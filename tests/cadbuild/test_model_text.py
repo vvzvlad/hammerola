@@ -1,26 +1,15 @@
 """What `modeltext` promises about a value the model decides.
 
-NOTHING HERE IS A DEFENCE, AND THERE IS NOBODY TO DEFEND AGAINST -- said first,
-because a syntax-tree pin stood here for six review rounds on the opposite
-belief and this file is where it would come back. model.py is the OWNER's own
-code, pushed with the owner's own secret, from the owner's own repository; the
-pin and the tests that treated it as an adversary went together on 2026-09-07,
-and AGENTS.md and SPEC 7.9 carry the decision.
+Nothing here is a defence: model.py is the OWNER's own code, and the build log
+IS the author's own output -- `print`, `sys.stderr.write` and
+`os.write(1, ...)` all reach it, which
+`test_the_build_log_is_the_models_own_output_unfiltered` below pins as a
+feature. Filtering at the stream would mangle every traceback and multi-line
+refusal the hub prints down those same two streams.
 
-WHAT THE PIN WAS is worth knowing so it is not rebuilt: a walk over
-`provenance.py`, `geometry.py`, `modelchecks.py` and `modeltext.py` requiring
-every f-string interpolation in them to be a call of a `modeltext` function or
-an entry on a list with a reason beside it, in service of the idea that the
-build log's contents could be controlled. They are not meant to be. The log IS
-the author's own output -- `print`, `sys.stderr.write` and `os.write(1, ...)`
-all reach it, which
-`test_the_build_log_is_the_models_own_output_unfiltered` below pins as the
-feature it is -- and filtering at the stream would mangle every traceback and
-every multi-line refusal the hub prints down those same two streams.
-
-WHAT IS LEFT is what `modeltext` is actually for: the HUB's own messages staying
-readable and staying messages when an ordinary mistake is in the way. Three
-promises, and each one is about an author who did not mean it:
+`modeltext` is for the HUB's own messages staying readable and staying messages
+when an ordinary mistake is in the way. Three promises, each about an author
+who did not mean it:
 
   * IT NEVER RAISES. A `__repr__` with a bug in it is an ordinary bug, and a
     raise from inside an `except` REPLACES the BuildError being built -- so one
@@ -71,12 +60,11 @@ def _log_lines(text):
 def test_a_render_that_raises_becomes_text_naming_the_exception():
     """A `__repr__` with a bug in it, which is an ordinary bug.
 
-    It used to leave `provenance.check` as a bare RuntimeError, which the build
-    process reports as EXIT_CRASHED (4) -- the HUB's own breakage -- for a class
-    the model wrote. Two things answer that now and they are not
-    interchangeable: `build._answers_for_the_model` fixes the exit code and
-    loses the message, and this swallow keeps the refusal whole so that a walk
-    over fifty numbers survives one broken value.
+    A bare RuntimeError out of `provenance.check` would be EXIT_CRASHED (4) --
+    the HUB's own breakage -- for a class the model wrote.
+    `build._answers_for_the_model` fixes the exit code but loses the message;
+    this swallow keeps the refusal whole so that a walk over fifty numbers
+    survives one broken value.
 
     The exception is NAMED because "<unprintable>" alone sends an author
     looking for a bug in the hub.
@@ -221,12 +209,9 @@ def test_a_section_label_stays_on_its_row_of_the_timing_table(capsys,
     from a `finally`, i.e. on the build that already failed -- the log somebody
     is reading to find out what went wrong.
 
-    THE FLOOR IS LOWERED because a `with` block that does nothing takes no
+    The floor is lowered because a `with` block that does nothing takes no
     measurable time, and a section under `SECTION_FLOOR` is counted rather than
-    named -- so the first draft of this test asserted on a table its label was
-    never in, and passed with the escape removed. Sleeping for a tenth of a
-    second would be the other way to reach the same line, and slower for
-    nothing.
+    named -- otherwise the label would never reach the table.
     """
     monkeypatch.setattr(modelchecks, "SECTION_FLOOR", 0.0)
     try:
@@ -246,10 +231,8 @@ def test_the_flag_is_about_the_characters_that_come_back():
 
     The escape WIDENS a string, so what `shown_text` hands back is the first
     `limit` characters escaped and then cut again to make room for the `...`.
-    A newline in the part cut away is escaped by a scan nobody reads the output
-    of -- and the caller printed "the hub rewrote this" over text it had not
-    rewritten. The first spelling of the flag compared `escaped(text[:limit])`
-    against `text[:limit]`, which is exactly that scan.
+    A newline in the part cut away must not make the caller print "the hub
+    rewrote this" over text it shows unchanged.
     """
     limit = 200
     tail_only = "a" * (limit - 3) + "\n" + "b" * 50
@@ -292,25 +275,14 @@ def test_a_failed_check_is_reported_as_one_problem_per_line(isolated_project,
 
 def test_a_check_whose_own_words_were_rewritten_is_told_so(isolated_project,
                                                            out_dir):
-    """The other half of that trade, and the half that was missing.
+    """The other half of that trade: the escape is explained.
 
-    The escape is right and stays; what was wrong was the SILENCE. An author who
-    writes a four-line problem message gets one line of `\\u000a`s back and no
-    word anywhere about who did that or how to avoid it -- while the comparison
-    the docstring used to make in its defence, a refused `note`, comes with
-    several hundred characters of explanation and advice. That is a refusal WITH
-    instructions against a mangling with none, which is not the trade it was
-    presented as.
+    An author who writes a four-line problem message gets one line of
+    `\\u000a`s back, so the log says who did that and how to avoid it. It is a
+    note and not a refusal: the build is already going red on this check.
 
-    REFUSING WAS THE OTHER OPTION AND WAS NOT TAKEN. A refusal here is a new way
-    for a model that publishes today to stop publishing, over the formatting of
-    a message that is already reporting a failure -- and the build is going red
-    on this check either way, so the author is reading the text regardless. What
-    they were missing was the sentence, not the veto.
-
-    THE NOTE IS ATTACHED TO THE LIST AND NOT TO THE PROBLEM, and it is
-    deliberately not prefixed `warning:`: the build is already failing on the
-    check itself, and a second prefix in a refusal reads as a second verdict.
+    The note is attached to the list and not to the problem, and it is not
+    prefixed `warning:`: a second prefix in a refusal reads as a second verdict.
     """
     multiline = types.SimpleNamespace(
         checks=lambda: ["the lid does not fit\nand the base is 2mm out"])
@@ -337,18 +309,11 @@ def test_the_note_is_decided_by_the_very_text_it_is_attached_to(isolated_project
                                                                 out_dir):
     """The note and the line it explains have to come from ONE render.
 
-    They did not: the line shown came from `shown(p, str, ...)` while the note
-    was decided by a second, separate look at the value -- so the two were about
-    two renderings, and any object that does not render identically twice makes
-    them disagree. Below the difference is between `str.__str__` and the class's
-    own; a `__str__` that interpolates a counter or a timestamp does the same
-    thing without meaning to.
-
-    THE FIX IS NOT A SECOND RENDER THAT AGREES, it is one render that answers
-    both questions: `shown_and_rewritten` returns the text and the flag from the
-    same pass, so there is no second string for them to disagree about. A test
-    that asserted "both calls render the same way" would pass on the day
-    somebody adds a third caller that does not.
+    Any object that does not render identically twice would make two separate
+    looks disagree. Below the difference is between `str.__str__` and the
+    class's own; a `__str__` that interpolates a counter or a timestamp does the
+    same thing without meaning to. `shown_and_rewritten` returns the text and
+    the flag from the same pass.
 
     A `str` SUBCLASS IS THE VEHICLE because `run_checks` accepts nothing else --
     it refuses a problem list whose elements are not strings -- and `strip` is
@@ -373,7 +338,7 @@ def test_the_note_is_decided_by_the_very_text_it_is_attached_to(isolated_project
 
 
 # --------------------------------------------------------------------------
-# Why there is no syntax-tree pin here any more
+# The build log is unfiltered
 # --------------------------------------------------------------------------
 
 def test_the_build_log_is_the_models_own_output_unfiltered(tmp_path):
@@ -387,17 +352,9 @@ def test_the_build_log_is_the_models_own_output_unfiltered(tmp_path):
     what a subprocess or a C extension does, past any writer object python has
     installed, and it lands there too.
 
-    THIS IS ALSO THE MEASUREMENT THAT RETIRED A SYNTAX-TREE PIN, and it is kept
-    partly so that is not rediscovered. The pin stood here for six review
-    rounds requiring every f-string in four files to route a model's value
-    through `modeltext`, defending a rule that the log's contents could be
-    controlled. They cannot, they are not meant to be, and filtering at the
-    stream would be actively harmful: the hub prints its own tracebacks and
-    multi-line refusals down these same two streams.
-
-    WHAT FOLLOWS FOR `modeltext` is that its subject is the hub's OWN messages
-    -- which it must not let a value break, truncate past a ceiling, or turn
-    into a raise. Those are what the tests above hold it to.
+    The log's contents are not controlled, and filtering at the stream would be
+    harmful: the hub prints its own tracebacks and multi-line refusals down
+    these same two streams.
     """
     project = tmp_path / "loud-model"
     project.mkdir()

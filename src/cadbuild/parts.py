@@ -5,10 +5,7 @@ The key of an entry IS the part's identity. It is the file stem a printable is
 exported under, the label the viewer's tree shows, the name a view points at,
 and the key everything about the part is filed under in meta.json. Nothing
 anywhere works out what a part is from its shape or from a string that looks
-like its name -- that guessing is exactly what this catalogue replaced, and it
-had two visible failures: a part renamed in the `print` view ("base (print)")
-lost its own download buttons, and a decoy solid of a similar shape stood in
-for a real part in `assembled` and passed the coverage gate.
+like its name.
 
 A view is a list of REFERENCES into this catalogue and carries no geometry, so
 there is no second copy of a part to disagree with the first. The one exception
@@ -44,16 +41,10 @@ from .palette import HARDWARE_COLOR, MOCK_COLOR, palette_colors
 # bought bearing and put download buttons on a public page offering it.
 KIND_PRINTABLE = "printable"
 KIND_HARDWARE = "hardware"
-# `mock` IS SCENERY AND THE INTERFERENCE GATE DOES NOT ASK ABOUT IT (decision of
-# 2026-08-31, gate.check_interference): a pair with a mock on either side is
-# skipped whole. The wall a bracket bolts to, the barrel a frame stands in, the
-# board a case closes over -- those are drawn so the picture means something,
-# and they overlap the product by construction. Requiring a reason for each
-# would fill `interference_ok` with rows saying "the wall, because it is the
-# wall" and bury the one declaration that is about a real joint. `hardware` is
-# the opposite and stays under the gate: a screw is material that is really
-# there, and its thread biting into a printed hole is precisely the overlap the
-# contract asks to be declared with a reason.
+# `mock` is scenery: gate.check_interference skips any pair with a mock on
+# either side, since a wall or a board overlaps the product by construction.
+# `hardware` stays under the gate: a screw thread biting into a printed hole is
+# exactly the overlap that must be declared with a reason.
 KIND_MOCK = "mock"
 # In the order they are offered in every message: what you print, what you buy,
 # what is only there so the picture makes sense.
@@ -72,28 +63,13 @@ RECORD_KEYS = frozenset({"shape", "mesh", "kind", "color", "note"})
 # that has already computed and exported every part.
 MESH_ATTRS = ("vertices", "vertex_normals", "faces", "bounds")
 
-# The stems this build keeps for ITSELF, next to the parts, and what each one is.
-# A catalogue key landing on one of them is worse than an awkward name: a
-# printable is exported to `<stem>.stl` by the export loop, the whole-build
-# artefact overwrites that file afterwards, and the hub hashes the result later
-# still -- so the published `print.stl` would be the plate rather than the part,
-# under the part's own download button, with nothing anywhere saying so.
+# The stems this build keeps for itself. A printable exported to `<stem>.stl`
+# would be silently overwritten by the whole-build artefact of that name.
 #
-# THE HAZARD IS CONDITIONAL AND THE RESERVATION IS NOT, and that asymmetry is the
-# half a reader will not work out alone. `assembled.stl` is written by every
-# build, so for that stem the collision above is certain; `print.stl` is written
-# only by a project that HAS a `print` view, and a project without one would come
-# to no harm from a part called `print`. The name is refused there too, because a
-# reservation that came and went with a view in model.py could not be relied on
-# -- and the day that view is added is long after the part was named. So nothing
-# here promises the file, which is why the refusal below is worded as a
-# reservation rather than as a collision.
-#
-# IT APPLIES TO EVERY KIND, not only to what is exported. The key is the node
-# name in every view file and the key of the part's entry in meta.json, so a
-# `mock` called `assembled` would still be the one name in the tree that reads
-# as the build's own artefact -- and the day somebody changes its kind, the
-# collision is real and the rename is a published-URL change.
+# The reservation is unconditional even though `print.stl` exists only when the
+# project has a `print` view: the view may be added after the part is named. It
+# applies to every kind, since the key also names view nodes and meta.json
+# entries, and a kind change would otherwise turn it into a real collision.
 RESERVED_STEMS = {
     ASSEMBLED_STEM: "the glued-together assembly",
     PRINT_VIEW_ID: "the print plate",
@@ -108,11 +84,9 @@ def check_stem(stem, made):
     deliberately not held to any shorter caption-shaped rule -- nothing below
     is a caption.
 
-    MEMBER_RE is the rule every catalogue key already passed in
-    `read_catalogue`, so what this can actually catch is the other source of
-    stems: a rename of ASSEMBLED_STEM, PREVIEW_SUFFIX or PRINT_VIEW_ID in
-    cadbuild.artifacts. Unchecked, that reaches the hub as an opaque 422 on the
-    push with the build itself reporting success.
+    Catalogue keys already passed MEMBER_RE in `read_catalogue`, so this
+    catches a bad rename of ASSEMBLED_STEM, PREVIEW_SUFFIX or PRINT_VIEW_ID in
+    cadbuild.artifacts, which would otherwise surface as a 422 on the push.
     """
     if not MEMBER_RE.match(stem):
         raise BuildError(
@@ -147,11 +121,8 @@ def _check_key(key):
             f"exported to {key!r}.stl, and the key is what names it."
         )
     if key in RESERVED_STEMS:
-        # A RESERVATION, worded as one. Whether this build would really write
-        # `<stem>.stl` depends on the project -- there is no `print.stl`
-        # without a `print` view -- so a message saying it does would be
-        # telling an author about a file their own build does not produce, and
-        # `print` is an entirely ordinary name for a single printed part.
+        # Worded as a reservation: `print.stl` exists only when the project
+        # has a `print` view.
         raise BuildError(
             f"catalogue key {key!r} is reserved: {key}.stl is the name this "
             f"build keeps for {RESERVED_STEMS[key]}. Call the part something "
@@ -169,14 +140,9 @@ def _check_color(color, where):
     export_views, after every part has been exported and meshed -- minutes
     spent on an answer visible now.
 
-    WHAT COMES BACK IS THE PARSER'S SPELLING AND NOT THE AUTHOR'S, and that is
-    what makes every consumer of a catalogue colour read ONE spelling. The
-    parser takes `"red"`, `"#f00"` and `"steelblue"` as happily as six hex
-    digits, and the tessellator is happy with all of them -- but the rasteriser
-    that draws the pictures (`preview_png._hex_rgb`) reads exactly six hex
-    digits, so a part the catalogue accepted as `"red"` used to pass every gate
-    and then kill the build inside the PNG of itself. Canonicalising here, in
-    the validator, is what leaves one spelling downstream of it.
+    Returns the parser's canonical spelling: it accepts `"red"`, `"#f00"` and
+    `"steelblue"`, but `preview_png._hex_rgb` reads exactly six hex digits, so
+    everything downstream gets one spelling.
 
     AN 8-DIGIT `#rrggbbaa` LOSES ITS ALPHA HERE, and that costs nothing:
     transparency travels separately, as the `alpha` of the reference that
@@ -208,10 +174,7 @@ def _check_mesh(mesh, where):
     slip -- a Workplane written under `mesh`, a path written instead of a loaded
     mesh -- which is what `as_shape` catches on the other side.
 
-    `tests/cadbuild/test_naming.py` holds a REAL Trimesh against the same list,
-    which is what keeps the duck type honest: the fake mesh the rest of the
-    suite runs on implements exactly these names and would not notice trimesh
-    renaming one.
+    `tests/cadbuild/test_naming.py` checks a real Trimesh against the same list.
     """
     missing = [name for name in MESH_ATTRS if not hasattr(mesh, name)]
     if not missing:
@@ -292,15 +255,9 @@ def read_catalogue(model):
             'parts() must return a non-empty dict: {"lid": {"shape": lid, '
             '"kind": "printable"}, ...}'
         )
-    # HOW BIG THE CATALOGUE MAY BE, counted before a single entry is read --
-    # the hub's own ceiling (`render.MAX_PARTS`), mirrored here for the reason
-    # every ceiling in hubspec is: a catalogue this build accepts and the hub
-    # then refuses is a whole build's geometry spent on a 422.
-    #
-    # IT USED TO COUNT THE PARTS CARRYING A NOTE, which was the same number
-    # doing a job it could not do: what makes meta.json enormous is the number
-    # of RECORDS, and the ones without a note -- a hundred thousand bought
-    # screws -- were exactly what the count could not see.
+    # The hub's own ceiling (`render.MAX_PARTS`), mirrored so the build fails
+    # before spending its geometry on a 422. It counts records, which is what
+    # sizes meta.json.
     if len(catalogue) > MAX_PARTS:
         raise BuildError(
             f"parts() returned {len(catalogue)} entries, over the {MAX_PARTS} "
@@ -360,16 +317,8 @@ def read_catalogue(model):
                 f"{KIND_MOCK!r} is only there so the picture makes sense."
             )
         if mesh is not None and kind != KIND_MOCK:
-            # A mesh CAN ONLY BE SCENERY, and it is the three things this build
-            # does to the other two kinds that say so: there is no solid to
-            # write into a STEP, nothing whose watertightness or first layer the
-            # printable gate could judge, and no boolean the interference gate
-            # could ask about a triangle soup. `mock` is already out of all
-            # three (`printables.export_printables` walks the printables,
-            # `gate.check_interference` skips a pair with a mock in it,
-            # `check_print_layout` keeps the plate to printables), so this is
-            # the kind whose existing treatment is the right one -- rather than
-            # a fourth kind, or three exemptions written by hand.
+            # A mesh has no solid to export, judge for printability, or
+            # intersect, and `mock` is already exempt from all three.
             raise BuildError(
                 f'{where} is a "mesh" declared {kind!r}, and a mesh has to be '
                 f"{KIND_MOCK!r}. It is geometry that came from somewhere else: "

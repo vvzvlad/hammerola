@@ -1,13 +1,9 @@
 """What the hub hands somebody who has just found it: the skill, the tool, the
 template — and whether there is anything here yet.
 
-THE PROBLEM THIS SOLVES. Everything else on this service assumes you already
-have `hammerola` on your PATH, a model directory to run it in and the secret to
-present. A person who has just deployed a hub, or an agent sitting in an empty
-model repository, has none of the three, and until now nothing on the service
-said where to get them: the front page asks for a token, and the token is not
-what is missing. So the hub serves the three things a first run needs, and one
-document that names them.
+Everything else on this service assumes `hammerola` on PATH, a model directory
+and the secret. A first run has none of them, so the hub serves the three
+things it needs, and one document that names them.
 
     GET /start                    the manifest: the three paths, the versions
                                   of the skill and of the client, and `empty`
@@ -15,73 +11,34 @@ document that names them.
     GET /start/hammerola          the client, one executable file
     GET /start/template.tar.gz    a model directory that builds as it stands
 
-ALL FOUR ARE PUBLIC, and that is a decision rather than an oversight. The line
-this service draws is written in `src/app.py`: a BUILD is public because a
-permanent link is what the hub is for, and the LIST of what exists is not,
-because nobody is handed it and every id in it prefixes a permanent URL. These
-four are on neither side of that line — they are the software, byte for byte the
-same on every deployment, and they say nothing whatever about what has been
-published here. Putting them behind `EDIT_TOKEN` would also be circular: the
-manifest exists to be read by somebody who does not have the token yet, and the
-client is the thing that stores one.
+All four are public: they are the software, identical on every deployment,
+and say nothing about what is published here. Behind `EDIT_TOKEN` they would be
+circular, since the manifest is for somebody who has no token yet.
 
-`empty` IS THE ONE STATEMENT ABOUT THIS INSTANCE THAT IS MADE WITHOUT
-AUTHENTICATION, and it is deliberately the smallest one that can be made. The
-argument for it: a person who deploys a hub and opens it sees a login form and
-nothing else, so the instance stays unused for want of one sentence about what
-to do next. The argument against: it is a fact about the deployment, given to
-anyone who asks. It is accepted at exactly this width — a boolean — and no
-wider. NOT a count, not a name, not a date, not "when was the last push". A
-count would leak the size of the fleet and its growth rate to anyone who polled;
-a name is the prefix of a permanent URL, which is precisely what `/index.json`
-is guarded to withhold.
+`empty` is the one statement about this instance made without authentication,
+and it is a boolean on purpose: not a count (fleet size and growth), not a name
+(the prefix of a permanent URL, which `/index.json` withholds).
 
-WHAT READS `empty` IS THE DOOR — the sign-in screen of a hub nobody has pushed
-to (`ui/src/HammerolaEntry.jsx`, issue #48). It draws five lines somebody
-copies and hands to their agent: where the skill is, where the client is, what
-this hub's address is, install the skill and follow it, ask the owner for the
-token. The two paths in it come from the manifest and the address from the
-browser, so nothing on that page names a deployment either. That is what the
-argument above buys, and until it was written the argument was a debt: the
-route answered a question about the deployment anonymously and no reader had
-collected on it.
+What reads `empty` is the sign-in screen of a hub nobody has pushed to
+(`ui/src/HammerolaEntry.jsx`): five lines to hand to an agent, with the paths
+from the manifest and the address from the browser. The page asks lazily, only
+when showing the form.
 
-ALL SIX FIELDS HAVE A READER, `empty` included — it is the one the
-paragraph above is about, and it is the gate on the two the door draws: the door
-renders nothing unless it says `true`. `hammerola create` follows `template`;
-`skill` and `client` are what the door renders; `skill_version` is what
-`hammerola skill` compares against the copy installed on a laptop; and
-`client_version` is what `hammerola build` and `hammerola commit` compare
-against themselves, refusing to publish from a client the hub has outgrown
-(issue #77). The page asks LAZILY, only when it is showing the form, so a hub
-with projects on it is not polled by every reader who already has a token.
+Every field has a reader: `hammerola create` follows `template`; the sign-in
+screen reads `empty` and renders `skill` and `client`; `hammerola skill`
+compares `skill_version` with the installed copy; `hammerola build` and
+`hammerola commit` refuse to publish from a client older than `client_version`.
+Both versions are constants of the image, not of the deployment, and
+`client_version` can already be read out of the client served here.
 
-NEITHER VERSION IS A SECOND STATEMENT ABOUT THE DEPLOYMENT, and the test
-guarding this route is written to say why: like the three paths they are
-constants of the IMAGE — two hubs running the same image answer with the same
-numbers — so they tell a reader what software is running and nothing about what
-is published here. `client_version` says even less than that: it is a number
-anybody can already read out of the client this route hands them unasked, so it
-saves a download rather than disclosing anything. That is the line, and `empty`
-is still the only thing on the far side of it.
+What counts as empty is "no project directory with anything in it"
+(`Store.empty`). Not "no cards on the front page": a project with only a `dev`
+build has no card (SPEC 7.6) but is not empty. And not "no project directory":
+`build_staging` creates one that a failed first build leaves behind.
 
-WHAT COUNTS AS EMPTY is "no project directory on the volume WITH ANYTHING IN IT"
-(`Store.empty`), which differs from the obvious reading in two places. It is not
-"no cards on the front page" — see below — and it is not "no project directory
-either": `build_staging` creates one before the build runs and nothing removes it
-when the build fails the gate, so counting bare directories made a hub
-permanently non-empty the moment its FIRST push failed, which is precisely the
-person this answer exists for. A project whose only
-build is in the `dev` slot has no card — the index is built from committed
-revisions (SPEC 7.6) — and this hub is not empty: somebody has published to it,
-an onboarding block would be telling them what they have already done, and
-`hammerola status` has something to say. Reading `index.json` instead would have
-called that hub empty.
-
-NO ADDRESS APPEARS HERE. The paths below are relative and that is the whole of
-what this module names: the door reads the hub's address off the address it was
-loaded from (`hubOrigin` in `ui/src/hub.js`), and this repository never carries
-the address of a deployment (AGENTS.md).
+No address appears here. The paths are relative; the page reads the hub's
+address from where it was loaded (`hubOrigin` in `ui/src/hub.js`), and this
+repository never carries a deployment's address (AGENTS.md).
 """
 
 import ast
@@ -98,10 +55,8 @@ from hammerola import VERSION as CLIENT_VERSION
 ROOT = Path(__file__).resolve().parent.parent
 
 # --- the routes, named once ------------------------------------------------
-# The manifest carries them so that nothing else has to spell them: `hammerola
-# create` asks the manifest where the template is rather than carrying a second
-# copy of this string, and the door's block for an agent renders its two
-# addresses out of what it fetched rather than out of a third copy.
+# The manifest carries them so that `hammerola create` and the sign-in page
+# need no copies of these strings.
 START_SEGMENT = "start"
 SKILL_NAME = "skill.md"
 CLIENT_NAME = "hammerola"
@@ -123,32 +78,22 @@ TEMPLATE_KEY = "template"
 # holds the two strings together.
 SKILL_VERSION_KEY = "skill_version"
 
-# ...and the same for the CLIENT this image serves at `/start/hammerola`. The
-# number is imported rather than parsed out of a file, unlike the skill's:
-# `hammerola/__init__.py` is a module of this repository and the hub already
-# imports four others from that package, so the value the manifest states and
-# the value inside the archive it serves are the same object. `hammerola/
-# update.py` names this key too, and reads it to decide whether a `build` or a
-# `commit` may go ahead at all.
+# ...and the same for the client this image serves at `/start/hammerola`. The
+# number is imported from `hammerola/__init__.py`, so the manifest and the
+# served archive agree. `hammerola/update.py` reads this key to decide whether
+# a `build` or a `commit` may go ahead.
 CLIENT_VERSION_KEY = "client_version"
 
-# THE VERSION LIVES IN THE FILE, and this is the whole of what reads it. Two
-# tight patterns rather than a YAML parser: there is no YAML in the standard
-# library, the frontmatter is written in this repository, and the value is one
-# integer. The client carries a second copy of exactly these two patterns
-# (`hammerola/skill.py`) because it may import nothing from here — and a test
-# runs both over the shipped file and compares the answers, which is what keeps
-# the copies from drifting into disagreeing about a version number.
+# The skill's version lives in its frontmatter. Two tight patterns rather than a
+# YAML parser (none in the standard library; the value is one integer). The
+# client carries a copy (`hammerola/skill.py`), and a test checks both agree on
+# the shipped file.
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _VERSION_LINE = re.compile(r"^version:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
 
 SKILL_FILE = ROOT / "skill" / "SKILL.md"
-# `model_template/` and NOT `template/`, which is what this was called for
-# exactly one review: one letter from `templates/`, the page templates next to
-# it, and both copied to the root of the image by adjacent COPY lines. Two names
-# that differ by a letter are how a COPY or an ignore rule ends up pointing at
-# the wrong one — and each still resolves, so nothing fails loudly. The name also
-# says what the directory is: a template for a MODEL, not for a page.
+# `model_template/`, not `template/`: one letter from `templates/` (the page
+# templates), which is copied into the image next to it.
 TEMPLATE_DIR = ROOT / "model_template"
 
 # --- the client, as one file ----------------------------------------------
@@ -160,18 +105,11 @@ TEMPLATE_DIR = ROOT / "model_template"
 # file lands under is the name of the command.
 #
 # It works because the tool imports nothing outside the standard library
-# (`hammerola/__init__.py`, and `tests/client/test_stdlib_only.py` enforces
-# it): a zipapp cannot carry a compiled dependency, so a client that grew one
-# would break here rather than on somebody's laptop.
+# (`tests/client/test_stdlib_only.py` enforces it).
 #
-# WHAT GOES IN is every module under `hammerola/`, and nothing else: the
-# distribution is one package, so the pure modules the hub and the client share
-# — `buildnames`, `metricsdiff`, `projectslug` — live inside it and arrive by
-# the same glob as the rest. That set is closed under imports and a test proves
-# it (`tests/test_onboarding.py`), because a module imported from inside the
-# package and living outside it would produce an archive that runs on this
-# machine, where the checkout is on `sys.path`, and dies with an ImportError on
-# the laptop this is built for.
+# Every module under `hammerola/` goes in, and nothing else; the modules shared
+# with the hub (`buildnames`, `metricsdiff`, `projectslug`) live in that package
+# too. `tests/test_onboarding.py` proves the set is closed under imports.
 
 # The module the generated `__main__.py` imports, and therefore the root of the
 # closure `_refuse_unimportable` walks. Anything the tool needs is reachable from
@@ -180,18 +118,11 @@ CLIENT_ENTRY = "hammerola/cli.py"
 
 CLIENT_SHEBANG = b"#!/usr/bin/env python3\n"
 
-# THE PYTHON THIS TOOL IS HELD TO, and the one place that floor is written. It
-# is not an aspiration: `/usr/bin/python3` is 3.9 on macOS and on Debian 11, and
-# 3.8 on Ubuntu 20.04, so a machine's stock interpreter is what the FIRST
-# command of the onboarding runs under — a tool that needs a newer one fails at
-# the very step whose whole purpose is that nothing has to be installed.
-#
-# 3.9 rather than 3.8 because the checks below cannot honestly claim more: what
-# is enforced is the syntax the archive's modules use (`tests/test_onboarding.py`
-# walks their syntax trees and refuses PEP 604 `X | Y` in an annotation, which is
-# 3.10, and parses everything with `feature_version` at this floor). Nothing
-# proves the LIBRARY calls are 3.8-safe, and 3.9 is the oldest interpreter this
-# was actually run under.
+# The minimum Python for the client: a machine's stock `/usr/bin/python3` runs
+# the first onboarding command (3.9 on macOS and Debian 11). Only syntax is
+# enforced (`tests/test_onboarding.py` parses with `feature_version` at this
+# floor and refuses PEP 604 `X | Y` annotations); 3.9 is the oldest interpreter
+# it was actually run under.
 #
 # Three things read this: the guard in the generated entry point below, so a too
 # old interpreter says so instead of dying inside an import; the skill, which
@@ -237,44 +168,13 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 def manifest(*, empty: bool) -> dict:
     """The document a first run is made of, and the door's block is drawn from.
 
-    Six keys and no more, checked by a test: three relative paths and two
-    version numbers, all five constants of the IMAGE, and the ONE boolean about
-    this deployment. Adding a field here is adding a statement the hub makes
-    without authentication — read the module docstring before doing it, and note
-    which side of that line a candidate falls on. Both versions are on the safe
-    side for the same reason the paths are: they are byte-identical on every
-    deployment running this image, so they say what the software IS and nothing
-    about what has been published here or who runs it.
+    Six keys, checked by a test: three relative paths and two versions, all
+    constants of the image, plus the one boolean about this deployment. Adding
+    a field adds an unauthenticated statement; see the module docstring.
 
-    `client_version` WAS THE SIXTH AND IT WAS ADDED DELIBERATELY (issue #77),
-    with the same argument `skill_version` made before it and one addition of
-    its own: it is not merely SAFE to publish, it is a fact about the FILE THIS
-    ROUTE ALREADY SERVES ANONYMOUSLY. Anybody who can read this key can download
-    the client at `client` and read the same number out of it, so the field
-    hands over nothing that was not already public — it saves a client the
-    download, which is the entire point of asking before a push instead of
-    after.
-
-    ALL SIX HAVE A READER. `hammerola create` follows `template`; the sign-in
-    page reads `empty` — that is the whole of the gate on its block — and
-    follows `skill` and `client` when it says there is nothing here yet;
-    `hammerola skill` reads `skill_version` to tell a stale copy of the
-    instructions from a current one, which is the one thing in this system that
-    used to go wrong in total silence (issue #51); `hammerola build` and
-    `hammerola commit` read `client_version` and refuse to publish from a client
-    older than it, which is the sentence that used to be written down as true
-    and was not (`skill_version` below).
-    `template` is the one the BROWSER deliberately ignores — a page cannot
-    unpack a starter project into anybody's directory, and the block that would
-    name it says "install the skill and follow it" instead — but it is read all
-    the same, by the client, which is where unpacking belongs.
-
-    IT OPENS A FILE NOW, which it did not before: `skill_version` reads the
-    shipped `SKILL.md`. So this can fail the way the three artefact routes can —
-    an image whose skill is missing or whose frontmatter lost its version — and
-    `src/app.py` answers that with the same logged 404 rather than dropping the
-    socket. `client_version` adds no such failure: it is imported at startup, so
-    an image missing it never serves a request at all.
+    It reads the shipped `SKILL.md` for `skill_version`, so it can fail like
+    the artefact routes; `src/app.py` answers that with a logged 404.
+    `client_version` is imported at startup and adds no such failure.
     """
     return {
         "empty": bool(empty),
@@ -300,36 +200,15 @@ def skill_bytes() -> bytes:
 def skill_version() -> int:
     """The version of the instructions this image ships. Off the file itself.
 
-    WHY THE SKILL IS VERSIONED AT ALL, when the template and the model contract
-    are not versioned by hand: those two break LOUDLY — a stale contract fails
-    the build. A stale skill keeps confidently teaching yesterday — a command
-    that was renamed, a ceiling that was raised — and the agent following it
-    gets a refusal whose cause is a file on its own disk, with nothing anywhere
-    going red. So the file states which one it is, the manifest repeats it, and
-    `hammerola skill` compares the two (issue #51).
+    The skill is versioned because a stale one fails silently: it keeps
+    teaching renamed commands and old ceilings. The file states its version,
+    the manifest repeats it, and `hammerola skill` compares them.
 
-    THE CLIENT USED TO BE IN THAT FIRST LIST and it did not belong there. This
-    paragraph said a stale client "is refused by the hub and says so", and
-    nothing anywhere compared a client version — there was none to compare, and
-    an old client simply went on quietly doing what it could. The sentence is
-    now true and is machinery rather than a claim: `hammerola/__init__.py`
-    states `VERSION`, `manifest` above repeats it as `client_version`, and
-    `build` and `commit` refuse to publish from a client older than the hub's
-    (issue #77). Both numbers are here for the same reason and neither is a
-    statement about the deployment.
+    In the frontmatter, where Claude Code skills already accept extra keys, so
+    the number travels with the file.
 
-    IN THE FRONTMATTER and not in a comment in the body, because that is the
-    part of the document a Claude Code skill already has a parser for: extra
-    keys beside `name` and `description` are ordinary there — Anthropic's own
-    plugin skills carry `version`, `license` and `allowed-tools` — so the number
-    travels with the file wherever it is copied, and no reader has to know a
-    convention of ours to find it.
-
-    STRICTLY PARSED, WITH NO DEFAULT. A file with no version is a ValueError and
-    not a 1: defaulting would make a shipped skill that lost its version
-    indistinguishable from a fresh one, which is the exact silence this whole
-    entry exists to end. Cached like `skill_bytes` and for the same reason — the
-    file cannot change while the process runs.
+    Strictly parsed, with no default: a missing version must not read as the
+    first one. Cached; the file cannot change while the process runs.
     """
     text = skill_bytes().decode("utf-8")
     block = _FRONTMATTER.match(text)
@@ -365,34 +244,13 @@ def client_bytes() -> bytes:
 def _import_verdict() -> str | None:
     """The refusal `_refuse_unimportable` would raise, or None — REMEMBERED.
 
-    THE POINT IS THAT A REFUSAL IS CACHED AT ALL. `lru_cache` stores a returned
-    value and never a raised exception, so caching `client_bytes` covered the
-    healthy image and nothing else: on a broken one the parse ran again on every
-    request. `/start/hammerola` is public, is dispatched before the token check,
-    is throttled by nothing (`src/app.py`) and is served by a thread per
-    connection, so that was 22 ms of CPU for an 80-byte anonymous GET —
-    measured, twenty requests and twenty parses — and a HEAD bought the same,
-    because the archive is built before `with_body` is looked at. It also made
-    the paragraph in `_refuse_unimportable` about being able to AFFORD a parse
-    false on precisely the image that paragraph exists for.
+    `lru_cache` stores returned values, not exceptions, so caching
+    `client_bytes` alone would re-parse on every request to a public,
+    unthrottled route when the image is broken. Remembering a refusal is safe:
+    the image cannot change while the process runs.
 
-    MEASURED AFTER, on the same broken image over the same socket: twenty GETs,
-    ONE parse, 4.5 ms per request — which is what a 404 on this hub costs when
-    it computes nothing, since the healthy route with its archive already built
-    answers in 4.7 ms. A broken image is no longer a cheaper request to make
-    than a working one.
-
-    REMEMBERING A REFUSAL IS SAFE HERE because there is nothing to recover
-    from: the modules are inside the image, the image cannot change while the
-    process runs, and the verdict reached on the first request is the verdict
-    for every later one. That is the same property that lets the caches around
-    this one go unguarded by a fixture.
-
-    ONLY ValueError BECOMES A VERDICT. An OSError — a member that vanished
-    between the glob and the read — is left to propagate as itself:
-    `_serve_start` tells the two apart in its log line, and it costs one failed
-    `open` rather than twenty parses, so there is nothing here for a cache to
-    buy.
+    Only ValueError becomes a verdict; an OSError (a member vanished between the
+    glob and the read) propagates, and `_serve_start` logs the two differently.
     """
     try:
         _refuse_unimportable(client_members())
@@ -409,10 +267,8 @@ def client_members() -> list:
     place to forget. Nothing outside the package is carried, because the tool is
     one distribution and reaches into nothing else.
 
-    A GLOB IS ALSO WHY THIS LIST CANNOT BE TRUSTED ON ITS OWN, and the reason
-    `client_bytes` runs `_refuse_unimportable` over what comes back: a file that
-    is not there does not appear in a glob, so a client module `.dockerignore`
-    kept out of the image subtracts itself from this list in complete silence.
+    A module missing from the image (e.g. via `.dockerignore`) silently drops
+    out of the glob, which is why `client_bytes` runs `_refuse_unimportable`.
     """
     return sorted((f"hammerola/{path.name}", path)
                   for path in sorted((ROOT / "hammerola").glob("*.py")))
@@ -421,55 +277,24 @@ def client_members() -> list:
 def _refuse_unimportable(members) -> None:
     """Refuse to serve a client that would die on `import` where it is run.
 
-    THE FAILURE THIS EXISTS FOR HAS NO OTHER WITNESS. `hammerola/*.py` is
-    globbed, so a module `.dockerignore` (or a mistyped COPY) kept out of the
-    image is not an error here — it is simply not in the glob, and the archive
-    is built, served with a 200 and a plausible size, and dies with an
-    ImportError on the laptop that downloaded it. The suite cannot see it
-    either: `tests/test_onboarding.py` builds this archive out of the CHECKOUT,
-    where every module is present by construction.
+    A module kept out of the image is simply absent from the glob, and the
+    archive would be served and fail with ImportError on the laptop. The suite
+    builds from the checkout, where every module exists, so it cannot see this.
 
-    So the archive is held to a property the glob cannot express: everything
-    reachable by imports from `CLIENT_ENTRY` has to be IN it. That is derived
-    from the modules themselves rather than from a list, which keeps the
-    property of the glob that is worth keeping — a module added to the package
-    needs no second edit — while removing the one that is not. A module nothing
-    reaches is not required, and that is honest rather than lax: nothing imports
-    it, so its absence breaks nothing.
+    So everything reachable by imports from `CLIENT_ENTRY` must be in the
+    archive. A module nothing reaches is not required.
 
-    ONE ARCHIVE MEMBER IS OUTSIDE THE CLOSURE, and it is pinned by a test
-    (`tests/test_onboarding.py`) rather than counted here — this said "two"
-    while the package's `__init__.py` was reached by accident from the outside,
-    and a miscount in this paragraph is exactly what that test now makes
-    impossible. How many members there are ALTOGETHER is deliberately not
-    written beside it: the one is pinned by that test, the total is decoration,
-    and it had already gone stale twice by 2026-08-31.
-    `hammerola/__main__.py` is unreachable ON
-    PURPOSE: the zipapp's entry point is the generated `CLIENT_MAIN` at the
-    archive's root, because a zip's entry point has to sit there.
-    `hammerola/__init__.py` is reached like any other module, because every
-    import out of a sibling names the package (`from hammerola import project`).
+    One member is outside the closure on purpose, pinned by
+    `tests/test_onboarding.py`: `hammerola/__main__.py`, since the zipapp's entry
+    point is the generated `CLIENT_MAIN` at the archive root.
 
-    IT RAISES ValueError, LIKE `_refuse_unservable`, and that type is part of
-    the contract with `src/app.py`: `_serve_start` catches it and answers 404
-    with a log line naming the artefact's defect. Anything raised here that it
-    does not catch would reach the socket as a dropped connection instead — so
-    a file that will not even parse is re-raised as ValueError too rather than
-    left as SyntaxError.
+    Raises ValueError (as does `_refuse_unservable`), which `_serve_start`
+    answers with a logged 404; a file that will not parse is re-raised as
+    ValueError too.
 
-    WHAT IT DOES NOT DO is decide whether the tool WORKS: an import that
-    resolves says nothing about what the module does. This is the packaging
-    question — did every module the tool imports reach the image — and it is
-    asked here because the image is the only place it can go wrong.
-
-    WHAT IT COSTS, measured on 20 modules: 16 ms, and once per process WHATEVER
-    THE ANSWER IS. Both halves of that need a cache and they are different ones:
-    `client_bytes` remembers the archive, which covers the healthy image, and
-    `_import_verdict` remembers the refusal, which covers the broken one —
-    `lru_cache` stores no exception, so without the second a broken image paid
-    this on every anonymous request to a public, unthrottled route. That is the
-    whole reason this can afford to parse rather than guess; a per-request cost
-    would have bought a cheaper and weaker check instead.
+    It answers a packaging question only, not whether the tool works. Cost is
+    about 16 ms once per process, cached by `client_bytes` (healthy image) and
+    `_import_verdict` (broken one).
     """
     _, missing = _import_closure(members)
     if missing:
@@ -490,12 +315,9 @@ _OWN_SCOPE = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
 def _module_scope(tree):
     """Every node a module's own body owns, at any depth inside a statement.
 
-    NOT `tree.body`, which is what this used to be and what made a legitimate
-    `__init__.py` read as an empty one: a name bound inside `try/except
-    ImportError` — the commonest shape there is — or inside `if/else`, `for` or
-    `with` is bound at import exactly like one at the top level, and a walk of
-    the body alone sees none of them. NOT `ast.walk` either, because that
-    descends into function and class bodies, which bind nothing until they run.
+    Not `tree.body`: names bound inside `try/except`, `if`, `for` or `with` are
+    bound at import too. Not `ast.walk` either: function and class bodies bind
+    nothing until they run.
     """
     stack = list(tree.body)
     while stack:
@@ -508,13 +330,8 @@ def _module_scope(tree):
 def _import_closure(members):
     """(reachable modules, missing ones) walking imports from `CLIENT_ENTRY`.
 
-    Split out of `_refuse_unimportable` so the SIZE of the closure can be
-    asserted by a test. Without that, the two edges this walk does not follow —
-    a relative import (refused below) and a name reached through
-    `importlib.import_module` (not refused, see `wanted`) — would each shrink
-    the closure silently, and a suite that only checks "a module removed from
-    the list is refused" stays green while the list of modules it can still
-    speak for gets shorter.
+    Split out so a test can assert the size of the closure, which would shrink
+    silently through edges this walk does not follow (see `wanted`).
     """
     carried = dict(members)
     trees = {}
@@ -524,9 +341,7 @@ def _import_closure(members):
             try:
                 source = carried[name].read_text(encoding="utf-8")
             except UnicodeDecodeError as error:
-                # A UnicodeDecodeError is already a ValueError, so `_serve_start`
-                # answered 404 either way; what it did not do was name the file,
-                # and the log line on that 404 is the only thing the reader gets.
+                # Re-raised to name the file in `_serve_start`'s 404 log line.
                 raise ValueError(f"{name} in this image is not utf-8 text: "
                                  f"{error}") from error
             try:
@@ -558,25 +373,14 @@ def _import_closure(members):
         function is an import the tool makes, and one that is only reached on
         some paths is the worst kind to discover on a laptop.
 
-        A RELATIVE IMPORT IS REFUSED RATHER THAN SKIPPED, and that one branch is
-        the difference between a blind spot and an answer. `from . import x`
-        carries no module name to resolve, so following it would mean
-        reimplementing the interpreter's own resolution against the archive's
-        layout; skipping it — which is what `node.level == 0` used to do
-        silently — shrinks the closure without shrinking what the refusal
-        CLAIMS. Measured: rewriting `cli.py`'s imports as relative, a change no
-        runtime behaviour depends on, took the closure from 18 modules to 1 and
-        left a client tree missing `status.py` being served with a 200. The
-        client is written with absolute imports; this says so out loud instead
-        of quietly meaning less.
+        A relative import is refused rather than skipped: it carries no module
+        name to resolve, and skipping it would shrink the closure silently. The
+        client is written with absolute imports.
 
-        TWO EDGES ARE NOT FOLLOWED AND NOT REFUSED EITHER, because neither is a
-        FORM this could recognise and both are absent from the client today.
-        `importlib.import_module("hammerola.x")` is a call with a string in it,
-        so a module reached only that way is not required here and would fail on
-        the laptop. And `if TYPE_CHECKING:` runs the other way round — the
-        import is collected and the module required, though at runtime it is
-        never executed — which refuses an image that would have worked.
+        Two edges are neither followed nor refused, and neither occurs in the
+        client today: `importlib.import_module("hammerola.x")` (not required
+        here, would fail on the laptop), and imports under `if TYPE_CHECKING:`
+        (required here though never executed).
         """
         for node in ast.walk(tree(name)):
             if isinstance(node, ast.Import):
@@ -597,11 +401,8 @@ def _import_closure(members):
                     continue
                 yield node.module, None
                 for alias in node.names:
-                    # `from hammerola import *` names no submodule: it binds
-                    # whatever `__init__` bound, and the package itself is
-                    # already required by the line above. Treating `*` as a
-                    # name asked for `hammerola.*` and reported a module by
-                    # that invented spelling.
+                    # `from hammerola import *` names no submodule; the
+                    # package itself is already required above.
                     if alias.name != "*":
                         yield node.module, alias.name
 
@@ -609,14 +410,8 @@ def _import_closure(members):
         """The names a package's `__init__.py` binds — or None for "unknowable".
 
         What tells `from hammerola import project` (a submodule, which has to
-        be carried) from `from hammerola import SOMETHING` (a name defined in
-        the package itself, which does not). This was written against a
-        `hammerola/__init__.py` that bound nothing at all, for the day the
-        package WOULD bind something. That day is issue #77: the answer is now
-        `{"VERSION"}` — the constant the manifest repeats as `client_version`
-        and `update.py` reaches for as `from hammerola import VERSION`. Without
-        this the check would go looking for a module of that name and refuse a
-        healthy image.
+        be carried) from `from hammerola import VERSION` (a name defined in
+        the package itself, which does not).
 
         None means the namespace cannot be enumerated at all, and the caller
         then abstains rather than refusing. Two forms do that, and both would
@@ -681,15 +476,11 @@ def _import_closure(members):
 def template_bytes() -> bytes:
     """The starter model directory, as a .tar.gz the client unpacks.
 
-    ONE HIDDEN FILE IS IN IT, and that is the only way this archive differs from
-    a push: `.gitignore` belongs in a fresh project, and the hub's own path
-    alphabet cannot carry a leading dot (`src/store.SAFE_COMPONENT`) — which is
-    why `pack.py` DROPS hidden entries on the way up rather than refusing them.
-    The client reads this archive under `unpack.TEMPLATE_RULES`, which allows
-    that one NAME in the LAST component and nothing else; `_refuse_unservable`
-    below holds this side to the same rule, so a hidden directory added to the
-    template tree is refused here rather than served to a client that would then
-    refuse it — or, worse, to an older one that would not.
+    One hidden file is in it, `.gitignore`, which a push could not carry (the
+    hub's alphabet has no leading dot, `src/store.SAFE_COMPONENT`; `pack.py`
+    drops hidden entries). The client unpacks under `unpack.TEMPLATE_RULES`,
+    which allows that one name in the last component; `_refuse_unservable`
+    holds this side to the same rule.
 
     Written through `gzip.GzipFile(mtime=0)` rather than `tarfile.open("w:gz")`,
     which would stamp the moment of the request into the gzip header and make
@@ -734,21 +525,12 @@ def template_members() -> list:
 def _refuse_unservable(members) -> None:
     """Refuse to build an archive the client would refuse to unpack.
 
-    THE CLIENT IS THE CONTROL and this is not a second one: what may be written
-    into somebody's directory is decided on their machine (`unpack`), because
-    "the server checked it" is a statement about the server. What this adds is
-    that the two sides cannot silently disagree — anything dropped into the
-    template tree that a client will not write would otherwise ship, and the
-    failure would land on whoever ran `create`, as a refusal naming a file they
-    never chose.
+    The client's `unpack` is the control; this keeps the two sides from
+    disagreeing, so a bad template fails here rather than on `create`.
 
-    IT CALLS THE CLIENT'S OWN CHECK rather than repeating it, and that is the
-    fix for how this went wrong the first time: written out by hand it covered
-    the alphabet and forgot the depth, so a template nine directories deep was
-    built here, served, and then refused on the other side — the exact outcome
-    the paragraph above claims is impossible. The ceilings that are properties of
-    the SET rather than of one name are checked here, because `unpack` applies
-    those to a tar and this side has files.
+    It calls the client's own check rather than repeating it. Ceilings on the
+    set rather than one name are checked here, since `unpack` applies those to
+    a tar and this side has files.
     """
     from hammerola.limits import MAX_BUILD_BYTES, MAX_MEMBERS
     from hammerola.unpack import TEMPLATE_RULES, check_name

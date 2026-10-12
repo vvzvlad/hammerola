@@ -1,15 +1,12 @@
 """The stored Proposal: one per project, behind EDIT_TOKEN (src/proposals.py).
 
-The document a reader assembles in the browser panel used to live in page state
-and nowhere else, so a reload lost it. These tests are about the hub half of
-where it goes instead — the three routes on `/api/v1/proposals/<pid>` and the
-one file per project behind them.
+The document a reader assembles in the browser panel is stored on the hub so a
+reload does not lose it. These tests cover the three routes on
+`/api/v1/proposals/<pid>` and the one file per project behind them.
 
-MOST OF THEM PUBLISH NOTHING, and that is the behaviour rather than a shortcut:
-a proposal is a statement somebody is drafting and the route deliberately does
-not ask the volume whether the project exists. The two tests that do push are
-the ones about a project being REMOVED, where the build directory is the thing
-under test.
+Most of them publish nothing, and that is the behaviour: the route deliberately
+does not ask the volume whether the project exists. The two tests that push are
+about a project being REMOVED, where the build directory is under test.
 
 They talk HTTP to a real server, like the rest of the suite, because the
 promises being checked are made in status codes.
@@ -414,11 +411,10 @@ def _warnings(hub, *, pid, times=1):
 def test_a_project_nobody_has_drawn_on_is_absence_and_says_nothing(hub):
     """A MISSING FILE IS NOT A FAULT AND MUST NOT BE REPORTED AS ONE.
 
-    Unlike `comments._read_record`, whose caller is a glob and so only ever
-    hands it a path something just listed, this one is handed a path built from
-    the id in the URL. Most projects have no proposal, so the ordinary answer
-    went through the `unreadable proposal …` arm and every page load of every
-    such project wrote a warning naming a file that was never supposed to exist.
+    Unlike `comments._read_record`, whose caller is a glob and only hands it paths
+    it just listed, this one is handed a path built from the id in the URL. Most
+    projects have no proposal, so absence must not go through the
+    `unreadable proposal …` arm and log a warning on every page load.
     """
     assert _warnings(hub, pid="proj1", times=2) == []
 

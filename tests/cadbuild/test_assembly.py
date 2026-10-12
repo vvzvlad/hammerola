@@ -5,10 +5,8 @@ No kernel here, and none needed — which is the whole reason this file exists.
 measures, writes and cleans up after itself, and `overview_meshes` and
 `preview_files` turn the evidence of what was written into the two maps that
 declare it. The only caller of the export that runs the real thing is
-`tests/test_template.py`, and that one skips wherever the kernel does not
-import — no longer CI, whose image carries it (issue #27), but still any
-machine without it, so anything asserted only there is unasserted on such a
-machine.
+`tests/test_template.py`, which skips wherever the kernel does not import, so
+anything asserted only there is unasserted on such a machine.
 
 The two calls that are genuinely the kernel's, `Compound.makeCompound` and
 `drop_mesh`, are stood in for below; that they CAN be, on a python with no
@@ -210,8 +208,8 @@ def test_the_plate_is_measured_before_it_is_meshed(exported, out_dir):
     measurement below the export and every other fact here still holds: the
     file is written, the count is right, the meshes are dropped, and the only
     thing that changed is a number — the one metrics.json publishes as
-    `assembly.print_bbox_mm` and `hammerola diff` prints as the plate's size
-    (issue #58). So the order is what this asserts, and it is asserted here
+    `assembly.print_bbox_mm` and `hammerola diff` prints as the plate's size.
+    So the order is what this asserts, and it is asserted here
     because the only other caller of this function skips wherever the kernel is
     missing.
     """
@@ -567,13 +565,11 @@ def test_nothing_about_the_plate_is_declared_without_one():
 
 
 def test_every_picture_that_was_rendered_is_declared_under_its_own_stem():
-    """The per-part pictures included, which is what this map was added for.
+    """The per-part pictures included: each is declared under its own stem.
 
-    A part's picture used to be declared by nothing at all — the only map was
-    `downloads`, and putting ten of them in there would have put ten buttons on
-    the page — so the only way to reach one was to assemble its URL out of the
-    part name and the suffix, by hand, and that breaks silently the day either
-    moves. The stem is the key because the reader holds a part NAME.
+    Without this map the only way to reach a part's picture would be to
+    assemble its URL from the part name and the suffix, by hand. The stem is
+    the key because the reader holds a part NAME.
     """
     previews = preview_files([
         f"base{PREVIEW_SUFFIX}",
@@ -621,10 +617,8 @@ def test_a_stem_rename_that_makes_the_key_illegal_is_refused_here(monkeypatch):
         overview_meshes(plate=False)
     assert "whole/assembled" in str(exc.value)
     # The message has to send the reader to the module the renamed constant is
-    # in. All three stems this map and the picture map are built from live in
-    # one module now, so the message names one -- it used to name two, because
-    # PRINT_VIEW_ID lived in cadbuild.views until the catalogue needed to
-    # reserve that stem without importing it.
+    # in; all three stems this map and the picture map are built from live in
+    # cadbuild.artifacts.
     assert "cadbuild.artifacts" in str(exc.value)
     assert "cadbuild.views" not in str(exc.value)
 

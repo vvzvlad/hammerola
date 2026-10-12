@@ -1,24 +1,16 @@
 """What a build cost, printed on the side that waited for it.
 
-THE NUMBER WAS ALWAYS THERE AND NOBODY EVER SAW IT. The parent times every build
-on a monotonic clock, the job record has carried `duration_seconds` since step 5,
-and the hub serves it on `GET /api/v1/jobs/<id>` — and nothing in the client read
-it, so the agent that pushed learned only that the build was green. It cannot
-measure this for itself either: the CAD kernel lives in the hub's image, so a
-model that imports `cadquery` does not necessarily run on the machine it was
-written on. Between three minutes and the hub's five-minute wall is the whole
-zone where everything is green and everything is slow, and nothing was reporting
-it.
+The parent times every build on a monotonic clock, the job record carries
+`duration_seconds`, and the hub serves it on `GET /api/v1/jobs/<id>`. The agent
+that pushed cannot measure this for itself: the CAD kernel lives in the hub's
+image. Between three minutes and the hub's five-minute wall is the zone where
+everything is green and everything is slow, and this line is what reports it.
 
-THAT ZONE IS NARROWER THAN IT WAS AND IS WHY THIS FILE IS ON A LIST NOW. The
-wall was 900 s when this was written, so the zone ran from 180 s to 900; issue
-#81 took it to 300 and the zone with it, from twelve minutes wide to two. The
-threshold did not move, deliberately -- it is a judgement about when a build
-starts costing its author, not a fraction of the ceiling -- but it is now close
-enough to the ceiling that a drop below 180 would leave no zone at all, and
-`tests/test_build_ceilings.py` is where that is caught.
+The 180 s threshold is a judgement about when a build starts costing its
+author, not a fraction of the ceiling; `tests/test_build_ceilings.py` checks
+that the zone below the wall still exists.
 
-TWO NUMBERS AND THEY ARE NEVER SWAPPED. The BUILD comes from the parent's
+Two numbers, and they are never swapped. The BUILD comes from the parent's
 monotonic clock and is read out of the record; the QUEUE WAIT is the gap between
 two wall-clock stamps and is computed here. The tests below are written so that
 one standing in for the other fails: every record whose build time is asserted
@@ -41,7 +33,7 @@ from hammerola.hub import SLOW_BUILD_SECONDS
 from src.buildproc import runner
 from src.store import utcnow_iso
 
-# The address and the token, from tests/client/conftest.py (issue #99).
+# The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
 
 # The two stamps of a job that waited eight seconds for a worker. Written out
@@ -259,15 +251,14 @@ def test_the_two_self_diagnosing_statuses_are_the_hubs_own_words(capsys):
 ])
 def test_a_duration_the_client_cannot_read_prints_nothing_and_ends_no_run(
         value, capsys):
-    """Four refusals in `_whole_seconds`, and only one of them was held.
+    """Four refusals in `_whole_seconds`.
 
     The FAR END chooses this field, and this line is printed after a build that
     has already finished — so anything unreadable here has to fall out silently
     rather than raise into a run whose work is done and published. The exception
     tuple is the interesting part: `int(round(nan))` and `int(round(inf))` raise
-    two DIFFERENT errors, and the next reader who trims the `except` to the one
-    they can explain, or swaps the `>= 0` for a truthiness test, would do it to a
-    green suite. That is what this pins.
+    two DIFFERENT errors, and `>= 0` is not a truthiness test. That is what
+    this pins.
     """
     cli._print_duration(record(value))
     assert printed(capsys) == ""

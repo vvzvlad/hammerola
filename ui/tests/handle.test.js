@@ -1,8 +1,7 @@
 // ui/src/viewport/handle.js — the grip on the section plane.
 //
-// There is no GPU here and nothing below looks at a pixel, which is the same
-// discipline the rest of this suite keeps — but the grip is a group of MESHES in
-// the library's scene now, so what is assertable has moved with it. Where it
+// There is no GPU here and nothing below looks at a pixel. The grip is a group
+// of MESHES in the library's scene, so where it
 // stands is a world point rather than a projection; which way it points is a
 // rotation taken into the world rather than a CSS angle; how big it is drawn is
 // `scene3d.js`'s one scale, and that module's own suite asks about it. Left here
@@ -284,8 +283,7 @@ describe('what it is built out of', () => {
   it('stands the dark ink on a white casing, drawn under it', () => {
     // ONE COLOUR FOR BOTH THEMES is what every widget over this canvas claims,
     // and for a 2 px dark shaft on the DARK theme it is only true with something
-    // light behind it. The DOM layer bought that with a `drop-shadow` filter,
-    // which means nothing to a mesh; the casing is the same idea as geometry.
+    // light behind it: the casing.
     //
     // UNDER IT, not merely present: with no depth test the renderer's order IS
     // the stacking, so a casing that sorted after the ink would paint the arrow
@@ -641,8 +639,8 @@ describe('one whole drag', () => {
   it('refuses a press on a scene that cannot be measured, and leaves it alone', () => {
     // A clip plane the library cannot hand back is not a plane the drag can be
     // measured against: `sectionGripAxis` declines and the grip answers `false`,
-    // which hands the press straight back to the model. It used to swallow it
-    // and do nothing, which is the one thing worse than either.
+    // which hands the press straight back to the model rather than swallowing
+    // it.
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { viewer, vp, g, canvas } = scene()
     rendered(viewer)
@@ -967,8 +965,8 @@ describe('one whole turn', () => {
     // `setFromUnitVectors` measures from world +Y, and re-deriving it per frame
     // leaves the twist about the normal free — but that twist is ZERO for a
     // ring whose axis is square across the reference, which is exactly the
-    // second ring under the default camera. Written there this test passes with
-    // the fix and without it. The ring it shows on is the one whose axis lies
+    // second ring under the default camera, where this test would pass either
+    // way. The ring it shows on is the one whose axis lies
     // ALONG world -Y: the FIRST of the two, which the camera from above shows
     // square on and which is therefore the one a ray can reach here.
     const { viewer, vp, canvas, group } = scene(

@@ -1,19 +1,18 @@
 """`hammerola skill` and `skill update` — the verb that dates the instructions.
 
-WHAT IS WORTH PINNING HERE, in the order it would hurt to get wrong:
+What is worth pinning here, in the order it would hurt to get wrong:
 
   * the COMPARISON, because a wrong answer to it is silent in both directions —
     "up to date" about a stale file teaches yesterday for another month, and
     "out of date" about a current one sends somebody to overwrite what they
-    have. Neither fails anything anywhere else (issue #51);
+    have. Neither fails anything anywhere else;
   * that a MISSING file is not an error. It is the first state every machine is
     in, and a non-zero exit for it would make the ordinary case look broken;
   * that `update` writes where it was told, in BOTH argument orders. The flag
     sits on two parsers and argparse quietly prefers the inner one's default,
     which would put somebody's file in a place they did not name.
 
-NOTHING HERE TOUCHES THE DEVELOPER'S `~/.claude`, and it is held that way twice
-over. Nearly every test passes `--path` into `tmp_path`, because the default is
+Nothing here touches the developer's `~/.claude`, held that way twice over. Nearly every test passes `--path` into `tmp_path`, because the default is
 a real file on the machine running the suite and a test that wrote it would
 replace the author's own instructions with whatever this hub happened to serve.
 But a flag is discipline, so this directory's conftest also substitutes HOME —
@@ -21,9 +20,7 @@ and the one test below that runs the default path on purpose is what proves the
 substitution is doing its job.
 
 The hub is the REAL one over a real socket, like the rest of this directory —
-the two halves of this contract are a route and a client, and the whole reason
-the client lives in this repository is that no test could see both while they
-lived in two.
+the two halves of this contract are a route and a client.
 """
 
 from pathlib import Path

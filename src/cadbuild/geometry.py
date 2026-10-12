@@ -6,11 +6,9 @@ import sys
 
 from .errors import BuildError
 from .modelchecks import call_model, model_site
-# Rendering a value the model decides. `shown` calls `str()` INSIDE itself,
-# which is what a handler already building a refusal needs: an `__str__` with a
-# bug in it would otherwise raise out of the `except` and replace the message.
-# See `modeltext` for what these promise -- and, just as much, for what they do
-# not.
+# `shown` calls `str()` inside itself, so a buggy `__str__` cannot raise out of
+# a handler that is building a refusal. See `modeltext` for what these promise
+# and what they do not.
 from .modeltext import MAX_MESSAGE_CHARS, shown
 from .paths import project_root
 
@@ -23,33 +21,19 @@ def load_model():
     """Import the project's model.py. The contract is parts() and views().
 
     parts() is the catalogue -- every piece of geometry the model has, each
-    under the key that IS its identity -- and views() selects from it. There is
-    no printables() any more: a second dict of geometry beside the catalogue is
-    what forced everything downstream to guess which entry of one was which
-    entry of the other.
+    under the key that is its identity -- and views() selects from it.
 
-    The project root goes on sys.path here rather than at import time, and it
-    goes on FIRST. First, because `import mocks` in a model.py has to find the
-    project's own mocks.py and nothing else called mocks that happens to be
-    installed. Here, because this package is installed once per machine while
-    the project is whichever one the run is in -- and a path pinned at import
-    would be the wrong project's the moment anything imported this module
-    before the root was known.
+    The project root goes first on sys.path, here rather than at import time:
+    first, so `import mocks` finds the project's own mocks.py; here, because
+    this package is installed once while the project is whichever one the run
+    is in.
 
-    THE MESSAGE NAMES THE LINE, and this is the door where that matters most.
-    `provenance` looks only at module-level names, so a note with a newline in
-    it is almost always written at the top level of model.py -- and it is then
-    raised HERE, during the import, rather than at any of the doors
-    `modelchecks.call_model` guards (`MODEL_DOORS` is the list). Those answer
-    `(model.py:5)`; this one
-    answered with no file and no line at all, leaving an author with forty
-    constants to find the one that is wrong by reading.
+    The message names the model's line: a bad module-level constant (e.g. a
+    note with a newline, caught by `provenance`) raises here during import,
+    not at one of the doors `modelchecks.call_model` guards (`MODEL_DOORS`).
 
-    `model_site` AND NOT `fail_site`, deliberately: with no model.py to import
-    there is no model frame in the traceback, and `fail_site` would fall back to
-    naming a file of the hub's -- `importing model.py failed (geometry.py:<line>)`
-    for a file that is not there. Saying nothing is the right answer to "which
-    line of the model" when the model does not exist.
+    `model_site`, not `fail_site`: with no model.py there is no model frame,
+    and `fail_site` would name a hub file instead.
     """
     root_path = project_root()
     root = str(root_path)
@@ -75,19 +59,15 @@ def load_model():
 
 
 def _contract_moved(model):
-    """Say the contract CHANGED, when the model was written against the old one.
+    """Say the contract changed, when the model was written against the old one.
 
-    A model from before the catalogue opened with `printables()` beside
-    `views()`, and its author, told only "model.py does not define parts()",
-    goes looking for a typo in a file that has no typo in it — the name is not
-    missing, it was renamed out from under them, and nothing they can read from
-    here says so.
+    A model from before the catalogue defines `printables()` beside `views()`;
+    told only "model.py does not define parts()", its author would look for a
+    typo.
 
-    THIS IS A DIAGNOSIS AND NOT A COMPATIBILITY LAYER. The translator for the
-    old shape was written, then deleted deliberately (`legacy.py`, commit
-    d84056e): fixing an old model is the author's work, and a hub that quietly
-    accepted both shapes would keep every model in the older one forever. So
-    this adds a sentence to a refusal and changes nothing about what is
+    A diagnosis, not a compatibility layer: fixing an old model is the
+    author's work, and accepting both shapes would keep models in the old one.
+    This adds a sentence to the refusal and changes nothing about what is
     refused.
     """
     if not callable(getattr(model, "printables", None)):
@@ -102,24 +82,15 @@ def _contract_moved(model):
 def _shadowed_src_hint(root, exc):
     """Name the cause when the project's own `src/` is what broke the import.
 
-    The other half of _warn_if_checklib_shadowed below, for the case where the
-    import did not survive at all. The root goes on sys.path FIRST, on purpose,
-    so a project that carries a directory called `src` -- about the most
-    ordinary name a repository has -- owns the name `src` for the rest of the
-    process, and any `import src....` made after that point resolves into the
-    model project rather than into the hub. Raised through a model.py, the
-    message is `No module named 'src.cadbuild'` and it reads as if the MODEL
-    asked for something that does not exist: the search starts in the model,
-    which is the one place the cause is not.
+    The project root goes first on sys.path, so a project with a `src`
+    directory owns the name `src` for the rest of the process, and any later
+    `import src....` resolves into the project. The resulting `No module named
+    'src.cadbuild'` reads as if the model asked for something missing.
 
-    `import checklib` is deliberately immune to this -- checklib.py at the
-    repository root resolves its implementation by file path and never mentions
-    the name `src`, precisely so a model project may keep a `src/` of its own.
-    So this hint fires on a build where that immunity is gone: the shim
-    reverted to importing by name, or a project's own checklib.py reaching for
-    `src.` directly. Appended to the real error rather than replacing it, and a
-    hint rather than a refusal -- a project is entitled to a `src/`, and this
-    function's only job is to point at it.
+    `import checklib` is immune: the root shim resolves its implementation by
+    file path. So this fires when that immunity is gone (the shim importing by
+    name, or a project's checklib.py reaching for `src.`). Appended to the real
+    error as a hint: a project is entitled to a `src/`.
     """
     if not isinstance(exc, ImportError):
         return ""
@@ -145,19 +116,14 @@ def checklib_shadow():
     """Where the model's `import checklib` landed, when it was not ours.
 
     `None` when the model imported the package's own copy, or imported none at
-    all. Otherwise the path of the copy it did import, as a string -- `'?'` for
-    a module with no `__file__`, because the caller is building a sentence and
-    "somewhere" is still worth saying.
+    all. Otherwise the path of the copy it did import -- `'?'` for a module
+    with no `__file__`.
 
-    PUBLIC BECAUSE TWO REFUSALS NEED THE SAME ANSWER, and the second one arrived
-    long after this: `provenance.check` refuses a model whose numbers do not
-    declare themselves, and a project with its own checklib is told exactly that
-    about numbers it DID declare -- through the shadowing copy, whose `Number`
-    is a different class. Naming the cause is the difference between a message
-    the author can act on and one that sends them to rewrite correct lines. The
-    detection is one function rather than two because the ONE thing it turns on
-    -- which attribute identity distinguishes our module from an older copy --
-    is exactly the sort of fact a second implementation gets subtly wrong.
+    Public because two refusals need it: this warning, and `provenance.check`,
+    which would otherwise tell a project with its own checklib that numbers it
+    did declare are undeclared (the shadowing copy's `Number` is a different
+    class). One implementation, because the attribute-identity test that tells
+    the copies apart is easy to get subtly wrong twice.
     """
     import sys
 
@@ -174,18 +140,14 @@ def checklib_shadow():
 def _warn_if_checklib_shadowed():
     """Say so when the model's `import checklib` found the project's own copy.
 
-    A project that still carries checklib.py at its root shadows the one this
-    package installs -- the project root goes on sys.path first, deliberately,
-    so a project can override anything it needs to. For checklib that override
-    is silent and lossy in one specific way: pairwise_interference RECORDS the
-    volumes it measured, and metrics.json reads that record back out of the
-    package's copy. Two copies means the model fills one and the build reads
-    the other, so the interference numbers come out empty on a build that
-    measured them. Nothing goes red; the numbers are just gone.
+    The project root goes first on sys.path, so a project's checklib.py
+    shadows this package's. pairwise_interference records the volumes it
+    measured and metrics.json reads that record from the package's copy, so
+    with two copies the interference numbers come out empty and nothing goes
+    red.
 
-    A warning and not an error: the project's copy is the older one, but it
-    works, and a build must not fail over a half-finished migration. Deleting
-    checklib.py from the project is the whole of the fix.
+    A warning, not an error: the old copy works. Deleting checklib.py from the
+    project is the fix.
     """
     shadow = checklib_shadow()
     if shadow is None:
@@ -199,21 +161,19 @@ def _warn_if_checklib_shadowed():
     )
 
 
-# What a message calls the doors below. They share a sentence because they are
-# one question asked of the same object -- "give me the geometry you are" -- and
-# the author cannot act on which spelling of it the hub happened to use.
+# What a message calls the doors below: one question ("give me the geometry
+# you are") whichever spelling the hub used.
 A_SHAPE = "reading a shape model.py handed over"
 
 
 def _first_body(obj):
     """`obj.val()`, or `obj` where there is no stack.
 
-    A FUNCTION SO THAT IT CAN BE A DOOR, which is the whole reason it is not
-    written inline: `val()` runs inside the CAD kernel, and the kernel's frames
-    are not the model's, so `raised_by_the_model` cannot answer for what happens
-    in here (see `modelchecks.MODEL_DOORS`). Everything in the expression is
-    guarded rather than the call alone: `hasattr` swallows AttributeError and
-    nothing else, so a `val` PROPERTY that raises raises here too.
+    A function so it can be a door: `val()` runs inside the CAD kernel, whose
+    frames are not the model's, so `raised_by_the_model` cannot answer for it
+    (see `modelchecks.MODEL_DOORS`). The whole expression is guarded, since
+    `hasattr` only swallows AttributeError and a raising `val` property raises
+    here too.
     """
     return obj.val() if hasattr(obj, "val") else obj
 
@@ -226,25 +186,18 @@ def _every_body(obj):
 def as_shape(obj, where):
     """Accept a Workplane or a bare Shape, return something with isValid().
 
-    THE FIRST body only. Use it where one body is all there can be, and
-    as_shapes() everywhere completeness matters -- see there.
+    The first body only. Use it where one body is all there can be, and
+    as_shapes() everywhere completeness matters.
 
-    A DOOR INTO THE MODEL, and one of a PAIR with `as_shapes` below
-    (`modelchecks.MODEL_DOORS` lists both). THESE TWO ARE THE DOORS THAT BUY
-    THE EXIT CODE rather than only the message, which is what earns them their
-    place on a list otherwise made of calls into model.py: the object is the
-    author's, but the code that raises is the CAD KERNEL's, in site-packages,
-    so nothing on the traceback sits under the project root and
-    `raised_by_the_model` answers False for a fault that is entirely theirs.
-    Measured before the guard existed: a `val()` that raises left the build
-    process as a bare exception, i.e. EXIT_CRASHED, and the hub told whoever
-    pushed that it had fallen over.
+    A door into the model, paired with `as_shapes` (`modelchecks.MODEL_DOORS`
+    lists both). These two decide the exit code, not just the message: the
+    object is the author's but the raising code is the CAD kernel's, so no
+    traceback frame is under the project root and `raised_by_the_model` would
+    answer False, reporting the author's fault as a hub crash (EXIT_CRASHED).
 
-    THE GUARD IS INSIDE THESE TWO FUNCTIONS rather than at the call sites.
-    Which of the two a caller reaches does not follow from anything -- parts
-    arrive HERE, views, the gate and the assembly arrive THERE -- and both are
-    called from several modules; a rule applied at the sites somebody thought
-    about is the failure this whole area keeps repeating.
+    The guard is inside these functions rather than at call sites, because
+    both are called from several modules (parts here; views, the gate and the
+    assembly via `as_shapes`).
     """
     shape = call_model(A_SHAPE, _first_body, obj)
     if not hasattr(shape, "isValid"):
@@ -256,19 +209,16 @@ def as_shape(obj, where):
 def as_shapes(obj, where):
     """Every body in a Workplane, not just the first. Always a non-empty list.
 
-    `Workplane.val()` hands back the first object on the stack, so a view built
-    up with `.add()` used to be judged on its first body alone: the second
-    body's overlap went unseen on the print plate, a printable that happened to
-    be second in the stack could not be recognised in a view, and
-    `assembled.stl` was written without it. The model half of the template has
-    always known better -- drop_mesh() walks `vals()` -- and this is the same
-    walk for the gate half.
+    `Workplane.val()` returns only the first object on the stack, so a view
+    built with `.add()` would be judged on its first body alone: overlaps of
+    later bodies unseen, parts missing from `assembled.stl`. drop_mesh() walks
+    `vals()` the same way.
 
     A bare Shape has no stack and stands for itself. A Compound is one object
-    with several bodies inside it and `vals()` returns it whole, which is
-    right: it is handled as the one thing the model handed over.
+    with several bodies and `vals()` returns it whole, as the one thing the
+    model handed over.
 
-    A DOOR, for the reason `as_shape` above gives at length.
+    A door, for the reason `as_shape` gives.
     """
     shapes = call_model(A_SHAPE, _every_body, obj)
     if not shapes:
@@ -289,60 +239,35 @@ def drop_mesh(obj):
     computes bounding boxes off that mesh. checks() runs after the export, so
     without this every BoundingBox() a model measures would be quietly wrong.
 
-    THE BOX READS BIGGER, NEVER SMALLER -- a given axis may not move at all,
-    but none of them moves down -- and the direction is what this note is for:
-    everything below follows from the sign. Measured here on cadquery 2.8.0,
-    `mesh(0.1)` on three shapes, every axis:
+    The box reads bigger, never smaller (an axis may not move, none shrinks).
+    Cadquery 2.8.0, `mesh(0.1)`:
 
         cylinder r=5 h=10            Z 10.000000 -> 10.003108
         box 30x20x10, 3 mm fillets   X 30.000000 -> 30.001807 (all three axes)
         sphere r=5                   Z 10.000000 -> 10.026316
 
-    Not one axis of the three came back smaller. Exported the way this build
-    exports (artifacts.STL_TOLERANCE 0.01, STL_ANGULAR_TOLERANCE 0.1) the
-    cylinder reads that same 10.003108 -- through `Shape.exportStl`,
-    `exporters.export` and a bare `mesh()` alike, and it is the one figure two
-    independent runs of this agreed on. Clean_s, which is what this function
-    calls, puts it back to 10.000000 exactly.
+    At this build's export settings (artifacts.STL_TOLERANCE 0.01,
+    STL_ANGULAR_TOLERANCE 0.1) the cylinder reads the same 10.003108 via
+    `Shape.exportStl`, `exporters.export` or `mesh()`. Clean_s, which this
+    calls, restores 10.000000 exactly.
 
-    HOW FAR IT MOVES REPRODUCES ONLY SO FAR, and the boundary is known rather
-    than vague. Two of us swept the angular tolerance on this cylinder under
-    the same cadquery 2.8.0: at 0.01, 0.04 and 0.1 the two benches agreed to
-    the last digit on all three axes -- the stationary Y below included -- and
-    at 0.2 they did not. Neither run explained the other. So the figures here
-    are quoted up to 0.1, and past it a number is whoever's bench produced it.
+    The amount depends on the angular tolerance (cylinder Z at linear 0.01:
+    10.000031 at 0.01, 10.000498 at 0.04, 10.003108 at 0.1; figures past 0.1
+    did not reproduce across machines) and on the axis (at 0.1 Y did not move
+    while X and Z grew; at 0.04 X 10.000249, Y 10.000373, Z 10.000498). So a
+    meshed box is only quotable with the shape, both tolerances and the axis;
+    only the sign carries on its own.
 
-    What held on both, at linear 0.01, on Z: angular 0.01 gives 10.000031, 0.04
-    gives 10.000498, 0.1 gives 10.003108. The angular tolerance moves the
-    result a long way and moves it predictably.
+    It is not a chord effect (which would shrink the box): the cylinder's Z is
+    bounded by flat faces and still grew.
 
-    IT ALSO DEPENDS ON THE AXIS, on that one cylinder, which is the part most
-    likely to catch somebody out: at angular 0.1 the Y extent did not move at
-    all (10.000000) while X and Z both grew to 10.003108, and at 0.04 all three
-    differ (X 10.000249, Y 10.000373, Z 10.000498). The axes do not scale with
-    one another, so what one extent did says nothing about the next.
-
-    A bounding box off a meshed shape is therefore only worth quoting together
-    with the shape, BOTH tolerances and the AXIS -- and that is the signature
-    every figure above carries. The SIGN is the only part that carries on its
-    own.
-
-    IT IS NOT A CHORD EFFECT, which is the guess that makes it sound harmless
-    and points the sign the other way ("a curve cut into straight segments falls
-    INSIDE itself, so the box must shrink"). The cylinder's Z is bounded by two
-    flat faces, where nothing is being approximated at all, and Z grew anyway.
-
-    WHAT THE SIGN COSTS, in the order the damage gets worse:
+    What the sign costs:
       * "does this fit the printer" reads every extent over, so a part that
-        clears the bed by less than the inflation goes RED. Wrong, but loud, and
-        the number in the message looks odd enough to be questioned.
-      * a clearance measured between two solids reads TIGHTER than it is, both
-        sides having grown towards each other.
-      * and the one to watch: an inequality whose GROWN side is the weak one
-        buys itself slack and passes IN SILENCE. `assert box.zlen >= MINIMUM` is
-        exactly that shape, and a part short of the minimum by less than the
-        inflation goes green on the mesh's numbers -- however small that band
-        is, the failure inside it is the quiet one.
+        clears the bed by less than the inflation goes red -- wrong, but loud;
+      * a clearance between two solids reads tighter than it is;
+      * an inequality whose grown side is the weak one passes silently:
+        `assert box.zlen >= MINIMUM` goes green for a part short by less than
+        the inflation.
     """
     from OCP.BRepTools import BRepTools
 

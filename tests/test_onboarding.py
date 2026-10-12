@@ -1,50 +1,27 @@
 """`/start`: the four things a first run needs, and the one fact given for free.
 
-WHAT IS BEING PINNED HERE, in the order it would hurt to get wrong:
+Pinned here, in the order it would hurt to get wrong:
 
-  * the manifest is PUBLIC and says whether this hub is empty — that boolean is
+  * the manifest is PUBLIC and says whether this hub is empty; that boolean is
     the only statement about the deployment anybody gets without the token, and
-    the test that matters most is the one asserting nothing else rides along;
-  * "empty" means "no project directory on the volume with anything in it", and
-    both halves of that are load-bearing. A project whose only build is in the
-    `dev` slot makes the hub NOT empty, though it has no card on the front page
-    — which is why reading `index.json` for this would have given the wrong
-    answer. A project directory a FAILED build left behind makes it not empty
-    either, which is why the count is not of directories;
-  * the client really is a runnable program. It is assembled out of the modules
-    at request time, so the way it breaks is an ImportError on somebody's laptop
-    for a module the archive did not carry — a thing no test of this repository
-    could notice, because here the checkout is on `sys.path`. So it is run, in a
-    process that cannot see this checkout at all.
+    the test that matters most asserts nothing else rides along;
+  * "empty" means "no project directory on the volume with anything in it". A
+    project whose only build is in the `dev` slot makes the hub NOT empty though
+    it has no card (so `index.json` is the wrong source), and a project directory
+    a FAILED build left behind does not count (so it is not a count of
+    directories);
+  * the client really is a runnable program. It is assembled from the modules at
+    request time, so it breaks as an ImportError on somebody's laptop for a module
+    the archive did not carry, which the checkout on `sys.path` hides here. So it
+    is run in a process that cannot see this checkout.
 
-THE FIVE `lru_cache`s IN `src/onboarding.py` ARE GUARDED, and the guard is in
-`tests/conftest.py` rather than here — `guard_onboarding_caches`, autouse,
-before and after every test in the suite. It is at the root because that is where
-the VICTIM is: four of those caches are what the module says they are, pure
-functions of files inside the image, but `_import_verdict` caches the REFUSAL, so
-a test that hands the check a doctored member list leaves "this image has no
-client to serve" behind and every later `/start/hammerola` — in files that never
-mention onboarding — answers 404. A guard living in this file would have watched
-the culprit and not the damage.
-
-Nothing here clears them or steps around them: the determinism test below calls
-`template_bytes()` and `client_bytes()` the way any caller does and reads the
-timestamps out of the RESULT, so a cached answer and a freshly built one are the
-same evidence.
-
-ONE TEST PLANTS A VERDICT ON PURPOSE — it is the test that the refusal is
-remembered at all — and it says so by asking for `onboarding_cache_sandbox`,
-which hands it cleared caches and clears them again afterwards. That is the form
-to copy if a second one is ever needed; a `try/finally` inside the test was the
-first shape of it and is gone, because two mechanisms for one job leave the
-question of which is load-bearing to whoever reads it next.
-
-This paragraph used to end by claiming that test reached for `__wrapped__`
-rather than `cache_clear()` "so that nothing here touches the cache at all". It
-never did -- the name appears nowhere in this repository -- and bypassing the
-cache would buy nothing, for exactly the reason two sentences up. It is
-corrected rather than implemented because a self-report describing machinery the
-file does not have is how the paragraphs around it stop being believed.
+The five `lru_cache`s in `src/onboarding.py` are guarded by
+`guard_onboarding_caches` in `tests/conftest.py`, autouse around every test in the
+suite: `_import_verdict` caches the REFUSAL, so a test that hands the check a
+doctored member list would make every later `/start/hammerola`, in any file,
+answer 404. The determinism test reads timestamps out of the result, so a cached
+answer is the same evidence as a fresh one. A test that plants a verdict on purpose
+asks for `onboarding_cache_sandbox`, which clears the caches before and after.
 """
 
 import ast
@@ -93,24 +70,16 @@ def test_the_manifest_says_nothing_about_this_hub_but_whether_it_is_empty(
     """THE ONE TEST THAT GUARDS THE DECISION.
 
     A field added here is a statement the hub makes to anybody who asks. A count
-    would leak the size of the fleet and its growth rate to whoever polled; a
-    project name or an id is the prefix of every permanent URL that project will
-    ever have, which is precisely what `/index.json` is behind the token to
-    withhold. So the shape is fixed: five constants of the IMAGE, and one
-    boolean about this deployment.
+    would leak the size of the fleet and its growth rate; a project name or id is
+    the prefix of every permanent URL that project will have, which `/index.json`
+    is behind the token to withhold. So the shape is fixed: constants of the IMAGE,
+    and one boolean about this deployment.
 
-    THE TWO VERSIONS WERE ADDED DELIBERATELY AND ARE ON THE SAFE SIDE OF THAT
-    LINE, which is why this list has moved twice while the rule has not
-    (`skill_version` for issue #51, `client_version` for #77). Each is a
-    constant of the image exactly as the three paths are — two hubs running the
-    same image answer with the same numbers, and a number changes when the
-    software does, never when somebody pushes. They name what is RUNNING here,
-    which is public anyway, and nothing about what is published here or who runs
-    it. `client_version` has a second argument of its own: it is a number
-    already inside the file `client` hands to anybody who asks for it, so
-    stating it discloses nothing and only saves a download. `empty` is still the
-    only field on the other side of the line, and the next candidate has to make
-    that same argument before it is added.
+    `skill_version` and `client_version` are constants of the image like the three
+    paths: two hubs on one image answer the same, and they change with the
+    software, never with a push. `client_version` is also already inside the file
+    `client` serves to anyone. `empty` is the only field about the deployment, and
+    any new candidate has to make the same argument.
     """
     assert set(manifest) == {"empty", "skill", "client", "template",
                              "skill_version", "client_version"}
@@ -159,18 +128,15 @@ def test_a_project_with_only_a_dev_build_is_not_empty(hub):
 
 
 def test_a_build_that_FAILED_leaves_the_hub_empty(hub):
-    """The case the old rule got wrong, and it landed on the worst reader.
+    """A build that FAILED leaves the hub empty.
 
     `build_staging` creates `project/<pid>/` before the build runs and nothing
-    removes it when the build then fails the gate — the caller takes the staging
-    tree and leaves the shell. Counting bare directories therefore turned
-    `empty` false FOREVER on a hub whose very first push did not build, i.e. for
-    exactly the person the onboarding answer exists for.
+    removes it when the build fails the gate, so counting bare directories would
+    turn `empty` false for good on a hub whose first push did not build: exactly
+    the person the onboarding answer exists for.
 
-    Staged by making the directory the way a failed build leaves it, rather than
-    by failing a real build: what is under test is how the ANSWER is computed,
-    and a real failure would drag the whole build path in to prove one
-    directory.
+    Staged by making the directory the way a failed build leaves it: what is under
+    test is how the ANSWER is computed.
     """
     assert hub.get("/start").json()["empty"] is True
     (hub.store.projects_dir / "demo0001").mkdir(parents=True)
@@ -189,17 +155,13 @@ def test_emptiness_is_reported_rather_than_guessed_when_the_volume_is_unreadable
         hub, monkeypatch, level):
     """Fails CLOSED: an error must not be reported as "your hub is empty".
 
-    An onboarding block is what an empty hub shows, so a store that cannot be
-    read has to answer "not empty" — telling somebody with forty projects that
-    they have none, on the strength of an EACCES, is the worse of the two.
-    Pinned before that block was built rather than after: it is a property of
-    the answer, and the door inherited it.
+    An onboarding block is what an empty hub shows, so a store that cannot be read
+    answers "not empty"; telling somebody with forty projects they have none, on
+    the strength of an EACCES, is the worse error.
 
-    BOTH LEVELS, because there are now two `iterdir`s and only the outer one was
-    covered: counting what is INSIDE each project directory (which is what keeps
-    a failed build's leftovers from making the hub look used) added a second
-    call, and wrapping it in a `try: ... except OSError: pass` left the suite
-    green while turning an unreadable project into "not there".
+    Both levels: counting what is INSIDE each project directory is a second
+    `iterdir`, and swallowing its OSError would turn an unreadable project into
+    "not there".
     """
     # Patched on the class and narrowed to one directory, rather than arranged
     # with a `chmod`: the CI container runs the suite as root, where a mode of
@@ -234,17 +196,12 @@ def test_the_skill_is_served_as_markdown_with_its_frontmatter(hub):
 
 
 def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
-    """THE SEAM WHERE DRIFT WOULD APPEAR, and nothing else would notice it.
+    """The manifest states the version of the skill this hub serves.
 
-    The manifest's number is what `hammerola skill` compares a laptop's copy
-    against, so a number that stopped matching the file this hub serves would
-    make the tool say "up to date" about instructions that are not, or send
-    somebody to update a file that is already current — either way silently, and
-    silence is the whole failure this entry exists to end.
-
-    Parsed HERE, with a pattern written in this test, rather than by calling
-    either side's parser: this is the one place the two are compared, and using
-    one of them to do it would compare it with itself.
+    `hammerola skill` compares a laptop's copy against the manifest's number, so a
+    number that stopped matching the served file would silently report "up to
+    date" wrongly, or the reverse. Parsed here with a pattern written in this
+    test: using either side's parser would compare it with itself.
     """
     served = hub.get("/start/skill.md").text
     block = served.split("\n---\n", 1)[0]
@@ -259,11 +216,9 @@ def test_a_skill_with_no_version_is_refused_rather_than_read_as_the_first(
     """NO DEFAULT, and that is the decision this test holds.
 
     A missing version read as 1 would make a shipped file that LOST its version
-    indistinguishable from a fresh one — the tool would then say "up to date"
-    about a skill nobody can date, which is the exact silence being closed. So
-    it raises, and `src/app.py` turns that into a logged 404 on the route.
-
-    Both shapes, because they fail at different lines: a document with no
+    indistinguishable from a fresh one, and the tool would say "up to date" about
+    a skill nobody can date. So it raises, and `src/app.py` turns that into a
+    logged 404 on the route. Both shapes, because they fail at different lines: no
     frontmatter at all, and frontmatter with everything but the version.
     """
     for text in ("# no frontmatter here\n",
@@ -280,13 +235,11 @@ def test_a_skill_with_no_version_is_refused_rather_than_read_as_the_first(
 
 def test_a_skill_the_hub_cannot_date_is_a_404_and_not_a_dropped_socket(
         hub, monkeypatch):
-    """The manifest OPENS A FILE now, so it can break the way the others can.
+    """The manifest opens a file, so it can fail like the other routes.
 
-    It could not before — three constants and a boolean — and the route was
-    written on that premise. `_handle_get` has no blanket `except`, so a
-    ValueError out of the version parse would have gone past the handler and
-    reached the caller as a closed connection. Asserting the STATUS is the
-    point: "not 200" would pass on the dropped socket this rules out.
+    `_handle_get` has no blanket `except`, so a ValueError out of the version
+    parse must be turned into a 404 rather than reach the caller as a closed
+    connection. The STATUS is asserted: "not 200" would pass on a dropped socket.
     """
     def refuse():
         raise ValueError("planted: no version in the frontmatter")
@@ -333,29 +286,18 @@ def test_the_client_is_one_executable_file(hub):
 def test_the_client_archive_carries_every_module_it_imports(hub):
     """The failure this catches happens on somebody ELSE's machine.
 
-    WHAT IS LEFT FOR IT TO CATCH IS THE PACKAGE BEING FLAT, and that is worth
-    saying plainly, because the archive is now assembled by the very glob this
-    test walks: `hammerola/*.py`. A module that sits directly in the package is
-    therefore carried by construction and this can no longer fail on one. A
-    SUBPACKAGE can: `hammerola/sub/mod.py` is a file the glob does not see, so
-    `import hammerola.sub.mod` produces an archive that works perfectly here,
-    where the whole checkout is on `sys.path`, and dies with an ImportError the
-    first time somebody runs the downloaded file. BE PRECISE ABOUT WHICH
-    SPELLING, because only the dotted ones reach this check: `import
-    hammerola.sub.mod` and `from hammerola.sub.mod import X` name the file, while
-    `from hammerola.sub import mod` names the PACKAGE and is looked for as
-    `hammerola/sub.py`, which is not a file and is dropped below. That last form
-    is caught when the archive is built instead — `_refuse_unimportable` reports
-    it missing from the closure.
+    The archive is assembled by the same glob this test walks, `hammerola/*.py`,
+    so a module directly in the package is carried by construction. A SUBPACKAGE
+    is not: `import hammerola.sub.mod` works here, where the checkout is on
+    `sys.path`, and dies with an ImportError in the downloaded file. Only the
+    dotted spellings reach this check (`import hammerola.sub.mod`,
+    `from hammerola.sub.mod import X`); `from hammerola.sub import mod` names the
+    package, is dropped below, and is caught when the archive is built
+    (`_refuse_unimportable` reports it missing from the closure).
 
-    IT USED TO CATCH MORE, and stopped when the tool got a distribution name:
-    while the client was `src/client/`, the three shared modules lived in `src/`
-    and reached the archive only through a hand-kept list, so a fourth one added
-    beside them was carried by nothing. The list is gone and they live in the
-    package. The other half of what that guarded — an import of something
-    outside the package altogether — is held by
-    `tests/client/test_stdlib_only.py`, which allows `hammerola` and the
-    standard library and refuses everything else.
+    Imports from outside the package are held by
+    `tests/client/test_stdlib_only.py`, which allows `hammerola` and the standard
+    library and refuses everything else.
     """
     carried = {name for name, _path in onboarding.client_members()}
     wanted = set()
@@ -440,14 +382,12 @@ def test_the_template_is_a_tar_a_fresh_project_can_be_made_of(hub):
 def test_the_archives_carry_nothing_about_when_they_were_built():
     """The PROPERTY, not two builds compared with each other.
 
-    Comparing two builds a microsecond apart is what this test used to do, and
-    it passed for a naive implementation: `tarfile.open(mode="w:gz")` stamps the
+    Two builds a microsecond apart land in the same second, so comparing them
+    would pass a naive implementation: `tarfile.open(mode="w:gz")` stamps the
     moment into the gzip header and `writestr` stamps local time into every zip
-    entry, and both runs land in the same second. So the timestamps themselves
-    are read out of the bytes.
-
-    What it buys: two hubs on one image serve identical files, and a client can
-    compare what it downloaded against what it has.
+    entry. So the timestamps themselves are read out of the bytes. Two hubs on one
+    image then serve identical files, and a client can compare what it downloaded
+    against what it has.
     """
     # Bytes 4..8 of a gzip member are MTIME, little-endian. Zero means "no
     # timestamp", which is what `GzipFile(mtime=0)` writes and what
@@ -486,20 +426,15 @@ def _annotations(tree):
 def test_no_module_in_the_archive_uses_syntax_the_declared_python_lacks():
     """The floor is `MIN_PYTHON`, and this is what holds the code to it.
 
-    IT CANNOT BE CHECKED BY RUNNING THE FILE, which is the whole reason this is
-    an AST walk: the suite has one interpreter, the venv's, and it is far newer
-    than what the tool is downloaded onto. A test that ran the archive with
-    `sys.executable` would say "it runs" about a python nobody onboarding has.
+    It cannot be checked by running the file: the suite's interpreter is far newer
+    than what the tool is downloaded onto. Hence an AST walk.
 
-    The specific trap, and the one that was actually here: `str | None` in an
-    annotation is PEP 604, i.e. 3.10, and an annotation is EVALUATED at def
-    time — so under 3.9 the module raises `TypeError` on import, and with `cli`
-    among the six that broke, not one verb worked. `/usr/bin/python3` is 3.9 on
-    macOS and Debian 11.
-
-    `feature_version` catches a second class of it (syntax the parser can be
-    told to refuse), and it is not a substitute: it covers only what CPython's
-    parser gates that way, which is why the explicit walk above it exists.
+    The main trap: `str | None` in an annotation is PEP 604 (3.10), and an
+    annotation is EVALUATED at def time, so under 3.9 the module raises
+    `TypeError` on import. `/usr/bin/python3` is 3.9 on macOS and Debian 11.
+    `feature_version` catches a second class (syntax the parser can be told to
+    refuse) but only what CPython's parser gates that way, so the explicit walk
+    stays.
     """
     offenders = {}
     for name, path in onboarding.client_members():
@@ -533,15 +468,12 @@ def test_the_skill_states_the_same_python_floor(hub):
 
 # -- what the skill promises about the contract ------------------------------
 def test_the_skill_quotes_the_contract_numbers_that_are_actually_enforced(hub):
-    """The same reasoning the python floor already gets, applied to the rest.
+    """The skill quotes the contract numbers that are actually enforced.
 
-    The skill's "four rules that break a push" spells the path alphabet, the
-    depth and the file count as LITERALS, and a reader acts on them: rule 1 is
-    read while renaming files. They are the client's own constants, so they can
-    be compared rather than trusted — and one of them has already moved once
-    (`MAX_MEMBERS` went from 256 to 1024 in step 2 of the plan), which is
-    exactly the edit that leaves a document quietly telling people the old
-    number.
+    The skill's "four rules that break a push" spells the path alphabet, the depth
+    and the file count as LITERALS, and a reader acts on them (rule 1 while
+    renaming files). They are the client's own constants, so they are compared
+    rather than trusted.
 
     The alphabet is compared without its anchors: the skill quotes the pattern
     a person matches a FILE NAME against, and `\\A`/`\\Z` are how a regex says
@@ -579,16 +511,12 @@ def test_every_package_a_model_may_import_is_really_in_the_image(package):
 
 
 def test_the_skill_and_the_template_describe_the_SAME_image(hub):
-    """They disagreed, and the direction of the disagreement is what mattered.
+    """The skill and the template list the same packages in the image.
 
-    The skill named five packages, the template named two — and the skill sends
-    its reader to the template as the live source of the contract ("read it
-    rather than this section"), so the authoritative half was the one
-    understating the environment. An author who believes it writes an
-    interpolation by hand instead of importing numpy.
-
-    Both are checked against the same list, so neither can drift into being the
-    optimistic one.
+    The skill sends its reader to the template as the live source of the contract,
+    so a template that understated the environment would have authors hand-write
+    an interpolation instead of importing numpy. Both are checked against the same
+    list, so neither can drift into being the optimistic one.
     """
     skill = hub.get("/start/skill.md").text
     template = (onboarding.TEMPLATE_DIR / "model.py").read_text(encoding="utf-8")
@@ -614,17 +542,11 @@ BACKTICKED_NAME = re.compile(r"`([a-z_][a-z0-9_]*)`")
 def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
     """The inventory the skill hands an author, against the module itself.
 
-    This sentence went stale once already and stayed stale for two releases: it
-    told its reader that "nothing anywhere checks an overhang, a minimum wall or
-    whether a tool reaches a screw" while `unsupported_area`, `thin_walls`,
-    `minimum_feature` and `tool_access` were all sitting in the module. The cost
-    of that direction of error is the whole point -- an author who believes it
-    writes the check by hand out of primitives, or does not write it at all, and
-    the document is served to every agent that installs the skill.
-
-    The other direction is caught here too, and it is the louder one: a helper
-    renamed in `checklib` leaves the skill telling authors to call something
-    that raises AttributeError.
+    A skill claiming a check does not exist makes an author write it by hand out of
+    primitives, or not at all, and the document is served to every agent that
+    installs the skill. The other direction is caught too: a helper renamed in
+    `checklib` leaves the skill telling authors to call something that raises
+    AttributeError.
     """
     skill = hub.get("/start/skill.md").text
     bullet = SKILL_CHECKLIB_BULLET.search(skill)
@@ -651,19 +573,14 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
 SKILL_WORKERS = re.compile(r"drains\s+the\s+queue\s+across\s+(\w+)\s+worker\s+processes")
 SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
 
-# The BUILD ceilings, and ALL FOUR sentences that carry them rather than the
-# memorable ones. The wall is stated three times on purpose -- in minutes as the
-# heading an author reads first, in seconds where the four clocks are laid out,
-# and in minutes again where a hung check is costed -- and issue #81 left all
-# three saying 900's worth for a release. Pinning two of the three would have
-# left the survivor to go stale alone, which is the same defect with a smaller
-# blast radius rather than a different one.
+# The BUILD ceilings, and ALL FOUR sentences that carry them. The wall is stated
+# three times on purpose (in minutes as the heading an author reads first, in
+# seconds where the four clocks are laid out, and in minutes again where a hung
+# check is costed); pinning two would leave the third to go stale alone.
 #
-# THE DOCUMENT STATES THE WALL NOWHERE ELSE, which is a property to preserve and
-# not a coincidence: the review of #81 twice caught a fresh unpinned copy that
-# the fix for #81 had itself just written into this file, once as arithmetic off
-# the slow-build threshold. Prose that recomputes a ceiling belongs on this side
-# of the HTTP boundary.
+# The document states the wall nowhere else, and that is a property to preserve:
+# prose that recomputes a ceiling (e.g. off the slow-build threshold) belongs on
+# this side of the HTTP boundary.
 SKILL_WALL_MINUTES = re.compile(r"A\s+build\s+has\s+(\w+)\s+minutes\s+of\s+wall\s+clock")
 SKILL_WALL = re.compile(r"kills\s+a\s+build\s+at\s+(\d+)\s+seconds")
 SKILL_WALL_WHOLE = re.compile(r"whole\s+(\w+)-minute\s+wall\s+clock")
@@ -677,17 +594,12 @@ SPELLED = {"two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
 def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
     """Two numbers an author sizes their checks against, held to the code.
 
-    A check written to fit "120 seconds" against a budget that has since moved
-    is not a document error an author can catch: their check is killed on a
-    ceiling the instructions they were given said was somewhere else, and the
-    build reports the unit failed. The worker count is the same kind of claim --
-    it is what "two run at once" is worth, and the whole reason to split a
-    `checks()` into units at all.
-
-    AGENTS.md is explicit that an assertion which has to stay true belongs in a
-    test. Neither number is derivable from the skill, and nothing about editing
-    `src/cadbuild/checkunits.py` would send anybody to a markdown file served
-    over HTTP out of `skill/`.
+    A check written to fit a budget that has since moved is killed on a ceiling the
+    instructions said was elsewhere, and the build reports the unit failed. The
+    worker count is the same kind of claim: it is what "two run at once" is worth,
+    and the reason to split a `checks()` into units. Neither number is derivable
+    from the skill, and editing `src/cadbuild/checkunits.py` sends nobody to a
+    markdown file served out of `skill/`.
     """
     skill = hub.get("/start/skill.md").text
 
@@ -712,34 +624,19 @@ def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
 def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
     """The wall an author sizes `checks()` against, and the client's own wait.
 
-    THIS IS THE PIN THAT WAS MISSING WHEN IT WAS NEEDED. Issue #81 took the wall
-    from 900 s to 300 and `JOB_TIMEOUT` from 8100 to 2700, and every executable
-    ceiling assertion in the suite stayed green while this document went on
-    telling authors they had fifteen minutes -- four sentences of it, caught by
-    a reviewer reading rather than by anything running. The two numbers beside
-    them, the worker count and the unit budget, were pinned by the test above
-    and could not have gone stale the same way; that asymmetry is the whole
-    argument for this function.
+    A stale wall is not a document error an author can catch: they calibrate
+    `checks()` against the ceiling they were handed and the build is killed on a
+    lower number with a timeout naming nothing, while the instructions live in a
+    directory nobody edits alongside `limits.py`.
 
-    WHAT A STALE WALL COSTS is not a document error an author can catch. They
-    calibrate `checks()` against the ceiling they were handed, push, and the
-    build is killed on a number two thirds lower with a timeout naming nothing
-    -- and the instructions that sized it are served from a directory nobody
-    edits while editing `limits.py`.
+    The client's ceiling is pinned for the reason `test_build_ceilings.py` gives:
+    `hammerola/` is stdlib-only and cannot import the wall, so the skill's copy of
+    that literal is a copy of a copy.
 
-    The client's ceiling is pinned for the reason `test_build_ceilings.py` gives
-    about it: `hammerola/` is stdlib-only and cannot import the wall, so the
-    skill's copy of that literal is a copy of a copy.
-
-    WHAT THIS DOES NOT COVER, said here because a half-pinned document reads as
-    a pinned one. The skill also quotes the hub's concurrency ("four builds at a
+    Not covered: the skill also quotes the hub's concurrency ("four builds at a
     time", `MAX_CONCURRENT_BUILDS`) and the slow-build threshold ("past three
-    minutes", `SLOW_BUILD_SECONDS`), and neither of THOSE copies is read back by
-    anything -- the constants themselves are asserted in
-    `tests/test_build_ceilings.py`, which is a different claim and does not
-    reach this document. Both survived issue #81 untouched, which is why they
-    are not here: this function covers the sentences that drop broke, and the
-    honest place for the rest is a commit that has a reason to move them.
+    minutes", `SLOW_BUILD_SECONDS`), and nothing reads those copies back;
+    `tests/test_build_ceilings.py` asserts the constants, not this document.
     """
     skill = hub.get("/start/skill.md").text
 
@@ -763,10 +660,9 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
         f"skill/SKILL.md tells an author the hub kills a build at "
         f"{wall.group(1)}s and wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
 
-    # The third spelling, where the unit budget is argued for against what a
-    # hung check used to cost. It is the sentence the other two hide behind: it
-    # reads as background rather than as a ceiling, and it was the last of the
-    # four still saying "fifteen" when the first three had been corrected.
+    # The third spelling, where the unit budget is argued for against what a hung
+    # check costs. It reads as background rather than as a ceiling, which makes it
+    # the easiest of the four to leave stale.
     whole = SKILL_WALL_WHOLE.search(skill)
     assert whole, (
         "the skill no longer costs a hung check against the whole wall in the "
@@ -791,16 +687,12 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
 def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():
     """The generated entry point is RUN, against a `sys` that says 3.8.
 
-    Grepping the source for the comparison is what this used to do, and it was
-    not an observation of anything: `if False and sys.version_info < ...` passes
-    a grep and a line-order check alike. The old interpreter is not on this
-    machine, so the interpreter is what gets replaced — `sys` is swapped in
-    `sys.modules` for the length of one `exec`, which is the narrowest window
-    that still lets the generated `import sys` find the fake.
+    A grep would pass `if False and sys.version_info < ...`. The old interpreter
+    is not on this machine, so `sys` is swapped in `sys.modules` for one `exec`,
+    the narrowest window that still lets the generated `import sys` find the fake.
 
-    What is being observed: it exits, it exits BEFORE the import (a real 3.8
-    would raise inside `cli` rather than exiting), and the message names both
-    versions.
+    Observed: it exits, it exits BEFORE the import (a real 3.8 would raise inside
+    `cli` rather than exiting), and the message names both versions.
     """
     fake = types.ModuleType("sys")
     fake.version_info = (3, 8, 10)
@@ -836,14 +728,11 @@ def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():
     "../escape.py",
 ])
 def test_the_hub_refuses_to_build_a_template_a_client_would_refuse(name):
-    """The guard that makes the two sides agree, and it was covered by nothing.
+    """The hub refuses to build a template a client would refuse.
 
-    A mutation turning `_refuse_unservable` into a no-op left the suite green,
-    and the guard was also narrower than it claimed: it checked the alphabet and
-    not the depth, so a template nine directories deep was built here, served,
-    and refused on the other side — the one outcome it exists to prevent. It now
-    calls the client's own `check_name`, and this is parametrized over what that
-    covers.
+    `_refuse_unservable` calls the client's own `check_name` (alphabet and depth),
+    so a template the client would refuse is never built, served and then refused
+    on the other side. Parametrized over what `check_name` covers.
     """
     with pytest.raises(ValueError):
         onboarding._refuse_unservable([(name, Path(__file__))])
@@ -852,12 +741,9 @@ def test_the_hub_refuses_to_build_a_template_a_client_would_refuse(name):
 def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
     """The first of the two ceilings that belong to the SET rather than a name.
 
-    They are checked on this side rather than delegated, because `unpack`
-    applies them to a tar and this side is holding files — which is exactly the
-    kind of "nearly the same check" that drifts, so both are asserted here. The
-    other one is the test below; this docstring used to promise both while only
-    this one existed, which is how `if total > MAX_BUILD_BYTES` came to survive
-    being turned into `if False`.
+    They are checked on this side rather than delegated, because `unpack` applies
+    them to a tar while this side holds files: a "nearly the same check" that can
+    drift, so both are asserted (the other is the test below).
     """
     from hammerola.limits import MAX_MEMBERS
 
@@ -869,13 +755,12 @@ def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
 
 def test_the_hub_refuses_a_template_that_unpacks_to_more_than_a_push_may_be(
         tmp_path):
-    """The second one: the VOLUME, which no other test here could reach.
+    """The second one: the VOLUME.
 
-    It cannot be staged with many files — `MAX_MEMBERS` fires first, which is
-    the whole reason this ceiling needs a case of its own — so it is one member
-    that is bigger than the ceiling on its own. The file is made with
-    `truncate`, i.e. sparse: `st_size` is what `_refuse_unservable` measures and
-    what this has to be big, and no 64 MB is ever written to the disk.
+    It cannot be staged with many files (`MAX_MEMBERS` fires first), so it is one
+    member bigger than the ceiling on its own, made with `truncate`: sparse, so
+    `st_size`, which `_refuse_unservable` measures, is big while no 64 MB is
+    written to disk.
     """
     from hammerola.limits import MAX_BUILD_BYTES
 
@@ -910,17 +795,14 @@ def test_a_template_the_hub_cannot_serve_is_a_404_and_not_a_500(hub,
 
 def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
         hub, monkeypatch):
-    """The THIRD way these routes break, and the one that used to reach nobody.
+    """A start route that cannot import is a 404, not a dropped socket.
 
-    `template_bytes` borrows the client's own unpacking rules at call time
-    (`_refuse_unservable` imports `hammerola.limits`, `unpack` and `errors`),
-    so a client module `.dockerignore` kept out of the image takes this route
-    down with a ModuleNotFoundError — not the OSError of a missing file and not
-    the ValueError of a template the client would refuse. `_serve_start` caught
-    neither of those two names, and `_handle_get` has no blanket `except`, so
-    the exception went past the handler and the caller got a closed connection
-    instead of an answer. Asserting the STATUS is the point: a test that only
-    asserted "not 200" would pass on the dropped socket this exists to rule out.
+    `template_bytes` borrows the client's unpacking rules at call time
+    (`_refuse_unservable` imports `hammerola.limits`, `unpack` and `errors`), so a
+    client module `.dockerignore` kept out of the image fails this route with a
+    ModuleNotFoundError: neither the OSError of a missing file nor the ValueError
+    of a refused template. `_handle_get` has no blanket `except`, so `_serve_start`
+    must catch it. The STATUS is asserted: "not 200" would pass on a dropped socket.
     """
     def refuse():
         raise ModuleNotFoundError("No module named 'hammerola.limits'")
@@ -949,17 +831,15 @@ def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
 def test_the_hub_refuses_a_client_that_is_missing_a_module_it_imports(gone):
     """THE FAILURE HAS NO OTHER WITNESS, which is why the refusal exists.
 
-    A list would have caught this and was deliberately not used: a module added
-    to `hammerola/` is part of the tool by definition, and a second place to
-    name it is a place to forget. The price of the glob is that absence is
-    invisible — the archive was built, served with a 200 and a plausible size,
-    and died with an ImportError on the laptop that downloaded it. So the
-    closure is computed from the modules themselves instead.
+    The archive is built from a glob rather than a list (a module added to
+    `hammerola/` is part of the tool by definition), so a missing module is
+    invisible: served with a 200 and a plausible size, dying with an ImportError on
+    the laptop. So the closure is computed from the modules themselves.
 
-    `project.py` is in this list for a reason of its own: it is imported only as
-    `from hammerola import project`, which names the PACKAGE, so a check that
-    looked at dotted module names alone would miss it — and it would miss most
-    of the package, since that is how `cli.py` reaches ten of them.
+    `project.py` is here because it is imported only as
+    `from hammerola import project`, which names the PACKAGE; a check of dotted
+    module names alone would miss it, and most of the package, since that is how
+    `cli.py` reaches most modules.
     """
     members = [(name, path) for name, path in onboarding.client_members()
                if name != gone]
@@ -975,29 +855,20 @@ def test_the_hub_refuses_a_client_that_is_missing_a_module_it_imports(gone):
 
 def test_a_broken_image_parses_the_client_once_and_not_once_per_request(
         hub, monkeypatch, onboarding_cache_sandbox):
-    """THE HANDLE THIS ROUTE USED TO BE, and it was open to anybody.
+    """A broken image parses the client once, not once per request.
 
-    `lru_cache` remembers a returned value and never a raised exception, so
-    caching `client_bytes` covered the healthy image and left the broken one
-    re-parsing twenty modules on EVERY request — a public route dispatched
-    before the token check, throttled by nothing (`src/app.py`), on a server
-    that spends a thread per connection. Measured before the fix: twenty
-    anonymous GETs, twenty parses, 22 ms of CPU each for an 80-byte request.
-    HEAD is here too because it bought the same: the archive is built before
+    `lru_cache` remembers a returned value and never a raised exception, so caching
+    `client_bytes` alone would leave a broken image re-parsing twenty modules on
+    EVERY request: a public route dispatched before the token check, throttled by
+    nothing (`src/app.py`), on a thread-per-connection server, about 22 ms of CPU
+    per 80-byte request. HEAD is covered too: the archive is built before
     `with_body` is looked at.
 
-    It also made `_refuse_unimportable`'s own paragraph false — "once per
-    process, which is why it can afford to parse" — on exactly the image that
-    paragraph exists to talk about.
-
-    `onboarding_cache_sandbox` IS WHAT MAKES THIS TEST LEGAL. Proving the
-    refusal is remembered means remembering one, and a remembered refusal is
-    exactly the poison `guard_onboarding_caches` fails a test for; the fixture
-    hands over cleared caches and clears them again afterwards, which is also
-    what lets the assertions above mean anything (a cache already holding the
-    real archive would answer before the doctored input was reached). Asking for
-    it is the declaration; `monkeypatch` could not do this half, because putting
-    `client_members` back does not unremember what it returned.
+    `onboarding_cache_sandbox` makes this test legal: proving the refusal is
+    remembered means remembering one, which `guard_onboarding_caches` otherwise
+    fails a test for. The fixture hands over cleared caches and clears them again
+    afterwards; `monkeypatch` cannot, since restoring `client_members` does not
+    unremember what it returned.
     """
     calls = []
     real_refuse = onboarding._refuse_unimportable
@@ -1028,18 +899,12 @@ def test_what_the_client_really_carries_is_importable():
 def test_a_module_no_import_reaches_is_not_required():
     """The boundary, asserted rather than left to be discovered.
 
-    The closure starts at `CLIENT_ENTRY` and requires what it can reach. A
-    module nothing imports is therefore not required, and that is honest rather
-    than lax — nothing imports it, so its absence breaks nothing. `__main__.py`
-    is unreachable ON PURPOSE: the zipapp's entry point is the generated
-    `CLIENT_MAIN` at the archive's root, because a zip's entry point has to sit
-    there.
-
-    WHAT THIS DOES NOT SAY is that `__main__.py` is the ONLY module outside the
-    closure — the docstring here claimed exactly that, and it was wrong by one,
-    which is a claim a passing test made look checked. The test below is the one
-    that counts them; this one is about a single module being droppable, and it
-    would go on passing with any number of others out there too.
+    The closure starts at `CLIENT_ENTRY` and requires what it can reach, so a
+    module nothing imports is not required: its absence breaks nothing.
+    `__main__.py` is unreachable ON PURPOSE: the zipapp's entry point is the
+    generated `CLIENT_MAIN` at the archive's root, because a zip's entry point has
+    to sit there. This test is about one module being droppable; the test below
+    counts the modules outside the closure.
     """
     members = [(name, path) for name, path in onboarding.client_members()
                if name != "hammerola/__main__.py"]
@@ -1047,29 +912,18 @@ def test_a_module_no_import_reaches_is_not_required():
 
 
 def test_the_closure_reaches_every_module_but_the_one_nothing_imports():
-    """HOW MANY modules the refusal can speak for — the number nothing asserted.
+    """HOW MANY modules the refusal can speak for.
 
-    Every case above removes a module and asserts a refusal, and all of them go
-    on passing while the closure SHRINKS: the walk is what decides which modules
-    it has an opinion about, and an import form it does not follow simply takes
-    modules out of it in silence. Both blind spots found on review moved this
-    number and no test noticed — rewriting one module's imports as relative
-    dropped the closure from 18 to 1 (and a tree missing `status.py` was then
-    served with a 200), and an `__init__.py` that bound a name inside a
-    `try/except ImportError` went the other way and refused a healthy image.
+    Every case above removes a module and asserts a refusal, and all of them keep
+    passing while the closure SHRINKS: an import form the walk does not follow
+    takes modules out of it in silence (relative imports in one module would drop
+    it to one), and a name bound in an unexpected way can refuse a healthy image.
 
-    So the SET is asserted, not the count, because the one name outside it is
-    outside for a reason that has to keep being true: `hammerola/__main__.py`
-    is deliberate — the zipapp's entry point is the generated `CLIENT_MAIN` at
-    the archive's root, because a zip's entry point has to sit there.
-    `hammerola/__init__.py` used to be outside it too, back when the package
-    lived under `src` and the imports leaving it landed on module files
-    directly; every import between siblings now names the package, so the walk
-    resolves it like any other member.
-
-    A name appearing here means the refusal stopped covering a module. A name
-    disappearing means the walk started following something new, which is fine
-    and wants the list updated deliberately.
+    So the SET is asserted. The one name outside it is `hammerola/__main__.py`, by
+    design (the zipapp's entry point is the generated `CLIENT_MAIN` at the
+    archive's root). A name appearing here means the refusal stopped covering a
+    module; a name disappearing means the walk follows something new, and the list
+    is updated deliberately.
     """
     members = onboarding.client_members()
     reached, missing = onboarding._import_closure(members)
@@ -1085,13 +939,12 @@ def _client_with(tmp_path, source, dropped="hammerola/artifacts.py"):
 
     `dropped` is a module `cli.py` reaches ONLY as `from hammerola import
     artifacts`, so an image without it is healthy exactly when the package binds
-    that name itself — which is the question `bound()` answers.
+    that name itself, which is the question `bound()` answers.
 
-    `VERSION` IS PREPENDED TO EVERY CASE and is not part of the experiment:
-    `update.py` imports that name out of the package, so a fabricated
-    `__init__.py` without it is refused correctly and for a reason none of these
-    cases is about. The value is nonsense on purpose — nothing here runs it, and
-    what is under test is the name being BOUND.
+    `VERSION` is prepended to every case: `update.py` imports that name out of the
+    package, so an `__init__.py` without it would be refused for a reason none of
+    these cases is about. The value is nonsense on purpose; only the name being
+    BOUND is under test.
     """
     fake = tmp_path / "__init__.py"
     fake.write_text('VERSION = "0.0.0"\n' + source, encoding="utf-8")
@@ -1120,11 +973,9 @@ def test_a_package_that_binds_a_name_is_not_called_incomplete(tmp_path, label,
                                                               source):
     """A FALSE REFUSAL IS A 404 ON A HEALTHY IMAGE, and a red gate (h).
 
-    `bound()` walked `tree.body` and nothing else, so it saw only what was bound
-    at the top level of a statement list — while everything above binds its name
-    at import just as firmly. Every one of these was refused before 2026-08-28;
-    the control is last, and it is what keeps this from passing because the
-    check became a no-op.
+    Each case binds its name at import somewhere other than the top level of a
+    statement list, so `bound()` must look beyond `tree.body`. The control is last,
+    and it keeps this from passing because the check became a no-op.
     """
     onboarding._refuse_unimportable(_client_with(tmp_path, source))
 
@@ -1146,18 +997,13 @@ def test_a_package_that_binds_nothing_still_refuses_the_missing_module(tmp_path)
 
 
 def test_a_relative_import_is_refused_rather_than_ignored(tmp_path):
-    """The blind spot turned into a noise, because it could not be turned into
-    an answer.
+    """A relative import is refused, because the walk cannot answer it.
 
-    `from . import x` carries no module name, so the walk skipped it — and a
-    skip costs the closure every module that import reached, with nothing
-    failing. Measured before the refusal: rewriting `cli.py`'s imports as
-    relative (a change no runtime behaviour depends on) left a closure of ONE
-    module and a client tree missing `status.py` was served with a 200.
-
-    Staged on a module the entry point reaches rather than on the entry point,
-    so what is being observed is the walk arriving there and refusing — not a
-    special case at the root.
+    `from . import x` carries no module name, so skipping it would cost the closure
+    every module that import reaches, with nothing failing (a tree missing
+    `status.py` would be served with a 200). Staged on a module the entry point
+    reaches, so the walk is observed arriving there and refusing, not a special
+    case at the root.
     """
     original = dict(onboarding.client_members())["hammerola/revdiff.py"]
     mutated = original.read_text(encoding="utf-8").replace(
@@ -1180,11 +1026,9 @@ def test_a_relative_import_is_refused_rather_than_ignored(tmp_path):
 def test_a_client_module_that_will_not_parse_is_refused_as_one(tmp_path):
     """A file that is not python is an artefact defect like any other here.
 
-    It matters only for the TYPE: `ast.parse` raises SyntaxError, which is not
-    a ValueError and not an OSError, so left alone it would leave `_serve_start`
-    the same way an uncaught ImportError did — past the handler, onto the
-    socket. Re-raised as ValueError it becomes the logged 404 the route
-    promises.
+    `ast.parse` raises SyntaxError, which is neither ValueError nor OSError and
+    would escape `_serve_start` onto the socket. Re-raised as ValueError it becomes
+    the logged 404 the route promises.
     """
     broken = tmp_path / "cli.py"
     broken.write_text("def main(:\n", encoding="utf-8")
@@ -1232,13 +1076,9 @@ def test_the_client_and_the_hub_agree_on_where_the_manifest_is():
 
 
 def test_the_manifest_key_the_client_follows_is_the_one_the_hub_writes():
-    """Both sides of the string, which this used to miss entirely.
+    """Both sides of the string: the client's key against the hub's.
 
-    It compared `onboarding.TEMPLATE_KEY` against `onboarding.manifest(...)` —
-    the hub against itself — while the client had the key as a bare literal that
-    nothing here could see. The client now names it, so the comparison is the
-    one the title claims: the same arrangement `hub.START_PATH` has with
-    `onboarding.MANIFEST_URL`.
+    The same arrangement `hub.START_PATH` has with `onboarding.MANIFEST_URL`.
     """
     from hammerola import setup
 
@@ -1247,11 +1087,11 @@ def test_the_manifest_key_the_client_follows_is_the_one_the_hub_writes():
 
 
 def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
-    """The same arrangement for the verb added by issue #51.
+    """The same arrangement for `hammerola skill`.
 
-    `hammerola skill` reads two fields out of the manifest — where the file is
-    and which version it is — and it spells both itself, because the client
-    imports nothing from the serving half.
+    `hammerola skill` reads two fields out of the manifest, where the file is and
+    which version it is, and spells both itself, because the client imports
+    nothing from the serving half.
     """
     from hammerola import skill as client_skill
 
@@ -1263,13 +1103,12 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
 
 
 def test_the_keys_and_the_bytes_the_update_command_follows_are_the_hubs_own():
-    """The same arrangement again for the verb added by issue #77.
+    """The same arrangement for `hammerola update`.
 
-    `hammerola update` reads two fields out of the manifest — where the client
-    is and which version the hub serves — and checks that what comes back begins
-    with the shebang a zipapp begins with. It spells all three itself, because
-    the client imports nothing from the serving half, and a copy that drifted
-    would not fail anything by itself: a key that stopped matching turns the
+    `hammerola update` reads two fields out of the manifest (where the client is
+    and which version the hub serves) and checks that what comes back begins with
+    the shebang a zipapp begins with. It spells all three itself, and a drifted
+    copy would fail nothing by itself: a key that stopped matching turns the
     refusal to publish into silence, and a shebang that stopped matching turns
     every update into "that is not the tool".
     """

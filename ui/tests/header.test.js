@@ -1,32 +1,26 @@
 // The header of the build page, and the one panel that hangs off it — the three
 // answers `computed()` gives about WHICH BUILD this is and what is open beside
-// it. All three were wrong in a way a test could not have caught before, because
-// none of them is a layout question: they are values the component computes, and
-// each of them was computed from the right data in the wrong shape.
+// it. None of them is a layout question: they are values the component
+// computes, and each has to be computed in the right shape.
 //
-//   * the revision button drew `PAGE.slot` raw. On a pointer that reads `dev` or
-//     `latest`; on a pinned revision it is the digest of the sources — 64
-//     characters — while the picker the button opens has always drawn the same
-//     value at seven. The header contradicted its own menu;
-//   * the picker's rows carried the DATE and no clock, from a helper written for
-//     a list of CI commits. Publishing is `hammerola build` from a laptop now,
-//     run as often as an author saves, so the column that is supposed to tell
-//     two builds apart said the same thing on every row;
-//   * the comment rail was open on arrival, taking 300 px of a page whose whole
-//     job is showing a model, from readers who had not asked to see a queue.
+//   * the revision button draws the slot shortened. On a pointer that reads
+//     `dev` or `latest`; on a pinned revision it is the digest of the sources —
+//     64 characters — which the picker the button opens draws at seven;
+//   * the picker's rows carry the date AND the clock: publishing is `hammerola
+//     build` from a laptop, run as often as an author saves, so the date alone
+//     would say the same thing on every row;
+//   * the comment rail is closed on arrival: it takes 300 px of a page whose
+//     whole job is showing a model.
 //
 // ALMOST NOTHING IS RENDERED HERE, the arrangement every file in this directory
 // uses: the instance is the real prototype with the state spelled out, and the
 // real `computed()` runs over it. The layout around these values is checked from
 // Python against the source (tests/test_ui_source.py).
 //
-// THE ONE EXCEPTION IS BELOW, and it is worth knowing why it had to be made.
-// `computed()` and `render()` are two halves of a claim like "the whole digest
-// stays within reach": one produces the value, the other puts it on an element
-// where a reader can hover it. Checking the first half alone left `title=
-// {v.slotTitle}` deletable with the entire suite green — the digest computed,
-// shown to nobody, uncopyable, and `hammerola source <rev>` with nowhere to
-// read its argument from. `render()` returns plain objects, so reading what it
+// THE ONE EXCEPTION IS BELOW. `computed()` and `render()` are two halves of a
+// claim like "the whole digest stays within reach": one produces the value, the
+// other puts it on an element where a reader can hover it and copy it for
+// `hammerola source <rev>`. `render()` returns plain objects, so reading what it
 // drew costs no DOM and no mounting (ui/tests/eltree.js).
 //
 // `PAGE` IS STUBBED AND `shortId` IS NOT. The page reads which build it is off
@@ -45,11 +39,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // runs, so pointing this file's three slots at one object and changing its field
 // is enough — no `vi.doMock`, no `vi.resetModules`, nothing to undo.
 //
-// What that replaces was a trap: `vi.mock` is hoisted and registered ONCE, so a
-// `vi.doUnmock` in a `finally` takes the registration away for good. Two tests
-// here did that, and every later test in the file was quietly running against
-// the real `hub.js` — which reads the slot off jsdom's URL, i.e. the empty
-// string. The same mistake is why `arrangement.test.js` is a file of its own.
+// (`vi.mock` is hoisted and registered ONCE, so a `vi.doUnmock` in a `finally`
+// would take the registration away for every later test in the file.)
 const { REV, PAGE } = vi.hoisted(() => {
   const rev = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
   return { REV: rev, PAGE: { pid: 'proj1', slot: rev, base: `/project/proj1/${rev}/` } }
@@ -97,11 +88,9 @@ function component({ builds = null, rail = null, props = {} } = {}) {
 
 // -- the line under the title, and the tab strip ------------------------------
 //
-// `views[].parts` NAMES the catalogue keys a view shows and used to COUNT them
-// (issue #75). THE FIELD KEPT ITS NAME AND CHANGED ITS TYPE, which is the one
-// shape of change nothing here could see: `${current.parts} parts` went on
-// rendering perfectly happily, as `lid,post,pin parts`. So both readers of it
-// are asserted on their text, which is what a reader is actually shown.
+// `views[].parts` NAMES the catalogue keys a view shows; read as a count it
+// would render as `lid,post,pin parts`. So both readers of it are asserted on
+// their text, which is what a reader is actually shown.
 
 describe('what the header says about this build', () => {
   /** The page on a build with the given views, opened on the first of them. */
@@ -120,20 +109,11 @@ describe('what the header says about this build', () => {
 
   it('counts the parts of THIS view and sizes the whole build', () => {
     // The count is the LENGTH of the list and nothing else, so what it counts
-    // is whatever the hub put on the list.
-    //
-    // "COUNTS DISTINCT PARTS, SO FIVE OF ONE PIN IS ONE PART" WAS A SECOND
-    // TEST HERE, on `['lid', 'pin']`, and it was a second name for this one
-    // assertion: it exercised the same expression and no mutation reddened it
-    // alone. The property it named is real and it belongs to the BUILD —
-    // `list(dict.fromkeys(node["key"] for node in nodes))` in
-    // src/cadbuild/views.py — so the only suite that can assert it is the
-    // Python one, and it does: `test_a_real_export_is_a_document_the_hub_would
-    // _accept` in tests/cadbuild/test_views.py exports a view holding two
-    // `pin` leaves and expects `["lid", "pin", "board"]` (it needs the kernel,
-    // so it skips in CI). A browser-side case that cannot fail on any of that
-    // was hiding where the property lives rather than covering it. Merged
-    // rather than deleted so the sentence stays where somebody looks for it.
+    // is whatever the hub put on the list. That five of one pin is one part is
+    // a property of the BUILD (`list(dict.fromkeys(...))` in
+    // src/cadbuild/views.py), asserted by
+    // `test_a_real_export_is_a_document_the_hub_would_accept` in
+    // tests/cadbuild/test_views.py.
     expect(showing(VIEWS).computed().subtitle).toBe('3 parts · 2 views · 2.0 MB')
   })
 
@@ -160,14 +140,6 @@ describe('what the header says about this build', () => {
     // the guard has to be `Array.isArray` and not "is it there"; asserting the
     // absent case alone leaves the reading that would put `undefined parts` on
     // the header.
-    //
-    // A NUMBER HERE IS NOT AN OLD BUILD, tempting as the reading is: `parts`
-    // was indeed a count before issue #75, but it sat on `variants[]`, and the
-    // rename to `views` came in the same commit as the change of type
-    // (`build_meta` in src/render.py, before 5683fea). `subtitle()` reads
-    // `meta.views` unguarded before it ever calls this, so a genuine old
-    // document never reaches this guard at all. Nothing here opens one; what
-    // this covers is a document somebody wrote by hand.
     const c = showing([{ id: 'assembled', name: 'assembled', file: 'a.json',
                         parts: 3, gzip: 0 }])
     expect(c.computed().subtitle).toBe('0 parts · 1 view · 0.0 MB')
@@ -189,22 +161,14 @@ describe('the revision in the header', () => {
     // header is where somebody looks for the id of the thing they are looking
     // at. The full value stays as the button's title.
     //
-    // BOTH HALVES. `computed()` naming the value and `render()` hanging it on
-    // an element are one claim, and asserting the first alone is what let
-    // `title={v.slotTitle}` be deleted with 378 JS tests and the whole Python
-    // suite still green: "within reach" is a property of the render, so the
-    // render is what has to be asked.
-    //
-    // AND ON THE REVISION BUTTON, not merely somewhere on the page. "Somewhere"
-    // was the first version of this and it was weaker than the sentence above
-    // it: moving the digest onto the neighbouring `all projects` link passed,
-    // while the claim says it is the button's title. So: exactly one element
-    // carries it, and that element is identified by WHAT IT DOES — clicking it
+    // Both halves: `computed()` naming the value and `render()` hanging it on
+    // an element are one claim, and "within reach" is a property of the
+    // render. And on the revision button, not merely somewhere on the page:
+    // exactly one element carries it, identified by WHAT IT DOES — clicking it
     // opens the build picker, which nothing else in the header does. Identity
-    // against `v.revToggle` would not work, and the reason is worth writing
-    // down: `computed()` builds a fresh closure on every call, and `render()`
-    // calls it again, so the handler on the element is never the object this
-    // test holds.
+    // against `v.revToggle` would not work: `computed()` builds a fresh closure
+    // on every call, and `render()` calls it again, so the handler on the
+    // element is never the object this test holds.
     const c = component()
     expect(c.computed().slotTitle).toBe(REV)
 
@@ -279,15 +243,8 @@ describe('the build picker', () => {
     // is the build the address names, and the tree's highlighted row is the
     // part the reader just clicked. Nothing but WEIGHT tells them apart — same
     // hue, same shape, adjacent panels — so the two must not resolve to one
-    // token.
-    //
-    // WHICH IS EXACTLY WHAT THE PALETTE CONVERSION DID (issue #35). Three blue
-    // tints in this file collapsed onto `--accent-bg` on the way to tokens.css,
-    // this row's `#f0f6fd` among them, and the result reads perfectly well —
-    // one shade of blue, correct in both themes, with a distinction the reader
-    // had been using quietly deleted. That is the failure this asserts against,
-    // and it is invisible to every other test here: the row still has a
-    // background, the page still renders, both themes still agree.
+    // token; folded into one, everything still renders in both themes and no
+    // other test notices.
     //
     // The TOKENS and not their values, because the values are in
     // static/_v/tokens.css and that file's own tests hold the two apart there.
@@ -326,8 +283,8 @@ describe('the build picker', () => {
   it('hands a picked revision to the in-place switch', () => {
     // A build is an ADDRESS, and `history.pushState` says so without throwing
     // the document away — which is what keeps the camera, the hidden parts and
-    // the section across the one gesture they are worth the most in
-    // (issue #62). The row's whole job is to name the build; what the switch
+    // the section across the one gesture they are worth the most in. The row's
+    // whole job is to name the build; what the switch
     // then does with it is ui/tests/revswitch.test.js.
     //
     // Stubbed on the INSTANCE, because `computed()` builds a fresh closure on

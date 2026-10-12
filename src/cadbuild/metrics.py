@@ -5,42 +5,20 @@ Every number in metrics.json is one the gate measured anyway; nothing here
 computes geometry. It is written next to the geometry, so the NEXT build of the
 same project can read it back and say what changed.
 
-ONE FUNCTION OF THIS MODULE STAYED ON THE CLIENT SIDE and is deliberately not
-here: `check_project_match`, which refuses to publish over a snapshot belonging
-to somebody else. It is about a laptop talking to a hub over HTTP, and it guards
-against a copied project.json pointing at a stranger's id -- a question the hub
-answers from its own store, not from a build's own numbers. Everything that is
-pure -- the fingerprints, the diff, the summary and the printing -- came across
-unchanged.
+The baseline is a file: the parent copies the previous metrics.json out of the
+`dev` slot into the build's scratch and names it on the command line
+(`buildproc.runner.run_build`), and `read_baseline` opens the copy. The build
+never touches the network, so the diff cannot fail a build.
 
-THE BASELINE IS A FILE, NOT A REQUEST, and that is the one thing this module
-does differently from the laptop it came off. There it was `fetch_baseline`,
-a GET of the previous metrics.json off `{hub}/project/<pid>/dev/`; inside the
-hub the parent process copies that file out of the `dev` slot into the build's
-own scratch and names it on the command line (`buildproc.runner.run_build`), and
-`read_baseline` below opens the copy. A build process that had to reach the
-network to publish would be a build that fails when the network does, and the
-whole promise of the diff below is that it cannot fail a build (issue #59).
+The comparison lives in `hammerola/metricsdiff.py` and is imported back here:
+`hammerola diff` also reads metrics.json, and the client is stdlib-only and
+never imports the build half. See that module's docstring for why it is shared
+rather than copied.
 
-THE COMPARISON ITSELF NOW LIVES IN `hammerola/metricsdiff.py` and is imported back
-here, so this module still exposes every name it always did. It moved because
-metrics.json gained a SECOND reader that cannot import this one: `hammerola
-diff` prints what moved between two published revisions, and the client is
-stdlib-only and never imports the build half. Read that module's docstring for
-why a shared module beat a second copy -- the short version is that a copy is
-what broke publication once already.
-
-WHY THE IMPORT IS ABSOLUTE where every other import in this package is
-relative. `hammerola.metricsdiff` is outside the package, so there is no relative
-spelling; naming `hammerola` is safe HERE because of when this module is
-imported. A model is loaded with its own directory first on `sys.path`
-(`geometry.load_model`), so a project with a `hammerola/` directory of its own
-can shadow the name -- but that happens inside `build()`, and
-`src.cadbuild.build` imports this module at its own import time, which is before
-the child process reaches any model. THE NAME TO CHECK IS `hammerola` AND NOT
-`src`: the shared modules moved into the client package when the tool got a
-distribution name, so the directory a model could shadow this with is no longer
-the one this sentence used to name.
+The import is absolute because `hammerola.metricsdiff` is outside the package.
+A model's own `hammerola/` directory could shadow the name once the model is
+loaded (`geometry.load_model` puts its directory first), but this module is
+imported when `src.cadbuild.build` is, before the child reaches any model.
 """
 
 from datetime import datetime, timezone
@@ -65,12 +43,9 @@ from . import checklib
 from .hubspec import DEV_LABEL
 from .paths import project_root
 
-# Re-exported on purpose: `from .metrics import METRICS_NAME` and
-# `from src.cadbuild.metrics import metrics_diff` are what the build and its
-# tests are written against, and moving the implementation must not move the
-# names. `__all__` is what keeps them: every name imported above is either
-# used in this file or listed here, so a linter has no unused import to delete
-# and cannot take the module's public surface with it.
+# Re-exported: the build and its tests import these names from here. Every
+# name imported above is used in this file or listed in `__all__`, so a linter
+# finds no unused import to delete.
 __all__ = [
     "METRIC_FIELDS", "METRICS_NAME", "METRICS_REL_TOL", "METRICS_VERSION",
     "collect_metrics", "metrics_diff", "metrics_summary", "read_baseline",
@@ -79,28 +54,18 @@ __all__ = [
 ]
 
 
-# METRICS_NAME -- the file this writes and both readers fetch -- is imported
-# above, from the module the readers share. Nothing on the hub has to know about
-# it: the name passes the member rule, `.json` is a type the hub serves, and
-# every member is reachable at its own URL, which is how the next build and
-# `hammerola diff` read it back.
+# METRICS_NAME is imported above from the module the readers share. The hub
+# needs nothing special for it: it passes the member rule, `.json` is served,
+# and every member has its own URL, which is how the next build and `hammerola
+# diff` read it.
 #
-# Bumped when a reader of an older file would misread it. A build refuses to
-# compare against a version it does not know and says so, rather than diffing
-# fields that have quietly changed meaning. It stays HERE, with the writer: the
-# readers do not enforce it (`metrics_diff` compares fields it recognises and
-# ignores the rest), so a shared constant would only look as though they did.
+# Bumped when a reader of an older file would misread it; a build refuses to
+# compare against an unknown version rather than diff fields whose meaning
+# changed. Kept here with the writer, since the readers do not enforce it
+# (`metrics_diff` compares the fields it recognises and ignores the rest).
 #
-# STILL 1 AFTER ISSUE #58, DELIBERATELY, and this is written down because the
-# next reader's instinct is to bump it "just in case". That issue only ADDED
-# fields -- two per part, and four on the assembly: the two boxes, the volume
-# and the swept clearance -- and changed the meaning of none, so an older file
-# is read exactly as correctly as it was before: the
-# comparison walks the fields present in BOTH documents and passes over the
-# rest. A bump would say the opposite -- that this file cannot be compared with
-# what came before it -- and every revision already published would drop out of
-# comparison the day it landed, which is the one thing an immutable revision is
-# kept for.
+# Adding fields does not need a bump: the comparison walks fields present in
+# both documents. A bump would make every published revision incomparable.
 METRICS_VERSION = 1
 
 
@@ -108,32 +73,21 @@ METRICS_VERSION = 1
 # Metrics, and the comparison with the previous build
 # --------------------------------------------------------------------------
 #
-# Every number in metrics.json is one the gate measured anyway; nothing here
-# computes geometry. It rides in the archive, so the hub can hand it to the NEXT
-# build of the same project as a baseline and that build can say what moved --
-# which is the only form of "did that edit do what I meant" that does not
-# involve opening two viewers side by side and squinting.
+# Every number in metrics.json is one the gate measured anyway. The hub hands
+# the file to the next build of the project as a baseline, so that build can
+# say what moved.
 #
-# TWO BLOCKS, AND THEY ANSWER DIFFERENT QUESTIONS. The summary says what this
-# build measured and is printed on EVERY run: the numbers are in metrics.json
-# too, but that file has to be fetched by name, while the log arrives on its own
-# and arrives at whoever pushed. The diff says what moved since `dev` and is
-# printed whenever there is a baseline -- including when nothing moved, because
-# silence there is indistinguishable from a comparison that never happened.
+# Two blocks. The summary (what this build measured) prints on every run: the
+# log reaches the pusher on its own, while metrics.json must be fetched. The
+# diff (what moved since `dev`) prints whenever there is a baseline, even when
+# nothing moved, since silence would look like no comparison.
 #
-# The summary is kept SHORT for a reason that is not taste, and the reason is at
-# the call site rather than here (`report_metrics`, PHYSICAL_FIELDS): a face or
-# triangle count is a fact about the TESSELLATION, not about the part, so it
-# belongs where it explains why something moved -- in the diff below and in
-# metrics.json -- and not on a line somebody reads to see what they just built.
+# The summary stays short: face and triangle counts describe the tessellation,
+# not the part, so they belong in the diff and metrics.json (see
+# `report_metrics`, PHYSICAL_FIELDS).
 #
-# THIS ONCE SAID THE LOG IS READ ONCE AND NEVER RE-READ, and that was false in
-# both halves. `_keep_the_code` does return early for the slot, but the build LOG
-# is not what it handles: `JobStore` writes `data/jobs/<id>/log.txt`, jobs have no
-# retention at all (AGENTS.md), and the slot's meta.json carries the job id
-# precisely so `hammerola log dev` can read that log back as often as it likes
-# (issue #79, `hammerola/sources.py:_dev_log`). Nothing about how long this text
-# lives may be argued from that sentence again.
+# The build log is kept (`data/jobs/<id>/log.txt`, no retention) and can be
+# re-read with `hammerola log dev` (`hammerola/sources.py:_dev_log`).
 
 
 def _comment_free(text):
@@ -160,18 +114,15 @@ def _comment_free(text):
 def source_fingerprints(root=None):
     """Two hashes of the model source: as written, and with comments removed.
 
-    Only the *.py at the root of the project -- model.py, mocks.py and whatever
-    else the model imports from beside itself. The build machinery is
-    deliberately out of it: it is an installed package now and lives nowhere
-    near the project, so upgrading it cannot read as "the geometry changed".
+    Only the *.py at the project root (model.py, mocks.py and whatever the
+    model imports beside itself). The build machinery is an installed package
+    elsewhere, so upgrading it cannot read as "the geometry changed".
 
-    The second hash is the one with a job: it tells *only comments were
-    touched* apart from a real edit, so that a rewritten comment does not read
-    as a changed model. unchanged_code_moved_geometry is what reads it -- same
-    hash and different solids means the source is not what changed. When the
-    hash is empty the file did not tokenize (a syntax error in something
-    nothing imports, say) and nothing may be claimed about it, which is why
-    that check requires a non-empty one.
+    The second hash tells a comment-only edit from a real one;
+    unchanged_code_moved_geometry reads it (same hash, different solids means
+    the source is not what changed). An empty hash means a file did not
+    tokenize and nothing may be claimed, which is why that check requires a
+    non-empty one.
     """
     written = hashlib.sha256()
     code = hashlib.sha256()
@@ -199,64 +150,48 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance,
                     bbox, print_bbox):
     """The build's numbers, in the shape metrics.json is written in.
 
-    `checks_static` is how many of the checks the constants at the top of
-    model.py settled on their own (see `modelchecks.static_asserts`). It rides
-    beside `checks_passed` rather than inside it because it is a fact about the
-    same set of checks: a project whose count fell while this rose lost nothing
-    -- the checks were counted differently -- and one where this rose on its own
-    is drifting towards a checks() that proves nothing.
+    `checks_static` is how many checks the constants at the top of model.py
+    settled on their own (see `modelchecks.static_asserts`). It sits beside
+    `checks_passed` because it is about the same set: a count that fell while
+    this rose lost nothing, and this rising alone means checks() drifting
+    towards proving nothing.
 
-    EITHER NUMBER MAY BE None, WHICH IS "COUNT UNKNOWN" AND NOT ZERO.
-    `checks_passed` has always been able to be (`modelchecks.run_checks` answers
-    it for a body nobody could count), and both of them are None on a build that
-    skipped the model's own checks at the push's request. Nothing else in the
-    file says so, deliberately: a forced build is not marked (issue #52).
+    Either may be None, meaning "count unknown", not zero: `checks_passed` for
+    an uncountable body (`modelchecks.run_checks`), and both on a build that
+    skipped the model's checks at the push's request. A forced build is not
+    otherwise marked.
 
-    `provenance` is what `cadbuild.provenance.report` handed back at the top of
-    the build: how many of this model's numbers were measured, derived or
-    merely chosen, which ones nobody measured, and the note each declaration
-    carries -- the sentence `derived()` promises its author will end up here. It
-    is a REQUIRED argument rather than one with a default, because a default
-    would let a caller drop the whole record by forgetting it, and the file
-    would still look complete.
+    `provenance` is what `cadbuild.provenance.report` returned: how many of
+    the model's numbers were measured, derived or chosen, which nobody
+    measured, and each declaration's note. Required, so a forgetful caller
+    cannot drop the record while the file still looks complete.
 
     `bbox` and `print_bbox` are the boxes `export_assembled` and
-    `export_print_plate` measured BEFORE they meshed anything -- the product's
-    own envelope, scenery excluded, and how much bed it takes to print. They are
-    REQUIRED for the reason above, and they are taken rather than measured
-    because measuring again here would measure the mesh (see either export's
-    docstring).
+    `export_print_plate` measured before meshing (the product's envelope
+    without scenery, and the bed it takes). Required for the same reason, and
+    passed in because measuring here would measure the mesh.
 
-    EITHER MAY BE None, AND THEN ITS KEY IS ABSENT rather than empty.
-    `print_bbox` is None on a model with no `print` view, and an empty one would
-    be this build saying it occupies no bed; `bbox` is None on a view holding
-    nothing but mocks, where there is no product to measure at all and three
-    zeroes would be this build saying it made something of no size.
+    Either may be None, and its key is then absent: no `print` view, or a view
+    holding only mocks. An empty box would claim no bed or a product of no
+    size.
     """
-    # ONE ASSEMBLY, four kinds of number: how big the product is -- its own
-    # envelope, with the scenery left out, because a mock overlaps the product
-    # by construction and a box round it would report the wall rather than the
-    # part standing against it -- how much bed it takes, how much material is
-    # in it, and the two records the model's own checks() left behind. The
-    # volume is SUMMED from what the gate already measured per part rather than
-    # measured off the compound, because an assembly is glued and not fused and
-    # a boolean union of it is minutes of work.
+    # One assembly: how big the product is (its own envelope; mocks overlap it
+    # by construction), how much bed it takes, how much material, and the two
+    # records the model's checks() left. The volume is summed from per-part
+    # volumes the gate measured, since a boolean union of a glued assembly
+    # takes minutes.
     #
-    # SO IT IS A SUM OVER THE CATALOGUE AND NOT OVER THE SCENE, which is what
-    # the issue asked for and is worth stating because the two differ: a part
-    # placed several times in the `assembled` view -- five pins are five
-    # references to one `pin`, and that is the ordinary case -- is counted ONCE
-    # here. The number answers "how much material do the distinct printables
-    # come to", not "how much filament does one product take".
+    # A sum over the catalogue, not the scene: a part placed several times
+    # (five references to one `pin`) counts once. It answers "how much material
+    # do the distinct printables come to", not "how much filament per product".
     assembly = {
         "volume_mm3": sum(part["volume_mm3"] for part in parts.values()),
         # Empty unless the model's checks() called checklib.pairwise_interference
         # -- these are volumes it measured, never volumes computed for this file.
         "interference_mm3": checklib.recorded_interference(),
-        # Empty unless it called checklib.swept_clearance, and empty the same
-        # way: the tightest gap along a pair's travel, measured as the check
-        # went. EMPTY RATHER THAN ABSENT, exactly as interference is: "this
-        # model swept no pair" is an answer, and a reader has one way of asking.
+        # Empty unless it called checklib.swept_clearance: the tightest gap
+        # along a pair's travel. Empty rather than absent, like interference:
+        # "no pair swept" is an answer.
         "clearance": checklib.recorded_clearance(),
     }
     if bbox is not None:
@@ -269,8 +204,7 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance,
         "project": project,
         "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": source_fingerprints(),
-        # Beside `source` because it is about the same thing the two hashes
-        # above are: the model as it was written, not the solid that came out.
+        # Beside `source`: both describe the model as written, not the solid.
         "provenance": provenance,
         "parts": parts,
         "assembly": assembly,
@@ -306,31 +240,23 @@ def read_baseline(path):
     it can be handed is a file somebody else published, and the caller's
     promise is that a diff cannot fail a build.
 
-    What it settles is deliberately only what CAN be settled cheaply: the file
-    parses, it is an object, and its `version` is one this build knows. Nothing
-    about what is inside it -- `{"version": 1, "parts": {"body": 42}}` passes
-    all three and is a TypeError in the middle of the comparison, which is why
+    It settles only what is cheap: the file parses, is an object, and has a
+    known `version`. Its contents are not checked (`{"version": 1, "parts":
+    {"body": 42}}` passes and breaks the comparison), which is why
     report_metrics keeps its guard.
 
-    `path` IS None WHEN THE PARENT HAD NOTHING TO GIVE, which covers a project
-    with no `dev` build and one whose slot the copy could not be made from
-    (`buildproc.runner.run_build`). It is a path on the command line for
-    everything else, and a path that is not there is a `dev` build that shipped
-    no metrics.json -- a build older than this work, or one published by hand.
+    `path` is None when the parent had nothing to give: no `dev` build, or a
+    copy that could not be made (`buildproc.runner.run_build`). A path that
+    does not exist means the `dev` build shipped no metrics.json (published by
+    hand, or before metrics existed).
     """
     if path is None:
-        # SAYS WHAT IS TRUE OF BOTH CASES AND NOT MORE. The paragraph above is
-        # the reason: None also means the copy could not be made from a slot
-        # that IS there, so "this project has no dev build yet" -- which is what
-        # this said -- told an author who pushes `dev` every day that they do
-        # not. The parent knows which of the two it was; this side does not, and
-        # a line printed to whoever pushed may not assert what it cannot see.
+        # Only what is true of both cases: None also means the copy failed
+        # from a slot that exists, which this side cannot tell apart.
         return None, f"this build was handed no {DEV_LABEL} {METRICS_NAME}"
-    # ONE CLAUSE FOR EVERY WAY THE FILE IS NOT A DOCUMENT -- it would not open,
-    # it is not UTF-8, it is not JSON, it is not an object. They are one answer
-    # to whoever pushed ("what is in the slot cannot be read"), and telling them
-    # apart in the log would describe the hub's volume to somebody who cannot
-    # look at it.
+    # One clause for every way the file is not a document (will not open, not
+    # UTF-8, not JSON, not an object): the pusher cannot look at the hub's
+    # volume anyway.
     unreadable = f"the {METRICS_NAME} published as {DEV_LABEL} is not readable"
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -360,45 +286,28 @@ def read_baseline(path):
 def report_metrics(out_dir, baseline, why):
     """Print what this build measured, and what moved since the `dev` build.
 
-    TWO BLOCKS AND ONE OF THEM IS UNCONDITIONAL. The summary is what this build
-    measured and is printed on every run, with or without a baseline: the log
-    is the only channel that arrives at whoever pushed without a second action,
-    and it must not depend on whether there was a previous build. The diff
-    follows it when there is a baseline, and it prints even when nothing moved
-    -- with how many numbers were compared, because silence reads exactly like
-    a comparison that never happened.
+    Two blocks, one of them unconditional. The summary of what this
+    build measured prints on every run, baseline or not: the log is the only
+    channel that reaches the pusher without a second action. The diff follows
+    when there is a baseline, and prints even when nothing moved, with how
+    many numbers were compared.
 
-    THIS NEVER FAILS A BUILD, and that promise has to hold against the baseline
-    as well as against the network. read_baseline settles two things about the
-    file the parent handed over -- an object, of a version this build knows --
-    and nothing at all about what is inside it. `{"version": 1, "parts":
-    {"body": 42}}` is a perfectly good answer to both questions and a TypeError
-    in the middle of the comparison; a string where a measured volume belongs is
-    a ValueError in a format specifier. Neither is a BuildError, so neither is
-    caught by main(), and a build that modelled, gated and was ready to publish
-    would go red over the shape of a file whose entire job is a printed diff --
-    with the docstrings and the documentation both promising it cannot.
+    This never fails a build. read_baseline checks only that the file is an
+    object of a known version; its contents can still raise TypeError or
+    ValueError mid-comparison, which are not BuildErrors and would turn a
+    ready build red over a printed diff.
 
-    SO EACH BLOCK CARRIES ITS OWN GUARD, and that is what makes the first
-    paragraph true rather than aspirational. The whole comparison sits under one
-    of them rather than each field under its own: the failures are not a list to
-    enumerate, they are every way a dict of unknown shape can be walked, and one
-    line saying the published file is not one is the right amount to say about
-    all of them. unchanged_code_moved_geometry is inside that guard, because it
-    walks the same two dicts and is no safer than the diff is. The SUMMARY is
-    NOT, and that is the whole reason there are two guards: it walks the
-    document this build just wrote, and under the baseline's guard a baseline
-    that is rubbish inside cost the sizes as well as the diff -- a build that
-    printed no numbers at all, which is the defect this block exists to fix,
-    arriving by a different road. Each guard covers its own printing too, but
-    each block's lines are built first on purpose -- a formatting error then
-    happens before anything reaches the terminal, instead of halfway through a
-    block.
+    So each block has its own guard. The comparison sits under one guard as a
+    whole (the failures are every way a dict of unknown shape can be walked),
+    including unchanged_code_moved_geometry, which walks the same dicts. The
+    summary has its own, because it walks this build's own document and a bad
+    baseline must not cost the sizes too. Each block builds its lines before
+    printing, so a formatting error happens before any output.
 
-    WHAT IS PRINTED HERE IS NOT EVIDENCE OF ANYTHING. The model runs in this
-    process and can rewrite both its baseline and this output; publication goes
-    by the file list the PARENT verified and by the exit code, and no decision
-    in the hub may ever be attached to this text.
+    What is printed here is not evidence: the model runs in this process and
+    can rewrite both its baseline and this output. Publication goes by the
+    file list the parent verified and the exit code; no hub decision may
+    depend on this text.
     """
     try:
         current = json.loads((out_dir / METRICS_NAME).read_text(encoding="utf-8"))

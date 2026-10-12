@@ -1,122 +1,59 @@
-// Hatching the cut face, the way a section drawing has always been read.
+// Hatching the cut face, as in a section drawing.
 //
-// The library draws the cut with the classic stencil trick: a front and a back
-// stencil pass with `colorWrite: false`, then a `PlaneGeometry(2, 2)` cap quad
-// where the stencil says the solid was opened. That quad is a
-// `MeshStandardMaterial` and it is drawn as a flat fill, so a section here came
-// out as a coloured silhouette — the shape of the cut and nothing about it.
-// Fusion draws two layers instead: the fill in the component's colour
-// (`clipObjectColors`, options.js) and a diagonal hatch over it, `Show Hatch`,
-// on by default and with no settings of its own. This file is the second layer.
+// The library draws the cut with the stencil trick: front and back stencil
+// passes with `colorWrite: false`, then a `PlaneGeometry(2, 2)` cap quad where
+// the stencil says the solid was opened. That cap is a flat fill. Like Fusion's
+// `Show Hatch`, this file adds a diagonal hatch over the fill, which is drawn in
+// the component's colour (`clipObjectColors`, options.js).
 //
-// IN THE PLANE OF THE CUT, NOT ON THE SCREEN — the pattern AND the period it
-// repeats at. The one thing measured on the screen is the TARGET spacing, and
-// all it does is pick which discrete LEVEL the period sits at; the nuance is the
-// second bullet below. A screen-space hatch reads as a film laid over the
-// picture: it stands still while the model turns under it. The cap quad already
-// carries the frame this needs — `uv` runs 0..1 across a quad that
-// `PlaneMesh.updateMatrixWorld` scales to `0.5 * size` and turns to face the
-// clip normal, so uv IS the section plane, in world proportions. Direction and
-// phase are read out of that plane and turn with the model, exactly as they
-// always did.
+// The pattern lives in the plane of the cut, not on the screen: `uv` runs 0..1
+// across a quad that `PlaneMesh.updateMatrixWorld` scales to `0.5 * size` and
+// turns to face the clip normal, so uv is the section plane in world
+// proportions, and direction and phase turn with the model.
 //
-// PER PART, AND NOT ONE FIELD ACROSS THE CUT (issue #13). The first version
-// hatched every cap out of the quad's own frame, which made one clip plane's
-// stripes run through wall, board and lid unbroken — the cut read as one body,
-// which is the one reading a section exists to correct. What stayed per part
-// after that, and what pointedly did not, are the two decisions below — both
-// the owner's, and neither re-opens from here:
+//   * Every solid gets its own field and its own angle, so neighbouring bodies
+//     differ in slope. The angle and phase are hashed from the solid's tree path
+//     (`solid.name`), deterministically, so the hatch does not jump between
+//     revisions. Two keys can hash onto one slope; the phase, taken from other
+//     bits of the hash, separates most such pairs.
+//   * One pitch for every cut face, anchored to the part: the period is a
+//     distance in the plane of the cut, so within a level nothing moves with
+//     the camera. The period steps through power-of-two LEVELS of that distance
+//     so the on-screen spacing stays between PITCH_PX and twice it (CSS pixels);
+//     zooming or tilting a face crosses levels, and since levels nest (see
+//     `HATCH`) a crossing halves or doubles the lines and moves none of the
+//     survivors. Line width is in framebuffer pixels (see PITCH_PX, LINE_PX).
+//     The hatch is therefore not a scale: a 5 mm boss and a 500 mm plate hatch
+//     identically, and spacing can differ between faces by up to 2x.
 //
-//   * every SOLID gets its own field AND its own angle, so neighbouring bodies
-//     differ in slope — the drawing convention — even where their phases
-//     happen to coincide. The angle is hashed from the solid's tree path
-//     (`solid.name`) and is DETERMINISTIC on purpose: an angle taken from
-//     position or a random source would jump between revisions and break
-//     comparing two revisions by eye. The price of that stability is that two
-//     particular keys can hash onto one slope; the set below is what keeps the
-//     rest of the convention, and the phase, taken from different bits of the
-//     same hash, is what separates the rare pair that collides;
-//   * ONE PITCH FOR EVERY CUT FACE IN THE SCENE, and it is ANCHORED TO THE
-//     PART. The period is a distance in the PLANE OF THE CUT, so WITHIN a level
-//     nothing on the face moves whatever the camera does; the period keeps up
-//     with the apparent scale in discrete LEVELS — powers of two of that
-//     in-plane distance — and steps to the next one when the lines are about to
-//     merge. PITCH_PX is what "about to merge" means: the TARGET on-screen
-//     spacing, in CSS PIXELS, that the level is picked against. A level change
-//     is reached by ZOOMING or by TILTING a face far enough to change its own
-//     foreshortening — both routes are ordinary trackball use, not a corner — and
-//     because the levels NEST (see `HATCH`) crossing one halves or doubles the
-//     line count and moves nothing that survives it. The lines themselves stay
-//     measured in FRAMEBUFFER pixels, a different unit on a retina display and
-//     deliberately so (see PITCH_PX and LINE_PX, and issue #96 for the grain
-//     that came of using one unit for both), and very thin: Fusion's hatch,
-//     which is what the owner asked for.
-//     This replaces a period held at a constant number of SCREEN pixels, which
-//     was the pattern painted on the glass rather than on the part: turning the
-//     model changes the foreshortening, so the same point of the part landed in
-//     a different stripe and the whole field crept across the cut face. Further
-//     back it replaces a pitch that followed each part's own bounding box: that
-//     gave a big part wide bands and a small one fine lines, and the two side by
-//     side read as two different drawings.
-//     Two costs are accepted for that. The hatch is not a scale — a 5 mm boss
-//     and a 500 mm plate hatch identically, and a part small on screen gets
-//     fewer lines across it rather than the same number. And the hatch is no
-//     longer the same density everywhere on the screen: each face sits at
-//     whatever level its own foreshortening picks, so across the scene the
-//     spacing steps between one and two times the target. WITHIN one face it is
-//     uniform — this camera is orthographic, so the gradient is one constant
-//     over a face (see `HATCH`) and a level boundary can fall inside a face only
-//     through float noise at the exact threshold.
+// `onBeforeCompile` rather than a material of our own: the cap material carries
+// the stencil test, polygon offset, the other clip planes and its colour, and
+// patching its shader keeps all of that instead of copying library code.
 //
-// WHY `onBeforeCompile` AND NOT A MATERIAL OF OUR OWN. The cap material carries
-// the stencil test that makes the cap appear only where the solid was opened,
-// the polygon offset that keeps it off the face, the other two clip planes and
-// its own colour. Rebuilding all of that outside the library would be copying
-// its geometry code and would go stale silently; patching the shader of the
-// material it already built leaves every one of those properties alone.
-//
-// THE ONE FRAGILITY, named so nobody has to rediscover it: this is string
-// surgery on three.js's own shader chunks, so it is pinned to the THREE version
-// in static/_v/three.module.js (r184 today) rather than to a release of
-// three-cad-viewer. `patchCapMaterial` therefore checks that the marker it
-// splices at is still there and says so once if it is not — a hatch that
-// quietly stopped happening is the failure worth catching, because the page
-// still renders perfectly.
+// This is string surgery on three.js shader chunks, so it is pinned to the THREE
+// version in static/_v/three.module.js (r184), not to a three-cad-viewer release.
+// A missing marker means the hatch silently disappears while the page still
+// renders; the suite checks the markers are present.
 
 const MARKER = "#include <opaque_fragment>";
 
 /** The anchor the uniform declarations splice at: the first line of three.js's
- *  own uniform block in `meshphysical_frag`, which is at GLOBAL scope — the
- *  hatch's own declarations must be, since the marker below sits inside
- *  `main()`, where a declaration would not compile. First occurrence is the
- *  only one in that shader, and the suite proves it sits ahead of `MARKER` in
- *  static/_v/three.module.js. */
+ *  uniform block in `meshphysical_frag`, at global scope (the `MARKER` sits
+ *  inside `main()`, where a declaration would not compile). It occurs once in
+ *  that shader, and the suite checks it precedes `MARKER`. */
 const UNIFORM_ANCHOR = "uniform vec3 diffuse;";
 
-/** The two measurements of the hatch, IN TWO DIFFERENT PIXELS, and the split is
- *  the whole of issue #96: the lines sit PITCH_PX CSS pixels apart — the TARGET
- *  the level ladder is picked against, so the spacing on screen is between that
- *  and twice it, see `HATCH` — and each is LINE_PX FRAMEBUFFER pixels across, on
- *  every cut face in the scene and at every zoom. The shader is where they are
- *  applied — see `HATCH`.
+/** The two measurements, in two different pixel units. The lines are PITCH_PX
+ *  CSS pixels apart (the target the level is picked against, so on-screen
+ *  spacing is between that and twice it, see `HATCH`), and each line is LINE_PX
+ *  FRAMEBUFFER pixels wide.
  *
- *  WHY NOT ONE UNIT FOR BOTH, which is what this was and what made the hatch
- *  read as scanner noise rather than as lines. The canvas is drawn at the
- *  renderer's pixel ratio — the display's own density unless the reader has
- *  turned "Retina resolution" off (viewport/element.js) — so a period of 8
- *  FRAMEBUFFER pixels is four CSS pixels on a 2x display, with a line three
- *  quarters of a CSS pixel wide inside it — that is grain, and on a close-up it
- *  fills the screen with it. The two numbers answer different questions:
- *
- *    * the DISTANCE BETWEEN LINES is legibility, and what the reader perceives
- *      is CSS pixels, so the target is `PITCH_PX` times the renderer's pixel
- *      ratio in framebuffer pixels (`hatchPitchPx`) and the spacing comes out
- *      between 8 and 16 CSS pixels on every display;
- *    * the WIDTH is ink, and stays framebuffer: a pixel and a half OF THE
- *      FRAMEBUFFER is what reads as a drawn hairline, while the same 1.5 taken
- *      as CSS pixels would be three device pixels on a retina screen and read
- *      as a band — which is the band this fix must not re-create while widening
- *      the spacing. */
+ *  The canvas is drawn at the renderer's pixel ratio (viewport/element.js), so
+ *  the units differ on a retina display:
+ *    * spacing is legibility, perceived in CSS pixels, so the target is
+ *      `PITCH_PX` times the renderer's pixel ratio (`hatchPitchPx`);
+ *    * width is ink: 1.5 framebuffer pixels reads as a hairline, while 1.5 CSS
+ *      pixels would be three device pixels on a 2x screen and read as a band. */
 const PITCH_PX = 8.0;
 const LINE_PX = 1.5;
 
@@ -126,15 +63,11 @@ const LINE_PX = 1.5;
 const AA_PX = 1.0;
 
 /** The set every part's line direction is drawn from, in DEGREES, as the
- *  direction the lines RUN in the cap quad's uv plane. Six slopes covering the
- *  half turn, no two closer than 30 degrees — a drawing-office gap: adjacent
- *  choices have to read as different hatches at a glance, and fifteen degrees
- *  apart does not. 45 degrees is the conventional section angle and stays in
- *  the set; the mirrored slopes (>90) are deliberately there too, because a
- *  hash has to be able to put two neighbours on opposite leans. Order matters
- *  only in deciding which key gets which slope; it carries no meaning beyond
- *  that. Exported for the suite, which holds the set to the gap this paragraph
- *  claims. */
+ *  direction the lines run in the cap quad's uv plane. Six slopes covering the
+ *  half turn, no two closer than 30 degrees so adjacent choices read as
+ *  different hatches; 45 is the conventional section angle, and the mirrored
+ *  slopes (>90) let two neighbours lean opposite ways. Exported for the suite,
+ *  which checks the 30-degree gap. */
 export const HATCH_SLOPES = [45, 15, 75, 105, 135, 165];
 
 /** FNV-1a, 32 bits, over the part's tree path. Chosen for being adequate and
@@ -160,43 +93,27 @@ function mix(h) {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-/** Half a line and half its anti-aliasing band, IN FRAMEBUFFER PIXELS, spelled
- *  as GLSL float literals: the shader counts in PERIOD units and converts each
- *  of these through the period's own pixel size to get there.
+/** Half a line and half its anti-aliasing band, IN FRAMEBUFFER PIXELS, as GLSL
+ *  float literals. The shader converts them into fractions of the period using
+ *  the period's own pixel size, because the period depends on the pixel ratio
+ *  and the level the shader picks; a fraction computed here would let the line
+ *  thicken with each level.
  *
- *  THE CONVERSION IS THE SHADER'S, and that is the point rather than a detail.
- *  These were `LINE_PX / 2 / PITCH_PX` and `0.5 / PITCH_PX`, computed here as
- *  fractions of the period, which was fine while the period was a constant. It
- *  is neither constant nor knowable here any more: it follows the renderer's
- *  pixel ratio (see PITCH_PX) and then the LEVEL the shader picks for the face
- *  (see `HATCH`), so a fraction taken against the old constant would leave the
- *  line and the band at a fixed share of a period that MOVES — the line going
- *  from 1.5 framebuffer pixels to 3 on a 2x display, and doubling again at every
- *  level change, which is exactly the band the split exists to avoid. Handing
- *  the shader pixel counts and letting it divide by the period's own pixel size
- *  keeps all three in step by construction, at whatever ratio and whatever
- *  level.
- *
- *  RETUNED FOR A THIN LINE, not carried over. The band this replaced was
- *  `fwidth(hatchS)` on each side — two pixels across a line that is now 1.5
- *  wide, which leaves no fully inked middle at all and washes the whole hatch
- *  into an even grey. That is the failure to watch for if these numbers move:
- *  it looks like a colour choice rather than a bug. */
+ *  If the band grows to about the line width, no fully inked middle remains and
+ *  the hatch washes out into an even grey, which looks like a colour choice
+ *  rather than a bug. */
 const HALF_LINE_PX = (LINE_PX / 2).toFixed(4);
 const HALF_AA_PX = (AA_PX / 2).toFixed(4);
 
 /** The hatch's five uniforms, declared at global scope just ahead of three.js's
- *  own — see UNIFORM_ANCHOR. Plain `float`s and nothing structured, because no
- *  THREE constructor is reachable from this module to build a Vector2 with.
+ *  own (see UNIFORM_ANCHOR). Plain `float`s, because no THREE constructor is
+ *  reachable from this module to build a Vector2 with.
  *
- *  `hatchPitch` is the one that is neither per part nor constant: it is the
- *  TARGET spacing in framebuffer pixels — what the level is picked against, see
- *  `HATCH` — which depends on the renderer's pixel ratio (see `hatchPitchPx`).
- *  A UNIFORM and not a number baked into `HATCH`, because
- *  `HATCH` has to stay one module-level string — three.js keys its program cache
- *  off `onBeforeCompile.toString()`, and a source that varied with the ratio
- *  would mean a second compiled program, or worse, one program silently shared
- *  by caps that wanted different ones. See `hatchShader`. */
+ *  `hatchPitch` is the target spacing in framebuffer pixels (see
+ *  `hatchPitchPx`). It is a uniform rather than baked into `HATCH` because
+ *  three.js keys its program cache off `onBeforeCompile.toString()`: a source
+ *  that varied with the ratio would compile a second program or share one
+ *  program between caps that need different ones. See `hatchShader`. */
 const HATCH_UNIFORMS = `
 uniform float hatchDirX;
 uniform float hatchDirY;
@@ -208,125 +125,61 @@ uniform float hatchPitch;
 /**
  * The hatch itself.
  *
- * `vUv` is the section plane (see the header). The line direction comes in as
- * the `hatchDirX`/`hatchDirY` pair — one slope out of HATCH_SLOPES, turned 90
- * degrees because the stripes are the LEVEL SETS of `dot(p, dir)` and so run
- * perpendicular to it — and the phase in as `hatchPhase`. Those two are per
- * part and are the only per-part numbers there are; see `capUniforms` for where
- * they come from. The pitch is not among them: `hatchPitch` is one number for
- * the whole scene, PITCH_PX CSS pixels expressed in framebuffer ones — see
- * `hatchPitchPx`, which is where the renderer's pixel ratio enters — and it is
- * the TARGET spacing that picks the level rather than the period itself.
+ * `vUv` is the section plane (see the header). `hatchDirX`/`hatchDirY` is one
+ * slope of HATCH_SLOPES turned 90 degrees, because the stripes are the level
+ * sets of `dot(p, dir)`; `hatchPhase` is the per-part phase (see `capUniforms`).
+ * `hatchPitch` is one number for the whole scene: the target spacing in
+ * framebuffer pixels (see `hatchPitchPx`).
  *
- * THE PERIOD IS A DISTANCE IN THE PLANE OF THE CUT, which is the whole of the
- * fix. `hatchUv` is measured in the cap quad's uv, and that uv IS the section
- * plane in world proportions (see the header), so a period counted in those
- * units is painted ON THE PART: the camera can turn and every stripe stays over
- * the same material. Holding it at a constant number of SCREEN pixels instead —
- * `hatchUv` divided by its own screen gradient, which is what this used to do —
- * made the whole field creep across the face as the foreshortening changed, the
- * pattern behaving like a film on the glass rather than ink on the cut.
+ * The period is a distance in the section plane, so stripes stay over the same
+ * material as the camera turns.
  *
- * THE LEVELS ARE POWERS OF TWO, in that same in-plane frame, and that is how the
- * spacing keeps up with the apparent scale. `hatchGrad` is how much uv one framebuffer
- * pixel covers ACROSS THE STRIPES, so `hatchPitch * hatchGrad` is the target
- * spacing expressed in uv, and `exp2(ceil(log2(...)))` is the smallest power of
- * two at least that big. `ceil` is what makes the guarantee one-sided: the
- * level's spacing on screen lands between `hatchPitch` and `2 * hatchPitch`
- * pixels, so the lines are never about to merge and never open up further than
- * twice the target.
+ * Levels are powers of two in that plane. `hatchGrad` is the uv one
+ * framebuffer pixel covers across the stripes, so `hatchPitch * hatchGrad` is
+ * the target spacing in uv and `exp2(ceil(log2(...)))` the smallest power of
+ * two at least that big: on-screen spacing lands between `hatchPitch` and
+ * `2 * hatchPitch` pixels.
  *
- * POWERS OF TWO AND NOT SOME OTHER LADDER, for two reasons that both have to
- * hold. The first is that the levels NEST, and that is a property of the two
- * lines below rather than of `exp2` alone: `hatchS` puts the line centres on the
- * INTEGERS of the step and `hatchPhase` is a fixed offset in the PLANE, not a
- * fraction of the period, so the lines stand at `hatchUv = n * hatchStep -
- * hatchPhase`. Double the step and every EVEN line of the fine grid is a line of
- * the coarse one, at the same place on the part: a level change HALVES or
- * DOUBLES the line count and moves nothing that survives it. Write the phase as
- * a fraction of the period instead — which is what this did for one review round
- * — and every crossing slides the whole field by up to half a period, which is
- * the jumping this change exists to remove. The second reason is arithmetic:
- * both steps are exact powers of two, so `(hatchUv + hatchPhase) / hatchStep`
- * divides without rounding and doubling the step halves `hatchS` BIT FOR BIT —
- * the even lines land on exactly the float they were on, so the nesting above
- * is exact rather than within an ulp, and a level is not a new source of drift.
+ * Levels nest: line centres sit on the integers of `hatchS` and `hatchPhase` is
+ * a fixed offset in the plane (not a fraction of the period), so lines stand at
+ * `hatchUv = n * hatchStep - hatchPhase`. Doubling the step keeps every even
+ * line in place, so a level change halves or doubles the line count and moves
+ * nothing else. With power-of-two steps the division is exact, so the
+ * surviving lines land on bit-identical positions. Levels change on zoom and on
+ * tilt (tilting a face to 60 degrees doubles the gradient across the stripes),
+ * which ordinary trackball use does constantly, so the nesting matters.
  *
- * WHAT MOVES, AND WHEN. Within a level nothing on the part moves, whatever the
- * camera does. A level change is a discrete step, and it is reached by ZOOMING
- * or by TILTING a face: the level comes out of `hatchGrad`, which is the face's
- * own foreshortening. Tilting a face to 60 degrees multiplies the gradient
- * across the stripes by up to two — a level on its own in the worst case, and
- * by nothing at all for a part whose slope happens to run along the tilt axis,
- * which the trackball sweeps anyway. Ordinary
- * trackball use therefore crosses boundaries all the time, which is precisely
- * why the nesting above is not optional — with it, a crossing costs half the
- * lines or twice them and nothing slides.
+ * Ink is counted in framebuffer pixels at every level: one period is
+ * `hatchStep / hatchGrad` pixels, so HALF_LINE_PX and HALF_AA_PX are multiplied
+ * by `hatchGrad / hatchStep` to become fractions of a period. Ink that changes
+ * thickness at a level change means this cancellation is broken.
  *
- * THE INK IS STILL COUNTED IN FRAMEBUFFER PIXELS, at every level, and that is
- * what `hatchGrad / hatchStep` is doing in the two lines below. `hatchS` counts
- * periods of `hatchStep` uv, and one such period is `hatchStep / hatchGrad`
- * pixels wide, so a pixel count becomes a fraction of a period by dividing by
- * that — HALF_LINE_PX and HALF_AA_PX go through exactly that conversion. The
- * two factors cancel, so the hairline stays 1.5 framebuffer pixels across and
- * the band about one whether the level is fine or coarse. Ink that thickened or
- * thinned at a level change is the tell that this cancellation got broken.
+ * `length`, not `fwidth`: `fwidth` is the L1 sum `abs(dFdx) + abs(dFdy)`,
+ * up to 1.41x the true gradient depending on stripe orientation, which would
+ * give each slope a different density and make faces near a boundary flip
+ * levels as the model turns.
  *
- * `length` AND NOT `fwidth`, which is the trap this spent a review on: `fwidth`
- * is `abs(dFdx) + abs(dFdy)`, the L1 sum and not the length, so it runs from
- * the true gradient up to 1.41 times it depending on how the stripes happen to
- * lie on the screen. As the width of an anti-aliasing band that overshoot is
- * harmless, which is what it used to be here; in `hatchGrad` it feeds both the
- * number the level is chosen against and the pixel conversion above — every
- * slope in HATCH_SLOPES a different density, and a face sitting near a level
- * boundary flipping levels as the model turns, which is the creep this fixes
- * wearing another hat. One ladder for every angle means the Euclidean length.
+ * The `max` guards against a zero gradient (a degenerate cap, or one magnified
+ * below float precision): `log2(0)` would make `hatchStep` zero. An edge-on cap
+ * has a huge gradient, gets a coarse level and renders as one flat tone.
  *
- * The `max` is a floor against a ZERO gradient, which is uv that does not
- * change from one pixel to the next — a degenerate cap, or one magnified until
- * the difference falls under float precision. It is not a tolerance, and it
- * carries more than it used to: `log2(0)` is minus infinity, so without the
- * floor `hatchStep` would come out zero and every line below would divide by
- * it. A cap turned edge-on is the opposite case and needs no floor: its
- * gradient is huge, the ladder simply picks a coarse level, and the sliver on
- * screen comes out as one flat tone.
+ * The viewport is orthographic (`ortho: true`, options.js), so the uv-to-pixel
+ * map is one constant linear map per flat cap: the gradient is constant over a
+ * face and a level boundary can fall inside a face only through float noise at
+ * the threshold. The map is not isotropic, which is why the length is taken per
+ * fragment. Under a perspective camera a level boundary would be a visible seam.
  *
- * EXACT RATHER THAN APPROXIMATE, and it is the camera that makes it so: this
- * viewport is ORTHOGRAPHIC by construction (`ortho: true`, options.js), so the
- * map from a flat cap's uv to pixels is ONE CONSTANT LINEAR MAP over the whole
- * face — foreshortened along one axis where the cap is tilted, but the same map
- * at every fragment, which is what makes the gradient the SAME NUMBER over the
- * whole face. Constant, not isotropic: that foreshortening is why the length is
- * taken per fragment here and could not be computed once on the CPU. The lines
- * therefore come out straight and evenly spaced, and `hatchStep` is one level
- * for the whole face — a level boundary can fall inside a face only through
- * float noise, where the gradient sits on the threshold and rounds two ways.
- * Under a perspective camera the ratio would drift across the face: this would
- * be a near-enough approximation, and a level boundary would be a visible seam
- * crossing the cut.
+ * Flat: this replaces `gl_FragColor` instead of tinting the lit result, so the
+ * lighting does not shade the cut face. It is spliced in before
+ * `tonemapping_fragment` and `colorspace_fragment`, so the colour is in the
+ * working (linear) space like `diffuse`.
  *
- * FLAT, and deliberately: this REPLACES `gl_FragColor` rather than tinting the
- * lit result. A `MeshStandardMaterial` would shade the lines along with the
- * fill, and a cut face that is darker at one end because of where a lamp
- * happens to be is a cut face nobody can read a hatch off. It is spliced in
- * before `tonemapping_fragment` and `colorspace_fragment`, so the colour
- * written here is in the working (linear) space exactly like `diffuse` and goes
- * out through the same conversions as the rest of the scene.
+ * Anti-aliasing is only the smoothstep band (AA_PX): the on-screen period never
+ * falls below PITCH_PX pixels, so moire cannot occur.
  *
- * THE ANTI-ALIASING IS THE SMOOTHSTEP'S BAND AND NOTHING ELSE — AA_PX, about a
- * pixel in total. There is no moire crossfade any more: an on-screen period the
- * ladder never lets fall below PITCH_PX pixels cannot shrink towards a pixel
- * however small the part is on screen, so the case that code existed for stopped
- * being reachable.
- *
- * `hatchOn` gates the whole thing and is the reason the checkbox costs no
- * recompile: at 0 the coverage multiplies out and the cap is a flat fill in the
- * part's own colour, with the compiled program, the cache key and the geometry
- * all untouched. FLAT, not the face the library would draw on its own: the
- * block below replaces `gl_FragColor` UNCONDITIONALLY, so an unticked box
- * removes the lines and not the flatness — the lit `MeshStandardMaterial`
- * shading is gone from the cut face either way, and deliberately, for the
- * reason the paragraph above gives.
+ * `hatchOn` gates the lines without a recompile. At 0 the cap is a flat fill
+ * in the part's colour; the lit shading is gone either way, since the block
+ * replaces `gl_FragColor` unconditionally.
  */
 const HATCH = `
   {
@@ -358,51 +211,40 @@ const HATCH = `
 
 /**
  * The target spacing the level is picked against (see `HATCH`), in FRAMEBUFFER
- * pixels: PITCH_PX CSS pixels times `ratio`, the RENDERER's pixel ratio — the
- * pixels the shader's derivatives count. That is the display's density unless
- * "Retina resolution" is off (viewport/element.js), and it is NOT
- * `window.devicePixelRatio`, which would double the spacing with it off. See
- * PITCH_PX for why the width does NOT go through here.
+ * pixels: PITCH_PX CSS pixels times `ratio`, the renderer's pixel ratio (the
+ * pixels the shader's derivatives count). Not `window.devicePixelRatio`, which
+ * differs when "Retina resolution" is off (viewport/element.js).
  *
- * DEFENSIVE ONLY ABOUT THE NUMBER: a missing or zero ratio is 1 and nothing is
- * clamped — a ceiling would silently halve the spacing on a 3x display. Sampled
- * when a uniform is written and never tracked: the viewport re-runs
- * `setCutHatch` whenever it moves the ratio.
+ * A missing or zero ratio counts as 1; there is no ceiling, which would shrink
+ * the spacing on a 3x display. The viewport re-runs `setCutHatch` whenever it
+ * changes the ratio.
  */
 function hatchPitchPx(ratio) {
   return PITCH_PX * (ratio > 0 ? ratio : 1);
 }
 
 /**
- * The patch, as ONE module-level function shared by every cap material.
+ * The patch, as one module-level function shared by every cap material.
  *
- * That sharing is load-bearing rather than tidiness. three.js's default
- * `customProgramCacheKey` returns `onBeforeCompile.toString()`, so one function
- * object means one cache key means ONE compiled program for all of the caps —
- * and a patched material still differs from an unpatched one, which is what the
- * default is there for. It also means no `customProgramCacheKey` of our own is
- * needed.
+ * three.js's default `customProgramCacheKey` returns
+ * `onBeforeCompile.toString()`, so one function object means one compiled
+ * program for all caps, while a patched material still differs from an
+ * unpatched one.
  *
- * WHICH IS WHY THE PER-PART NUMBERS TRAVEL AS UNIFORMS AND NEVER AS A CLOSURE.
- * A `toString()` cannot see a closure, so baking `capUniforms`' numbers in here
- * would put every cap on whichever program was compiled first — silently. They
- * are read off `this.userData.hatch` instead: three.js calls
- * `material.onBeforeCompile(parameters, renderer)`, so `this` IS the material,
- * and the numbers land in `shader.uniforms` as plain `{ value }` floats — one
- * uniform set per MATERIAL while the compiled program stays shared. The
- * `shader` object is kept on `material.userData.hatchShader` so `setCutHatch`
- * can flip a value in place later, without a recompile.
+ * Per-part numbers therefore travel as uniforms, never in a closure, which
+ * `toString()` cannot see (every cap would silently get the first compiled
+ * program). They are read off `this.userData.hatch` — three.js calls
+ * `material.onBeforeCompile(parameters, renderer)`, so `this` is the material —
+ * giving one uniform set per material with a shared program. The `shader`
+ * object is kept on `material.userData.hatchShader` so `setCutHatch` can change
+ * values in place without a recompile.
  *
- * THE PITCH IS SET HERE TOO, and it is the one uniform that comes from neither
- * the material nor a constant: it follows the pixel ratio of `renderer`, the
- * second argument three.js hands `onBeforeCompile`. Set at PATCH time and not
- * only from `setCutHatch`, so a scene that renders once and is never toggled is
- * already right.
+ * The pitch follows the pixel ratio of `renderer`, the second argument, and is
+ * set here as well as in `setCutHatch` so a scene that is never toggled is
+ * right too.
  *
- * DECLARED, NOT JUST READ: the five identifiers exist for the GLSL compiler
- * only because `HATCH_UNIFORMS` is spliced in ahead of three.js's own uniform
- * block. Losing that splice is a shader that fails to compile — loud in the
- * console, and the suite holds the anchor to static/_v/three.module.js for it.
+ * The five identifiers only exist because `HATCH_UNIFORMS` is spliced ahead of
+ * three.js's uniform block; without it the shader fails to compile.
  */
 export function hatchShader(shader, renderer) {
   const p = this && this.userData && this.userData.hatch;
@@ -422,36 +264,25 @@ export function hatchShader(shader, renderer) {
 }
 
 /**
- * Patch one cap material with one part's numbers, or leave it exactly as it
- * was.
+ * Patch one cap material with one part's numbers, or leave it as it was.
  *
- * `USE_UV` is what makes `vUv` exist at all: since r152 three declares the
- * generic uv varying only for materials that asked for it, and a cap material
- * has no map of any kind to ask on its behalf.
+ * `USE_UV` makes `vUv` exist: since r152 three declares the uv varying only for
+ * materials that ask for it, and a cap material has no map.
  *
- * MATERIALS ARE NEVER SHARED BETWEEN CAPS, and this must not start sharing
- * them: the library builds one per (plane, solid) and leans on `material.id`
- * for render order, which is what keeps a solid's stencil pass and its own cap
- * adjacent. Collapsing them into one would reorder the draws and break the
- * stencil isolation the caps depend on.
+ * Materials are never shared between caps: the library builds one per
+ * (plane, solid) and uses `material.id` for render order, which keeps a solid's
+ * stencil pass adjacent to its cap. Sharing would break the stencil isolation.
  *
- * The numbers themselves live on `material.userData.hatch` — the source of
- * truth `hatchShader` compiles from — and never in the patching function, which
- * has to stay closure-free for the cache key's sake (see `hatchShader`).
+ * The numbers live on `material.userData.hatch`, which `hatchShader` compiles
+ * from; the patch function stays closure-free for the cache key's sake.
  */
 function patchCapMaterial(material, params) {
   if (!material) return false;
   if (material.onBeforeCompile === hatchShader) {
-    // Same function object, same cache key, same program, and NO `needsUpdate`
-    // — that is what keeps a re-render from recompiling. What this leaves
-    // behind is worth being exact about: the numbers land where the NEXT
-    // compile reads them, and not in the uniforms a compiled shader is already
-    // drawing from, so a cap patched twice with different numbers goes on
-    // showing the first set. `setCutHatch` is the one that writes both,
-    // because the checkbox has to move a live cap. No product path reaches
-    // this branch with different numbers — `safeHatch` runs once per `show()`,
-    // on caps the library has just built — so the branch stays as it is
-    // rather than growing a second uniform writer for a case nobody has.
+    // Same function, same cache key, same program, and no `needsUpdate`, so a
+    // re-render does not recompile. The numbers reach only the next compile,
+    // not the live uniforms; `setCutHatch` writes both. `safeHatch` runs once
+    // per `show()` on fresh caps, so no path reaches here with new numbers.
     material.userData.hatch = params;
     return true;
   }
@@ -464,25 +295,17 @@ function patchCapMaterial(material, params) {
 }
 
 /**
- * The hatch parameters for every cap of the part named `key`.
+ * The hatch parameters for every cap of the part named `key`: angle and phase.
  *
- * ANGLE AND PHASE, AND NOTHING ELSE — which is all that is left of the per-part
- * arithmetic now that the pitch is one number for the whole scene, turned into a
- * level by the shader (see `HATCH`). Nothing here reads the cap, the clipping
- * region's size or the part's bounding box, and nothing should start to: a
- * number derived from any of those is a pitch that follows the part again,
- * which is the decision the header records the owner reversing.
+ * Both come from the key alone through one mixed hash, so they are stable
+ * across revisions and independent of where the part sits. Nothing here reads
+ * the cap, the clipping region or the part's bounding box: a number derived
+ * from those would make the pitch follow the part.
  *
- * Both come from the part's key alone, through one mixed hash, so they are
- * stable across revisions and independent of where the part sits. The slope is
- * one of HATCH_SLOPES, all pairwise far enough apart to read as different; the
- * phase takes the bits a second mix produces, so two keys that do land on one
- * slope still hatch out of step — by their phase difference taken modulo the
- * current step, so the separation is a property of the level rather than a
- * fixed fraction of the period — and two that coincide in BOTH are the rare
- * pair the header accepts. A number in [0,1), which the shader reads as an
- * offset IN THE PLANE rather than as a fraction of the period: see `HATCH`, and
- * do not turn it back into a fraction — that is what the levels nest on.
+ * The slope is one of HATCH_SLOPES; the phase comes from a second mix, so two
+ * keys on one slope usually still hatch out of step. The phase is in [0,1) and
+ * the shader reads it as an offset in the plane, not a fraction of the period —
+ * the level nesting depends on that (see `HATCH`).
  */
 function capUniforms(key) {
   const h = mix(hashKey(key));
@@ -497,24 +320,19 @@ function capUniforms(key) {
 }
 
 /**
- * Hatch every cut face in the scene, one field per part. Safe to call again;
- * does nothing twice.
+ * Hatch every cut face in the scene, one field per part. Safe to call again.
  *
- * CALLED AFTER `render()` AND NOWHERE ELSE, because that is when the cap meshes
- * exist: the library builds them in `Clipping._createStencils`, one per (plane,
- * solid), grouped per solid into `_capUnits` — the field this reads, because
- * the parameters are hashed from the SOLID and applied to its caps. There is a
- * second path that rebuilds them — `rebuildStencils`, from
- * `addPart`/`updatePart` growing the bounds and from the public
- * `ensureStencilSize` — and this viewport uses neither, since changing what is
- * on screen here is `clear()` plus `render()`. If one is ever reached for, the
- * hatch has to be re-applied there too or it will disappear with nothing said.
+ * Called after `render()`, when the cap meshes exist: the library builds them
+ * in `Clipping._createStencils`, one per (plane, solid), grouped per solid into
+ * `_capUnits`. The library's other rebuild path, `rebuildStencils` (from
+ * `addPart`/`updatePart` and `ensureStencilSize`), is not used here, since
+ * changing the scene is `clear()` plus `render()`; if it ever is, the hatch has
+ * to be re-applied there too.
  *
- * `_capUnits` is the library's own private field, so this asks defensively and
- * gives up quietly: a viewer that has moved it should cost the page its hatch
- * and nothing else. `on` is the checkbox's current answer — a scene rendered
- * while the box is unticked comes up patched but hatching nothing, which keeps
- * the later toggle a pure uniform write.
+ * `_capUnits` is a private field, so this reads it defensively and gives up
+ * quietly. `on` is the checkbox's current state: a scene rendered with the box
+ * unticked is patched but hatches nothing, so the later toggle is a uniform
+ * write.
  */
 export function hatchSectionCaps(g, on = true) {
   const units = g && g.clipping && g.clipping._capUnits;
@@ -556,22 +374,16 @@ export function hatchSectionCaps(g, on = true) {
 
 /**
  * Flip the hatch without touching a shader: every patched cap's `hatchOn`
- * uniform is rewritten in place and the next frame draws the new answer, with
- * the compiled program, the cache key and the geometry untouched.
+ * uniform is rewritten in place, with the program, cache key and geometry
+ * untouched.
  *
- * The twin of the `userData.hatchShader` reference `hatchShader` keeps: the
- * compile reads the numbers from `userData.hatch` (so a LATER recompile keeps
- * the answer too), and this writes both that source of truth and the live
- * uniform. Caps the scene does not have, or materials not patched, are skipped
- * quietly — this runs on every state event, and a scene with no cut in it has
- * nothing to flip.
+ * Writes both `userData.hatch` (so a later recompile keeps the state) and the
+ * live uniform from `userData.hatchShader`. Unpatched materials are skipped
+ * quietly; this runs on every state event.
  *
- * THE PITCH RIDES ALONG on the same walk rather than getting a writer of its
- * own. It is not part of the toggle and does not belong to `userData.hatch` —
- * it is not per part — but this is the one path that already reaches every LIVE
- * shader, which is why the viewport calls it again after moving the renderer's
- * pixel ratio. The renderer is reached through the display, the one object in
- * `g` that holds the viewer (`Display.setupUI`).
+ * The pitch is updated on the same walk, since this is the one path that
+ * reaches every live shader; the viewport calls it after changing the pixel
+ * ratio. The renderer is reached through the display (`Display.setupUI`).
  */
 export function setCutHatch(g, on) {
   const units = g && g.clipping && g.clipping._capUnits;
@@ -602,24 +414,13 @@ export function setCutHatch(g, on) {
 }
 
 /**
- * `hatchSectionCaps` with this module's promise about it KEPT HERE — the one
- * the viewport calls.
+ * `hatchSectionCaps` wrapped so it cannot throw — the one the viewport calls.
  *
- * The promise is the last paragraph of the header: a viewer that has moved the
- * cap meshes should cost the page its hatch and NOTHING ELSE. `hatchSectionCaps`
- * asks defensively and gives up quietly, but "defensively" is not "cannot
- * throw": every reach into the library's private shape is a property access on
- * an object this does not own, and a getter, a proxy or a revoked reference
- * throws where a plain read would have returned undefined.
- *
- * KEPT AT THE DEFINITION AND NOT AT THE CALL SITE, which is the whole reason
- * this function exists. The call site is inside `show()`, whose own catch draws
- * the error panel INSTEAD OF THE MODEL and sets `loadFailed` — so the next
- * `hmr:state` would not even retry, and a decoration would have taken the whole
- * viewer down. A `try` written around the call there would be correct exactly as
- * long as nobody edited it, and correct-by-spelling is what a test can only
- * check by reading the source. Here it is correct by construction and a test can
- * simply make the patching throw.
+ * Reaching into the library's private shape can throw (a getter, a proxy, a
+ * revoked reference). The call site is inside `show()`, whose catch draws the
+ * error panel instead of the model and sets `loadFailed`, so an escaped error
+ * would take the viewer down. The guard lives here rather than at the call site
+ * so a test can make the patching throw and check it.
  */
 export function safeHatch(g, on) {
   try {

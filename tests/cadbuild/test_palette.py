@@ -1,14 +1,8 @@
-"""The palette, and the bug it exists to prevent.
+"""The palette: a part's colour comes from a hash of its key.
 
-This is the regression that started the whole extraction: the colour of a part
-used to come from its POSITION in `printables()`, so inserting one part at the
-top renumbered every part below it and the next publish came back with the
-whole model repainted -- for an edit that changed none of them. The fix (colour
-from a hash of the key) shipped only in the newest copy of publish.py, so half
-the fleet still had colours that moved and half did not.
-
-Every test here is about that: same key, same colour, no matter what happens
-around it.
+A colour taken from a part's POSITION would repaint every part below an
+inserted one. Every test here is about that: same key, same colour, no matter
+what happens around it.
 """
 
 import hashlib
@@ -147,9 +141,8 @@ def test_hardware_is_as_distinct_as_the_palette_is_from_itself():
     The floor is computed from the palette rather than written down, so the
     rule keeps meaning the same thing after a repaint: this colour has to sit
     at least as far from every colour the build already uses as the two CLOSEST
-    of those sit from each other. Today that floor is about 37 and this colour
-    clears it at about 79, so there is room for an edit that reaches for
-    another grey to be caught without every repaint tripping the check.
+    of those sit from each other (measured: floor about 37, this colour about
+    79).
     """
     others = list(PART_PALETTE) + [MOCK_COLOR]
     floor = min(_apart(a, b) for a, b in itertools.combinations(others, 2))

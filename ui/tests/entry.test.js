@@ -29,7 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // itself instead of with the code.
 //
 // `loadStart` is stubbed beside it and answers `null` by default — a hub that
-// could NOT be asked, which since issue #91 is the only thing `null` means. A hub
+// could NOT be asked, which is the only thing `null` means. A hub
 // with projects on it answers `{ ...paths, empty: false }`, and a test that wants
 // that one says so: `FULL` below. What the real one does with what a hub actually
 // sends is `start.test.js`, in a file of its own for the reason given there: this
@@ -69,7 +69,7 @@ import { collect, texts, titles } from './eltree.js'
  *
  * `render.index_card` writes every field here but one: `status` is a live fact
  * about the project's draft, so the file declares it as null and the route
- * fills it in per request (`_serve_index_json` in src/app.py, issue #32).
+ * fills it in per request (`_serve_index_json` in src/app.py).
  */
 const CARD = {
   pid: '0a1b2c3d4e5f',
@@ -80,13 +80,8 @@ const CARD = {
   first_built: '2026-01-22T09:00:00Z',
   dev: false,
   status: 'idle',
-  // BOTH OF THESE WERE RENAMED, AND THE COUNT UNDER THE FIRST ONE CHANGED WITH
-  // IT (issue #75). `parts` used to be the part count of the biggest view;
   // `printables` is how many records in the build's catalogue are actually
-  // printed, so the bought screws and the scenery are out of it. The card would
-  // have gone on rendering a number under the old name, which is exactly why
-  // the hub stopped writing that name — a reader breaks loudly here instead of
-  // quietly showing the wrong total.
+  // printed, so the bought screws and the scenery are out of it.
   printables: 14,
   views: 3,
   mb: '1.2',
@@ -323,21 +318,14 @@ describe('the order of the list', () => {
 })
 
 // -- the arrangement, between visits -----------------------------------------
-// Which way the list is drawn and what order it is in used to be state and
-// nothing else, so both were re-chosen on every page load: a reader who works
-// from the dense list by name got tiles by last-built again on the next visit.
-// What is pinned here is the two ends of the memory — that a stored answer is
-// what the page comes up with, and that choosing one records it.
+// Which way the list is drawn and what order it is in are remembered between
+// visits. What is pinned here is the two ends of the memory — that a stored
+// answer is what the page comes up with, and that choosing one records it.
 //
-// THE CASE THE STORAGE MAKES UNAVOIDABLE — a cell holding a value the page
-// cannot use — is NOT here, and could not honestly be: store.js is stubbed in
-// this file, so a bad value planted through the stub would be testing the
-// component against something the real module cannot produce. It lives in
-// `arrangement.test.js`, which drives the real store, in a file of its own
-// because that is the cheap way to get the isolation: vitest resets the module
-// registry between FILES, and undoing a `vi.mock` inside one is a two-part
-// restore where forgetting the second part silently hands the next dynamic
-// import the wrong module.
+// A cell holding a value the page cannot use is tested in
+// `arrangement.test.js`, which drives the real store: store.js is stubbed in
+// this file, so a bad value planted through the stub would test the component
+// against something the real module cannot produce.
 
 describe('the arrangement of the list', () => {
   /** The component as React builds it: defaultProps applied, constructor run. */
@@ -377,11 +365,7 @@ describe('the arrangement of the list', () => {
     // Both halves travel through one method, and a click sets one of them. The
     // other must not be rewritten with the value it already had — a write per
     // click on an unrelated tab is a cell changing for no reason anybody could
-    // trace.
-    //
-    // BOTH DIRECTIONS, because the sentence above is about the PAIR and only one
-    // of them was asked: a `choose` that wrote the sort on every view click
-    // passed this test unchanged, while the name claimed otherwise.
+    // trace. Asserted in both directions.
     built().choose({ sort: 'first' })
     expect(writeProjectSort).toHaveBeenCalledWith('first')
     expect(writeProjectView).not.toHaveBeenCalled()
@@ -394,10 +378,9 @@ describe('the arrangement of the list', () => {
   })
 
   it('asks storage once, at construction, rather than on every render', () => {
-    // AND IT RENDERS, which is the half the name promises and the body used to
-    // leave out: with only the constructor run, a getter that read storage on
-    // every access passed this test unchanged. Two renders rather than one,
-    // because "once per render" and "once ever" are the same count at one.
+    // And it renders: with only the constructor run, a getter that read
+    // storage on every access would pass. Two renders rather than one, because
+    // "once per render" and "once ever" are the same count at one.
     const c = built()
     c.props = { ...c.props, projects: [] }
     c.render()
@@ -407,10 +390,9 @@ describe('the arrangement of the list', () => {
   })
 
   it('lights the card the pointer is over, in either view', () => {
-    // `cardStyle` is the one thing the two view bodies share, and it became a
-    // method when they became a table — so what used to be a closure over
-    // `this.state` inside `render()` now has to read the same state from
-    // outside it. Both bodies call it, so a break here is a break in both.
+    // `cardStyle` is the one thing the two view bodies share, a method reading
+    // `this.state` from outside `render()`. Both bodies call it, so a break
+    // here is a break in both.
     const c = built()
     const resting = c.cardStyle('a')
     c.state = { ...c.state, hover: 'a' }
@@ -546,10 +528,10 @@ describe('arriving with a token already stored', () => {
   })
 
   it('asks for no list when there is no token, and asks /start instead', () => {
-    // BOTH HALVES ARE ASSERTED, and the second one used to be a sentence. It
-    // does ask the hub ONE thing on this path — whether anything is published
-    // here, which is what the door's block is drawn from. That is the public
-    // route and it carries no token; the guarded one is not touched.
+    // Both halves are asserted. It does ask the hub ONE thing on this path —
+    // whether anything is published here, which is what the door's block is
+    // drawn from. That is the public route and it carries no token; the
+    // guarded one is not touched.
     const c = page(null)
     HammerolaEntry.prototype.componentDidMount.call(c)
     expect(loadIndex).not.toHaveBeenCalled()
@@ -621,17 +603,15 @@ describe('which screen is drawn', () => {
 //
 // Five lines somebody copies and hands to their agent: where the skill is, where
 // the client is, what this hub's address is, install the skill and follow it,
-// ask the owner for the token (issue #48). What is pinned here is the
-// properties that are decisions rather than layout — it appears at every arrival
-// at the door AND ONLY ON A HUB WITH NOTHING PUBLISHED, every address in it is
-// BUILT from the browser's origin and the manifest's paths, it carries no token,
-// and it never claims to have copied itself when it has not.
+// ask the owner for the token. What is pinned here is the properties that are
+// decisions rather than layout — it appears at every arrival at the door AND
+// ONLY ON A HUB WITH NOTHING PUBLISHED, every address in it is BUILT from the
+// browser's origin and the manifest's paths, it carries no token, and it never
+// claims to have copied itself when it has not.
 //
-// THE CONDITION IS THIS SCREEN'S OWN NOW (issue #91). `startHint` used to answer
-// `null` for a hub with projects, so nothing here could draw a block on one even
-// by mistake; it answers `empty: false` instead, because the list draws the
-// block on such a hub. So the assertion that the DOOR does not is the only thing
-// holding that line, and it is the second test below.
+// `startHint` answers `empty: false` for a hub with projects, because the list
+// draws the block there, so the assertion that the DOOR does not is the only
+// thing holding that line (the second test below).
 //
 // WHAT IS NOT HERE is what the manifest has to say for the paths to exist at
 // all: that lives in start.test.js, where hub.js is the real module.
@@ -747,10 +727,9 @@ describe('the block for an agent', () => {
   })
 
   it('is handed no token to print, whatever the page is holding', () => {
-    // THE RULE THAT USED TO BE A RULE ABOUT THE WHOLE FILE, now a rule about
-    // this screen (issue #91): the lines CAN carry a token, and the door is
-    // where they must not — its reader has not got in, so there is nothing of
-    // theirs to print and a token on that screen could only be somebody else's.
+    // The lines CAN carry a token, and the door is where they must not: its
+    // reader has not got in, so a token on that screen could only be somebody
+    // else's.
     //
     // DRIVEN FROM THE PAGE, not from the screen, because what keeps the door's
     // copy tokenless is not a check inside it: it is that `render` hands the
@@ -800,13 +779,10 @@ describe('the fifth line of the brief', () => {
 
 describe('when the page asks the hub about itself', () => {
   it('asks on a page load with no token, which is the arrival it exists for', async () => {
-    // THE ONE THAT ACTUALLY HAPPENS: somebody deployed this, opened it, and has
-    // no token — the whole reason the block was written. It was also the one
-    // arrival nothing covered: deleting `this.askStart()` out of
-    // `componentDidMount` left every test in this file green, while the two
-    // arrivals below (sign-out, a refused token) both caught it. Asserted end to
-    // end rather than by counting the call, so that a mount which asks and then
-    // drops the answer fails here too.
+    // The case that actually happens: somebody deployed this, opened it, and
+    // has no token. Asserted end to end rather than by counting the
+    // `askStart()` call, so that a mount which asks and then drops the answer
+    // fails here too.
     loadStart.mockImplementation(async () => HINT)
     const c = page(null)
     await HammerolaEntry.prototype.componentDidMount.call(c)
@@ -816,12 +792,10 @@ describe('when the page asks the hub about itself', () => {
   })
 
   it('asks for a reader who has a token too, and after their list has come back', async () => {
-    // THE LAZINESS THAT WENT WITH THE GATE (issue #91). While the door was the
-    // only screen drawing a block, a reader with a token was somebody the
-    // question bought nothing for; the list draws one now, so that reader is
-    // exactly who it is asked for. Asserted end to end — the answer has to reach
-    // `start`, not merely be requested — and the list is asserted first, because
-    // the ask is deliberately behind it: this is the screen that reads it.
+    // A reader with a token is asked too, because the list draws the block.
+    // Asserted end to end — the answer has to reach `start`, not merely be
+    // requested — and the list is asserted first, because the ask is
+    // deliberately behind it: this is the screen that reads it.
     loadIndex.mockResolvedValue([CARD])
     loadStart.mockImplementation(async () => ({ ...HINT, empty: false }))
     const c = page('remembered')
@@ -874,11 +848,9 @@ describe('when the page asks the hub about itself', () => {
   })
 
   it('keeps the paths when the hub answered that it has projects', async () => {
-    // WHAT THE GATE'S REMOVAL LOOKS LIKE FROM UP HERE. This used to be a hub
-    // whose answer was `null`, i.e. one the page learnt nothing addressable
-    // from; it now hands the paths over with `empty: false` on them, because the
-    // list has to print them on such a hub. `null` is left meaning one thing —
-    // the hub was not asked, or could not be read — which is the test below.
+    // A hub with projects hands the paths over with `empty: false` on them,
+    // because the list has to print them on such a hub. `null` means one thing
+    // — the hub was not asked, or could not be read — which is the test below.
     loadStart.mockImplementation(async () => ({ ...HINT, empty: false }))
     const c = page()
     await c.askStart()
@@ -904,16 +876,12 @@ describe('when the page asks the hub about itself', () => {
   })
 
   it('asks again after an ask that threw, rather than handing back the wreck', async () => {
-    // UNREACHABLE TODAY AND WRITTEN ANYWAY, because the path is deliberate:
-    // `loadStart` resolves for every failure it can have, and `startHint` was
-    // put OUTSIDE its `try` on purpose so that a defect in this bundle arrives
-    // as a stack trace instead of a hub that silently never has a block
-    // (hub.js). "There is nothing to catch here" is therefore the first
-    // sentence in askStart's docstring that will go stale, and clearing the
-    // flight on the fulfilled branch alone makes that day cost twice: the
-    // rejected promise sits in `this.asking` and every later arrival at the
-    // door gets it back without a request being made, so the block never
-    // appears again for the life of the page.
+    // Unreachable today, written anyway: `loadStart` resolves for every
+    // failure it can have, and `startHint` sits outside its `try` on purpose so
+    // that a defect in this bundle arrives as a stack trace (hub.js). If the
+    // flight were cleared on the fulfilled branch alone, a rejected promise
+    // would sit in `this.asking` and every later arrival at the door would get
+    // it back without a request, so the block would never appear again.
     loadStart.mockImplementationOnce(async () => { throw new Error('defect') })
     const c = page()
     await expect(c.askStart()).rejects.toThrow('defect')
@@ -942,16 +910,12 @@ describe('when the page asks the hub about itself', () => {
   })
 
   it('leaves the question about /start unasked and unanswered', async () => {
-    // THE CONSTRUCTOR IS OTHERWISE UNTESTED, and everything the block hangs off
-    // is seeded there: `start`, `answered` and `asking`. Every other test in
-    // this file builds the page with `Object.create` and writes `state` by
-    // hand, so the constructor never runs in them — and all three of
-    // `answered = true`, `asking = <a promise that never settles>` and a
-    // `start` seeded with a block passed the entire suite unchanged. The first
-    // two are the door never asking `/start` at any arrival, on any hub, for
-    // the life of the tab; the third is the block drawn on a hub that never
-    // said it was empty. Asserted through a real ask rather than by reading the
-    // fields, so that seeding them with anything else fails here too.
+    // The constructor seeds everything the block hangs off — `start`,
+    // `answered` and `asking` — and every other test here builds the page with
+    // `Object.create`, so this is the only one that runs it. A wrong seed is
+    // the door never asking `/start` for the life of the tab, or the block
+    // drawn on a hub that never said it was empty. Asserted through a real ask
+    // rather than by reading the fields.
     loadStart.mockImplementation(async () => HINT)
     const c = new HammerolaEntry({})
     c.setState = vi.fn((patch) => { c.state = { ...c.state, ...patch } })
@@ -1057,10 +1021,10 @@ describe('copying the block', () => {
 // The list is behind the token, so this is the one page in the bundle that can
 // print one — and the one whose reader is the owner who already has it. What is
 // pinned here is that the block is drawn from what the page was handed, that the
-// lines it copies are the lines it drew, and that it is drawn ON EVERY HUB
-// (issue #91): the door's `empty` is the door's, and a page that only offered
-// the brief while the list was empty would offer it for the one hour of a hub's
-// life when nobody needs a page to find it.
+// lines it copies are the lines it drew, and that it is drawn ON EVERY HUB: the
+// door's `empty` is the door's, and a page that only offered the brief while the
+// list was empty would offer it for the one hour of a hub's life when nobody
+// needs a page to find it.
 
 /** The list as the page hands it over: defaultProps applied, state seeded. */
 function list(props) {
@@ -1075,12 +1039,10 @@ const clipboard = (writeText) => {
 
 describe('the caption under the list', () => {
   it('says both halves of it, in one line', () => {
-    // SHORTER, NOT SMALLER (issue #91). The two claims are the whole of the
-    // sentence and neither survives being dropped: a project is listed from its
-    // first commit, and a push into the local `dev` slot never lists one. What
-    // is asserted is that ONE string carries both — the old wording said them on
-    // two lines either side of a `<br>`, so a reading that found them in two
-    // strings would pass on the sentence this replaced.
+    // Shorter, not smaller. The two claims are the whole of the sentence: a
+    // project is listed from its first commit, and a push into the local `dev`
+    // slot never lists one. Asserted as ONE string carrying both, so a reading
+    // that found them in two strings fails.
     const drawn = texts(list({}).render())
     const said = drawn.filter((line) => line.includes('hammerola commit'))
     expect(said).toHaveLength(1)
@@ -1137,8 +1099,8 @@ describe('the block on the list', () => {
   })
 
   it('copies the lines it drew, and no others', async () => {
-    // The rule the door keeps, at the second place it now has to hold: what is
-    // copied cannot differ from what is read. Both come from `brief()`.
+    // The rule the door keeps holds here too: what is copied cannot differ
+    // from what is read. Both come from `brief()`.
     const writeText = vi.fn(async () => {})
     clipboard(writeText)
     const c = list({ start: AT, token: 'sekrit' })
@@ -1241,11 +1203,10 @@ describe('what the page hands the list', () => {
 
 // -- removing a project ------------------------------------------------------
 //
-// Issue #92. The route has been there since #26 (`_handle_delete` in src/app.py)
-// and until now only a terminal could reach it, so what is new is the interface
-// and every one of these is about that: who is offered the control, what the
-// confirmation demands before it will act, what goes on the wire when it does,
-// and what a refusal leaves standing.
+// The route is `_handle_delete` in src/app.py; these tests are about the
+// interface to it: who is offered the control, what the confirmation demands
+// before it will act, what goes on the wire when it does, and what a refusal
+// leaves standing.
 //
 // THE HUB CALL IS THE REAL ONE. `deleteProject` is deliberately NOT in the mock
 // factory at the top of this file — it arrives through `importOriginal` — so the

@@ -1,24 +1,15 @@
 """The whitelist of `run:` bodies the two workflows share, checked mechanically.
 
-AGENTS.md states the rule and the reason: a handful of step bodies must be
-BYTE-IDENTICAL between `.gitea/workflows/tests.yml` and
-`image-check-publish.yml`, because that is the whole mechanism keeping the PR
-gate from drifting into testing less than the publishing one. It also says to
-verify it by hashing rather than by eye.
+AGENTS.md states the rule: a handful of step bodies must be BYTE-IDENTICAL
+between `.gitea/workflows/tests.yml` and `image-check-publish.yml`, so the PR
+gate cannot drift into testing less than the publishing one. This file hashes
+them on every push.
 
-This file is that hashing, run on every push. Until it existed the rule was
-prose, and a prose rule about two files that are edited months apart is a rule
-that holds until the first hurried edit — which, by the shape of the failure,
-would be an edit that made the PR side check LESS while both files still looked
-right.
+Read as text with no YAML parser: a parser normalises whitespace, and whitespace
+is what is under test.
 
-Read as text, deliberately, with no YAML parser anywhere near it: a parser
-normalises whitespace, and whitespace is precisely what is under test.
-
-The two steps that LOOK like they belong on the list and deliberately do not get
-an assertion of their own at the bottom — that they still DIFFER — so that
-"fixing" them into agreement is caught in the same place as breaking one of the
-six.
+The two look-alike steps that deliberately differ are asserted to STILL differ,
+so "fixing" them into agreement is caught here too.
 """
 
 from __future__ import annotations
@@ -149,9 +140,9 @@ def test_the_whitelist_here_matches_the_one_in_agents_md():
         f"one — this file checks {len(IDENTICAL)} bodies")
 
 
-# The gate's worst case, written down in THREE places: `ci/smoke.py` sums it from
-# its own per-call budgets, and each workflow repeats the total in the comment
-# that justifies the step's `timeout-minutes`.
+# The gate's worst case, written in three places: `ci/smoke.py` sums it from its
+# per-call budgets, and each workflow repeats the total in the comment that
+# justifies the step's `timeout-minutes`.
 SMOKE = WORKFLOWS.parents[1] / "ci" / "smoke.py"
 SMOKE_SUM = re.compile(r"^#\s*=\s*(\d+) s,", re.M)
 WORKFLOW_SUM = re.compile(r"sums from its individual per-call bounds: (\d+) s")
@@ -159,26 +150,13 @@ STEP_TIMEOUT = re.compile(r"timeout-minutes:\s*(\d+)")
 
 
 def test_the_gates_worst_case_is_the_same_number_in_all_three_places():
-    """One number, three files, and it has already drifted once in silence.
+    """The gate's worst-case sum is the same number in all three places.
 
-    Before check (i) was added, `ci/smoke.py` declared 765 s while both workflows
-    declared 735 — each file consistent with ITSELF (840 − 75, 840 − 105) and
-    with neither the other nor the truth. Nothing said so, because the rule was
-    a sentence: "Raise this number whenever that sum grows past it, in BOTH
-    workflows". AGENTS.md is explicit that a sentence like that is the
-    specification for a test, and this is it.
-
-    WHAT THE DRIFT COSTS is not a wrong comment. The step's `timeout-minutes` is
-    sized off this sum, and a gate killed by its own timeout never reaches the
-    `finally` that removes the containers it started — so the next run on that
-    runner meets a name that is already taken. The margin is 45 s now, the
-    narrowest it has been, which is exactly when the number stops tolerating a
-    silent copy.
-
-    The sum cannot be DERIVED from the constants: it is a sequence of calls, not
-    a set of them, and only the script knows which ones it makes. Agreement
-    between the three writings is all that is available, and it is enough to
-    catch what actually went wrong.
+    The step's `timeout-minutes` is sized off this sum, and a gate killed by its
+    own timeout never reaches the `finally` that removes its containers, so the
+    next run on that runner meets a name already taken. The sum cannot be
+    derived (it is a sequence of calls only the script knows), so agreement
+    between the three writings is what is checked.
     """
     declared = SMOKE_SUM.search(SMOKE.read_text(encoding="utf-8"))
     assert declared, (
@@ -209,32 +187,25 @@ def test_the_gates_worst_case_is_the_same_number_in_all_three_places():
             f"`finally` that removes its containers never runs")
 
 
-# The suite runs as TWO pytest invocations, and which tests each one takes is
-# load-bearing rather than a tidy split.
+# The suite runs as two pytest invocations; which tests each takes is
+# load-bearing.
 SUITE_STEP = "Run the test suite in a container"
 BUILDPROC_RUN = "pytest -n 4 --dist loadfile tests/buildproc "
 REST_RUN = "pytest -n 4 --dist loadfile --ignore=tests/buildproc "
 
 
 def test_buildproc_runs_in_a_pytest_of_its_own(pr_bodies, publish_bodies):
-    """Merge the two invocations back into one and CI starts flipping a coin.
+    """tests/buildproc runs in a pytest invocation of its own.
 
-    `tests/buildproc/conftest.py` opens every test there by asserting the real
-    kernel is not imported in this process -- a test that reached the live OCCT
-    pool would resize it for everything after. Serially that held for free:
-    `tests/buildproc/` is collected before `tests/cadbuild/`, whose real-geometry
-    tests `importorskip("cadquery")` into the pytest process. Under xdist a
-    worker takes whole files as they free up, so one worker can run a buildproc
-    file, then a kernel file, then another buildproc file -- and every buildproc
-    test after that errors at SETUP, blaming "a stub planted without monkeypatch"
-    for something no test did. 91 errors on the run that caught it, against four
-    green runs before, i.e. this is a coin rather than a regression.
+    `tests/buildproc/conftest.py` asserts the real kernel is not imported in the
+    process (a test reaching the live OCCT pool would resize it for everything
+    after). Under xdist a worker takes whole files as they free up, so a worker
+    could run a kernel-importing `tests/cadbuild/` file between buildproc files,
+    and every later buildproc test would error at setup — intermittently.
 
-    Two things hold it up besides the split, and neither is checked here because
-    neither can be read off the workflow: nothing under `src/` imports the kernel
-    at module level (it is reached inside functions), and no test under
-    `tests/buildproc/` imports it either -- `probes.py` asks a SUBPROCESS. Break
-    one of those and this test still passes while the coin comes back.
+    Also required, but not readable from the workflow: nothing under `src/`
+    imports the kernel at module level, and no test under `tests/buildproc/`
+    imports it (`probes.py` asks a subprocess).
     """
     for name, body in (("tests.yml", pr_bodies[SUITE_STEP]),
                        ("image-check-publish.yml", publish_bodies[SUITE_STEP])):
@@ -248,12 +219,10 @@ def test_buildproc_runs_in_a_pytest_of_its_own(pr_bodies, publish_bodies):
             f"have the kernel imported, which is the failure the split avoids")
 
 
-# THE TEST IMAGE'S TAG IS A HASH OF ITS INPUTS, and "its inputs" has to mean the
-# same set of files in three places: the `cat` that hashes them, the `tar` that
-# makes the build context, and the `COPY` in ci/Dockerfile.test that puts them in
-# the image. A file that reaches the image without reaching the hash is a stale
-# image answering to a CURRENT tag — the single failure the hash exists to rule
-# out, arriving through the back door.
+# The test image's tag is a hash of its inputs, and "its inputs" must be the same
+# set in three places: the `cat` that hashes them, the `tar` that makes the build
+# context, and the `COPY` in ci/Dockerfile.test. A file in the image but not in
+# the hash is a stale image answering to a current tag.
 TEST_DOCKERFILE = WORKFLOWS.parents[1] / "ci" / "Dockerfile.test"
 HASHED = re.compile(r'TEST_IMAGE="hammerola-test:\$\(cat ([^|]+)\| sha256sum')
 CONTEXT = re.compile(r"tar -cf - (ci/Dockerfile\.test[^\\\n]*)")
@@ -264,16 +233,10 @@ def test_the_test_images_tag_hashes_every_file_that_can_change_it(pr_bodies,
                                                                  publish_bodies):
     """Three lists, one set, in both workflows.
 
-    Read as text rather than executed, because what goes wrong is an edit: a
-    requirements file added to the `COPY` and forgotten in the `cat`, and every
-    run afterwards reuses an image built from the older set while the tag says it
-    is current. Nothing about that run looks wrong — the suite passes, against
-    dependencies nobody chose.
-
-    The build context is in the set for the same reason, from the other side: a
-    file the hash names but the context does not is a build that fails outright,
-    which is loud, but it also means the hash is measuring something the image
-    cannot contain.
+    What goes wrong is an edit: a requirements file added to the `COPY` and
+    forgotten in the `cat`, after which every run reuses an image built from the
+    older set. A file hashed but missing from the context fails the build
+    loudly, but means the hash measures something the image cannot contain.
     """
     copied = COPIED.search(TEST_DOCKERFILE.read_text(encoding="utf-8"))
     assert copied, (
@@ -306,14 +269,11 @@ def test_the_test_images_tag_hashes_every_file_that_can_change_it(pr_bodies,
 
 
 def test_the_suite_runs_in_the_image_the_step_builds(pr_bodies, publish_bodies):
-    """The link that used to be mechanical and became prose.
+    """The suite's `docker run` uses the image the step builds.
 
-    While the kernel's libraries were installed by the `docker run` itself,
-    tests/test_ci_kernel_libs.py read the executed line. They live in
-    ci/Dockerfile.test now, so that file is what it reads — and an edit putting
-    any other image back on the `docker run` would leave all of it green while
-    about ninety tests quietly went back to being skips, which is the failure
-    issue #27 closed.
+    The kernel's libraries live in ci/Dockerfile.test (read by
+    tests/test_ci_kernel_libs.py), so any other image on the `docker run` would
+    leave that green while about ninety tests silently become skips.
     """
     for name, body in (("tests.yml", pr_bodies[SUITE_STEP]),
                        ("image-check-publish.yml", publish_bodies[SUITE_STEP])):

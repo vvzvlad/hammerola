@@ -1,22 +1,15 @@
 """requirements.txt and requirements.lock, held to one story.
 
-The image installs the LOCK — `pip install --no-cache-dir --require-hashes -r
-requirements.lock` in the Dockerfile — and the lock is compiled from
-requirements.txt by `make lock`, by hand and on purpose (the Makefile's `lock`
-target carries the reasoning). Two files that have to agree and nothing making
-them is the arrangement this project keeps out everywhere else, and here the
-disagreement is silent in the worst direction: a version raised in
-requirements.txt with a lock nobody regenerated means the bump reached no build
-at all, while the commit that carries it reads exactly like one that did.
+The image installs the LOCK (`pip install --no-cache-dir --require-hashes -r
+requirements.lock` in the Dockerfile), compiled from requirements.txt by
+`make lock`, by hand and on purpose (the Makefile's `lock` target explains). A
+version raised in requirements.txt with a lock nobody regenerated reaches no build,
+while the commit reads like one that did.
 
-THE GATE COVERS PART OF THIS AND CANNOT COVER THIS PART. ci/smoke.py reads seven
-versions back out of the BUILT IMAGE — the four kernel ones and the three the
-preview picture needs — and compares them against its own `PINS`, so it catches
-a three-edit bump done in two: PINS ahead of the image (the lock was never
-regenerated) or the image ahead of PINS. What it cannot see
-is the bump done in ONE — requirements.txt edited alone changes nothing in the
-image, so the gate reads back exactly what it read before and says so. That is
-the case this file is for, and it is cheap, because both files are text.
+ci/smoke.py reads seven versions back out of the BUILT IMAGE (the four kernel ones
+and the three the preview picture needs) and compares them against its `PINS`, so
+it catches PINS and the image disagreeing. It cannot see requirements.txt edited
+alone, which changes nothing in the image. That case is this file's.
 """
 
 import re
@@ -140,12 +133,10 @@ def test_every_pin_in_requirements_is_the_version_the_lock_resolved():
 def test_the_dockerfile_installs_the_lock_and_requires_hashes():
     """The mechanism itself, which a one-line edit could undo in silence.
 
-    Restoring `-r requirements.txt` there leaves every check in this repository
-    green: the seven pins the gate reads back are stated in requirements.txt too,
-    so the image would pass it while the other distributions went back to
-    floating. (Since the dependency layer copies the lock ALONE, that swap now
-    also needs the COPY line changed to bring requirements.txt back up there —
-    which is a second edit, not a second check.)
+    Restoring `-r requirements.txt` there leaves every other check green: the seven
+    pins the gate reads back are in requirements.txt too, so the image would pass
+    while the other distributions floated. (The dependency layer copies the lock
+    alone, so that swap also needs the COPY line changed.)
     """
     assert INSTALL_RE.search(DOCKERFILE), (
         "the Dockerfile has no `RUN pip install ... --require-hashes -r "
@@ -157,29 +148,19 @@ def test_the_dockerfile_installs_the_lock_and_requires_hashes():
 
 
 def test_the_counts_requirements_txt_states_are_the_counts_that_exist():
-    """The arithmetic in that file's prose, which has been wrong twice.
+    """The counts requirements.txt's prose states are the counts that exist.
 
-    Before the lock it said "60 distributions … the remaining 53"; with the lock
-    it said the gate repeats "these same four versions … the other 52" while
-    ci/smoke.py's PINS held seven. Each version was internally consistent and
-    externally false, which is precisely the failure a reader cannot catch: the
-    paragraph reads as though somebody counted.
-
-    Nothing else could hold these. The numbers move on a `make lock` that added
-    or dropped a transitive package — an edit nobody makes to this file at all —
-    and AGENTS.md is explicit that an assertion which has to stay true belongs
-    in a test. So this is the test, and it counts what the prose asserts:
+    The numbers move on a `make lock` that adds or drops a transitive package, an
+    edit nobody makes to requirements.txt, so they are counted here:
 
       * the lock's size, all three times the file states it;
       * the split of that size into named-here + inherited + transitive, with
-        two of the three terms counted rather than taken on trust — only
+        two of the three terms counted rather than taken on trust; only
         `transitive` is left to the sum, and it is the term nobody hand-edits;
       * how many of them the gate reads back out of the built image, and how
         many it therefore says nothing about.
 
-    A REWORDING FAILS THIS, and that is deliberate: `counts()` says so in as
-    many words, and the sentences are quoted above it. Re-checking the number
-    while re-checking the pattern is the point.
+    A REWORDING FAILS THIS on purpose: `counts()` quotes the sentences it reads.
     """
     resolved = len(pins(LOCK))
     assert resolved > 0, "requirements.lock parses to nothing — the regex is wrong"

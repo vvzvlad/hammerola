@@ -1,16 +1,11 @@
-// The three contracts of `component.js`, which 21 files now rest on (#102).
+// The three contracts of `component.js`, which most files in this directory
+// rest on. Each test below is a way the helper could be "improved" that would
+// take a directory of tests down quietly.
 //
-// A FIXTURE WITH NO PROOF THAT IT CAN FAIL IS WORTH WHAT THAT ONE WAS —
-// `pageguard.test.js` says it about a guard, and it holds here for the same
-// reason: these three were prose in a docblock, and prose is what a later
-// "improvement" reads past. Each one below is a way the helper could be made
-// to look better and take a directory of tests down with it QUIETLY.
-//
-// The one-level merge is the sharpest. Deepening it reads like a fix — the
-// docblock itself calls the current behaviour surprising — and the three
-// fixtures that pass `{ parts: null }` to ask for a build with no files would
-// then get the default's `lid.stl` back and go on passing, asserting the
-// "nothing to download" branch against a build that has something.
+// The one-level merge is the sharpest: deepened, the three fixtures that pass
+// `{ parts: null }` to ask for a build with no files would get the default's
+// `lid.stl` back and go on passing, asserting the "nothing to download" branch
+// against a build that has something.
 
 import { describe, it, expect, vi } from 'vitest'
 

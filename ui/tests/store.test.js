@@ -3,38 +3,22 @@
 // projects is arranged, the strip of projects this browser has been in, and
 // whether the model is drawn at retina resolution.
 //
-// THE STORAGE IS A DOUBLE, AND THE DOUBLE IS THE WHOLE TEST. There is no
-// `localStorage` in this runner at all: Node's own global of that name is
-// undefined unless the process was started with `--localstorage-file`, and it
-// wins over the one jsdom would otherwise put on the window — so `typeof
-// localStorage` is `undefined` here, both as a global and as `window.localStorage`.
-// Every access in store.js sits inside a try/catch that reads an absent storage
-// as "nothing was remembered", so against the bare runner these tests pass with
-// the module gutted: `writeToken` would store nothing, `readToken` would return
-// null, and a test that only checks "no throw" would be perfectly happy.
+// The storage is a double. This runner has no `localStorage`: Node's global of
+// that name is undefined unless started with `--localstorage-file`, and it wins
+// over jsdom's, so it is `undefined` both as a global and on `window`. store.js
+// reads an absent storage as "nothing was remembered", so without the double
+// these tests would pass against a module that stores nothing. Hence:
 //
-// Hence the two rules this file is built on:
+//   * the double is installed for the whole file, not one `describe`, so a new
+//     block cannot be written without it;
+//   * its absence is an error: `expectTheDouble()` runs before every test.
 //
-//   * the double is installed for the WHOLE FILE, not for one `describe`. A
-//     `beforeEach` inside one block is an invitation for the next block to be
-//     written beside it without one — and that block would go green against a
-//     module that stored nothing;
-//   * its absence is an ERROR RATHER THAN SILENCE. `expectTheDouble()` below
-//     runs before every test and says out loud what broke, because the failure
-//     it guards against does not look like a failure: it looks like a passing
-//     suite.
+// That matters most for the token, the one secret these pages hold.
 //
-// That matters most for the TOKEN. It is the one secret these pages hold, and
-// "the token was silently not saved" is indistinguishable from "the token was
-// saved" to any test that does not look at the storage it was saved into.
-//
-// The keys are written out below rather than imported, and that is the one place
-// here where a literal is the right answer: they are the OBSERVABLE — the
-// pointer key is read by a module outside this bundle entirely
-// (`static/_v/pointer_pref.js`, compared as text by `tests/test_pointer_memory.py`),
-// and the others are what a reader's browser carries between visits. Reusing
-// the module's own expression would give a test that agrees with itself whatever
-// it is changed to.
+// The keys are written out rather than imported because they are the
+// observable: the pointer key is read by `static/_v/pointer_pref.js` (compared
+// as text by `tests/test_pointer_memory.py`), and the others are what a
+// reader's browser carries between visits.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -76,12 +60,10 @@ function install(replacement) {
 }
 
 /**
- * The guard: this test is about to assert something about stored values, and
- * there has to be somewhere for them to be stored.
+ * The guard: there must be a storage for stored values to land in.
  *
- * A thrown Error rather than an `expect`, because what it reports is not a
- * failed assertion about the code under test — it is this file having stopped
- * testing anything, and the message has to say so in those words.
+ * A thrown Error rather than an `expect`, because it reports that this file has
+ * stopped testing anything, not a failed assertion about the code.
  */
 function expectTheDouble() {
   if (typeof localStorage === 'undefined' || localStorage !== storage) {
@@ -120,11 +102,9 @@ describe('the token', () => {
   })
 
   it('is not keyed by anything, so signing in once covers every project', () => {
-    // The property this replaced was the opposite one, and it was right while
-    // the shape of the human token was still undecided. It is checked in this
-    // direction now because the regression available is a per-project key coming
-    // back: the front page would then write a cell no project page ever reads,
-    // and signing in there would look like it worked and do nothing.
+    // One token key for the whole site: a per-project key would make the front
+    // page write a cell no project page reads, so signing in there would do
+    // nothing.
     writeToken('sekrit')
     expect([...storage.cells.keys()]).toEqual([TOKEN_KEY])
   })
@@ -168,14 +148,11 @@ describe('the token', () => {
 })
 
 // -- the notes ---------------------------------------------------------------
-// A note is a property of a PART and belongs to the project rather than to a
-// build: "3.2 mm wall, printer minimum, leave it" is true before a rebuild and
-// after one. There is no endpoint for them, so they live here, keyed by the
-// part's CATALOGUE KEY since issue #75 — the identity the model declares, which
-// survives a rebuild and does not change between the print view and the
-// assembled one the way a row's name does. Nothing in THIS module knows that:
-// it stores whatever map it is handed under the project's key, which is why the
-// change cost it no code and no test.
+// A note belongs to a part and the project rather than to a build: "3.2 mm
+// wall, printer minimum, leave it" is true across rebuilds. There is no
+// endpoint for them, so they live here, keyed by the part's catalogue key
+// (which survives a rebuild and is the same in every view). This module just
+// stores whatever map it is handed under the project's key.
 
 describe('the notes', () => {
   const notes = { 'bracket-left': '3.2 mm wall, leave it', clamp: 'reprint in PETG' }
@@ -236,13 +213,11 @@ describe('the notes', () => {
 
 // -- the pointer memory ------------------------------------------------------
 // The one thing this bundle stores that somebody else reads: the resolver page
-// at /project/<pid>/ has a module of its own (`static/_v/pointer_pref.js`)
-// because it must not pull this bundle to answer one question and leave. Nothing
-// in JavaScript can check that the two spellings of the key agree — the resolver
-// is not in this bundle and is not going to be — so `tests/test_pointer_memory.py`
-// compares them as text. What is left for this file is the behaviour behind the
-// key: which names get recorded, which get refused, and that a browser refusing
-// storage does not take the page down with it.
+// at /project/<pid>/ has its own module (`static/_v/pointer_pref.js`) so it does
+// not pull this bundle. `tests/test_pointer_memory.py` compares the two
+// spellings of the key as text. This file covers which names get recorded,
+// which get refused, and that a browser refusing storage does not break the
+// page.
 
 describe('rememberPointer', () => {
   it('records either of the two moving names under the project key', () => {
@@ -295,12 +270,9 @@ describe('rememberPointer', () => {
 // Tiles or rows, and in what order. One key each for the whole site, because a
 // hub has one list of projects and the page holding it names no project.
 //
-// EVERY TEST BELOW IS ABOUT THE VALUE COMING BACK, not about the value going in.
-// What is in a cell is a string this browser has been carrying since whichever
-// version of the page wrote it, and the failure being guarded against is not a
-// wrong arrangement — it is a sort id with no comparator behind it (a list in no
-// order at all) or a view id no branch draws (a blank page under a live header),
-// both reached without anybody doing anything wrong.
+// Every test is about the value coming back: a cell may hold whatever an older
+// page wrote, and the failure guarded against is a sort id with no comparator
+// (a list in no order) or a view id no branch draws (a blank page).
 
 describe('the arrangement of the project list', () => {
   it('round-trips both answers, each under its own site-wide key', () => {
@@ -384,19 +356,13 @@ describe('the arrangement of the project list', () => {
 
 // -- the strip of projects this browser has been in --------------------------
 // Navigation memory beside the address: a list of links at `/project/<pid>/`,
-// nothing more. Nothing here stores WHICH tab is active — that is the pid in the
-// URL — so there is no such assertion below and there must not be one.
+// nothing more. Which tab is active is the pid in the URL, not stored.
 //
-// THE FIRST LIST THIS MODULE STORES, and the shape of these tests follows from
-// that. A scalar is either readable or it is not; a list can be nine good
-// entries and one somebody typed into a browser's storage inspector, and the
-// decision (store.js says why at length) is that the bad one costs only itself.
-// That property is the one no smaller test here implies.
+// The first list this module stores: one bad entry (say, typed into a storage
+// inspector) costs only itself (store.js says why).
 //
-// THE CLOCK IS DRIVEN RATHER THAN WAITED ON. Eviction is by LAST VISIT, so a
-// suite that let `Date.now()` run would be asserting something about ten
-// arrivals within one millisecond — a fact about `Array.prototype.sort`, not
-// about this module. Every test that cares says what time it is.
+// The clock is driven, not waited on: eviction is by last visit, so letting
+// `Date.now()` run would test ten arrivals within one millisecond.
 
 describe('the tab strip', () => {
   /** Put the browser's clock where this test needs it. */
@@ -495,15 +461,12 @@ describe('the tab strip', () => {
   })
 
   it('keeps one entry per project, and it is the first of them', () => {
-    // Nothing here writes a duplicate — `rememberTab` finds the pid before it
-    // appends — but a hand-edited cell can hold one, and two entries for one
-    // project are two pills going to the same place under one React key, of
-    // which only the first would ever be refreshed again.
+    // Nothing here writes a duplicate (`rememberTab` finds the pid before it
+    // appends), but a hand-edited cell can hold one, and two entries for one
+    // project would be two pills under one React key.
     //
-    // THE FIRST IS THE ONE KEPT because position is the order of OPENING: the
-    // earlier entry is the one that recorded this project's arrival, and
-    // dropping it in favour of the later would move the pill rightwards under
-    // a reader for a reason no rule anywhere states.
+    // The first is kept because position is the order of opening; keeping the
+    // later one would move the pill right for no stated reason.
     storage.setItem(TABS_KEY, JSON.stringify([
       { pid: 'a', title: 'A', seen: 1 },
       { pid: 'b', title: 'B first', seen: 2 },

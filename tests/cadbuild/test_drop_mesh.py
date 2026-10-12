@@ -1,14 +1,10 @@
 """What a triangulation does to a bounding box, measured on the real kernel.
 
-THE MOCKED TEST NEXT DOOR CANNOT ANSWER ANY OF THIS.
 `test_geometry.test_drop_mesh_walks_every_body` stands `OCP.BRepTools` up out of
-a stub and watches which shapes `Clean_s` was called for -- which is the right
-test for the WALK and says nothing at all about why the walk is needed. The
-claim underneath it ("an export leaves a triangulation, and from then on the
-bounding box is the mesh's") had no empirical test anywhere, and a claim about
-OCCT that nothing runs is exactly how a comment ends up describing behaviour
-the kernel does not have. This file is that evidence, and it is written as
-PROPERTIES rather than as the numbers they were first seen as:
+a stub and watches which shapes `Clean_s` was called for -- the right test for
+the WALK, and silent on why the walk is needed. This file is the evidence for
+the claim underneath it ("an export leaves a triangulation, and from then on
+the bounding box is the mesh's"), written as PROPERTIES rather than numbers:
 
   * the box after a mesh reads BIGGER, never smaller -- the direction is the
     whole content, because it decides which checks fail loudly and which pass
@@ -20,32 +16,22 @@ PROPERTIES rather than as the numbers they were first seen as:
   * and a `translate()` copy does NOT share the triangulation with the shape it
     came from, while `.moved()` and `.located()` do.
 
-THE LAST ONE IS WHY IT IS WORTH A TEST RATHER THAN A COMMENT. "The copies share
-it through the TShape" reads as "clean the original and you have cleaned the
-copies", and for a `translate()` copy that is false in both directions: it keeps
-its own triangulation when the original is cleaned, and meshing it leaves the
-original clean. A build that reasoned the other way would measure a copy off a
-mesh nobody dropped.
+The last one is why this is a test rather than a comment: "the copies share it
+through the TShape" reads as "clean the original and you have cleaned the
+copies", and for a `translate()` copy that is false in both directions -- it
+keeps its own triangulation when the original is cleaned, and meshing it leaves
+the original clean. A build that reasoned the other way would measure a copy off
+a mesh nobody dropped.
 
-NO LITERAL MILLIMETRES ARE PINNED HERE, deliberately. The size of the error
-follows the tolerances the shape was meshed at -- the ANGULAR one, measurably,
-which for the export path is `artifacts.STL_ANGULAR_TOLERANCE` -- so a test
-asserting `10.003108` would be a constant tied to another constant it never
-mentions, going red on a tolerance change with nothing wrong in the code. Every
-assertion below compares two measurements of the same shape instead.
+No literal millimetres are pinned here. The size of the error follows the
+tolerances the shape was meshed at -- the ANGULAR one, measurably, which for
+the export path is `artifacts.STL_ANGULAR_TOLERANCE` -- and which axis is read
+(on this cylinder one axis does not move while the other two do), and two
+benches on the same cadquery 2.8.0 parted company above an angular tolerance
+of 0.1. Every assertion below compares two measurements of the same shape
+instead; `geometry.drop_mesh` is where the figures are written down.
 
-THAT PRECAUTION HAS SINCE PAID OFF, which is worth recording because it turns a
-matter of taste into a reason. Two people swept the angular tolerance on the
-same cadquery 2.8.0: the figures matched to the last digit up to 0.1 and parted
-company at 0.2, with no explanation found on either side. The extent also
-depends on WHICH AXIS is read -- on this very cylinder one axis does not move
-while the other two do -- so a pinned figure is a claim about one axis of one
-shape at two tolerances on one bench, three qualifiers a literal in an assertion
-carries none of. `geometry.drop_mesh` is where they are all written down. These
-assertions, being comparisons, need none of them.
-
-Needs the CAD kernel and skips without it, like test_material_at.py. CI's test
-image carries the kernel's libraries (issue #27), so this runs there.
+Needs the CAD kernel and skips without it, like test_material_at.py.
 """
 
 import pytest
@@ -53,24 +39,14 @@ import pytest
 from src.cadbuild import geometry
 from src.cadbuild.artifacts import STL_ANGULAR_TOLERANCE, STL_TOLERANCE
 
-# BOTH tolerances the direct `mesh()` tests use, and both are passed
-# explicitly. `Shape.mesh(tolerance, angularTolerance=0.1)` has a default for
-# the second one that happens to equal the build's own STL_ANGULAR_TOLERANCE,
-# so these tests used to depend on the number that decides their outcome
-# without naming it -- and would have gone on passing, meaning something else,
-# the day either constant moved.
-#
-# WHICH OF THE TWO HOLDS THESE TESTS UP is measured, not assumed, and it is not
-# the one the earlier comment here credited. The linear tolerance did not move
-# the cylinder's Z extent at all over a factor of a thousand (0.001, 0.01 and
-# 0.1 read identically on this bench), so no value of it buys any margin over
-# numerical noise; the ANGULAR tolerance is what moves the result. At 0.1 it
-# moves this cylinder's Z by about three microns -- six orders of magnitude
-# above the 1e-9 mm the restore test compares at, which is the margin that
-# actually keeps these assertions off the noise floor. 0.1 is chosen because it
-# is where two independent benches agreed to the last digit (see
-# geometry.drop_mesh), although no assertion below depends on that: every one
-# of them compares two measurements of one shape.
+# Both tolerances the direct `mesh()` tests use, passed explicitly:
+# `Shape.mesh(tolerance, angularTolerance=0.1)` defaults the second to a value
+# that happens to equal the build's STL_ANGULAR_TOLERANCE. The angular tolerance
+# is what moves the result -- the linear one left the cylinder's Z extent
+# unchanged from 0.001 to 0.1 -- and at 0.1 it moves Z by about three microns,
+# six orders of magnitude above the 1e-9 mm the restore test compares at. 0.1 is
+# where two independent benches agreed to the last digit (see
+# geometry.drop_mesh); no assertion below depends on that.
 MESH_LINEAR_TOL = 0.1
 MESH_ANGULAR_TOL = 0.1
 

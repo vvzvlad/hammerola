@@ -1,21 +1,14 @@
 """The test image and the shipped image install the SAME kernel libraries.
 
-`import cadquery` needs libGL, libX11 and libexpat from outside the wheel — the
-derivation is in the Dockerfile and belongs there, not here. What this file
-guards is that the two places which install them cannot drift apart: the shipped
-image's `RUN apt-get install` and the one in `ci/Dockerfile.test`, the image both
-workflows run the suite in.
+`import cadquery` needs libGL, libX11 and libexpat from outside the wheel (the
+derivation is in the Dockerfile). This guards that the shipped image's
+`RUN apt-get install` and the one in `ci/Dockerfile.test`, the image both workflows
+run the suite in, cannot drift apart.
 
-Drift is silent in the direction that matters. Add a library to the Dockerfile
-because the kernel started needing it, and the suite goes on running in a
-container that lacks it: the tests that touch the kernel skip (a skip is not a
-failure), CI stays green, and the missing library surfaces on the hub. Drop one
-from the Dockerfile and the suite proves the kernel imports in an environment the
-image no longer provides — green here, `ImportError` in production.
-
-Only the packaging is checked. Whether the list is CORRECT is answered by
-`ci/smoke.py`, which imports cadquery inside the built image before anything is
-pushed.
+Drift is silent: a library added only to the Dockerfile leaves the kernel tests
+skipping in CI, and one dropped from it leaves the suite proving an import the
+image no longer supports. Whether the list is CORRECT is answered by `ci/smoke.py`,
+which imports cadquery inside the built image.
 """
 
 import re
@@ -67,15 +60,9 @@ def packages(path):
 def test_the_two_images_install_the_same_kernel_libraries():
     """One list, two files, equal apart from the two named exceptions.
 
-    Asserted as sets with the exceptions subtracted rather than by comparing the
-    text: both files write one package per line for the sake of the diff, but the
-    order and the indentation are each file's own business and neither is worth a
-    failure.
-
-    A path that moved fails loudly here rather than vacuously — `packages()` reads
-    the file, so a missing one raises — and the libgl1 row is the guard for the
-    other way of checking nothing: an install command rewritten into a shape the
-    expression cannot read.
+    Compared as sets rather than as text: order and indentation are each file's
+    own business. A missing file raises in `packages()`, and the libgl1 row guards
+    against an install command rewritten into a shape the expression cannot read.
     """
     image = packages(DOCKERFILE) - RUNTIME_ONLY
     assert "libgl1" in image, (

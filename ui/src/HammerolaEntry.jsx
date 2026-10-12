@@ -1,84 +1,41 @@
 /**
- * ============================================================================
- *  HammerolaEntry — the front page: sign in, and the list of projects
- * ============================================================================
+ * HammerolaEntry — the front page: sign in, and the list of projects.
  *
- * The designer's second mock-up (blocks 13 and "Что разделяет заказчика и
- * зрителя"), ported onto the hub's real index and the real secret. What changed
- * from the mock, and why, in one place so nobody has to diff it:
- *
- *   PROJECTS   -> GET /index.json, the file `Store._refresh_index` rewrites on
- *                 every publish. `hub.projectCard` is the whole mapping and says
- *                 which of the mock's fields the hub can answer.
- *   preview    -> the build's own picture (issue #34). Every build renders a
- *                 sheet for the view it assembles and declares it in meta.json,
- *                 so `index_card` puts the first view that has one on the card.
- *                 A build with no picture draws the mock's own neutral plate.
- *   status     -> the DRAFT's, and only that (issue #32). `/index.json` answers
- *                 `idle`/`building`/`failed` for the last build pushed AS A
- *                 DRAFT — not for the last build in the project's `dev` slot,
- *                 which a commit build fills too (issue #78) while deliberately
- *                 moving no pointer; the chip is drawn for the middle two and
- *                 for nothing else, because a pill on every card is a pill
- *                 nobody reads. A COMMIT build in flight stays invisible here on
- *                 purpose — see `projectCard` in hub.js.
- *   rev / hash -> one thing, not two: a revision is named by the digest of its
- *                 sources (SPEC 7.7), so there is no `v241` beside the hash.
+ * Data mapping (the mock's fields onto the hub's real index):
+ *   PROJECTS   -> GET /index.json, rewritten by `Store._refresh_index` on every
+ *                 publish; `hub.projectCard` is the whole mapping.
+ *   preview    -> the first view with a rendered sheet (`index_card`); a build
+ *                 with no picture draws a neutral plate.
+ *   status     -> the last DRAFT build only: `idle`/`building`/`failed`. The chip
+ *                 is drawn for `building` and `failed`; a commit build in flight
+ *                 stays invisible (see `projectCard` in hub.js).
+ *   rev / hash -> one thing: a revision is named by the digest of its sources
+ *                 (SPEC 7.7).
  *   createdAt  -> the OLDEST build the hub still holds, labelled "first built"
- *                 rather than "created", because that is the claim the data
- *                 supports (render.index_card).
- *   login      -> the same secret and the same three storage functions the build
- *                 page uses (store.js), not a second mechanism. This screen is
- *                 another surface for `EDIT_TOKEN`, which is why it says that
- *                 name on the field: it is the string `hammerola login` asks for
- *                 on a terminal, and a person holding it should not have to
- *                 guess that the two are the same.
- *   onSubmit   -> answered by fetching the list with the token, which is what
- *                 makes the mock's `busy` and `error` props real rather than
- *                 decorative. There is no separate "check this token" call
- *                 because there is nothing to check separately: the list IS what
- *                 the token opens.
+ *                 (render.index_card).
+ *   login      -> the same `EDIT_TOKEN` and storage functions as the build page
+ *                 (store.js); the field says that name because it is what
+ *                 `hammerola login` asks for.
+ *   onSubmit   -> answered by fetching the list with the token: the list IS what
+ *                 the token opens, so there is no separate check call.
  *
- * THE TWO SCREENS ARE ONE DOOR, which is why the designer sent them in one file
- * and why they are in one here. No token, no list — and NOT a "view only" list
- * like the build page's. The two are genuinely different: a build is a permanent
- * link somebody was GIVEN and it is public, while this page is the enumeration
- * of everything on the hub, which nobody is given. `viewer()` has no meaning
- * here, and there is deliberately no state in which this component draws a card
- * without a secret.
+ * No token, no list: unlike a build, this page enumerates the whole hub, so
+ * there is no view-only state. `/index.json` answers 401 without the token
+ * (src/app.py, `_serve_index_json`); this component only makes the refusal
+ * legible.
  *
- * AND THE DOOR IS ON THE SERVER. `/index.json` answers 401 without the token
- * (src/app.py, `_serve_index_json`), so this component is not what makes the
- * list private — it is what makes the refusal legible. A page that merely
- * declined to DRAW cards it had already fetched would be decoration: the data
- * would be one devtools tab away, and the check would live on the wrong side of
- * the wire.
+ * Both screens carry a block of lines to hand to an agent (`agentBrief`, paths
+ * from `/start` in src/onboarding.py). The door's copy says where the token comes
+ * from and is drawn only on an empty hub; the list's copy carries the token and
+ * is drawn on every hub. Every failure of the `/start` fetch is silence
+ * (`loadStart` in hub.js).
  *
- * AND BOTH SCREENS CARRY ONE MORE THING: five lines a person copies and hands to
- * their agent — where the skill is, where the client is, what this hub's address
- * is, install the skill and follow it, and the token. TWO COPIES OF IT, and they
- * differ in exactly the two ways the screens do (issue #91). The door is read by
- * somebody who has not got in: its copy says where the secret comes from instead
- * of carrying it, and it is drawn only on a hub with nothing published, since a
- * reader who cannot get into a hub that is already full is not being set up. The
- * list is behind the token: its copy carries it, and it is drawn on every hub,
- * because starting the next project on a hub with forty is the ordinary case and
- * the only one there is a page for. `agentBrief` below is the whole of the text
- * and `/start` (src/onboarding.py) is where the paths come from; what makes it
- * safe to add to a page whose job is elsewhere is that every failure of that
- * fetch is silence. See `loadStart` in hub.js.
+ * A card is an `<a>` so middle-click, copy-link and the status bar work;
+ * `hub.projectUrl` decides where it points.
  *
- * A CARD IS AN `<a>`, not a div with a click handler, which is the one place the
- * mock's markup was not taken literally. The page it replaced used a real link
- * and the reasons hold: middle-click, copy-link-address and the status bar all
- * come from the element rather than from us. Where it points is a decision of
- * its own — `hub.projectUrl` explains it.
- *
- * STYLING is inline, carried over from the mock so the layout stays 1:1;
- * `css()` in style.jsx parses a CSS string into a React style object. The one
- * exception is the two rules in ENTRY_CSS below, which have nowhere inline to
- * live. Fonts are the system stacks and not the mock's webfont — style.jsx says
- * why, and tests/test_ui_source.py holds the line.
+ * Styling is inline (`css()` in style.jsx parses a CSS string), except the rules
+ * in ENTRY_CSS. Fonts are the system stacks — see style.jsx and
+ * tests/test_ui_source.py.
  */
 
 import React from 'react';
@@ -102,32 +59,19 @@ import {
 } from './style.jsx';
 
 /**
- * The only two rules that cannot be inline styles.
+ * The only two rules that cannot be inline styles: `@keyframes` has no inline
+ * form, and `html`/`body` are above anything React renders. The page colour is
+ * painted by the `html, body` rule in `static/_v/tokens.css`; restating it here
+ * would win (this block is injected later at the same specificity) and could
+ * drift.
  *
- * A `@keyframes` has no inline form at all, and `html`/`body` are elements above
- * anything React renders here.
+ * Injected as a `<style>` element because `import './x.css'` would emit a second
+ * build output that the Makefile, Dockerfile, ci/smoke.py and the page template
+ * would all have to name (see ui/vite.config.mjs). The CSP allows inline styles
+ * (src/app.py, CSP_HTML).
  *
- * THE PAGE COLOUR USED TO BE THE OTHER HALF OF THAT SENTENCE and is not here any
- * more (issue #35). It still has to be on both elements, and for the reason it
- * always did — this page SCROLLS, unlike the build page whose root is a fixed
- * full-screen box, so the document's own canvas shows through past the end of
- * the list and, for a moment, before the first render — but it is painted from
- * the palette now, by the `html, body` rule in `static/_v/tokens.css` that all
- * three documents link. Restating it here would be a second declaration of one
- * value, and the one that WINS: this block is injected into the body, so it
- * comes after the linked stylesheet at the same specificity, and a page that had
- * drifted would drift from the copy nobody can see.
- *
- * Injected as a `<style>` element rather than an imported stylesheet: an
- * `import './x.css'` would make this build emit a second output file, and that
- * name would then have to be added to the Makefile, the Dockerfile, ci/smoke.py
- * and the page template — see ui/vite.config.mjs, which says so at length. The
- * page's CSP allows it: `style-src` carries 'unsafe-inline', `script-src` does
- * not (src/app.py, CSP_HTML).
- *
- * The keyframe is named `hmr_spin` rather than `spin` for the reason every class
- * this bundle writes carries the prefix: the name is global to the document, and
- * the document also holds a vendored stylesheet nobody here maintains.
+ * `hmr_spin`, not `spin`: keyframe names are document-global and the document
+ * also holds a vendored stylesheet.
  */
 const ENTRY_CSS = `
 html, body { margin: 0; }
@@ -142,15 +86,12 @@ html, body { margin: 0; }
  * Icosphere levels: 0 is the icosahedron, each next one a subdivision.
  *
  * `parents[i] = [a, b]` is the edge vertex `i` is the midpoint of. A vertex is
- * BORN AT `min(a, b)`, and at that moment every edge of it is either zero-length
- * or lies exactly on an edge of the previous level. That is what makes the
- * transition geometric — one mesh unfolding — rather than a second shape fading
- * in over the first; opacity is left to say depth and nothing else.
+ * born at `min(a, b)`, where every edge of it is zero-length or lies on an edge
+ * of the previous level, so the transition is one mesh unfolding; opacity only
+ * says depth.
  *
- * BUILT ON FIRST USE, not at module scope, and the laziness is the point rather
- * than tidiness: this is one bundle serving two pages, so a top-level `(() =>
- * {...})()` here would subdivide 1280 faces during the build page's first paint,
- * every time, for a backdrop that page never draws.
+ * Built on first use: the bundle also serves the build page, which never draws
+ * the backdrop and should not subdivide 1280 faces on first paint.
  */
 let icoLevels = null;
 function levels() {
@@ -217,52 +158,20 @@ const BACKDROP_SHAPES = [
 /**
  * The animated backdrop. Canvas 2D, no dependency, ~2k lines a frame.
  *
- * IT STOPS in all three ways it has to, and only one of them is code here:
+ * It stops under `prefers-reduced-motion: reduce` (one frame, read once at
+ * mount) and on unmount (signing in swaps this screen for the list). A hidden
+ * tab needs nothing: `requestAnimationFrame` does not run there.
  *
- *   * REDUCED MOTION — `prefers-reduced-motion: reduce` draws exactly one frame
- *     and never asks for another, so the shapes are there and still. Read once,
- *     at mount: a person who changes that setting mid-session gets it on the
- *     next page, which is the same bargain every other reduced-motion answer on
- *     this site makes.
- *   * UNMOUNT — the pending frame is cancelled. This matters here rather than
- *     being boilerplate, because this component really is unmounted while the
- *     page stays open: signing in swaps this screen for the list.
- *   * A HIDDEN TAB — nothing, deliberately. `requestAnimationFrame` callbacks
- *     are not run for a document that is not being rendered, so a backgrounded
- *     tab already costs nothing, and a `visibilitychange` listener beside it
- *     would be a second mechanism that cannot be observed to work.
+ * The ink cannot be a `var()`: a canvas context discards an unparseable colour
+ * and keeps the initial black. So the token is set as `color` on the canvas
+ * element and read back with `getComputedStyle`, which yields an `rgb(…)` the
+ * context parses. That read flushes style, so it is cached and refreshed by a
+ * `MutationObserver` on `data-theme` (store.js) instead of per frame.
+ * `canvas.width = …` resets the context, so `strokeStyle` and `lineJoin` are
+ * assigned every frame.
  *
- * THE INK IS THE ONE COLOUR ON THIS PAGE THAT A `var()` CANNOT REACH, which is
- * why it is a prop at all and why the prop is spent the way it is. A canvas 2D
- * context parses its own colour strings and knows nothing about the cascade:
- * `ctx.strokeStyle = 'var(--text-muted)'` is an unparseable value, which the
- * context DISCARDS — leaving whatever was set before it, i.e. the initial black
- * — so the mesh would be a black cage on a light page and nothing said anywhere.
- *
- * So the token is put where the cascade can resolve it, on the canvas ELEMENT
- * (`color` in `render()` below), and the drawing reads back the resolved value
- * with `getComputedStyle` — which hands over an `rgb(…)` triple the context does
- * parse.
- *
- * READ WHEN IT CAN HAVE CHANGED, AND NOT ONCE PER FRAME. `getComputedStyle`
- * flushes whatever style the document has pending, so asking it for a colour
- * sixty times a second is most of what this effect costs — and the answer moves
- * only when somebody changes the theme, which is one attribute on `<html>`
- * (store.js). A `MutationObserver` on that attribute is therefore the whole
- * subscription, and the value in between is a cached string. The property still
- * has to be ASSIGNED every frame: `canvas.width = …` resets the 2D context to
- * its defaults, which is why `lineJoin` is set in the loop as well.
- *
- * The backdrop still follows `data-theme` on the frame after it changes rather
- * than on the next page load; a reduced-motion reader draws one frame and gets
- * the theme they arrived in.
- *
- * `--text-muted` is the role: this is the faintest thing on the page that still
- * has to be SEEN, the same weight as the mono meta a card is captioned with, and
- * it is the one grey that gets lighter rather than darker when the page goes
- * dark. The per-edge alpha that says depth moves to `globalAlpha`, which
- * multiplies whatever the stroke colour is — so the depth cue survives the ink
- * becoming a value this file no longer knows.
+ * `--text-muted` is the faintest role that still has to be seen; per-edge depth
+ * goes into `globalAlpha`, which multiplies whatever the stroke colour is.
  */
 export class MeshBackdrop extends React.Component {
   static defaultProps = {
@@ -280,12 +189,8 @@ export class MeshBackdrop extends React.Component {
     const ico = levels();
     const TOP = ico.length - 1;
 
-    // The palette's answer for whatever theme is in force, resolved by the
-    // browser off the element rather than by us off a name — and re-read only
-    // when the one attribute that can change it changes. Guarded because a
-    // document without an observer, or without a `documentElement` to watch, is
-    // still a document this backdrop can draw on: it keeps the ink the page
-    // arrived in, which is the same bargain reduced motion already makes.
+    // Re-read only when `data-theme` changes. Guarded: without an observer the
+    // backdrop keeps the ink the page arrived in.
     let ink = window.getComputedStyle(canvas).color;
     try {
       this.watch = new MutationObserver(() => {
@@ -308,8 +213,7 @@ export class MeshBackdrop extends React.Component {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
       ctx.lineJoin = 'round';
-      // Assigned here and not once above, for the same reason `lineJoin` is:
-      // the resize a few lines up wipes the context back to its defaults.
+      // The resize above resets the context to its defaults.
       ctx.strokeStyle = ink;
 
       this.props.shapes.forEach((sp) => {
@@ -362,8 +266,7 @@ export class MeshBackdrop extends React.Component {
           ctx.stroke();
         });
       });
-      // Put it back: everything above sets it per edge, so nothing here depends
-      // on this line — it is the context's own invariant, for whatever draws next.
+      // Restore the context default for whatever draws next.
       ctx.globalAlpha = 1;
 
       if (!reduce) this.raf = requestAnimationFrame(draw);
@@ -373,9 +276,7 @@ export class MeshBackdrop extends React.Component {
 
   componentWillUnmount() {
     cancelAnimationFrame(this.raf);
-    // The same reason the frame is cancelled: this component really is
-    // unmounted while the page stays open, and an observer left watching
-    // `<html>` would go on resolving a colour for a canvas nobody draws.
+    // This component unmounts while the page stays open.
     if (this.watch) this.watch.disconnect();
   }
 
@@ -400,45 +301,20 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
 /**
  * The block both screens offer, as the lines it is made of.
  *
- * IT IS ADDRESSED TO AN AGENT, not to the person copying it — imperative, no
- * greeting, no explanation of what this service is. That is the shape of the
- * requirement (issue #48) and it is also what makes it short: everything
- * about hammerola is already written in the skill, which is the first address
- * here, so a second account of it on this page would be a copy that goes stale
- * and a wall of text an agent has to read before it can get the real one.
+ * Addressed to an agent: imperative and short, because everything about
+ * hammerola is in the skill, the first address here. The `Hub:` line is the one
+ * only this page can write — the skill names no deployment
+ * (`test_the_skill_names_no_deployment`) — and it stands alone because it is the
+ * argument to `hammerola login`.
  *
- * FIVE LINES, AND THE THIRD IS THE ONE THAT COULD ONLY BE WRITTEN HERE. The
- * skill carries no deployment's address on purpose (issue #47, and
- * `test_the_skill_names_no_deployment` holds it to that) — it says the hub is
- * whichever one you were given. This is where it is given, and it is a line of
- * its own rather than something to be cut out of the two above it because that
- * is how it is used: as the argument to `hammerola login`.
+ * The fifth line is the token when `token` is passed (the list, which holds an
+ * accepted token; the block is then a credential, which the list says beside its
+ * button) and otherwise says where the token comes from (the door). One function
+ * keeps the four shared lines in one place.
  *
- * NO TOKEN ON THE SIGN-IN SCREEN, AND NO FIELD FOR ONE THERE. That rule was
- * written as a rule about this function and it is a rule about the DOOR (issue
- * #91): the reader of the door has not got in, the page holds no token, and
- * there is nothing to put in the block — so its fifth line says where the secret
- * comes from instead, from a person to a person. The list is the other case. It
- * is drawn only once the hub has accepted a token, so that page holds one
- * already and the person copying it is the owner who has it anyway; passing it
- * here is what puts it in the lines. The warning the old rule carried holds
- * wherever `token` is passed — the block then IS a credential in whatever it is
- * pasted into — which is why the list prints that sentence beside its button.
- *
- * ONE FUNCTION WITH BOTH FIFTH LINES rather than two functions with one each:
- * they are alternatives to the same line, and side by side it is legible that
- * exactly one of them is ever printed. Two functions would be two texts to keep
- * in step, and the first thing to drift would be the four lines they share.
- *
- * Everything addressable is BUILT from what the caller passes: `origin` is the
- * browser's own (`hubOrigin`), the two paths are the manifest's. Nothing in this
- * file names a host.
- *
- * `Client:` AND NOT `Helper:`, which is what the second line said first. This
- * repository has one word for that file and uses it everywhere — `hammerola/`,
- * "the client" in AGENTS.md and the SPEC, `hammerola` once it is on a PATH — and
- * a third name invented on this one page leaves the agent that reads the block
- * and then the skill working out that the two are the same thing.
+ * Everything addressable is built from the caller's `origin` (`hubOrigin`) and
+ * the manifest's paths; nothing here names a host. "Client" is the repository's
+ * one word for `hammerola/`.
  */
 export function agentBrief({ origin, skill, client, token }) {
   return [
@@ -446,9 +322,7 @@ export function agentBrief({ origin, skill, client, token }) {
     `Client: ${origin}${client}`,
     `Hub: ${origin}`,
     'Install the skill and follow it.',
-    // A caller with no token passes none, and the line then says so rather than
-    // printing an empty one: `Token:` with nothing after it reads as a hub that
-    // has no secret at all.
+    // `Token:` with nothing after it would read as a hub without a secret.
     token ? `Token: ${token}` : 'Ask the owner of this instance for the token.',
   ];
 }
@@ -456,49 +330,31 @@ export function agentBrief({ origin, skill, client, token }) {
 /**
  * What the copy button says once it knows, keyed by what happened.
  *
- * `none` is the case worth the table: `navigator.clipboard` is absent in an
- * insecure context, and a hub reached over plain http on a local network is
- * exactly that — a perfectly ordinary deployment of this service. The button
- * still answers, and what it must not do is say the text was copied when
- * nothing was: the person would paste whatever was in the buffer before.
+ * `none`: `navigator.clipboard` is absent in an insecure context, such as a hub
+ * on plain http on a local network. The button must not claim a copy then.
  */
 const COPY_LABELS = { done: 'Copied', failed: 'Copy failed', none: 'Copy by hand' };
 
 /**
- * The lines into the clipboard, in one piece, and which of the three happened.
- *
- * ONE FUNCTION FOR BOTH BLOCKS (issue #91). The door's and the list's differ in
- * what their lines SAY and in nothing else, and the three answers above are the
- * part that is easy to get wrong twice: the `none` branch is what keeps a hub on
- * a plain http address from claiming a copy no clipboard was there to make.
- *
- * IT RESOLVES FOR EVERY OUTCOME, so no caller has to catch anything — what it
- * hands back is a key of that table and never a rejection.
+ * The lines into the clipboard, in one piece; resolves to a key of COPY_LABELS
+ * for every outcome and never rejects. Shared by both blocks.
  */
 function copyLines(lines) {
   const clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
   if (!clipboard || typeof clipboard.writeText !== 'function') return Promise.resolve('none');
   return clipboard.writeText(lines.join('\n')).then(
     () => 'done',
-    // Rejected rather than absent: the document was not focused, or the
-    // permission was refused. Same rule as the branch above — say what
-    // happened, never "Copied".
+    // Rejected: the document was not focused or permission was refused.
     () => 'failed',
   );
 }
 
 /**
- * The door. Everything on the other side of it is one fetch away, and this
- * screen is what a refusal looks like.
+ * The door: the screen a refusal looks like.
  *
- * It has ONE state, unlike the control on the build page, and the asymmetry is
- * the design rather than an omission. There, a token can be removed while the
- * page keeps working, because a build is public and viewing it is the ordinary
- * case; the popover therefore has a signed-in half. Here, having a token the
- * hub accepts means being on the list instead — so the only thing this screen
- * can ever be showing is the absence of one, and a "signed in" half would be
- * unreachable code that still had to be maintained. Signing out lives where it
- * can be reached: the header of the list.
+ * It has one state. Holding a token the hub accepts means being on the list
+ * instead, so a signed-in half would be unreachable; signing out lives in the
+ * list's header.
  */
 export class HammerolaLogin extends React.Component {
   static defaultProps = {
@@ -507,23 +363,17 @@ export class HammerolaLogin extends React.Component {
     animate: true,
     busy: false,
     error: '',
-    // `{origin, skill, client, empty}` once the hub has answered its manifest,
-    // and null until then — or for good, if it could not be asked at all. THE
-    // BOOLEAN IS THIS SCREEN'S TO READ (issue #91): the paths arrive on every
-    // hub, and the block below them is the door's only where `empty` is true.
+    // `{origin, skill, client, empty}` once the hub answered its manifest, null
+    // until then or if it could not be asked. The block is drawn only where
+    // `empty` is true.
     start: null,
   };
 
   state = { token: '', hover: false, focus: false, copied: '' };
 
   /**
-   * A verdict on the clipboard is about the text that was in it, so it does not
-   * outlive that text.
-   *
-   * `Copied` under a block whose lines have since changed is a claim about a
-   * clipboard holding something else; `Copy failed` under new lines reports a
-   * failure that happened to different ones. Neither can be corrected by the
-   * reader, because the button says nothing until it is pressed again.
+   * A clipboard verdict is about the text that was copied, so it is cleared when
+   * the lines change.
    */
   componentDidUpdate(previous) {
     if (previous.start !== this.props.start && this.state.copied) {
@@ -537,42 +387,24 @@ export class HammerolaLogin extends React.Component {
   };
 
   /**
-   * The whole block into the clipboard, in one piece.
-   *
-   * The lines exist to be handed over together — three addresses and two
-   * instructions are one message, and a person selecting them out of the box by
-   * hand drops a character off an address about as often as not, which is the
-   * reason this button exists at all.
-   *
-   * THE TEXT COMES FROM `agentBrief`, the same call the screen draws from, so
-   * what is copied cannot differ from what is read.
+   * The whole block into the clipboard, in one piece, from the same `agentBrief`
+   * call the screen draws, so what is copied matches what is read.
    */
   copy = () => {
     const { start } = this.props;
     if (!start) return Promise.resolve();
-    // The last verdict was about the press before this one. Clearing it first is
-    // what keeps a retry from reading as its own result for however long the
-    // clipboard takes to answer.
+    // Clear the previous verdict so a retry does not read as its own result.
     if (this.state.copied) this.setState({ copied: '' });
-    // NO TOKEN IN THE ARGUMENT, and it is not an omission: this screen has none
-    // to pass. See `agentBrief`.
+    // No token: this screen has none. See `agentBrief`.
     return copyLines(agentBrief(start)).then((copied) => this.setState({ copied }));
   };
 
   /**
-   * The block, INSIDE the card and under a hairline, rather than a panel of its
-   * own beside it.
+   * The block, inside the card under a hairline, so an empty hub reads as one
+   * screen with two halves: sign in, or hand this over.
    *
-   * A reader arriving at an empty hub is being shown one thing with two halves —
-   * sign in if this is yours, hand this over if you are setting it up — and a
-   * second card would make them two screens competing for the middle of the
-   * page. Same card, same fonts, same palette; the mono box is the interface's
-   * own input colour, so it reads as text to be taken rather than as a warning.
-   *
-   * IT DRAWS WHATEVER IT IS CALLED WITH, and whether to call it is `render`'s —
-   * see the gate there. The heading is the reason the two cannot be swapped: on
-   * a hub with projects on it, "Nothing published here yet" is a lie about the
-   * one thing this screen is refusing to show.
+   * Whether to call it is `render`'s decision: "Nothing published here yet" would
+   * be false on a hub with projects.
    */
   drawStart(start) {
     return (
@@ -658,24 +490,14 @@ export class HammerolaLogin extends React.Component {
               onMouseLeave={() => this.setState({ hover: false })}
               style={css('display:flex;align-items:center;justify-content:center;gap:8px;height:38px;'
                 + `border-radius:6px;color:var(--text-on-accent);font:600 13px ${SANS};cursor:pointer;background:`
-                // `--accent-muted` is the button WAITING: the accent washed
-                // roughly halfway toward the ground, which reads as "not yet"
-                // under white text in either theme. It was `--accent-line` for
-                // one round — a border colour asked to fill a button, because
-                // the palette had no washed accent at all — and a role spent on
-                // something other than what its name says is how the names stop
-                // being trustworthy. The build page's Switch button wanted the
-                // same thing and had made the same substitution; the token was
-                // added for the pair. The other two here are the accent doing
-                // exactly its job.
+                // `--accent-muted` is the button waiting: the accent washed
+                // toward the ground, readable under white text in either theme.
                 + (busy ? 'var(--accent-muted);cursor:default'
                   : s.hover ? 'var(--accent-strong)' : 'var(--accent)'))}
             >
               {busy && (
-                // A ring of the ink the button is written in, dimmed. The alpha
-                // is the ELEMENT'S — there is no translucent white in the
-                // palette and no reason for one, and an element that is nothing
-                // but a border renders identically either way.
+                // A ring of the button's ink, dimmed with element opacity (the
+                // palette has no translucent white).
                 <span style={css('width:11px;height:11px;border-radius:50%;opacity:.55;'
                   + 'border:1.6px solid var(--text-on-accent);border-top-color:transparent;'
                   + 'animation:hmr_spin .9s linear infinite')}
@@ -690,12 +512,8 @@ export class HammerolaLogin extends React.Component {
             </div>
           </div>
 
-          {/* THE DOOR'S OWN GATE, and the only place it is applied (issue #91).
-              The paths arrive on every hub — the list prints them there — so
-              what keeps this screen's copy off a hub with forty projects is this
-              boolean and nothing upstream of it. A reader who cannot get into a
-              full hub is not the person somebody is setting a hub up for, and
-              the heading of the block says so in as many words. */}
+          {/* The door's only gate: the paths arrive on every hub, so this
+              boolean alone keeps the block off a hub that has projects. */}
           {start && start.empty && this.drawStart(start)}
 
           <div style={css(`font:400 11px ${MONO};color:var(--text-faint);margin-top:22px`)}>rev-pinned · agent-built</div>
@@ -731,53 +549,29 @@ const monthYear = (v) => (ts(v)
 /**
  * The preview plate, and the build's own picture over it when there is one.
  *
- * `src` is a picture the build already rendered for one of its whole-view
- * meshes — which view it was of is not promised, see `render.index_card` — and
- * the card FITS IT WHOLE (`object-fit:contain`) rather than cropping it. It has
- * to: this box has no fixed shape to crop against. Its width is fluid
- * (`minmax(min(320px,100%),1fr)` in the grid body below) at a fixed height, so
- * its ratio moves with the window, and every crop a picture survived at one
- * width ate into it at another.
+ * The picture is fitted whole (`object-fit:contain`), not cropped: the box has a
+ * fluid width (`minmax(min(320px,100%),1fr)` in the grid body) at a fixed height,
+ * so its ratio moves with the window. The build ships a band-less render for
+ * this box (`cadbuild.artifacts.CARD_SUFFIX`); a build without one names only the
+ * sheet, which is fitted whole.
  *
- * SO THE BUILD SHIPS A PICTURE FOR THIS BOX: the bare render, with none of the
- * sheet's title band and footer (`cadbuild.artifacts.CARD_SUFFIX`), which is
- * what the call sites hand over when the card names one. A build published
- * before that existed names only the sheet, and the sheet is then fitted whole —
- * bands and all, smaller, but nothing cut off.
- *
- * WHAT SHOWS EITHER SIDE OF A PICTURE NARROWER THAN THE BOX IS THE PLATE, which
- * is the other half of why fitting is affordable here: `contain` leaves part of
- * the box uncovered, and what lies under it is the same gradient a card with no
- * picture at all draws, so the result reads as one surface rather than as a gap.
- *
- * THE PLATE STAYS UNDERNEATH rather than being swapped out, which makes it two
- * answers for the price of one: it is what shows while the picture loads, and it
- * is what is left if the picture never arrives. `onError` hides the img — a
- * build whose file 404s falls back to the plate instead of the browser's
- * broken-image glyph — and it writes the style directly because this file uses
- * no hooks and this has to stay a function component.
- *
- * With no `src` the output is the plate and nothing else, exactly as it was
- * before any of this: a build made by an image with no rendering stack ships no
- * pictures, and the placeholder is drawn rather than left blank because a card
- * with a hole in it reads as a broken image, while this reads as "a model".
+ * The plate stays underneath: it fills the margins `contain` leaves, shows while
+ * the picture loads, and remains if it never arrives (`onError` hides the img
+ * instead of showing a broken-image glyph; it writes the style directly because
+ * this is a hook-free function component). With no `src` only the plate is
+ * drawn, which reads as "a model" rather than a broken image.
  */
 const Preview = ({ radius, src }) => (
-  // TWO NEIGHBOURING NEUTRALS AND NOT ONE, which is the plate's whole drawing:
-  // a flat fill with a wireframe on it reads as a missing image, a shallow
-  // gradient reads as a surface. `--hover-bg` is the second stop because it is
-  // the step the same surface takes under a pointer, and it stays a neighbour
-  // of `--sunken-bg` in both themes. NOT `--chip-bg`, which is now the other
-  // neutral in that gap: a chip fill is sized to be seen as an EDGE against
-  // what it lies on, and an edge is the one thing a gradient must not have.
+  // Two neighbouring neutrals: a shallow gradient reads as a surface, a flat
+  // fill as a missing image. `--hover-bg` stays a neighbour of `--sunken-bg` in
+  // both themes; `--chip-bg` would read as an edge.
   <div style={css('position:absolute;inset:0;'
     + 'background:linear-gradient(160deg,var(--sunken-bg),var(--hover-bg));'
     + `overflow:hidden;border-radius:${radius || 0}px`)}
   >
     <svg width="100%" height="100%" viewBox="0 0 120 80" preserveAspectRatio="xMidYMid slice" style={css('display:block')}>
-      {/* A presentation attribute is a CSS declaration, so a `var()` in one is
-          resolved against the cascade exactly as an inline style is — the same
-          mechanism that inks the mark in style.jsx. */}
+      {/* A presentation attribute is a CSS declaration, so `var()` resolves
+          against the cascade, as for the mark in style.jsx. */}
       <g stroke="var(--line-strong)" strokeWidth=".7" fill="none">
         <path d="M60 22l22 13v22L60 70 38 57V35z" />
         <path d="M38 35l22 13 22-13M60 48v22" opacity=".7" />
@@ -797,24 +591,16 @@ const Preview = ({ radius, src }) => (
 /**
  * What the newest build of this project is.
  *
- * One identifier and not the mock's two. A revision is named by the digest of
- * its sources, so the hash IS the revision and there is no number beside it; it
- * is cut to the same seven characters the rest of the site reads a commit at.
- * The `dev` chip says that the project's local slot holds work no commit has
- * published — never what that work is, which is the whole of SPEC 7.6 as it
- * applies to this page. It is deliberately not "the slot is occupied": a commit
- * fills the slot with itself (issue #78), so that would be every card.
+ * One identifier: a revision is named by the digest of its sources, cut to seven
+ * characters. The `dev` chip says the local slot holds work no commit has
+ * published, never what it is (SPEC 7.6); a commit fills the slot with itself,
+ * so "slot occupied" would be every card.
  *
- * The STATUS chip beside it says what the draft's last build is DOING, and only
- * while there is something to say: a build in flight and a build that failed
- * (issue #32). `idle` gets no chip at all — a pill on every card is a pill
- * nobody reads — and neither does a card from a hub that answers no status,
- * which is what the table lookup buys over two comparisons.
+ * The status chip appears only for a draft build in flight or failed; `idle`, or
+ * a hub that answers no status, gets none.
  *
- * EXPORTED for the same reason the four tables below are: a chip lives inside a
- * component element, and `texts()` over a view body stops at that element rather
- * than descending into it — so a test reading the body's tree would pass whether
- * or not either chip was ever drawn. `entry.test.js` calls this directly.
+ * Exported because `texts()` over a view body stops at component elements, so
+ * `entry.test.js` calls this directly.
  */
 const STATUS_CHIPS = Object.freeze({
   building: {
@@ -853,50 +639,25 @@ export const RevLine = ({ p }) => {
 };
 
 /**
- * EVERYTHING AN ARRANGEMENT'S ID REACHES, IN TABLES KEYED BY THAT ID.
+ * Everything an arrangement's id reaches, in tables keyed by that id.
  *
- * A sort is three things — a tab, a comparator, and a value store.js will keep
- * — and a view is three too: a tab, a body that draws the list, and the same
- * stored value. Two of the six used to be written as code rather than as a
- * table: the comparators lived in an object literal inside `sorted()`, and the
- * two bodies were `{grid && …}` / `{!grid && …}` in the middle of `render()`.
- * That is four sets of names that have to be the same set, and nothing made
- * them one.
+ * A sort is a tab, a comparator and a value store.js keeps; a view is a tab, a
+ * body and the same stored value. Tables make the four key sets one set: a sort
+ * missing its comparator would hand `Array.prototype.sort` `undefined` and
+ * silently keep arrival order.
  *
- * It is not a hypothetical. Adding a sort to store.js and to `SORT_LABELS`
- * without touching the comparator passes the whole suite and, in a browser,
- * hands `Array.prototype.sort` an `undefined` comparator: the list comes back in
- * whatever order it arrived in, the new tab is lit, and the choice is remembered
- * for ever. The negated-tiles branch was worse in a quieter way — it drew the
- * dense list for every id that was not the tile view, so an unknown view looked
- * like a working answer.
+ * The views are named in prose here, not quoted: `tests/test_ui_source.py`
+ * forbids a quoted view id anywhere in this file outside defaultProps, comments
+ * included.
  *
- * The two views are named in prose here rather than quoted, and that is the
- * house rule rather than shyness: `tests/test_ui_source.py` forbids a view id
- * appearing anywhere in this file except its defaultProps, in any of the three
- * quote characters, precisely so that no branch on one can hide from the tables
- * — and a rule with an exception for comments is a rule that reads the same
- * text two ways.
- *
- * So each of the four is a table now and all four are EXPORTED, which is the
- * part that makes the check trustworthy: `ui/tests/vocabulary.test.js` imports
- * them and compares `Object.keys` against store.js's two lists. The first
- * version of that check read this file as text and matched braces and commas —
- * and it passed on the very defect it was written for, because a trailing `//`
- * comment holding a comma made the parser take the next word for a key. A set of
- * keys is a thing the language computes exactly; there is no reason to guess at
- * it from the source, and every reason not to.
- *
- * FROZEN, because exporting them made "who may add a key" a question at all.
- * The key sets are checked once, at import time, against store.js's two lists;
- * an importer writing a fifth entry afterwards would put the page in an
- * arrangement no check ever saw. Freezing costs nothing and answers it here.
+ * Exported so `ui/tests/vocabulary.test.js` compares `Object.keys` against
+ * store.js's lists, and frozen so no importer adds a key that check never saw.
  */
 export const SORT_LABELS = Object.freeze({ name: 'Name', modified: 'Last built', first: 'First built' });
 
 export const SORT_CMP = Object.freeze({
-  // No locale argument: a title comes out of the model's own project.json and
-  // can be in any language, and the reader's is not knowable here.
+  // No locale argument: a title can be in any language, and the reader's is
+  // not knowable here.
   name: (a, b) => String(a.title).localeCompare(String(b.title)),
   modified: (a, b) => ts(b.built) - ts(a.built),
   first: (a, b) => ts(b.first) - ts(a.first),
@@ -911,13 +672,8 @@ export const VIEW_ICONS = Object.freeze({
  *  the delete control — the one thing on a card that is not part of its link. */
 export const VIEW_BODIES = Object.freeze({
   grid: (page, rows) => (
-    // `min(320px,100%)` RATHER THAN `320px`, and the difference is the whole of
-    // whether this page fits a phone. `minmax(320px,1fr)` states a floor no
-    // narrower window can honour: on a 320px screen the container is already
-    // 320 minus its own `padding:24px 20px`, so every track was 40px wider than
-    // the room for it and the page scrolled sideways for ever. `min()` lets the
-    // floor fall to the container's own width when there is less than 320 of it,
-    // which on a wide screen is not reached and changes nothing.
+    // `min(320px,100%)`, not `320px`: on a phone the container is narrower than
+    // 320px after its padding, and a fixed floor would scroll the page sideways.
     <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:16px')}>
       {rows.map((p) => (
         <a
@@ -927,9 +683,7 @@ export const VIEW_BODIES = Object.freeze({
           style={css(`${page.cardStyle(p.pid)}overflow:hidden;display:flex;flex-direction:column`)}
         >
           <div style={css('position:relative;height:190px;flex:none')}>
-            {/* The band-less picture when the build wrote one, and the sheet
-                when it did not: every build older than that field has only the
-                sheet, and its card goes on drawing it. */}
+            {/* The band-less picture when the build wrote one, else the sheet. */}
             <Preview src={p.card || p.preview} />
           </div>
           <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
@@ -986,17 +740,9 @@ export const VIEW_BODIES = Object.freeze({
 });
 
 /**
- * What the delete control says to a pointer resting on it.
- *
- * A TOOLTIP AND NOT A LABEL, because the control is a 13px glyph in the corner
- * of a card: the word "Delete" beside every project would be the loudest thing
- * on a page whose job is to show what is on the hub. The act itself is spelled
- * out in as many words the moment it is pressed (`drawConfirm`), which is where
- * a reader who could not guess the glyph finds out what they raised.
- *
- * EXPORTED for the reason the tables above are: it is how `entry.test.js` finds
- * the control in a tree, and a copy of the string over there would let that file
- * agree with itself about a control it never drew.
+ * The delete control's tooltip: the control is a 13px glyph, and the act is
+ * spelled out once pressed (`drawConfirm`). Exported so `entry.test.js` finds the
+ * control by the same string.
  */
 export const REMOVE_TITLE = 'Delete this project';
 
@@ -1005,32 +751,23 @@ export class HammerolaProjects extends React.Component {
     projects: [],
     defaultView: 'grid',
     defaultSort: 'modified',
-    // `{origin, skill, client, empty}` once the hub has answered its manifest,
-    // and null until then — or for good, if it could not be asked. The same
-    // value the door is handed, from the same ask. THE BOOLEAN IN IT IS NOT
-    // READ HERE: it is the door's condition, and this page draws its block
-    // wherever the paths arrived, a hub with forty projects included.
+    // `{origin, skill, client, empty}` once the hub answered its manifest, null
+    // until then. `empty` is the door's condition and is not read here: this
+    // page draws its block wherever the paths arrived.
     start: null,
-    // The token this browser got in with, which the footer's block prints —
-    // and which is also the whole of whether a card carries a delete control
-    // (`remover`). It is never SENT from here: the request that removes a
-    // project is the page's, above, for the same reason the list's own fetch
-    // is (`onDelete`).
+    // The token this browser got in with: the footer's block prints it, and it
+    // decides whether a card carries a delete control (`remover`). It is never
+    // sent from here; the page above makes the request (`onDelete`).
     token: '',
-    // Remove one project, whole. Answers a promise that resolves once the hub
-    // has done it and REJECTS with the sentence to show — see `remove` below.
-    // Null draws no control at all, which is also what an absent token does.
+    // Remove one project, whole. Returns a promise that resolves once the hub
+    // has done it and rejects with the sentence to show (see `remove`). Null
+    // draws no control.
     onDelete: null,
   };
 
-  // Seeded from what this browser remembered, and `null` when it remembered
-  // nothing legible — which is what the two getters below already read as "use
-  // the default", so the default stays in one place (defaultProps) whether it is
-  // reached on a first visit or after a stored value was thrown away.
-  //
-  // READ IN THE CONSTRUCTOR, not at module scope: this bundle also serves the
-  // build page, and a read up there would touch storage on a page that never
-  // draws this list.
+  // Seeded from storage; `null` when nothing legible was stored, which the
+  // getters below read as "use defaultProps". Read in the constructor, not at
+  // module scope, because this bundle also serves the build page.
   constructor(props) {
     super(props);
     this.state = {
@@ -1038,14 +775,11 @@ export class HammerolaProjects extends React.Component {
       sort: readProjectSort(),
       hover: null,
       copied: '',
-      // The four fields of the confirmation, and it is worth saying what each
-      // is for because only the first says whether the box is on screen:
-      // `doomed` is the pid being confirmed, `typed` what has been typed into
-      // it so far, `erasing` that the hub has been asked and has not answered,
-      // and `failed` the sentence it answered with instead. They are cleared
-      // together (`askRemove`, `cancelRemove`) — a stale `failed` under a box
-      // reopened on a different project would be a refusal about a project the
-      // reader is no longer looking at.
+      // The confirmation: `doomed` is the pid being confirmed (and whether the
+      // box is shown), `typed` the text typed so far, `erasing` that the hub was
+      // asked and has not answered, `failed` its refusal. Cleared together
+      // (`askRemove`, `cancelRemove`) so a refusal never shows under another
+      // project.
       doomed: null,
       typed: '',
       erasing: false,
@@ -1058,22 +792,12 @@ export class HammerolaProjects extends React.Component {
   get sort() { return this.state.sort || this.props.defaultSort; }
 
   /**
-   * Both halves of a click on a tab: what is drawn now, and what the next visit
-   * opens on.
+   * A tab click: what is drawn now, and what the next visit opens on.
    *
-   * The write goes through store.js and nothing here touches `localStorage`
-   * itself — the rule `tests/test_ui_source.py` enforces, so that the one place
-   * an absent storage has to be caught stays one place.
-   *
-   * FILTERED ON THE WAY IN, not only on the way to storage, and the asymmetry
-   * that made that necessary is worth naming: `writeProjectView` already
-   * refuses an id store.js does not know, so an unrecognised choice was NOT
-   * written — and `setState` took it anyway. With no `||` behind the table
-   * lookups any more, `choose({ view: 'kanban' })` drew a blank page off a
-   * value the next visit could not even reproduce. This method is public on an
-   * exported class, so "nothing calls it with that" is not a property of this
-   * file. An unknown id now leaves the arrangement where it was, which is what
-   * `recall()` in store.js does with an unknown cell.
+   * Storage goes through store.js only (enforced by `tests/test_ui_source.py`).
+   * An id store.js does not know is ignored here too, not only on the way to
+   * storage: the tables have no fallback, so an unknown view would draw a blank
+   * page. This matches `recall()` in store.js.
    */
   choose(patch) {
     const next = {};
@@ -1084,29 +808,11 @@ export class HammerolaProjects extends React.Component {
     this.setState(next);
   }
 
-  // NO FALLBACK, and the one that used to be here is worth naming because it
-  // looked like defence and was not: `SORT_CMP[this.sort] ||
-  // SORT_CMP[this.props.defaultSort]` cannot fire, because the only way
-  // `this.sort` is missing from the table is that it CAME from `defaultSort` —
-  // `state.sort` holds nothing store.js would not hand back. So the second
-  // lookup reads the same key as the first, and the branch was dead code that
-  // read as cover.
-  //
-  // What keeps this total is that every input is pinned: store.js validates
-  // what it hands back, `choose()` refuses a patch these tables cannot answer,
-  // and `ui/tests/vocabulary.test.js` asserts `defaultProps` names arrangements
-  // they have. A prop naming something else is a programming error caught at
-  // build time.
-  //
-  // IT HAS TO BE CAUGHT THERE, because a miss on THIS table would not announce
-  // itself at runtime. `SORT_CMP[unknown]` is `undefined`, and
-  // `Array.prototype.sort(undefined)` is a perfectly legal call: it compares by
-  // the default string conversion, which is `"[object Object]"` for every row,
-  // so the list comes back in arrival order looking sorted and nothing is
-  // thrown. The view half is the loud one — `VIEW_BODIES[unknown]` is
-  // `undefined` and throws where `render()` calls it — and the difference is
-  // the whole reason the three checks above are the guarantee rather than a
-  // formality.
+  // No fallback: every input is pinned — store.js validates what it returns,
+  // `choose()` refuses unknown ids, and `ui/tests/vocabulary.test.js` checks
+  // defaultProps. That check matters because a miss here is silent:
+  // `sort(undefined)` compares every row as "[object Object]" and keeps arrival
+  // order, whereas an unknown view throws in `render()`.
   sorted() {
     return this.props.projects.slice().sort(SORT_CMP[this.sort]);
   }
@@ -1116,12 +822,8 @@ export class HammerolaProjects extends React.Component {
     onMouseLeave: () => this.setState({ hover: null }),
   });
 
-  /** A card's frame, which is the only thing the two view bodies share.
-   *
-   * `--line` is the SAME border the sign-in card is drawn with, and the two were
-   * a shade apart in the mock. A card's edge is one job; two greys for it is the
-   * drift the palette exists to end, so they are one name now.
-   */
+  /** A card's frame, the only thing the two view bodies share. `--line` is the
+   * same border the sign-in card uses. */
   cardStyle(id) {
     const lit = this.state.hover === id;
     return 'background:var(--card-bg);border:1px solid '
@@ -1144,28 +846,15 @@ export class HammerolaProjects extends React.Component {
   }
 
   /* ─── removing a project ───────────────────────────────────────────────
-     Issue #92. The route has been there since issue #26 and only a terminal
-     could reach it (`hammerola rm`); this is the same act with the same
-     confirmation, on the page that already enumerates what there is to remove.
-
-     THE SECRET IS NOT SPENT HERE. `token` says whether to draw the control, and
-     the request is the page's above (`onDelete`) — the same division the list
-     already keeps for the fetch that filled it. */
+     The same act and confirmation as `hammerola rm`. `token` decides whether to
+     draw the control; the request is the page's (`onDelete`). */
 
   /**
-   * The delete control on one card, or nothing at all.
+   * The delete control on one card, or nothing.
    *
-   * DRAWN ONLY FOR A READER HOLDING THE TOKEN, which on this page is everyone —
-   * and that is exactly why the condition is written rather than assumed: this
-   * class is exported, its `token` defaults to empty, and a control that offers
-   * to erase a project to somebody who cannot is an error message dressed as a
-   * button. `onDelete` is the other half of the same sentence: with no handler
-   * there is nothing behind the control, so there is no control.
-   *
-   * IT LIVES INSIDE AN `<a>`, which is the whole reason for the two calls on the
-   * event. The card is a real link (see VIEW_BODIES) and a click anywhere in it
-   * navigates; without `preventDefault` the confirmation would be raised on a
-   * page already on its way to the project.
+   * Drawn only with a token and an `onDelete` handler: the class is exported and
+   * `token` defaults to empty. It sits inside the card's `<a>`, hence
+   * `preventDefault` and `stopPropagation` so the click does not navigate.
    */
   remover(pid) {
     if (!this.props.token || !this.props.onDelete) return null;
@@ -1199,16 +888,9 @@ export class HammerolaProjects extends React.Component {
   /**
    * Whether what has been typed is the id of the project being removed.
    *
-   * THE ID AND NOT A YES, for the reason `hammerola rm` asks for it on a
-   * terminal (`admin.CONFIRM_PROMPT`): this is irreversible, there is no
-   * retention and no undo (SPEC 5.3, 7.3), and a confirmation somebody can
-   * clear without reading is a confirmation that stops the wrong deletion
-   * never. It is also the string the hub is addressed by, and it is on the
-   * screen two lines above the field.
-   *
-   * TRIMMED, and only trimmed — the same `.strip()` the client does. A pasted
-   * id often carries a space or a newline; anything else typed is a different
-   * project, or a different intention.
+   * The id, not a yes, as `hammerola rm` asks (`admin.CONFIRM_PROMPT`): deletion
+   * is irreversible (SPEC 5.3, 7.3). Only trimmed, like the client's `.strip()`,
+   * because a pasted id often carries whitespace.
    */
   get confirmed() {
     const pid = this.state.doomed;
@@ -1218,14 +900,9 @@ export class HammerolaProjects extends React.Component {
   /**
    * Ask the page to remove the project, once the id has been typed back.
    *
-   * THE GUARD IS HERE AND NOT ONLY ON THE BUTTON'S PAINT, because a disabled
-   * look is not a disabled control: this is also what the Enter key in the
-   * field runs, and it is a public method on an exported class.
-   *
-   * A FAILURE LEAVES THE BOX OPEN, holding the sentence the hub answered with
-   * and whatever was typed. Closing it would take the reader back to a list
-   * still showing the project with nothing said about why — and the one thing
-   * worth knowing after a refused deletion is that the project is still there.
+   * The guard is here, not only in the button's look: Enter in the field runs
+   * this too, and it is public on an exported class. A failure leaves the box
+   * open with the hub's sentence, so the reader learns the project is still there.
    */
   remove = () => {
     if (!this.confirmed || this.state.erasing || !this.props.onDelete) {
@@ -1233,9 +910,8 @@ export class HammerolaProjects extends React.Component {
     }
     this.setState({ erasing: true, failed: '' });
     return Promise.resolve(this.props.onDelete(this.state.doomed)).then(
-      // The card leaves the list because the PAGE dropped it, not because this
-      // box did: the projects are its state, and a list filtered here as well
-      // would be a second answer to "what is on this hub".
+      // The card leaves because the page dropped it from its state; filtering
+      // here too would be a second answer to "what is on this hub".
       () => this.setState({ doomed: null, typed: '', erasing: false, failed: '' }),
       (error) => this.setState({
         erasing: false,
@@ -1245,15 +921,9 @@ export class HammerolaProjects extends React.Component {
   };
 
   /**
-   * The confirmation, over the whole page rather than inside the card.
-   *
-   * The card is 320px of tiles in one arrangement and a 60px row in the other,
-   * and what has to be read here is three sentences and a field. One box in the
-   * middle of the page is also what makes the act feel like the act: everything
-   * else on this screen is a link.
-   *
-   * IT IS DRAWN FROM THE ROW, and falls back to the id, because a project whose
-   * `title` came back empty is still a project somebody is about to delete.
+   * The confirmation, over the whole page rather than inside the card, which is
+   * too small in either view for three sentences and a field. Falls back to the
+   * id when the row's `title` is empty.
    */
   drawConfirm() {
     const pid = this.state.doomed;
@@ -1280,8 +950,7 @@ export class HammerolaProjects extends React.Component {
           <div style={css(`font:400 12px/1.6 ${SANS};color:var(--text)`)}>
             Type <span style={css(ACCENT_MONO)}>{pid}</span> to confirm.
           </div>
-          {/* The same three fills the sign-in field spends, and the same rule:
-              recessed at rest, the palette's red tint once the hub has refused. */}
+          {/* As the sign-in field: recessed at rest, red tint once refused. */}
           <input
             type="text"
             placeholder="project id"
@@ -1305,12 +974,9 @@ export class HammerolaProjects extends React.Component {
             >
               Cancel
             </div>
-            {/* THE BUTTON IS THE STATE OF THE FIELD, drawn: until the id has
-                been typed back it is an inert neutral, and `remove` refuses on
-                its own account whatever this says. The armed fill is the
-                palette's danger tint rather than a filled red, which this
-                interface has no role for — and the tint is what the error
-                lines on both screens are already drawn on. */}
+            {/* Inert neutral until the id is typed back (`remove` refuses on its
+                own account regardless); armed it takes the danger tint, as the
+                error lines do. */}
             <div
               onClick={this.remove}
               style={css(DIALOG_BTN
@@ -1330,13 +996,8 @@ export class HammerolaProjects extends React.Component {
   }
 
   /**
-   * The block's text, from the ONE call the box and the button both read.
-   *
-   * Same rule the door keeps and for the same reason: what is copied cannot
-   * differ from what is read. Here it is a method rather than the call written
-   * twice because the argument is assembled — the page's `start` with this
-   * page's token on top — and two assemblies are two chances to hand the
-   * clipboard a line the reader was never shown.
+   * The block's text, from the one call the box and the button both read, so
+   * what is copied matches what is shown: the page's `start` plus this token.
    */
   brief() {
     return agentBrief({ ...this.props.start, token: this.props.token });
@@ -1350,28 +1011,13 @@ export class HammerolaProjects extends React.Component {
   };
 
   /**
-   * The block, in the footer under the caption, on EVERY hub whose paths came
-   * back — not only on one with nothing published (issue #91).
+   * The block in the footer, on every hub whose paths came back: the reader is
+   * the owner starting the next project. Its fifth line is the token, which is
+   * why the sentence under the heading calls it a credential.
    *
-   * That is the difference from the door's copy, and it is the reason this one
-   * was written: the reader here is the owner, and what they are doing on a hub
-   * that already has projects is starting the next one. A block that appeared
-   * only on an empty hub would be a block for the single hour of this system's
-   * life when the list has nothing in it, on the one page that is not the door.
-   *
-   * WHAT IS DIFFERENT HERE IS ALSO THE FIFTH LINE, and it is the other half of
-   * why the block is on this page at all: the list is behind the token, so this
-   * page has one to put in it and the door does not. That is what the sentence
-   * under the heading is for — the lines are a credential now, and the reader
-   * about to press Copy is the one person who can be told so.
-   *
-   * NO `componentDidUpdate` CLEARING THE VERDICT, unlike the door's copy, and
-   * the asymmetry is a fact about the inputs rather than an omission: the lines
-   * cannot change while this block is on the screen. `start` arrives once, from
-   * an ask that is made at most once (`answered`), and it arrives BEFORE the
-   * block exists — there is no block to press until it does; the token is fixed
-   * for as long as the list is drawn at all, because losing it takes the whole
-   * page back to the door. `entry.test.js` holds the page to that.
+   * No `componentDidUpdate` clearing the verdict, unlike the door: `start`
+   * arrives once and before the block exists, and losing the token takes the
+   * page back to the door (`entry.test.js` holds this).
    */
   drawBrief() {
     if (!this.props.start) return null;
@@ -1406,9 +1052,7 @@ export class HammerolaProjects extends React.Component {
 
   render() {
     const rows = this.sorted();
-    // Looked up, not branched on, and with no `||` behind it for the reason
-    // `sorted()` gives: the fallback that used to be here could only ever repeat
-    // the lookup that had just missed.
+    // Looked up, no fallback — see `sorted()`.
     const body = VIEW_BODIES[this.view];
 
     return (
@@ -1420,14 +1064,9 @@ export class HammerolaProjects extends React.Component {
         <style>{ENTRY_CSS}</style>
 
         {/* ── header ──
-            `min-height` and `flex-wrap`, for the reason `static/_v/site.css`
-            gives on the resolver's copy of this row and the build page's header
-            repeats: a row that cannot break its line can only overflow, and a
-            header that overflows is one whose right-hand end — here the sign-out
-            button — is simply not on the screen. When the row no longer fits it
-            grows a second line instead; this page asks no breakpoint and needs
-            none, since the six items here run out of room at around 380px on
-            their own. The row gap only ever applies once it has wrapped. */}
+            `min-height` and `flex-wrap` (as in `static/_v/site.css`): when the
+            row does not fit it wraps instead of pushing the sign-out button off
+            screen. No breakpoint needed; the row gap applies only once wrapped. */}
         <div style={css('min-height:50px;display:flex;flex-wrap:wrap;align-items:center;'
           + 'gap:6px 12px;padding:0 20px;'
           + HEADER_BAR)}>
@@ -1441,11 +1080,8 @@ export class HammerolaProjects extends React.Component {
           <span style={css(`font:400 11px ${MONO};color:var(--text-faint)`)}>
             {rows.length === 1 ? '1 project' : `${rows.length} projects`}
           </span>
-          {/* The only control the header needs, because being here IS being
-              signed in — there is no view-only state of this page to switch to.
-              It says "Sign out" rather than the build page's "Editing on",
-              which would read as a status on a page whose existence already is
-              one. */}
+          {/* Being here is being signed in, so this is the header's only
+              control. */}
           <div
             onClick={this.props.onSignOut}
             style={css('display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;cursor:pointer;'
@@ -1464,12 +1100,8 @@ export class HammerolaProjects extends React.Component {
           {/* ── sort, and which way to look at it ── */}
           <div style={css('display:flex;align-items:center;gap:8px;padding:0 2px 16px;flex-wrap:wrap')}>
             <span style={css(`font:500 11px ${SANS};color:var(--text-muted)`)}>Sort by</span>
-            {/* THE TRACK IS `--chip-bg` AND IT MATTERS MORE HERE THAN ANYWHERE,
-                because this one lies directly on `--page-bg`. On `--sunken-bg`
-                it was not merely faint, it was INVERTED — L* 95.8 against the
-                page's 94.0, a groove drawn lighter than the surface it is cut
-                into — where the literal it replaced was darker than the page by
-                dE 4.0. Both pills below take the same track. */}
+            {/* The track is `--chip-bg` because it lies on `--page-bg`, where
+                `--sunken-bg` would be lighter than the page. Both pills share it. */}
             <div style={css(SEGMENTED)}>
               {PROJECT_SORTS.map((id) =>
                 this.tab(this.sort === id, () => this.choose({ sort: id }), SORT_LABELS[id], id))}
@@ -1491,29 +1123,17 @@ export class HammerolaProjects extends React.Component {
             </div>
           )}
 
-          {/* Both halves of this sentence are load-bearing, and the second one is
-              the one that answers a support question: a project whose only build
-              is in the local slot has NO card here, on purpose (SPEC 7.6, and
-              Store._refresh_index). Without saying so, "I published and my
-              project is missing" looks like a bug.
-
-              ONE LINE NOW, AND BOTH HALVES STILL IN IT (issue #91). What went is
-              the wording, not a claim: `from its first commit` is `appears here
-              after its first commit`, and `never from a dev push` is `work
-              published into the local dev slot is never listed`. It had to
-              shrink because it is no longer the only thing in this footer — the
-              block under it answers the next question, which is what to do
-              about any of that. */}
+          {/* A project whose only build is in the local slot has no card here
+              (SPEC 7.6, Store._refresh_index); saying so keeps "my project is
+              missing" from looking like a bug. */}
           <div style={css(`font:400 11px/1.7 ${MONO};color:var(--text-faint);text-align:center;padding-top:28px`)}>
             a project is listed from its first `hammerola commit` — never from a `dev` push
           </div>
           {this.drawBrief()}
         </div>
 
-        {/* OVER EVERYTHING AND OUTSIDE THE COLUMN, which is what makes it a
-            confirmation rather than a panel: the box is `position:fixed`, so a
-            list scrolled halfway down still raises it in the middle of the
-            screen, where the reader's eyes already are. */}
+        {/* Outside the column and `position:fixed`, so it appears mid-screen
+            however far the list is scrolled. */}
         {this.drawConfirm()}
       </div>
     );
@@ -1528,39 +1148,27 @@ export default class HammerolaEntry extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
-      // `null` is "not fetched yet" and `[]` is "fetched, and this hub has no
-      // projects". They are drawn differently and must not collapse: the second
-      // is a real answer somebody acts on by pushing something.
+      // `null` is "not fetched yet", `[]` is "this hub has no projects"; they
+      // are drawn differently.
       projects: null,
       token: readToken(),
       busy: false,
       refused: '',
-      // What both screens build their block out of: `{origin, skill, client,
-      // empty}`, or null for "not asked yet" and "could not be asked" alike.
-      // Those two are one state on purpose — see `askStart`. "This hub has
-      // projects" is NOT one of them any more (issue #91): it is the `empty`
-      // field, which the door reads and the list does not.
+      // What both screens build their block from: `{origin, skill, client,
+      // empty}`, or null for "not asked yet" and "could not be asked" alike (see
+      // `askStart`). The door reads `empty`; the list does not.
       start: null,
     };
-    // Whether the hub has ANSWERED — not whether it has been asked. Two fields
-    // rather than one because "no answer yet" and "being asked right now" want
-    // opposite things: the first has to be asked again at the next arrival, the
-    // second must not be asked over the top of itself. Instance fields rather
-    // than state: nothing renders differently for either, and a re-render on the
-    // answer is what `start` is for.
+    // `answered`: the hub has answered (not merely been asked), so a failed ask
+    // is retried at the next arrival. `asking`: the request in flight, so
+    // arrivals during it share it. Instance fields: neither changes rendering.
     this.answered = false;
     this.asking = null;
   }
 
   componentDidMount() {
-    // THE REQUEST IS NO LONGER LAZY, and the branch below no longer makes it so
-    // (issue #91). The branch itself is unchanged and still routes: whoever has
-    // a token goes straight to the list. What went is the assumption behind it —
-    // that arriving with a token meant nobody would read the answer, true while
-    // the door was the only screen that drew the block. The list draws it now,
-    // on every hub, so `open` asks too, after the list has come back. It costs one
-    // public, uncached GET of a small JSON with no credential on it, once per
-    // page, and `loadStart` cannot fail loudly enough to be felt.
+    // A token goes straight to the list, which asks for `/start` itself once
+    // the list is back; otherwise this is the door.
     if (this.state.token) {
       this.open(this.state.token);
       return;
@@ -1569,54 +1177,23 @@ export default class HammerolaEntry extends React.Component {
   }
 
   /**
-   * Ask the hub whether it has anything published — once it has ANSWERED.
+   * Fetch `/start` until the hub has answered once.
    *
-   * Called from every arrival AT THE DOOR: a page load with no token, signing
-   * out, and a stored token the hub refused. The last two are how a reader ends
-   * up looking at the form without ever having been shown it, and the block has
-   * to be there — a hub is at its emptiest for the person who just signed out of
-   * one they had nothing in.
+   * Called on every arrival at the door (page load without a token, sign-out, a
+   * refused token) and when the list comes back; the door reads `empty`, the
+   * list ignores it.
    *
-   * AND FROM THE ARRIVAL THAT IS NOT AT THE DOOR (issue #91): a list that came
-   * back at all, whatever was in it. One ask serves both screens, and what they
-   * do with the answer differs — the door reads `empty` and the list ignores it.
+   * `answered` is set on the answer, not the request: a `null` (no answer, or an
+   * unreadable one — hub.js) leaves it down and the next arrival asks again. That
+   * matters because a failed first ask on page load would otherwise hide the
+   * block after the following 401. `asking` makes concurrent arrivals share one
+   * request. `empty` only turns false by a push, after which the reader reloads;
+   * the paths are constants of the image.
    *
-   * THE FLAG IS SET ON THE ANSWER AND NOT ON THE REQUEST, which is the whole of
-   * what `this.answered` is worth saying about. Set on the way in, one failed
-   * ask spent the only one there was: the door's first arrival is a page load,
-   * `/start` did not come back, and the 401 a moment later — the arrival the
-   * block is most written for, since somebody typing a token into an empty hub
-   * is usually its owner — found the question already asked and drew nothing
-   * until a reload. That is the ordinary sequence, not a corner of it.
-   *
-   * A `null` therefore leaves the flag down and the question is asked again at
-   * the next arrival, which is right because nothing was learned: `null` is now
-   * only "the hub did not answer, or answered something unreadable" (hub.js).
-   * The cost is one public, uncached GET per sign-out or mistyped token, which
-   * is nothing. `this.asking` covers the other direction — two arrivals inside
-   * one flight ask once between them.
-   *
-   * The answer cannot go stale in the direction that matters: what turns `empty`
-   * false is a push, and the person who pushes reloads to see it. The paths do
-   * not go stale at all — they are constants of the image serving this page.
-   *
-   * NO `catch`, and that is a property of `loadStart` rather than an oversight:
-   * it resolves for every failure it can have, so there is nothing here to
-   * catch and no way for a hint to take the sign-in form down. hub.js says why
-   * at length, and `ui/tests/start.test.js` is what holds it to it.
-   *
-   * THE FLIGHT IS CLEARED ON BOTH BRANCHES ALL THE SAME, and the reason is the
-   * sentence above rather than a case it misses: "there is nothing to catch" is
-   * a fact about `loadStart` TODAY, and it is the first thing here that goes
-   * stale — the paragraph above says why the rejecting path was deliberately
-   * left open (a defect in this bundle has to arrive as a stack trace, not as a
-   * hub that silently never has a block). Clearing on the fulfilled branch
-   * ALONE makes that day cost two failures instead of one: the rejected promise
-   * stays in `this.asking`, and every later arrival at the door is handed it
-   * back unasked — the block never appears again for the life of the page, on a
-   * hub that would have answered. The rejection is re-thrown rather than
-   * swallowed so the stack trace the docstring promises still reaches the
-   * console.
+   * No `catch`: `loadStart` resolves for every failure it expects
+   * (`ui/tests/start.test.js`), so a rejection is a defect that should reach the
+   * console. The flight is cleared on both branches so a rejection does not
+   * stay in `asking` and block every later ask; it is re-thrown.
    */
   askStart() {
     if (this.answered) return Promise.resolve();
@@ -1625,9 +1202,7 @@ export default class HammerolaEntry extends React.Component {
       (hint) => {
         this.asking = null;
         if (hint) this.answered = true;
-        // The origin is read HERE, from the browser, and joined to the
-        // manifest's relative paths. Neither half is written down anywhere in
-        // this bundle.
+        // Origin from the browser, joined to the manifest's relative paths.
         this.setState({ start: hint ? { origin: hubOrigin(), ...hint } : null });
       },
       (error) => {
@@ -1641,12 +1216,8 @@ export default class HammerolaEntry extends React.Component {
   /**
    * Fetch the list with a token, and let the answer decide the screen.
    *
-   * ONE PATH FOR BOTH ARRIVALS — a stored token on page load, and one just
-   * typed in — because they are the same question asked of the same route, and
-   * two paths would be two places for "what does a 401 mean here" to drift. A
-   * stored token that the hub no longer accepts (it was rotated, or this browser
-   * has been shut for a month) has to land on the sign-in screen exactly as a
-   * mistyped one does.
+   * One path for a stored token and a typed one, so a stored token the hub no
+   * longer accepts lands on the sign-in screen exactly as a mistyped one does.
    */
   open(token) {
     this.setState({ busy: true, refused: '' });
@@ -1660,36 +1231,24 @@ export default class HammerolaEntry extends React.Component {
           busy: false,
           refused: '',
         });
-        // THE LIST'S OWN ARRIVAL AT THE BLOCK (issue #91), and there is no
-        // condition on it: the block is drawn on this page whatever the hub
-        // holds, so the paths are wanted whatever came back. Asked HERE rather
-        // than at mount so that the request goes out with the screen that reads
-        // it — a token the hub refuses lands on the door instead, and that path
-        // asks for itself, in the branch below. Somebody who came through the
-        // door has been answered already; `askStart` sees its own flag and
-        // makes no second request.
+        // The list draws the block whatever the hub holds, so ask now; a door
+        // arrival that already got an answer makes no second request.
         this.askStart();
       },
       (error) => {
         if (error instanceof Unauthorized) {
-          // Taken out of storage rather than merely not written. A token the hub
-          // refuses is not worth keeping, and leaving it would make every later
-          // page load start by being refused again.
+          // Cleared from storage so later page loads do not start refused.
           clearToken();
           this.setState({
             token: null, busy: false, projects: null,
             refused: 'The hub refused that token.',
           });
-          // The reader is at the door and may well be its owner setting the hub
-          // up with the wrong string in the browser. The hub answered, so it is
-          // there to ask.
+          // Back at the door; the hub answered, so it can be asked for `/start`.
           this.askStart();
           return;
         }
         console.error('index', error);
-        // NOT asked here, and the difference from the branch above is the whole
-        // reason: this one means the hub did not answer at all, so a second
-        // question would be one more request nobody can get an answer to.
+        // Not asked here: the hub did not answer at all.
         this.setState({
           busy: false,
           refused: 'Could not reach the hub. Try again in a moment.',
@@ -1710,20 +1269,12 @@ export default class HammerolaEntry extends React.Component {
   /**
    * Remove one project from the hub, and its card from the list.
    *
-   * THE REQUEST IS THE PAGE'S, like every other one on this screen: the token
-   * is state here, the list of projects is state here, and the list component
-   * holds the confirmation. It answers a promise so that the box can stay open
-   * on a failure with something to say (`HammerolaProjects.remove`).
-   *
-   * THE SENTENCE IS MADE HERE, not shown raw, and the two branches are the two
-   * the door already draws: a refused token is its own answer — the same words
-   * `open` uses for it — and everything else carries whatever the hub said,
-   * which for this route is worth reading (a 404 is somebody else having
-   * removed it already). What is NOT done here is what `open` does with a 401,
-   * i.e. clear the token and take the page back to the door: this reader has a
-   * list on the screen that the same token fetched a moment ago, and throwing
-   * it away over one refusal would answer a failed deletion by signing them
-   * out. They are told, and the next thing they touch says the same.
+   * The request is the page's (it holds the token and the list); the promise
+   * lets the box stay open with a sentence on failure
+   * (`HammerolaProjects.remove`). A 401 gets `open`'s wording; anything else
+   * carries the hub's message (a 404 means someone removed it already). Unlike
+   * `open`, a 401 here does not sign the reader out: the list on screen was
+   * fetched with this token moments ago.
    */
   remove(pid) {
     return deleteProject(pid, this.state.token).then(
@@ -1745,18 +1296,14 @@ export default class HammerolaEntry extends React.Component {
   signOut() {
     clearToken();
     this.setState({ token: null, projects: null, refused: '' });
-    // Back at the door, and it is a door like any other: if there is nothing on
-    // this hub, whoever is looking at it needs the block. This is also the only
-    // arrival that never passes through a page load.
+    // Back at the door, which needs the block if the hub is empty.
     this.askStart();
   }
 
   render() {
     const s = this.state;
-    // THE ONLY CONDITION, and it is deliberately the data rather than a screen
-    // name: there is a list to show exactly when the hub answered with one.
-    // Anything else — no token, a refused token, a hub that did not answer — is
-    // the door, which is also the only place any of those can be acted on.
+    // The only condition: a list exists exactly when the hub answered with one.
+    // Anything else — no token, refused, unreachable — is the door.
     if (!s.projects) {
       return (
         <HammerolaLogin

@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Calling into the model: its checks(), counted -- and every other door.
+"""Calling into the model: its checks(), counted, and every other entry point.
 
-A checks() that asserts nothing is a checks() that passes, so the number of
-checks it performs is counted from its source and a zero is refused.
+A checks() that asserts nothing passes, so the number of checks is counted
+from its source and a zero is refused.
 
-`call_model` below is the OTHER half, and it is here because it is the same
-machinery: a model's own exception has to become a BuildError, and the message
-has to name the line in the MODEL rather than a line of ours. `MODEL_DOORS`
-lists where that is done per site; `raised_by_the_model` is what makes the
-answer hold at the sites nobody wrapped -- wherever the author's own code left
-a python frame to find, and no further than that.
+`call_model` turns a model's own exception into a BuildError whose message
+names the line in the model. `MODEL_DOORS` lists the guarded call sites;
+`raised_by_the_model` covers unguarded sites wherever the author's code left a
+Python frame on the traceback.
 """
 
 from pathlib import Path
@@ -35,43 +33,24 @@ from .modeltext import (MAX_MESSAGE_CHARS, shown, shown_and_rewritten,
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
-# WHERE THE BUILD CALLS INTO A model.py, named once. Each entry is `(what the
-# message calls it, the site)`, and the SITE IS DERIVED RATHER THAN DESCRIBED:
-# it is `<module>.<function>` of the frame the BuildError left the door by, plus
-# `/<module>.<function>` of the guarded callable when that callable is one of
-# ours rather than the model's own. `tests/cadbuild/test_model_doors.py` reads
-# both out of a real traceback, so a string here that stops matching where the
-# guard actually is fails, and a door whose guard is deleted fails with it.
+# Where the build calls into a model.py. Each entry is `(what the message
+# calls it, the site)`; the site is `<module>.<function>` of the frame the
+# BuildError leaves by, plus `/<module>.<function>` of the guarded callable when
+# that callable is ours. `tests/cadbuild/test_model_doors.py` reads both out of
+# a real traceback, so a stale string or a deleted guard fails there.
 #
-# WHAT A DOOR BUYS IS THE MESSAGE, and that is the whole of what it is for.
-# `parts() raised TypeError (model.py:5): ...` names the entrance and the line
-# the author has to open; the handler on `build.build` can only say that the
-# model's own code raised something. Both end in EXIT_BUILD_FAILED -- "the model
-# said no" -- rather than EXIT_CRASHED, which the hub reports to whoever pushed
-# as "the build crashed".
+# A door buys the message: `parts() raised TypeError (model.py:5): ...` names
+# the entry point and the model line. Every door ends in EXIT_BUILD_FAILED, not
+# EXIT_CRASHED. The pair round `as_shape`/`as_shapes` also decide the exit code:
+# an object from the model raises inside the CAD kernel, with no frame under the
+# project root, so `raised_by_the_model` cannot attribute it.
 #
-# TWO OF THEM BUY THE EXIT CODE AS WELL, and they are the pair round `as_shape`
-# and `as_shapes`. An object the model handed over raises inside the CAD kernel,
-# not inside model.py, so there is no frame under the project root and
-# `raised_by_the_model` answers False for a fault that is entirely the author's
-# -- an empty stack asked for its one body, say. Round those two the door is the
-# only thing that answers.
+# Only calls INTO the model belong here: model.py is the owner's own code, and
+# a door round the hub's own code would report a hub bug as "the model said no".
 #
-# THE LIST WAS ONCE MUCH LONGER, and it was shortened deliberately on
-# 2026-09-07 rather than left to rot. It carried a door round the hub's own
-# READING of every container a model hands back, and one round every attribute
-# lookup on the model module. Those were written for an ADVERSARY -- a model.py
-# fighting the hub -- and there is no adversary in this system: model.py is the
-# owner's own code, pushed with the owner's own secret, from the owner's own
-# repository (AGENTS.md, "код владельца"; SPEC 7.9). What they cost meanwhile
-# was real and landed on the person the hub is for: a door round OUR OWN code
-# reports OUR bug to the author as "the model said no". So this list holds
-# calls INTO a model, and nothing else.
-#
-# TWO ENTRIES DO NOT GIVE THEIR ANSWER THROUGH `call_model`, and say why in
-# their own docstrings: `geometry.load_model` (through `model_site`, which has
-# no model frame to name when there is no model.py) and `run_checks` below (its
-# own catching, so it can tell an AssertionError and a SystemExit apart).
+# `geometry.load_model` answers through `model_site` (no model frame exists when
+# model.py is missing) and `run_checks` does its own catching (to tell an
+# AssertionError and a SystemExit apart); neither goes through `call_model`.
 MODEL_DOORS = (
     ("importing model.py", "geometry.load_model"),
     ("parts()", "parts.read_catalogue"),
@@ -84,21 +63,15 @@ MODEL_DOORS = (
 )
 
 
-# One frame, reduced to the two things anything here asks of it. Named rather
-# than a bare tuple so `_named` below reads the same as it did against
-# `traceback.FrameSummary`.
+# One frame, reduced to the two things anything here asks of it.
 _Frame = collections.namedtuple("_Frame", "filename lineno")
 
 
 def _frames(exc):
-    """The traceback as filenames and line numbers, TOUCHING NO SOURCE FILE.
+    """The traceback as filenames and line numbers, touching no source file.
 
-    `traceback.extract_tb` is what this replaces, and nothing here wants what
-    that function adds: it looks the source LINE up for every frame, through
-    `linecache`, and the two readers below print a file and a number
-    (`_named`) or compare a path (`raised_by_the_model`). Walking `tb_next`
-    reads `co_filename` and `tb_lineno`, which the interpreter already holds,
-    and opens no file at all.
+    Unlike `traceback.extract_tb`, this does not look up source lines through
+    `linecache`; the readers only need a file and a number.
     """
     frames = []
     tb = exc.__traceback__
@@ -116,27 +89,13 @@ def _named(frame):
 def model_site(exc):
     """` (model.py:123)` for the deepest frame OUTSIDE this package, or ``.
 
-    THE DEEPEST FRAME IS USUALLY OURS AND IS THE WRONG ONE TO NAME. A model
-    writing `checklib.estimated(0.25, "...")` with a bad note raises inside
-    `checklib.Number.__new__`, so the plain last frame made the message read
-    `checks() raised ValueError (checklib.py:217)` -- a file the author did not
-    write, cannot open and did not break, for a mistake sitting on one line of
-    their own model. What they need is that line.
+    The deepest frame is usually ours (a bad note raises inside
+    `checklib.Number.__new__`), and the author needs the line in their model,
+    so this package's frames are dropped. Frames below us (cadquery) are kept:
+    nothing here can tell a kernel frame from the model's own helper module.
 
-    So the frames belonging to this package are dropped and the deepest of what
-    is left is named. Frames BELOW us are left alone: a model that breaks inside
-    cadquery is still reported at the cadquery line, exactly as before, because
-    there is no rule here that could tell a kernel frame from the model's own
-    helper module -- and pretending to would be inventing a project boundary
-    this file has no way to know.
-
-    IT SAYS NOTHING RATHER THAN NAMING ONE OF OURS, which is the whole
-    difference between this and `fail_site` below, and it is why the import door
-    calls this one. `geometry.load_model` fails with no model frames at all when
-    there is no model.py to import: every frame is ours, and a fallback there
-    would answer `importing model.py failed (geometry.py:<line>)` -- pointing the
-    author of a missing file at a file of the hub's, which is the exact defect
-    the frame-dropping above exists to end.
+    Unlike `fail_site`, this says nothing rather than naming one of ours, which
+    is why the import door uses it: with no model.py every frame is the hub's.
     """
     frames = [frame for frame in _frames(exc)
               if Path(frame.filename).parent.resolve() != _PACKAGE_DIR]
@@ -146,32 +105,16 @@ def model_site(exc):
 def fail_site(exc):
     """`model_site`, falling back to the deepest frame of ours when it is silent.
 
-    EVERY DOOR BUT THE IMPORT CALLS THIS, and the import is why there are two
-    functions at all. `call_model` below uses it for everything it guards, and
-    `run_checks` below uses it on all three of its failure paths for `checks()`;
-    the IMPORT door does neither of those things -- it is not below,
-    it is `geometry.load_model`, and it calls `model_site` for the reason the
-    last paragraph of that function gives. Where the others ARE concerned
-    the model really is on the stack by the time it has been opened: whatever
-    comes back names something, and naming a file of ours is better than naming
-    nothing at all when the fault is ours to begin with. `call_model` catching a
-    package function called straight from `call_model` is the shape that reaches
-    the fallback in practice, and without it `(outside)[-1]` raises IndexError
-    INSIDE the except handler -- which REPLACES the BuildError being built, so
-    the build ends in EXIT_CRASHED (4) instead of EXIT_BUILD_FAILED (3).
+    Every door except the import uses this (`call_model`, and all three
+    failure paths of `run_checks`). There the model is on the stack, and naming
+    a file of ours beats naming nothing. The fallback also matters when
+    `call_model` guards a package function directly: with no frame outside the
+    package, indexing would raise IndexError inside the except handler and
+    replace the BuildError, ending the build in EXIT_CRASHED.
 
-    WHAT THE FRAME-DROPPING COSTS, said plainly and measured rather than
-    argued: a bug in this package raised while the model is running is reported
-    at the model's line, and NO FILE OF OURS IS NAMED ANYWHERE. This paragraph
-    used to claim the exception type and its text still named the file when the
-    fault was the hub's; they do not -- `parts() raised TypeError
-    (model_y.py:5): 'NoneType' object is not iterable` is the whole of the
-    message a hub bug on ordinary model data produces. The trade is still the
-    right one, for a different reason than the one written here before: the line
-    named is the model's own call INTO this package, which is where anybody
-    debugging either fault starts reading, and a hub-to-model callback resolves
-    to the model's line correctly besides. What is given up is a traceback --
-    and the reader of a build log is not the person who can act on one.
+    Cost of the frame-dropping: a bug in this package raised while the model
+    runs is reported at the model's line and names no file of ours. That line is
+    the model's call into the package, which is where debugging starts anyway.
     """
     site = model_site(exc)
     if site:
@@ -185,37 +128,20 @@ def fail_site(exc):
 def raised_by_the_model(exc):
     """Is a frame from inside the project's own tree on this traceback?
 
-    THE QUESTION THE EXIT CODE TURNS ON WHEREVER IT CAN BE ASKED, asked once at
-    the top of the build instead of at every place somebody remembered.
-    `build.build` is the caller: an exception with a model frame under it
-    becomes a `BuildError` (EXIT_BUILD_FAILED -- "the model said no"), and one
-    without keeps travelling and ends as EXIT_CRASHED -- "the build crashed",
-    which is ours to look at. It is what carries the answer at every site nobody
-    wrapped, and it does not care how the value was reached.
+    `build.build` asks this once for unguarded sites: with a model frame the
+    exception becomes a BuildError (EXIT_BUILD_FAILED), without one it ends as
+    EXIT_CRASHED.
 
-    A SUFFICIENT CONDITION AND NOT A NECESSARY ONE, which is the whole of what
-    it may be relied on for. True means the fault is the author's; FALSE MEANS
-    NOTHING. The ordinary way to reach a False that is wrong needs no trick at
-    all: a model hands over an object, the CAD kernel raises while working with
-    it, and every frame on the traceback belongs to cadquery or to us. That is
-    why `as_shape` and `as_shapes` carry doors of their own -- see the comment
-    on `MODEL_DOORS`.
+    Sufficient, not necessary: True means the fault is the author's, False
+    means nothing. A model object that makes the CAD kernel raise leaves only
+    cadquery and hub frames, which is why `as_shape`/`as_shapes` have doors.
 
-    THE PROJECT'S TREE AND NOT "OUTSIDE THIS PACKAGE", which is the difference
-    between this and `model_site` above and is why there are two predicates.
-    `model_site` NAMES a frame, so it drops the hub's and takes whatever is
-    left -- a cadquery frame included, because there is no way to tell a kernel
-    frame from a helper module of the model's. Deciding blame that way would
-    hand a hub bug that fails inside matplotlib to the author as "the model said
-    no". Only the project's own tree is the model's own code, and a hub bug
-    cannot have a frame there unless the hub was running model code, which is
-    exactly when it IS the author's fault.
+    It tests the project's tree, not "outside this package" like `model_site`:
+    otherwise a hub bug failing inside matplotlib would be blamed on the model.
 
-    An ABSOLUTE path is required, so `<string>`, `<frozen importlib._bootstrap>`
-    and the rest of the interpreter's bracketed pseudo-filenames are not model
-    frames -- they resolve relative to the working directory, which during a
-    build IS the project root, and would otherwise make an import failure of the
-    hub's read as the author's mistake.
+    Only absolute paths count, so pseudo-filenames like `<string>` (which would
+    resolve against the working directory, the project root) are not model
+    frames.
     """
     try:
         root = paths.project_root()
@@ -229,24 +155,12 @@ def raised_by_the_model(exc):
 def _inside(filename, root):
     """Is this frame's file under `root`? Two spellings of the path, no raises.
 
-    THE NAME FIRST, THEN THE REAL PATH, and the second is not belt and braces:
-    `root` is resolved (`paths.set_project_root`) while a frame carries whatever
-    string the import used, and on a host where the project sits under a
-    symlinked directory the two disagree for every file of the model's --
-    `/var/folders/...` against `/private/var/folders/...` on macOS, measured. A
-    predicate that missed that would answer "not the model's" for the whole
-    tree, which is the safe direction only in the sense that it silently gives
-    back what this handler exists to provide.
+    The name first, then the real path: `root` is resolved while a frame
+    carries the string the import used, and under a symlinked directory the two
+    differ (`/var/folders` vs `/private/var/folders` on macOS).
 
-    `realpath` and not `resolve`: it normalizes a name that is not there rather
-    than raising, and a `co_filename` need not name a file that exists.
-
-    `test_a_frame_reached_through_a_symlink_is_still_the_models_own` is what
-    holds the line, in both directions. It builds the link itself rather than
-    waiting for a host that has one, which is the whole reason it exists:
-    reached only through the ambient filesystem, this branch runs on a
-    developer's macOS and never on Linux CI, so deleting it left the suite
-    green.
+    `realpath` rather than `resolve`: a `co_filename` need not exist, and
+    `realpath` does not raise for it.
     """
     if not os.path.isabs(filename):
         return False
@@ -261,32 +175,20 @@ def _inside(filename, root):
 def call_model(name, func, *args):
     """Call one function of the model's, and answer for it in BuildError terms.
 
-    THE RULE IS UNIVERSAL OR IT IS NOTHING, and it was not: `checklib.measured`,
-    `derived` and `estimated` refuse a bad note with a ValueError, and the whole
-    point of refusing there is that the build then blames the MODEL. Only the
-    import (in `geometry.load_model`) and `checks()` (in `run_checks` below)
-    turned that ValueError into a BuildError, so the identical typo written
-    inside `parts()` or `views()` left a bare
-    ValueError travelling out of the build process as EXIT_CRASHED, which the
-    hub reports to whoever pushed as "the build crashed". A note with a typo in
-    it then looked exactly like OCCT falling over, which is precisely the
-    diagnosis the refusal exists to give.
+    Any exception from the model (e.g. the ValueError `checklib.measured`
+    raises for a bad note) becomes a BuildError, so it ends as
+    EXIT_BUILD_FAILED rather than EXIT_CRASHED.
 
     A BuildError is re-raised untouched: everything below this call that refuses
     the catalogue or a view already speaks in those terms, and wrapping one
     again would prefix a considered message with "parts() raised BuildError".
 
-    `BaseException` is deliberately NOT caught. `SystemExit` from a model is
-    already terminal on every path -- `buildproc.child` catches BaseException and
-    ends the build as EXIT_CRASHED -- so there is no green-and-published outcome
-    to guard against here, which is the one thing that earns `run_checks` its
-    own SystemExit branch below.
+    `BaseException` is not caught: `buildproc.child` already ends the build as
+    EXIT_CRASHED on a SystemExit, so nothing can be published green from here.
 
-    THE EXCEPTION'S OWN TEXT IS AUTHOR PROSE and reaches the build log through
-    `modeltext`: a message written across three lines would otherwise turn one
-    refusal into what reads as three, and `MAX_MESSAGE_CHARS` rather than the
-    note ceiling because `checklib._text_problem` answers a bad note in about
-    300 characters and the actionable half is the second half.
+    The exception text is rendered through `modeltext` so a multi-line message
+    stays one line; `MAX_MESSAGE_CHARS` because `checklib._text_problem`
+    explains a bad note in about 300 characters.
     """
     try:
         return func(*args)
@@ -363,9 +265,7 @@ def _fills_list(node, collected):
         problems.append("...")                       Call on the list
         problems = checklib.mating_face_flat(...)    Assign whose value calls out
 
-    The last one is the one that used to be missed, and missing it was not a
-    wrong number but a red build: `problems = checklib.mating_face_flat(...)`
-    followed by `return problems` counted zero, and zero is refused below.
+    Missing the last one would count zero, and zero is refused.
     """
     if isinstance(node, ast.AugAssign):
         return isinstance(node.target, ast.Name) and node.target.id in collected
@@ -410,17 +310,10 @@ _ChecksSource = collections.namedtuple("_ChecksSource", "tree source first")
 def _checks_source(func):
     """`_ChecksSource` for `func`, or None when its source cannot be read.
 
-    ONE READ AND ONE PARSE FOR BOTH READERS. `count_checks` and
-    `static_asserts` ask the same question of the same function, and each used
-    to do its own `inspect.getsource` + `ast.parse` -- so `run_checks` read and
-    parsed the author's checks() twice per build. `inspect.getsource` is
-    `"".join(getsourcelines(...)[0])`, so the text both worked on was already
-    the same string.
+    One read and one parse shared by `count_checks` and `static_asserts`.
 
-    None rather than a raise for the three failures a checks() actually arrives
-    with -- a C function, one built by `exec`, a file that has moved since it
-    was imported -- which is the set `count_checks` has always answered None
-    for. Anything else is left to escape, exactly as it did from there.
+    None for the failures a checks() actually arrives with: a C function, one
+    built by `exec`, a file moved since import. Anything else escapes.
     """
     try:
         lines, first = inspect.getsourcelines(func)
@@ -568,12 +461,9 @@ def _bounded(value):
     number this file declares is the one number that decides how big anything
     here may get. It is about the MAGNITUDE of a number and about nothing else.
 
-    A LARGE SEQUENCE IS DELIBERATELY NOT GUARDED HERE, and the ceiling above
-    never was one: `"x" * BIG` is already built by the time its length could be
-    measured, so a branch measuring it costs the allocation and prevents
-    nothing. The boundary against a model that allocates is the separate build
-    process -- `rlimit`, the watchdog, the SIGKILL (SPEC §7.9) -- and not a
-    check running inside it.
+    Large sequences are not guarded: `"x" * BIG` is already built by the time
+    its length could be measured. Allocation is bounded by the build process
+    (`rlimit`, the watchdog, SIGKILL; SPEC §7.9).
     """
     ceiling = 2 ** MAX_STATIC_POW
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -797,16 +687,9 @@ def static_asserts(func, namespace, parsed=None):
     NEVER AN EXCEPTION: this runs on a build whose checks have already passed,
     and nothing about a printed note is worth failing that build over.
 
-    THE CATCH IS BLANKET AND COVERS THE ANALYSIS ITSELF, not just the reading,
-    which is what makes the promise above true rather than intended. `_applied`
-    above is the precedent and the argument is the same one: enumerating the
-    ways an analysis of somebody else's source can refuse is a list that goes
-    stale into a raise. It went stale here -- `static_value` recurses by
-    expression DEPTH, so about twelve hundred nested terms in one assert raise
-    RecursionError, which is neither OSError, TypeError nor SyntaxError. That
-    escaped into `run_checks` AFTER every check of the model had passed and
-    turned a green build into a crash, for a printed note. "Could not work it
-    out" means "found nothing", on every path.
+    The catch is blanket and covers the analysis itself, as in `_applied`:
+    e.g. `static_value` recurses by expression depth, so a deeply nested assert
+    raises RecursionError. "Could not work it out" means "found nothing".
 
     `parsed` is `count_checks`'s `_checks_source(func)`, handed over rather
     than read and parsed again. Taking it here stays INSIDE the try, so the
@@ -862,7 +745,7 @@ def print_check_sections():
     below SECTION_FLOOR collapse into one line: their count is what matters
     (twelve tiny sections is a shape worth seeing), not twelve labels.
 
-    THE ROWS CAN NOW ADD UP TO MORE THAN THE PHASE THEY SIT UNDER: a label's
+    The rows can add up to more THAN THE PHASE THEY SIT UNDER: a label's
     seconds are summed across the PARALLEL workers running check units as well
     as across repeats, so two units that each spent 40 s under `probing` print
     one 80-second row out of 40 seconds of wall clock.
@@ -871,8 +754,7 @@ def print_check_sections():
     module the MODEL filled. The model's own `import checklib` may be what loads
     it, through the shim at the repository root, and there must be exactly one
     module: two would mean the model records into one and this reads the other,
-    printing an empty table for a run that measured itself (the same trap
-    `geometry._warn_if_checklib_shadowed` exists for).
+    printing an empty table (see `geometry._warn_if_checklib_shadowed`).
     """
     from . import checklib
 
@@ -887,32 +769,18 @@ def print_check_sections():
 
     print("check sections:")
     for label, seconds in named:
-        # THE LABEL IS THE MODEL'S, and it is the one field of this table that
-        # is. `checklib.section(label)` refuses a non-string and scans it for
-        # nothing else, so a label with a newline in it turns one row into two
-        # and a table read as a ranking into a list nobody can rank -- on the
-        # build that already failed, which is the log somebody is reading.
+        # The label is the model's and may hold a newline
+        # (`checklib.section` only refuses non-strings), so it is escaped.
         print(f"  {shown_text(label)}: {seconds:.1f}s")
     if rest:
         print(f"  other {len(rest)} sections: "
               f"{sum(seconds for _, seconds in rest):.1f}s")
 
 
-# What the hub says when it rewrote a check's own words, and the whole of what
-# turns a silent mangling into a trade an author can act on. It is ONE sentence
-# under the whole list rather than one per problem: what an author needs to know
-# is that the hub did this and how to stop it, and repeating that under four
-# messages would bury the four messages.
-#
-# INDENTED LIKE THE PROBLEMS ABOVE IT and deliberately NOT prefixed `warning:` --
-# the build is already failing on the check itself, and a second prefix in a
-# refusal would read as a second verdict.
-#
-# IT IS A HINT AND NOT A VERDICT, WHICH IS JUST AS WELL: a check may return this
-# very text as a problem of its own, and the copy would differ from the real one
-# by the `  - ` prefix alone. Nothing here can tell the two apart, so nothing
-# here should be written as though it could -- what the escape defends is the
-# START of a line, and this sentence is not load-bearing for that.
+# Printed once under the problem list when the hub rewrote a check's own words.
+# Not prefixed `warning:`: the build is already failing, and a second prefix
+# would read as a second verdict. It is a hint only; a check could return the
+# same text itself.
 _ESCAPE_NOTE = (
     "\n  (the hub rewrote a line break or an invisible character in the "
     "text above. A build-log line beginning `warning:` is read as a verdict "
@@ -1024,14 +892,10 @@ def run_checks(model, out_dir):
     deliberately not one. It mirrors how `_reraises` is subtracted in
     count_checks without being allowed to reach zero.
 
-    A MODEL WITH UNITS IS THE EXCEPTION TO THAT LAST RULE, and it has to be. 0
-    is only reserved because it is the refusal, and the refusal is waived for a
-    model that has units -- so for that model 0 is an ordinary answer, "checks()
-    holds nothing and the units are where the checks went", and
-    `checkunits.run_units` adds one per unit to it. Left as None it was an
-    unknown that nothing could make known again.
+    A model with units is the exception: the refusal is waived for it, so 0 is
+    an ordinary answer and `checkunits.run_units` adds one per unit to it.
 
-    Optional: a model.py without checks() builds exactly as it did before.
+    Optional: a model.py without checks() builds without it.
     Called after the geometry gate and before anything is packed, so a check
     can measure the exported files in out_dir and not only the geometry.
 
@@ -1060,12 +924,8 @@ def run_checks(model, out_dir):
             f"model.py defines checks, but it is a {type(checks).__name__}, "
             "not a function")
 
-    # Read and parsed ONCE, here, for the two readers of it below: the count on
-    # the next line and the static-assert note after the checks have run. None
-    # when the source cannot be read at all -- a C function, something built by
-    # exec(), a file that moved. Both readers then repeat the failed read for
-    # themselves and arrive at the same answer, which costs a miss and nothing
-    # else; "once" is about the ordinary path, where there is a source to read.
+    # Read and parsed once for the count and the static-assert note. When it is
+    # None, both readers retry the read and reach the same answer.
     parsed = _checks_source(checks)
 
     count = count_checks(checks, parsed)
@@ -1116,23 +976,11 @@ def run_checks(model, out_dir):
         # most wanted on the build that went red, and a `finally` is the only
         # place that covers the raise as well as the return.
         #
-        # NOTHING IN HERE MAY RAISE. An exception leaving a `finally` REPLACES
-        # the exception on its way out, so a printing bug would swallow the
-        # BuildError naming the check that failed and report itself instead --
-        # the build would go red for the wrong reason and the real one would be
-        # gone. Hence the blanket catch, which is otherwise not this file's
-        # style.
-        #
-        # AND THE RESCUE PRINT IS WRAPPED TOO, which is the half that was
-        # missing: the one realistic way a function whose whole job is printing
-        # fails is that WRITING fails -- a closed or broken stdout -- and in
-        # exactly that case the `print` in the handler raises the same error
-        # again, out of the `finally`, doing the substitution this block exists
-        # to prevent. It was reproduced: the build reported `ValueError: I/O
-        # operation on closed file` instead of the assert that failed, and a
-        # build whose checks all passed went red with nothing wrong in it. The
-        # inner handler is deliberately empty -- there is nowhere left to
-        # report to, and the timing table is worth nothing against the verdict.
+        # Nothing in here may raise: an exception leaving a `finally` replaces
+        # the BuildError on its way out. The rescue print is wrapped too, since
+        # the realistic failure is a closed or broken stdout, where it would
+        # raise again; the inner handler is empty because there is nowhere
+        # left to report to.
         try:
             print_check_sections()
         except Exception as printing_error:  # never mask the verdict above
@@ -1164,15 +1012,9 @@ def run_checks(model, out_dir):
         # `MAX_MESSAGE_CHARS` per problem, because a check reporting a
         # measurement has more to say than a note does.
         #
-        # AND THE ESCAPE SAYS SO WHEN IT FIRED, which is the half that makes it
-        # a trade rather than a mangling. `checklib` refuses a bad note with
-        # several hundred characters of explanation; this used to hand back a
-        # rearranged message and not one word saying the hub had touched it.
-        #
-        # ONE CALL DECIDES BOTH, and it has to be one: the sentence used to be
-        # decided by re-rendering the value a second time, so a `__str__` that
-        # answers differently on two calls showed one string and reported about
-        # another.
+        # When the escape fires, `_ESCAPE_NOTE` says so. One call decides both
+        # the text and whether it was rewritten, so a `__str__` that answers
+        # differently on two calls cannot desynchronise them.
         shown_problems = [shown_and_rewritten(p, str, limit=MAX_MESSAGE_CHARS)
                           for p in problems]
         listed = "\n".join(f"  - {text}" for text, _ in shown_problems)
@@ -1190,27 +1032,16 @@ def run_checks(model, out_dir):
             # The "never 0" above: an all-static checks() reports an unknown
             # count, not a refusal.
             #
-            # AND ONLY WHEN THERE ARE NO UNITS, because 0 here is then a real
-            # measurement rather than a value 0 is reserved against. A model
-            # half way through the migration -- an empty `checks()`, which the
-            # units above are what waives the refusal of, plus its units --
-            # counted 0 and left through this line as "unknown", so
-            # `checkunits.run_units` had nothing to add its units to and
-            # metrics.json carried `checks_passed: null` for a model with eight
-            # checks. `report_metrics` could then no longer say the project had
-            # lost one, which is the one thing that number is kept for.
+            # Only without units: with units, 0 is a real count that
+            # `checkunits.run_units` adds to, and None would leave metrics.json
+            # with `checks_passed: null`.
             passed = None
 
     # Say the number when it is known, and say that it is not when it is not.
-    # A bare `passed` reads like "many" and can mean "none". The bracket appears
-    # only when there is something in it, so a build with nothing to say prints
-    # the line it has always printed.
+    # The bracket appears only when there is something in it.
     if passed is not None:
-        # "MORE" AND NOT "OF THEM": the static ones have already been taken off
-        # `passed`, so they are not among the number the bracket sits beside.
-        # "2 of them" next to a 5 that is the REMAINDER says three real checks
-        # are left where there are five, and with more static asserts than real
-        # ones it prints a bracket whose number is the larger of the two.
+        # "more", not "of them": the static ones are already subtracted from
+        # `passed`.
         aside = (f" ({len(static)} more decided by the constants alone)"
                  if static else "")
         print(f"checks: {passed} passed{aside}")

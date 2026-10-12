@@ -1,12 +1,8 @@
 """The client's copy of the hub's ceilings must be the hub's ceilings.
 
-THIS IS THE TEST THAT DID NOT EXIST, and its absence is why publication is
-broken today. `cad_publish/hubspec.py` carried the same numbers in a repository
-that could not see the hub's; when the hub changed, nothing anywhere compared
-the two. Both halves are in this repository now, so the comparison is a test —
-and one that runs in the same CI job as everything else, so a change to either
-side fails at the commit that makes it rather than at the next attempt to
-publish a model.
+Both halves are in this repository, so the comparison is a test in the same
+CI job as everything else: a change to either side fails at the commit that
+makes it rather than at the next attempt to publish a model.
 
 `hammerola/limits.py` explains why it is a copy at all: the client has to
 import under a laptop's bare python3, and `src.store` brings loguru and the
@@ -52,12 +48,11 @@ def test_the_text_ceiling_is_the_hubs():
 
 
 def test_the_message_header_is_spelled_the_same_on_both_sides():
-    """The name of the header a revision's message travels on (issue #67).
+    """The name of the header a revision's message travels on.
 
     Spelled twice for the reason everything in this file is: the client must
-    import under a bare python3 and cannot see `src`. Two spellings of one wire
-    name is exactly the shape the module docstring above calls the thing that
-    broke publication — and this one would break QUIETLY, because a header
+    import under a bare python3 and cannot see `src`. This one would break
+    QUIETLY, because a header
     nobody reads is not an error: the push succeeds, the build publishes, and the
     message is simply gone from every row.
     """
@@ -74,23 +69,22 @@ def test_the_size_ceiling_matches_the_hubs_default():
     MAX_BUILD_BYTES is a setting: a deployment may raise or lower it and the
     client has no way to ask. So the local check exists to catch the archive
     nobody would accept, and the hub's 413 — carrying its own number — is the
-    authority. What this test pins is that the client is not guessing at a
-    number the project has since moved.
+    authority. What this test pins is that the client's default matches the
+    hub's.
     """
     assert (limits.MAX_BUILD_BYTES
             == Settings.model_fields["max_build_bytes"].default)
 
 
 def test_the_states_a_poller_stops_on_are_the_hubs():
-    """The two words `Hub.await_job` waits to see (issue #98).
+    """The two words `Hub.await_job` waits to see.
 
-    The hub is the side that ISSUES them and says so over its own copy: nothing
-    in `src/jobs.py` selects a job by whether it has finished any more, and the
-    tuple is kept there because it is the wire contract this client mirrors. The
+    The hub is the side that ISSUES them, and the tuple in `src/jobs.py` is the
+    wire contract this client mirrors. The
     client's copy is a copy for the reason everything in this file is one — it
     has to import under a bare python3.
 
-    DRIFT IS A GREEN SUITE AND A BROKEN PUSH. A word this side does not
+    Drift is a green suite and a broken push. A word this side does not
     recognise is not an error anywhere: the build runs, publishes and is served,
     while `await_job` goes on polling a record that will never change again
     until `--timeout` runs out. Every `build` and every `commit` then reports a
@@ -109,7 +103,7 @@ def test_the_states_a_poller_stops_on_are_the_hubs():
 
 
 def test_the_attachment_kinds_are_the_hubs():
-    """What `hammerola comments files` asks the hub FOR (issue #98).
+    """What `hammerola comments files` asks the hub FOR.
 
     Both spellings travel, and each of the two is the same string in two
     places: the kind is the KEY a comment record carries the stored file name
@@ -122,7 +116,7 @@ def test_the_attachment_kinds_are_the_hubs():
     `tests/client/test_queue.py` already pins the EXTENSIONS such a file is
     stored under and says nothing about the kinds.
 
-    DRIFT IS SILENT IN BOTH HALVES. A kind the record does not carry reads as
+    Drift is silent in both halves. A kind the record does not carry reads as
     "this comment has no such attachment" — `files` prints "no photo or frame"
     and exits 0, on a comment whose photo the build page is showing — and a kind
     the hub does not serve is a 404 fetching bytes the hub has.
@@ -140,7 +134,7 @@ def test_the_attachment_kinds_are_the_hubs():
 
 
 def test_the_id_login_probes_with_is_one_the_hub_would_look_up():
-    """The trick `hammerola login` stands on (issue #98).
+    """The trick `hammerola login` stands on.
 
     `check_token` asks the jobs route for an id no job can have and reads the
     answer as a verdict on the SECRET: 401 is "wrong token", anything else is

@@ -48,13 +48,11 @@ def _importable(root):
     SECOND module object with a second `_INTERFERENCE` — which is the exact
     failure the shim and the conftest guard exist for.
 
-    "WHERE ITS CODE IS" IS `modulesource.came_from` AND NOT `__file__`, which is
-    what stood here: a namespace package — a directory with no `__init__.py`,
-    which is what a project keeping its mocks in a `mocks/` directory has —
-    carries `__file__ is None` and its location in `__path__` alone, so it
-    walked through this sweep and stayed in `sys.modules` for the rest of the
-    session. The two sweeps in `tests/test_template.py` had the same hole and
-    now share the same answer.
+    "Where its code is" is `modulesource.came_from` and not `__file__`: a
+    namespace package — a directory with no `__init__.py`, which is what a
+    project keeping its mocks in a `mocks/` directory has — carries
+    `__file__ is None` and its location in `__path__` alone. The sweeps in
+    `tests/test_template.py` use the same answer.
     """
     before = set(sys.modules)
     sys.path.insert(0, str(root))
@@ -163,10 +161,9 @@ def test_a_note_that_is_not_a_sentence_is_refused():
 def test_a_declared_number_does_not_change_after_it_is_declared():
     """The three fields are read-only, and what that closes is a CRASH.
 
-    They were plain slots, so `n.kind = "guessed"` took -- and `report()`, which
-    indexes its counts by kind, then raised a bare `KeyError`. A KeyError is not
-    a `BuildError`, so the build ended in a traceback rather than in a message
-    saying what was wrong. The value itself is already immutable, this being a
+    A writable `n.kind = "guessed"` would make `report()`, which indexes its
+    counts by kind, raise a bare `KeyError` -- a traceback rather than a
+    message saying what was wrong. The value itself is already immutable, this being a
     float; making the provenance match it is what turns "a number's provenance
     is fixed at the point it is written" into something that holds.
     """
@@ -178,7 +175,7 @@ def test_a_declared_number_does_not_change_after_it_is_declared():
             delattr(value, field)
     assert (value.kind, value.source, value.note) == (
         checklib.MEASURED, "ref/measurements.md#lid-fit", "caliper")
-    # The path that used to die: a kind report() has no counter for.
+    # report() still counts the kind that was set at construction.
     assert provenance.report([provenance.Entry("GAP", value, 1)])["measured"] == 1
 
 
@@ -318,13 +315,10 @@ def test_a_lowercase_name_is_outside_the_rule(isolated_project):
 
 
 def test_an_import_binds_no_name_this_walk_reads(isolated_project):
-    """RETITLED to what it pins. It used to be called "an imported LOWERCASE
-    float is outside the rule", and it passed for a reason that had nothing to
-    do with case: an `ImportFrom` puts nothing into `module_bindings` at
-    all, so `pi` never reaches the UPPER_SNAKE filter and the test stayed green
-    with `UPPER_SNAKE` deleted outright. The case half is
+    """An `ImportFrom` puts nothing into `module_bindings` at all, so `pi`
+    never reaches the UPPER_SNAKE filter. The case half is
     `test_a_lowercase_name_is_outside_the_rule` above; this is the import half,
-    and it says so by asserting the value really is there and really is a float.
+    and it asserts the value really is there and really is a float.
     """
     model = a_model(isolated_project, "from math import pi\n")
     assert isinstance(model.pi, float) and not isinstance(model.pi,
@@ -368,9 +362,8 @@ def test_a_bool_is_neither_a_number_nor_a_bare_float(isolated_project):
 def test_a_name_assigned_twice_reports_both_lines(isolated_project):
     """EVERY line that binds it, in the order they are written.
 
-    It used to report the last one only, on the argument that python binds the
-    name there. True of straight-line code -- this case -- and the three tests
-    below are the ones where it is false.
+    "The last one" is right only for straight-line code -- this case -- and the
+    three tests below are the ones where it is false.
     """
     model = a_model(isolated_project, """
         GAP = 0.2
@@ -384,14 +377,8 @@ def test_a_name_assigned_twice_reports_both_lines(isolated_project):
 
 
 def test_one_set_of_lines_has_one_phrase():
-    """`at_lines` sorts and deduplicates, so no caller has to.
-
-    It used to do neither, and the only caller made up half the difference:
-    `module_level_lines` runs its lines through `dict.fromkeys`, so duplicates
-    were gone before the phrase was built while ORDER was whatever the walk
-    found. That left a function whose answer depended on how it was called --
-    `lines 2, 1` and `lines 1, 2` for the same two lines -- with the property
-    the message needs living in a different module.
+    """`at_lines` sorts and deduplicates, so no caller has to: the same two
+    lines always read `lines 1, 2`, however they were gathered.
     """
     assert provenance.at_lines(3) == "line 3"
     assert provenance.at_lines([3]) == "line 3"
@@ -429,7 +416,7 @@ def test_a_name_bound_out_of_order_or_twice_over_reads_as_one_place(
      "    GAP = 0.9\n", (3, 5)),
 ])
 def test_a_name_bound_in_two_arms_names_both(isolated_project, source, lines):
-    """The claim `line` used to make, falsified by a five-line model.
+    """A five-line model where the last binding is not the one that ran.
 
     No walk over a syntax tree can say which arm ran, so all the lines are named
     and none of them is claimed. The message says `lines 3, 5`, and both are
@@ -470,15 +457,11 @@ def test_an_imported_upper_snake_float_is_not_refused(isolated_project):
 
 def test_a_number_a_helper_module_declares_is_neither_refused_nor_reported(
         isolated_project):
-    """THE PRICE OF THE TEST ABOVE, paid on both halves rather than on one.
+    """The price of the test above, paid on both halves.
 
-    `collect()` used to sweep every name in `vars(model)` while `unwrapped()`
-    read the tree, so one rule was about two sets of names: a helper's BARE
-    float was deliberately let through (the test above), and the same helper's
-    `measured(10.0, "ref/gone.md")` refused the build with a message naming no
-    line and no file the author could open. Both halves now read the one walk,
-    and what follows from that is this test: a helper's numbers are outside the
-    rule entirely -- not refused, and not counted in metrics.json either.
+    `collect()` and `unwrapped()` read the one walk, so a helper's numbers are
+    outside the rule entirely -- not refused, and not counted in metrics.json
+    either.
     """
     model = a_model(isolated_project, "from helpers import MAX_WIDTH, LIP\n",
                     helpers="""
@@ -499,7 +482,7 @@ def test_a_number_a_helper_module_declares_is_neither_refused_nor_reported(
 
 
 @pytest.mark.parametrize("source, line", [
-    # `if`, which is all this used to cover, and its `else`.
+    # `if` and its `else`.
     ("if True:\n    GAP = 0.2\n", 2),
     ("if False:\n    pass\nelse:\n    GAP = 0.2\n", 4),
     ("for _ in range(1):\n    GAP = 0.2\n", 2),
@@ -535,10 +518,9 @@ def test_the_two_nodes_that_carry_statements_are_not_statements():
 
     `ast.ExceptHandler` and `ast.match_case` hold a body of statements without
     being statements, so `isinstance(child, ast.stmt)` -- the obvious way to
-    gather the children worth descending into, and the way this used to do it --
-    silently skips both. Said here because nothing in the grammar documentation
-    says it in one line, and because the day it stops being true the walk is
-    doing extra work rather than missing something.
+    gather the children worth descending into -- silently skips both. The day
+    it stops being true the walk is doing extra work rather than missing
+    something.
     """
     for node_type in provenance._CARRIES_STATEMENTS:
         assert not issubclass(node_type, ast.stmt), (
@@ -553,9 +535,9 @@ def test_an_augmented_assignment_rebinds_the_name_at_its_own_line(
 
     Provenance deliberately does not survive arithmetic, so `WALL += 0.5` turns
     a declared number into a bare one. With the target not rebound, the refusal
-    pointed at the line of the PREVIOUS assignment -- a line holding a perfectly
-    correct `checklib.estimated(...)` -- so the author was sent to read code
-    that was right.
+    would point at the line of the PREVIOUS assignment -- a line holding a perfectly
+    correct `checklib.estimated(...)` -- sending the author to read code that
+    is right.
     """
     model = a_model(isolated_project, """
         import checklib
@@ -565,8 +547,7 @@ def test_an_augmented_assignment_rebinds_the_name_at_its_own_line(
     """)
     bare, = provenance.unwrapped(model)
     assert (bare.name, bare.value, bare.line) == ("WALL", 3.0, (3, 4))
-    # And it is no longer a declared number at all, which is the other half of
-    # why the old message was wrong.
+    # And it is not a declared number at all any more.
     assert provenance.collect(model) == []
 
 
@@ -577,8 +558,7 @@ def test_the_expression_an_augmented_assignment_records_is_a_legal_expression():
     statement's own target as the left operand -- gives it a `ctx=Store` name.
     It unparses correctly and its positions are right, so nothing shows: the
     node is simply not a legal expression, and `compile` says so. No consumer
-    compiles one today, which is exactly why this needs a test rather than a
-    comment.
+    compiles one yet, so only this test would notice.
     """
     tree = ast.parse("WALL = 2.0\nWALL += 0.5\n")
     binding = provenance.module_bindings(tree)["WALL"][1]
@@ -632,9 +612,8 @@ def test_a_walrus_is_bound_before_the_body_it_guards(isolated_project):
     """The order the walk visits the three parts of a statement in.
 
     `if (GAP := 0.2) > 0:` with a `GAP = 0.4` inside it binds line 1 and THEN
-    line 2, which is the order python runs them in. The walrus pass used to run
-    after the descent, so the lines came out `(2, 1)` -- and while the last one
-    won, that was a message pointing at the line that ran FIRST.
+    line 2, which is the order python runs them in, so the walrus pass runs
+    before the descent.
     """
     model = a_model(isolated_project, "if (GAP := 0.2) > 0:\n    GAP = 0.4\n")
     bare, = provenance.unwrapped(model)
@@ -661,13 +640,9 @@ def test_a_walrus_in_a_lambda_body_binds_nothing_here(isolated_project):
 
     `_bind_walruses` returns at `ast.Lambda`, and the gap above says why: a
     lambda is a scope, so a `:=` in its BODY binds a local of that lambda and
-    not a module global. Nothing pinned the line, and `if False:` in its place
-    left the whole suite green -- because a walrus in a lambda body appears in
-    no test above, and the shapes that do appear are all bound somewhere else
-    too, so the extra binding it invents changes no verdict.
+    not a module global.
 
-    IT CHANGES ONE HERE, and that is what makes this the mutation's witness
-    rather than a restatement of the code. `MAX_WIDTH` is bound by a `global`
+    The extra binding would change a verdict here. `MAX_WIDTH` is bound by a `global`
     inside a function -- deliberately outside the rule (`module_bindings` names
     it), so `vars(model)` holds a bare 4.0 that the walk is not supposed to see
     a line for. Let the lambda's walrus bind the name, and the walk suddenly has
@@ -705,11 +680,9 @@ def bound_expressions(source):
 def test_a_tuple_assignment_binds_every_name_it_names(isolated_project):
     """`A, B = 0.4, 0.3` is two bare numbers, at one line, with their OWN values.
 
-    THE EXPRESSION IS THE HALF THAT WAS ASSERTED BY NOTHING. `_paired` is what
-    hands each target element the element of the value beside it, and replacing
-    it with `[value] * len(elements)` -- i.e. giving both names the whole tuple
-    -- left the entire suite green, because everything else here reads the
-    runtime value. So the binding is read directly and printed back: with the
+    `_paired` hands each target element the element of the value beside it.
+    Everything else here reads the runtime value, so the binding is read
+    directly and printed back: with the
     pairing, `BOSS_CHAMFER` is bound to `0.4`; without it, to `(0.4, 0.3)`.
     """
     source = "BOSS_CHAMFER, LIP_CHAMFER = 0.4, 0.3\n"
@@ -745,11 +718,10 @@ def test_a_tuple_that_cannot_be_taken_apart_gives_every_name_the_whole_value(
 
 def test_a_starred_target_binds_the_name_that_collects_the_rest(
         isolated_project):
-    """`A, *REST = ...` -- the `ast.Starred` branch of `_bind`, which nothing hit.
+    """`A, *REST = ...` -- the `ast.Starred` branch of `_bind`.
 
-    Deleting that branch left the whole suite green while the answer really
-    changed: REST is bound by no other form, so it simply vanished from the
-    walk, and the two bare floats it holds went unrefused. A starred target also
+    REST is bound by no other form, so without the branch it vanishes from the
+    walk and the two bare floats it holds go unrefused. A starred target also
     makes the element-by-element pairing undecidable -- it consumes an unknown
     number of them -- so every name gets the whole tuple, which is a superset
     and never claims less than the truth.
@@ -796,8 +768,8 @@ def test_the_refusal_names_a_shadowing_checklib_as_the_cause(isolated_project):
     `Number`. This rule recognises only the image's class, so they list as bare,
     and the message then reads "these do not say where they came from" about
     lines that plainly do. The refusal stands (there is nothing else it can do
-    with a class it cannot recognise); what changes is that it names the cause
-    and says what to do instead of the advice that would not help.
+    with a class it cannot recognise), but it names the cause and says what to
+    do.
     """
     with _a_project_with_its_own_checklib("/models/thing/checklib.py"):
         with pytest.raises(BuildError) as exc:
@@ -870,10 +842,9 @@ def test_a_local_inside_a_function_is_not_a_module_level_name(isolated_project):
 def measured_model(source):
     """A model whose one number is measured against `source`.
 
-    The project root is not a parameter and never was one: this returns TEXT,
-    and it is `gate(root, ...)` that decides which directory the source is
-    resolved against. The root used to be passed here and dropped on the floor
-    by all eleven callers, which reads as if the two were connected.
+    The project root is not a parameter: this returns TEXT, and it is
+    `gate(root, ...)` that decides which directory the source is resolved
+    against.
     """
     return """
         import checklib
@@ -899,15 +870,12 @@ def test_an_anchor_that_names_a_heading_resolves(isolated_project):
 
 
 def test_a_source_with_no_anchor_asks_nothing_of_the_headings(isolated_project):
-    """THE ANCHOR IS OPTIONAL, and README.md said it was not.
+    """The anchor is optional.
 
-    "its source has to name a file in the project, AND A HEADING IN IT, that
-    exist" -- a sentence about a rule that would refuse `measured(3.0,
-    "ref/measurements.md")`, which builds. `_source_problem` returns None the
-    moment `anchor` is empty, before `_heading_slugs` is ever called.
+    `measured(3.0, "ref/measurements.md")` builds: `_source_problem` returns
+    None the moment `anchor` is empty, before `_heading_slugs` is ever called.
 
-    The second half is the one worth having as a test rather than as a
-    correction: a file WITH NO HEADINGS AT ALL is a legal journal, so the
+    A file WITH NO HEADINGS AT ALL is a legal journal, so the
     heading walk must not be reached to find that out. A page of measurements
     with a paragraph at the top and no `#` anywhere is an ordinary thing for
     somebody to write first.
@@ -1101,7 +1069,7 @@ def test_every_estimate_is_printed_and_none_of_them_is_a_warning(
 
 
 def test_the_summary_has_the_shape_metrics_json_carries(isolated_project):
-    """FORM, not content: issue #58 is what reads it and it is not written yet.
+    """FORM, not content.
 
     Held to being JSON, because that is where it goes — `write_metrics` dumps
     it and nothing else converts it on the way.
@@ -1129,11 +1097,7 @@ def test_the_summary_carries_the_notes_the_declarations_promise(
         isolated_project):
     """`derived()` tells the author the note travels into metrics.json.
 
-    It did not. The summary carried three counts and a list of names, and the
-    entire output of `derived()` -- the sentence saying which numbers a number
-    follows from -- had no reader anywhere. Issue #58 is what will read these.
-
-    EVERY KIND'S NOTE, not only `derived`'s: it is one field written for one
+    Every kind's note, not only `derived`'s: it is one field written for one
     reader. And only where there is one, since `note` is optional on
     `measured()` and an empty string asserts nothing about where a figure came
     from.
@@ -1161,15 +1125,11 @@ def test_the_summary_carries_the_notes_the_declarations_promise(
 
 
 def test_a_name_out_of_a_dict_key_is_held_to_the_note_ceiling(isolated_project):
-    """The name is AUTHOR TEXT too, and it used to be the unbounded half.
+    """The name is AUTHOR TEXT too, and is bounded like the note.
 
-    `MAX_NOTE_CHARS` was justified by the size of metrics.json ("a 200 000
-    character note made a 200 kB metrics.json") and bounded only the note.
-    `_one_level` builds the name out of the model's own dict KEY, so eighteen
-    characters of note under a 500 000-character key measured a 500 128-byte
-    `provenance` block in a file that is public, immutable and never deleted.
-    That figure is OF THE FILE: `metrics.write_metrics` dumps with `indent=2`,
-    which is 20 bytes wider here than the same block dumped compact (500 108).
+    `_one_level` builds the name out of the model's own dict KEY, so an
+    unbounded key would put an unbounded `provenance` block into metrics.json,
+    a file that is public, immutable and never deleted.
     """
     key = "k" * 500
     entries = provenance.collect(a_model(
@@ -1212,14 +1172,11 @@ def test_a_module_global_of_any_length_is_capped_in_the_refusal_too(
 
 def test_the_summary_lists_no_more_than_the_ceiling_and_says_how_many_it_dropped(
         isolated_project, capsys):
-    """The NUMBER of declarations was unbounded as well, and it is the worse half.
+    """The NUMBER of declarations is bounded as well.
 
     Seventy-five characters of source -- a dict comprehension of 50 000
-    estimates -- measured
-    a 12 477 875-byte `provenance` block in metrics.json as `write_metrics`
-    dumps it, with `indent=2` (12 077 855 dumped compact). Three claims here, and
-    the third is
-    what makes the cut safe to make: the two author-text lists are cut, the
+    estimates -- would make a ~12 MB `provenance` block in metrics.json. Three
+    claims here, and the third is what makes the cut safe to make: the two author-text lists are cut, the
     COUNTS are exact (they are totalled before anything is dropped), and what
     was dropped is said out loud rather than left for a reader to infer from a
     list shorter than the count beside it.
@@ -1277,8 +1234,8 @@ def test_a_model_that_declares_nothing_says_nothing(isolated_project, capsys):
 
 # What a dict key's `__repr__` can hand back without anybody meaning anything by
 # it. `_one_level` builds the inventory's name for a nested number by rendering
-# the key, so these are the shapes that reach a printed line -- and each one
-# used to end the build in a way that blamed the hub.
+# the key, so these are the shapes that reach a printed line -- and none of
+# them may end the build in a way that blames the hub.
 UNPRINTABLE_KEYS = [
     # A key whose repr runs onto a second line, which is what a multi-line
     # string key looks like: the inventory prints one estimate per line, and the
@@ -1347,10 +1304,9 @@ def test_the_name_is_escaped_for_exactly_what_a_note_is_refused_for(
     LENGTH and `escaped` deliberately says nothing about it: capping is the
     next step, and `modeltext.shown_text` is where the two meet.
 
-    IT IS ASKED OF `modeltext` DIRECTLY even though this file is about
-    `provenance`: the escape moved out of here when the boundary became one
-    module, and the rule it is being held to -- the note scan -- is the thing
-    this suite has the corpus for.
+    It is asked of `modeltext` directly even though this file is about
+    `provenance`: the rule it is held to -- the note scan -- is the thing this
+    suite has the corpus for.
     """
     corpus = [chr(code) for code in range(0, 0x2100)] + [
         "plain", "мм", "0.25 mm", "ok\u2028", "ok\u2029",
@@ -1372,20 +1328,17 @@ def test_the_name_is_escaped_for_exactly_what_a_note_is_refused_for(
 
 def test_a_project_with_no_model_py_is_refused_in_words_rather_than_by_a_crash(
         isolated_project):
-    """Nothing to parse is a REFUSAL, and it stays one now the path is derived.
+    """Nothing to parse is a REFUSAL.
 
     `_model_source` asks the import system what `import model` resolves to under
     the project root, and a root with no model.py in it has no answer --
     `PathFinder.find_spec` returns None, and `Path(None)` a line later is a
-    TypeError the `except` below it does not catch. So the guard is still a
-    guard, and `pytest.raises(BuildError)` is what says so: a TypeError fails
-    this test rather than satisfying it.
+    TypeError the `except` below it does not catch. `pytest.raises(BuildError)`
+    is what says the guard is there: a TypeError fails this test.
 
-    IT USED TO BE ASKED THE OTHER WAY ROUND -- a module with no `__file__`,
-    which is what an exec'd or a synthesized one is -- and that premise went
-    away with the attribute: the walks no longer read anything off the module to
-    find the file, so a module built by hand is judged against whatever the
-    project root holds, exactly like an imported one.
+    The walks read nothing off the module to find the file, so a module built
+    by hand is judged against whatever the project root holds, exactly like an
+    imported one.
 
     BOTH DOORS, because both walks call `module_level_lines` and only one of
     them is on the path a reader would guess.
@@ -1423,14 +1376,13 @@ def test_the_source_is_the_package_model_when_that_is_what_import_finds(
 
 def test_a_namespace_package_the_model_imported_is_swept_after_it(
         isolated_project):
-    """The fixture's own hygiene, and it used to have a hole exactly here.
+    """The fixture's own hygiene, for a namespace package.
 
     `geometry.load_model` puts a model's directory FIRST on sys.path so that
     `import mocks` finds the project's own, and a project whose mocks are a
     DIRECTORY rather than a file gives a namespace package: `__file__ is None`,
-    location in `__path__` alone. The sweep asked `__file__` and nothing else,
-    so this module survived every test in the file and answered the next
-    `import mocks` from a directory that had been deleted.
+    location in `__path__` alone. A sweep that asked only `__file__` would
+    leave it to answer the next `import mocks` from a deleted directory.
 
     A FIXTURE TEST RATHER THAN A PRODUCTION ONE, deliberately: what leaks is
     `sys.modules` inside this suite, and the failure it causes lands on some

@@ -81,12 +81,10 @@ class Shape:
     def moved(self, at):
         """A copy standing where the Location puts it, as Shape.moved() is.
 
-        `type(self)` AND EVERY FIELD, because a fake that stops being itself
-        when it is placed is the green lie this module exists to avoid: hard
-        `Shape(...)` made `Broken(...).moved(at)` an ordinary solid that
-        intersects perfectly, and dropped the `solids=()` that is the whole of
-        what a `Shell` stands for. Nothing in a view has to carry an `at` for
-        that to be wrong -- it only has to be the day one does.
+        `type(self)` and every field, because a fake that stops being itself
+        when it is placed is the green lie this module exists to avoid: a placed
+        `Broken(...)` must still be broken, and a `Shell` must keep the
+        `solids=()` that is the whole of what it stands for.
         """
         return type(self)(self._box.moved(at.dx, at.dy, at.dz),
                           volume=self._volume, areas=self._areas,

@@ -1,37 +1,24 @@
-// One arrangement of the project list, four places it has to reach — checked by
-// ASKING THE LANGUAGE, not by reading the source.
+// One arrangement of the project list, four places it has to reach, checked by
+// importing the values rather than reading the source.
 //
 // A sort is a stored value, a tab label and a comparator; a view is a stored
 // value, a tab icon and a body that draws the rows. `store.js` holds the two
-// vocabularies, `HammerolaEntry.jsx` holds the four tables, and every pairing
+// vocabularies, `HammerolaEntry.jsx` holds the four tables, and every mismatch
 // fails silently and differently:
 //
 //   * a sort store.js knows with no entry in `SORT_CMP` hands
-//     `Array.prototype.sort` an `undefined` comparator. That is not "unsorted",
-//     it is "compared as strings" — every row equal, arrival order kept, the new
-//     tab lit, and the choice remembered for ever;
+//     `Array.prototype.sort` an `undefined` comparator: compared as strings,
+//     every row equal, arrival order kept, the tab lit and the choice
+//     remembered;
 //   * a view with no entry in `VIEW_BODIES` draws nothing under a live header;
-//   * a table entry store.js does NOT know is a tab that works until the next
-//     page load and then quietly forgets, which is the bug the memory exists to
-//     fix, reintroduced for one option.
+//   * a table entry store.js does not know is a tab that works until the next
+//     page load and then is forgotten.
 //
-// THIS FILE EXISTS BECAUSE THE PREVIOUS VERSION OF THE CHECK WAS A PARSER, and
-// it passed on exactly the defect it was written for. It lived in
-// `tests/test_ui_source.py`, matched braces and collected the words after
-// commas, and `strip_comments()` there removes only whole-line comments by
-// design — so a trailing `// oldest project, parts come from metrics` on the
-// last row of a table put a comma at depth zero and handed the parser the next
-// word as a key. Sort added to store.js and to the labels, comparator left out,
-// suite green. The same parser also broke the other way: a trailing comment with
-// no comma swallowed the following real key, and a comma inside a label string
-// (`'Last built, newest'` — an ordinary bit of UI wording) failed on nothing at
-// all.
-//
-// The keys of an object are something the runtime computes exactly. There is no
-// version of "derive it from the text" that is better than importing it, so the
-// invariant moved to where the values can be imported. What is left in Python is
-// the one property that is genuinely about the TEXT rather than about a value:
-// that the render does not go back to comparing `this.view` against a literal.
+// Object keys are computed exactly by the runtime, so the invariant is checked
+// on imported values; parsing the source text is unreliable (trailing
+// comments, commas inside labels). What remains in Python
+// (`tests/test_ui_source.py`) is the one property about the text itself: that
+// the render does not compare `this.view` against a literal.
 
 import { describe, expect, it } from 'vitest'
 
@@ -46,11 +33,9 @@ const sorted = (names) => [...names].sort()
 /**
  * Two projects carrying every field either half of this file reads.
  *
- * ONE FIXTURE FOR BOTH, and it has to hold every field a comparator sorts on —
- * so `test('has a comparator that actually orders two rows')` below asserts
- * exactly that, and a sort added on a field nobody put here fails with a
- * sentence about the fixture instead of with "the comparator calls two rows
- * equal", which would be true and would send the reader to the wrong file.
+ * One fixture for both, holding every field a comparator sorts on; the
+ * fixture check below makes a sort on a missing field fail with a sentence
+ * about the fixture rather than "the comparator calls two rows equal".
  */
 const ROWS = [
   { pid: 'a', title: 'Adapter', slug: 'adapter', meta: '3 parts', rev: 'e05f73b', dev: false,
@@ -78,28 +63,19 @@ describe('every sort the hub will remember', () => {
     // `SORT_CMP.name` being a string would satisfy the key check above and then
     // throw inside `Array.prototype.sort`.
     //
-    // RUN, NOT MEASURED. `SORT_CMP[id].length === 2` stood here, and declared
-    // arity is not the property wanted: `(a, b = a) => …` reports 1 and
-    // `(...rows) => …` reports 0, so an ordinary rewrite of a comparator fails
-    // a check about something else entirely — while the only defect the number
-    // catches beyond `typeof` is a comparator that ignores a row, which running
-    // it catches properly. Two rows differing in every field any comparator
-    // here reads, so one that calls them equal calls everything equal — the
-    // silent failure this file's header is about, and the one shape a table of
-    // the right keys can still have.
+    // Run, not measured: declared arity is unreliable (`(a, b = a) => …` reports
+    // 1, `(...rows) => …` reports 0), and running catches a comparator that
+    // ignores a row. The two rows differ in every field any comparator reads, so
+    // one that calls them equal calls everything equal.
     const [a, b] = ROWS
 
-    // THE FIXTURE IS CHECKED BEFORE THE COMPARATORS ARE, because otherwise a
-    // sort added on a field nobody put in `ROWS` fails below with "calls two
-    // rows equal" — a true sentence pointing at the wrong file, which reads as a
-    // bug in the comparator somebody has just written correctly.
-    // `arrangement.test.js` carries the same barrier for the same reason ("a
-    // view was added with no way to recognise what it draws").
+    // The fixture is checked before the comparators, so a sort on a field missing
+    // from `ROWS` fails here rather than below with "calls two rows equal",
+    // which would point at the wrong file. `arrangement.test.js` has the same
+    // barrier.
     //
     // Spelled out rather than derived, because a sort id is not its field:
-    // `modified` orders on `built`. The map's whole job is to notice a sort with
-    // nothing behind it here; a comparator that changes which field it reads
-    // makes an entry stale without making anything wrong.
+    // `modified` orders on `built`.
     const SORT_FIELD = { name: 'title', modified: 'built', first: 'first' }
     for (const id of PROJECT_SORTS) {
       const field = SORT_FIELD[id]
@@ -156,18 +132,13 @@ describe('every view the hub will remember', () => {
   })
 
   it('has a body that draws one link per row', () => {
-    // RUN, NOT MEASURED, and the objection is the comparator's above, word for
-    // word. `VIEW_BODIES[id].length === 2` stood here: `(page, rows = []) =>`
-    // reports 1 and `(...[page, rows]) =>` reports 0, so two ordinary rewrites
-    // fail a check about something else — while a body that IGNORES its rows,
-    // `(page, rows) => (rows = [], …)`, satisfies it exactly. That last one is
-    // the whole failure this table exists to prevent: an empty list under a live
-    // header, the tab lit, the choice remembered.
+    // Run, not measured, as for the comparators: `(page, rows = []) =>` reports
+    // arity 1 and `(...[page, rows]) =>` reports 0, while a body that ignores its
+    // rows can still report 2, and that is the failure this table must catch.
     //
-    // The links and not the container: every body emits its wrapper whether or
-    // not it has anything to put inside, so counting wrappers cannot tell a list
-    // from an empty one. `key` is the row's `pid`, so the sequence says how many
-    // rows were drawn AND in what order.
+    // The links, not the container: every body emits its wrapper even when
+    // empty. `key` is the row's `pid`, so the sequence says how many rows were
+    // drawn and in what order.
     for (const id of PROJECT_VIEWS) {
       expect(typeof VIEW_BODIES[id]).toBe('function')
       const drawn = links(VIEW_BODIES[id](page, ROWS))
@@ -186,16 +157,12 @@ describe('every view the hub will remember', () => {
 
 describe('the vocabulary itself', () => {
   it('cannot be added to by anything that imports it', () => {
-    // Everything above holds at IMPORT TIME, once — so an importer that writes a
-    // sixth entry afterwards puts the page in an arrangement no check here ever
-    // saw, and nothing anywhere would report it. `Object.freeze` costs nothing
-    // and closes the question, and it was unchecked until this test: taking it
-    // off all six left the suite green.
+    // Everything above is checked once, at import time, so an importer adding an
+    // entry later would go unchecked; `Object.freeze` closes that.
     //
-    // The two LISTS are the ones that matter. An extra key in a table is an
-    // answer nobody asks for; an extra id in `PROJECT_VIEWS` is a tab that gets
-    // drawn, a value `choose` accepts, a value storage keeps — and then a lookup
-    // into a table that has never had it.
+    // The two lists matter most: an extra key in a table is never asked for, but
+    // an extra id in `PROJECT_VIEWS` is a drawn tab, a value `choose` accepts and
+    // storage keeps, and then a lookup into a table that lacks it.
     for (const [name, table] of Object.entries({
       PROJECT_VIEWS, PROJECT_SORTS, SORT_LABELS, SORT_CMP, VIEW_ICONS, VIEW_BODIES,
     })) {

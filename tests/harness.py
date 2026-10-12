@@ -6,18 +6,16 @@ service promises is in the RESPONSE — status codes, `Cache-Control`, `Location
 and a test that reached past the HTTP layer could not observe any of it, which is
 exactly the layer SPEC 7.4 makes claims about.
 
-TWO THINGS HERE STAND IN FOR THE BUILD, and both are load-bearing enough to say
-out loud, because they are what lets the rest of the suite go on being about
+Two things here stand in for the build, so the rest of the suite can be about
 publication rather than about geometry.
 
 `copying_builder` replaces `src.buildproc.run_build`: it publishes the pushed
-tree unchanged. Every test written before the hub built anything pushes a
-FINISHED artefact — a meta.json and a view — so with this builder those pushes
-mean exactly what they always meant, and the archive is still the thing under
-test. The suite has no CadQuery, and a real build would be minutes per test.
+tree unchanged. Most tests push a FINISHED artefact — a meta.json and a view —
+so the archive is the thing under test. The suite has no CadQuery, and a real
+build would be minutes per test.
 
-`Hub.publish` posts and then WAITS, reconstructing the answer the endpoint gave
-before the push became asynchronous (SPEC 8A.2 step 5). Almost every test in this
+`Hub.publish` posts and then WAITS, turning the asynchronous push back into one
+synchronous answer (SPEC 8A.2 step 5). Almost every test in this
 suite is about what ends up on disk, not about the handover; making each of them
 poll a job would be two hundred copies of the same loop. The handover itself —
 the 202, the job record, the log, the queue — is tested through `publish_async`
@@ -39,10 +37,8 @@ from src.app import create_server
 from src.buildproc import STATUS_CRASHED, STATUS_FAILED, STATUS_OK, BuildOutcome
 from src.jobs import STATE_DONE, STATE_FAILED
 
-# The one secret of the whole system (issue #26). There were two names
-# here — TOKEN for pushes and READ_TOKEN for the comment queue — until step 0 of
-# the plan collapsed them on the hub; a test that wants "a token the hub does not
-# know" spells one out on the spot rather than reaching for a second constant.
+# The one secret of the whole system. A test that wants "a token the hub does
+# not know" spells one out on the spot rather than reaching for a second constant.
 TOKEN = "test-edit-token"
 
 # A sentinel for "this field was not supplied at all", as distinct from
@@ -60,9 +56,7 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
     downstream only reads attributes, so a namespace is a faithful stand-in.
 
     `overrides` carries the comment ceilings (SPEC 7A.4) — all three of them
-    about SIZE, since the count ceilings and the rate limit were removed on
-    2026-08-27 — and the proposal body's, which is about size for the same
-    reason. They are keyword arguments rather than named parameters because a
+    about SIZE — and the proposal body's. They are keyword arguments rather than named parameters because a
     test only ever varies one: a photo-size test wants
     `comment_max_photo_bytes=1024` and could not care less what the text ceiling
     is.
@@ -144,9 +138,9 @@ class Hub:
         return httpx.request(method, self.url + path, **kw)
 
     def publish(self, pid, commit, body, token=TOKEN, headers=None):
-        """Push, wait for the build, and answer as the synchronous endpoint did.
+        """Push, wait for the build, and answer synchronously.
 
-        201/200/409/422/413/401 come back exactly as they used to. A 202 is
+        201/200/409/422/413/401 come back as they are. A 202 is
         followed to its job and turned back into the answer that job reached,
         which is the one nearly every test in this suite is asking about. Use
         `publish_async` when the handover itself is the subject.
@@ -157,8 +151,8 @@ class Hub:
         carries it in `revision`, which only `publish_async` can show.
 
         `headers` are sent alongside the two this always sends, for the tests
-        whose subject is a header the route reads — `X-Hammerola-Message` is the
-        only one today (issue #67).
+        whose subject is a header the route reads, such as
+        `X-Hammerola-Message`.
         """
         reply = self.publish_async(pid, commit, body, token=token,
                                    headers=headers)
@@ -351,7 +345,7 @@ def comment_payload(**extra):
 
 
 class PublishReply:
-    """A finished job, shaped like the reply the push used to get.
+    """A finished job, shaped like a synchronous publish reply.
 
     Not an httpx response and deliberately not pretending to be one: it carries
     the three things a test asks a publish reply for — the status, the JSON body
@@ -375,22 +369,19 @@ def copying_builder(project_dir, out_dir, *, pid, **_kw):
     """Stand in for `src.buildproc.run_build`: ship the pushed tree unchanged.
 
     The push carries a source tree that a real build turns into artefacts. This
-    suite pushes the ARTEFACTS — that is what every test written before the hub
-    built anything sends, and it is what keeps those tests about the archive and
-    the publication rather than about geometry — so the stand-in copies the tree
-    into the output directory and declares every file in it.
+    suite pushes the ARTEFACTS, which keeps the tests about the archive and the
+    publication rather than about geometry, so the stand-in copies the tree into
+    the output directory and declares every file in it.
 
     `copytree` and not a move: the sources belong to the job, which removes them
     when it is done, and a build that consumed its own input would hide the fact
     that the two directories are separate on purpose.
 
-    IT REPORTS WHAT THE COPY ACTUALLY TOOK, and the flat `0.0` it used to
-    declare was not a simplification but a false statement about a real clock.
-    `duration_seconds` now reaches the client, which prints it after every build
-    (`cli._print_duration`), so a hard zero here would have been a stand-in
-    quietly deciding what the thing under test does — and it very nearly did:
-    the honest reading of an absent duration is `is None`, and a truthiness test
-    would have passed this suite in silence with the line never printed once.
+    It reports what the copy actually took. `duration_seconds` reaches the
+    client, which prints it after every build (`cli._print_duration`), so a
+    hard zero here would be a stand-in deciding what the thing under test does
+    — a truthiness test on it would pass this suite with the line never
+    printed.
     """
     started = time.monotonic()
     shutil.copytree(project_dir, out_dir)
@@ -428,7 +419,7 @@ def reading_comparer(old_dir, new_dir, *, pid, **_kw):
     directories only far enough to say what it was given and reports it as the
     log, which IS the answer a comparison produces: nothing is published.
 
-    IT REPORTS A REAL DURATION, for the reason spelled out on `copying_builder`:
+    It reports a real duration, for the reason spelled out on `copying_builder`:
     the number reaches the job record and a stand-in must not be the thing that
     decides what it looks like.
     """
@@ -487,15 +478,14 @@ def stop_hub(hub):
 
 
 # -- archive building -------------------------------------------------------
-# THE EXPORTS THE DEFAULT CATALOGUE NAMES, as archive members. Two rules the hub
-# grew to mirror what a build can actually produce make these compulsory rather
-# than decorative: a catalogue with no printable in it is a 422, and so is a
+# The exports the default catalogue names, as archive members. Two hub rules
+# that mirror what a build can actually produce make these compulsory: a catalogue with no printable in it is a 422, and so is a
 # printable that declares no `files` (`render._catalogue`) — while
 # `cadbuild.printables.export_printables` writes STEP, STL and 3MF for every
 # printable it finds. So the smallest archive this suite can publish is the
 # document, the view file, and one export per printable.
 #
-# A CONSTANT AND NOT TWO LITERALS PER TEST, because a test builds its archive by
+# A constant and not two literals per test, because a test builds its archive by
 # hand exactly when it wants to vary ONE thing about it: spelling the exports
 # out at each of those sites would put the fixture's own invariant — the
 # catalogue names these two names — in a hundred places that are about something
@@ -509,25 +499,21 @@ DEFAULT_EXPORTS = {
 
 
 def meta_bytes(views=None, parts=None, **extra):
-    """A meta.json in the wire format of SPEC 7, as issue #75 left it.
+    """A meta.json in the wire format of SPEC 7.
 
-    TWO FIELDS CARRY THE WHOLE SHAPE and they are the two arguments here:
+    Two fields carry the whole shape and they are the two arguments here:
     `parts` is the catalogue — the one place a part exists, keyed by the name
     that IS its identity — and `views` is a list of tabs, each naming the
-    catalogue keys it shows. The four flat maps the document used to carry
-    (`downloads`, `overview`, `previews`, `notes`) are gone: a file now belongs
-    to the part or the view it is OF, and a note sits inside the record it is
-    about.
+    catalogue keys it shows. A file belongs to the part or the view it is OF,
+    and a note sits inside the record it is about.
 
     The default pair is the smallest document the hub accepts, and the two
     halves agree by construction: the view shows both keys the catalogue
     declares.
 
-    EVERY DEFAULT PRINTABLE CARRIES AN EXPORT, because a printable that carries
+    Every default printable carries an export, because a printable that carries
     none is a 422 (`render._catalogue`) and a catalogue with no printable in it
-    is another — the two rules the hub grew to mirror what a build can actually
-    produce, `export_printables` writing STEP, STL and 3MF for every printable
-    it finds. ONE export each rather than three: what the fixture stands for is
+    is another. ONE export each rather than three: what the fixture stands for is
     the SHAPE — a printable owns a non-empty `files` naming files this build
     published — and two more names per part would be two more archive members
     in every test that pushes one, for nothing. `good_build` is what puts
@@ -554,14 +540,12 @@ def meta_bytes(views=None, parts=None, **extra):
 def view_bytes(marker="a", keys=("lid", "pin")):
     """Stand-in for a tessellation: a root group over one keyed leaf per key.
 
-    IT NAMES KEYS NOW, and the reason is a check that did not exist when it did
-    not. The hub holds a view file's leaves against the `parts` list its
+    It names keys: the hub holds a view file's leaves against the `parts` list its
     meta.json declares for that view, in both directions
     (`render._match_selection`), and refuses a leaf carrying no key at all — so
     a stand-in of unkeyed leaves is a document no push can carry, and one
     naming the wrong keys is a 422. The default is the default `meta_bytes`
-    selection, so the two halves agree by construction exactly as they did
-    before; a test that declares another selection passes its own keys here.
+    selection, so the two halves agree by construction; a test that declares another selection passes its own keys here.
 
     The shape is the exported one: a node with `parts` is a GROUP and carries no
     key of its own, and each leaf under it names the catalogue record it is of.
@@ -591,14 +575,12 @@ def tar_gz(files: dict) -> bytes:
 def good_build(marker="a", extra_files=None, view_keys=None, **extra) -> bytes:
     """A publishable archive. `**extra` goes straight into meta.json.
 
-    Forwarded rather than enumerated, and that stays true through issue #75:
-    the fields a test may want to put in the document are not a fixed list —
-    `parts`, a `views` entry's `overview` or `preview`, a stray key the hub is
-    supposed to drop — so this signature would otherwise grow a parameter per
-    field. `downloads` was one such parameter until the map it named stopped
-    existing, which is exactly the drift the forwarding avoids.
+    Forwarded rather than enumerated: the fields a test may want to put in the
+    document are not a fixed list — `parts`, a `views` entry's `overview` or
+    `preview`, a stray key the hub is supposed to drop — so this signature
+    would otherwise grow a parameter per field.
 
-    `view_keys` IS THE ONE EXCEPTION AND IS NAMED RATHER THAN FORWARDED,
+    `view_keys` is the one exception and is named rather than forwarded,
     because it goes into the OTHER file: the hub holds the view file's leaves
     against the `parts` the meta declares for that view, so a test narrowing
     the catalogue has to narrow the stand-in view with it. It is not derived
@@ -617,8 +599,7 @@ def good_build(marker="a", extra_files=None, view_keys=None, **extra) -> bytes:
         # a member nobody's document names is two more names in `files`, which
         # is the ceiling `_check_map_size` and `_spend_file_budget` derive from
         # — so the tests ABOUT those ceilings build their archives with
-        # `tar_gz` directly and count their own members, exactly as they did
-        # before.
+        # `tar_gz` directly and count their own members.
         **DEFAULT_EXPORTS,
     }
     files.update(extra_files or {})

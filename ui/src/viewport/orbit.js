@@ -1,71 +1,48 @@
 // Orbit about the point under the cursor, on top of a trackball that orbits
 // about the middle of the canvas.
 //
-// Fusion turns the model about the point you grabbed. This trackball turns it
-// about `target`, and `target` is always in the middle of the canvas: its
-// `update()` rebuilds the camera position as `target + eye` and, on the ortho
-// camera this viewport uses, ends in `lookAt(target)`. So the pivot is not a
-// setting left on the wrong value — it is where the axis of this trackball
-// lives, and a reader inspecting a corner of a large part watches that corner
-// swing off the screen while the middle of the canvas, which they were not
-// looking at, stays put.
+// The trackball turns the model about `target`, which is always at the canvas
+// centre: `update()` rebuilds the camera as `target + eye` and, on the ortho
+// camera, ends in `lookAt(target)`. Moving the target to the picked point does
+// not work, because `lookAt` would turn the camera to face it and the view would
+// swing on press; the pivot must stay on the view axis.
 //
-// SWAPPING THE TARGET FOR THE PICKED POINT DOES NOT WORK, and that is worth
-// writing down because it is the obvious move. `lookAt(target)` is in the ortho
-// branch too, so a target moved off the view axis is a camera turned to face it:
-// the whole view swings the moment the press lands. This trackball's pivot has
-// to stay on the axis of view, and the point under the cursor is, in general,
-// not on it.
-//
-// So the same shape as the cursor zoom: LET THE LIBRARY ROTATE AS IT ALWAYS HAS,
-// then slide the camera sideways so the grabbed point lands back on the pixel it
-// was grabbed at. Write C for the camera, v for the unit view axis, P for the
-// grabbed point and n for the pixel it was grabbed at, in NDC:
+// So, like the cursor zoom: let the library rotate, then slide the camera
+// sideways so the grabbed point lands back on the pixel it was grabbed at. With
+// C the camera, v the unit view axis, P the grabbed point and n its pixel in
+// NDC:
 //
 //     d = perp(P - C) - ndcOffset(n)
 //
 // and moving camera and target both by d puts it right. Recomputed from scratch
-// on every frame the camera moves, so nothing accumulates and a dropped frame
-// costs nothing.
+// every frame, so nothing accumulates.
 //
-// MEASURED IN A BROWSER, because the arithmetic being right is not the same as
-// the point staying put. Chrome over CDP with trusted pointer events, ortho
-// camera, a 1266x722 canvas and a 15-step drag of (+140, -70) px; the number is
-// how far the grabbed point had moved off its pixel when the drag ended:
+// Measured in Chrome over CDP with trusted pointer events (ortho, 1266x722
+// canvas, 15-step drag of (+140, -70) px), distance of the grabbed point from
+// its pixel at the end of the drag:
 //
-//     grabbed point                     before        after
+//     grabbed point                     without       with
 //     edge, 430,563 (off centre)        148.7 px      0.70 px
 //     vertex, 506,274 (off centre)      --            0.95 px
 //     face at the canvas centre         137.4 px      0.71 px
-//     background (nothing picked)       target unmoved, as before
+//     background (nothing picked)       target unmoved
 //
-// The residual 0.70 px is not drift and must not be "fixed": the picker reads a
-// PIXEL, so the point it hands back is up to half a pixel off that pixel's
-// centre, and the same 0.70 px is already there before the press. The gesture
-// itself adds 0.00 px. Everything else was measured unchanged to the last digit
-// with the correction in and out — wheel zoom to cursor 0.29 px, pinch 1.03 px
-// on a x2.0000 gesture, swipe pan 480.0 px for 480 px of delta, right-button
-// pan, the section click, the hold key and the comment anchor.
+// The residual ~0.7 px is not drift: the picker reads a pixel, so its point is up
+// to half a pixel off the pixel centre before the press; the gesture adds 0.00.
 //
-// THE LISTENER IS ADDED ON THE PRESS AND REMOVED ON THE RELEASE, not once at
-// startup, and in React that is the trap rather than tidiness: `render()` builds
-// a NEW controls object, and this viewport calls it on every view switch and
-// every live reload. A `useEffect([])` that subscribed once would be a pivot
-// that silently stopped working after the first swap, and the symptom a week
-// later is "it worked yesterday". Between gestures this feature has nothing
-// hooked into the library at all.
+// The listener is added on the press and removed on release, not once at
+// startup: `render()` builds a new controls object on every view switch and live
+// reload, so a one-time subscription would stop working after the first swap.
 
 import { cameraBasis, ndcAt, ndcOffset, panCamera } from "./camera.js";
 import { gestureInternals, internals } from "./internals.js";
 import { dot3 } from "./math.js";
 
 // The trackball's own state numbers (`STATE` in the bundle: NONE -1, ROTATE 0,
-// ZOOM 1, PAN 2). Read rather than re-derived from the event, because WHICH
-// PRESS ROTATES is the library's to decide and its rule is not the obvious one:
-// `KeyMapper` permutes the modifiers, so the drag that pans is the one with the
-// CTRL key held — spelled `shift` inside the bundle — and the keyboard can put
-// the controls in a pan or zoom state with no modifier on the event at all. A
-// second copy of that rule here would be one upgrade away from anchoring a pan.
+// ZOOM 1, PAN 2). Read rather than derived from the event, because the library
+// decides which press rotates: `KeyMapper` permutes the modifiers (the panning
+// drag holds CTRL, spelled `shift` in the bundle), and the keyboard can put the
+// controls in pan or zoom with no modifier on the event.
 const TRACKBALL_NONE = -1;
 const TRACKBALL_ROTATE = 0;
 
@@ -84,9 +61,8 @@ function trackball(g) {
 }
 
 export function installOrbit(vp) {
-  // The correction moves the camera, which makes the trackball dispatch "change"
-  // again from inside our own handler. One flag rather than a debounce: what has
-  // to be stopped is re-entry, not repetition.
+  // The correction moves the camera, which makes the trackball dispatch
+  // "change" again from inside this handler. A flag stops the re-entry.
   let busy = false;
 
   /** The camera has moved: slide the grabbed point back onto its pixel. */
@@ -97,14 +73,11 @@ export function installOrbit(vp) {
     if (!viewer) return;
     const g = internals(viewer);
     if (!g) return;
-    // The scene was rebuilt under the gesture — a view switch, or a live reload
-    // landing mid-drag. The pivot was measured against a camera that no longer
-    // exists, so the gesture is over as far as this is concerned.
+    // The scene was rebuilt under the gesture (view switch, live reload): the
+    // pivot belongs to a camera that no longer exists.
     if (trackball(g) !== a.tb) return;
-    // The controls are still rotating. A release can go missing — Cmd+Tab in the
-    // middle of a drag is enough — and an anchor that outlived its gesture would
-    // otherwise turn the reader's next WHEEL into a zoom that holds a point they
-    // grabbed minutes ago.
+    // Not rotating any more. A release can go missing (Cmd+Tab mid-drag), and a
+    // stale anchor must not affect the next wheel zoom.
     if (a.tb.state !== TRACKBALL_ROTATE) return;
     try {
       const b = cameraBasis(viewer, g);
@@ -118,9 +91,8 @@ export function installOrbit(vp) {
                  rel[1] - along * b.view[1] - off[1],
                  rel[2] - along * b.view[2] - off[2]];
       if (!d.every(Number.isFinite)) return;
-      // The first frame of every gesture, and any frame the trackball reported a
-      // change that was not a rotation. Nothing to put right, and the call below
-      // would be a render for nothing.
+      // The first frame of every gesture, or a change that was not a rotation:
+      // nothing to correct, and panning would render for nothing.
       if (d[0] === 0 && d[1] === 0 && d[2] === 0) return;
       busy = true;
       panCamera(viewer, b, d);
@@ -147,18 +119,14 @@ export function installOrbit(vp) {
 
   /** The release. Flush whatever rotation is still owed, then unhook.
    *
-   * The flush is not decoration. The trackball records the pointer where it
-   * lands and turns it into a rotation in a LATER `update()`; with holroyd on
-   * that update runs in the pointermove handler and nothing is ever pending, but
-   * the library reads `holroyd` from its own state and the plain trackball
-   * rotates in the animation loop instead. A release arriving between the last
-   * move and the next frame would then leave one rotation with no correction
-   * after it — the grabbed point jumping off the cursor at the very end of the
-   * gesture, which is the one moment the reader is looking at it.
+   * The trackball turns a recorded pointer position into a rotation in a later
+   * `update()`. With holroyd on that runs in the pointermove handler, but the
+   * plain trackball rotates in the animation loop, so a release between the last
+   * move and the next frame would leave one uncorrected rotation and the point
+   * would jump off the cursor at the end.
    *
-   * Applying a rotation that has already been applied is a no-op (`_rotateCamera`
-   * copies its end state onto its start state), so this costs nothing when there
-   * is nothing owed.
+   * Re-applying an applied rotation is a no-op (`_rotateCamera` copies its end
+   * state onto its start state).
    */
   function onEnd() {
     const a = vp.orbitAnchor;
@@ -172,12 +140,9 @@ export function installOrbit(vp) {
   }
 
   /**
-   * Take the pivot ONCE, at the moment of the press.
-   *
-   * Once and not per frame, and that is the whole difference between a pivot and
-   * a point that crawls: re-picking mid-gesture would read whatever the rotation
-   * has just brought under the cursor, and the model would slide out from under
-   * the finger.
+   * Take the pivot once, at the moment of the press. Re-picking mid-gesture
+   * would read whatever the rotation brought under the cursor, and the model
+   * would slide out from under the finger.
    */
   const onDown = (event) => {
     // A press with the last gesture still hooked up means its release went
@@ -189,19 +154,17 @@ export function installOrbit(vp) {
     if (!g) return;
     const tb = trackball(g);
     if (!tb) return;
-    // Is this press a rotation? This listener is on the CONTAINER in the bubble
-    // phase and the trackball's own pointerdown handler is on the canvas, so by
-    // the time the event arrives the press has been classified and `state` is
-    // this press's own answer.
+    // Is this press a rotation? This listener is on the container in the bubble
+    // phase and the trackball's pointerdown handler is on the canvas, so `state`
+    // already holds this press's classification.
     if (tb.state !== TRACKBALL_ROTATE || tb.keyState !== TRACKBALL_NONE) return;
     const ndc = ndcAt(g.canvas, event);
     if (!ndc) return;
     let point = null;
     try {
       const rect = g.canvas.getBoundingClientRect();
-      // The picker's default priority is vertex > edge > face, which is the snap
-      // this wants and did not have to be built: aim near a corner and the
-      // corner is what the model turns about, the way it does in a CAD package.
+      // The picker's default priority is vertex > edge > face, so aiming near a
+      // corner pivots about the corner.
       const hit = g.picker.pickAt(event.clientX - rect.left,
                                   event.clientY - rect.top);
       if (hit && hit.point) point = hit.point;
@@ -209,9 +172,8 @@ export function installOrbit(vp) {
       console.warn("orbit pick", error);
       return;
     }
-    // Nothing under the cursor. NOT a failure and not a case for an invented
-    // point: a press on the background rotates about `target`, which is what the
-    // reader who pressed there is used to.
+    // Nothing under the cursor: a press on the background rotates about
+    // `target`, as usual.
     if (!point) return;
     const b = cameraBasis(viewer, g);
     if (!b) return;
@@ -220,12 +182,10 @@ export function installOrbit(vp) {
     const rel = [point.x - b.C[0], point.y - b.C[1], point.z - b.C[2]];
     const along = dot3(rel, b.view);
     if (!Number.isFinite(along)) return;
-    // The picked point SNAPPED ONTO THE RAY THROUGH THE CURSOR: same point, at
-    // the depth the picker read it, but with its sideways position taken from
-    // the projection rather than from the picker's own buffer. The two disagree
-    // by a fraction of a pixel, and that fraction would be a correction applied
-    // on the first frame of every gesture — a visible twitch before anything has
-    // turned. This makes the correction identically zero until the model moves.
+    // The picked point snapped onto the ray through the cursor: its depth from
+    // the picker, its sideways position from the projection. The two differ by a
+    // fraction of a pixel, which would otherwise be a twitch on the first frame;
+    // this keeps the correction zero until the model moves.
     const pivot = [b.C[0] + off[0] + along * b.view[0],
                    b.C[1] + off[1] + along * b.view[1],
                    b.C[2] + off[2] + along * b.view[2]];
@@ -239,11 +199,10 @@ export function installOrbit(vp) {
     addEventListener("pointercancel", onEnd, true);
   };
 
-  // Bubble phase, deliberately: this listener does not want the event, it wants
-  // the trackball's verdict on it, and that only exists once the canvas's own
-  // handler has run. Nothing here calls preventDefault or stopPropagation — the
-  // rotation stays entirely the library's, and a tool that DOES stop the press
-  // in the capture phase keeps the canvas to itself.
+  // Bubble phase: this wants the trackball's verdict on the press, which exists
+  // only after the canvas's own handler ran. Nothing here calls preventDefault
+  // or stopPropagation; a tool that stops the press in the capture phase keeps
+  // the canvas to itself.
   vp.box.addEventListener("pointerdown", onDown);
 
   return () => {

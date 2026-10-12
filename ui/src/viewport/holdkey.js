@@ -1,54 +1,31 @@
 // Hold-to-peek: hold a key and the cut tool is up, let go and it is gone.
 //
-// ui-brief block 4 asks for it by name, and the whole of this file is the
-// answer to two questions that each cost a debugging session the first time this
-// site built the feature: WHICH KEY, and WHAT HAPPENS WHEN THE RELEASE NEVER
-// ARRIVES. Both answers are written out below rather than cited, because the
-// code they were found in is gone and the findings are what mattered.
+// Why a plain letter and not a modifier such as Command:
+//   * the library already uses modifiers: its `keyMapping` permutes them
+//     (`{shift: "ctrlKey", ctrl: "shiftKey", meta: "altKey", alt: "metaKey"}`),
+//     and the trackball pans on a left drag with ctrl/meta/shiftKey, read off
+//     the pointer event, so there is nothing to intercept;
+//   * Cmd+wheel is the browser's page zoom;
+//   * macOS hands Cmd+Tab, Cmd+Space and menu shortcuts to the system, taking
+//     the keyup with them (the stuck-key problem below).
 //
-// WHY A PLAIN LETTER AND NOT A MODIFIER. Command was the obvious candidate and
-// it does not survive contact:
+// Not any letter: the library binds `_handleKeyboardShortcut` on the container
+// (`ViewerState.DISPLAY_DEFAULTS.keymap`) and answers a key it knows with
+// `preventDefault(); stopPropagation()`. The container takes focus on any
+// click on the model. Its letters, read off the bundle:
+// A 0 g G p t b R r 5 1 3 8 2 4 6 x L D P I h space Escape T C M Z S, plus
+// a/v/e/f/s while the topo-filter dropdown is open and Backspace with the select
+// tool. Hiding the panel (`tools: false`, docs/viewer-api.md §1) is only CSS:
+// the handler stays bound and still eats those keys.
 //
-//   * it is already spoken for INSIDE the library. Its `keyMapping` deliberately
-//     permutes the modifiers (`{shift: "ctrlKey", ctrl: "shiftKey",
-//     meta: "altKey", alt: "metaKey"}`), so `metaKey` reads as the logical `alt`
-//     there, and the trackball pans on a left drag with ctrl/meta/shiftKey. The
-//     flag is read off the POINTER event, not off a keydown that could be
-//     swallowed, so there is nothing to intercept;
-//   * Cmd+wheel is the browser's own page zoom, and a hold-to-peek is exactly
-//     when somebody reaches for the wheel;
-//   * and it is the worst case for the stuck-key problem below: macOS hands
-//     Cmd+Tab, Cmd+Space and every menu-bar shortcut to the system, taking the
-//     keyup with them.
+// So: C. `c` is free, `C` is the library's Clip tab, and this key holds up the
+// tool that drives that tab's plane. It is under the left hand.
 //
-// A plain letter, then — but NOT any plain letter. The library has a shortcut
-// table of its own (`ViewerState.DISPLAY_DEFAULTS.keymap`), it hangs
-// `_handleKeyboardShortcut` on the CONTAINER, and a key it recognises is
-// answered with `preventDefault(); stopPropagation()`. The container takes focus
-// the moment anybody clicks the model, so from then on a colliding key never
-// reaches this file at all. Its letters, measured off the bundle rather than
-// guessed: A 0 g G p t b R r 5 1 3 8 2 4 6 x L D P I h space Escape T C M Z S,
-// plus a/v/e/f/s while the topo-filter dropdown is open and Backspace with the
-// select tool. `x` is `explode` — and `x` was this feature's first key, silently
-// eaten after every click on the part until that table was read off the bundle.
+// Matched on `code`, not `key`, so it works on a Cyrillic layout (where the key
+// produces "с"); `key` is the fallback when no code is reported.
 //
-// Hiding the panel does NOT retire that list. `tools: false` is CSS
-// (docs/viewer-api.md §1): the handler is still bound and the container still
-// takes focus, so a colliding letter is still eaten, silently, by a toolbar
-// nobody can see.
-//
-// So: C. `c` is free, `C` is the library's own Clip tab, and the tool this key
-// holds up is the one that drives that tab's plane. It is also under the left
-// hand while the right is on the mouse.
-//
-// Matched on `code`, not `key`: `code` is the physical key, so this still works
-// on a Cyrillic layout, where the same key produces "с". `key` is the fallback
-// for the rare input path that reports no code at all.
-//
-// The listeners are registered in the CAPTURE phase on the WINDOW for the same
-// reason the collision was possible at all: capture on the window runs before
-// anything on the container, so nothing downstream can swallow this key even if
-// the library's table grows a `c` one day.
+// Listeners are in the capture phase on the window, which runs before anything
+// on the container, so the library cannot swallow this key.
 
 const HOLD_CODE = "KeyC";
 const HOLD_KEY = "c";
@@ -57,17 +34,10 @@ export const isHoldKey = (e) =>
   (e.code ? e.code === HOLD_CODE
           : String(e.key || "").toLowerCase() === HOLD_KEY);
 
-/** True when the keystroke belongs to something the reader is typing into.
- *
- * A comment box is a textarea, and a shortcut that fires while somebody is
- * writing a sentence is a shortcut that eats the sentence. A `<select>` counts
- * too — a picker jumps to an option by its first letter.
- *
- * "Any `<input>`" would be the wrong rule, and measurably so: the library's tab
- * strip is `<input>`, so are the Clip panel's checkboxes, and under that rule one
- * click on a checkbox would cost the reader the shortcut with nothing on screen
- * to explain it. Same test the library applies in its own handler — text-entry
- * inputs only.
+/** True when the keystroke belongs to something the reader is typing into: a
+ * textarea, contenteditable, a `<select>` (jumps to an option by letter), or a
+ * text-entry `<input>`. Not any `<input>`: the library's tab strip and the
+ * Clip panel's checkboxes are inputs too. Same rule as the library's handler.
  */
 const NOT_TEXT_INPUT = new Set(["button", "checkbox", "radio", "submit",
                                 "reset", "file", "image", "range", "color"]);
@@ -85,11 +55,9 @@ export function typingTarget() {
 /**
  * Wire the hold key up to `onHold` / `onRelease`. Returns a teardown function.
  *
- * `onRelease` is called at most once per hold and may be called for reasons that
- * are not a keyup at all — see the three nets at the bottom. Every one of them
- * is a case that really happens, and the failure they prevent is the same one:
- * a tool that is still up when the reader comes back, reading as a viewer that
- * has broken rather than a mode nobody left.
+ * `onRelease` is called at most once per hold and may fire for reasons other
+ * than a keyup (see the listeners at the bottom), so the tool never stays up
+ * after the reader has left the key.
  */
 export function installHoldKey({ onHold, onRelease, onEscape }) {
   let held = false;
@@ -134,12 +102,9 @@ export function installHoldKey({ onHold, onRelease, onEscape }) {
 
   addEventListener("keydown", onKeyDown, true);
   addEventListener("keyup", onKeyUp, true);
-  // The three ways a keyup goes missing entirely. None is hypothetical: Cmd+Tab
-  // away, a system menu opening over the page, or the tab going to the
-  // background all leave the key down as far as this document is concerned.
-  // Deliberately redundant — a tab going to the background fires `blur` AND
-  // `visibilitychange` — because a release that arrives twice costs nothing and
-  // one that never arrives costs the page.
+  // The ways a keyup goes missing: Cmd+Tab away, a system menu over the page,
+  // the tab going to the background. Redundant on purpose (backgrounding fires
+  // both `blur` and `visibilitychange`); a second release is a no-op.
   const onBlur = () => release();
   const onVisibility = () => {
     if (document.visibilityState !== "visible") release();

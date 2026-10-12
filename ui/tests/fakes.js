@@ -41,8 +41,8 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
  *
  * three.js: `normalize() { return this.divideScalar( this.length() || 1 ); }`
  * — and the `|| 1` is the whole of what this function has to get right. Divided
- * unconditionally, as this once was, a zero-length vector comes back as NaNs and
- * every plane built from one is NaN; the library instead leaves it AT ZERO.
+ * unconditionally, a zero-length vector comes back as NaNs and every plane
+ * built from one is NaN; the library instead leaves it AT ZERO.
  *
  * The difference is not academic, because a zero clip normal is reachable (see
  * `unit3` in math.js) and the two behaviours look nothing alike on screen. NaN
@@ -257,14 +257,11 @@ function plane(normal, constant, center) {
     // `CenteredPlane.setConstant`, verbatim in its effect: the slider counts
     // from `centre`, not from the origin.
     //
-    // FROM `this.center` AND NOT FROM AN ARGUMENT. The library keeps the centre
-    // in ONE field on the plane, so a fake taking it as a parameter has two —
-    // this one, which `sectionValueFor` reads through `g.plane.center`, and the
-    // viewer's `clipCenter`, which callers were passing in. They are the same
-    // object today and nothing notices; a test that changed either one would put
-    // the fake in a state the library cannot be in, and the suite would then
-    // approve arithmetic done against one centre while the plane stood at the
-    // other.
+    // From `this.center`, not from an argument: the library keeps the centre in
+    // ONE field on the plane (read by `sectionValueFor` through
+    // `g.plane.center`). A fake taking it as a parameter would have two, and a
+    // test that changed one would put the fake in a state the library cannot
+    // be in.
     setCentered(value) {
       this.constant = value - dot(this.normal, this.center)
     },
@@ -494,11 +491,10 @@ export function fakeCapMaterial(color = PLANE_COLORS[0]) {
  *  `index`, `plane`, `size`, `center`) on a `PlaneGeometry(2, 2)` that
  *  `updateMatrixWorld` scales to `0.5 * size` — so one uv unit ACROSS the cap
  *  quad is `size` world units. `size` is the clipping region's size and every
- *  cap of a scene carries the same one. Nothing in `hatch.js` reads it any
- *  more: the pitch is counted in PIXELS — CSS ones now, framebuffer ones for
- *  the line and its band, and the difference does not matter here — and a
- *  measure in pixels of any kind is what makes that factor cancel. The hatch
- *  suite varies `size` exactly to prove it cancels.
+ *  cap of a scene carries the same one. `hatch.js` does not read it: the pitch
+ *  is counted in pixels (CSS ones, framebuffer ones for the line and its band),
+ *  which makes that factor cancel. The hatch suite varies `size` exactly to
+ *  prove it cancels.
  *
  *  The `plane` is the `CenteredPlane` the constructor was handed, and its
  *  `normal` is a THREE `Vector3` — read as `.x/.y/.z`, NOT as the array the
@@ -573,7 +569,7 @@ export function fakeCapUnits(solids, {
 //
 // Transcribed from the vendored files, not invented. The trio the outline
 // harvests off a live solid's edges is `three/examples/jsm`, which the bundle
-// keeps carrying even though three itself is external to it now:
+// keeps carrying although three itself is external to it:
 // `LineSegmentsGeometry.setPositions`
 // (three/examples/jsm/lines/LineSegmentsGeometry.js) keeps the segments in ONE
 // interleaved buffer of stride 6 — `instanceStart` reads xyz at offset 0,

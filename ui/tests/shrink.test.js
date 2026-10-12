@@ -1,22 +1,18 @@
 // The re-encode a comment's two attachments go through on the way out —
 // ui/src/shrink.js.
 //
-// THIS RUNNER CANNOT SEE A PIXEL, and that is the shape of every test here.
-// There is no `createImageBitmap` in jsdom at all, and there is no rasteriser
-// behind `<canvas>` either — the `canvas` package is deliberately not in
-// ui/package.json — so `getContext('2d')` answers null and nothing that draws
-// can be checked by looking at what came out.
+// This runner cannot see a pixel: jsdom has no `createImageBitmap` and no
+// rasteriser behind `<canvas>` (the `canvas` package is not in ui/package.json),
+// so `getContext('2d')` answers null.
 //
-// What CAN be checked is the policy, which is the whole of what this module
-// decides: how big the canvas was made, that the proportion survived it, what
-// the encoder was asked for, which blob came back, and that the decoded bitmap
-// was released. Those are stubs of the two platform calls and assertions about
-// the ARGUMENTS they were handed — the pixels are the browser's half.
+// What is checked is the policy this module decides: the canvas size, that the
+// proportion survived, what the encoder was asked for, which blob came back,
+// and that the decoded bitmap was released. The two platform calls are stubs
+// and the assertions are about their arguments.
 //
-// The absence of the decoder is also load-bearing OUTSIDE this file: it is why
-// `sendComment` behaves in ui/tests/feed.test.js exactly as it did before this
-// module existed, and the first test below says so out loud rather than leaving
-// it to be inferred from a suite that stayed green.
+// The missing decoder also matters outside this file: it is why `sendComment`
+// in ui/tests/feed.test.js sends the original blob, and the first test below
+// says so.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -208,10 +204,8 @@ describe('a re-encode that did not pay', () => {
     // better than a lossy codec meant for photographs. Sending the bigger file
     // would make the slow press this module exists to fix slower still.
     //
-    // AND IT IS NOT LOGGED, unlike every failure below: nothing went wrong
-    // here, the answer is just that the original was already the better one,
-    // and a console line on an ordinary outcome is how a real warning gets
-    // learned as noise.
+    // Not logged, unlike every failure below: nothing went wrong, and a console
+    // line on an ordinary outcome teaches readers to ignore real warnings.
     const warn = warnings()
     const source = bytes(1200)
     decoder(bitmap(3060, 2240))
@@ -224,18 +218,15 @@ describe('a re-encode that did not pay', () => {
 
 // -- nothing here may cost the reader the comment ------------------------------
 //
-// Every one of these is a real browser: a decoder that is not there, a blob
-// that will not decode, a canvas that refuses a context, an encoder that gives
-// up. The comment is the thing being sent — the picture is an attachment to it
-// — so each of them sends the ORIGINAL blob and says so in the console, and
-// none of them throws into `sendComment`, where a throw would be a comment the
-// reader loses with the draft still in the composer.
+// Each of these happens in real browsers: no decoder, a blob that will not
+// decode, a canvas that refuses a context, an encoder that gives up. The
+// picture is an attachment to the comment, so each sends the original blob,
+// warns in the console, and never throws into `sendComment`, where a throw
+// would lose the comment with the draft still in the composer.
 //
-// EACH IS ASSERTED THE SAME THREE WAYS — resolves (rather than throws), the
-// source blob back, a warning logged — because the failure being guarded
-// against is silence: a path that returns undefined puts `undefined` in the
-// form, and a path that throws costs the reader the draft, and neither shows
-// up in a test that only checks the happy case still works.
+// Each is asserted three ways (resolves, returns the source blob, logs a
+// warning), because a path that returns undefined puts `undefined` in the
+// form and a path that throws loses the draft.
 
 describe('every way this can fail', () => {
   /** Ran, came back with the source, and left a line in the console. */

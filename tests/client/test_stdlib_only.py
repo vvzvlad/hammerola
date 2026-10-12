@@ -1,7 +1,6 @@
 """The client imports the standard library and this repository, and nothing else.
 
-THE RULE IS WRITTEN IN `hammerola/__init__.py` AND WAS NOT CHECKED ANYWHERE.
-`hammerola` is installed on the author's machine and installs nothing: it runs
+The rule is written in `hammerola/__init__.py`. `hammerola` is installed on the author's machine and installs nothing: it runs
 under whatever python3 is there, so one `import httpx` in a client module makes
 the tool fail at startup on every machine that is not a checkout of this
 repository with a virtualenv in it — and it fails at IMPORT, so it takes every
@@ -9,13 +8,11 @@ verb with it, not the one that grew the dependency. Nothing in the suite would
 notice: the test environment has every runtime dependency installed, so the
 import succeeds here and only here.
 
-WHAT THE SECOND CHECK IS FOR, AND WHAT IT NO LONGER IS. The package carries the
-pure modules the hub and the client share — `buildnames`, `metricsdiff`,
-`projectslug` — so nothing in it reaches into `src` any more, and the first
-check is what holds that: `FIRST_PARTY` is `{"hammerola"}`, so ANY import of
-`src` fails it, not merely the dangerous halves. THE SECOND CHECK CANNOT FAIL
-WHILE THE FIRST PASSES, and it is kept anyway rather than deleted, because it is
-where the two halves are NAMED with their reasons: `src/cadbuild/` is the build
+The package carries the pure modules the hub and the client share —
+`buildnames`, `metricsdiff`, `projectslug` — so nothing in it reaches into
+`src`, and the first check holds that: `FIRST_PARTY` is `{"hammerola"}`, so ANY
+import of `src` fails it. The second check cannot fail while the first passes;
+it is where the two dangerous halves are NAMED with their reasons: `src/cadbuild/` is the build
 half and exists to load a CAD kernel, `src/store.py` brings loguru and the
 service. Do not read it as a safety net under the first one — it is a subset of
 it, so anybody loosening `FIRST_PARTY` back to `{"src"}` reopens

@@ -7,16 +7,8 @@ fixture. That matters more here than anywhere else in this suite: the text comes
 from a stranger's keyboard (SPEC 7A.4), and the reason it is safe to print is
 that the hub already refused everything that would not be.
 
-ONE SECRET, ON BOTH SIDES. The client always kept one (issue #26,
-decided 2026-08-27); the hub caught up in step 0 of the plan, so the queue and
-the push now check the same `EDIT_TOKEN`. Two things went away with the second
-variable and are named here so they are not restored: `hub_factory` no longer
-needs `comment_read_token=TOKEN` to make these tests representative, and the
-last test in this file — `test_a_hub_still_running_two_secrets_names_the_second_one`
-— was DELETED along with the sentence in `hammerola/hub.py` that it checked.
-That sentence existed for a 401 that did not mean "wrong token" but "this
-deployment set its second variable to something else", and there is no second
-variable to set.
+One secret, on both sides: the queue and the push check the same
+`EDIT_TOKEN`.
 """
 
 import json
@@ -32,8 +24,8 @@ from src import app
 
 @pytest.fixture
 def hub(hub_factory, monkeypatch):
-    """A hub running the way issue #26 says a deployment runs: one
-    secret, and one variable to put it in."""
+    """A hub running the way a deployment runs: one secret, and one
+    variable to put it in."""
     instance = hub_factory()
     monkeypatch.setenv("HUB_URL", instance.url)
     monkeypatch.setenv("EDIT_TOKEN", TOKEN)
@@ -111,9 +103,9 @@ def test_only_this_projects_queue_is_read(hub, tmp_path, capsys):
 
 def test_an_attachment_is_reported_as_the_command_that_fetches_it(hub, model,
                                                                   capsys):
-    """NOT AS THE URL, which is what used to be printed here. The bytes are
-    behind the same token as the queue, so a reader given the URL can only open
-    it by taking the secret out of the configuration — and one did."""
+    """Not as the URL. The bytes are behind the same token as the queue, so a
+    reader given the URL could only open it by taking the secret out of the
+    configuration."""
     publish_dev(model)
     reply = hub.post_comment("demo0001", "dev", payload=comment_payload(),
                              photo=("part.png", PNG_BYTES, "image/png"))

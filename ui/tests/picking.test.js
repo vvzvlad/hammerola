@@ -11,11 +11,11 @@
 // crosses.
 //
 // The vendored facts this correction rests on are read straight out of the
-// shipped files at the bottom, in the style outline.test.js and hatch.test.js
-// established: when three-cad-viewer is next updated they fail loudly, which is
-// the only warning available for a mechanism that reads private fields. Since
-// the fork builds with `external: three` those facts live in two places — the
-// library's own code in the bundle, three's own in static/_v/three.module.js.
+// shipped files at the bottom, as outline.test.js and hatch.test.js do: when
+// three-cad-viewer is next updated they fail loudly, which is the only warning
+// available for a mechanism that reads private fields. With `external: three`
+// those facts live in two places — the library's own code in the bundle,
+// three's own in static/_v/three.module.js.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -122,8 +122,8 @@ const QUARTER_TURN = {
 const pixelOver = (g, x, y) => projectPoint(g, [x, y, 0]).slice(0, 2)
 
 const PLATE = ['/model/plate', 'model|plate', [0, 0, 0]]
-// Flush underneath, exactly as the part that used to answer for the cut face:
-// the plane does not cross it, so it must never be the answer.
+// Flush underneath, so the id picker reads through the cap quad to it: the
+// plane does not cross it, so it must never be the answer.
 const SPACER = ['/model/reference_spacer', 'model|reference_spacer', [0, 0, -2]]
 
 describe('solidOf and nameOf', () => {
@@ -229,10 +229,10 @@ describe('capOwnerAt', () => {
   })
 
   it('never answers with a part the plane does not cut, however close it lies', () => {
-    // ISSUE #73, MEASURED IN A BROWSER: the cut face of `plate` opened the menu
-    // for `reference_spacer`, which sits flush underneath and is what the id
-    // picker reads through the id-less cap quad to. The spacer is listed FIRST
-    // here so a loop that answered with the first unit it looked at fails.
+    // The cut face of `plate` must not open the menu for `reference_spacer`,
+    // which sits flush underneath and is what the id picker reads through the
+    // id-less cap quad to. The spacer is listed FIRST here so a loop that
+    // answered with the first unit it looked at fails.
     const { vp, g } = cutScene([SPACER, PLATE])
     expect(capOwnerAt(vp, g, pixelOver(g, 1, 1)).id).toBe('/model/plate')
   })
@@ -366,8 +366,7 @@ describe('capOwnerAt', () => {
       // — the ray closes on the plane from the clipped half — but the eye itself
       // has drifted over to the kept side, because an ortho ray starts at its own
       // laterally offset point rather than at the eye. Gate on the eye and the
-      // menu falls back to the picker and opens on what lies behind the cut,
-      // which is issue #73 itself.
+      // menu falls back to the picker and opens on what lies behind the cut.
       //
       // The pose is built explicitly rather than orbited into: `s` is the sine
       // of the angle off edge-on, the basis stays orthonormal, and the eye sits
@@ -542,10 +541,9 @@ describe('the vendored files still say what the cut-face menu rests on', () => {
     // comparison, and what `projectPlanes` puts in `w` -- and together they
     // read as "discard where n . p + c < 0".
     //
-    // ALL THREE ARE THREE'S OWN, so they are asked of three.module.js and not of
-    // the bundle: `external: three` took the clipping chunks and `WebGLClipping`
-    // out of it, and a `toContain` pointed at the bundle would now fail on a
-    // convention that never moved.
+    // ALL THREE ARE THREE'S OWN, so they are asked of three.module.js and not
+    // of the bundle: with `external: three` the clipping chunks and
+    // `WebGLClipping` are not in it.
     const source = three()
     expect(source).toContain('vClipPosition = - mvPosition.xyz;')
     expect(source).toContain('if ( dot( vClipPosition, plane.xyz ) > plane.w ) discard;')

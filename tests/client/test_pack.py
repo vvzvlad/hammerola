@@ -9,9 +9,8 @@ Two kinds of claim here, and they are answered differently on purpose:
     inside the hub, as a confusing message about an import.
 
 And a refusal names EVERYTHING at once — the second half of this file is about
-nothing else (issue #42). One run has to be enough to fix the tree,
-because the real case is nineteen cyrillic file names in a `ref/` and refusing
-one at a time turned one rename job into nineteen pushes.
+nothing else. One run has to be enough to fix the tree: nineteen cyrillic file
+names in a `ref/` must not take nineteen pushes.
 
 The archive itself is checked by unpacking it with the same `tarfile` the hub
 opens it with, so what is asserted is the bytes that would be sent.
@@ -42,8 +41,7 @@ def listed_paths(message):
     A refusal indents its group headlines by two spaces and the paths under them
     by four, so this is the whole parse. Worth having rather than asserting on
     substrings: `_out` is a substring of `_out.tar.gz`, and a path that happens
-    to be the last line of the message has no newline after it — both of which
-    made an earlier version of these tests pass and fail for the wrong reasons.
+    to be the last line of the message has no newline after it.
 
     What comes back is what is PRINTED, quotes and escapes included, so compare
     against `shown(...)` rather than against a bare path.
@@ -69,12 +67,10 @@ def advice_for(message, path):
     The parse is the message's own indentation: a headline is indented two
     spaces, the paths under it four.
 
-    A LISTED LINE IS NOT ALWAYS JUST THE PATH, which an exact comparison here
-    got wrong: a refusal may carry a `detail`, and the `unreadable` group is the
-    one that does — `    'locked' ('Permission denied')`. So the only group whose
-    lines have the other shape was invisible to this, silently, as a `None` that
-    reads exactly like "that path was never listed". Matched by prefix instead,
-    and the detail's ` (` is required rather than assumed: `repr` closes every
+    A listed line is not always just the path: a refusal may carry a `detail`,
+    and the `unreadable` group is the one that does —
+    `    'locked' ('Permission denied')`. So it is matched by prefix, and the
+    detail's ` (` is required rather than assumed: `repr` closes every
     path with a quote, so `'_out'` cannot prefix `'_out.tar.gz'`, but a bare
     `startswith` would still be one rule looser than the message's own shape.
     """
@@ -138,24 +134,16 @@ def test_build_output_and_caches_are_dropped(tmp_path):
 
 
 def test_the_old_publishers_output_is_refused_rather_than_dropped(tmp_path):
-    """`_out` is off the exclusion list now, and being refused is the point.
+    """`_out` is not on the exclusion list, and being refused is the point.
 
-    NOT BECAUSE NOTHING WRITES IT ANY MORE — `make build` in a model repository
-    still does, from the Makefile the project template hands out, and this client
-    has no local build to replace it with, so an author who runs the geometry
-    before publishing meets this refusal after every build. The list is off by a
-    different rule: it exists for what the author's OWN tools regenerate, and
-    `_out` belongs to the publisher this client replaces (`cad_publish`, moved
-    into the hub by SPEC 8A.2 step 3). Excluding it would mean packing by the
-    conventions of the thing being retired — and silently, so a push goes out
+    The list exists for what the author's OWN tools regenerate; `_out` belongs
+    to the old publisher, and excluding it silently would let a push go out
     while its author believes the `_out/` on screen went with it.
 
-    AND BOTH HALVES OF THE PAIR HAVE TO BE TOLD THE SAME THING, which is the part
-    naming the paths does not check. `_out.tar.gz` is a FILE, so it landed in a
-    group whose only instruction was "rename them" — wrong advice for build
-    output, and wrong for the half of the pair a listing puts first at that. The
-    group it is in and the sentence over that group are therefore asserted, not
-    just the line with its name on it.
+    Both halves of the pair have to be told the same thing. `_out.tar.gz` is a
+    FILE, and "rename them" is wrong advice for build output, so the group it
+    is in and the sentence over that group are asserted, not just the line with
+    its name on it.
     """
     root = make_model(tmp_path / "demo")
     (root / "_out").mkdir()
@@ -266,16 +254,12 @@ def test_a_directory_that_cannot_be_listed_is_refused_by_name(tmp_path):
     """An unreadable subdirectory is a message, not a traceback.
 
     `cli.main` prints exactly five exception families as a sentence, and an
-    `OSError` out of `iterdir` is not one of them — so before this the whole
-    command ended in a traceback that did not even name the directory, for
-    somebody whose real problem is one `chmod`.
+    `OSError` out of `iterdir` is not one of them, so it is caught and named
+    — for somebody whose real problem is one `chmod`.
 
-    THE GROUP IS ASSERTED, not just the name, and this is the one case where
-    doing so exercises something extra: a line here carries the errno's text
-    beside the path, so it is the only group whose listed lines are not the path
-    alone. `advice_for` compared the whole line for equality once, which made
-    exactly this group unreachable — and unreachable as a `None` indistinguishable
-    from "never listed at all".
+    The group is asserted, not just the name: a line here carries the errno's
+    text beside the path, so it is the only group whose listed lines are not
+    the path alone.
     """
     root = make_model(tmp_path / "demo")
     locked = root / "ref"
@@ -298,14 +282,11 @@ def test_a_directory_that_cannot_be_listed_is_refused_by_name(tmp_path):
 
 def test_the_detail_beside_a_refused_path_is_escaped_like_the_path(
         tmp_path, monkeypatch):
-    """`detail` was the one string a message printed exactly as it arrived.
+    """`detail` goes through `_shown` like every refused path.
 
-    The whole point of `_shown` is to be the single door every refused path goes
-    through, and this went round it: `_walk` records `error.strerror or
-    str(error)` for a directory it cannot list, and the fallback half of that is
-    an OSError's own text, which repeats the FULL PATH it was raised for. So a
-    directory whose name carries an escape sequence cleared the terminal through
-    the one line nothing escaped.
+    `_walk` records `error.strerror or str(error)` for a directory it cannot
+    list, and the fallback half of that is an OSError's own text, which repeats
+    the FULL PATH it was raised for — escape sequences included.
 
     The fallback is what has to be provoked, since `strerror` is set for every
     ordinary errno: an OSError built with a single argument has no errno and no
@@ -346,9 +327,9 @@ def test_an_empty_tree_is_refused(tmp_path):
         collect(root)
 
 
-# -- one message, every path (issue #42) -----------------------------
+# -- one message, every path -----------------------------------------
 def test_every_unpublishable_name_arrives_in_one_message(tmp_path):
-    """The case this was written for, at its real size: nineteen of them.
+    """The real case, at its real size: nineteen of them.
 
     Nineteen files with cyrillic names in a `ref/`, on the project
     `clay-settler`. Before this the author learned about one per push.

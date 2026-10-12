@@ -1,10 +1,8 @@
 // How big the widget is, and the one-shot measurement behind it.
 //
-// Ported from the page viewer this interface replaced, with one change of
-// shape: every number here
-// is per-VIEWPORT state rather than a module-level pair, because the interface
-// can hold more than one (the diff view of ui-brief block 9 is two builds side
-// by side) and a chrome measurement taken from one is not the other's.
+// Every number here is per-viewport state, not module-level: the interface can
+// hold more than one viewport (the diff view shows two builds side by side),
+// and one's chrome measurement is not the other's.
 
 import { displayOptions } from "./options.js";
 

@@ -76,9 +76,10 @@ describe('unit3', () => {
   it('answers for a vector too large or too small for `len3` to square', () => {
     // WHY THIS DOES NOT GO THROUGH `len3`, and the reason it is a separate
     // function: `len3` squares first, so it overflows to Infinity around 1.34e154
-    // and underflows to 0 around 1.5e-162. Dividing by either produced an answer
-    // that was WRONG RATHER THAN ABSENT — `[1e200,0,0]` came back as `[0,0,0]`, a
-    // finite vector of zero length that every finiteness check waves through.
+    // and underflows to 0 around 1.5e-162. Dividing by either gives an answer
+    // that is WRONG RATHER THAN ABSENT — `[1e200,0,0]` would come back as
+    // `[0,0,0]`, a finite vector of zero length that every finiteness check
+    // waves through.
     // What that does downstream is NOT a crash and not a NaN: three.js's own
     // `normalize` is `divideScalar( length() || 1 )`, so zero stays zero, the
     // clip plane becomes `(0,0,0,w)` and the fragment test `dot(vClipPosition,

@@ -576,11 +576,10 @@ describe('the widget', () => {
   })
 
   it('rewrites attributes on a turn and never rebuilds the elements', () => {
-    // THE OTHER HALF OF THAT TRADE, and the one the dirty-check does not cover.
-    // Every frame the camera MOVES used to create ~33 SVG elements, attach 81
-    // listeners and call `replaceChildren` — a full SVG repaint alongside the
-    // WebGL frame the reader is dragging, i.e. exactly the rewrite the loop's
-    // comment calls the expensive half. Node identity is what says it stopped.
+    // The other half, not covered by the dirty-check: a camera move must reuse
+    // the SVG nodes rather than rebuild them (~33 elements, 81 listeners and a
+    // `replaceChildren` per frame alongside the WebGL frame). Node identity
+    // shows it.
     const vp = fakeViewport([...ISO])
     const cube = build(vp)
     cube.refresh()

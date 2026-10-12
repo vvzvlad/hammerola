@@ -1,22 +1,13 @@
 // Which files belong to which part, how the header's menu groups the same set by
 // FORMAT, and what the tree row's menu offers for one part.
 //
-// THE ANSWER IS DECLARED NOW RATHER THAN RECONSTRUCTED (issue #75).
 // `meta.parts` is a catalogue keyed by the part's own identity, and each record
 // names the files that were exported for it: `{key: {kind, files: {extension:
-// filename}}}`. What this file used to be about went with the code it tested —
-// the page read `meta.downloads`, a flat `{label: filename}` map saying nothing
-// about which part a file belonged to, and worked it out by cutting the
-// filename at its last dot and calling the stem a part. Every hazard those
-// tests were built around left with the parse: the label that degenerated to a
-// bare `stl` on a one-part build, the part whose own name contains dots, the
-// `assembled.stl` indistinguishable in shape from a part's `foo.stl`.
+// filename}}}`. Nothing is reconstructed from filenames.
 //
-// WHAT THE BUILD PUBLISHES ABOUT ITSELF STILL REACHES NEITHER MENU, and that is
-// the decision these tests hold — it MOVED rather than went away, which is
-// exactly the kind of change that quietly stops being checked. The whole-view
-// mesh and picture (`assembled.stl`, `assembled_preview.png`) are now fields on
-// a VIEW, and a part's own render is `preview` INSIDE its catalogue record, one
+// What the build publishes about itself reaches neither menu. The whole-view
+// mesh and picture (`assembled.stl`, `assembled_preview.png`) are fields on a
+// VIEW, and a part's own render is `preview` inside its catalogue record, one
 // key away from `files`. They exist so a client can be told the files are there
 // — the hub lists no directory — and a picture is looked at rather than
 // downloaded. `print.stl` is the one where a button would be actively wrong:
@@ -59,16 +50,14 @@ const PARTS = {
 }
 
 /**
- * Everything the same build publishes about ITSELF, at the two levels it now
- * sits at: the view's own mesh and picture (`views[].overview`,
- * `views[].preview` in src/render.py) and each part's render (`preview` inside
- * its catalogue record).
+ * Everything the same build publishes about ITSELF, at its two levels: the
+ * view's own mesh and picture (`views[].overview`, `views[].preview` in
+ * src/render.py) and each part's render (`preview` inside its catalogue
+ * record).
  *
- * Handed to the component so the tests below can assert that it changes NOTHING
- * on either menu. A fixture that simply left these out would agree with a
- * browser that had started reading them — and the part's picture in particular
- * now sits in the SAME OBJECT as its files, which is a shorter reach than it
- * was when the pictures were a map of their own.
+ * Handed to the component so the tests below can assert that it changes
+ * NOTHING on either menu; a fixture that left these out would agree with a
+ * browser that had started reading them.
  */
 const VIEW_FILES = {
   overview: 'assembled.stl',
@@ -84,7 +73,7 @@ const PARTS_WITH_PICTURES = {
  * The same build's tree: a part, a group with a part in it, and a part that is
  * in the catalogue but never printed.
  *
- * EVERY LEAF CARRIES ITS CATALOGUE KEY, which is what the view file now stamps
+ * EVERY LEAF CARRIES ITS CATALOGUE KEY, which is what the view file stamps
  * on it (`export_views` in src/cadbuild/views.py) and what the hub refuses a
  * push without (`check_view_file`). The keys are deliberately not the row
  * NAMES: `reference spacer` is keyed `spacer`, so a lookup that fell back to
@@ -110,18 +99,9 @@ const TREE = {
  * The same tree with a leaf that names NO key.
  *
  * No push the hub accepted produces one — `check_view_file` refuses a leaf
- * without a key — so this is a document that did not come through the front
- * door: a hand-made file, or a hub that answered something else.
- *
- * AN OLD BUILD IS NOT ON THAT LIST, and the omission is the decision rather
- * than an oversight. Reaching a view file's tree at all means `meta.json` was
- * read first, and a genuine document from before issue #75 named its list
- * `variants` (`build_meta` in src/render.py, before 5683fea) where `load()`
- * reads `meta.views` with no guard — so it takes the page down long before any
- * tree is fetched. Old builds were dropped by decision; nothing here opens one.
- *
- * It is here because the answer to it is a DECISION rather than an accident:
- * the row gets nothing, and its name is never used as a stand-in key.
+ * without a key — so this is a hand-made file, or a hub that answered
+ * something else. The row gets nothing, and its name is never used as a
+ * stand-in key.
  */
 const TREE_WITH_AN_UNKEYED_LEAF = {
   ...TREE,
@@ -131,33 +111,19 @@ const TREE_WITH_AN_UNKEYED_LEAF = {
 /**
  * The same tree with a LEAF called `assembled` on it, keyed `post`.
  *
- * KEYED TO A PART THAT HAS FILES, WHICH IS THE WHOLE OF WHAT MAKES IT A TEST.
- * It was keyed `spacer` — hardware, no files — and that made the two readings
- * agree: by key, a record with no files; by name, no record at all; both
- * answering "No files for this part". So the test below stayed green with the
- * menu reverted to a full lookup by NAME — the very reconstruction this fixture
- * exists to catch — and asked, byte for byte, the same question the bought
- * screw already asks. Keyed `post` the two readings differ: three files by key,
- * nothing by name, so the row can be asked which of the two it used.
+ * Keyed to a part that has files, so the two readings differ: three files by
+ * key, nothing by name, and the row can be asked which of the two it used.
  *
- * NO PUSH PRODUCES THIS ONE EITHER, and it takes two rules to say why. A view
- * entry no longer carries a name at all — it is a REFERENCE into the catalogue
- * (`read_parts` in src/cadbuild/views.py), and the tessellator names the leaf
- * after the key it was given — so a leaf named `assembled` and keyed `post`
- * is two strings that cannot come apart on a real build. And `assembled` is a
- * key no part may have, whatever its kind: it is one of the stems a build keeps
- * for itself (`RESERVED_STEMS` in src/cadbuild/parts.py, whose own note spells
- * out that the reservation applies to every kind, not only to what is
- * exported). What IS legal under that name is a GROUP — `_check_group_name`
- * refuses only a name that is also a catalogue key — but a group is a different
- * row with a different menu, so this fixture stays a leaf.
+ * No push produces this: a view entry is a reference into the catalogue
+ * (`read_parts` in src/cadbuild/views.py) and the tessellator names the leaf
+ * after its key, and `assembled` is a key no part may have (`RESERVED_STEMS`
+ * in src/cadbuild/parts.py). A GROUP may carry the name (`_check_group_name`
+ * refuses only a catalogue key), but a group is a different row with a
+ * different menu, so this fixture stays a leaf.
  *
- * IT IS HERE AS THE HAND-MADE DOCUMENT the old reconstruction died on, and the
- * assertion is a decision rather than a description of a real build: this row's
- * name collides with `views[].overview` on the very same document, which names
- * `assembled.stl`. Matched the old way — a row's name against a filename's stem
- * — those two put the whole assembly on this row's menu, with the link working
- * and nothing anywhere saying whose file it was.
+ * The row's name collides with `views[].overview` on the same document
+ * (`assembled.stl`); matched by name against a filename's stem, the whole
+ * assembly would land on this row's menu.
  */
 const TREE_WITH_A_RESERVED_NAME = {
   ...TREE,
@@ -187,35 +153,12 @@ function component({ node, parts = PARTS, token = null, expanded = {},
     state: {
       meta: {
         project: 'fixture', commit: 'abc1234', built: '',
-        // `parts: null` MEANS THE FIELD IS NOT THERE, and it is spelled by
-        // omission rather than as an empty object because `{}` describes no
-        // document there has ever been: `_catalogue` in src/render.py refuses an
-        // empty `parts` in as many words, and refuses again a catalogue with no
-        // `printable` in it (and a printable with no `files`). So the reader of
-        // the two "no files" branches below is A HAND-MADE DOCUMENT, OR ONE THIS
-        // PAGE DID NOT GET FROM A PUSH.
-        //
-        // IT IS NOT AN OLD BUILD, and that is worth writing down because the
-        // reading is inviting and wrong. A genuine document from before issue #75
-        // carried `variants` where this one carries `views` (`build_meta` in
-        // src/render.py, before 5683fea), and exactly TWO readings of `meta.views`
-        // are unguarded: `load()` calls `.find` on it the moment meta.json
-        // arrives, and `subtitle()` does the same on every render that has a meta
-        // at all. Those two are also the ones that run FIRST, so such a document
-        // takes the page down long before any catalogue is looked at.
-        //
-        // Every other reading of that field does guard, and that is not an
-        // inconsistency to be tidied in either direction: what those guard is
-        // `meta` not being THERE yet — the page draws before the fetch answers,
-        // and a build swap has a window mid-flight — with the two that ingest a
-        // freshly fetched document (`switchBuild` and `poll`/`takePending`)
-        // checking the shape of `views` on top of that. Neither question is the
-        // one above, and answering it here would only hide the crash that keeps
-        // an old document out.
-        //
-        // Nothing here opens one and nothing here promises to: old builds were
-        // dropped by decision, while an untrusted document is a different thing
-        // and is what these branches are for.
+        // `parts: null` means the field is not there, spelled by omission
+        // because `{}` describes no real document: `_catalogue` in
+        // src/render.py refuses an empty `parts`, a catalogue with no
+        // `printable`, and a printable with no `files`. So the reader of the two
+        // "no files" branches below is a hand-made document, or one this page
+        // did not get from a push.
         ...(parts ? { parts } : {}),
         views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
                   parts: Object.keys(parts || {}), gzip: 1000, ...viewFiles }],
@@ -289,10 +232,8 @@ describe('groupDownloads', () => {
   })
 
   it('names every row after the KEY, on a one-part build as on a six-part one', () => {
-    // The case that used to need the whole reconstruction: the hub's download
-    // label degenerated to a bare `stl` when there was only one printable, so
-    // the part's name had to be dug out of the filename. A catalogue key does
-    // not degenerate — it is the part's identity whatever else the build holds.
+    // A catalogue key is the part's identity whatever else the build holds,
+    // including on a build with a single printable.
     const groups = groupDownloads({ post: PARTS.post })
     expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
     expect(groups.flatMap((g) => g.files.map((f) => f.label)))
@@ -362,10 +303,9 @@ describe('groupDownloads', () => {
   })
 
   it('never offers the `preview` sitting in the same record', () => {
-    // Now a shorter reach than it was: the part's picture used to be in a map
-    // of its own and is now one key away from its files. A picture is looked at
-    // rather than saved, and it is declared so `hammerola artifacts` can fetch
-    // it — a different reader.
+    // The part's picture sits one key away from its files. A picture is looked
+    // at rather than saved, and it is declared so `hammerola artifacts` can
+    // fetch it — a different reader.
     const groups = groupDownloads(PARTS_WITH_PICTURES)
     expect(groups.flatMap((g) => g.files.map((f) => f.file)))
       .toEqual(['plate.stl', 'post.stl', 'plate.3mf', 'post.3mf',
@@ -645,9 +585,9 @@ describe('the chain the page keeps a handle on', () => {
 
 describe('the header\'s downloads menu', () => {
   it('offers each group a link that takes the whole group, in the menu\'s own order', () => {
-    // The point of issue #66 in one assertion: one click, every STL. The
-    // downloading itself is `sequentialDownload`; what is checked here is that
-    // the button hands it exactly the group's own files and nothing else.
+    // One click, every STL. The downloading itself is `sequentialDownload`;
+    // what is checked here is that the button hands it exactly the group's own
+    // files and nothing else.
     const c = component({ node: '/model/plate' })
     c.downloadAll = vi.fn()
     const [stl] = c.computed().downloadGroups
@@ -660,14 +600,11 @@ describe('the header\'s downloads menu', () => {
   })
 
   it('says so on a document carrying no catalogue, instead of drawing an empty menu', () => {
-    // The branch is not dead and its reader is named: a hand-made document, or
-    // one this page did not get from a push, with no `meta.parts` on it at all.
-    // No push produces one — the hub refuses a catalogue that is empty or has
-    // nothing printable in it — and no build from before issue #75 gets here
-    // either, since those named the list `variants` and this page reads
-    // `meta.views` unguarded. The row menu has a sentence for the same
-    // document, and the two must not drift apart: a menu with nothing in it
-    // reads as a menu that failed to load.
+    // Its reader: a hand-made document, or one this page did not get from a
+    // push, with no `meta.parts` on it at all (the hub refuses a catalogue that
+    // is empty or has nothing printable). The row menu has a sentence for the
+    // same document, and the two must not drift apart: a menu with nothing in
+    // it reads as a menu that failed to load.
     const c = component({ node: '/model/plate', parts: null })
     expect('parts' in c.state.meta, 'the fixture still carries a catalogue').toBe(false)
     expect(c.computed().downloadGroups).toEqual([])
@@ -702,11 +639,8 @@ describe('the row menu', () => {
   it('points those rows at the same URLs the header\'s menu does', () => {
     // One construction for both menus: a plain link against the build's own
     // directory. Compared against the header's list rather than rebuilt here,
-    // so a change to either one has to move the other.
-    //
-    // READ OUT OF THE GROUPS, because that is what the header now draws. The
-    // flat `v.downloads` this used to read is gone — a value nothing rendered
-    // would have been a parity test against a list nobody could see.
+    // so a change to either one has to move the other. Read out of the groups,
+    // because that is what the header draws.
     const v = component({ node: '/model/plate' }).computed()
     const header = new Map(v.downloadGroups.flatMap((g) => g.files)
       .map((f) => [f.file, f.href]))
@@ -758,15 +692,9 @@ describe('the row menu', () => {
   it('offers a group nothing, the same way a note is not offered on one', () => {
     // Files hang on a PART. A group is not a part and has no catalogue record
     // of its own, so the union of its leaves' files is a set this menu would
-    // be inventing. Bulk along the axis a reader actually asks for — one format,
-    // every part — is in the header's menu, which has a "download all" per group
-    // since issue #66.
-    //
-    // This comment used to end "a browser would block after the first", which is
-    // false: a browser ASKS, once, with a per-site permission it then remembers.
-    // Corrected rather than dropped because the false version made the choice
-    // look like a constraint — and it is the reason the header's bulk button
-    // could be built at all.
+    // be inventing. Bulk along the axis a reader actually asks for — one
+    // format, every part — is the header's per-group "download all" (a browser
+    // asks once for multiple downloads and remembers the per-site permission).
     const items = menuOn({ node: '/model/inner' })
     expect(labels(items)).toEqual(['Isolate', 'Hide', 'Translucent', 'Copy name'])
   })
@@ -809,22 +737,15 @@ describe('the row menu', () => {
   })
 
   it('gives a row named `assembled` ITS OWN part\'s files, not the assembly', () => {
-    // The case the old reconstruction actually broke on, kept because what
-    // protects against it changed and the failure did not. The row is named
-    // `assembled` while `views[].overview` on the same document names
-    // `assembled.stl`, the whole product: matched by name those two put the
-    // entire assembly on this row, with the link working and nothing saying
-    // whose file it was. Matched by KEY the question does not arise — the key
-    // is `post`, a name is not looked at anywhere on the path, and what the row
-    // offers is what `post` exported.
+    // The row is named `assembled` while `views[].overview` on the same
+    // document names `assembled.stl`, the whole product. Matched by KEY the
+    // question does not arise: the key is `post`, a name is not looked at
+    // anywhere on the path, and what the row offers is what `post` exported.
     //
-    // THE KEY POINTS AT A PART WITH FILES ON PURPOSE, which is what makes this
-    // a test of the lookup rather than of the sentence: reverted to a lookup by
-    // NAME the row finds no `assembled` in the catalogue and answers "No files
-    // for this part", so the assertion has to be the three files and not the
-    // absence of them. The reserved name is still the point — the collision is
-    // what the row is built out of — and the build side refuses it as well (see
-    // the fixture), so this is the second line rather than the only one.
+    // The key points at a part with files, so this tests the lookup rather
+    // than the sentence: a lookup by NAME would find no `assembled` and answer
+    // "No files for this part", so the assertion is the three files. The build
+    // side refuses the reserved name as well (see the fixture).
     const v = component({ node: '/model/assembled', viewFiles: VIEW_FILES,
                           tree: TREE_WITH_A_RESERVED_NAME }).computed()
     expect(fileRows(v.menuItems).map((m) => m.hint))
@@ -847,10 +768,8 @@ describe('the row menu', () => {
 
   it('gives a row that STATES something no handler at all', () => {
     // The styling on those two rows says they are not clickable — `cursor:
-    // default` and a grey — and they used to be handed an `onClick` anyway, one
-    // that stopped the event and closed the menu: a row acting while saying it
-    // would not. With no handler it is inert, which is exactly what it claims,
-    // and the menu still closes on the next click outside it.
+    // default` and a grey — so they get no `onClick`: inert, as they claim, and
+    // the menu still closes on the next click outside it.
     for (const items of [menuOn({ node: '/model/spacer' }),
                          menuOn({ node: '/model/plate', parts: null })]) {
       const said = items.filter((m) => m.style.includes('cursor:default'))

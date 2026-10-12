@@ -3,61 +3,38 @@
 Somebody holding the edit token opens a published model and assembles a rough
 parametric body over it in the browser panel — the motor the bracket has to
 clear, the wall it bolts to, a part of the build dragged to where they want it.
-Until now that document lived in page state and nowhere else
-(`ui/src/proposal.js` says so at the head of the file), so a reload lost every
-number in it. This is where it goes instead:
+The document (built by `ui/src/proposal.js`) is stored here:
 
     <data>/proposals/<pid>.json        the whole proposal, one file per project
 
 ONE PER PROJECT, NO HISTORY AND NO RETENTION. A second write REPLACES the first
 rather than appending to it, and the only thing that removes one is somebody
 asking — `DELETE /api/v1/proposals/<pid>`, or removing the project it belongs
-to. That is the same answer everything else on this volume gives (SPEC 5.3);
-what is different here is that a proposal is the person's working document, so
-"replaces" is what they mean by saving it, and a pile of previous versions would
-be a mechanism nobody asked for.
+to (SPEC 5.3). A proposal is a working document, so saving replaces it.
 
-DELIBERATELY OUTSIDE THE BUILD DIRECTORY, for the two reasons the comment queue
-gives (SPEC 7A.3), and both stand on their own here too. ACCESS: a build
-directory is served to anybody who has the URL, with a year of `immutable`, so a
-proposal placed in one would be public and irrevocably cached — and this is read
-and written under EDIT_TOKEN. LIFETIME: a proposal is about the PROJECT and not
-about one revision. The reader goes on editing the same document across
-rebuilds, and the `published` stamp it carries is a NOTE about which build the
-moves were measured on, not the address the document lives at.
+Outside the build directory for the comment queue's reasons (SPEC 7A.3): build
+directories are public and cached `immutable`, while this is read and written
+under EDIT_TOKEN; and a proposal is about the project, edited across rebuilds.
+The `published` stamp notes which build the moves were measured on.
 
-THE DOCUMENT IS STORED OPAQUELY AND ITS NODES ARE NOT CHECKED, which is a
-decision rather than an omission. What `doc` holds is `{version, units, nodes}`
-as `ui/src/proposal.js` builds it, and the author of a proposal is the owner of
-the project, writing through their own browser under the one secret of the
-system: there is no adversary on this path to be defended against. A second
-definition of the document in Python would be a schema that has to stay in step
-with that module forever, and the benefit nobody can name is exactly the shape
-AGENTS.md warns about — «не выдумал ли я противника».
+The document (`{version, units, nodes}`, as `ui/src/proposal.js` builds it) is
+stored opaquely: its author is the project owner under EDIT_TOKEN, and a Python
+schema would have to track that module forever.
 
-WHAT IS CHECKED IS ABOUT THE BYTES AND ABOUT THIS STORE, never about the sender,
-which is the same line `src/comments.py` draws:
+What is checked is about the bytes and this store, as in `src/comments.py`:
 
   * the request body has a ceiling (`proposal_max_body_bytes`), because an
     unbounded parse and an unbounded store are not made safe by a credential;
   * `doc` must be a JSON object, `published` and `view` one printable line each
     or null — enough that what comes back off the volume is the shape every
     reader here already assumes;
-  * `text` must be a string or null, and PRINTABLE THE WAY A COMMENT'S BODY IS
-    (`comments._body_text`): newline and tab survive, because the projection is
-    a table of several lines, and every other character in Unicode category C
-    is refused — U+202E among them, which reverses the text around it in any
-    terminal. This is the field `hammerola proposal` prints straight into the
-    agent's terminal, and the same projection pasted into a comment is refused
-    there, so accepting it here would be the same bytes going in through the
-    other door;
-  * NO NaN AND NO INFINITY ANYWHERE IN THE PAYLOAD. `json.loads` accepts all
-    three by default, `json.dumps(..., allow_nan=False)` then refuses to write
-    them, and the bad number would surface as a 500 on a request that had
-    already been accepted. This is not a defence against anybody: it is our own
-    drag arithmetic producing a number that cannot be read back — the hazard
-    `comments._numbers` records for a camera — so it is refused at the door
-    with a 422 instead.
+  * `text` must be a string or null, printable the way a comment's body is
+    (`comments._body_text`): newline and tab survive, every other character in
+    Unicode category C (e.g. U+202E) is refused. `hammerola proposal` prints
+    this field straight into the agent's terminal;
+  * no NaN or infinity anywhere in the payload: `json.loads` accepts them but
+    `json.dumps(..., allow_nan=False)` would refuse to write them, turning an
+    accepted request into a 500. They are refused with a 422 instead.
 """
 
 import json
@@ -87,12 +64,8 @@ def _refuse_constant(literal: str):
 def _finite_number(text: str) -> float:
     """`json.loads`'s hook for every float literal in the body.
 
-    THE THREE LITERALS ABOVE ARE NOT THE ONLY WAY TO SPELL AN INFINITY, and this
-    is the half a `parse_constant` alone misses: `1e999` is an ordinary JSON
-    number, it never reaches that hook, and `float()` turns it into `inf` just
-    the same. Refusing it here is what makes "no infinity in the payload" true
-    at the door rather than nearly true — the alternative is a ValueError out of
-    `json.dumps` further down, i.e. the 500 this module exists to avoid.
+    `1e999` is an ordinary JSON number that `parse_constant` never sees, yet
+    `float()` turns it into `inf`; it is refused here.
     """
     number = float(text)
     if number != number or number in (float("inf"), float("-inf")):
@@ -117,14 +90,10 @@ def parse_body(body: bytes) -> dict:
 def _body_text(value) -> str:
     """The projection: several lines allowed, control characters not.
 
-    `records.check_body_printable`, which the comment queue shares, and
-    deliberately NOT `records.one_line`. Newline and tab have to survive — the
-    projection is a table the panel aligned into columns, so a single-line check
-    would refuse every multi-line document and the browser's save would start
-    failing silently. Everything else in Unicode category C goes, U+202E
-    included: this is the one field of the record that `hammerola proposal`
-    prints straight into the agent's terminal, where that codepoint reverses the
-    text around it.
+    `records.check_body_printable`, not `records.one_line`: the projection is
+    a multi-line table, so newline and tab must survive. Everything else in
+    Unicode category C goes, since `hammerola proposal` prints this field into
+    the agent's terminal.
     """
     if not isinstance(value, str):
         raise ProposalError(422, "`text` must be a string or null")
@@ -238,11 +207,8 @@ class ProposalStore:
         """The same deletion, under the name `DELETE /api/v1/projects/<pid>`
         calls it.
 
-        Two names for one line because the two callers mean different things by
-        it: `remove` is the reader putting their own document away, while this
-        is the project going and taking everything about it with it — the name
-        `CommentStore.remove_project` already carries, so app.py composes the two
-        stores the same way rather than special-casing this one.
+        Named like `CommentStore.remove_project`, so app.py composes the stores
+        the same way.
         """
         return self.remove(pid)
 
@@ -255,20 +221,11 @@ def _read_record(path: Path) -> dict | None:
     and a damaged file must not turn that into a 500 on a page somebody has
     open.
 
-    A MISSING FILE IS ABSENCE AND SAYS NOTHING, which is the one arm that does
-    not warn. `comments._read_record` is handed paths a glob just produced, so
-    for it "not there" is a race and worth a line; this one is handed a path
-    CONSTRUCTED from the id in the URL, and most projects have no proposal at
-    all — so the warning fired on every page load of every project nobody has
-    drawn on, naming a file that was never supposed to exist.
+    A missing file is plain absence and does not warn: the path is built from
+    the URL id, and most projects have no proposal. Anything else (a damaged
+    file, a directory in its place) warns.
 
-    EVERYTHING ELSE GOES ON WARNING, because a damaged file or a directory
-    where the record should be is real and this line is the only sign of it
-    anywhere.
-
-    NO WRITE-BACK, for the reason `comments._read_record` gives: this runs per
-    request rather than into a registry a start builds, so there is no long-lived
-    copy to diverge from the volume (#107).
+    No write-back, for the reason `comments._read_record` gives.
     """
     try:
         record = json.loads(path.read_text(encoding="utf-8"))

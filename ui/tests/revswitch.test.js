@@ -1,30 +1,19 @@
-// Switching revisions IN PLACE — issue #62.
+// Switching revisions in place, without reloading the page, so the camera,
+// hidden parts, section and view tab survive when comparing two builds. What
+// differs between two revisions is one meta.json and one view payload.
 //
-// The gesture used to be `location.href = …`: the browser threw the document
-// away and built it again — template, bundle, viewer, view file — so the camera,
-// the hidden parts, the section and the view tab were all lost at exactly the
-// moment they are worth the most, which is somebody comparing two builds of one
-// part from one angle. Everything that differs between two revisions of a
-// project is one meta.json and one view payload; the rest of the page is the
-// same kind of thing rebuilt from different data.
+// The claims under test: the address still says which geometry this is (pushed,
+// not loaded, so the link copies and opens as before), and what the reader set
+// up survives, except what would be wrong on the new build.
 //
-// SO THE CLAIMS UNDER TEST ARE TWO. The address still says which geometry this
-// is — pushed, not loaded, so the link copies and opens exactly as before — and
-// what the reader set up survives, except for the things that would be lies if
-// they did.
+// The URL and `PAGE` are real. `vi.hoisted` runs before every import, the only
+// place early enough to put jsdom on a build page: `PAGE` is derived at module
+// scope off `location.pathname`, and a stub would let a swap that forgot to
+// update it keep fetching the old revision. Only `loadMeta` and `loadBuilds`,
+// the two hub fetches a swap makes, are mocked.
 //
-// THE URL IS REAL AND SO IS `PAGE`. `vi.hoisted` runs before every import in
-// this file, which is the only place early enough to put jsdom on a build page:
-// `PAGE` is derived at module scope off `location.pathname`, and a stubbed one
-// would let the file agree with itself about the very field the whole entry
-// turns on — nothing re-derives `PAGE`, so a swap that forgot it would go on
-// fetching the revision that had just left the screen. Only the two hub fetches
-// a swap makes are mocked — `loadMeta` and `loadBuilds` — because they are the
-// only things here that talk to a hub; everything else is the real module.
-//
-// NOTHING IS RENDERED, the arrangement every file in this directory uses: the
-// instance is the real prototype with the state spelled out, and the real
-// methods run over it.
+// Nothing is rendered: the instance is the real prototype with the state
+// spelled out, and the real methods run over it.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -79,10 +68,8 @@ afterEach(() => { vi.restoreAllMocks() })
 
 /**
  * Both views the fixture build declares, in the order meta.json lists them.
- *
- * `parts` NAMES the catalogue keys a view shows rather than counting them
- * (issue #75), which is what lets the tab strip say what is in a tab without
- * fetching the geometry.
+ * `parts` names the catalogue keys a view shows, which lets the tab strip say
+ * what is in a tab without fetching the geometry.
  */
 const VIEWS = [
   { id: 'assembled', name: 'assembled', file: 'a.json',
@@ -155,15 +142,13 @@ function component(over = {}) {
 }
 
 /**
- * Record what the page hands to the BROWSER as a navigation, without letting
+ * Record what the page hands the browser as a navigation, without letting
  * jsdom try one.
  *
- * `window.location` is a getter here, so the whole object can be stood in for —
- * and it has to be, since a write to `location.href` is the one thing on this
- * page that cannot be observed any other way: jsdom refuses the navigation, says
- * so on its own console and leaves every readable field exactly as it was. The
- * three reads the code makes are delegated to the real one so nothing else
- * changes meaning.
+ * `window.location` is a getter here, so the whole object can be replaced, and
+ * must be: jsdom refuses a write to `location.href`, logs it and leaves every
+ * field unchanged, so it cannot be observed otherwise. The three reads the code
+ * makes are delegated to the real one.
  */
 function watchNavigation() {
   const real = Object.getOwnPropertyDescriptor(window, 'location')
@@ -324,11 +309,8 @@ describe('picking a revision', () => {
     })
 
   it('re-reads the history the picker itself lists', async () => {
-    // WHAT THE RELOAD USED TO DO FOR FREE. `builds.json` is read once on mount,
-    // so without this a session of switching would go on offering the history as
-    // it stood when the page opened — and a revision published meanwhile could
-    // not be reached from the menu at all, on the one page whose job is to
-    // move between revisions.
+    // `builds.json` is read once on mount, so a swap must reload it or a revision
+    // published meanwhile cannot be reached from the menu.
     const c = component()
     const C = 'c'.repeat(64)
     loadMeta.mockResolvedValue(build())
@@ -366,14 +348,12 @@ describe('picking a revision', () => {
 
 describe('the message on a picker row', () => {
   it('is what the revision said it was, and the pointers have none', () => {
-    // The menu is a column of twelve hex characters and a column of timestamps:
-    // between them they tell two revisions APART without saying what either one
-    // is. `builds.json` carries the subject of a revision that was pushed with
-    // `-m` (issue #67), and the row is where it lands.
+    // The menu's hashes and timestamps tell revisions apart without saying what
+    // either is. `builds.json` carries the subject of a revision pushed with
+    // `-m`, and the row shows it.
     //
-    // `dev` and `latest` are NAMES that resolve to whatever is current, so
-    // there is no one revision for them to describe — an empty string, which is
-    // also what keeps their rows the shape every row used to be.
+    // `dev` and `latest` are names that resolve to whatever is current, so there
+    // is no one revision to describe: an empty string.
     const c = component({
       builds: {
         has_dev: true,
@@ -430,9 +410,8 @@ describe('popstate', () => {
   }
 
   it('switches back the same way, and does not push again', async () => {
-    // The entries this page pushed are entries it now has to answer for: Back
-    // that moved the address bar and left the previous revision on screen would
-    // be a worse lie than the reload this replaced.
+    // The entries this page pushes must be honoured: Back that moved the address
+    // bar and left the previous revision on screen would be wrong.
     const c = mounted()
     const push = vi.spyOn(history, 'pushState')
     loadMeta.mockResolvedValue(build())
@@ -470,19 +449,12 @@ describe('popstate', () => {
   })
 
   it('calls a swap off without taking another', async () => {
-    // COMING BACK TO THE BUILD ON SCREEN IS NOT A TRIP. The entry used to be
-    // thrown away as a no-op — "already here" was asked against `PAGE.slot`,
-    // which during a swap still names the build being LEFT — so the swap landed
-    // under an address bar saying otherwise. The answer to that is to cancel,
-    // and cancelling is where the second version went wrong: it ran the whole
-    // of `switchBuild` against the build that had never left the screen.
-    //
-    // What that cost is asserted here rather than described, because none of it
-    // looks like a failure at the time. `leaveBuild` throws away the reader's
-    // own work over a gesture that asked for nothing; and the viewport is then
-    // handed a payload identical to the one it holds, which it reads as nothing
-    // to load — so no `hmr:model` comes back, `onModel` never runs, and the two
-    // things it spends stay armed for an unrelated event to trip over later.
+    // Coming back to the build on screen is not a trip. "Already here" cannot be
+    // asked of `PAGE.slot`, which during a swap still names the build being left;
+    // the answer is to cancel the swap, without running `switchBuild` against the
+    // build that never left. Otherwise `leaveBuild` discards the reader's work,
+    // and the viewport, handed an identical payload, loads nothing, so no
+    // `hmr:model` comes back and `onModel` never spends what it was armed with.
     const c = mounted()
     const push = vi.spyOn(history, 'pushState')
     const answers = {}
@@ -605,13 +577,10 @@ describe('popstate', () => {
   })
 
   it('overrules a pick still on the wire rather than doubling it', async () => {
-    // BACK IS A GESTURE LIKE ANY OTHER and is supposed to win, which is the
-    // second way two swaps used to end up in flight together. This one never
-    // went through the picker at all, so closing the menu was never going to
-    // reach it — and its own "already here" guard reads `PAGE.slot`, which a
-    // swap moves only after its fetch answers. So Back during a slow pick sails
-    // straight through and starts a second swap; whichever answered last then
-    // decided what the reader was looking at.
+    // Back is a gesture like any other and is supposed to win. It never goes
+    // through the picker, and its "already here" guard reads `PAGE.slot`, which a
+    // swap moves only after its fetch answers, so Back during a slow pick starts
+    // a second swap; the ordering must decide which one lands.
     const C = 'c'.repeat(64)
     const c = mounted()
     const push = vi.spyOn(history, 'pushState')
@@ -643,10 +612,9 @@ describe('popstate', () => {
 
 // -- two of them in flight at once --------------------------------------------
 //
-// The picker closes before the fetch, and this file used to read that as a lock
-// on picking a second row. It is not one: `revToggle` reopens the menu with one
-// click and `onPick` asks nothing before calling `switchBuild` again. So the
-// ordering has to be in the method — by number, not by refusing the gesture.
+// The picker closes before the fetch, but that is not a lock: `revToggle`
+// reopens the menu with one click and `onPick` calls `switchBuild` again. So
+// the ordering is in the method, by number, not by refusing the gesture.
 
 describe('a second revision picked while the first is fetching', () => {
   /** Two swaps held at the network, answered by base, one at a time. */
@@ -742,12 +710,10 @@ describe('a second revision picked while the first is fetching', () => {
   })
 
   it('is called off by a click on the row still on screen', async () => {
-    // THE SAME GESTURE AS FORWARD-ONTO-THE-CURRENT-BUILD, through the other
-    // door, and it has to mean the same thing: the picker highlights the build
-    // on SCREEN, so clicking it while a swap is carrying the page elsewhere is
-    // the reader saying they want to stay. Cancel the trip, take no other, and
-    // leave the reader's own work alone — this used to leave the swap running
-    // and hand them a revision they had just declined.
+    // The same as Forward onto the current build, through the other door: the
+    // picker highlights the build on screen, so clicking it while a swap is in
+    // flight means stay. Cancel the trip, take no other, and leave the reader's
+    // own work alone.
     const c = component({ sel: '/model/plate' })
     const answers = held()
 
@@ -767,15 +733,11 @@ describe('a second revision picked while the first is fetching', () => {
 
   it('puts the address back when it was a popstate that started the swap',
     async () => {
-      // THE COMBINATION NEITHER DOOR COVERED ON ITS OWN. A picked swap moves
-      // nothing until its fetch answers, so calling one off leaves the bar where
-      // it was — which is what the test above measures, and why it cannot see
-      // this. A `popstate` swap is the other way round: it exists BECAUSE the
-      // browser moved first. Forward onto B, then a click on the row for A still
-      // on screen, and the page stays on A under an address saying B — F5 opens
-      // the build the reader just declined, the copied link points at it, and
-      // the next Back reads as "nothing happened". Nothing else on the page
-      // brings the two back together.
+      // A picked swap moves nothing until its fetch answers, so cancelling one
+      // leaves the bar where it was. A `popstate` swap exists because the browser
+      // moved first: Forward onto B, then a click on the row for A still on
+      // screen, and the page stays on A under an address saying B. The address
+      // must be put back.
       const c = component({ sel: '/model/plate' })
       const answers = held()
 
@@ -804,14 +766,11 @@ describe('a second revision picked while the first is fetching', () => {
 
   it('takes the view showing into the address it puts right', async () => {
     // The address is assembled the way a landing swap assembles it, `?v=` and
-    // all. Writing the bare path instead would repair the divergence over the
-    // BUILD and open one over the VIEW: F5 would then land on the build's first
-    // view rather than the tab the reader is looking at.
+    // all; the bare path would make F5 land on the build's first view.
     //
-    // AND THE VIEW IS THE ONE ON SCREEN, not the one the abandoned entry names.
-    // The entry being cancelled here says `assembled`; the page never got there,
-    // so the tab in front of the reader is still `printables` and that is what
-    // the address has to describe.
+    // And the view is the one on screen, not the one the abandoned entry names:
+    // the entry says `assembled`, but the page never got there, so the address
+    // describes `printables`.
     const c = component({ view: 'printables' })
     const answers = held()
 
@@ -856,11 +815,9 @@ describe('a second revision picked while the first is fetching', () => {
 
   it('does not lay a second entry over the one the reader is standing on',
     async () => {
-      // THE PICKER USED TO ASK `PAGE.slot`, and `PAGE` lags a swap by a fetch.
-      // Forward onto B starts one; the reader, seeing nothing happen yet, opens
-      // the picker and clicks row B. The click read as a real gesture, and
-      // `pushState` laid a SECOND entry for B on top of the one they were
-      // standing on: one Back afterwards looks like nothing happened, and the
+      // The picker must not ask `PAGE.slot`, which lags a swap by a fetch.
+      // Forward onto B starts one; a click on row B meanwhile must not push a
+      // second entry for B, or one Back looks like nothing happened and the
       // forward history is cut off.
       const c = component()
       const push = vi.spyOn(history, 'pushState')
@@ -1038,15 +995,11 @@ describe('hidden and translucent parts', () => {
 
   it('survive a swap whose view never rendered, into the build opened instead',
     async () => {
-      // THE THIRD PATH, and the one where the carry is worth the most: the swap
-      // that failed left an UNSPENT carry standing — `rejoin` is consumed by a
-      // model event, and the model event of a view that would not render never
-      // arrives — while `onViewError` cleared the tree those names were read
-      // off. A reader who answers that failure by opening ANOTHER build rather
-      // than pressing Retry then arrives at `leaveBuild` with no tree, and
-      // recomputing the carry there answered "nothing was hidden" and threw away
-      // names that were still exactly right. Every hidden part back on screen,
-      // over a failure two gestures ago, with nothing saying why.
+      // A failed swap leaves an unspent carry (`rejoin` is consumed by a model
+      // event that never arrives for a view that would not render), while
+      // `onViewError` cleared the tree those names came from. Opening another
+      // build from there reaches `leaveBuild` with no tree, so it must reuse the
+      // standing carry rather than recompute "nothing was hidden".
       const C = 'c'.repeat(64)
       const c = component({ hidden: ['/model/plate'] })
       c.captureHome = vi.fn()
@@ -1065,15 +1018,11 @@ describe('hidden and translucent parts', () => {
 
   it('are not resurrected by a carry the reader has already overruled',
     async () => {
-      // THE MIRROR OF THE TEST ABOVE, and it is what keeping the carry cost
-      // until `setVisibility` was added. The carry is a SNAPSHOT, taken when a
-      // build opens and spent when its model lands, and between those two the
-      // reader can still work the tree — which is exactly the state a failed
-      // view leaves them in. The three buttons over the panel are rendered
-      // outside the `hasTree` branch, so "show all parts" is live with no tree
-      // at all: press it, open another build, and a part the reader had just
-      // unhidden came back HIDDEN, resurrected by a list taken before they
-      // touched it.
+      // The mirror of the test above, and why `setVisibility` exists. The carry
+      // is a snapshot taken when a build opens and spent when its model lands,
+      // and the reader can still work the tree in between: the buttons over the
+      // panel render outside the `hasTree` branch, so "show all parts" works with
+      // no tree. A part unhidden there must not come back hidden on the next build.
       const C = 'c'.repeat(64)
       const c = component({ hidden: ['/model/plate'] })
       c.captureHome = vi.fn()
@@ -1096,18 +1045,12 @@ describe('hidden and translucent parts', () => {
 
   it('follow a part hidden while the new build was still on the wire',
     async () => {
-      // THE WINDOW THIS ALL TURNS ON, and the one no test used to enter. It is
-      // not the meta fetch — `leaveBuild` runs after that answers — it is the
-      // geometry download and the render, the long part, and it is spent with
-      // the LEAVING build's tree on screen and its rows live. A click there
-      // writes an id of the old tree, and only the snapshot, taken in names,
-      // can carry it across.
-      //
-      // Dropping the snapshot instead left the id an id. On this tree — the two
-      // parts rebuilt onto each other's paths, which is what a renumber looks
-      // like — `/model/plate` is `post` afterwards, so the reader hid one part
-      // and a DIFFERENT one disappeared. Losing the gesture would have been the
-      // better failure of the two.
+      // The window between `leaveBuild` (after the meta fetch) and the render is
+      // the long one, spent with the leaving build's tree on screen and its rows
+      // live. A click there writes an id of the old tree, and only the snapshot,
+      // taken in names, can carry it across. Here the two parts are rebuilt onto
+      // each other's paths, as a renumber does, so carrying the id would hide a
+      // different part.
       const SWAPPED = {
         id: '/model',
         name: 'model',
@@ -1188,23 +1131,19 @@ describe('hidden and translucent parts', () => {
 
     expect(c.state.hidden).toEqual(['/model/plate'])
     expect(c.state.ghost).toEqual(['/model/post'])
-    // THE STATE EVENT GOES OUT ANYWAY, which it did not before issue #33: it was
-    // withheld unless something had been rejoined, on the ground that nothing
-    // else in it had changed. A comment pin now hangs on the catalogue key and
-    // is placed by asking the viewport where that part IS, so every model event
-    // moves pins — the tree that has just landed is a rebuild free to have
-    // renumbered or moved the part a comment names.
+    // The state event goes out anyway: a comment pin hangs on the catalogue key
+    // and is placed by asking the viewport where that part is, so every model
+    // event moves pins.
     expect(c.sync).toHaveBeenCalledTimes(1)
   })
 })
 
 // -- taking one of those gestures back ----------------------------------------
 //
-// Issue #84. The tree's controls are the one place on this page where a single
-// click changes many rows at once — Isolate hides everything the reader did not
-// point at — and until now nothing put them back. The stack lives on the
-// instance rather than in state, so what these tests read is what the reader
-// reads: the two lists, and the scene event they are sent on.
+// The tree's controls are the one place on this page where one click changes
+// many rows (Isolate hides everything not pointed at). The stack lives on the
+// instance rather than in state, so these tests read what the reader sees: the
+// two lists, and the scene event they are sent on.
 
 describe('Ctrl+Z over the tree', () => {
   /** Three parts, so an Isolate has more than one thing to hide. */
@@ -1346,16 +1285,13 @@ describe('Ctrl+Z over the tree', () => {
   })
 
   it('fires on a Cyrillic layout, where that key does not say "z"', () => {
-    // The reader presses a PHYSICAL key, and `holdkey.js` paid for this finding
-    // in full over the hold key: with a Russian layout up the Z key reports
-    // `key: "я"`. Matched on `key`, the chord is then a shortcut this page's own
-    // author does not have — and it fails silently, with nothing on screen to
-    // say why the step was not taken. Hence `code`, and hence this test: the
-    // fallback path (no `code` at all) is what every other test in this block
-    // exercises, so only this one holds the rule up.
+    // The chord is matched on the physical key: with a Russian layout the Z key
+    // reports `key: "я"` (as `holdkey.js` found for the hold key). Hence `code`;
+    // every other test here exercises the fallback with no `code`, so only this
+    // one holds the rule.
     //
     // `readNotes` runs on mount and this runner has no `localStorage`; store.js
-    // catches that and says so, which is one line of noise per test.
+    // catches that and warns, one line of noise per test.
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const c = opened()
     c.load = vi.fn(async () => {})
@@ -1375,27 +1311,21 @@ describe('Ctrl+Z over the tree', () => {
 
 // -- and taking a MOVE or a TURN back -----------------------------------------
 //
-// The same chord over the other half of what a reader does to this page. A part
-// of the build dragged or turned, and a body of the proposal dragged or turned,
-// are edits of the proposal DOCUMENT — so a step back is a whole document, put
-// back through `setProposal`, the door every other edit of it comes through.
+// A part of the build or a proposal body dragged or turned is an edit of the
+// proposal document, so a step back is a whole document, restored through
+// `setProposal`.
 //
-// ONE STACK WITH THE GESTURES ABOVE, which is the claim that needs holding up
-// most: the entries interleave and come off in the order they were made, because
-// that is what a reader means by Ctrl+Z. The rest is that an entry describes the
-// document as it stood BEFORE the gesture, that a gesture which was refused
-// leaves none, and that the hub ends up holding what the page holds.
+// One stack with the gestures above: entries interleave and come off in the
+// order they were made. An entry holds the document as it stood before the
+// gesture, a refused gesture leaves none, and the hub ends up holding what the
+// page holds.
 //
-// AND WHAT A WRITE NOBODY RECORDED DOES TO THE STACK, which is the other half of
-// holding a WHOLE DOCUMENT per step. Every ordinary edit of the panel comes
-// through `setProposal` and records nothing, so the document steps behind one are
-// dropped at that door: the chord can never reach past an edit it does not know
-// about. The visibility steps are about other state and stay.
+// Ordinary panel edits come through `setProposal` and record nothing, so the
+// document steps behind one are dropped there: the chord never reaches past an
+// edit it does not know about. Visibility steps are other state and stay.
 //
-// WHERE THE GESTURES THEMSELVES ARE TESTED: what the document records for a drag
-// and for a ring is ui/tests/proposalpanel.test.js, and that the viewport reports
-// one event per gesture rather than one per frame is ui/tests/tools.test.js and
-// ui/tests/rings.test.js. What is HERE is only what the chord does to them.
+// What the document records for a drag and a ring is in proposalpanel.test.js;
+// one event per gesture is in tools.test.js and rings.test.js.
 
 describe('Ctrl+Z over a gesture in the scene', () => {
   /** A body the reader drew: the document a step has to be able to bring back. */
@@ -1410,15 +1340,12 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   /**
    * The page with a document on it and a viewport under it.
    *
-   * THE ELEMENT IS SPIES, the arrangement proposalpanel.test.js uses for the
-   * same reason: what the viewport DOES with the moves is element.test.js's
-   * subject, and what is asked here is that the undo hands them over at all.
-   * `overlayBody` is not optional — `setProposal` asks it where the selection
-   * went, on every document it writes.
+   * The element is spies, as in proposalpanel.test.js; what the viewport does
+   * with the moves is element.test.js's subject. `overlayBody` is required:
+   * `setProposal` asks it where the selection went on every write.
    *
-   * `stored` is what the hub said when the page asked for its record, and it has
-   * to be an ANSWER rather than the `null` a page mounts with: nothing is written
-   * back until the load has resolved (`saveProposal`).
+   * `stored` must be an answer rather than the `null` a page mounts with:
+   * nothing is written back until the load has resolved (`saveProposal`).
    */
   const drawing = ({ proposal = drawn(), stored = false, ...over } = {}) => {
     const el = {
@@ -1441,12 +1368,9 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   }
 
   /**
-   * A part of the build dragged, in the words the viewport reports one in.
-   *
-   * `build` IS THE FIXTURE'S OWN KEY and is on every one of these because it is
-   * on every real report: the handler drops a report whose stamp is not the build
-   * now on screen, so a helper that left it off would be testing that drop and
-   * nothing else.
+   * A part of the build dragged, as the viewport reports it. `build` is the
+   * fixture's own key: the handler drops a report whose stamp is not the build
+   * on screen.
    */
   const drag = (c, path_, delta) => c.recordGesture({
     id: path_, name: path_.split('/').filter(Boolean).pop(), paths: [path_],
@@ -1520,12 +1444,9 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   })
 
   it('takes the two kinds back in the order they were made', () => {
-    // THE WHOLE ARGUMENT FOR ONE STACK. A reader hides a part, drags another and
-    // presses the chord: what has to come back is the DRAG, because it is the
-    // last thing they did. Stacks per kind would answer with the hide — undoing
-    // a gesture the reader can no longer see while the one they are looking at
-    // stays put — and the second press would then take the drag, in an order
-    // nobody performed.
+    // One stack: a reader hides a part, drags another and presses the chord; the
+    // drag comes back first because it was the last thing they did. Per-kind
+    // stacks would undo the hide instead.
     const { c } = drawing()
 
     row(c, '/model/plate').onVis(click)
@@ -1614,18 +1535,11 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   })
 
   it('loses its moves to a live rebuild, as the document on screen does', () => {
-    // A LIVE REBUILD IS NOT A SWAP and the history is deliberately kept across
-    // one — the page stays on the same revision, and the reader's steps are
-    // still theirs. But `onModel` drops the moves out of the document when a
-    // build lands, and a stored step IS a document: left whole, Ctrl+Z after a
-    // rebuild would put back a displacement measured against the build that has
-    // gone. The paths make that concrete rather than untidy — `/model/pin(2)` is
-    // a number the tessellator hands out afresh, so the restored move can name a
-    // different part than the one the hand actually dragged.
-    //
-    // THE BODY STAYS, in the step exactly as it stays in the document: a motor
-    // the model has to clear is as true of the build arriving as of the one that
-    // left.
+    // A live rebuild is not a swap and the history is kept across it. But
+    // `onModel` drops the moves from the document when a build lands, and a
+    // stored step is a document, so its moves go too: `/model/pin(2)` is handed
+    // out afresh by the tessellator, so a restored move could name a different
+    // part. Bodies stay in the step as they stay in the document.
     const { c } = drawing()
 
     drag(c, '/model/plate', [3, 0, 0])
@@ -1664,18 +1578,11 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   })
 
   it('drops a step a rebuild has made equal to the document on screen', () => {
-    // WHAT THE PRUNE ABOVE LEAVES BEHIND IF NOTHING ELSE IS DONE. A step that
-    // differed from the document only by the moves in it is, once both sides
-    // have lost them, the document already on screen — so pressing the chord on
-    // one changes nothing the reader can see, and still pays a whole
-    // `buildProposal` and a re-staged scene.
-    //
-    // AND THE PRESS AFTER IT IS THE REAL COST, which is why this is not merely
-    // wasteful. The stack is one stack: hide two parts, move and turn three,
-    // have a rebuild land, and the dead steps sit on top of the visibility ones.
-    // The presses that do nothing come first and the un-hide comes after them,
-    // so the reader is answered with a part reappearing from five minutes ago —
-    // with no button, no counter and nothing else on the page to say why.
+    // After that prune, a step that differed from the document only by its moves
+    // equals the document on screen, so pressing the chord would change nothing
+    // visible yet still rebuild and re-stage. Worse, such dead steps would sit on
+    // top of visibility steps, so the presses that do nothing come first and an
+    // old un-hide follows. They are dropped.
     const { c, el } = drawing()
 
     row(c, '/model/plate').onVis(click)
@@ -1700,14 +1607,11 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   })
 
   it('does not reach past an edit that recorded no step', () => {
-    // THE HOLE THIS CLOSES, and it is the whole document that falls through it.
-    // A document step holds the WHOLE document and only the two gestures push
-    // one, so an ordinary edit of the panel — a body drawn, a digit committed, a
-    // node deleted, a role flipped — used to leave the step behind it standing.
-    // Drag a part, draw a body, press the chord meaning "take back the drag":
-    // the body went with it, and the save that followed posted the older
-    // document over the newer one on the hub. No redo, no toast, and nothing on
-    // the page to recover the drawing from.
+    // A document step holds the whole document and only the two gestures push
+    // one, so an ordinary panel edit (a body drawn, a digit committed, a node
+    // deleted) must drop the steps behind it. Otherwise "take back the drag"
+    // would also remove the body drawn after it, and the save would post the
+    // older document over the newer one on the hub.
     vi.useFakeTimers()
     onTestFinished(() => vi.useRealTimers())
     const fetching = vi.fn(async () => ({ status: 200, json: async () => ({}) }))
@@ -1758,15 +1662,10 @@ describe('Ctrl+Z over a gesture in the scene', () => {
   })
 
   it('is not taken away by a write that hands the same document back', () => {
-    // A WRITE THAT CHANGES NOTHING IS NOT AN EDIT, and the invalidation must not
-    // read it as one: a door that re-stages by pushing `state.proposal` through
-    // untouched records no step, so a rule that went by "a write happened"
-    // rather than "the document changed" would quietly stop the chord undoing
-    // the drag the reader had just made. Nothing on screen would say why.
-    //
-    // IDENTITY IS THE WHOLE OF THE TEST (`DROP_STEPS` says why), which is what
-    // the call below is: the document the page is already holding, handed back
-    // to its own door.
+    // A write that changes nothing is not an edit: a door that re-stages by
+    // pushing `state.proposal` through untouched must not drop the steps, or the
+    // chord would stop undoing the drag just made. Identity is the test
+    // (`DROP_STEPS` says why), so the call below hands back the same document.
     const { c, el } = drawing()
 
     drag(c, '/model/plate', [3, 0, 0])
@@ -1920,24 +1819,17 @@ describe('what does not survive', () => {
   })
 
   it('takes that comment\'s ANCHOR away, the part\'s name included', async () => {
-    // The half the exception above does not cover. `sendComment` posts to
-    // `meta.commit`, so a draft carried across whole files the previous build's
-    // solid path, the previous build's 3D point, a measurement taken on geometry
-    // that is gone and a drag of a part the rebuild has already put back — every
-    // one of them as a fact about the build now on screen, and the two numbers
-    // among them reach an agent as a task.
+    // `sendComment` posts to `meta.commit`, so a draft carried across would file
+    // the previous build's solid path, 3D point, measurement and drag as facts
+    // about the build now on screen.
     //
-    // THE NAME GOES TOO, though a name is the one thing a rebuild does not
-    // renumber. It is what `composerPart` renders while `sendComment` sends
-    // `partId`, so keeping it shows the reader an attachment the posted comment
-    // will not carry — a mismatch with nothing on screen to reveal it.
+    // The name goes too: `composerPart` renders it while `sendComment` sends
+    // `partId`, so keeping it would show an attachment the comment will not carry.
     //
-    // AND SO DOES `key`, which is the same argument read backwards and the one
-    // worth a line of its own: the catalogue key is the field DESIGNED to
-    // outlive a rebuild, so of everything here it is the one a reader of the
-    // code expects to stay. It cannot. Nothing on screen shows a key — the
-    // composer draws `part` — so a draft that kept it would look unattached and
-    // post anchored to a part the reader never picked on this build.
+    // And so does `key`, though the catalogue key is designed to outlive a
+    // rebuild: nothing on screen shows a key (the composer draws `part`), so a
+    // draft that kept it would look unattached and post anchored to a part the
+    // reader never picked on this build.
     const c = component({
       composer: {
         part: 'plate', partId: '/model/plate', key: 'plate', p: [1, 2, 3],
@@ -1995,15 +1887,12 @@ describe('what does not survive', () => {
   })
 
   it('sends the viewport no pin at the coordinate the build it left recorded', async () => {
-    // A STORED POINT IS ONLY TRUE ON THE BUILD IT WAS TAKEN ON, and that is what
-    // survives of the old claim here: `anchorFor` reads the coordinate when the
-    // record's commit AND view are the ones on screen, and after a swap neither
-    // is, so the numbers are not handed to the new geometry — which need not
-    // contain that point at all. Where the comment goes instead is wherever its
-    // catalogue key is drawn, a place only `partPoint` can answer; there is no
-    // viewport in this fixture (`host.current` is null), so nothing answers and
-    // no pin is sent. The draft's own pin goes the other way, through the
-    // composer's anchor.
+    // A stored point is only true on the build it was taken on: `anchorFor` reads
+    // the coordinate only when the record's commit and view are on screen, and
+    // after a swap neither is. The comment goes wherever its catalogue key is
+    // drawn, which only `partPoint` can answer; with no viewport here
+    // (`host.current` is null) no pin is sent. The draft's own pin goes through
+    // the composer's anchor.
     const c = component({
       feed: [{ id: 'c1', commit: A, view: 'assembled', part: '/model/plate',
                key: 'plate', point: [1, 2, 3], status: 'open',
@@ -2027,18 +1916,15 @@ describe('what does not survive', () => {
 
 // -- the OTHER door into another build ----------------------------------------
 //
-// Switch on the "new build" banner. It is a revision switch by every fact that
-// matters — another commit, built from other sources, with a bounding box of its
-// own and parts the previous build need not have had — and the list above used
-// to be written out in `switchBuild` and nowhere else, so none of it happened
-// here. `leaveBuild` is now the one list and both doors call it; these are the
-// same claims asked of the second door, and each one was a live defect until the
-// method existed.
+// Switch on the "new build" banner is a revision switch by every fact that
+// matters (another commit, other sources, its own bounding box and parts), so
+// it calls the same `leaveBuild` as `switchBuild`; these are the same claims
+// asked of the second door.
 //
-// The offer is a build with the SAME views the fixture is on, so the view id
-// survives and the section is asked the question it is meant to be asked. The
-// viewport is absent (`host.current` is null), which `takePending` reads as "not
-// busy" — the deferring is interface.test.js's subject, not this one's.
+// The offer has the same views as the fixture, so the view id survives and the
+// section is asked the question it is meant to be asked. The viewport is absent
+// (`host.current` is null), which `takePending` reads as "not busy"; deferring
+// is interface.test.js's subject.
 
 describe('taking the banner\'s build', () => {
   /** The page with an offer standing, on a build with a section laid on it. */
@@ -2132,9 +2018,9 @@ describe('taking the banner\'s build', () => {
     expect(c.state.notePop).toBeNull()
     expect(c.state.noteDraft).toBe('')
     expect(c.state.measure).toBeNull()
-    // And the viewport is told, since a selection is its state too. An EMPTY
-    // LIST and not a null: a selection is the paths of a row since issue #75,
-    // because a row may stand for several copies of one part.
+    // And the viewport is told, since a selection is its state too: an empty
+    // list, not null, because a selection is the paths of a row, which may
+    // stand for several copies of one part.
     expect(seen[0].selected).toEqual([])
   })
 
@@ -2171,20 +2057,13 @@ describe('taking the banner\'s build', () => {
   })
 
   it('leaves a download chain running, because no href moved', () => {
-    // THE ONE THING THE SWAP DOES THAT THIS DOES NOT, and the boundary is the
-    // claim: `leaveBuild` carries what goes with the BUILD, while a download
-    // chain goes with the ADDRESS — `fileHref` is `PAGE.base` plus a name, and
-    // `PAGE.base` does not move here. So every href still to come resolves to
-    // the pointer the reader pressed the button on, which is what they asked
-    // for.
-    //
-    // Cutting it here was tried and is the worse failure: "Download all" on ten
-    // STLs takes two seconds, so a Switch pressed a moment later left the reader
-    // three files of ten with nothing on the screen saying so — off to print an
-    // incomplete set. The mixing this was meant to prevent does not need Switch
-    // at all: the pointer starts serving the new build WHEN THE HUB PUBLISHES
-    // IT, which is before the poll notices and before the banner is even up.
-    // Later, on the same banner, cancels nothing and never did.
+    // The one thing the swap does that this does not: `leaveBuild` carries what
+    // goes with the build, while a download chain goes with the address
+    // (`fileHref` is `PAGE.base` plus a name, and `PAGE.base` does not move here).
+    // So downloads still in progress finish from the pointer the reader pressed
+    // the button on. Cancelling them would leave a partial set of STLs with
+    // nothing saying so, and mixing cannot be prevented here anyway: the pointer
+    // serves the new build as soon as the hub publishes it, before the banner.
     const clicked = []
     const timers = []
     const c = offered()
@@ -2203,15 +2082,10 @@ describe('taking the banner\'s build', () => {
 
   it('re-resolves the hidden and translucent parts by NAME, as the picker does',
     () => {
-      // THE TWIN of the swap's own claim, and it was missing for exactly as long
-      // as the list was written out in `switchBuild` alone: this door set no
-      // carry, `rejoin` answered null, and the ids of the build that left were
-      // handed straight to the build that replaced it. Ids are solid paths and a
-      // rebuild renumbers them freely — `plate` is `/model/plate` here and
-      // `/model/0` in the next build — so the part the reader hid came back on
-      // screen, or, where the old path had been renumbered onto somebody else,
-      // a part they never touched vanished instead. The toast over all of that
-      // read "your frame and tree are kept".
+      // The banner door must set the carry as the swap does. Ids are solid paths
+      // and a rebuild renumbers them freely (`plate` is `/model/plate` here and
+      // `/model/0` in the next build), so handing ids across would show a hidden
+      // part or hide a different one.
       const c = offered({ hidden: ['/model/plate'], ghost: ['/model/post'] })
       c.captureHome = vi.fn()
 
@@ -2230,15 +2104,10 @@ describe('taking the banner\'s build', () => {
 
 describe('a deferred take of the banner\'s build', () => {
   it('is cancelled by picking a revision, before it can land inside the swap', async () => {
-    // THE SEQUENCE, and the reason the cancel is before the fetch rather than
-    // after it: Switch on the banner defers while the reader's hand is on the
-    // model and retries every 250 ms for five seconds, which is shorter than a
-    // network round trip. A reader who pressed Switch, saw nothing happen and
-    // picked a revision instead used to get the deferred take landing INSIDE
-    // this await — `meta` replaced by the banner's build, its geometry fetched,
-    // "Now viewing ccc" toasted — and then the revision they actually asked for
-    // arriving on top of it. One wasted load, and a toast naming a build that is
-    // not on the screen.
+    // The cancel comes before the fetch: Switch on the banner defers while the
+    // reader's hand is on the model and retries every 250 ms for five seconds,
+    // shorter than a round trip. A deferred take must not land inside this
+    // await and be overwritten by the revision the reader actually picked.
     vi.useFakeTimers()
     onTestFinished(() => vi.useRealTimers())
     const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
@@ -2308,10 +2177,8 @@ describe('a deferred take of the banner\'s build', () => {
 
 // -- and the banner's Switch pressed OUTRIGHT while that revision is fetching --
 //
-// The deferred take above needs a busy viewport to exist at all. A direct press
-// needs nothing, lands in the same window, and used to run the whole of
-// `takePending` — which is why closing the picker was never enough: the banner
-// is not in the picker.
+// A direct press needs no busy viewport and lands in the same window, and the
+// banner is not in the picker, so closing the picker does not stop it.
 
 describe('the banner\'s Switch while a picked revision is on the wire', () => {
   /** A swap held at the fetch, and the resolver that lets it finish. */
@@ -2322,14 +2189,9 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
   }
 
   it('does not run, however directly it is pressed', async () => {
-    // THROUGH THE HANDLER THE PAGE ACTUALLY RENDERS, not through `takePending`:
-    // what is under test is that the button on the screen is inert, and a test
-    // that called the method would pass on a page whose Switch still worked.
-    //
-    // Without the refusal this press swaps `meta` to the banner's build, tells
-    // the viewport to fetch its geometry and toasts "Now viewing ccc" — and then
-    // the revision the reader picked lands on top of it. One wasted load of a
-    // model nobody chose, and a toast naming a build that is not there.
+    // Through the handler the page renders, not `takePending`: what is under test
+    // is that the button on screen is inert. Without the refusal this press
+    // loads the banner's build, and then the picked revision lands on top of it.
     const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     // Not busy, so nothing defers: a press either runs now or is refused.
     c.el = () => null
@@ -2347,10 +2209,8 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
   })
 
   it('says so, instead of looking exactly as clickable as it did', () => {
-    // A button that ignores the click while still looking like a button is the
-    // failure the refusal was added to prevent, wearing the refusal's clothes:
-    // the reader presses it, nothing happens, and there is nothing on the screen
-    // to read that off.
+    // A refused button must also look refused; otherwise the reader presses it
+    // and nothing happens with nothing on screen to say why.
     const c = component({ pending: { commit: 'ccc', parts: PARTS, views: VIEWS } })
     const live = c.computed().bannerSwitchStyle
 
@@ -2546,17 +2406,12 @@ describe('a download chain still handing over files', () => {
 // -- what the new revision brings with it -------------------------------------
 
 describe('the author\'s note on a part', () => {
-  // It rides INSIDE the build's catalogue record for the part — `note` in
-  // `meta.parts[key]`, written in model.py and published with the build — so a
-  // swap that replaces `meta` replaces the notes with it. THAT IS ASSERTED
-  // RATHER THAN ASSUMED: a stale note is the worst thing this box can show,
-  // because it is a sentence about a part that is no longer the part on screen,
-  // and nothing about it would look wrong. Everything else about the two notes
-  // is in `notes.test.js`; this is the one claim that needs a real swap.
-  //
-  // THE PART IS PICKED AGAIN AFTERWARDS, because a swap drops the selection on
-  // purpose (above) — which is also the reader's own gesture: they click the
-  // part in the model that has just arrived.
+  // The note rides inside the build's catalogue record for the part (`note` in
+  // `meta.parts[key]`, written in model.py), so a swap that replaces `meta`
+  // replaces the notes with it. Asserted because a stale note describes a part
+  // that is no longer the one on screen. The rest of the notes is in
+  // notes.test.js. The part is picked again afterwards, since a swap drops the
+  // selection.
   const on = (id, name) => ({ sel: id, selName: name })
 
   /** The fixture's catalogue with one note written into it. */
@@ -2652,26 +2507,14 @@ describe('another project', () => {
 
 // -- the shape of `leaveBuild`'s answer, held against its callers -------------
 //
-// `leaveBuild` returns TWO halves — `state` for this side, `extra` for the
-// viewport, which holds a section plane of its own — and its own docstring names
-// what a caller that spread the first and dropped the second would leave behind:
-// the plane standing in the scene with the slider back at zero. Both callers do
-// it right today and both are tested doing it. THE THIRD ONE IS THE PROBLEM.
-// Nothing about the method makes half of the answer hard to drop, and the only
-// thing standing between that and production is a paragraph, which the next
-// person writing a third door is not obliged to read.
-//
-// SO THE CALLERS ARE READ OUT OF THE SOURCE rather than listed here — a list
-// would go stale the same way, silently, and the check would pass by knowing
-// about fewer doors than exist. The genre is not new in this repository:
-// tests/test_workflow_steps.py hashes the bodies of workflow steps that must
-// stay identical, for the same reason.
-//
-// THE OTHER WAY OUT WAS TO CHANGE THE SHAPE — have `leaveBuild` call `sync`
-// itself, or return one object the caller cannot half-spread — and it is
-// deliberately not taken. The two-half return has been through review twice, the
-// callers need the state merged with fields of their own BEFORE it reaches
-// `setState`, and moving code that works is a worse trade than checking it.
+// `leaveBuild` returns two halves: `state` for this side and `extra` for the
+// viewport, which holds a section plane of its own. A caller that spread the
+// first and dropped the second would leave the plane in the scene with the
+// slider at zero. The callers are read out of the source rather than listed
+// here, so a new door is checked without anyone updating a list (as
+// tests/test_workflow_steps.py does for workflow steps). The two-half shape is
+// kept because callers merge their own fields into the state before
+// `setState`.
 
 // From `process.cwd()` and not from `import.meta.url`: this file runs under
 // jsdom, where the module URL is an http one and `fileURLToPath` refuses it —
@@ -2681,21 +2524,13 @@ const SOURCE = readFileSync(resolve(process.cwd(), 'src/HammerolaViewer.jsx'), '
 /**
  * The same source with its comments taken out, and nothing else moved.
  *
- * THE GUARD BELOW CANNOT READ RAW TEXT, because this file's prose quotes the
- * very code it is about: `leaveBuild`'s own docstring spells out `...gone.state`
- * and `sync(gone.extra)` as the two halves a caller must keep. A `toContain`
- * over raw text therefore passed for a door that only TALKED about keeping them
- * — as long as the talking sat after the call, inside the slice — and went red
- * for a door that did everything right but explained itself above the call
- * instead. Both answers were about where the prose was.
+ * The guard cannot read raw text, because comments quote the code they describe
+ * (`leaveBuild`'s docstring spells out `...gone.state` and `sync(gone.extra)`).
  *
  * The three quote characters are tracked, so a `//` inside a string is not a
- * comment. Regex literals are NOT, and do not have to be: a `/` is read as a
- * comment only when the next character is `/` or `*`, and no regex in the three
- * files this reads contains either. NOT "no escaped slash anywhere", which this
- * said until the component grew `/^image\/([a-z0-9+.-]+)$/i` -- an escaped
- * slash is harmless, since what would mis-strip is `//` or `/*` inside a
- * pattern. Newlines survive, so offsets still land on the line they came from.
+ * comment. Regex literals are not: a `/` starts a comment only when followed by
+ * `/` or `*`, and no regex in the files read contains either. Newlines survive,
+ * so offsets stay on their original lines.
  */
 function stripComments(js) {
   let out = ''
@@ -2729,13 +2564,10 @@ function stripComments(js) {
  * The source of one method, from `at` to the line that closes it, or null.
  *
  * Methods of this class close on a `}` indented by two spaces, and nothing
- * inside one is indented that shallowly — the nested blocks close at four and
- * six. That is a CONVENTION of this file rather than a fact about JavaScript,
- * so both ways it can be wrong answer for themselves instead of being assumed:
- * a closing line that is not found comes back null rather than quietly handing
- * back the whole rest of the file, and a slice that ran PAST the method is
- * caught by the thing it would then have to contain — the signature of the next
- * one, which is the only other place this file indents a name by two spaces.
+ * inside one is indented that shallowly. That is a convention of this file, so
+ * both failures are checked: a missing closing line returns null rather than
+ * the rest of the file, and a slice that ran past the method contains the next
+ * method's signature, the only other two-space-indented name.
  */
 function methodFrom(code, at) {
   const end = code.indexOf('\n  }\n', at)
@@ -2747,14 +2579,9 @@ function methodFrom(code, at) {
 /**
  * Every door in `source`, and one complaint per thing wrong with one.
  *
- * A FUNCTION OVER A STRING, not a check written against this one file, so that
- * the guard can be handed a door built to fail. A test that reads source is
- * worth what it can be shown to reject; until then it is a regex nobody has
- * seen go red.
- *
- * IT STRIPS ITS OWN INPUT rather than being handed stripped text: reading the
- * prose is the mistake this whole arrangement is here to make impossible, and a
- * call site free to pass the raw file is that mistake still available.
+ * A function over a string, so the guard can be handed a door built to fail.
+ * It strips its own input, so no call site can pass the raw file with its
+ * prose.
  */
 function auditDoors(source) {
   const code = stripComments(source)
@@ -2815,10 +2642,9 @@ describe('every door into another build', () => {
   // -- and the guard against itself -------------------------------------------
 
   it('is read out of the code and not out of the prose around it', () => {
-    // The door this guard used to pass: it says every word the check looks for
-    // and does none of it. The second method is the control — the same words,
-    // actually executed — so a guard that simply always complained would fail
-    // here too.
+    // A door that says every word the check looks for and does none of it. The
+    // second method is the control (the same words, executed), so a guard that
+    // always complained would fail here too.
     const fake = [
       'class Fake {',
       '  onPick(slot) {',
@@ -2902,12 +2728,11 @@ describe('every door into another build', () => {
 
 // -- and every writer of `hidden` / `ghost` ----------------------------------
 //
-// The same genre for the same reason: `setVisibility` is what keeps a swap's
-// snapshot in step with the reader, six controls call it, and nothing about
-// `this.set` stops a seventh from writing those two lists directly. Only ONE of
-// the six is reachable by a behaviour test in this file, so for the other five
-// this guard is the whole of the coverage — which is why it reads the call
-// rather than a shape of the line the call happens to be written on.
+// `setVisibility` keeps a swap's snapshot in step with the reader; six controls
+// call it, and nothing about `this.set` stops a seventh from writing those two
+// lists directly. Only one of the six is reachable by a behaviour test here, so
+// this guard is the coverage for the other five and reads the call itself, not
+// the shape of the line it is written on.
 
 /** How far a bracket at `open` in `code` reaches, string-aware. */
 function balanced(code, open) {
@@ -2932,39 +2757,23 @@ function balanced(code, open) {
 }
 
 /**
- * The state fields one call to `set` / `setState` WRITES, out of its arguments.
+ * The state fields one call to `set` / `setState` writes, out of its arguments.
  *
- * THREE POSITIONS AND NO OTHERS, because a patch can only reach `setState` in
- * three ways: it stands at the top of the argument list (`{ … }`, and either
- * arm of a `cond ? { … } : { … }` stands there too), it is what a functional
- * updater RETURNS (`return { … }`, at whatever block depth inside the body —
- * which covers a `function` updater as well, since nothing here reads how the
- * function was spelled), or it is what a concise body evaluates to (`=> ({ … })`
- * and equally `=> (cond ? { … } : null)`, since the frame is what is labelled
- * and not the two characters before the brace). Every other `{` in the
- * arguments is somebody else's object and is skipped whole.
- * The one at the top that is NOT a patch is a body opening there — the
- * completion callback's `() => {` — and it is excluded by what precedes it.
+ * A patch reaches `setState` in three positions only: at the top of the
+ * argument list (`{ … }`, including either arm of `cond ? { … } : { … }`), as
+ * what a functional updater returns (`return { … }` at any block depth, for
+ * arrow or `function` updaters), or as what a concise body evaluates to
+ * (`=> ({ … })`, `=> (cond ? { … } : null)`). Every other `{` in the arguments
+ * is skipped whole. The completion callback's `() => {` at the top is excluded
+ * by what precedes it. Counting nesting depth instead misreads both `if (…) {`
+ * inside a callback and `setVisibility`'s `… ? { hidden, ghost } : null`.
  *
- * COUNTING NESTING DEPTH INSTEAD IS WHAT THIS REPLACES, and it was wrong in
- * both directions at once. A `{` was an object unless it followed `=>`, so
- * `if (…) {` inside a callback counted as a level and pushed a real
- * `return { hidden: [] }` below the one depth being read — the write went
- * unseen. Widening the block rule to fix that then broke the other way, on this
- * file's own code: `setVisibility` rebuilds the carry as `… ? { hidden, ghost }
- * : null` inside an `if` inside a callback, and every wider rule reads that as
- * a write and goes red on correct code. Naming the three positions has no such
- * knob: the ternary is in none of them, the return is in one.
+ * The key is read to its terminator: `:` for a plain key, `,` or `}` for the
+ * shorthand `{ hidden }`.
  *
- * THE KEY IS READ TO ITS TERMINATOR — `:` for a plain key, `,` or `}` for the
- * shorthand `{ hidden }`, which the colon-only regex before this let through
- * even though it is the idiomatic spelling the moment a local of that name
- * exists.
- *
- * It errs toward complaining in exactly one place: a `return { hidden }` inside
- * some nested closure of the arguments is not a patch, and is flagged anyway.
- * Nothing in this file is written that way, and a complaint about an unreadable
- * form is the failure this guard is allowed to have.
+ * It errs toward complaining in one place: a `return { hidden }` inside a
+ * nested closure of the arguments is not a patch but is flagged. Nothing here is
+ * written that way.
  */
 function patchKeys(args) {
   const found = []
@@ -3008,44 +2817,30 @@ function patchKeys(args) {
 /**
  * A call to one of `names`, in either spelling this page writes calls in.
  *
- * ONE FORM FOR BOTH HALVES: in the component a door is `this.set({…})`, and in a
- * module lifted out of `computed()` it is a bare `set({…})` destructured out of
- * `deps` — so `this.` is optional and the rest is anchored instead. THE ANCHOR
- * IS THE POINT: `\b` alone holds off `offset(` and `unset(` but not `rows.set(`,
- * a Map write that is nobody's state, so `.` joins `\w$` in the lookbehind and
- * `this.` is spelled back in as the one receiver that IS a door. The cost is
- * said out loud — a write through any other receiver (`deps.set({ hidden })`) is
- * as invisible here as a patch behind an identifier.
+ * In the component a door is `this.set({…})`; in a module lifted out of
+ * `computed()` it is a bare `set({…})` from `deps`. So `this.` is optional and
+ * the lookbehind excludes `\w`, `$` and `.`: that holds off `offset(`, `unset(`
+ * and `rows.set(` (a Map write). A write through any other receiver
+ * (`deps.set({ hidden })`) is invisible here, like a patch behind an identifier.
  */
 const callTo = (names) => new RegExp(`(?<![\\w$.])(?:this\\.)?(?:${names})\\s*\\(`, 'g')
 
 /**
  * Complaints about who writes `hidden` and `ghost` in `source`.
  *
- * ONE WRITER IS ALLOWED AND IT IS NAMED BY METHOD: `onModel` is the build
- * ARRIVING, which is the other end of the same mechanism — it is where `rejoin`
- * spends the snapshot, so it has nothing to keep in step. Excluded by name
- * rather than by how the call is written, because the way it is written is
- * exactly what this guard must not depend on.
+ * One writer is allowed, named by method: `onModel` is the build arriving, where
+ * `rejoin` spends the snapshot, so it has nothing to keep in step. It is
+ * excluded by name rather than by how the call is written.
  *
- * WHICH NAMES THOSE ARE IS THE CALLER'S, one list per file of the page. A module
- * passes none: `onModel` is a class method of the component and nothing in a
- * module holds the other end of that mechanism. A module naming one anyway is a
- * complaint rather than a widened hole — the lookup below reads the component's
- * two-space method shape, does not find it in a module, and says so, which is
- * the same complaint the component gets when its own method moves.
+ * The allowed names are the caller's, one list per file. A module passes none;
+ * a module naming one anyway gets a complaint, since the lookup reads the
+ * component's two-space method shape and does not find it.
  *
- * WHAT IT STILL CANNOT SEE, said out loud rather than implied. A patch built
- * into a variable first (`const patch = { hidden: [] }; this.set(patch)`): the
- * argument is an identifier by then and no reading of the call site can follow
- * it. And a patch ASSEMBLED BY A CALL (`this.set(Object.assign({ hidden: [] },
- * …))`), which is left open deliberately rather than missed — closing it means
- * reading a `{` at the top of a call inside the arguments as a patch, and that
- * is the exact shape of `this.set({ menu: null }, () => this.sync({ hidden }))`,
- * a correct line this file's own style produces. A guard that goes red on that
- * is the guard that gets deleted, which is worse than one hole nothing in this
- * file stands in. Every writer here is written inline today, and the six that
- * matter are one-liners inside `computed`.
+ * Not seen: a patch built into a variable first (`this.set(patch)`), and a patch
+ * assembled by a call (`this.set(Object.assign({ hidden: [] }, …))`). The second
+ * is left open on purpose: catching it would also flag the correct
+ * `this.set({ menu: null }, () => this.sync({ hidden }))`. Every writer here is
+ * written inline.
  */
 const VISIBILITY_KEYS = ['hidden', 'ghost']
 const MAY_WRITE_VISIBILITY = ['onModel']
@@ -3060,14 +2855,10 @@ function auditVisibility(source, allowed = MAY_WRITE_VISIBILITY) {
   // gone dark, which is the shape this widening was built to catch.
   if (writers.length < 2) bad.push('nothing calls setVisibility any more')
 
-  // THE WINDOW IS A HOLE, so it is bounded by the same reading the doors above
-  // use rather than by "to the end of the file if I cannot find the end". That
-  // fallback is what makes this the worst check in the file to get wrong:
-  // `onModel` sits ABOVE all six writers, so a window that ran on would exempt
-  // every one of them at once and the guard would go green while checking
-  // nothing at all. `methodFrom` refuses both ways it can lose its bearings — no
-  // closing line, or one belonging to a later method — and a refusal here is a
-  // complaint, exactly like the exemption not resolving.
+  // The exemption window is bounded by `methodFrom`, never "to the end of the
+  // file": `onModel` sits above all six writers, so a window that ran on would
+  // exempt every one of them. A refusal from `methodFrom` (no closing line, or
+  // one belonging to a later method) is a complaint, like an unresolved name.
   const exempt = allowed.map((name) => {
     const at = new RegExp(`^  ${name}\\s*\\(`, 'm').exec(code)
     if (!at) return null
@@ -3097,13 +2888,10 @@ function auditVisibility(source, allowed = MAY_WRITE_VISIBILITY) {
 /**
  * Every file of the page this rule is about, with what may write these in it.
  *
- * THE PAGE AND NOT THE COMPONENT (#103): five of the six writers moved into
- * `rowmenu.js` and `proposalview.js`, so a guard reading `HammerolaViewer.jsx`
- * alone watches one of them and is green about the rest — which it was, because
- * a bare `set(` matches no rule written for `this.set(`. A file belongs here
- * when it calls `setVisibility`; the other five modules of the split call it
- * nowhere, and the per-file canary would read their silence as the regex
- * having died rather than as a file with nothing to keep in step.
+ * The page, not just the component: five of the six writers live in
+ * `rowmenu.js` and `proposalview.js`. A file belongs here when it calls
+ * `setVisibility`; the other modules call it nowhere, and the per-file canary
+ * would read their silence as the regex having died.
  */
 const VISIBILITY_PAGE = [
   ['src/HammerolaViewer.jsx', MAY_WRITE_VISIBILITY],
@@ -3264,14 +3052,11 @@ describe('the reader changing what they can see', () => {
   })
 
   it('does not let the exemption run past the method it belongs to', () => {
-    // THE WORST WAY THIS GUARD CAN FAIL, and the only one that is silent. The
-    // window used to end at the end of the FILE when the method's closing line
-    // was not found where this file's indentation says — and `onModel` is above
-    // every writer, so one method that did not close took the exemption over
-    // all of them and the guard passed while checking nothing. Here the close
-    // it finds belongs to the method BELOW, which is the shape that swallows a
-    // real write: the complaint has to be about the window, and the write below
-    // it has to be caught as well.
+    // The silent failure: if the window ran to the end of the file when the
+    // method's closing line was not found, `onModel` (above every writer) would
+    // exempt all of them. Here the close it finds belongs to the method below,
+    // the shape that swallows a real write: the complaint must be about the
+    // window, and the write below must still be caught.
     const swallowed = [
       'class F {',
       '  a() {',

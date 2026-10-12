@@ -1,5 +1,5 @@
-// What is under the cursor: the part, the exact point, and — the piece that had
-// to be built — the NORMAL of the face.
+// What is under the cursor: the part, the exact point, and the normal of the
+// face.
 
 import { cameraBasis, ndcRay } from "./camera.js";
 import { cross3, len3, sub3, unit3, vec3 } from "./math.js";
@@ -52,25 +52,18 @@ export function pickEntity(g, x, y, options) {
 
 /**
  * Where the view ray through NDC `[nx, ny]` meets the section plane, as
- * `{ point, slope }` in world coordinates — or null.
+ * `{ point, slope }` in world coordinates, or null.
  *
- * `distanceToPoint` TWICE rather than reading the plane's own components, and
- * that is not a flourish: it is the one method `internals()` guarantees the
- * plane still has, and its difference over a UNIT STEP along the ray is exactly
- * `normal . dir`. So the whole thing is done in the library's arithmetic, and it
- * does not care whether `plane.normal` is a `Vector3` or three numbers in an
- * array.
+ * Uses `distanceToPoint` twice instead of the plane's components: it is the
+ * method `internals()` guarantees, and its difference over a unit step along
+ * the ray is `normal . dir`, whatever form `plane.normal` takes.
  *
- * `slope` IS THAT `normal . dir`, and it is handed back rather than kept because
- * it answers two questions, not one. It is the denominator of the intersection;
- * it is also the rate at which the signed distance grows as the ray advances,
- * i.e. WHICH SIDE THE RAY ENTERS THE PLANE FROM, which is what tells the cut-face
- * resolver whether anything can stand between the reader and the cap. Computing
- * it twice, or deriving it from the camera instead, is how those two drift apart.
+ * `slope` is that `normal . dir`: the denominator of the intersection, and the
+ * side the ray enters the plane from, which the cut-face resolver needs. It is
+ * returned so both come from one computation.
  *
- * Null when the ray runs PARALLEL to the plane: there is no point on the plane
- * under that pixel, and `sectionAxis` already refuses to drag a plane in that
- * pose for the same reason.
+ * Null when the ray is parallel to the plane (as `sectionAxis` refuses to drag
+ * in that pose).
  */
 export function planePointAt(vp, g, ndc) {
   const b = cameraBasis(vp.viewer, g);
@@ -94,15 +87,13 @@ export function planePointAt(vp, g, ndc) {
 /**
  * Is this solid's cut face on screen at all?
  *
- * Two separate answers, because the library gives them in two separate places.
- * `cull` (viewer/src/scene/clipping.ts:694) turns a cap mesh off when its solid
- * is too small on screen, over the frame budget, or not straddled by that plane
- * — so a cap that is not `visible` is not being drawn. HIDING a part does not
- * touch the cap: it writes `material.visible = false` on the front face and on
- * the solid's own stencil meshes (`setShapeVisible`,
- * viewer/src/scene/objectgroup.ts:549), and the cap quad then renders
- * against a stencil nothing wrote, painting nothing. Both look identical on
- * screen and neither can be read off the other.
+ * Two separate answers in two places in the library. `cull`
+ * (viewer/src/scene/clipping.ts:694) hides a cap mesh when its solid is too
+ * small on screen, over the frame budget, or not straddled by the plane. Hiding
+ * a part does not touch the cap: `setShapeVisible`
+ * (viewer/src/scene/objectgroup.ts:549) sets `material.visible = false` on the
+ * front face and the solid's stencil meshes, and the cap then renders against an
+ * empty stencil, painting nothing. Neither can be read off the other.
  */
 function capOnScreen(unit, solid) {
   if (!solid || solid.visible === false) return false;
@@ -111,115 +102,80 @@ function capOnScreen(unit, solid) {
   if (face && face.visible === false) return false;
   const caps = unit.capMeshes;
   if (!Array.isArray(caps)) return false;
-  // BY `index` AND NOT BY POSITION. `_createStencils` fills `capMeshes`
-  // plane-major so the section plane's cap is at SECTION_INDEX today, but the
-  // library writes the plane it belongs to onto the mesh, and a solid the loop
-  // ever skipped for one plane would shift the rest along silently.
+  // By `index`, not position: `_createStencils` fills `capMeshes` plane-major,
+  // but the library writes each mesh's plane onto it, and a skipped solid would
+  // shift positions silently.
   const cap = caps.find((c) => c && c.index === SECTION_INDEX);
   return !!cap && cap.visible !== false;
 }
 
 /**
- * The part whose CUT FACE is under NDC `[nx, ny]`, in the shape `pickEntity`
- * answers with — or null when no cut stands, or when the cursor is not over one.
+ * The part whose cut face is under NDC `[nx, ny]`, in the shape `pickEntity`
+ * answers with, or null when no cut stands or the cursor is not over one.
  *
- * The stencil cap that closes a cut off is the one thing on screen the id picker
- * cannot see. It is built by `Clipping._createStencils`
- * (viewer/src/scene/clipping.ts:478) out of a quad with no component id on it,
- * it joins no pick layer and it is in no registry — and the route of giving it
- * one is closed, because the pick pass replaces every material with its own
- * (`scene.overrideMaterial`, viewer/src/rendering/id-picking.ts:1221), which
- * kills the stencil that trims the quad to the part's silhouette and would paint
- * that id across the whole clipping rectangle. So a click on a cut face used to
- * name whatever lay BEHIND it — the menu opened there, and so did the plain
- * selection until they were put on one resolver — measured in a browser: the
- * cut face of `plate` answered `reference_spacer`, which sits flush underneath.
+ * The stencil cap is invisible to the id picker: `Clipping._createStencils`
+ * (viewer/src/scene/clipping.ts:478) builds it from a quad with no component id
+ * in no pick layer or registry. Giving it one does not work: the pick pass
+ * replaces every material (`scene.overrideMaterial`,
+ * viewer/src/rendering/id-picking.ts:1221), losing the stencil that trims the
+ * quad to the silhouette, so the id would cover the whole clipping rectangle.
+ * Without this, a click on a cut face names whatever lies behind it.
  *
- * WHAT REPLACES THE PICK IS GEOMETRY, and it needs no depth comparison against
- * the pick result — but it does need the ray to REACH the plane from the side
- * the renderer threw away, and the line that enforces that is `slope > 0`.
+ * Geometry replaces the pick. No depth comparison is needed, but the ray must
+ * reach the plane from the clipped side: `slope > 0`.
  *
- * Along the ray the signed distance is a straight line, `d(t) = d0 + t * slope`
- * with `slope = normal . dir`, and the cap sits where it crosses zero. Whatever
- * is nearer the reader than the cap is therefore at `d < 0` exactly when
- * `slope > 0` — and three.js discards on a NEGATIVE signed distance, so that is
- * exactly the case where nothing between the reader and the cap survives the
- * clip. The sign is read off static/_v/three.module.js rather than remembered,
- * because getting it backwards is silent: `clipping_planes_vertex` sets
- * `vClipPosition = -mvPosition.xyz`, `projectPlanes` packs the view-space
- * constant into `plane.w`, and the fragment chunk discards on
- * `dot(vClipPosition, plane.xyz) > plane.w`, i.e. on `-(n . p) > c`, i.e. on
+ * Along the ray `d(t) = d0 + t * slope` with `slope = normal . dir`, and the cap
+ * is at zero. Whatever is nearer the reader is at `d < 0` exactly when
+ * `slope > 0`, and three.js discards negative signed distance, so nothing in
+ * front of the cap survives. The sign, from static/_v/three.module.js:
+ * `clipping_planes_vertex` sets `vClipPosition = -mvPosition.xyz`,
+ * `projectPlanes` packs the view-space constant into `plane.w`, and the fragment
+ * discards on `dot(vClipPosition, plane.xyz) > plane.w`, i.e. on
  * `n . p + c < 0`.
  *
- * With `slope < 0` the near part of the ray is in the KEPT half instead, and
- * since the plane point is INTERIOR to the solid the ray must cross that solid's
- * own surface on its way in. The cap is then behind that part's own surface, so
- * the picker answers with the same solid either way and this stands aside —
- * which holds for a ghosted part too, where the surface shows the cap
- * through it rather than hiding it. That pose is one
- * Flip button or one orbit away, so it is not a corner: without the test the
- * menu opens — and the selection lands — on a part that is not under the
- * cursor, which is issue #73 again from the other side.
+ * With `slope < 0` the near part of the ray is in the kept half; the plane point
+ * is interior to the solid, so the ray crosses that solid's own surface first
+ * and the picker already answers with the right solid (a ghosted part too). That
+ * pose is one Flip or one orbit away.
  *
- * WHY THE RAY AND NOT THE EYE. "The eye is in the clipped half" sounds like the
- * same statement and is a different one, because AN ORTHO RAY DOES NOT START AT
- * THE EYE — every pixel's ray begins at its own laterally offset point. The two
- * agree only while the camera's standoff dominates, and they come apart near
- * edge-on: measured on this project's fakes, a 2-unit cube cut at z = 1.895 and
- * the camera orbited to 4.6 degrees off edge-on gives `normal . dir = +0.08` —
- * the reader is genuinely looking into the cut — while the eye's own signed
- * distance is `+0.202`, which would refuse. The band is about `arcsin(d / 5R)`
- * wide, where `d` is how far the plane stands from the camera's target — the
- * slider's own value — and `R` the model's bounding radius, the library's
- * `Camera.DISTANCE_FACTOR` being 5. It widens again when the model has been
- * panned towards the edge of the screen.
+ * The ray, not the eye: an ortho ray starts at its own laterally offset point,
+ * not at the eye. Near edge-on they disagree: a 2-unit cube cut at z = 1.895
+ * with the camera 4.6 degrees off edge-on gives `normal . dir = +0.08` (looking
+ * into the cut) while the eye's signed distance is `+0.202`. The band is about
+ * `arcsin(d / 5R)` wide (`d` the plane's distance from the camera target, `R`
+ * the model's bounding radius, `Camera.DISTANCE_FACTOR` 5), wider when the model
+ * is panned off centre.
  *
- * AND NO `t > 0` TEST. Under ortho `unproject` puts the ray's origin at MID
- * DEPTH between the near and far planes, so a perfectly visible cut face can sit
- * at a negative parameter along it. `t` says nothing about visibility here.
+ * No `t > 0` test: under ortho `unproject` puts the ray origin at mid depth, so
+ * a visible cut face can sit at negative `t`.
  *
- * THE PATH COMES BACK BY IDENTITY. `nestedGroup.groups` is keyed by the SLASH
- * path — the string the menu, the tree and `getStates` all agree on — while
- * `unit.solid.name` is the PIPE form the library writes for its own scene graph
- * (`path.replaceAll("/", this.delim)`, viewer/src/scene/nestedgroup.ts:606).
- * Reversing that spelling is string surgery on a name a model is free to
- * contain, so the key is found by matching the group OBJECT instead.
+ * The path is found by identity: `nestedGroup.groups` is keyed by the slash
+ * path, while `unit.solid.name` is the library's pipe form
+ * (`path.replaceAll("/", this.delim)`, viewer/src/scene/nestedgroup.ts:606), and
+ * reversing that is unsafe on names that may contain the delimiter.
  *
- * THE ANSWER'S SHAPE IS `pickEntity`'S, AND TWO OF ITS FIELDS MEAN LESS HERE.
- * `id`, `name` and `point` mean exactly what they mean there. `path` does NOT:
- * there it is the topological path of the entity that was hit, down to
- * `/model/plate/faces/faces_12`, and here it is the SOLID's own path, the same
- * string as `id`, because a cap is not a registered face — it is a quad the
- * library synthesised and there is no finer entity to name. `topo` is
- * synthetic for the same reason: nothing was looked up to produce it, and
- * "face" is written because a cut face is what the reader clicked. Both are
- * kept so the two resolvers hand the interface one shape. `tools.js` reads `id`
- * and `name`, and passes `point` on unread in the pick event — so the synthetic
- * point DOES leave the viewport, and a reader of it there would be holding the
- * cap's own plane rather than a surface of the model. A caller that wants to
- * MEASURE what is under the cursor must go to `pickEntity`, which is what the
- * three callers outside this one's pair — measure, comment, move — already do.
+ * The answer has `pickEntity`'s shape, but `path` is the solid's own path (same
+ * as `id`; a cap is no registered face) and `topo` is a synthetic "face".
+ * `tools.js` reads `id` and `name` and passes `point` through in the pick event,
+ * where it is a point on the cap's plane, not on a model surface. Callers that
+ * measure (measure, comment, move) use `pickEntity`.
  */
 export function capOwnerAt(vp, g, ndc) {
-  // A cut on screen is a seed AND the renderer's clipping flag: `suspendSectionCut`
-  // deliberately keeps the seed when the cut is switched off, so that turning it
-  // back on needs no second click, which makes a seed alone "a cut was placed
-  // once". With no cut standing this whole function must not run at all.
+  // A cut on screen needs a seed and the renderer's clipping flag:
+  // `suspendSectionCut` keeps the seed while the cut is off.
   if (!vp || !vp.sectionSeed || !g) return null;
   const viewer = vp.viewer;
   const renderer = viewer && viewer.renderer;
   if (!renderer || renderer.localClippingEnabled !== true) return null;
   try {
-    // `_capUnits` is the library's own private field, asked for defensively and
-    // given up on quietly — exactly as the hatch asks for it. A viewer that has
-    // moved it costs the menu this correction and nothing else.
+    // `_capUnits` is a private library field, read defensively (as the hatch
+    // does); if it moves, the menu loses only this correction.
     const units = g.clipping && g.clipping._capUnits;
     const groups = g.nestedGroup && g.nestedGroup.groups;
     if (!Array.isArray(units) || !units.length || !groups) return null;
     const hit = planePointAt(vp, g, ndc);
-    // BEFORE ANY PER-SOLID WORK, because it is about the ray and not about any
-    // one part: reaching the plane from the kept side puts every cap behind its
-    // own solid, and the picker was right all along.
+    // Checked before any per-solid work: from the kept side every cap is behind
+    // its own solid, and the picker is right.
     if (!hit || !(hit.slope > 0)) return null;
     const at = hit.point;
     for (const unit of units) {
@@ -241,12 +197,10 @@ export function capOwnerAt(vp, g, ndc) {
 
 /** One face pixel: its component id and its world position, or null. */
 function probeFace(picker, x, y, single) {
-  // `topoFilter` is what keeps this on a FACE. The picker resolves
-  // vertex > edge > face by priority, so a click a few pixels from an edge would
-  // otherwise come back as that edge — whose "normal" is meaningless and whose
-  // position sits on a different surface than the one that was aimed at.
-  // `windowSize: 1` reads the exact pixel; the centre probe keeps the default
-  // 3x3 window so the reader's aim gets the same tolerance as anywhere else.
+  // `topoFilter` keeps this on a face: the picker prefers vertex > edge > face,
+  // so a click near an edge would return the edge, whose position lies on
+  // another surface. `windowSize: 1` reads the exact pixel; the centre probe
+  // keeps the default 3x3 window for the reader's aim.
   const opts = single ? { topoFilter: ["face"], windowSize: 1 }
                       : { topoFilter: ["face"] };
   const hit = picker.pickAt(x, y, opts);
@@ -257,22 +211,14 @@ function probeFace(picker, x, y, single) {
 /**
  * World normal + world point of the face under a canvas pixel, or null.
  *
- * THERE IS NO RAYCASTER HERE, and that is the interesting part. The vendored
- * bundle exports `Viewer` and `Display` and nothing else — no `Raycaster`, no
- * `Ray`, no `Vector3` — and shipping a second copy of three.js to read one
- * normal is not a trade worth making.
+ * No raycaster: three.js is not a dependency of this bundle. The picker's
+ * render target carries world position beside the id, so three pixels of the
+ * same face give the normal as a cross product. The result is already in world
+ * space (no normal matrix to get wrong), and the samples honour clipping like
+ * the screen, so a surface exposed by an earlier cut reads as that surface.
  *
- * The picker itself has what is needed. Its render target carries WORLD POSITION
- * next to the id, so three pixels of the SAME face read off that buffer give the
- * normal as a cross product. Two things fall out of that for free: the result is
- * already in world space, so there is no object matrix and no normal matrix to
- * get wrong (a normal does not transform by the same matrix as a point, and that
- * is a classic way to end up with a plane that is subtly skew); and the samples
- * honour clipping exactly the way the pixels on screen do, so clicking a surface
- * an earlier cut exposed reads THAT surface and not the one that was cut away.
- *
- * On a curved face this returns the local tangent plane, which is the useful
- * answer: it is the plane the cut will actually follow at that spot.
+ * On a curved face this is the local tangent plane, which is the plane the cut
+ * will follow at that spot.
  */
 export function faceNormalAt(picker, x, y) {
   const centre = probeFace(picker, x, y, false);

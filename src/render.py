@@ -24,77 +24,45 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-# THE RULE ABOUT FILE NAMES IS IMPORTED, NOT WRITTEN HERE, and that import is
-# the subject of issue #53. This module used to ask the question with checks
-# inlined in `build_meta` — membership in what the build wrote, `/`,
-# `GENERATED_FILES` — while `app._safe_name` asked it with a rule of its own
-# that ALSO refused a leading dot, and `hammerola/artifacts.py` approximated it
-# a third time. Three copies, no two alike, and the disagreement published a
-# build that could never be opened. `hammerola/buildnames.py` is the single place that
-# answers it now, and `tests/test_buildnames.py` asserts the three sides hold
-# the same OBJECT rather than a copy of it — which is what fails on the day
-# somebody inlines one again.
-# `first_nonprintable` travels with it because `_plain_text` below asks the same
-# question of every displayed field, and the two must not drift apart on what
-# "printable" means.
+# The file-name rule lives in hammerola/buildnames.py, so this module,
+# `app._safe_name` and hammerola/artifacts.py share one object
+# (tests/test_buildnames.py asserts it). `first_nonprintable` comes with it so
+# `_plain_text` agrees with it on what "printable" means.
 from hammerola.buildnames import first_nonprintable, unservable_reason
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
-# The key a part files an exported file under — `stl`, `step`, `3mf` — which
-# ends up as a download button's caption. Kept to the same shape as a file name
-# so it can never carry markup, a quote or a control character: the pages build
-# their DOM with textContent, and this is the second line of that defence. It
-# held the label of the flat `downloads` map before issue #75 moved those files
-# under the part they belong to; the caption argument moved with them unchanged.
+# The key a part files an exported file under — `stl`, `step`, `3mf` — shown as
+# a download button's caption. Kept to the shape of a file name so it can never
+# carry markup, a quote or a control character: the pages build their DOM with
+# textContent, and this is the second line of that defence.
 SAFE_LABEL = re.compile(r"\A[A-Za-z0-9._-]{1,32}\Z")
 
 # Free-text fields shown on the index and the build page. Long enough for a real
 # title, short enough that one push cannot push every other card off the screen.
 MAX_TEXT = 200
 
-# How many parts one build's catalogue may carry. Not a tidiness rule: every
-# record is legal at its own ceilings — a 200-character key, a 200-character
-# note — so 100 000 of them make a 20 MB meta.json that every visitor of that
-# build page downloads, under a year of `immutable`, from a push that can never
-# be taken back. It also bounds the work the validation loop below does per
-# push, which is the other half of accepting a document whose size the sender
-# chooses.
-#
-# IT COUNTS RECORDS, NOT NOTES, and the difference is the whole reason for the
-# number: the records without a note are exactly what a note-shaped ceiling
-# cannot see, and a catalogue of a hundred thousand bought screws costs the same
-# megabytes while carrying no note at all. Spelled the same on both sides of the
-# wire (`cadbuild.hubspec.MAX_PARTS`), held equal by
-# tests/cadbuild/test_naming.py.
-#
-# WHAT IT DOES NOT BOUND is the number of FILES the catalogue points at — that
-# is `_spend_file_budget` below, and it is a different bound from a different
-# source.
+# How many parts one build's catalogue may carry. Every record is legal at its
+# own ceilings, so 100 000 of them would make a 20 MB meta.json served under a
+# year of `immutable`; it also bounds the validation loop per push. It counts
+# records, not notes: records without a note cost the same megabytes. Equal to
+# `cadbuild.hubspec.MAX_PARTS` (tests/cadbuild/test_naming.py). The number of
+# FILES the catalogue points at is bounded by `_spend_file_budget`.
 MAX_PARTS = 200
 
-# What a catalogue entry may say a part IS. A TRANSCRIPTION of
-# `cadbuild.parts.KINDS` and deliberately not an import: nothing on the serving
-# side may reach into the build half, which runs inside the build process. The
-# two lists are held equal by tests/cadbuild/test_naming.py, from the one side
-# allowed to see both.
-#
-# AN UNKNOWN KIND IS REFUSED rather than carried through. The browser draws a
-# record BY its kind — a printable gets download buttons, a bought part gets
-# none — so a kind nothing recognises is a part nobody can draw, and "render
-# what you know and drop the rest" is a way for a push to choose which of its
-# parts a reader never sees.
+# What a catalogue entry may say a part is. A transcription of
+# `cadbuild.parts.KINDS`, not an import: the serving side never imports the
+# build half. Held equal by tests/cadbuild/test_naming.py. An unknown kind is
+# refused rather than carried through: the browser draws a record by its kind,
+# so a kind nothing recognises is a part nobody sees.
 KIND_PRINTABLE = "printable"
 PART_KINDS = (KIND_PRINTABLE, "hardware", "mock")
 
-# `built` is displayed like the rest but it is a TIMESTAMP, so its ceiling is the
-# length of one, with room for a long timezone spelling — not the free-text one.
-# It ends up in three places at once (the index card, the build page header and an
-# <option> caption) and, unlike a title, in the SHARED /index.json that every
-# EDITOR of this hub downloads with `no-cache` (the payload is behind EDIT_TOKEN
-# — `_serve_index_json` in src/app.py, pinned by `tests/test_serving.py`): 200
-# projects each carrying 200 KB of `built` is an index nobody can load, from
-# pushes that were each accepted.
+# `built` is displayed like the rest but it is a timestamp, so its ceiling is the
+# length of one, with room for a long timezone spelling. It lands in the shared
+# /index.json every editor downloads with `no-cache` (`_serve_index_json` in
+# src/app.py), where a free-text ceiling across 200 projects would make an index
+# nobody can load.
 MAX_BUILT = 64
 
 # Names inside a build directory that belong to the hub, not to the push. A view
@@ -115,18 +83,12 @@ GENERATED_FILES = {"meta.json", "index.html", ".payload.sha256"}
 # they are the shapes that carry parentheses.
 SAFE_COLOR = re.compile(r"\A(#[0-9A-Fa-f]{3,8}|[A-Za-z]{1,32})\Z")
 
-# The only keys of a view file this module looks at. Everything else — the vertex,
-# index and normal buffers that make up ~99% of a 2 MB view — is dropped as the
-# parser produces it (see `_view_fields`), so validating a view costs the size of
-# its largest single buffer rather than the size of the whole parsed document.
-#
-# `key` IS ON THIS LIST BECAUSE OF WHAT DROPPING IT COSTS. `export_views` stamps
-# the catalogue key on every leaf (issue #75) and the browser looks the record
-# up by it, so it is a string that travels from a push into the DOM — and while
-# it was not on this list it was the one such string NOTHING checked: the parser
-# threw it away before the walk below could see it. A key that is not on this
-# list is a key that is not validated, which is the whole reason the list is
-# written out rather than being "whatever the walk happens to read".
+# The only keys of a view file this module looks at. Everything else — the
+# vertex, index and normal buffers that make up ~99% of a view — is dropped as
+# the parser produces it (see `_view_fields`), so validating a view costs the
+# size of its largest single buffer rather than the whole parsed document. A key
+# not on this list is never validated: `key` is here because `export_views`
+# stamps the catalogue key on every leaf and the browser looks records up by it.
 VIEW_KEPT_KEYS = ("name", "color", "parts", "key")
 
 # Depth ceiling for the part tree. A real assembly nests a handful of levels; this
@@ -175,36 +137,17 @@ def project_title(value) -> str:
 def revision_message(value: str) -> str:
     """What a revision says about itself, checked exactly as a part name is.
 
-    THE PART-NAME RULE, CALLED AND NOT RESTATED (issue #67). A message arrives
-    on a header of the push, so it never went through `build_meta`'s walk and has
-    no validation of its own to inherit — and the field it most resembles is a
-    part name. This used to repeat that function's three lines sixty lines below
-    it, which is a second copy of a rule: `MAX_TEXT` is shared so the cap could
-    not drift, but the angle brackets could, and silently.
+    A message arrives on a header of the push, so it never goes through
+    `build_meta`; the part-name rule is called rather than restated. The part
+    that matters is `_plain_text` inside it: 200 characters, one line, no U+202E
+    and no control characters. The revision list renders it as a JSX child, so
+    React escapes the brackets.
 
-    THE HALF THAT IS LOAD-BEARING IS `_plain_text`, inside it. The revision list
-    renders a message as a JSX child, so React escapes it and the brackets buy
-    nothing there; what the cap and the printable-text rule buy is that a subject
-    stays a subject — 200 characters, one line, no U+202E reversing the date
-    beside it and no control character turning a log line into two. The brackets
-    come with the precedent rather than instead of it.
-
-    STRIPPED BEFORE IT IS CHECKED, and the order is not cosmetic: measuring the
-    raw string would refuse a 200-character subject with a newline after it —
-    twice over, once as 201 characters and once as a control character — and that
-    is a legal message somebody gets from `-m "$(cat subject.txt)"`. It is also
-    the number the client is held to (`hammerola/cli.py`), so the two have to
-    measure the same thing.
-
-    A non-string is refused before the strip rather than coerced, like
-    `project_title` above: `.strip()` on one would raise AttributeError, which is
-    not a ValueError and would leave the route answering 500 instead of 400.
-
-    AND SO IS A MESSAGE THAT IS ONLY SPACES, for the reason `project_title`
-    refuses one: the push ASKED for a subject, and "  " is not one. It used to
-    strip to "" and then evaporate at every `if message:` downstream — a flag
-    typed, accepted, and silently dropped, which is precisely what the route
-    refuses to do with a message it cannot store.
+    Stripped before it is checked, so a subject with a trailing newline (from
+    `-m "$(cat subject.txt)"`) is legal; `hammerola/cli.py` measures the same
+    thing. A non-string is refused before the strip (`.strip()` would raise
+    AttributeError and the route would answer 500), and so is a message of only
+    spaces: the push asked for a subject.
     """
     if not isinstance(value, str):
         raise ValueError("`message` must be a string")
@@ -215,19 +158,14 @@ def revision_message(value: str) -> str:
     return text
 
 
-# -- the theme, which the SERVER decides (issue #35) --------------------------
+# -- the theme, which the server decides --------------------------------------
 #
-# The whole interface is painted from `data-theme` on `<html>`: everything the
-# bundle draws is an INLINE style, which beats any class rule, so a `var()`
-# resolved against an ancestor is the only thing that can repaint it (the
-# docstring over `css()` in ui/src/style.jsx has the full argument). That
-# attribute therefore has to be right in the first byte the browser parses, and
-# neither of the two ways a page could work that out for itself is open here: an
-# inline pre-paint script is refused by the CSP, which inherits `script-src` from
-# `default-src 'self'` (`CSP_HTML` in src/app.py), and the resolver page runs no
-# bundle at all by design. A cookie is what is left, and it is the one that
-# actually fits: the reader's answer arrives WITH the request that asks for the
-# page.
+# The whole interface is painted from `data-theme` on `<html>`: the bundle draws
+# inline styles, so only a `var()` resolved against an ancestor can repaint them
+# (see `css()` in ui/src/style.jsx). The attribute has to be right in the first
+# byte the browser parses. An inline pre-paint script is refused by the CSP
+# (`CSP_HTML` in src/app.py) and the resolver page runs no bundle, so the
+# reader's choice arrives as a cookie, with the request for the page.
 
 THEME_COOKIE = "hammerola.theme"
 
@@ -245,32 +183,23 @@ DEFAULT_THEME = "light"
 THEME_ATTRIBUTE = 'data-theme="{}"'
 DEFAULT_STAMP = THEME_ATTRIBUTE.format(DEFAULT_THEME)
 
-# …and the swap is confined to the OPENING `<html>` TAG rather than run over the
-# document, which is not caution but a bug already met: `templates/build.html`
-# explains the ordering of its stylesheets by quoting the library's own
-# `[data-theme="light"]` selector, in prose, and a plain `str.replace` over the
-# file is one edit away from stamping a comment instead of the element. Every
-# template is a document with one `<html>` in it, and that is the one the theme
-# belongs on.
+# The swap is confined to the opening `<html>` tag: templates/build.html quotes
+# the library's `[data-theme="light"]` selector in a comment, which a plain
+# `str.replace` over the file would stamp instead of the element.
 HTML_TAG = re.compile(r"<html\b[^>]*>")
 
 
 def cookie_theme(header: str) -> str:
     """The theme this request asks for: one of THEMES, always.
 
-    ABSENT, UNPARSEABLE OR UNKNOWN ALL MEAN LIGHT, which is what the browser half
-    answers for the same cell (`readTheme` in ui/src/store.js) and for the same
-    reason: this header carries whatever any version of this site ever wrote,
-    plus whatever else is set on this host, plus whatever was typed into a
-    browser's cookie inspector. There is no adversary here to refuse — a value
-    nobody recognises is simply not an answer, and the page opens the way a first
-    visit does.
+    Absent, unparseable or unknown all mean light, as `readTheme` in
+    ui/src/store.js answers: the header carries whatever any version of this site
+    or anything else on this host wrote, and a value nobody recognises opens the
+    page the way a first visit does.
 
-    PARSED BY HAND RATHER THAN WITH `http.cookies`, in four lines. SimpleCookie
-    drops the REST OF THE HEADER when it meets a pair it cannot parse, so one odd
-    cookie belonging to something else on this host would silently take ours with
-    it — a theme that stops working depending on what else is in the jar is
-    exactly the kind of bug nobody reproduces.
+    Parsed by hand rather than with `http.cookies`: SimpleCookie drops the rest
+    of the header when it meets a pair it cannot parse, so another cookie on this
+    host could take ours with it.
     """
     for part in (header or "").split(";"):
         name, _, value = part.partition("=")
@@ -284,18 +213,10 @@ def cookie_theme(header: str) -> str:
 def _template(name: str, theme: str) -> str:
     """One page template, read once per process and stamped with one theme.
 
-    Cached because these are immutable inside the image: a template edit ships as
-    a new image, so re-reading per request would buy nothing and cost a syscall on
-    the hot path.
-
-    THE KEY WAS WIDENED RATHER THAN THE STAMP MOVED BEHIND THE CACHE, which is
-    the better trade as long as the key set stays tiny: caching the FINISHED
-    document does the substitution twice per template per process instead of once
-    per page view. `_page` below is what keeps it tiny, and it is a function
-    rather than a sentence in this docstring for the usual reason — the three
-    page functions are public and annotated `str`, so "nobody passes anything
-    else" is a claim about today's callers, while `maxsize=None` keyed on
-    something a request could choose is a way to fill memory from outside.
+    Templates are immutable inside the image, so re-reading per request would buy
+    nothing. The theme is part of the cache key, which stays tiny only because
+    `_page` normalizes it: `maxsize=None` keyed on a string a request chose would
+    let a client fill memory.
     """
     html = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
     return HTML_TAG.sub(
@@ -307,22 +228,19 @@ def _template(name: str, theme: str) -> str:
 def _page(name: str, theme: str) -> str:
     """One page, in a theme this module recognises — whatever it was handed.
 
-    THE NORMALIZATION HAPPENS HERE AND NOT INSIDE `_template`, and the difference
-    is the whole point of the helper: a correction behind the cache would still
-    mint a cache entry per distinct string, so the memory half of the invariant
-    would be exactly as open as before while the document came out right.
+    Normalized here, in front of the cache, so an unknown string never mints a
+    cache entry.
     """
     return _template(name, theme if theme in THEMES else DEFAULT_THEME)
 
 
 def build_page_html(theme: str) -> str:
-    """The shell of ONE build's page, served from the image on every request.
+    """The shell of one build's page, served from the image on every request.
 
-    NOT written into the build directory, which this docstring used to say and
-    which is the opposite of the decision `app._serve_build_page` is built on: the
-    shell is identical for every build and CHANGES with the image, so a copy
-    written at publish time and served under the year of `immutable` a commit URL
-    carries would freeze each build on the markup of the day it was pushed.
+    Not written into the build directory (`app._serve_build_page`): the shell is
+    identical for every build and changes with the image, so a copy served under
+    a commit URL's year of `immutable` would freeze each build on the markup of
+    the day it was pushed.
     """
     return _page("build.html", theme)
 
@@ -380,20 +298,11 @@ def _check_part_name(value, where: str) -> None:
 def _check_declared_file(name, files: dict, where: str) -> None:
     """Every file this document points at, wherever it is pointed at from.
 
-    SIX CALLERS NOW, and they are no longer four flat maps: a view's `file`,
-    its `overview` mesh, its `preview` picture and the `card` cut of that
-    picture, and — on a catalogue record — each of its exported `files` and its
-    own `preview`. One helper for all of them because they make the same claim
-    about a name — "this build wrote a file called that, and the hub will hand
-    it back" — and differ only in what OWNS the name, which is now stated by
-    where the pointer sits instead of being parsed out of a key (issue #75).
-    Each of the questions below is a way the push is accepted and then serves
-    something other than what was measured here, so they move together or not
-    at all. `views` was the last of the old four to arrive and it arrived
-    through a bug: it kept an inline check of its own that asked membership, `/`
-    and `GENERATED_FILES` and neither of the two clauses the shared rule had
-    grown, so the exact defect issue #53 exists to kill was still live on the
-    one map without which a build page is empty.
+    Callers: a view's `file`, `overview`, `preview` and `card`, and a catalogue
+    record's exported `files` and `preview`. They all claim "this build wrote a
+    file called that, and the hub will hand it back". Each check below is a way
+    a push could be accepted and then serve something other than what was
+    measured here, so they apply to every pointer together.
     """
     # `files` is what the build DECLARED it wrote, hashed by `_hash_output`. It
     # is a real file under this build — `runner._verify_output_file` checked
@@ -429,84 +338,26 @@ def _check_declared_file(name, files: dict, where: str) -> None:
 
 
 def _check_map_size(value, field: str, files: dict) -> None:
-    """How many entries one file-declaring collection may carry, counted first.
+    """How many entries one file-declaring collection (`views`) may carry.
 
-    ONE CALLER LEFT, AND IT IS A LIST: `views`. The three flat maps that shared
-    this — `downloads`, `overview`, `previews` — are gone with issue #75, and
-    what replaced them is bounded differently: a catalogue is counted against
-    `MAX_PARTS` and the files its records point at are counted against
-    `_spend_file_budget`. The argument is still any sized collection rather than
-    a dict — nothing here looks inside it, and "entries" is the right word for a
-    row of either. `views` was always the most expensive of the four by orders
-    of magnitude, which is why it may least of all go uncounted: every entry
-    costs a full parse of its view file (`check_view_file`) and a full gzip of
-    it (`measure_view`), measured at ~18 ms on a 0.9 MB view, and N entries may
-    point at ONE file — `seen` forbids a duplicate view id, not a duplicate file
-    name. A hundred thousand of them is hours of CPU inside `_finish_staging`,
-    in a build worker thread, with `jobs.MAX_CONCURRENT_BUILDS` of those in the
-    whole process.
+    Every view entry costs a full parse (`check_view_file`) and a full gzip
+    (`measure_view`) of its file, ~18 ms on a 0.9 MB view, and many entries may
+    point at one file (`seen` forbids duplicate view ids, not duplicate file
+    names). Counted before the loop, so refusing does not pay for what the
+    ceiling exists to refuse.
 
-    Counted FIRST, before the loop, exactly as the catalogue is counted below —
-    the ORDER is what the two share and it is the whole of what they share:
-    refusing after walking the document is paying for precisely what the ceiling
-    exists to refuse to pay for. What it stops is the shape a per-entry rule
-    cannot see: every entry legal, in enormous numbers.
+    The ceiling is `len(files)`, derived rather than chosen: every entry has to
+    name a file the build declared, and `export_views` writes one `<vid>.json`
+    per view. It is loose — on the build path `files` is bounded by
+    `limits.output_files` (4096), so a meta.json of a few megabytes is possible —
+    unlike `MAX_PARTS` or `MAX_BUILT`. The cost falls on one build page rather
+    than the shared /index.json, and the project can be deleted with the secret
+    that published it.
 
-    IT IS NOT PARITY WITH `MAX_PARTS` AND MUST NOT BE READ AS ONE. That number
-    is 200; this ceiling is `len(files)`, and on the build path `files` is
-    bounded by `limits.output_files` — 4096. So a model that writes 4096 tiny
-    files may legally declare on the order of four thousand views, each with a
-    name running to MAX_TEXT and a file name with no length ceiling at all
-    (`buildnames.unservable_reason` has none, deliberately). That is a
-    `meta.json` of a few megabytes, served under a year of `immutable` to every
-    visitor of that build — where the catalogue ceiling permits tens of
-    kilobytes. Different orders of magnitude, so "for the same reason" is
-    exactly what must not be said about the pair: what they share is the ORDER
-    of the count, and nothing else.
-
-    STILL WORTH HAVING, AND ACCEPTED RATHER THAN TIGHTENED. What it buys is the
-    shape check it was added for: "unbounded" becomes "bounded by what the build
-    actually wrote", so no list can be enormous without the FILES being enormous
-    too, and the millions-pointing-at-one-file shape is gone. What is left is a
-    ceiling that is loose rather than absent, and three things are why no number
-    is put in front of it. Reaching it takes a model that really writes
-    thousands of files — nothing stops one, since a build names and counts its
-    own output, but it is a deliberate act by whoever holds the secret rather
-    than something an honest project drifts into. The cost falls on the visitors
-    of that ONE build page, not on the shared `/index.json` every editor of this
-    hub downloads with `no-cache` — which is the asymmetry MAX_BUILT above exists
-    for and the reason its ceiling is a number. And the build is not beyond
-    reach afterwards: the project can be removed whole with the same secret that
-    published it (`DELETE /api/v1/projects/<pid>`), so "can never be taken back"
-    is true of the URL and not of the deployment.
-
-    WHAT IT DOES NOT BOUND AT ALL is the document on the way IN.
-    `Store._read_meta` reads `meta.json` with a single `read_text()` and no size
-    cap of its own, and the build that wrote that file was held only by
-    `limits.file_bytes` — 256 MiB. So the INPUT side is still unbounded in the
-    sense that matters for memory; this ceiling is about what gets PUBLISHED,
-    and nothing here should be read as covering the parse.
-
-    THE BOUND IS THE BUILD'S OWN FILE COUNT, and it is derived rather than
-    chosen: every entry here has to name a member of `files`, so a build that
-    really produced what it describes cannot declare more views than it
-    published files — `export_views` writes one `<vid>.json` per view, and every
-    one of those names is on that list. Beyond it, entries are repeats of a name
-    already declared, which is the millions-pointing-at-one-file shape and
-    nothing an honest build does.
-
-    A constant would be worse here, not tidier. MAX_PARTS is a count of
-    CATALOGUE RECORDS, and a view is not one of those — a project may draw more
-    tabs than it has parts, or one tab of two hundred. `files` is already
-    capped — by `limits.output_files`, on the build path — so this inherits a
-    ceiling instead of inventing a second one that can drift from it. ONE
-    SOURCE, NOT TWO, and MAX_MEMBERS is not the second: there is no archive path
-    here at all.
-    `build_meta` is called from `Store._finish_staging` alone, and the `files`
-    it is handed is always `_hash_output(staging, names)` — what the BUILD
-    declared it wrote. The mapping `_unpack` builds out of an archive's members
-    goes to `_payload_digest` and nowhere else, so MAX_MEMBERS never bounds
-    anything this reads.
+    It does not bound the input: `Store._read_meta` reads meta.json without a
+    size cap of its own, held only by `limits.file_bytes`. `files` here is always
+    `_hash_output(staging, names)` from `Store._finish_staging`, never archive
+    members, so MAX_MEMBERS plays no part.
     """
     if len(value) > len(files):
         raise ValueError(
@@ -516,29 +367,17 @@ def _check_map_size(value, field: str, files: dict) -> None:
 
 
 def _spend_file_budget(left: int, count: int, where: str, files: dict) -> int:
-    """How many file pointers the CATALOGUE may hold in total, spent as counted.
+    """How many file pointers the catalogue may hold in total, spent as counted.
 
-    THE SAME BOUND `_check_map_size` APPLIES TO A LIST, applied to a document
-    where the pointers are spread over records instead of sitting in one map —
-    which is precisely what stops the bound getting weaker as the shape changes.
-    Per record it would: a record may legally point at `len(files)` names, so
-    MAX_PARTS records could point at 200 × 4096 of them, and that is a fifty-
-    megabyte `meta.json` served under a year of `immutable` — an order worse
-    than the three flat maps this replaced, from a change that was supposed to
-    move a bound rather than loosen it. One budget for the whole catalogue keeps
-    the old total exactly.
+    The bound `_check_map_size` applies to a list, applied across records. Per
+    record it would be far weaker: MAX_PARTS records could each point at
+    `len(files)` names, a fifty-megabyte meta.json.
 
-    IT IS DERIVED AND IT IS NOT TIGHT AGAINST AN HONEST BUILD, which is what
-    makes it usable: every pointer here has to name a file this build published,
-    a printable owns its own three exports plus its own picture, and no two
-    records own one file — so an honest catalogue spends strictly less than it
-    is given (`meta.json` and `metrics.json` are published and pointed at by
-    nobody). Beyond the budget, pointers are repeats of a name already spoken
-    for, which is nothing a build does.
-
-    The views' own four pointers are NOT on this budget: they are bounded as
-    ENTRIES by `_check_map_size`, at four pointers per entry, which is the same
-    order the old document allowed across its three maps.
+    An honest build spends less than it is given: every pointer names a
+    published file, a printable owns its three exports plus its picture, no two
+    records own one file, and `meta.json` and `metrics.json` are pointed at by
+    nobody. The views' pointers are not on this budget; `_check_map_size` bounds
+    them as entries.
     """
     left -= count
     if left < 0:
@@ -550,60 +389,21 @@ def _spend_file_budget(left: int, count: int, where: str, files: dict) -> int:
 
 
 def _check_note(value, key: str) -> None:
-    """The AUTHOR's note on a part: text written in model.py, shown to a reader.
+    """The author's note on a part: text written in model.py, shown to a reader.
 
-    It used to be an entry of a flat `notes` map keyed by part name; issue #75
-    moved it inside the record it is about, which is the only change — the rules
-    are the ones it always had, and they are here rather than inline so the
-    record reader stays readable.
+    Angle brackets are banned at the boundary rather than for one renderer: the
+    text comes from a push and lands on a permanent page sharing an origin with
+    every other project, and text that cannot open an element cannot become
+    markup whatever renders it. `title` and `project` deliberately go through
+    `_plain_text` alone, so a bracket in a title is published.
 
-    Angle brackets are banned for the BOUNDARY rather than for any one
-    renderer: this text arrives from a push, i.e. from anybody who can land a
-    commit in a model repository, and where the browser half ends up putting it
-    is a decision made later, on a page that is permanent, immutable and shares
-    an origin with every other project on the host. Text that cannot open an
-    element cannot become markup whatever renders it — the same argument that
-    holds for a part name. NOT for `title` and `project`, and that is the code
-    rather than an omission here: those two go through `_plain_text` alone, so a
-    bracket in a title is published. Read this sentence before "fixing" either
-    side into agreement.
-
-    AN EMPTY STRING IS REFUSED RATHER THAN NORMALIZED AWAY, and refusing is the
-    decision. `_catalogue` below states the rule this closes — absent rather
-    than empty on the way out, so a reader never has two ways of asking one
-    question — and this field was where it was first kept honestly: `""` passed
-    every rule here and was emitted as `"note": ""`, a second spelling of "no
-    note" for every reader downstream. `files` is refused the same way now, and
-    that is this argument applied where it used to be contradicted — an empty
-    map was DROPPED there, in silence. Dropping it silently
-    would be the hub editing a document it did not write; refusing teaches the
-    one push that can reach this, which is a hand-made one. An honest client
-    never lands here — `cadbuild.build` writes the key under `if
-    record["note"]:` — so the strictness costs nobody anything.
-
-    PADDING IS REFUSED FOR THE SAME REASON, and the fact that decides it was
-    stated in neither half until now: `cadbuild.parts._check_note` NORMALIZES a
-    note — it strips it, refuses what is left over when that is empty, and
-    publishes the STRIPPED string — while nothing here normalizes anything. So
-    the boundary between the two runs through "refuse what arrives padded", not
-    through "tolerate it". A paragraph here used to claim the opposite, that
-    `" "` is a note the build really does publish and refusing it would turn a
-    legal build into a 422; both halves of that were false, and the hole it
-    guarded was real. `"   "` published, which is a THIRD spelling of "nothing
-    to say" beside an absent key and the `""` refused above; and one authored
-    text published as two different documents — ` M3x8 ` from a hand-made push,
-    `M3x8` from the build — so a byte comparison of two revisions reports a
-    change nobody made (issue #10).
-
-    WHAT THE RULE BUYS is that this side becomes the exact COMPLEMENT of the
-    other: everything `cadbuild._check_note` can produce (stripped, non-empty)
-    passes here, and everything it cannot produce is refused. That is the shape
-    `kind` already has, where the two lists are asserted equal outright
-    (tests/cadbuild/test_naming.py); stripping it here instead would be a second
-    and opposite answer to the question the paragraph above answers, in the same
-    function. Nothing honest is turned away, and for the same reason as above:
-    `cadbuild.build` writes the key under `if record["note"]:`, and the value it
-    writes came back stripped from the gate.
+    An empty string and padding are refused, not normalized:
+    `cadbuild.parts._check_note` strips a note and refuses an empty one, so this
+    side accepts exactly what the build can produce (stripped, non-empty) and
+    refuses the rest. Normalizing here would be the hub editing a document it did
+    not write, and would let one note publish as two different byte strings. Only
+    a hand-made push reaches these refusals: `cadbuild.build` writes the key
+    under `if record["note"]:`.
     """
     if not isinstance(value, str):
         raise ValueError(
@@ -625,79 +425,34 @@ def _check_note(value, key: str) -> None:
 
 
 def _catalogue(raw: dict, files: dict) -> dict:
-    """`parts`: every part of this build, filed under the key that IS its name.
+    """`parts`: every part of this build, filed under the key that is its name.
 
-    THE KEY IS THE IDENTITY (issue #75), and this map is where it is declared.
-    It travels from the model's own parts() through the view files and this
-    document into the browser unchanged, so nothing downstream reconstructs
-    which part is which by matching a shape or by splitting a file name — which
-    is what the four flat maps this replaces made every reader do, and what the
-    viewer got wrong on a part with a dot in its name.
+    The key is the identity: it travels from the model's own parts() through the
+    view files and this document into the browser unchanged, so no reader
+    reconstructs which part is which from a shape or a file name.
 
-    REQUIRED AND NON-EMPTY, exactly like `views`: a build whose catalogue holds
-    nothing printable is refused by the build's own gate, so a document with no
-    catalogue is not one this hub can have written — and `_usable_meta` in
-    store.py refuses the same shape from the other end, which is the pairing
-    that has to stay true. Accepting an empty one here would publish a build the
-    index then silently declines to list.
+    Required and non-empty, like `views`: the build's own gate refuses a
+    catalogue with nothing printable, and `_usable_meta` in store.py refuses the
+    same shape from the other end. Accepting an empty one here would publish a
+    build the index then silently declines to list.
 
-    EVERY OPTIONAL FIELD BELOW IS READ WITH AN EXPLICIT `is None`, never
-    `record.get(field) or {}`. That spelling turns a falsy non-object — `[]`,
-    `""`, `0` — into "nothing here" and publishes a push that described
-    something else, in silence; it is the rule for every optional field on this
-    document, and it outlived `_stem_map`, the helper whose docstring used to
-    carry it. `downloads` was the last place it was not followed — it read
-    `or {}` until the review of issue #53, so `downloads: 0` published a build
-    with no download buttons and told nobody.
+    Optional fields are read with an explicit `is None`, never
+    `record.get(field) or {}`, which would turn a falsy non-object (`[]`, `""`,
+    `0`) into "nothing here" in silence. Absent rather than empty: an empty
+    spelling (`files: {}`, `note: ""`) is refused, never dropped — the hub does
+    not edit a document it did not write, and `cadbuild.build` writes each of
+    those keys only when it has something to put there. A field written `null`
+    reads as absent and is not emitted; `kind` is not optional, so `kind: null`
+    is refused.
 
-    ABSENT RATHER THAN EMPTY, AND EVERY FIELD IS HELD TO IT THE SAME WAY: by
-    refusing the empty spelling, never by dropping it. `files: {}` is a 422
-    exactly as `note: ""` is, and for the reason `_check_note` argues at
-    length — the hub does not get to edit a document it did not write, and only
-    a hand-made push can carry either value, since `cadbuild.build` writes each
-    of those keys under a test that it has something to put there. `files` was
-    the exception until the review of this change: `if exported:` dropped an
-    empty map in SILENCE, in this same walk, a dozen lines from the field that
-    refuses the identical claim — so one document's one rule had two opposite
-    answers depending on which key it was asked about, and the drop was the very
-    edit the refusal next door exists to avoid. `preview` needs no clause of its
-    own and is not a third case: `""` is not a file this build declared, so
-    `_check_declared_file` has already refused it.
+    A printable carries files, and the catalogue carries at least one printable,
+    mirroring the build side: `cadbuild.printables.export_printables` exports
+    STEP, STL and 3MF for every printable, and `cadbuild.parts.read_catalogue`
+    refuses a catalogue with nothing to print.
 
-    A FIELD WRITTEN `null` IS THEREFORE AN ABSENT ONE, uniformly, and that is a
-    reading rather than an oversight: `null` is the JSON spelling of "nothing
-    here", and this document is REBUILT rather than passed through, so the two
-    spellings collapse into the one a reader sees. `notes: {"lid": null}` used to
-    be a 422 -- the flat map's VALUES were notes, and a null one was a broken
-    row -- and the danger that refusal covered is still closed, from the other
-    end: a null never reaches the browser, because the key is not emitted. What
-    changed is the verdict on the push, not what is served. `kind` is the one
-    field this does not apply to, because it is not optional: `kind: null` is
-    refused with every other non-kind.
-
-    A PRINTABLE CARRIES FILES, AND THE CATALOGUE CARRIES A PRINTABLE. Those are
-    the two claims this side makes about what a BUILD can produce, and both
-    arrived late because their MIRROR IMAGES were already here: a non-printable
-    that declares files is a 422 four lines from the printable that declared
-    none and was accepted, and "the catalogue is non-empty" stood next to
-    "something in it is printed" without it. Both are checked on the build side
-    and can be read there: `cadbuild.printables.export_printables` writes STEP,
-    STL and 3MF for EVERY printable and `cadbuild.build` files them under the
-    record, so a printable with no `files` is a record no build wrote; and
-    `cadbuild.parts.read_catalogue` refuses a catalogue whose every entry is
-    hardware or a mock, in as many words ("the catalogue has nothing to
-    print").
-
-    WHAT IS DELIBERATELY NOT ASKED HERE, so that nobody completes the symmetry
-    later: the build ALSO guarantees a view called `assembled` and an
-    `overview` on it (`cadbuild.views`), and neither is required by this side.
-    `assembled` is an id the BUILD half invented; the serving half knows
-    nothing about a view beyond its `id`, its `file` and the keys it selects,
-    and demanding a particular id would write the build half's vocabulary into
-    the receiving side — a coupling that does not exist today and costs more
-    than the hole it closes. The two rules above need no such vocabulary:
-    `printable` is a word this module already spells (`KIND_PRINTABLE`) and
-    `files` is a field it already reads.
+    Not checked here: the build also guarantees an `assembled` view with an
+    `overview` (`cadbuild.views`), but that id is build-half vocabulary and the
+    serving side does not depend on it.
     """
     catalogue = raw.get("parts")
     if not isinstance(catalogue, dict) or not catalogue:
@@ -738,13 +493,9 @@ def _catalogue(raw: dict, files: dict) -> dict:
 
         declared = record.get("files")
         if declared is None:
-            # THE OTHER HALF OF THE CLAUSE BELOW, and it was missing while that
-            # clause stood four lines away: a build exports STEP, STL and 3MF
-            # for every printable it finds, so "printable" and "has files" are
-            # one statement made twice, and a record making only half of it is
-            # one no build wrote. Refused for the reason the other half is: the
-            # browser draws a record BY its kind, so a printable with nothing to
-            # download is a row promising buttons that are not there.
+            # A build exports STEP, STL and 3MF for every printable, so a
+            # printable with no files is a record no build wrote, and the
+            # browser would draw a row promising buttons that are not there.
             if kind == KIND_PRINTABLE:
                 raise ValueError(
                     f"{where} is {kind!r} and declares no files; every "
@@ -764,9 +515,7 @@ def _catalogue(raw: dict, files: dict) -> dict:
                 raise ValueError(
                     f"the files of {where} must be an object mapping extension "
                     f"-> filename")
-            # REFUSED, NOT DROPPED — the docstring above has the argument, and
-            # it is the one `_check_note` makes about `""` on the field this
-            # same loop reads two blocks down.
+            # Refused, not dropped: see the docstring.
             if not declared:
                 raise ValueError(
                     f"{where} declares an empty `files`; a record with nothing "
@@ -776,10 +525,8 @@ def _catalogue(raw: dict, files: dict) -> dict:
                 budget, len(declared), f"the files of {where}", files)
             exported = {}
             for extension, name in declared.items():
-                # The extension is what the download button is captioned with,
-                # so it is whitelisted rather than escaped — the rule the old
-                # `downloads` label was held to, on the field that inherited its
-                # job.
+                # The extension captions the download button, so it is
+                # whitelisted rather than escaped.
                 if not isinstance(extension, str) or not SAFE_LABEL.match(
                         extension):
                     raise ValueError(
@@ -805,14 +552,9 @@ def _catalogue(raw: dict, files: dict) -> dict:
 
         read[key] = entry
 
-    # THE MIRROR OF `read_catalogue` ON THE BUILD SIDE, which refuses a
-    # catalogue whose every entry is hardware or a mock. A model project exists
-    # to produce a part, so a document describing nothing but bought screws and
-    # scenery was not written by a build of one — and the front page would list
-    # it as a build with nothing in it to print. Checked AFTER the walk and not
-    # before it, because `kind` is what answers it and the walk is what
-    # validates `kind`; a pre-pass would be a second reading of the same field,
-    # free to disagree with this one about what counts.
+    # Mirror of `read_catalogue` on the build side: a build of a model produces
+    # at least one printable. Checked after the walk, because the walk is what
+    # validates `kind`.
     if not any(entry["kind"] == KIND_PRINTABLE for entry in read.values()):
         raise ValueError(
             f"the catalogue has nothing to print: not one of its "
@@ -851,69 +593,23 @@ def check_view_file(path: Path, view_id: str, catalogue: dict) -> set:
         label.innerHTML = node.name;
         label.innerHTML += `<span style="color:${color}"> ⚈</span>`;
 
-    and `name`/`color` come straight out of this file. Patching the library is not
-    an option — it is vendored, 3.6 MB, and replaced wholesale by its next
-    release — so the check has to happen on the way in, once, rather than on every
-    render. The CSP is a backstop for what this misses, not a substitute for it:
-    it stops an injected <script> from running but says nothing about a `<form>`
-    posting elsewhere or an `<a>` covering the page, and a build URL is permanent,
-    immutable and shares an origin with every other project on the host.
+    and `name`/`color` come straight out of this file. The library is vendored
+    (3.6 MB, replaced wholesale by its next release), so the check happens once,
+    on the way in. The CSP is a backstop: it stops an injected <script> but not a
+    `<form>` posting elsewhere or an `<a>` covering the page.
 
-    `key` IS THE THIRD STRING NOW, and it is why this takes a catalogue.
-    `export_views` stamps the catalogue key on every leaf (issue #75) and the
-    browser looks the record up by it, so it reaches the page exactly as `name`
-    does and is held to the same rule. It is also the one field here that can be
-    checked against something rather than only for shape: a key naming a record
-    the catalogue does not declare is a part the reader can find nothing about,
-    and refusing it is what makes "this view shows that part" a fact instead of
-    two strings that happen to be equal.
+    `key` is the third string: `export_views` stamps the catalogue key on every
+    leaf and the browser looks the record up by it, so it gets the same rule and
+    has to name a record the catalogue declares. That is referential integrity
+    only; which solid carries which key is decided by the model's own code.
 
-    WHAT THE CROSS-CHECK IS NOT is a claim that the right geometry is under the
-    right key. Which solid was stamped with which key is decided inside the
-    build process, which runs the model's own code — so this can only hold the
-    document together, never hold it to the truth. Referential integrity is the
-    whole of what is on offer here, and it is worth having on its own.
-
-    A LEAF HAS TO CARRY A `key`, AND THE KEYS SEEN ARE RETURNED. The two halves
-    are one repair, and what they repair is the only promise `views[].parts` in
-    meta.json makes: that a reader learns what is in a tab WITHOUT fetching a
-    multi-megabyte view file. Until the two documents were compared, nothing
-    signed that promise — a view file of unkeyed leaves published beside a list
-    naming three parts, `hammerola status` and the build page repeated the
-    three, and the only thing that could contradict them was the very download
-    the field exists to avoid. Into an immutable directory, under a year of
-    cache, undoable only by deleting the project.
-
-    THE LEAF/GROUP DISTINCTION IS `parts`, and reading it is a transcription
-    rather than the hub deciding the shape of a document it did not write. This
-    walk already descends into a node precisely because it has `parts` (below);
-    the vendored viewer decides the same way (`isShapeTree(shape) { return
-    "parts" in shape; }`); and the build writes a group as
-    `{"version", "name", "id", "loc", "parts"}` with no key and a leaf with one.
-    So a node with no `parts` under it is a leaf, and a leaf with no key is a
-    part a reader can find nothing about — the reconstruction-by-name the
-    catalogue exists to end.
-
-    IT IS THE PRESENCE OF THE FIELD AND NOT ITS VALUE, which is the viewer's
-    rule quoted verbatim above: `"parts" in shape`. Asking `is None` instead
-    made `{"key": "lid", "parts": null}` a LEAF here — a document this accepted,
-    while the viewer read the same node as a group and ran
-    `for (const shape of shapes.parts)` over a null. That is the failure issue
-    #53 is about, arriving through the other door: a 201 into an immutable
-    directory under a year of cache, and a build that never opens. Both
-    spellings agree on every node a build writes and disagree on exactly one
-    hand-made value, so the cheap way to keep them agreeing is to ask the
-    question the same way. `null` now reaches the list check below and is
-    refused in its words. `VIEW_KEPT_KEYS` is what makes the presence readable
-    at all: the parser drops the fields not on it, and `parts` is on it, so a
-    key written in the file is a key in the node here.
-
-    EVERY `key` IN THE FILE GOES INTO THE SET, wherever it sits, because a key
-    is a claim about what this view shows and this walk is not the place to
-    decide which nodes a future viewer will read one from. A group carrying one
-    is not something the build writes; if a push writes it anyway, it is
-    declared like any other. What the set is FOR is `_match_selection`, which
-    holds it against the view's declared `parts` — equality in both directions.
+    Every leaf has to carry a `key`, and every key seen (on leaves or groups) is
+    returned for `_match_selection`, so `views[].parts` in meta.json can be
+    trusted without fetching the view file. A node is a group when the field
+    `parts` is present, whatever its value — the vendored viewer's own rule
+    (`"parts" in shape`) — so `"parts": null` is a group, refused by the list
+    check, rather than a leaf. `VIEW_KEPT_KEYS` keeps `parts` so its presence
+    survives the parse.
 
     Walked iteratively, with a depth ceiling, so neither a deeply nested tree nor
     a wide one can turn a malformed upload into a RecursionError.
@@ -1019,37 +715,18 @@ def measure_view(path: Path) -> tuple[int, int]:
 
 
 def _view_parts(view: dict, view_id: str, catalogue: dict) -> list:
-    """`views[].parts`: WHICH parts this view shows, by catalogue key.
+    """`views[].parts`: which parts this view shows, by catalogue key.
 
-    A LIST OF KEYS AND NOT A COUNT, and that swap is the whole of issue #75 on
-    this document. A number was a fact about the view FILE that no reader could
-    reconcile with anything else: five pins are five references to one catalogue
-    record, so the count disagreed with the parts map beside it, and a reader
-    wanting to know what was in a tab had to fetch a multi-megabyte view file to
-    find out.
+    Every key has to be one the catalogue declares; membership is stricter than
+    `_check_part_name`, since every catalogue key already passed it.
 
-    EVERY KEY HAS TO BE ONE THE CATALOGUE DECLARES, and that check is the reason
-    the field is worth having at all: it turns "this view shows that part" from
-    two strings that happen to be equal into something the hub can refuse. Held
-    to no name rule of its own here — membership in the catalogue is stricter
-    than `_check_part_name`, since every key in it already passed exactly that.
+    Counted against the size of the catalogue before the walk, so a list of a
+    hundred thousand repeats is refused before any of it is walked; the
+    duplicate refusal is what makes that count exact.
 
-    COUNTED BEFORE THE WALK, against the size of the catalogue. Deduplication on
-    the build side is not a bound on this side: the document arrives from a
-    push, and the build that wrote it is not a witness the hub has. The
-    duplicate refusal below is what makes the count exact — a list with no
-    repeats, every entry a distinct catalogue key, cannot be longer than the
-    catalogue — but it is reached one entry at a time, and the ceiling is here
-    so a list of a hundred thousand repeats is refused before any of it is
-    walked.
-
-    ASKED BEFORE THE VIEW FILE IS OPENED, and that is why the comparison with
-    the file is a second function rather than an argument to this one. Everything
-    here is a dict lookup; what follows it in `build_meta` is a full parse of the
-    view file and a full gzip of it, in a build worker of which the process has
-    two. A push naming one 200 MB view and writing `"parts": "x"` used to pay
-    both before this line could produce the 422 — precisely the bill
-    `_check_map_size` refuses to pay one paragraph over.
+    Called before the view file is opened, because what follows in `build_meta`
+    is a full parse and gzip of it; the comparison with the file is the separate
+    `_match_selection`.
     """
     refs = view.get("parts")
     if not isinstance(refs, list):
@@ -1079,30 +756,17 @@ def _view_parts(view: dict, view_id: str, catalogue: dict) -> list:
 
 
 def _match_selection(declared: list, shown: set, view_id: str) -> None:
-    """`views[].parts` has to be EXACTLY the keys its view file names.
+    """`views[].parts` has to be exactly the keys its view file names.
 
-    THE TWO DOCUMENTS ARE ONE CLAIM, and until they were compared nothing here
-    held them together: `_view_parts` above checked the list against the
-    catalogue, `check_view_file` checked the file against the catalogue, and
-    neither ever met the other. So a view file of two unkeyed leaves published
-    beside `"parts": ["lid", "pin", "m3"]`, and so did a `"parts": []` beside a
-    file full of them — a tab promising three parts and showing one, repeated by
-    `hammerola status` and by the card on the build page, into an immutable
-    directory under a year of cache.
+    `_view_parts` checks the list against the catalogue and `check_view_file`
+    checks the file against it; this holds the two together, so a tab cannot
+    promise parts it does not show.
 
-    EQUALITY AND NOT CONTAINMENT, because the field is DERIVED and not chosen:
-    `cadbuild.views.export_views` writes it as
-    `list(dict.fromkeys(node["key"] for node in nodes))` — the keys of the
-    leaves, deduplicated, in the order the author wrote them. So the set is the
-    whole of what an honest build can put here, and either direction of
-    disagreement is a document that lies about itself: a key declared and not
-    shown is a part a reader is promised and cannot find, a key shown and not
-    declared is a part in the tab that the summary never mentions.
-
-    ORDER IS NOT COMPARED, and that is not laxity. The list's order is the
-    author's statement about the assembly (`_view_parts` copies rather than
-    sorts it), while the walk that produced `shown` descends a stack and cannot
-    report an order at all. What is checked is membership, in both directions.
+    Equality, not containment: `cadbuild.views.export_views` writes the field as
+    `list(dict.fromkeys(node["key"] for node in nodes))`, so a disagreement in
+    either direction is a document that lies about itself. Order is not
+    compared: the list keeps the author's order and the stack walk that produced
+    `shown` has none.
     """
     missing = [key for key in declared if key not in shown]
     extra = sorted(shown.difference(declared))
@@ -1127,21 +791,12 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                job: str = None, message: str = None) -> dict:
     """Validate the uploaded meta.json and normalize it for the viewer.
 
-    NOTHING IS RENAMED ANY MORE. `views` used to be handed to the browser as
-    `variants` — a word the viewer had inherited from the prototype, translated
-    here in one line so working frontend code did not have to be touched over
-    it. Issue #75 rewrites that half around catalogue keys anyway, so the line
-    stopped buying anything and started costing the usual price of two names for
-    one thing. A view is called a view all the way through.
+    The catalogue is read first: every view names the keys it shows and every
+    leaf of every view file carries one, so `parts` has to exist before any of
+    them can be checked against it.
 
-    THE CATALOGUE IS READ FIRST, and the order is load-bearing rather than
-    tidy: every view names the keys it shows and every leaf of every view file
-    carries one, so `parts` has to exist before any of them can be checked
-    against it.
-
-    `bytes` and `gzip` are measured SERVER-SIDE rather than trusted from the
-    upload: they are shown in the view picker, so a wrong number is a wrong
-    promise about what clicking costs, and CI has no reason to compute them.
+    `bytes` and `gzip` are measured server-side rather than trusted from the
+    upload: they are shown in the view picker as what clicking costs.
     """
     catalogue = _catalogue(raw, files)
 
@@ -1167,29 +822,17 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             raise ValueError(f"view id {view_id!r} appears twice")
         seen.add(view_id)
 
-        # THE SAME QUESTION EVERY OTHER POINTER IS ASKED, through the same
-        # helper. This loop used to ask a version of it inline — membership, `/`
-        # and `GENERATED_FILES` — and that version never grew the leading-dot
-        # and non-printable clauses the shared rule has, so a view file called
-        # `.assembled.json` published with a 201 and 404'd on every GET, on the
-        # one map without which the build page has nothing to draw at all.
+        # The same check every other file pointer gets.
         name = view.get("file")
         _check_declared_file(name, files, f"view {view_id!r}")
 
-        # BEFORE THE FILE IS TOUCHED, and the order is the whole point: what
-        # this answers costs a lookup per key, while the two lines under it cost
-        # a full parse of the view file and a full gzip of it — up to
-        # MAX_BUILD_BYTES of it, in one of the `jobs.MAX_CONCURRENT_BUILDS`
-        # build workers. It used to be
-        # asked where its value is used, five lines down, so `"parts": "x"` was
-        # a 422 bought at the price of the whole file.
+        # Before the file is touched: this is a lookup per key, while the next
+        # two lines parse and gzip the whole view file.
         selected = _view_parts(view, view_id, catalogue)
 
-        # The bytes of this file are handed to `viewer.render()` verbatim, so the
-        # push does not stop being untrusted input at the archive boundary: what
-        # is inside a view reaches the DOM as well — and, since issue #75, every
-        # leaf of it names a catalogue key, which is checked against the
-        # catalogue this document declares rather than merely for shape.
+        # The bytes of this file are handed to `viewer.render()` verbatim, so
+        # what is inside a view reaches the DOM too; every leaf names a
+        # catalogue key, checked against the catalogue.
         shown = check_view_file(staging / name, view_id, catalogue)
         # The half that CANNOT be asked before the walk, because it is about
         # what the walk found: the summary above and the file have to name the
@@ -1223,12 +866,9 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                 preview, files, f"the picture of view {view_id!r}")
             entry["preview"] = preview
         # The same picture without the title band and the footer, for the front
-        # page's card, which FITS what it is given rather than cropping it
-        # (`ui/src/HammerolaEntry.jsx`). Read exactly like `preview` above and
-        # OPTIONAL for one reason that is not the others': every build published
-        # before the build side learnt to write it has none, and those cards go
-        # on working — so a missing `card` is an old build and never a broken
-        # one, and nothing here may start demanding it.
+        # page's card, which fits it rather than cropping
+        # (`ui/src/HammerolaEntry.jsx`). Optional: builds made before the build
+        # side wrote it have none, and their cards fall back to `preview`.
         card = view.get("card")
         if card is not None:
             _check_declared_file(
@@ -1242,16 +882,10 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     project = _plain_text(str(raw.get("project") or pid), "project")
     title = _plain_text(str(raw.get("title") or project), "title")
 
-    # `built` is the model's own timestamp and is what the build picker and
-    # `latest` order by. It is optional: a project that does not set it gets the
-    # moment the hub accepted the push, which is monotonic in practice and keeps a
-    # missing field from being a publish failure.
-    #
-    # It is NOT parsed as a date — `_built_key` deliberately tolerates an
-    # unparseable one so a single odd timestamp cannot break a project's picker —
-    # but it is displayed exactly like `project` and `title`, so it gets exactly
-    # their validation. Skipping it here was worth a 500 KB `built` served to
-    # every visitor of `/` and an RTL override reversing its neighbours.
+    # `built` is the model's own timestamp, which the build picker and `latest`
+    # order by. Optional: without it the moment the hub accepted the push is
+    # used. Not parsed as a date (`_built_key` tolerates an unparseable one) but
+    # displayed like `project` and `title`, so it gets their validation.
     raw_built = raw.get("built")
     built = (_plain_text(raw_built, "built", MAX_BUILT)
              if isinstance(raw_built, str) and raw_built.strip() else published)
@@ -1279,24 +913,16 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         "views": rendered,
         "parts": catalogue,
     }
-    # THE THIRD KEY THE SLOT HAS AND A REVISION DOES NOT (issue #79). The slot
-    # is not addressed by a revision, so no log is stored under its name and the
-    # only copy of one is at the JOB that produced the build — which nothing
-    # remembered, so `hammerola log dev` could only refuse. One field is that
-    # memory. Added after the document rather than inside it so a revision's
-    # meta.json does not change by a byte, and left None-able because a slot
-    # written without one still has to be a published slot.
+    # The slot is not addressed by a revision, so no log is stored under its
+    # name; `job` records the job that produced it so `hammerola log dev` can
+    # find the log. Added only for the slot so a revision's meta.json does not
+    # carry it, and None-able because a slot can be written without one.
     if dev:
         meta["job"] = job
-    # AND THE ONE FIELD THAT COMES FROM THE PUSH RATHER THAN FROM THE BUILD
-    # (issue #67). It is a property of ONE revision — what the author said this
-    # version is — so it is stored with that record and nowhere else; the picker
-    # is derived from these documents (`Store.builds_of`) and reads it back out
-    # of them. Written like `job` above, after the document and only when there
-    # is one, so a revision pushed without `-m` has a meta.json byte-identical
-    # to the one it would have had before this field existed. Already validated
-    # by `revision_message` at the door, where a bad one is refused rather than
-    # dropped.
+    # The one field that comes from the push rather than the build: what the
+    # author says this revision is. Written only when present, like `job`; the
+    # picker reads it back (`Store.builds_of`). Validated by `revision_message`
+    # at the door.
     if message:
         meta["message"] = message
     return meta
@@ -1311,17 +937,12 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
     is one directory that gets overwritten and a list of one thing that keeps
     changing is not a history.
 
-    The two moving names ride alongside instead, so the picker can offer them as
-    the destinations they are without inventing entries: `has_dev` says the local
-    slot is occupied, `latest` names the commit it currently resolves to. Either
-    can be absent — a project whose only build is local has no `latest`, and one
-    that has never published anything at all has no slot — and the picker must
-    offer neither in that case, or it offers a link to a 404. The slot's absence
-    ends at the FIRST publication of either kind: since issue #78 a commit fills
-    the slot with itself, so `has_dev` is true of every project that has ever
-    committed, laptop push or no. They are answers
-    about NAMES, which is why one is a flag and the other is a commit id: `dev`
-    resolves to itself and there is nothing more to say about it.
+    The two moving names ride alongside instead: `has_dev` says the local slot
+    is occupied, `latest` names the commit it currently resolves to. Either can
+    be absent, and the picker must then not offer it, or it offers a link to a
+    404. A commit fills the slot with itself, so `has_dev` is true of every
+    project that has ever committed. `dev` resolves to itself, which is why it is
+    a flag and `latest` is a commit id.
 
     `fallback` is the local slot's own meta, used for the project name only when
     there is no commit build to take it from.
@@ -1345,9 +966,7 @@ def _picker_entry(meta: dict) -> dict:
     view records, and this file is re-read on every load and every revision
     switch of the owner's page. Only what a row draws is carried.
 
-    `message` is present only when the revision has one (issue #67) — a project
-    whose revisions were pushed without `-m` gets exactly the file it got
-    before — and the picker draws a row without it as it always drew every row.
+    `message` is present only when the revision has one.
     """
     entry = {"commit": meta["commit"], "built": meta["built"]}
     message = meta.get("message")
@@ -1356,15 +975,10 @@ def _picker_entry(meta: dict) -> dict:
     return entry
 
 
-# THE THREE WORDS A PROJECT CARD MAY SAY ABOUT ITS DRAFT, and the whole mapping
-# onto them (issue #32). Here rather than in `src/jobs.py` because that module
-# imports `store`, which imports this one: a card word defined over there could
-# not be reached from the card without closing the cycle.
-#
-# So what the mapping takes is a PLAIN STRING and never a job record — this
-# module knows nothing about the registry and is not to learn. The coupling that
-# has to hold, that every state `src/jobs.py` can put a job in lands on one of
-# these words, is held by a TEST importing both rather than by this comment.
+# The three words a project card may say about its draft. Here rather than in
+# src/jobs.py because jobs imports store, which imports this module. The mapping
+# takes a plain string, never a job record; a test importing both modules holds
+# that every job state lands on one of these words.
 CARD_IDLE = "idle"
 CARD_BUILDING = "building"
 CARD_FAILED = "failed"
@@ -1393,80 +1007,34 @@ def card_status(state: str | None) -> str:
 def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     """One project's card in the index payload (`/index.json`, EDIT_TOKEN).
 
-    Built from its NEWEST commit build, plus two facts that belong to the project
-    rather than to any single build and are therefore passed in by the caller
-    (`Store._refresh_index`, which is already holding both).
+    Built from its newest commit build, plus two project-level facts the caller
+    (`Store._refresh_index`) passes in.
 
-    `dev` is whether the local slot holds sources NO COMMIT HAS PUBLISHED, which
-    is not the same as the slot being occupied: a commit fills the slot with
-    itself (issue #78), so "occupied" is true of every project that has ever
-    committed and a card built on it would carry the chip always.
-    `Store._uncommitted_in_slot` is what answers it, by digest.
+    `dev` is whether the local slot holds sources no commit has published
+    (`Store._uncommitted_in_slot`, by digest), not whether the slot is occupied:
+    a commit fills the slot with itself, so "occupied" would put the chip on
+    every card. `has_dev` in `builds_json` asks the other question on purpose:
+    the picker needs it to decide whether a `/dev/` link resolves.
 
-    THAT MAKES THIS FLAG AND `has_dev` IN `builds_json` TWO DIFFERENT QUESTIONS,
-    on purpose. `has_dev` asks whether the slot exists, because the picker uses
-    it to decide whether to OFFER a `/dev/` link at all — narrowing it to "the
-    slot differs from `latest`" would hide a link that resolves, and would make
-    `hammerola status` call an occupied slot empty. This flag asks whether there
-    is anything to say about the project on the front page, where a chip on
-    every card says nothing.
+    The card describes the newest commit and never the slot (SPEC 7.6).
 
-    The card still describes the newest COMMIT and never the slot — that is SPEC
-    7.6 and the front page is exactly where it matters — but "there is
-    uncommitted work in this project" is a different statement from "this is what
-    the project looks like", and only the second one is a promise about the link.
-
-    `first_built` is the honest answer to a question the hub cannot answer. It
-    does not know when a project was CREATED: `hammerola create` mints an id in
-    the author's own directory and nothing reaches this side until the first
-    push, so the earliest moment on record is a build. The card therefore carries
-    the OLDEST build still here and the page labels it as that rather than as a
-    creation date. It is a stable answer and not a drifting one only because
-    there is no retention (SPEC 5.3): builds are never swept, so the oldest one
-    stays the oldest.
+    `first_built` is the oldest build still here: the hub never learns when a
+    project was created (`hammerola create` runs locally), and with no retention
+    (SPEC 5.3) the oldest build stays the oldest. The page labels it as that.
     """
     total_gzip = sum(v["gzip"] for v in meta["views"])
-    # THE PICTURE, AND IT IS THE FIRST ONE ANY VIEW OF THIS BUILD DECLARES. A
-    # build renders a sheet per whole-view mesh (`cadbuild.preview_png`) and
-    # hangs it on the view it is of, while a card wants exactly one, so one of
-    # them has to be picked and the first is the pick.
-    #
-    # IT IS NOT A PROMISE ABOUT WHAT THE CARD'S LINK OPENS, and saying it were
-    # would be the easy sentence to write here. Two things break it, and both
-    # are ordinary. Pictures are hung only on the two view ids the build knows
-    # (`cadbuild.build.stem_of_view`), while the ORDER of the views is the
-    # model's own — so a project whose first view is one of its own carries a
-    # picture of a later one. And the card links at the pointer-less URL, which
-    # opens whichever of `latest` and `dev` this reader was last on (SPEC 9),
-    # while the card and this picture both describe the newest COMMIT build. So
-    # what the card promises is what the rest of the card already promises: this
-    # is the newest committed build, picture included.
-    #
-    # DELIBERATELY NOT LOOKED UP BY VIEW ID. The id of the assembled view is
-    # `cadbuild.artifacts.ASSEMBLED_VIEW_ID`, and nothing on the SERVING side
-    # reaches into the build half — the two things that do reach into it are the
-    # build process itself (`src/buildproc/child.py`) and the root `checklib.py`
-    # shim, both deliberate (docs/repo-map.md). It is the same rule the KINDS
-    # transcription at the top of this file already follows. Taking that
-    # dependency on to name one string costs more than this field is worth.
-    #
-    # `None` IS A REAL ANSWER rather than a defect to guard against: a build made
-    # by an image with no rendering stack ships no PNGs at all — `render_previews`
-    # in cadbuild/assembly.py degrades to a warning and returns nothing — so its
-    # views declare none, and that card keeps drawing the neutral plate.
+    # The picture is the first one any view of this build declares. It is not a
+    # promise about what the card's link opens: pictures hang only on the view
+    # ids the build knows while view order is the model's, and the link opens
+    # whichever of `latest` and `dev` the reader was last on (SPEC 9). Not looked
+    # up by view id, because the serving side does not import the build half
+    # (`cadbuild.artifacts.ASSEMBLED_VIEW_ID`; see docs/repo-map.md). `None` is a
+    # normal answer: an image with no rendering stack ships no PNGs.
     preview = next((view["preview"] for view in meta["views"]
                     if view.get("preview") is not None), None)
-    # THE SAME PICK ON THE PICTURE THE CARD ACTUALLY WANTS: the sheet without its
-    # title band and its footer, which the card fits whole. Picked separately
-    # rather than off the view `preview` came from, because the two questions are
-    # answered per view and a view that declares one declares both.
-    #
-    # `None` IS AN ORDINARY ANSWER HERE TOO, and for one more reason than
-    # `preview` has: every build published before the build side started writing
-    # this file has no `card` anywhere in its meta.json, and its card keeps
-    # drawing the sheet it has always drawn. The front page falls back to
-    # `preview` (`ui/src/HammerolaEntry.jsx`), so nothing about an old build has
-    # to be rebuilt or migrated.
+    # The same pick for the card picture (the sheet without its title band and
+    # footer). `None` also means a build made before the build side wrote it; the
+    # front page falls back to `preview` (`ui/src/HammerolaEntry.jsx`).
     card = next((view["card"] for view in meta["views"]
                  if view.get("card") is not None), None)
     return {
@@ -1477,30 +1045,13 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
         "built": meta["built"],
         "first_built": first_built,
         "dev": bool(dev),
-        # DECLARED HERE AND ANSWERED BY THE ROUTE. What the draft's build is
-        # doing is a live fact, and this function writes a FILE: whatever word
-        # were put here would be the word that was true at the last publish,
-        # which is precisely the moment nothing is building. `_serve_index_json`
-        # in src/app.py fills it per request, from the project's pointer and the
-        # job registry (`card_status` above). The key is written all the same so
-        # that the field the browser reads is one this function declares —
-        # `tests/test_ui_source.py` holds the two sides to that.
+        # Answered by the route: `_serve_index_json` in src/app.py fills it per
+        # request from the project's pointer and the job registry
+        # (`card_status`). Declared here so the field the browser reads is one
+        # this function writes (tests/test_ui_source.py).
         "status": None,
-        # HOW MANY PARTS GET PRINTED, and the field is called `printables`
-        # because it answers a different question from the one the old field
-        # asked. That one was `max(v["parts"] for v in meta["variants"])` — the
-        # part COUNT of the biggest view — and the literal translation of it now
-        # that `parts` is a catalogue, `len(meta["parts"])`, would count the
-        # bought screws and the scenery along with the printed parts: three
-        # printed parts and nine screws would read "12 parts" on the front page.
-        # The kind is what finally makes the honest number expressible.
-        #
-        # THE NAME CHANGES ON PURPOSE, and the same goes for `views` below. A
-        # field that keeps its name and changes its meaning breaks its readers
-        # in silence — a card would go on rendering a number that is no longer
-        # the number it says — while a field that DISAPPEARS breaks them loudly,
-        # at the one moment somebody is there to fix it. The browser half is
-        # repointed at these in the step that rewrites it (issue #75).
+        # How many parts get printed: catalogue records of kind printable, so
+        # bought screws and scenery are not counted.
         "printables": sum(1 for record in meta["parts"].values()
                           if record["kind"] == KIND_PRINTABLE),
         "views": len(meta["views"]),

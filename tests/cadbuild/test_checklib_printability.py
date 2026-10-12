@@ -12,7 +12,7 @@ The file is in two halves, and the split is the same one `test_checklib.py` and
 everywhere, CI included: a size that is not a size, a sweep of one position, an
 exemption for a part that is not in the assembly, an argument that is not
 geometry. The measurements need the CAD kernel and skip without it; CI's test
-container has it (issue #27), so both halves run there.
+container has it, so both halves run there.
 
 The geometry the second half runs on is built here rather than fetched: a
 socket with a narrow mouth over a wider cavity, and a lid whose head has to
@@ -150,7 +150,7 @@ def test_the_clearance_record_is_shared_between_the_two_names():
 
 
 def test_thin_walls_refuses_a_minimum_no_run_can_be_under():
-    """A check that passes for every part is worse than none (issue #55)."""
+    """A check that passes for every part is worse than none."""
     for minimum in (0.0, -0.8):
         with pytest.raises(ValueError, match="min_thickness"):
             checklib.thin_walls("not geometry either", [0.0], minimum)
@@ -161,9 +161,9 @@ def test_thin_walls_refuses_a_step_that_does_not_divide_the_minimum():
 
     A run is counted in whole steps, so a wall of exactly the minimum is seen
     as `floor(min / step)` samples long -- which adds up to the minimum only
-    when the division is whole. Measured before this refusal existed: a 0.8 mm
-    wall at min_thickness 0.8 and step 0.3 was reported as 0.60 mm on 24 scan
-    runs, the false red this check promises never to give.
+    when the division is whole. Without this refusal, a 0.8 mm wall at
+    min_thickness 0.8 and step 0.3 was reported as 0.60 mm on 24 scan runs,
+    the false red this check promises never to give.
     """
     with pytest.raises(ValueError, match="does not divide"):
         checklib.thin_walls("not geometry", [0.0], 0.8, step=0.3)
@@ -175,7 +175,7 @@ def test_thin_walls_refuses_a_step_that_leaves_one_division():
     A run is counted in whole steps, so with one division no run can be under
     one -- the check returns nothing for every part there is, including a rib
     eight times under the minimum. That is the same failure the min_thickness
-    refusal is named after (issue #55), reached by a different argument.
+    refusal guards against, reached by a different argument.
     """
     with pytest.raises(ValueError, match="the whole of min_thickness"):
         checklib.thin_walls("not geometry", [0.0], 0.8, step=0.8)

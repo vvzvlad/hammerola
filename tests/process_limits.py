@@ -28,10 +28,9 @@ WATCHED_RLIMITS = RLIMIT_NAMES
 # platform HAS and which it will let a process SET are two different questions
 # and only the second one differs in practice: Darwin has RLIMIT_AS and refuses
 # it at every value there is (measured -- see `limits.memory_limit_supported`),
-# while all six attributes exist on darwin and on linux alike (measured
-# 2026-08-26). A filter therefore drops nothing today, and on the day it did
-# drop something it would drop it silently, which is precisely the shape of bug
-# the guard downstream exists to catch.
+# while all six attributes exist on darwin and on linux alike (measured). A
+# filter would drop nothing, and if it ever did drop something it would drop it
+# silently.
 #
 # So a missing attribute refuses to start the suite instead of narrowing the
 # watch. That is the loud choice on purpose: `apply_process_limits` applies the

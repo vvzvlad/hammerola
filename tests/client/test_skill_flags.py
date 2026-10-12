@@ -1,21 +1,17 @@
-"""Every flag the parser accepts is a flag `skill/SKILL.md` teaches (issue #100).
+"""Every flag the parser accepts is a flag `skill/SKILL.md` teaches.
 
-THE ONE THING IN THIS SYSTEM THAT GOES STALE WITHOUT GOING RED. The client, the
-template and the model contract all break loudly, and the skill does not: it
-goes on confidently naming a flag that was renamed or dropped, and the agent
-reading it gets a refusal whose cause is a document on its own disk (`skill.py`).
-The audit that found this counted three long flags in the file against sixteen in
-`build_parser`, so the drift was not a near miss — the document had never covered
-the parser at all, and nothing anywhere would have said so.
+The skill goes stale without going red: it goes on naming a flag that was
+renamed or dropped, and the agent reading it gets a refusal whose cause is a
+document on its own disk (`skill.py`).
 
-THE PAIRING RUNS BOTH WAYS, and the two directions are different failures. A
+The pairing runs both ways, and the two directions are different failures. A
 parser flag the document does not carry is a capability the reader never learns
 it has, which is how a person ends up told "the queue has nothing" by an agent
 that did not know about `--all`. A flag the DOCUMENT carries and the parser does
 not is the louder half: the agent types it, argparse refuses the whole command,
-and the reason is a sentence written for a client two releases ago.
+and the reason is a sentence written for an older client.
 
-LONG SPELLINGS ONLY, and the second test is what makes that honest rather than
+Long spellings only, and the second test is what makes that honest rather than
 convenient. A short option is one character and this document also shows the
 `curl` and `mkdir` a machine is set up with, so scanning for `-o` or `-p` finds
 THEIR flags and proves nothing about ours. Every option this parser offers has a

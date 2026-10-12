@@ -148,17 +148,11 @@ def driven(monkeypatch):
 def with_the_real_rule(driven, monkeypatch, isolated_project):
     """`driven`, but with the REAL provenance module over a real model.py.
 
-    THIS FIXTURE EXISTS BECAUSE THE RULE COULD BE DELETED FROM `build()` AND THE
-    SUITE STAYED GREEN. Removing the `provenance.check(...)` line gave an
-    identical green run of tests/cadbuild, tests/buildproc and
-    tests/test_template.py: the fixture above replaces the whole module with a
-    stub, `tests/cadbuild/test_provenance.py` calls `collect`/`check` through a
-    helper of its own, and the one end-to-end witness -- the template build --
-    is importorskip'ped wherever the CAD kernel is absent — which CI no longer is
-    (issue #27), so that witness does run on a push now; what this file covers is
-    the machine that has no kernel, where the rule was tested thoroughly and its
-    CALL was not tested at all. Nothing here needs a kernel: everything that
-    would touch one is already
+    The fixture above replaces the whole provenance module with a stub and
+    `tests/cadbuild/test_provenance.py` calls `collect`/`check` through a helper
+    of its own, so without this the `provenance.check(...)` call in `build()` is
+    held only by the template build, which skips where the CAD kernel is
+    absent. Nothing here needs a kernel: everything that would touch one is
     faked by `driven`, and what is real is the parse, the walk and the refusal.
 
     Returns a function that writes model.py and points `build` at it.
@@ -264,12 +258,10 @@ def test_the_numbers_walk_answers_for_the_model_the_way_every_other_door_does(
     line the model wrote. `pytest.raises(BuildError)` is what says so here: the
     unwrapped ValueError fails this test rather than satisfying it.
 
-    IT USED TO REACH THAT THROUGH A KEY'S `__repr__`, and that is no longer a
-    raise at all -- `_one_level` renders the key with `modeltext.shown`, which
-    answers `<unprintable: ValueError>` rather than taking the build down. The
-    test beside this one is the witness for that half; this one had to move to a
-    door the chokepoint does not stand in, because a walk over the model's own
-    objects has more of them than rendering.
+    A key's `__repr__` is not such a door: `_one_level` renders the key with
+    `modeltext.shown`, which answers `<unprintable: ValueError>` rather than
+    taking the build down (the test beside this one). A walk over the model's
+    own objects has more doors than rendering, so this uses a dict subclass.
     """
     with_the_real_rule("""
         import checklib
@@ -339,11 +331,10 @@ def test_the_rule_is_asked_about_the_project_being_built(
     sitting right there -- or, worse, resolve against a directory that is not
     the push's.
 
-    IT USED TO BE ASSERTED THROUGH THE OUTCOME -- a journal at the root, a build
-    that does not raise -- and that could not tell the right argument from a
-    lucky one: `isolated_project` chdirs into the root it pins, so `Path.cwd()`
-    and `project_root()` are the same directory and replacing one with the other
-    left this green.
+    An outcome alone -- a journal at the root, a build that does not raise --
+    cannot tell the right argument from a lucky one: `isolated_project` chdirs
+    into the root it pins, so `Path.cwd()` and `project_root()` are the same
+    directory.
 
     THE DECOY IS WHAT MOVES THE ASSERTION ONTO THE ARGUMENT. Chdir'ing away is
     enough to make the substitution fail, but it fails by not resolving the
@@ -455,11 +446,10 @@ def test_a_build_with_a_print_view_declares_the_plate_and_says_nothing(
         with_a_plate, out_dir, capsys):
     """The other side of the same branch: the plate is DECLARED, not stowed away.
 
-    Being written into the output directory is not what gets a file published —
-    it is what got these files to the site without being hashed by
-    `store._hash_output` or name-checked by `runner._verified_files` (issue
-    #53). `files` is the declaration, and this is what says the plate and its
-    picture are on it.
+    Being written into the output directory is not what gets a file published:
+    `files` is the declaration that `store._hash_output` hashes and
+    `runner._verified_files` name-checks, and this is what says the plate and
+    its picture are on it.
     """
     _pid, meta, files = build(out_dir)
 
@@ -524,13 +514,10 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
         driven, monkeypatch, out_dir):
     """The timing itself, held on the CALL rather than on the log text.
 
-    NOTHING HELD IT BEFORE. The phase table is how somebody with no CAD kernel
-    on their machine finds out where a slow build went, and every
-    assertion about it lived in a comment: a phase could be dropped, or its mark
-    reset to the start of the build, and the suite would not have moved. Reading
-    it back off the printed lines would be a test of the format instead — the
-    fact worth holding is that `build` ASKS for each phase, in order, from the
-    mark the phase before it handed back.
+    The phase table is how somebody with no CAD kernel on their machine finds
+    out where a slow build went. Reading it back off the printed lines would be
+    a test of the format; the fact worth holding is that `build` ASKS for each
+    phase, in order, from the mark the phase before it handed back.
 
     THE MARK IS A COUNTER AND NOT A CLOCK, which is what makes the second
     assertion exact rather than approximate: `_phase`'s return value is only
@@ -542,11 +529,9 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
     beginning of the build rather than from the phase before it, so it is the
     one call whose `since` is `build`'s own starting mark.
 
-    AND THIS IS WHERE A REORDER SURFACES, which it did: `previews` comes AFTER
-    `tessellation` rather than inside `rendering`, because a picture of a whole
-    view is drawn from the view DOCUMENT the tessellation writes. Put back the
-    other way round it would draw from files that do not exist yet, and the only
-    other thing that would notice is somebody opening the PNG.
+    It also holds the order: `previews` comes AFTER `tessellation` rather than
+    inside `rendering`, because a picture of a whole view is drawn from the
+    view DOCUMENT the tessellation writes.
     """
     calls = []
 
@@ -573,18 +558,14 @@ def test_every_phase_of_a_build_is_timed_and_the_marks_run_end_to_end(
 
 def test_a_build_reports_its_metrics_and_it_is_the_CALL_that_is_held(
         driven, monkeypatch, out_dir, isolated_project):
-    """`report_metrics` existed, was documented in five places and was called
-    from NOWHERE, for as long as nothing held the call (issue #59).
+    """`build()` calls `report_metrics` with its own output directory and the
+    baseline it was handed, read through `read_baseline`.
 
-    So what this asserts is the call itself: that `build()` makes it, with its
-    own output directory, and with the baseline it was handed — read through
-    `read_baseline`, which is the other half of the wire. A test that looked for
-    a line in the log would be satisfied by a line printed from anywhere at all,
-    and what broke was never the format.
+    The call itself is asserted: a test that looked for a line in the log would
+    be satisfied by a line printed from anywhere at all.
 
-    BOTH BRANCHES, because the summary is unconditional now: a build with a
-    baseline reports against it, and a build with none reports anyway and
-    carries the reason there is nothing to compare with.
+    Both branches: a build with a baseline reports against it, and a build with
+    none reports anyway and carries the reason there is nothing to compare with.
     """
     calls = []
     monkeypatch.setattr(
@@ -634,7 +615,7 @@ def test_the_card_picture_hangs_on_the_view_and_never_on_a_part(
     DECLARED AS WELL AS NAMED. `files` is what `runner._verified_files` checks
     and `store._hash_output` hashes, and the hub answers for nothing outside it
     — so a card named in meta.json and missing from that list publishes with a
-    201 and 404s on the front page, which is the exact failure issue #53 was.
+    201 and 404s on the front page.
     """
     _pid, meta, files = build(out_dir)
 
@@ -653,15 +634,13 @@ def test_the_card_picture_hangs_on_the_view_and_never_on_a_part(
 
 def test_a_view_named_after_a_part_does_not_get_that_part_s_picture(
         driven, monkeypatch, out_dir):
-    """The collision the explicit `stem_of_view` translation closed.
+    """A view whose id equals a part's name gets the view's picture, not the part's.
 
     `previews` is keyed by a FILE STEM and a printable's stem is its catalogue
-    key, so a view whose id happens to equal a part's name used to be handed
-    that PART's picture for its tab -- a plain `entry["id"] in previews` finds
-    it, and the tab then shows one part where the view shows the assembly.
-    Nothing in the contract stops an author calling a view after a part: view
-    ids are held to the member alphabet and to the hub's reserved FILE names,
-    neither of which knows what the catalogue holds.
+    key, so a plain `entry["id"] in previews` would hand that view the part's
+    picture; `stem_of_view` translates explicitly. Nothing stops an author
+    calling a view after a part: view ids are held to the member alphabet and
+    to the hub's reserved FILE names, neither of which knows the catalogue.
     """
     monkeypatch.setattr(build_module, "export_print_plate",
                         lambda prepared, out_dir: None)
@@ -679,10 +658,9 @@ def test_a_view_named_after_a_part_does_not_get_that_part_s_picture(
 
 def test_a_part_carries_its_own_files_and_nothing_else_does(
         with_a_plate, out_dir):
-    """The ownership is STATED rather than parsed. It used to be a flat
-    `downloads` map keyed by `<part>.<ext>`, which every reader had to cut back
-    apart — and the viewer did that by splitting at a dot, so a part with a dot
-    in its name landed on another part's row."""
+    """Each record states which files it owns, so no reader has to parse
+    ownership out of a file name -- which breaks on a part with a dot in its
+    name."""
     with_a_plate.catalogue = catalogue(base="printable", screw="hardware",
                                        wall="mock")
     _pid, meta, _files = build(out_dir)
@@ -725,15 +703,7 @@ def test_every_file_meta_json_offers_is_on_the_list_that_gets_verified(
         with_a_plate, out_dir):
     """The two halves of one declaration, built apart and compared here.
 
-    THIS REPLACES AN ASSERTION THAT COULD NOT FAIL. `len(files) == len(set(files))`
-    was written as though the collapse in `build` folded a real overlap, and no
-    build can produce one: the part files arrive as a set, a view file is
-    `<vid>.json` under a unique id that cannot be `meta` or `metrics`, both
-    whole-build stems are refused to the catalogue, and the pictures are the
-    only `.png`s. Deleting `dict.fromkeys` left it green.
-
-    What really holds the line is the other direction. `files` is the
-    VERIFICATION list — what `runner._verified_files` checks and
+    `files` is the VERIFICATION list — what `runner._verified_files` checks and
     `store._hash_output` hashes — and the hub refuses any declared name that is
     not a key of that hash, so a file offered by meta.json and missing from the
     list is a 422 on the push with the build itself reporting success. `build`
@@ -896,9 +866,8 @@ def after_a_real_model_import():
         its own.
       * `sys.path`. `geometry.load_model` puts the project root on it and never
         takes it off, so a scratch project stays importable for the rest of the
-        session -- and pytest's tmp directories outlive the run. That is how
-        this was found: `test_geometry`'s "there is no model.py" test imported
-        the one THIS test had written, three files earlier, and did not raise.
+        session -- and pytest's tmp directories outlive the run, so a later
+        "there is no model.py" test would import the model this test wrote.
     """
     saved_path = list(sys.path)
     yield
@@ -916,14 +885,12 @@ def test_a_model_with_a_check_unit_counts_it_and_keeps_what_it_measured(
     Everything else about check units is tested from `run_units` inwards, which
     leaves the call itself unwatched: the line in `build()` could be deleted and
     nothing outside tests/cadbuild/test_checkunits.py would move. What this
-    holds is the three things that call has to get right, and each of them has
-    failed on its own:
+    holds is the three things that call has to get right:
 
       * THE UNITS ARE COUNTED. One registered unit is one check, so a model with
-        one `checks()` assert and one unit reports two. `run_checks` answering
-        `None` for a counted zero is what made that number `null` for a model
-        that had moved every check into units, and `report_metrics` then could
-        not say a project had lost one.
+        one `checks()` assert and one unit reports two, and a model that moved
+        every check into units reports a count rather than `null`, so
+        `report_metrics` can say a project lost one.
       * THE UNITS RUN BEFORE THE METRICS ARE WRITTEN, and their records are
         merged before `collect_metrics` reads them. The interference number here
         is measured in a WORKER PROCESS and reaches metrics.json only across

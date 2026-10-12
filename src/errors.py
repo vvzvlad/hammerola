@@ -1,11 +1,8 @@
 """The refusal every door of the service answers with.
 
-`store`, `comments` and `proposals` each carried their own copy of this class:
-identical bodies, different docstrings. They are three subclasses of one base
-now rather than one shared name, because the code that catches them cares WHICH
-door refused — `app.py` answers a publish, a comment and a proposal on separate
-routes, and an `except` that could not tell them apart would answer one with
-another's status.
+Three subclasses of one base rather than one shared name, because the code
+that catches them cares which door refused: `app.py` answers a publish, a
+comment and a proposal on separate routes.
 
 The status travels WITH the refusal so `app.py` does not classify a failure a
 second time, and the message is one that is safe to hand back to the caller: a

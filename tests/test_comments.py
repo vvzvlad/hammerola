@@ -1,25 +1,15 @@
 """The WRITE half of the comment queue (SPEC 7A.2, 7A.4).
 
-`POST /api/v1/comments/<pid>/<commit>` takes EDIT_TOKEN since step 0 of the plan
-(SPEC 8A.1): a hub that executes the code it is sent cannot also accept anonymous
-input into a queue an agent works from. It used to be the one endpoint here that
-read a body from someone who presented no credential at all, and most of this
-file is unchanged by that, deliberately — the SIZE ceilings and the rule that
-what a file IS gets decided by its bytes are about what the hub does with a body
-and what it later serves, not about who sent it.
+`POST /api/v1/comments/<pid>/<commit>` takes EDIT_TOKEN (SPEC 8A.1): a hub that
+executes the code it is sent cannot accept anonymous input into a queue an agent
+works from. The SIZE ceilings and the rule that a file's bytes decide what it IS are
+about what the hub does with a body, not about who sent it. There are no per-build,
+global or rate-limit ceilings (SPEC 7A.4); tests/test_no_retention.py asserts their
+absence.
 
-What the token DID take away is everything that counted or throttled: the
-per-build ceiling, the global one and the rate limit keyed on the client address
-are gone (SPEC 7A.4, 2026-08-27), along with the tests that pinned them. That the
-ceilings are not merely raised but absent is asserted in
-tests/test_no_retention.py, beside the other absences — an absence that nothing
-tests grows back.
-
-`harness.Hub.post_comment` therefore sends the token by default; the tests about
-the door pass `token=None`.
-
-The tests talk HTTP to a real server, like the rest of the suite, because the
-promises being checked are made in status codes.
+`harness.Hub.post_comment` sends the token by default; the tests about the door
+pass `token=None`. The tests talk HTTP to a real server, like the rest of the
+suite, because the promises being checked are made in status codes.
 """
 
 import json
@@ -179,11 +169,8 @@ def test_a_body_from_an_ordinary_client_encoder_is_accepted(hub):
 def test_the_reply_carries_the_id_and_nothing_else(hub):
     """The reply is a bare id: the text is never echoed back (SPEC 7A.4).
 
-    ABOUT THE REPLY AND NOT ABOUT RENDERING, which is the half of the old
-    sentence that stopped being true: since issue #33 the build page DOES draw
-    the queue, as text and never as markup, and `ui/tests/feed.test.js` is where
-    that is pinned. What stays true here is that a response nobody asked for
-    carries nothing back — the caller already has its own text.
+    This is about the reply, not rendering: the build page draws the queue as text,
+    pinned in `ui/tests/feed.test.js`. The caller already has its own text.
     """
     pid, commit = _publish(hub)
     payload = comment_payload(text="<script>alert(1)</script>")
@@ -195,13 +182,11 @@ def test_the_reply_carries_the_id_and_nothing_else(hub):
 
 # -- the door ---------------------------------------------------------------
 def test_a_comment_without_the_token_is_refused(hub):
-    """The reversal of a decision, so it is pinned as one (SPEC 8A.1, step 0).
+    """Writing a comment requires the token (SPEC 8A.1).
 
-    Writing here used to be public and this test used to assert the opposite —
-    that no Authorization header was sent and the comment landed anyway. That
-    was the first step of a path with no vulnerability in it: anyone writes a
-    comment, it lands in the queue, an agent reads the queue as a task, the
-    agent edits model.py, the hub executes model.py.
+    Public writes would open a path with no vulnerability in it: anyone writes a
+    comment, an agent reads the queue as a task, edits model.py, and the hub
+    executes model.py.
     """
     pid, commit = _publish(hub)
     r = hub.post_comment(pid, commit, comment_payload(), token=None)
@@ -218,13 +203,12 @@ def test_a_wrong_token_is_refused_the_same_way(hub):
 
 
 def test_the_token_is_checked_before_the_body_is_read(hub_factory):
-    """The ordering is the point of the change, not a detail.
+    """The token is checked before the body is read.
 
-    A caller without the secret must not be able to make this hub receive a
-    multipart body and parse it just to be told no. Proved against a hub whose
-    body ceiling is 4 KiB, with a body that is over it AND not multipart at all:
-    either fact would answer 413 or 422 the moment it was looked at, so 401 is
-    the only answer possible if NOTHING below the token check ran.
+    A caller without the secret must not make this hub receive and parse a
+    multipart body just to be told no. The hub's body ceiling is 4 KiB and the body
+    is over it AND not multipart, so either fact would answer 413 or 422 if looked
+    at; 401 means nothing below the token check ran.
     """
     small = hub_factory(comment_max_body_bytes=4096)
     pid, commit = _publish(small)
@@ -495,13 +479,9 @@ def test_oversized_text_is_413(hub_factory):
 def test_a_comment_outlives_the_build_it_is_about(hub):
     """SPEC 7A.3. The queue is not under the build directory, deliberately.
 
-    The build is removed BY HAND here, which is the only way a build goes now
-    (SPEC 5.3): retention used to make this happen on its own, and the test
-    stood on a window of one. The property is the same either way — a comment
-    is not a file inside the build it names, so nothing that removes the build
-    can take it — and doing it by hand is if anything the more faithful
-    rehearsal, because that is what will really happen the day somebody clears
-    space on the volume.
+    The build is removed by hand, the only way a build goes (SPEC 5.3). A comment
+    is not a file inside the build it names, so nothing that removes the build can
+    take it.
     """
     _publish(hub, commit="aaa", marker="a")
     posted = hub.post_comment("proj1", "aaa", comment_payload())
@@ -530,40 +510,27 @@ def test_comments_are_not_served_from_the_public_site(hub):
 
 # -- the page that writes into the queue ------------------------------------
 def test_the_committed_page_scripts_never_build_markup_from_a_string():
-    """The rule the whole site is written under (SPEC 7A.4).
+    """No committed page script builds markup from a string (SPEC 7A.4).
 
-    These pages take text from a stranger's keyboard and live on one origin
-    shared with every project on the host. Two stored XSS bugs in this project
-    were assignments to innerHTML, so the absence is asserted rather than
-    reviewed.
+    These pages take text from a stranger's keyboard and share one origin with
+    every project on the host, so the absence of innerHTML assignments is asserted
+    rather than reviewed. The committed scripts are the pointer resolver and the key
+    it reads; the compiled interface in `ui/src/` is held to the same rule by
+    tests/test_ui_source.py::test_nothing_writes_markup, against source with
+    comments stripped. `static/_v/hammerola.js` is a build artefact a fresh checkout
+    does not have, so it is not read.
 
-    The scripts checked here are the COMMITTED ones, which today means the
-    pointer resolver and the key it reads. The two pages that used to have one of
-    their own — the build page and then the front page — are drawn by the
-    compiled interface in `ui/src/` instead, and it is held to the same rule
-    there, by tests/test_ui_source.py::test_nothing_writes_markup. Two checks
-    rather than one because they can only be made differently: that side is
-    source with comments stripped, and there is no point reading
-    `static/_v/hammerola.js`, which is a build artefact a fresh checkout does not
-    have.
-
-    THE LIST IS DISCOVERED AND THEN CHECKED AGAINST WHAT IS EXPECTED, so that
-    neither direction is silent. A page script added to this directory is covered
-    without anybody remembering; a page script REMOVED — which is how the front
-    page's `index.js` left — fails here and has to be accounted for in the same
-    commit, rather than quietly leaving this test sweeping a shorter list. That
-    is the failure mode worth the extra assertion: a check that still passes
-    while checking less reads exactly like a check that passed.
+    The list is discovered and then checked against what is expected, so a page
+    script added here is covered automatically and one removed fails until it is
+    accounted for, instead of the test quietly checking less.
     """
     directory = STATIC / "_v"
-    # The viewer library DOES build markup from strings; it is not a page script
-    # of ours and not ours to hold to this rule, and where it comes from is
-    # written down (static/_v/PROVENANCE.md). `three.module.js` and
-    # `three.core.js` are npm's builds of three, in this directory because the
-    # viewer bundle imports three by URL instead of carrying it — a library, not
-    # a page script, on the same grounds. The build artefact is not read for the
-    # reason the docstring gives. Each is named rather than guessed at, so that a
-    # further library file here is a decision somebody makes in this line.
+    # The viewer library builds markup from strings; it is a library, not a page
+    # script of ours (static/_v/PROVENANCE.md). `three.module.js` and
+    # `three.core.js` are npm's builds of three, here because the viewer bundle
+    # imports three by URL. The build artefact is skipped for the reason the
+    # docstring gives. Each is named, so a further library file here is a decision
+    # made in this line.
     skipped = {"three-cad-viewer.esm.js", "three.module.js", "three.core.js"}
     ours = sorted(path.name for path in directory.glob("*.js")
                   if path.name not in skipped

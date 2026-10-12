@@ -1,10 +1,8 @@
 // Zoom to the cursor, on top of a trackball that zooms to the centre.
 //
 // `TrackballControls._zoomCamera` scales `camera.zoom` and moves nothing
-// sideways, and there is no option to change that. OrbitControls DOES have one
-// (`zoomToCursor`), but switching back to orbit to get it is not on the table —
-// orbit clamps the polar angle, which is precisely why options.js picks the
-// trackball. So the behaviour is built here instead.
+// sideways, with no option to change it. OrbitControls has `zoomToCursor`, but
+// it clamps the polar angle, which is why options.js picks the trackball.
 //
 // THE CAMERA IS ORTHOGRAPHIC, and that makes the correction not just exact but
 // DEPTH-FREE. Every world point on the ray through the cursor lands on the same

@@ -1,19 +1,16 @@
-"""The hub keeps the CODE of every revision it publishes (issue #17).
+"""The hub keeps the CODE of every revision it publishes.
 
 Three claims, and each of them fails in a different direction:
 
   * a published revision has its pushed body and its build log on disk, and the
-    body is BYTE FOR BYTE what was pushed — a repacked tree would still look like
+    body is BYTE FOR BYTE what was pushed: a repacked tree would still look like
     a source archive and would no longer be the thing that built the revision;
   * the code is NOT public. It leaves only through `GET /api/v1/sources/...`,
-    under the same secret that publishes, and every miss answers the same 404 —
-    while the build the code produced is served to the world with a year of
-    `immutable`. Getting that backwards is not repairable: the copies are handed
-    out;
-  * a build that FAILED leaves nothing. That is the invariant the store's whole
-    shape rests on — an archive exists only for a revision that was published —
-    and it is cheap to state and easy to lose, because "keep the body around in
-    case somebody wants it" is one line away from here at all times.
+    under the same secret that publishes, and every miss answers the same 404,
+    while the build it produced is served to the world with a year of
+    `immutable`. Copies handed out cannot be recalled;
+  * a build that FAILED leaves nothing. The store's shape rests on this: an
+    archive exists only for a revision that was published.
 
 The suite pushes finished artefacts rather than model source (see `harness`), so
 what is stored below is an archive of those. That changes nothing here: the store
@@ -228,13 +225,12 @@ def test_the_local_slot_is_not_a_revision_and_its_code_is_not_kept(hub):
 
 
 def test_a_caller_named_revision_is_stored_under_its_digest(hub):
-    """The route that still takes a `<commit>` stores by CONTENT, like the rest.
+    """The route that takes a `<commit>` stores by CONTENT, like the rest.
 
-    Worth pinning because the two ids then differ: the build is at the name the
-    caller chose and its code is at the digest, so that URL is not derivable from
-    this one. That is a property of the route that is on its way out (step 7),
-    not of the store — and the alternative, storing nothing for such a push,
-    would break the invariant that every published revision has its code.
+    The two ids then differ: the build is at the name the caller chose and its
+    code is at the digest, so one URL is not derivable from the other. Storing
+    nothing for such a push would break the invariant that every published
+    revision has its code.
     """
     body = good_build("named")
     assert hub.publish("proj1", "abc123", body).status_code == 201

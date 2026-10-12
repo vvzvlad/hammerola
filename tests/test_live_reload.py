@@ -35,11 +35,9 @@ def _build(marker, built="2026-08-21T04:16:00Z"):
 def _key(meta):
     """The interface's `buildKey`, in Python. Kept identical on purpose.
 
-    Pinned by the test at the bottom of this file rather than trusted: every
-    assertion here is written against this copy, so if the page started
-    comparing something else they would all keep passing while live reload
-    quietly stopped firing in the local slot — the URL that needs it most, and
-    the one where a browser is the only other witness.
+    Pinned by the test at the bottom of this file: every assertion here is written
+    against this copy, so if the page compared something else they would all keep
+    passing while live reload stopped firing in the local slot.
     """
     return meta["published"] if meta.get("dev") else meta["commit"]
 
@@ -48,15 +46,13 @@ def _key(meta):
 def test_a_local_push_changes_the_polled_key_in_the_slot(hub):
     """The one comparison the poll makes, end to end, in the local slot.
 
-    `commit` cannot carry it here and that is by design: the slot is ONE
-    directory (SPEC 7.6), so the field reads `dev` for every build it ever
-    holds. `published` is what moves — the moment the hub accepted the push,
-    stamped only when the slot actually changed.
+    `commit` cannot carry it: the slot is ONE directory (SPEC 7.6), so the field
+    reads `dev` for every build it holds. `published` moves: the moment the hub
+    accepted the push, stamped only when the slot actually changed.
 
-    Never `built`: that one is written by the model's own build script, is
-    optional and has second resolution at best, so an edit-build-look loop
-    produces ties and a poll comparing it would sit there showing the previous
-    attempt. Both builds below carry the SAME `built` for exactly that reason.
+    Never `built`: the model's own build script writes it, it is optional and has
+    second resolution at best, so an edit-build-look loop produces ties. Both
+    builds below carry the SAME `built` for that reason.
     """
     hub.publish_dev("proj1", _build("first"))
     before = hub.get("/project/proj1/dev/meta.json").json()
@@ -103,11 +99,10 @@ def test_the_polled_meta_is_never_cached(hub):
 def test_republishing_the_same_local_build_does_not_look_like_a_new_one(hub):
     """Building twice without changing anything must not look like a new build.
 
-    This is the reason the store still compares payload digests even though
-    nothing is addressed by one any more: an unchanged rebuild writes nothing,
-    so `published` does not move, so the key does not move. Without it every
-    rebuild of an untouched model would re-render the scene and re-seat the
-    camera of a page somebody is working in front of.
+    The store compares payload digests for this: an unchanged rebuild writes
+    nothing, so `published` and the key do not move. Otherwise every rebuild of an
+    untouched model would re-render the scene and re-seat the camera of an open
+    page.
     """
     hub.publish_dev("proj1", _build("first"))
     before = _key(hub.get("/project/proj1/dev/meta.json").json())
@@ -118,9 +113,6 @@ def test_republishing_the_same_local_build_does_not_look_like_a_new_one(hub):
 
 
 # -- the browser's half, pinned against the sources it lives in ---------------
-# What used to sit here read the old page viewer, which has been deleted. These
-# three read the interface that replaced it, so they still fail on a change
-# rather than on nothing.
 UI_SRC = Path(__file__).resolve().parent.parent / "ui" / "src"
 
 

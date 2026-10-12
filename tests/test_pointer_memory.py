@@ -1,25 +1,22 @@
 """Remembering which pointer a reader was on, per project (SPEC 9).
 
 Someone editing a model lives in `dev` and does not want to switch to it every
-time. So `/project/<pid>/` — the URL that names no pointer — opens whichever of
+time. So `/project/<pid>/`, the URL that names no pointer, opens whichever of
 `latest` and `dev` they were last on, falling back to `latest`.
 
-THE TRAP THIS FILE IS MOSTLY ABOUT: a URL that names a pointer must win over the
-remembered one, always. `/project/<pid>/latest/` is the link people paste to each
-other, and a reader quietly moved to somebody else's `dev` sees something other
-than what they were sent, with nothing on the page to tell them. So the pointer
-pages record the choice and never act on it; only the pointer-less URL acts on
-it. Half of that lives in the browser and is checked in a browser; what can be
-pinned from here is the shape that makes it possible:
+A URL that names a pointer always wins over the remembered one:
+`/project/<pid>/latest/` is the link people paste to each other, and a reader
+quietly moved to somebody else's `dev` would see something other than what they
+were sent. So the pointer pages record the choice and never act on it; only the
+pointer-less URL acts on it.
 
-THE TWO HALVES LIVE IN DIFFERENT BUNDLES, which is the other thing this file
-watches. The recording half is the interface (`ui/src/store.js`, called from the
-build page); the reading half is `static/_v/pointer_pref.js`, imported by the
-resolver — which cannot use the interface's copy, because pulling 3.6 MB of
-bundle to read one key and leave is exactly what the resolver exists not to do.
-So the key is spelled twice on purpose and compared from here.
+The two halves live in different bundles. The recording half is the interface
+(`ui/src/store.js`, called from the build page); the reading half is
+`static/_v/pointer_pref.js`, imported by the resolver, which must not pull a 3.6 MB
+bundle to read one key and leave. So the key is spelled twice on purpose and
+compared from here. Also pinned:
 
-  * the resolver is a PAGE, not a redirect — the answer is a localStorage key and
+  * the resolver is a PAGE, not a redirect: the answer is a localStorage key and
     the server cannot read one;
   * it is `no-cache`, like the pointers it hands over to: a cached decision page
     is a decision frozen;
@@ -48,10 +45,9 @@ TEMPLATE = ROOT / "templates" / "pointer.html"
 # storage, and the component that decides a page is an arrival worth recording.
 STORE_JS = ROOT / "ui" / "src" / "store.js"
 COMPONENT = ROOT / "ui" / "src" / "HammerolaViewer.jsx"
-# The front page, which is where the memory is most easily undone by accident.
-# It used to be a committed script (`static/_v/index.js`); it is drawn by the
-# compiled interface now, so the URL it links to is built in `hub.js` and used in
-# the entry component, and this file follows it there.
+# The front page, where the memory is most easily undone by accident. It is drawn
+# by the compiled interface: the URL it links to is built in `hub.js` and used in
+# the entry component.
 HUB_JS = ROOT / "ui" / "src" / "hub.js"
 ENTRY = ROOT / "ui" / "src" / "HammerolaEntry.jsx"
 
@@ -79,9 +75,8 @@ def test_the_pointerless_url_serves_a_page_and_not_a_redirect(hub):
 def test_all_three_routes_carry_the_right_cache_header(hub):
     """The resolver joins the two pointers on `no-cache`; commits keep the year.
 
-    It stands in for a redirect that used to be recomputed on every visit. A
-    cached copy of it would send a reader to the pointer they preferred on the
-    day the page was stored, and go on doing it for as long as the copy lived.
+    A cached copy of the resolver would send a reader to the pointer they preferred
+    on the day the page was stored, for as long as the copy lived.
     """
     hub.publish("proj1", "abc123", good_build())
     hub.publish_dev("proj1", good_build())
@@ -181,7 +176,7 @@ def test_builds_json_answers_has_dev_for_real(hub):
     404 with nothing in a log to say why.
     """
     hub.publish("proj1", "abc123", good_build())
-    # True from the first publish: a commit fills the slot with itself (#78).
+    # True from the first publish: a commit fills the slot with itself.
     assert hub.builds("proj1").json()["has_dev"] is True
     hub.publish_dev("proj1", good_build())
     assert hub.builds("proj1").json()["has_dev"] is True
@@ -252,10 +247,10 @@ def test_the_writer_and_the_reader_spell_the_same_key():
 
 
 def test_a_stored_value_that_is_not_a_pointer_reads_as_nothing():
-    """An old name, a hand-set key, a name this site no longer has.
+    """A stale name, a hand-set key, a name this site does not have.
 
-    All of them have to fall back to `latest`, and the check is the same list the
-    hub publishes under — which is what test_live_reload pins to the store.
+    All of them fall back to `latest`, checked against the same list the hub
+    publishes under, which test_live_reload pins to the store.
     """
     assert "POINTER_NAMES.includes(saved) ? saved : null" in _code(PREF)
 
@@ -309,12 +304,11 @@ def test_the_index_links_to_the_project_and_not_to_a_pointer():
     own projects takes most.
 
     Linking it straight to `latest` would overwrite the remembered choice on
-    every visit to the front page — the feature quietly undone by its own index.
+    every visit to the front page.
 
-    Checked in two places because the link is now built in one file and used in
+    Checked in two places because the link is built in one file and used in
     another, and either half can break it alone: a `projectUrl` that grew a
-    pointer would overwrite the memory everywhere at once, and a card that stopped
-    calling it would do the same on the one page that matters most.
+    pointer, or a card that stopped calling it.
     """
     url = _code(HUB_JS)
     built = re.search(r"export const projectUrl = \(pid\) => (.+);", url)

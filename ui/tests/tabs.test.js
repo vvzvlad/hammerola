@@ -1,35 +1,26 @@
 // The tab strip under the header: the projects this browser has been in lately.
 //
-// A TAB IS A LINK, and every test here is a restatement of that one sentence
-// (issue #45). The strip is navigation memory beside the address — a list of
-// `<a href>`s at `/project/<pid>/` — and it is deliberately NOT application
-// state competing with the URL. So:
+// A tab is a link. The strip is navigation memory beside the address (a list of
+// `<a href>`s at `/project/<pid>/`), not application state competing with the
+// URL. So:
 //
-//   * WHICH TAB IS ACTIVE is not stored, is not in `state`, and is not decided
-//     here at all: it is `PAGE.pid`, read off the address. The test for it moves
-//     the address and touches nothing else, because that is the only way the
-//     highlight is allowed to move;
-//   * CLICKING ONE is an ordinary same-window navigation, so the assertion is
-//     that an `<a href>` exists with the right target — no `target`, no
-//     `window.open`, nothing this file has to drive;
-//   * CLOSING ONE goes nowhere, including the tab the reader is standing on.
-//     `preventDefault` is what makes that true — the ✕ sits inside the anchor,
-//     so stopping React's synthetic bubbling alone would leave the browser's own
-//     navigation to fire and closing a tab would open it.
+//   * which tab is active is not stored or in `state`: it is `PAGE.pid`, read
+//     off the address, and its test moves only the address;
+//   * clicking one is an ordinary same-window navigation, so the assertion is
+//     that an `<a href>` exists with the right target (no `target`, no
+//     `window.open`);
+//   * closing one navigates nowhere, including the active tab. The ✕ sits inside
+//     the anchor, so `preventDefault` is needed: stopping React's bubbling alone
+//     would let the browser follow the link.
 //
-// NOTHING IS MOUNTED, the arrangement every file in this directory uses: the
-// instance is the real prototype with the state spelled out, `computed()` and
-// `render()` are the real ones, and what they drew is read straight off the
-// returned element objects (ui/tests/eltree.js). The layout AROUND those values
-// is checked from Python against the source (tests/test_ui_source.py).
+// Nothing is mounted: the real prototype runs with the state spelled out, and
+// what `computed()` and `render()` drew is read off the returned elements
+// (ui/tests/eltree.js). The layout around them is checked from Python against
+// the source (tests/test_ui_source.py).
 //
-// THE STORAGE DOUBLE BELOW IS LOAD-BEARING, for the reason ui/tests/store.test.js
-// states at length: this runner has no `localStorage` of its own, and every
-// access in store.js reads its absence as "nothing was remembered". Without a
-// double, `closeTab` would forget nothing, `readTabs()` would answer with an
-// empty strip, and "the tab is gone" would be green against a store that never
-// stored anything. Hence the close tests assert what SURVIVES as well as what
-// went: a strip wiped by an absent storage fails them.
+// The storage double is required (see store.test.js): this runner has no
+// `localStorage`, and store.js reads its absence as "nothing remembered". So the
+// close tests assert what survives as well as what went.
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -129,12 +120,9 @@ const clickEvent = () => ({
 
 // -- how a project gets onto the strip in the first place ---------------------
 //
-// EVERY OTHER TEST IN THIS FILE HANDS THE STRIP ITS TABS, which leaves the one
-// line that ever fills it — `rememberTab` in `load()` — held up by nothing:
-// delete it and the strip stays empty for ever while both suites go on passing.
-// So this runs the real `load()` over the real store, mocking only the two hub
-// fetches, and asks the question those tests cannot: did arriving here put this
-// project on the strip.
+// Every other test hands the strip its tabs, so the one line that fills it,
+// `rememberTab` in `load()`, needs its own test. This runs the real `load()`
+// over the real store, mocking only the two hub fetches.
 
 describe('how a project reaches the strip', () => {
   /** `load()` over a hub that answers with the fixture and no build history. */
@@ -254,16 +242,10 @@ describe('what a tab links at', () => {
   })
 
   it('breaks its line rather than losing its tail off the edge', () => {
-    // A FULL STRIP IS WIDER THAN THE WINDOW: ten pills at the `max-width` above,
-    // plus their gaps and the row's padding, comes to about 2000px. The root of
-    // this interface is `overflow:hidden`, so a row that cannot wrap does not
-    // scroll — it is cut off, silently, and the tabs past the cut are gone with
-    // nothing on screen to say they exist. Then the eleventh project opened
-    // evicts the coldest tab and the visible strip never changes, which is the
-    // strip lying about what it holds.
-    //
-    // Pinned here rather than argued in a comment: `flex-wrap` is one token, and
-    // it is one token away from the failure at every edit.
+    // A full strip is wider than the window: ten pills at the `max-width` above,
+    // plus gaps and padding, come to about 2000px. The root is `overflow:hidden`,
+    // so a row that cannot wrap is cut off silently, and the eleventh project
+    // would evict a tab nobody can see. Hence `flex-wrap`.
     const full = Array.from({ length: 10 }, (unused, i) => (
       entry(`p${i}`, `Project number ${i}`, 1000 + i)))
     const v = component({ tabs: full }).computed()

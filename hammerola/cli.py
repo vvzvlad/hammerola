@@ -20,75 +20,42 @@
     rename "New title"        change the project's TITLE — never its id
     rm                        remove the project from the hub, whole
 
-WHERE THE WORK LIVES. This module parses, dispatches and owns the publishing
-flow (`build` and `commit`, which are one operation with one thing varying);
-every other verb is a module, because none of them shares anything with
-publishing but the configuration: `setup.py` (login, create), `status.py`,
-`queue.py` (the comment queue), `proposal.py` (the stored proposal),
-`sources.py` (source, log), `artifacts.py`, `revdiff.py` (diff), `admin.py`
-(rename, rm), `skill.py` (skill, skill update), `update.py` (update).
-Every one of them RAISES on refusal rather than printing and exiting, so there
-is exactly one place in the tool that decides what a failure looks like — `main`
-below.
+This module parses, dispatches and owns the publishing flow (`build` and
+`commit`); every other verb lives in its own module: `setup.py` (login,
+create), `status.py`, `queue.py` (comments), `proposal.py`, `sources.py`
+(source, log), `artifacts.py`, `revdiff.py` (diff), `admin.py` (rename, rm),
+`skill.py`, `update.py`. They all RAISE on refusal, so `main` below is the one
+place that decides what a failure looks like.
 
-FOUR OF THE VERBS ABOVE ARE WORTH READING TWICE, because the obvious reading of
-each is the wrong one:
+  * `source` and `artifacts` are separate verbs because artefacts are PUBLIC
+    and code is not.
+  * `source` unpacks into its own directory; writing over the working copy is
+    a flag that also requires a clean git tree.
+  * `rename` changes the TITLE. Nothing changes an id: every permanent URL of
+    the project is built from it (SPEC §3.1).
+  * `rm` removes the whole project and asks first. A single build cannot be
+    removed: that would break a permanent URL.
+  * `update` writes the hub's zipapp over the running file, verified and via a
+    rename (`update.py`). `build` and `commit` refuse to publish from a client
+    older than the one the hub serves.
 
-  * `source` and `artifacts` are two verbs over one build for one reason: the
-    artefacts are PUBLIC and the code is not (issue #17). A flag would
-    put both behind one word.
-  * `source` unpacks into a directory of its own. Writing over the working copy
-    is a flag, and that flag additionally requires git to call the tree clean.
-  * `rename` changes the TITLE. There is no command and no flag that changes an
-    id, because every permanent URL of the project is built from it and the
-    builds behind those URLs cannot be recalled (SPEC §3.1).
-  * `rm` removes the whole project and asks first. There is no way to remove one
-    build: that would break a permanent URL and leave the project standing.
+THE PUBLISHING FLOW. Pack the working directory, POST it, poll the job, print
+the build log, and return zero only if a build was published:
 
-SELF-UPDATE IS HERE (issue #77) AND IT IS ONE VERB. `update` fetches the zipapp
-the hub serves and writes it over the file this process is running from, which
-is where it stops resembling `skill update`: that one writes a document, this
-one writes the running program, so what comes back is checked before it lands
-and lands through a rename rather than a truncating write (`update.py`). Its
-other half is a refusal — `build` and `commit` ask the hub which client it
-serves and will not publish from an older one, the only place in this tool that
-spends a round trip on a question about ITSELF.
+    build           -> <pid>/dev        the local slot: overwritten by every
+                                        push, no history, `latest` untouched,
+                                        served no-cache (SPEC 7.6).
+    commit          -> <pid>            an immutable revision. The HUB names it
+                                        from the sources and says so in the
+                                        reply; `latest` moves to it.
 
-WHAT IS STILL NOT HERE. `status` shows no "last job", for a reason that is not
-going to lift on its own — job order is stored nowhere, see `status.py`.
-`log dev` was in that sentence until the slot started naming the job that
-filled it (issue #79), and now answers with that build's log — see
-`sources._dev_log`.
+`commit` means "publish a version" and has nothing to do with git: nothing here
+reads HEAD or needs a repository. Afterwards a `git commit` line is printed as
+an offer (`gitsuggest`), never run.
 
-THE PUBLISHING FLOW, which is what the rest of this file is about. Pack the
-working directory, POST it, poll the job, print what the build printed, and
-return zero only if a build was published. What differs between the two verbs is
-the last segment of the URL, and with it what the publication MEANS:
-
-    build           -> <pid>/dev        the local slot. One directory per
-                                        project, overwritten by every push, no
-                                        history, `latest` untouched, served
-                                        no-cache (SPEC 7.6). The working copy as
-                                        it stands.
-    commit          -> <pid>            an immutable revision. The URL carries no
-                                        id, because the client has none: the HUB
-                                        names the revision from the sources it
-                                        receives and says so in the reply.
-                                        Served for a year as immutable and never
-                                        rewritten; `latest` moves to it.
-
-`commit` MEANS "PUBLISH A VERSION OF THIS", and it has nothing to do with git.
-Nothing here reads HEAD, nothing refuses a dirty tree, nothing needs a
-repository to exist — a directory with a `project.json` in it can always publish.
-What git gets afterwards is an OFFER: a finished `git commit` line, printed for
-a person to run or ignore (`gitsuggest`). Publishing and recording are two acts
-in that order, and this tool performs exactly one of them.
-
-THE EXIT CODE IS THE POINT OF THE WHOLE FLOW, because this replaces a forge's
-job status: zero means a build was published and nothing else does. A refused
-push, a model that failed, a gate that said no, a hub that could not be reached
-and a wait that ran out are all non-zero, each with the sentence that says which
-one it was — and, when the build ran at all, with its log.
+The exit code replaces a forge's job status: zero means a build was published.
+A refused push, a failed model, a gate, an unreachable hub and a timeout are all
+non-zero, each with a sentence saying which, plus the log when the build ran.
 """
 
 import argparse
@@ -113,11 +80,8 @@ EXIT_INTERRUPTED = 130
 def _fail(message: str) -> int:
     """Say why, on stderr, and hand back the failing exit code.
 
-    STDOUT IS FLUSHED FIRST, and that is not cosmetic. The build log goes to
-    stdout, which is block-buffered the moment the run is piped into a file or
-    read by an agent, while stderr is not buffered at all — so without this the
-    reason lands ABOVE the log that explains it, and the two streams read as if
-    the tool complained before the build said anything.
+    Stdout is flushed first: it is block-buffered when piped and stderr is
+    not, so otherwise the reason lands above the build log that explains it.
     """
     sys.stdout.flush()
     print(f"hammerola: {message}", file=sys.stderr)
@@ -206,12 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="the older revision, or `latest`")
     changes.add_argument("new", metavar="REVISION",
                          help="the newer revision, or `latest`")
-    # MUTUALLY EXCLUSIVE, AND ARGPARSE IS WHAT SAYS SO. `--json` is the whole
-    # output or none of it — a document a script reads cannot have a source diff
-    # or a geometry report printed around it — and `--material` adds a section
-    # to exactly that printed output. Asking for both is a request with no
-    # answer, and it is refused before anything is sent rather than by one flag
-    # quietly winning.
+    # Mutually exclusive: `--json` is the whole output, and `--material` adds a
+    # section to the printed output that `--json` replaces.
     answer = changes.add_mutually_exclusive_group()
     # The exit code is the same either way — `diff` returns 0 whether or not
     # anything moved, and something reading the JSON is reading it to find that
@@ -221,10 +181,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="print only what moved in each PART's physical numbers — volume, "
              "bounding box, first layer, overhang — as one JSON document. The "
              "assembly's own numbers are not in it")
-    # THE HUB DOES THIS ONE, and that is why it is a flag and not the default:
-    # every other half of `diff` is arithmetic over files this command already
-    # fetches, while this fuses two solids per part in the CAD kernel and takes
-    # as long as a build does.
+    # A flag, not the default: the hub fuses two solids per part in the CAD
+    # kernel, which takes as long as a build.
     answer.add_argument(
         "--material", action="store_true",
         help="also ask the hub to measure how much material each part gained "
@@ -245,10 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
     notes.add_argument(
         "--since", default=None, metavar="TIMESTAMP",
         help="only comments written at or after this ISO-8601 moment")
-    # A sub-subcommand rather than a `--resolve <id>` flag on the listing: they
-    # are two different acts, one of which WRITES, and a flag that quietly turns
-    # a read into a write is the shape of a mistake nobody catches in review.
-    # Optional, so `hammerola comments` on its own still lists.
+    # A sub-subcommand rather than a `--resolve` flag, so a read never turns
+    # into a write by a flag. Optional: `hammerola comments` alone still lists.
     queue_commands = notes.add_subparsers(dest="comment_command")
     close = queue_commands.add_parser(
         "resolve", help="mark one comment handled, so it is not done twice")
@@ -270,30 +226,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="the rough body somebody drew over this model in the browser — "
              "the motor it has to clear, the wall it bolts to — as numbers to "
              "design against. One per project, and it is never resolved")
-    # A sub-subcommand rather than a `--rm` flag, exactly as `comments resolve`
-    # is one: reading and DESTROYING are two acts, and a flag that turns a read
-    # into a deletion is the shape of a mistake nobody catches in review.
-    # Optional, so `hammerola proposal` on its own still reads.
+    # A sub-subcommand rather than a `--rm` flag, as with `comments resolve`.
+    # Optional: `hammerola proposal` alone still reads.
     proposal_commands = drawing.add_subparsers(dest="proposal_command")
     forget = proposal_commands.add_parser(
         "rm",
         help="remove the stored proposal. The project id has to be typed at "
              "the prompt, and this cannot be undone: somebody drew it by hand, "
              "the hub keeps no copy, and it is in no build")
-    # `--yes` LIVES ON `rm` ALONE, and `proposal` itself takes no flag at all —
-    # which is the only reason the SUPPRESS trap documented on `skill update`
-    # below does not arise here. A subparser parses into a namespace of its own
-    # and then copies EVERY key of it onto the parent's, defaults included, so a
-    # flag spelled on both would be silently decided by the inner one. Anything
-    # added to `proposal` itself means reading that comment first.
+    # `--yes` lives on `rm` alone and `proposal` takes no flag, so the
+    # subparser-default trap described on `skill update` below does not arise.
     forget.add_argument(
         "--yes", action="store_true",
         help="do not ask. Without it the project id has to be typed at the "
              "prompt — nothing can bring the proposal back")
 
-    # ASKED FOR BY NAME OR NOT AT ALL. Nothing else in this tool looks at the
-    # agent's skills directory, and nothing else prints a word about the
-    # instructions — see `skill.py` for why an automatic check was refused.
+    # Nothing else in this tool looks at the agent's skills directory (see
+    # `skill.py` for why there is no automatic check).
     instructions = commands.add_parser(
         "skill",
         help="the agent instructions: which version is installed here, and "
@@ -301,38 +250,27 @@ def build_parser() -> argparse.ArgumentParser:
     instructions.add_argument(
         "--path", default=None, metavar="FILE",
         help=f"the installed skill file (default: {skill.DEFAULT_PATH})")
-    # A sub-subcommand and not a `--update` flag, exactly as `comments resolve`
-    # is one: reading and WRITING are two acts, and a flag that turns a question
-    # into a write into somebody's `~/.claude` is the shape of a mistake nobody
-    # catches in review. Optional, so `hammerola skill` on its own still asks.
+    # A sub-subcommand rather than an `--update` flag, as with
+    # `comments resolve`. Optional: `hammerola skill` alone still asks.
     skill_commands = instructions.add_subparsers(dest="skill_command")
     refresh = skill_commands.add_parser(
         "update", help="write the hub's copy over the installed skill")
-    # SUPPRESS AND NOT `None`, and this is the one line here that cannot be
-    # simplified. A subparser parses into a namespace of its own and then copies
-    # EVERY key of it onto the parent's, defaults included, so a plain
-    # `default=None` would make `skill --path FILE update` write to the default
-    # location — the flag accepted, silently discarded, and the file landing
-    # somewhere the caller did not name. With SUPPRESS the attribute is only
-    # created when the flag is actually given, so both orders mean the same
-    # thing.
+    # SUPPRESS, not None: a subparser copies every key of its namespace onto
+    # the parent's, defaults included, so `default=None` would make
+    # `skill --path FILE update` silently drop FILE. With SUPPRESS the attribute
+    # exists only when the flag is given, so both orders mean the same.
     refresh.add_argument(
         "--path", default=argparse.SUPPRESS, metavar="FILE",
         help=f"the file to write (default: {skill.DEFAULT_PATH})")
 
-    # NO ARGUMENTS AND NO `--path`, which is what tells this apart from the verb
-    # above it: `skill update` writes a document into a directory this tool can
-    # only guess at, so it takes the guess as a flag, while `update` writes the
-    # file it is itself running from — the one path in this tool that is not a
-    # choice at all (`update._target`).
+    # No `--path`: `update` always writes the file it is running from
+    # (`update._target`).
     commands.add_parser(
         "update",
         help="write the hub's copy of this tool over the file it is running "
              "from, and print what changed between the two versions")
 
-    # THE TITLE IS THE ONLY THING THIS TAKES, and there is deliberately no
-    # `--id` beside it: an id that could be renamed would break every permanent
-    # URL of the project on the day it was used (SPEC §3.1).
+    # No `--id`: renaming an id would break every permanent URL (SPEC §3.1).
     title = commands.add_parser(
         "rename", help="change the project's title (never its id)")
     title.add_argument(
@@ -352,13 +290,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--timeout", type=float, default=JOB_TIMEOUT, metavar="SECONDS",
         help=f"how long to wait for the build (default: {JOB_TIMEOUT:.0f})")
-    # ONE THING IS CANCELLED AND IT IS THE MODEL'S OWN `checks()`: the build
-    # does not call them at all, which is the point — on a real model they are
-    # most of the time a build takes, and this is how something unfinished gets
-    # published quickly. The hub's own gate is not the author's to waive and
-    # goes on running: the provenance rule, the catalogue, the view gates and
-    # the per-part gates in `export_printables` all refuse a forced push
-    # exactly as they refuse any other.
+    # Skips only the model's own `checks()` (most of a build's time). The hub's
+    # gates — provenance, catalogue, view gates, per-part gates in
+    # `export_printables` — still run and refuse a forced push like any other.
     parser.add_argument(
         "--force", action="store_true",
         help="publish without running the model's own checks(). The hub's own "
@@ -371,9 +305,7 @@ def main(argv=None) -> int:
         return HANDLERS[args.command](args)
     except (config.ConfigError, project.ProjectError, PackError,
             ClientError, HubError) as error:
-        # One handler for every refusal the tool makes on purpose. Each of those
-        # exceptions carries a finished sentence — sometimes several lines of
-        # one — so there is nothing to add here but the program's name.
+        # Every deliberate refusal carries a finished sentence.
         return _fail(str(error))
     except KeyboardInterrupt:
         sys.stdout.flush()
@@ -385,43 +317,25 @@ def main(argv=None) -> int:
 def _publish(args) -> int:
     root = project.find_project_root(args.directory)
 
-    # BEFORE the tree is walked and long before it is packed: a machine with no
-    # HUB_URL must be told so in a second, not after a minute of work it was
-    # never going to be able to send. AGENTS.md: the address of our own service
-    # has no default.
+    # Read before the tree is walked, so a missing HUB_URL fails in a second.
+    # The address has no default.
     hub_url = config.hub_url(root)
     token = config.edit_token(root)
 
     pid = project.read_project_id(root)
-    # `dev` for the slot, and NOTHING for a revision: the absence of a last path
-    # segment is how the hub is asked to name it (`Hub.publish`).
+    # `dev` for the slot, nothing for a revision: no last path segment asks the
+    # hub to name it (`Hub.publish`).
     slot = DEV_SLOT if args.command == "build" else None
-    # `getattr` because both verbs land here and only `commit` has `-m`: a
-    # revision is a version of the project and can say what it is, while the
-    # local slot is the working copy and is overwritten by the next push.
+    # `getattr`: both verbs land here and only `commit` has `-m`.
     message = getattr(args, "message", None)
-    # A COURTESY, AND NOTHING MORE — the same kind of check as the size ceiling
-    # in `limits.py`, and held to the same modesty. It saves a minute of packing
-    # and a pointless upload of a push the hub is going to refuse anyway; it does
-    # NOT shape the refusal, and it is not where the rule lives. The hub's own
-    # 400 is the authority and says it better, which is why only these two cases
-    # are here: they are the ones a person hits by accident, and neither needs
-    # the hub to be asked. Everything else `render.revision_message` refuses —
-    # control characters, angle brackets — is left to the hub, because a second
-    # copy of a rule is how the two drift apart (`tests/client/test_limits.py`
-    # is what keeps the one number here honest).
-    #
-    # STRIPPED BEFORE IT IS MEASURED, because that is what the hub measures
-    # (`render.revision_message` strips first). Without it a 200-character
-    # subject with a trailing newline — `-m "$(cat subject.txt)"` — is refused
-    # here as 201 and would have been accepted there, which is the one way a
-    # courtesy check can do real harm: refusing a push that would have worked.
+    # A courtesy that saves packing a push the hub will refuse; the hub's 400
+    # (`render.revision_message`) is the authority and the only place the other
+    # rules (control characters, angle brackets) live. Stripped before it is
+    # measured, as the hub does, so a trailing newline is not counted.
     if message is not None:
         subject = message.strip()
         if not subject:
-            # `-m ""` never becomes a header at all, so without this the flag is
-            # typed, the push succeeds, and the row says nothing — the same hole
-            # the hub closes for `-m "   "`, and the hub cannot see this one.
+            # `-m ""` never becomes a header, so the hub cannot refuse it.
             raise ClientError(
                 "the revision message must not be empty.\n"
                 "  Say what this revision is, or leave `-m` off.")
@@ -431,35 +345,21 @@ def _publish(args) -> int:
                 f"shows at most {MAX_TEXT_CHARS} and refuses a longer one.\n"
                 f"  Shorten it.")
 
-    # BUILT HERE AND NOT AT THE PUSH, which is the second half of the paragraph
-    # above. Reading the two settings early only catches the variable being
-    # ABSENT; a typo IN it — a letter in the port, a missing scheme, an
-    # unclosed bracket — is caught by `Hub.__init__` (`hub._origin`), and with
-    # that line below `pack` the whole tree was walked, hashed and compressed
-    # before the tool said the address was unusable. Constructing a Hub opens
-    # nothing and sends nothing, so there is no cost to doing it here. The same
-    # goes for the token: a stored secret with a newline in it is refused here
-    # rather than after the packing.
+    # Built before `pack`: `Hub.__init__` validates the address and the token
+    # (`hub._origin`) without opening a connection, so a malformed one fails
+    # before the tree is packed.
     hub = Hub(hub_url, token)
 
-    # AND ONE QUESTION ABOUT THIS TOOL, asked here for the same reason the two
-    # settings are read above: before the tree is walked, so a client the hub
-    # has outgrown says so in a second rather than after packing a push it is
-    # not going to be allowed to make. It is the ONLY verb pair that asks — see
-    # `update.refuse_if_behind` for why reading verbs do not pay for it, and why
-    # a hub that cannot answer does not block the push. THE ADDRESS AND NOT THE
-    # HUB ABOVE: that one is built with the push's five-minute budget, and this
-    # question is 80 bytes.
+    # Before packing, so an outdated client fails fast. Only publishing verbs
+    # ask (see `update.refuse_if_behind`). Takes the address, not `hub`, which
+    # carries the push's five-minute timeout.
     update.refuse_if_behind(hub_url)
 
     archive = pack(root)
 
     title = project.read_project_title(root)
-    # WHERE, AS WHOM, INTO WHAT — said once, immediately before the bytes leave,
-    # and from here rather than from a caller so that no path can push without
-    # printing it. Each of the three is resolved somewhere else, and until this
-    # line no output has shown them together; it is the line somebody reading a
-    # transcript afterwards uses to see which project was written to.
+    # Where, which project, into what: printed right before the upload so a
+    # transcript shows which project was written to.
     print(f"publishing to {hub_url} as {title or '?'} ({pid}) -> "
           f"{slot or 'a new revision'}")
     print(f"  {len(archive.names)} files, {archive.size / 1e3:.1f} kB packed")
@@ -471,39 +371,24 @@ def _publish(args) -> int:
 
     if code == 200:
         # `Store.settled`: this exact source tree is already published under
-        # this name, so nothing was rebuilt. A success, and worth distinguishing
-        # in the output — otherwise a re-run that changed nothing looks exactly
-        # like one that shipped, which is the question actually being asked when
-        # a change does not show up in the browser.
-        #
-        # On a revision this is not a coincidence to be explained away: the name
-        # IS the digest of the sources, so identical sources cannot land
-        # anywhere else. "Unchanged" and "already published" are the same
-        # sentence here.
+        # this name, so nothing was rebuilt. A revision's name is the digest of
+        # its sources, so "unchanged" and "already published" coincide.
         print("unchanged: the hub already has this exact source, nothing rebuilt")
         _print_revision(payload.get("revision"))
         return _published(hub, payload.get("url"), root,
                           revision=payload.get("revision"), message=message)
 
     if code == 401:
-        # Named rather than shown as one more refusal code: it is the only one
-        # of them the person running this can fix in ten seconds, and the fix is
-        # a different command.
+        # Named separately: the fix is a different command (`login`).
         return _fail(UNAUTHORIZED)
 
     if code != 202:
-        # QUOTED, like every other place a reply's own words are printed. This
-        # one and the two below are on the ordinary push path — the commonest
-        # route in the tool — and they were writing whatever the far end sent
-        # straight to a terminal.
+        # Quoted, like every place a reply's own words reach the terminal.
         return _fail(f"the hub refused the push with HTTP {code}: "
                      f"{quoted(payload.get('error', payload))}")
 
-    # THE REVISION FIRST AND THE JOB SECOND, and both labelled with what they
-    # address. They arrive in the same reply and they look alike — two opaque
-    # strings — but one is the version being published and the other is this
-    # attempt at building it. Printing them unlabelled is how somebody ends up
-    # pasting a job id into a URL.
+    # Revision and job look alike; both are labelled so a job id is not
+    # mistaken for a revision.
     _print_revision(payload.get("revision"))
     job_id = payload.get("job")
     if not job_id:
@@ -512,10 +397,7 @@ def _publish(args) -> int:
     print(f"queued as job {job_id}: this build's progress and its log")
     sys.stdout.flush()
 
-    # STATE GOES TO STDOUT AND TROUBLE GOES TO STDERR, like the log's own
-    # failure line below: the states are the progress of the build, which is
-    # what this command is reporting, while a notice is about the CONNECTION to
-    # the hub and belongs with the other things that went wrong on the way.
+    # Build states go to stdout; connection notices go to stderr.
     record = hub.await_job(job_id, timeout=args.timeout,
                            on_state=lambda state: print(f"  {state}",
                                                         flush=True),
@@ -524,10 +406,7 @@ def _publish(args) -> int:
                                                         flush=True))
 
     _print_log(hub, job_id, record)
-    # AFTER THE LOG AND BEFORE THE VERDICT, which is the one point both endings
-    # pass through: a build that died in its twelfth minute is exactly the run
-    # whose time is worth knowing, so the line may not hang off the success
-    # branch.
+    # Before the verdict, so failed builds report their duration too.
     _print_duration(record)
 
     if record.get("state") == "done":
@@ -548,12 +427,10 @@ def _print_revision(revision) -> None:
 
 
 def _print_log(hub: Hub, job_id: str, record: dict) -> None:
-    """Print what the build printed. THIS IS WHY STEP 5 EXISTS.
+    """Print what the build printed, on success as well as on failure.
 
-    The hub builds out of process, so its log is the only account of what
-    happened to the model — the gate's complaint, the traceback, the part that
-    came out empty. Printed on success as well as on failure: a build that
-    published can still have warned about something.
+    The log is the only account of what happened to the model: the gate's
+    complaint, the traceback, the empty part, or a warning on a published build.
 
     A log that cannot be fetched is reported and does not change the outcome:
     the build is already over and its verdict is in the record.
@@ -573,41 +450,25 @@ def _print_log(hub: Hub, job_id: str, record: dict) -> None:
     print("--- end of build log ---")
 
 
-# The stamps the hub writes into a job record (`store.utcnow_iso`), and the one
-# import this whole line needs. The DURATION below is formatted by hand because
-# the client installs nothing — but subtracting two wall-clock stamps is
-# calendar arithmetic, a queue wait crosses midnight and a month like any other
-# hour does, and `datetime` is standard library the client already may use.
+# The stamps the hub writes into a job record (`store.utcnow_iso`).
 _STAMP = "%Y-%m-%dT%H:%M:%SZ"
 
-# The two endings that already carry their own diagnosis, in the hub's own words
+# Endings that already carry their own diagnosis, so no slow-build warning
 # (`buildproc.runner.STATUS_TIMEOUT` and `STATUS_CPU_EXHAUSTED`, copied because
-# the client may not import them; `tests/client/test_buildtime.py` compares this
-# against both). A build killed by a ceiling is not told to try optimising: it
-# has already been told what happened to it, and "this was slow" on top of
-# "killed for being slow" is noise on top of an answer.
+# the client may not import them; `tests/client/test_buildtime.py` compares).
 SELF_DIAGNOSING = ("timeout", "cpu_exhausted")
 
 
 def _print_duration(record: dict) -> None:
     """How long this build took, and a word when that is long enough to matter.
 
-    THE TWO NUMBERS ARE NEVER THE SAME NUMBER. The build is the parent's own
-    `duration_seconds`, measured on a MONOTONIC clock across the child, and it
-    is the only honest account of what the build cost; the queue wait is the gap
-    between two WALL-CLOCK stamps, which is all either end has for it. The build
-    time is therefore never computed from the stamps — those can jump (an NTP
-    step, a container's clock catching up) and would report a negative build or
-    an hour-long one.
-
-    NOT REACHED at all for a push the hub answered 200 to — `_publish` returns
-    before this — and that is a fact about the CALL rather than a branch in here:
-    the `unchanged` route has no job and no record, because nothing was rebuilt.
+    The build time is the hub's `duration_seconds`, measured on a monotonic
+    clock; it is never computed from the wall-clock stamps, which can jump. The
+    queue wait is the gap between two wall-clock stamps. Not called for a 200
+    (`unchanged`) push, which has no job.
     """
     seconds = _whole_seconds(record.get("duration_seconds"))
-    # `is None` AND NOT A TRUTHINESS TEST, decided on purpose: a build really can
-    # measure zero seconds — `tests/harness.py` used to declare exactly that —
-    # and a falsy check would drop the line for it in silence.
+    # `is None`, not falsiness: a build can measure zero seconds.
     if seconds is None:
         return
     waited = _queue_wait(record)
@@ -615,13 +476,8 @@ def _print_duration(record: dict) -> None:
     print(f"built in {_clock(seconds)}{bracket}")
     if (seconds > SLOW_BUILD_SECONDS
             and record.get("status") not in SELF_DIAGNOSING):
-        # A WARNING AND NOT A REFUSAL, said in the line itself: a slow build
-        # publishes, and the reader has to be able to tell this apart from the
-        # gate saying no. Where to go is named rather than described — all three
-        # are written up in the skill, under the section named at the end.
-        # BOTH NUMBERS IN THE SAME FORMAT, so the comparison the line is making
-        # can be read without arithmetic: `3m20s is over the 3m00s` rather than
-        # a measured time against a raw count of seconds.
+        # A warning, not a refusal: a slow build publishes. Both numbers use the
+        # same format so they compare by eye.
         print(f"warning: {_clock(seconds)} is over the "
               f"{_clock(SLOW_BUILD_SECONDS)} a "
               f"build should need. It published —\n"
@@ -673,9 +529,7 @@ def _queue_wait(record: dict):
 def _clock(seconds: int) -> str:
     """Whole seconds as `8s`, `4m12s`, `1h02m03s`.
 
-    Written out rather than reached for, because the client installs nothing
-    (`tests/client/test_stdlib_only.py`), and zero-padded past the first field so
-    that two builds compared by eye line up.
+    Zero-padded past the first field so two durations line up by eye.
     """
     hours, rest = divmod(seconds, 3600)
     minutes, whole = divmod(rest, 60)
@@ -690,21 +544,15 @@ def _suggest_git(root, revision, message) -> None:
     """Offer a git commit that records what was just published. Never runs one.
 
     Only after `commit`, and only when there is a repository with something
-    uncommitted in it — `gitsuggest` answers None for everything else, and a
-    directory with no git in it is one of those: the publication already
-    happened and never depended on git (see the module docstring).
-
-    Printed BEFORE `_published` writes the URL, because that URL has to stay the
-    last line of the run.
+    uncommitted in it (`gitsuggest` answers None otherwise). Printed before the
+    URL, which must stay the last line of the run.
     """
     if not revision:
         return
     try:
         offer = gitsuggest.suggestion(root, revision, message)
     except Exception:
-        # A publication that landed must not be reported as a failure because
-        # asking git a question went wrong. There is no honest suggestion to
-        # print, so there is none.
+        # A git problem must not turn a landed publication into a failure.
         return
     if offer:
         print(offer)
@@ -714,24 +562,14 @@ def _published(hub: Hub, build_url, root, revision=None, message=None) -> int:
     if not build_url:
         raise HubError("the build is published but the hub named no URL for it")
     _suggest_git(root, revision, message)
-    # THE LAST LINE OF THE RUN, and a bare URL on a line of its own: no quotes,
-    # no brackets, nothing in front of it. It gets copied out of a terminal and
-    # pasted into a chat, where anything around it stops it being a link. It is
-    # also the answer to "where did it go" that nobody then has to ASSEMBLE out
-    # of a hub name and an id — one such guess, a short sha the hub does not
-    # serve, has already cost an afternoon.
+    # The last line of the run: a bare URL with nothing around it, so it pastes
+    # as a link and nobody has to assemble one from a hub name and an id.
     print(hub.absolute(build_url))
     return EXIT_OK
 
 
-# WHICH FUNCTION EACH VERB IS. A table rather than a chain of `if`s, so a verb
-# the parser accepts and nothing implements cannot exist quietly: it is a
-# KeyError on the first run instead of a fall through into the publishing path.
-#
-# At the BOTTOM of the module because it names `_publish`, which is defined
-# above it — `main` only reads this at call time, so the position is free, and
-# the alternative (a dict of lambdas next to `main`) buys nothing but a layer of
-# indirection over the same two names.
+# A verb the parser accepts but nothing implements is a KeyError, not a fall
+# through into the publishing path. At the bottom because it names `_publish`.
 HANDLERS = {
     "login": setup.login,
     "create": setup.create,

@@ -1,43 +1,22 @@
-"""The starter template, held to the contract by BUILDING it.
+"""The starter template, held to the contract by building it.
 
-THIS IS WHY THE TEMPLATE IS FILES AND NOT A PARAGRAPH OF DOCUMENTATION. What
-`hammerola create` unpacks is the first model anybody here writes, and it is
-copied rather than read — so a template that stopped satisfying the gate would
-be a project that cannot publish, handed to somebody who has no way of telling
-whether the fault is theirs. Written as prose in a README it would rot in
-silence. As a directory the suite pushes through the real build, it cannot.
+What `hammerola create` unpacks is copied, not read, so a template that stopped
+satisfying the gate would hand every new project a push that cannot publish.
 
-TWO TESTS HERE NEED THE CAD KERNEL, and CI runs them: the image it runs the suite in
-carries the kernel's system libraries (issue #27, `ci/Dockerfile.test`), so `import
-cadquery` works there. They skip on a machine where it does not import, exactly as
-`tests/test_view_fixture.py` does. They are the BUILD test at the foot of this file,
-which computes the geometry, and the one that holds the stubbed kernel against the real
-one; what each of them costs when it skips is written where it stands.
+Two tests need the CAD kernel and run in CI (`ci/Dockerfile.test` carries its
+libraries); they skip where `import cadquery` fails, as
+`tests/test_view_fixture.py` does: the build test at the foot of this file and
+the one comparing the stubbed kernel with the real one.
 
-EVERYTHING ELSE RUNS ON EVERY PUSH, THE PROVENANCE GUARD INCLUDED — it imports
-the template with the kernel STUBBED and then asks the hub's own rule about the
-module that comes out. That guard used to be a second implementation of the
-rule, written here on the belief that a template cannot be imported without a
-kernel; it can, and the copy is gone. The rest is not all one thing: most of it
-asks whether the template is a tree the hub would ACCEPT, which is what breaks
-from an ordinary edit — a file added under a name the path alphabet refuses
-takes the whole push down, and takes it down for every project created from the
-template afterwards — while the pins described next ask about a document
-instead. Stated by which group a test is in rather than by counting them,
-because the count is what went stale here before.
+Everything else runs on every push, the provenance guard included: it imports
+the template with the kernel stubbed and asks the hub's own rule. Most tests ask
+whether the template is a tree the hub would accept (a name the path alphabet
+refuses breaks the push of every project made from it).
 
-AND THE GROUP THAT IS ABOUT A DOCUMENT RATHER THAN THE HUB. `skill/SKILL.md`
-QUOTES this template — the number of checks a run of it reports, and the
-wording of an assertion its `checks()` emits — to teach an agent that a green
-count can be about parts the build no longer holds, and what a failing check
-says when it lands on a catalogue of one's own. Both sentences are
-claims about THIS directory, which is why they are pinned here rather than beside
-the skill: the edit that falsifies them is an edit to model.py, and the failure
-has to land on whoever makes it. Until then they were held to nothing, and the
-document is not a comment — it is served to every agent that installs the skill,
-and it is followed. Neither pin needs the CAD kernel (one measures the source of
-`checks()`, the other reads an f-string out of it), so both keep running on every
-push in the same containers the build test skips in.
+Two pins are about a document: `skill/SKILL.md` quotes this template (the number
+of checks a run reports, and the wording of an assertion its `checks()` emits).
+They are pinned here because the edit that falsifies them is an edit to
+model.py. Neither needs the kernel.
 """
 
 import ast
@@ -72,11 +51,8 @@ from hammerola.unpack import TEMPLATE_RULES, check_name
 
 TEMPLATE_DIR = onboarding.TEMPLATE_DIR
 
-# The production ceilings, less the one macOS cannot apply. `memory_bytes` is
-# RLIMIT_AS, and Darwin refuses it at every value (see
-# `limits.memory_limit_supported`), so a workstation would report
-# `limits_error` before the build started — the failure would be about the
-# platform and would say nothing about the template.
+# The production ceilings, less RLIMIT_AS on macOS, which Darwin refuses at
+# every value (`limits.memory_limit_supported`).
 BUILD_LIMITS = (DEFAULT_LIMITS if memory_limit_supported()
                 else DEFAULT_LIMITS.replace(memory_bytes=None))
 
@@ -86,57 +62,34 @@ BUILD_LIMITS = (DEFAULT_LIMITS if memory_limit_supported()
 EXPECTED_ARTEFACTS = (
     "meta.json", "metrics.json", "assembled.json", "print.json",
     "base.stl", "base.step", "base.3mf", "lid.stl", "lid.step", "lid.3mf",
-    # The whole-build artefacts and the pictures (issue #53). They used to reach
-    # the site as stowaways — written into the output directory, declared by
-    # nothing, and carried along only because publication happens to be a
-    # directory rename. Named here for the reason everything above is: the day
-    # one of them stops being written, or stops being DECLARED, this is what
-    # says so instead of the build agreeing with itself.
+    # The whole-build artefacts and the pictures, which must be written and
+    # declared.
     "assembled.stl", "print.stl",
     "assembled_preview.png", "print_preview.png",
     "base_preview.png", "lid_preview.png",
-    # The band-less cut of each whole-view render, which is what the front page
-    # puts on a project card. There is no `base_card.png` or `lid_card.png` and
-    # there must not be: a card shows a project, so only a whole view has one.
+    # The band-less cut of each whole-view render, for the project card. Only
+    # whole views have one; there is no `base_card.png`.
     "assembled_card.png", "print_card.png",
 )
-# THIS LIST DID NOT MOVE WHEN THE ONE MAP BECAME THREE, and that is a fact about
-# `files` rather than an omission. `outcome.files` is the VERIFICATION list — the
-# names the parent checks and the hub hashes — and `build` assembles it from the
-# same evidence the maps are assembled from (`plate`, `written`) rather than from
-# the maps themselves. So which of `downloads`, `overview` and `previews` a name
-# is offered through is invisible here, by design: a narrowing of what is offered
-# must not be able to stop a file that is on disk from being verified.
+# `outcome.files` is the verification list (what the parent checks and the hub
+# hashes), assembled from `plate` and `written` rather than from the
+# `downloads`/`overview`/`previews` maps, so narrowing what is offered cannot
+# stop a file on disk from being verified.
 
 
 @pytest.fixture(autouse=True)
 def no_model_left_in_the_interpreter(tmp_path_factory):
     """Nothing a judged project supplied may outlive the test that judged it.
 
-    `hub_verdict` below IMPORTS a model into this interpreter, which is module
-    state in the sense AGENTS.md means: a name the project put in `sys.modules`
-    is answered to every later import in the session, and the test that then
-    fails is not the one that planted it. Checked BOTH BEFORE AND AFTER for that
-    exact reason -- an after-only check reports the leak against whichever test
-    ran next.
+    `hub_verdict` imports a model into this interpreter; a name it leaves in
+    `sys.modules` answers every later import. Checked before and after, so a leak
+    is reported against the test that caused it.
 
-    WHAT COUNTS AS A STRAY IS "IT CAME OUT OF A TMP DIRECTORY", not "it was not
-    there before". A model is entitled to add modules that are nobody's project
-    -- `pytest.importorskip("cadquery")` alone adds hundreds, permanently and
-    correctly -- so the predicate is where a module's CODE lives, and every
-    project this file judges is a copy under pytest's own base temp directory.
-    That is also what makes the check safe to run before a test: it is a property
-    of the interpreter rather than a diff against a snapshot.
-
-    WHERE THE CODE LIVES IS `modulesource`, and it is a module rather than the
-    one-liner that used to stand here because that one-liner read `__file__` and
-    nothing else -- which a namespace package has not got, so a `mocks/`
-    directory in a judged project walked through this fixture and through
-    `hub_verdict`'s sweep below. Its docstring has the whole of it.
-
-    The stubbed kernel is checked by the same clock: `_StubbedKernel` answers
-    every attribute with `_Opaque`, so one left behind in `sys.modules` would let
-    a later test "import cadquery" and compute geometry out of stand-ins.
+    A stray is a module whose code lives under pytest's base temp directory
+    (`modulesource`, which also handles namespace packages without `__file__`),
+    not "anything new": `pytest.importorskip("cadquery")` legitimately adds
+    hundreds. A leftover `_StubbedKernel` in `sys.modules` would let a later test
+    compute geometry out of `_Opaque` stand-ins.
     """
     base = str(tmp_path_factory.getbasetemp())
 
@@ -172,22 +125,16 @@ def template_files() -> list:
 def test_every_path_in_the_template_is_one_the_client_will_unpack():
     """The rules the template archive is read with, applied to the source.
 
-    The hub tars whatever is in this directory, so a file added here that
-    `unpack.TEMPLATE_RULES` refuses would produce an archive that every
-    `hammerola create` downloads and then refuses to write — a failure on
-    somebody else's machine, in the first command they ever run.
-
-    THE HIDDEN NAME IS CHECKED AS A LEAF, exactly as the rules check it. A
-    hidden DIRECTORY here would be the RCE that shaped those rules: `.git/config`
-    holds shell commands and the next `git status` runs them.
+    The hub tars this directory, so a file `unpack.TEMPLATE_RULES` refuses would
+    make every `hammerola create` fail. Hidden names are checked as leaves, as the
+    rules do: a hidden directory such as `.git/config` could carry shell commands.
     """
     offenders = []
     for path in template_files():
         relative = path.relative_to(TEMPLATE_DIR).as_posix()
         try:
-            # The client's own check, called rather than reimplemented: a third
-            # hand-written copy of this loop is how the hub came to serve a tree
-            # the client refused (see `onboarding._refuse_unservable`).
+            # The client's own check, not a copy (see
+            # `onboarding._refuse_unservable`).
             check_name(relative, "the template", TEMPLATE_RULES)
         except ClientError as error:
             offenders.append(str(error))
@@ -240,10 +187,8 @@ def test_the_model_defines_the_contract_it_is_the_example_of():
     defined = {node.name for node in tree.body
                if isinstance(node, ast.FunctionDef)}
     assert {"parts", "views", "checks"} <= defined
-    # AND printables() IS GONE. Presence is all the line above can see, and a
-    # leftover printables() would sail through it: the build ignores the
-    # function entirely, so the template would go on publishing while teaching
-    # a half of the contract that no longer exists to everybody who copies it.
+    # printables() was replaced by parts(); the build ignores it, so a leftover
+    # would publish while teaching a contract that no longer exists.
     assert "printables" not in defined, (
         "the template still defines printables(), which parts() replaced. The "
         "build ignores it, so nothing else in this suite would notice")
@@ -256,52 +201,22 @@ def test_the_model_defines_the_contract_it_is_the_example_of():
 
 
 # -- the provenance rule, asked of the hub rather than imitated --------------
-# WHAT STOOD HERE WAS A SECOND IMPLEMENTATION OF THE RULE, written over a syntax
-# tree because importing the template was believed to need the CAD kernel. It does
-# not: a stub is enough to let the module EXECUTE --
-# after which `provenance` answers with the hub's own verdict, which is what the
-# copy was approximating.
-#
-# THE COPY IS GONE WITH EVERYTHING THAT EXISTED TO VALIDATE IT: three corpora of
-# hand-written sources, the parity tests over them, and the paragraph naming the
-# gap it could not close. That paragraph had been rewritten three times and was
-# wrong in BOTH directions when it was finally measured against the real rule. It
-# flagged lines the hub publishes -- `SEATED = cq.Location((0, 0, 1.5))`,
-# `OFFSET = cq.Vector(0, 0, 1) * HEIGHT`, `LABEL = '%.1f mm' % SCREW_DIA`, and
-# the template's own `LID_SEATED` line one edit away, with its 180 written 180.0
-# -- and it was silent about lines the hub refuses: `LID_GAP = GAPS['lid'] * 2`
-# above all, which is the next line an author writes after the dict of estimates
-# the deleted corpus itself taught. The enforcement was circular besides: the
-# list of "gaps" was derived FROM the paragraph, so a family the paragraph forgot
-# could not be caught by the test written to catch a wrong paragraph.
-#
-# There is no approximation here now, so there is nothing left to diverge and no
-# paragraph left to be wrong a fourth time. What is written down instead is a
-# corpus of EDITS to the real template, each carrying the verdict the real rule
-# gives it -- see EDITS below.
+# A stub kernel is enough for the template to execute; `provenance` then gives
+# the hub's own verdict. EDITS below is a corpus of edits to the real template,
+# each with the verdict the real rule gives it.
 
 
 class _Opaque:
     """Whatever a kernel call hands back, for a python with no kernel.
 
-    ITS ONE JOB IS TO LET THE MODULE EXECUTE, and the one thing it must never be
-    is a number: the rule asks `isinstance(value, float)` of every module global,
-    so a stub that answered with a float would invent bare numbers no real build
-    ever sees, and the guard would refuse a template that publishes.
+    It lets the module execute and must never be a number: the rule asks
+    `isinstance(value, float)` of every module global, so a float would invent
+    bare numbers no real build sees.
 
-    `__mul__`/`__rmul__` are here because scaling a kernel object by a dimension
-    is ordinary model code (`cq.Vector(0, 0, 1) * HEIGHT`). An operation this
-    does not support fails the IMPORT, loudly, in whichever test asked for it --
-    which is the right failure: a stub that quietly returned something plausible
-    for an operation the kernel does differently would change a verdict without
-    saying so.
-
-    BY A SCALAR ONLY, and that is that same rule applied to multiplication
-    itself. It took anything, while `cq.Vector.__mul__` takes a number and
-    nothing else -- so `cq.Vector(0, 0, 1) * cq.Vector(1, 0, 0)` was published
-    here and raises TypeError against the real kernel, which is exactly the
-    "quietly plausible" answer the paragraph above forbids. `NotImplemented`
-    rather than a raise, so python builds the TypeError the kernel builds.
+    Multiplication by a scalar only, like `cq.Vector.__mul__`
+    (`cq.Vector(0, 0, 1) * HEIGHT`); anything else returns `NotImplemented` so
+    python raises the TypeError the kernel raises. An unsupported operation fails
+    the import loudly rather than changing a verdict.
     """
 
     def __init__(self, *args, **kwargs):
@@ -325,9 +240,8 @@ class _StubbedKernel(types.ModuleType):
 
 
 # The hub's answer about one model: why it refused (or None), what it counted as
-# declared, and what it found bare. The last two are summarised down to plain
-# tuples of plain values so that two runs can be COMPARED -- which is what
-# `test_the_stub_answers_what_the_real_kernel_answers` does with them.
+# declared, and what it found bare — as plain tuples so two runs can be compared
+# (`test_the_stub_answers_what_the_real_kernel_answers`).
 Verdict = collections.namedtuple("Verdict", "refusal declared bare")
 
 
@@ -335,43 +249,19 @@ def hub_verdict(project, stub=True):
     """Import the model in `project` and run the rule the build runs on it.
 
     `provenance.collect`, `provenance.unwrapped` and `provenance.check` are the
-    three calls `cadbuild.build` makes before any geometry, called here rather
-    than imitated. That is the whole of this change: what a second
-    implementation of them cannot do is stay equal to them.
+    calls `cadbuild.build` makes before any geometry, called rather than imitated.
 
-    SYS.MODULES IS SWEPT BY WHERE A MODULE CAME FROM, never blanket-purged, and
-    the distinction is load-bearing rather than tidiness. The root `checklib.py`
-    shim loads `src/cadbuild/checklib.py` BY PATH, so a re-import mints a SECOND
-    `Number` class -- and both halves of the rule recognise a declared number by
-    `isinstance`, so every declared number in the model would come back as a bare
-    float and the template would "fail" its own guard. A sweep that took every
-    name the import added would do exactly that, the first time a model's
-    `import checklib` happened to be the first one in the process.
+    `sys.modules` is swept by where a module came from
+    (`modulesource.came_from`, as `tests/cadbuild/test_provenance.py::_importable`
+    does), never blanket-purged: the root `checklib.py` shim loads
+    `src/cadbuild/checklib.py` by path, so a re-import mints a second `Number`
+    class and every declared number would read as bare. Removing what the project
+    supplied matters because a project's own `checklib.py` left in `sys.modules`
+    makes the pristine template fail its own guard later.
 
-    SO WHAT IS REMOVED IS WHAT THE PROJECT SUPPLIED, by where its code lives
-    (`modulesource.came_from`), which is the same rule
-    `tests/cadbuild/test_provenance.py::_importable` sweeps by and for the same
-    reason. It asks `__path__` as well as `__file__`, because a namespace package
-    -- a `mocks/` directory with no `__init__.py`, which is an ordinary thing for
-    a model project to have -- has only the second and slipped through both
-    sweeps while they read only the first. Leaving them was a real leak with a
-    measured victim: judge a
-    project carrying a `checklib.py` of its own and `sys.modules['checklib']`
-    stays pointed at THAT copy for the rest of the session, so the pristine
-    template judged afterwards is refused by its own guard with every one of its
-    28 declarations reported bare. Nothing in `EDITS` adds a file today, which is
-    the only reason the suite is green -- and a leak that is invisible until
-    somebody adds an ordinary case, and then lands in a different test, is the
-    shape this repository has an autouse fixture rule for. There is one below.
-
-    Exactly one name is swapped, `cadquery`, and it is put back the way it was
-    found: replaced if something was there, removed if nothing was.
-
-    THE PROJECT ROOT IS PINNED HERE and put back the same way, because the rule
-    resolves the file it parses against it (`provenance._model_source`) rather
-    than off the module's `__file__` -- which is the whole reason a model cannot
-    aim it. `project` is what `check` is handed below in any case, so this
-    pins one answer rather than introducing a second.
+    `cadquery` and the project root are put back as found. The root is pinned
+    because the rule resolves the file it parses against it
+    (`provenance._model_source`), not the module's `__file__`.
     """
     from src.cadbuild import provenance
 
@@ -381,12 +271,9 @@ def hub_verdict(project, stub=True):
     paths.set_project_root(project)
     if stub:
         sys.modules["cadquery"] = _StubbedKernel("cadquery")
-    # After the stub is in place, so that putting `cadquery` back is the business
-    # of the branch below and of nothing else.
+    # After the stub, so restoring `cadquery` is only the branch below's job.
     before = set(sys.modules)
-    # The model's own directory goes first on sys.path, the way
-    # `geometry.load_model` puts it there, so a project that imports a module of
-    # its own is imported here the way the hub imports it.
+    # The model's directory first on sys.path, as `geometry.load_model` does.
     sys.path.insert(0, str(project))
     spec = importlib.util.spec_from_file_location("model_under_test",
                                                   project / "model.py")
@@ -395,11 +282,8 @@ def hub_verdict(project, stub=True):
         try:
             spec.loader.exec_module(module)
         except Exception as error:
-            # A model that will not execute under the stub says nothing about
-            # the rule, and the bare traceback says nothing about the stub: an
-            # `AttributeError: 'X' object has no attribute 'Length'` from
-            # `DIAG = cq.Vector(1, 2, 3).Length` reads as a broken model, and
-            # every parametrised case here fails with it at once.
+            # Under the stub, a bare AttributeError would read as a broken
+            # model; say it is the stub.
             if not stub:
                 raise
             raise AssertionError(
@@ -449,28 +333,20 @@ Edit = collections.namedtuple("Edit", "label find replace refused")
 
 UNCHANGED = Edit("nothing changed", None, "", refused=False)
 
-# THE PIN ON THE GUARD ITSELF. A guard whose only subject is a file that passes
-# it says nothing about what it would catch -- and the guard this replaces was
-# rewritten three times, every time because it caught something other than what
-# it claimed. Every entry below was run through the real rule AND through the
-# real CAD kernel; the first three refused ones are the shapes an author
-# actually writes, and the accepted ones are all lines the deleted guard flagged
-# while the hub published them without a word.
+# The pin on the guard itself: what it refuses and what it publishes. Every entry
+# was run through the real rule and the real CAD kernel; the refused ones are
+# shapes an author actually writes, the accepted ones are geometry lines a naive
+# float check would wrongly flag.
 EDITS = (
     UNCHANGED,
     # -- refused: provenance does not survive arithmetic -------------------
-    # The likeliest mistake there is, and the reason a guard has to exist at
-    # all: a derived constant written as arithmetic over other constants is the
-    # ordinary way a CAD model is written, and the result is a plain float.
+    # The likeliest mistake: a constant derived by arithmetic is a plain float.
     Edit("a constant derived by arithmetic", None,
          "\nRIM = WALL * 2\n", refused=True),
-    # The same thing with nothing to derive from: the shape the rule is named
-    # for.
+    # The shape the rule is named for.
     Edit("a bare float", None, "\nRIM = 4.8\n", refused=True),
-    # A NUMBER TAKEN BACK OUT OF A CONTAINER. The deleted guard was silent about
-    # this one while its own corpus taught the line above it -- a dict of
-    # estimates is walked one level and accepted, and the next line an author
-    # writes takes a value out of it.
+    # A number taken back out of a container: a dict of estimates is accepted,
+    # arithmetic over one of its values is not.
     Edit("arithmetic over a number out of a dict", None,
          "\nGAPS = {'lid': checklib.estimated(0.25, 'print it')}\n"
          "LID_GAP = GAPS['lid'] * 2\n", refused=True),
@@ -482,10 +358,8 @@ EDITS = (
     Edit("arithmetic over a walrus", None,
          "\nX = (Y := SCREW_DIA) * 2\n", refused=True),
     # -- accepted: a float written in a line that is not a number ----------
-    # THE TEMPLATE'S OWN LINE, one character from what it already says. It is
-    # geometry, the hub publishes it, and a guard that flagged it would be red
-    # on an edit that was fine -- which is the failure that gets a guard deleted
-    # rather than fixed.
+    # The template's own line, one character away; it is geometry and the hub
+    # publishes it.
     Edit("a float literal inside a kernel call",
          "cq.Vector(1, 0, 0), 180)", "cq.Vector(1, 0, 0), 180.0)",
          refused=False),
@@ -495,9 +369,8 @@ EDITS = (
          "\nOFFSET = cq.Vector(0, 0, 1) * HEIGHT\n", refused=False),
     Edit("a string formatted from a number", None,
          "\nLABEL = '%.1f mm' % SCREW_DIA\n", refused=False),
-    # A bool is not a float subclass, so this is outside the rule -- a fact
-    # about python that `tests/cadbuild/test_provenance.py` states, since
-    # nothing in the source can.
+    # A bool is not a float subclass, so this is outside the rule
+    # (`tests/cadbuild/test_provenance.py` states it).
     Edit("a comparison against a number", None,
          "\nTIGHT = SCREW_DIA < 2.5\n", refused=False),
     Edit("a callable over a number", None,
@@ -530,10 +403,7 @@ def template_under(tmp_path, edit):
 def test_the_hub_would_publish_the_template_as_it_stands(tmp_path):
     """The rule the hub refuses a push with, run on the model everybody copies.
 
-    Every project created from this template inherits whatever is here, and its
-    author has no way of telling whose fault a refusal is -- so this must fail on
-    a workstation AND on a machine with no CAD kernel at all. It does, because
-    the kernel is stubbed and the RULE is the real one.
+    Runs without a CAD kernel: the kernel is stubbed, the rule is real.
     """
     verdict = hub_verdict(template_under(tmp_path, UNCHANGED))
     assert verdict.bare == (), (
@@ -550,23 +420,13 @@ def test_the_hub_would_publish_the_template_as_it_stands(tmp_path):
 
 def test_a_project_that_keeps_its_mocks_in_a_directory_leaves_nothing_behind(
         tmp_path):
-    """A namespace package walked through the sweep, and through the fixture too.
+    """A namespace package passes through the sweep and the fixture cleanly.
 
-    `hub_verdict` puts the project FIRST on sys.path, exactly as
-    `geometry.load_model` does and for the reason that function gives: `import
-    mocks` in a model.py has to find the project's own. A project whose mocks are
-    a DIRECTORY rather than a file gives a namespace package -- `__file__` is
-    None, the location is in `__path__` alone -- so the sweep, which read
-    `__file__` and nothing else, walked past it and left it in `sys.modules`
-    answering every later `import mocks` in the session from a directory that had
-    since been deleted.
-
-    NOTHING IN `EDITS` ADDS A FILE, which is the only reason the suite was green,
-    and a leak invisible until somebody adds an ordinary case is the shape this
-    repository has an autouse-fixture rule for. This test is the ordinary case,
-    and the autouse fixture above -- which had the identical hole and now shares
-    the identical answer -- is the second assertion here even though it is not
-    written out: it re-checks `sys.modules` after every test in this file.
+    `hub_verdict` puts the project first on sys.path, as `geometry.load_model`
+    does. Mocks kept in a directory without `__init__.py` form a namespace
+    package (`__file__` is None, the location is in `__path__`), which must be
+    swept like any other module. The autouse fixture re-checks `sys.modules`
+    after this test as well.
     """
     project = template_under(tmp_path, UNCHANGED)
     (project / "mocks").mkdir()
@@ -589,12 +449,7 @@ def test_a_project_that_keeps_its_mocks_in_a_directory_leaves_nothing_behind(
 
 @pytest.mark.parametrize("edit", EDITS, ids=[edit.label for edit in EDITS])
 def test_the_rule_answers_every_edit_the_way_this_list_says(edit, tmp_path):
-    """Each shape in EDITS, put through the real rule.
-
-    This is what says the guard above GUARDS. It costs nothing to keep now that
-    there is no second implementation to maintain: the sources are edits to the
-    real template and the verdict is the hub's own.
-    """
+    """Each shape in EDITS, put through the real rule."""
     verdict = hub_verdict(template_under(tmp_path, edit))
     refused = verdict.refusal is not None
     assert refused == edit.refused, (
@@ -606,21 +461,14 @@ def test_the_rule_answers_every_edit_the_way_this_list_says(edit, tmp_path):
 
 @pytest.mark.parametrize("edit", EDITS, ids=[edit.label for edit in EDITS])
 def test_the_stub_answers_what_the_real_kernel_answers(edit, tmp_path):
-    """WHAT KEEPS THE STUB HONEST: the second of the two tests here needing a kernel.
+    """The stub changes no verdict: the second test here needing a kernel.
 
-    Everything above runs against `_StubbedKernel`, which is a claim: that
-    swapping the kernel out changes no verdict. Where the kernel really is
-    importable -- a workstation -- the claim is checked rather than trusted, on
-    the same corpus, comparing the whole verdict and not just its sign: the
-    refusal text, every declared number with its kind and value, and every bare
-    one.
+    Compares the whole verdict on the same corpus — refusal text, every declared
+    number with its kind and value, every bare one — stubbed against real.
 
-    It SKIPS where the kernel does not import — no longer CI, which installs it
-    (issue #27) — and what that costs on such a machine is worth being exact
-    about: the guard itself does not skip, because the rule it runs is the hub's
-    either way; what goes unchecked is only whether the stub still stands in for
-    the kernel faithfully. The kernel moves on its pins in `requirements.txt`,
-    and this is what a run with the real one says about that move.
+    It skips where the kernel does not import (CI installs it). The guard itself
+    does not skip; only the stub's faithfulness goes unchecked, which matters as
+    the kernel moves on its `requirements.txt` pins.
     """
     pytest.importorskip(
         "cadquery", exc_type=ImportError,
@@ -636,19 +484,12 @@ def test_the_stub_answers_what_the_real_kernel_answers(edit, tmp_path):
 
 
 def test_the_stub_refuses_the_multiplication_the_kernel_refuses():
-    """`_Opaque` took any right-hand side; `cq.Vector` takes a number.
+    """`_Opaque` refuses non-scalar multiplication, as `cq.Vector` does.
 
-    So `cq.Vector(0, 0, 1) * cq.Vector(1, 0, 0)` was PUBLISHED by every verdict
-    in this file and raises TypeError against the real kernel -- a stub quietly
-    answering something plausible for an operation the kernel does differently,
-    which is the one thing `_Opaque`'s docstring says it must never do. The
-    corpus above cannot hold this case: an EDIT has to IMPORT under both kernels
-    to be compared at all, and this one imports under neither.
-
-    The second half needs the kernel and skips where it does not import, exactly
-    as the corpus comparison above does — no longer in CI, whose container
-    installs it (issue #27). What it costs on such a machine is the same: the
-    claim that the kernel really refuses this goes unchecked there.
+    `cq.Vector(0, 0, 1) * cq.Vector(1, 0, 0)` raises TypeError in the real
+    kernel. The EDITS corpus cannot hold this case: an edit has to import under
+    both kernels to be compared. The second half needs the kernel and skips
+    without it.
     """
     with pytest.raises(TypeError):
         _Opaque() * _Opaque()
@@ -662,13 +503,11 @@ def test_the_stub_refuses_the_multiplication_the_kernel_refuses():
 
 
 def test_a_model_the_stub_cannot_execute_says_which_kernel_it_was(tmp_path):
-    """The import failure has to name the stub, because it is usually the cause.
+    """The import failure names the stub, which is usually the cause.
 
-    `_Opaque` supports what the models here have needed and nothing else, so an
-    ordinary kernel expression can fail the import -- and the bare traceback,
-    `AttributeError: '_Opaque' object has no attribute 'Length'`, reads as a
-    broken model. It arrives on every parametrised case at once, which is the
-    least helpful moment to be guessing whose fault it is.
+    `_Opaque` supports only what the models here need, and a bare
+    `AttributeError: '_Opaque' object has no attribute 'Length'` reads as a
+    broken model on every parametrised case at once.
     """
     project = template_under(tmp_path, Edit(
         "an attribute _Opaque does not have", None,
@@ -680,17 +519,11 @@ def test_a_model_the_stub_cannot_execute_says_which_kernel_it_was(tmp_path):
 def test_every_measurement_in_the_template_points_at_a_real_line_of_the_journal():
     """`ref/measurements.md#screw` has to name a file and a heading that exist.
 
-    Checked by the build's own resolver against this directory, so a heading
-    renamed in the journal — or the journal moved — fails here rather than in
-    the first `hammerola build` somebody runs.
-
-    THE GUARD ABOVE REACHES THIS TOO, now that it runs the real
-    `provenance.check` rather than a copy of the rule over a syntax tree — a
-    source that stopped resolving reddens in both places. This one stays for
-    what that check cannot state: that the template MEASURES something at all.
-    A model whose every number had become an estimate would satisfy the guard
-    perfectly and would have stopped being the worked example of `measured()`,
-    which is the one kind of number with a document behind it.
+    Checked by the build's own resolver, so a renamed heading or a moved journal
+    fails here rather than in someone's first `hammerola build`. The provenance
+    guard also catches an unresolved source; this test additionally requires that
+    the template measures something at all, as the worked example of
+    `measured()`.
     """
     from src.cadbuild import checklib, provenance
 
@@ -715,35 +548,22 @@ def test_every_measurement_in_the_template_points_at_a_real_line_of_the_journal(
 
 
 def test_every_section_of_the_template_journal_carries_a_date():
-    """`skill/SKILL.md` describes this file as "date, what was measured, with
-    what, the number", and the template is the worked example that sentence
-    sends its reader to. It carried no date at all, so the one document an agent
-    copies the FORM from was demonstrating a form the instructions do not
-    describe. The date is what says whether a figure predates the change that
-    should have moved it, which is exactly the failure the journal exists to
-    catch.
+    """Every section the template's model cites carries a date.
 
-    THE HEADINGS ARE READ WITH THE RESOLVER'S OWN REGEX, not with a `^## ` of
-    this test's own. That split saw one heading level out of six, so a journal
-    section written `#measurements` -- or `### Screw`, or with the closing
-    hashes some editors add -- was silently not a section here while
-    `provenance._source_problem` resolved a `measured()` straight at it. It is
-    the failure a hand-written second reading of a rule always has, in a smaller
-    place — and the reason the provenance guard above stopped being one.
+    `skill/SKILL.md` describes the journal as "date, what was measured, with
+    what, the number", and the template is the worked example; the date says
+    whether a figure predates a change that should have moved it.
 
-    A DATE IS REQUIRED OF THE SECTIONS THE MODEL ACTUALLY CITES, which is the
-    other half of reading all six levels: `# Measurements` is the file's own
-    title, and it has no measurement under it to date. Asking the question of
-    what is cited rather than of what is merely a heading is both narrower and
-    exactly the subject the docstring above describes.
+    Headings are read with the resolver's own regex (all six levels, closing
+    hashes allowed), not a `^## ` of this test's own. Only cited sections need a
+    date: `# Measurements` is the file's title.
     """
     from src.cadbuild.provenance import _HEADING, heading_slug
 
     text = (TEMPLATE_DIR / "ref" / "measurements.md").read_text(encoding="utf-8")
-    # Off the syntax tree, not off a regex over the file: the template's own
-    # comments spell `checklib.measured(v, "ref/measurements.md#heading")` as
-    # the worked example of the form, and a text search reads that as a citation
-    # of a heading called `heading`.
+    # Off the syntax tree: the template's comments spell
+    # `checklib.measured(v, "ref/measurements.md#heading")` as an example, which
+    # a text search would read as a citation.
     tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
     cited = {node.args[1].value.split("#", 1)[1]
              for node in ast.walk(tree)
@@ -776,18 +596,10 @@ def test_every_section_of_the_template_journal_carries_a_date():
         f"these sections of the template journal record no date: {undated}")
 
 
-# One backticked constant, and a RUN of them. The names SKILL.md lists as this
-# template's estimated clearances are found by the SUBSTITUTED VALUES rather than
-# by the prose around them -- the same argument the two patterns further down are
-# built on, and for the same reason: a pattern spelling out "the starter
-# template's ... all are" would locate the quotation by the very wording it then
-# checks, so a reword would stop the match and the pin would quietly stop
-# pinning.
-#
-# TWO OR MORE NAMES, and that is the pattern's whole discrimination: SKILL.md
-# also backticks `GRIP_DROP` on its own, in a paragraph about somebody else's
-# model, and a single-name pattern would hold this template to a constant it has
-# no reason to define.
+# One backticked constant, and a run of them. The names SKILL.md lists as this
+# template's estimated clearances are found by the substituted values, not by
+# the surrounding prose, so a reword cannot silently stop the match. Two or more
+# names: SKILL.md also backticks `GRIP_DROP` alone, about another model.
 QUOTED_NAME = re.compile(r"`([A-Z][A-Z0-9_]{2,})`")
 QUOTED_NAME_RUN = re.compile(
     QUOTED_NAME.pattern + r"(?:(?:,| and)\s+" + QUOTED_NAME.pattern + r")+")
@@ -797,16 +609,11 @@ DECLARING_CALLS = ("measured", "derived", "estimated")
 
 
 def _one_level(name, node):
-    """`(name, node)` for a value and, ONE level in, for what a literal holds.
+    """`(name, node)` for a value and, one level in, for what a literal holds.
 
-    The same one level `provenance._one_level` walks, and named after it: a dict
-    or a list of constants is an ordinary way to hold them, the hub counts and
-    refuses what is inside one, and a selector that stopped at the assignment
-    could not see the very idiom EDITS teaches four lines apart from it
-    (`GAPS = {'lid': checklib.estimated(0.25, ...)}`).
-
-    Named `GAPS['lid']` and `SIZES[0]`, the way `provenance` names them, so a
-    message here points at what the build's own message would point at.
+    The same one level `provenance._one_level` walks: the hub counts what is
+    inside a dict or list of constants (`GAPS = {'lid': checklib.estimated(...)}`).
+    Named `GAPS['lid']` and `SIZES[0]`, as `provenance` names them.
     """
     yield name, node
     if isinstance(node, (ast.List, ast.Tuple)):
@@ -821,10 +628,7 @@ def _one_level(name, node):
 def estimate_note(call):
     """The note of a `checklib.estimated(...)` call, as an AST node, or None.
 
-    POSITIONAL OR KEYWORD, because both are legal python and the constructor
-    takes it either way. Reading `args[1]` alone reported `note=` as an estimate
-    written "without a literal note" -- a diagnosis pointing at the wrong thing
-    entirely, on a line that is correct.
+    Positional or keyword (`note=`): the constructor takes either.
     """
     if len(call.args) > 1:
         return call.args[1]
@@ -835,26 +639,12 @@ def estimate_note(call):
 def checklib_names(tree):
     """`(modules, constructors)` -- which names in this module mean checklib.
 
-    TWO SHAPES, and only one of them used to be read. `import checklib` binds a
-    module, and `checklib.estimated(...)` is an attribute call on it; `from
-    checklib import estimated` binds the constructor itself, and `estimated(...)`
-    is a plain call. The second is legal python, the hub's rule counts it (it
-    reads the imported module and never the spelling), and this walk reported
-    nothing at all for it.
-
-    `ast.walk` rather than the module body, because an import is not always
-    written at the top level:
-
-        try:
-            import checklib
-        except ImportError:
-            checklib = _stub
-
-    -- and the names an import binds are module globals wherever it is written.
-
-    ALIASES ARE FOLLOWED (`import checklib as cl`) for the same reason the
-    module is matched by name at all: what this returns is compared against the
-    hub's answer, and the hub sees the object rather than the word.
+    Two shapes: `import checklib` binds a module (`checklib.estimated(...)`), and
+    `from checklib import estimated` binds the constructor (`estimated(...)`);
+    the hub counts both. `ast.walk` rather than the module body, because an
+    import inside `try:` still binds a module global. Aliases
+    (`import checklib as cl`) are followed, since the hub sees the object, not
+    the word.
     """
     modules = set()
     constructors = {}
@@ -874,11 +664,8 @@ def checklib_names(tree):
 def declaring_kind(node, modules, constructors):
     """`"estimated"` if this expression is a checklib constructor call, else None.
 
-    IT ASKS WHICH MODULE, which the attribute test alone did not: `.estimated`
-    on anything at all counted, so a model's own `self.estimated(...)` or a
-    `numpy.derived(...)` was read as a declaration the hub would count. The hub
-    holds the imported OBJECT and so cannot make that mistake; this holds the
-    text and has to ask the imports.
+    Checks which module the attribute is on, so `self.estimated(...)` or
+    `numpy.derived(...)` does not count.
     """
     if not isinstance(node, ast.Call):
         return None
@@ -898,42 +685,16 @@ def declared_in(source):
     -> `{name: (kind, ast.Call, line)}`, over the module's own globals, which is
     the set the hub's rule is about.
 
-    WHICH NAMES A MODULE BINDS IS `provenance.module_bindings`, THE HUB'S OWN
-    WALK, and that is the whole of the change this function last needed. It used
-    to answer the question itself -- `ast.Assign` and `ast.AnnAssign` over
-    `tree.body`, plain-`Name` targets only -- and the docstring named the misses
-    it knew about while four more went unnamed, because a hand-written walk
-    cannot know what it does not look at: a TUPLE target
-    (`WALL, LID = checklib.estimated(...), checklib.estimated(...)`), a STARRED
-    one, a declaration inside a module-level `if` or `try`, and a walrus. Every
-    one of those is a module global, every one is counted and refused by the
-    hub, and every one was invisible here. Reusing the hub's walk closes all
-    four at once and cannot drift from it afterwards -- which is the exact
-    argument `module_bindings` makes for being public.
+    Which names a module binds is `provenance.module_bindings`, the hub's own
+    walk (tuple and starred targets, declarations inside a module-level `if` or
+    `try`, walrus). On top of it, one level into a literal (see `_one_level`).
 
-    WHAT IS STILL OUTSIDE IT, and stays outside, is now one thing rather than a
-    list: a call this cannot SEE, because it is not written where the name is
-    bound -- `WALL = _pick()` with the constructor inside the helper, or a
-    number arriving from another module. `provenance` reaches those because it
-    has the imported module and this has only the text, so the hub's rule stays
-    the wider of the two by design. What this must never be is NARROWER than the
-    shapes the template itself teaches, which is what it had become.
+    Outside it: a call not written where the name is bound (`WALL = _pick()`, or
+    a number from another module). `provenance` reaches those through the
+    imported module, so the hub's rule stays the wider of the two.
 
-    ONE LEVEL INTO A LITERAL is this file's own addition on top of the walk
-    (see `_one_level`), because `module_bindings` answers about NAMES and the
-    idiom EDITS teaches four lines apart is a dict of declarations.
-
-    WHAT REUSING THE WALK GAVE UP, said plainly because it is not free: this
-    file can no longer catch a bug IN the walk. A second implementation
-    disagreeing with the first is a signal, and there is now one implementation
-    with two callers -- so an error in `module_bindings` makes the hub and this
-    wrong together and silently. `tests/cadbuild/test_provenance.py` is what
-    holds that end: mutating `provenance._DESCENDED_INTO` to `()` reddens eight
-    tests there plus the selector's own. The trade was made deliberately -- a
-    hand-written second walk had four holes the hub did not, which is a worse
-    kind of silence -- but it is a trade, and the file that now carries the
-    weight is named here so it is not thinned out later by somebody reading it
-    as redundant.
+    Sharing the walk means a bug in `module_bindings` makes the hub and this
+    wrong together; `tests/cadbuild/test_provenance.py` covers the walk itself.
     """
     tree = ast.parse(source)
     modules, constructors = checklib_names(tree)
@@ -955,24 +716,13 @@ def declared_in_template():
 def test_the_selector_sees_the_shapes_a_model_is_written_in():
     """What `declared_in` reads, over a source written to hold every shape.
 
-    The two tests below rest on this walk, and it had gone narrower than the
-    template's own teaching without either of them noticing -- a green pin over a
-    set of constants it was no longer looking at. Each line here was a silent
-    miss: a declaration inside a dict (the idiom EDITS teaches), one inside a
-    list, a note given as `note=`, one assignment binding two names, and an
-    annotated assignment.
+    A declaration in a dict, in a list, a note as `note=`, a chained assignment,
+    an annotated one, a tuple target, a starred one, inside a module-level `if`
+    or `try`, a walrus, and the bare-name call `from checklib import estimated`
+    leaves.
 
-    THE SECOND HALF OF THE LIST ARRIVED WITH THE HUB'S OWN WALK, and every one
-    of them was a shape the hub counts and this reported nothing for: a tuple
-    target, a starred one, a declaration inside a module-level `if` or `try`, a
-    walrus, and the bare-name call `from checklib import estimated` leaves
-    behind. They are here rather than in the docstring because a named blind
-    spot and a closed one look identical from the outside.
-
-    THE LAST FOUR LINES ARE THE BOUNDARY, and they matter as much as the rest: a
-    walk that took local names would hold `checks()` and every helper to a rule
-    the hub applies to module level alone, and one that took any `.estimated`
-    at all would count a call on an object that is not checklib.
+    The last four lines are the boundary: local names, class attributes, lambda
+    bodies and a non-checklib `.estimated` are not module-level declarations.
     """
     found = declared_in(
         "import checklib\n"
@@ -1009,11 +759,9 @@ def test_the_selector_sees_the_shapes_a_model_is_written_in():
         "TALL": "estimated",
         "LIP": "derived",
         "SLOT": "estimated",
-        # A STARRED TARGET CONSUMES AN UNKNOWN NUMBER OF ELEMENTS, so the hub's
-        # walk hands the whole list to both names rather than guessing which
-        # element each gets (`provenance._paired` says so). Both therefore
-        # arrive named after the list they were cut out of, and this pins the
-        # answer the hub actually gives rather than the tidier one.
+        # A starred target takes an unknown number of elements, so the hub's walk
+        # hands the whole list to both names (`provenance._paired`); both are
+        # named after the list.
         "HEAD[0]": "estimated",
         "REST[0]": "estimated",
         "BOSS": "estimated",
@@ -1026,28 +774,16 @@ def test_the_selector_sees_the_shapes_a_model_is_written_in():
 def test_the_skill_is_right_about_what_an_estimate_does_in_this_template():
     """Two sentences of `skill/SKILL.md`, pinned to the file they describe.
 
-    THEY WERE BOTH FALSE, and neither had anything to fail on. The document said
-    "an estimate never drives geometry" while every estimate in this template
-    drives geometry, and "every constant of a fit, a clearance or an
-    interference cites a line in [the journal]" while the template's clearances
-    are estimates -- a document served to every agent that installs the skill,
-    teaching a rule the worked example it points at breaks. Pinned here, beside
-    the other two SKILL.md quotes, because the edit that falsifies them is an
-    edit to model.py and the failure has to land on whoever makes it.
-
-    THE NAMES ARE READ OUT OF THE DOCUMENT, not written down here. They were
-    transcribed by hand, which made this a pin on the template alone: deleting
-    both sentences from SKILL.md left the file green, so the half of the claim
-    that is about the DOCUMENT -- that it still says this at all -- was held to
-    nothing. That is the same failure the two quotation pins below already avoid,
-    and it is fixed the same way.
+    The template's clearances are estimates, and its estimates drive geometry.
+    Pinned here because the edit that falsifies them is an edit to model.py. The
+    names are read out of the document, not transcribed, so deleting the
+    sentences from SKILL.md fails this too.
     """
     skill = onboarding.SKILL_FILE.read_text(encoding="utf-8")
     tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
     kinds = {name: kind for name, (kind, _, _) in declared_in_template().items()}
 
-    # The constants the document names. It says they ARE estimates, which is the
-    # correction: the sentence before claimed they cite the journal.
+    # The constants the document names as estimates.
     named = sorted({name for run in QUOTED_NAME_RUN.finditer(skill)
                     for name in QUOTED_NAME.findall(run.group(0))})
     assert named, (
@@ -1080,41 +816,25 @@ def test_the_skill_is_right_about_what_an_estimate_does_in_this_template():
         "geometry any more")
 
 
-# The one estimate whose note answers BY NEGATION, named here rather than
-# reworded: PRINTER_TOL is a rounding allowance and not a dimension, so "nothing
-# measures it" IS the answer to what would settle it -- there is no measurement
-# that would.
+# The one estimate whose note answers by negation: PRINTER_TOL is a rounding
+# allowance, not a dimension, so no measurement would settle it.
 SETTLED_BY_NEGATION = {"PRINTER_TOL"}
 
 
 def test_every_estimate_in_the_template_says_what_would_settle_it():
-    """`checklib.estimated(value, note)` documents `note` as "what would settle
-    it", and this template is the worked example every author copies.
+    """Every estimate's note says what would settle it.
 
-    IT WAS NOT TRUE ONCE, and what went wrong is what this pins rather than any
-    wording: BOSS_WALL's note reported an experiment -- "this held a thread on
-    the first pair printed" -- on a number nobody had printed anything with, and
-    which had in fact been back-computed from the post diameter. A note that
-    reports a result is answering a different question from the one the
-    constructor asks, and nothing here could tell.
-
-    WHAT IT SEES IS THE SHAPE AND NOT THE TRUTH. No test can check that a
-    settling clause is honest; this catches the note that does not carry one at
-    all, which is the failure that actually happened, and it catches it in both
-    CI containers because it needs no kernel.
-
-    WHICH ESTIMATES IT SEES is `declared_in_template()`, and that is where the
-    other half of this pin lives: the selector it replaces required the
-    assignment to be one `Name` at module level with the note as the second
-    POSITIONAL argument, so an estimate inside a dict -- the idiom EDITS itself
-    teaches -- was never examined, `note=` written as a keyword was reported as
-    "estimated without a literal note", and `A = B = ...` was skipped in silence.
+    `checklib.estimated(value, note)` documents `note` as "what would settle
+    it", and this template is the example every author copies. A note that
+    reports a result answers a different question. This checks the shape, not
+    the truth: it catches a note without a settling clause. Needs no kernel.
+    Which estimates it sees is `declared_in_template()` (dicts, `note=`,
+    chained assignments included).
     """
     notes = {}
     for name, (kind, call, line) in declared_in_template().items():
-        # The KIND the selector worked out, not `call.func.attr`: a constructor
-        # imported by name (`from checklib import estimated`) is a call on an
-        # `ast.Name`, which has no `.attr` at all.
+        # The kind the selector worked out, not `call.func.attr`: a constructor
+        # imported by name is a call on an `ast.Name`, which has no `.attr`.
         if kind != "estimated":
             continue
         given = estimate_note(call)
@@ -1140,9 +860,9 @@ def test_every_estimate_in_the_template_says_what_would_settle_it():
         f"example every author copies")
 
 
-# The author-text arguments of each constructor, in the order they are written
-# after `value`. BOTH of `measured()`'s are here: `checklib._text_problem` holds
-# a source to the same ceiling as a note, and the ceiling is what this is for.
+# The author-text arguments of each constructor, in order after `value`. Both of
+# `measured()`'s count: `checklib._text_problem` holds a source to the same
+# ceiling as a note.
 AUTHOR_TEXT = {"measured": ("source", "note"),
                "derived": ("note",),
                "estimated": ("note",)}
@@ -1151,10 +871,8 @@ AUTHOR_TEXT = {"measured": ("source", "note"),
 def author_text_in(source):
     """Every string this module hands a checklib constructor.
 
-    -> `[(chars, line, field, text)]`, and a second list of the arguments that
-    are NOT literals -- which the caller asserts is empty rather than ignoring,
-    because an f-string note would otherwise leave this walk measuring less than
-    the file contains while staying green.
+    -> `[(chars, line, field, text)]`, and a list of arguments that are not
+    literals, which the caller asserts is empty so nothing goes unmeasured.
     """
     tree = ast.parse(source)
     modules, constructors = checklib_names(tree)
@@ -1177,24 +895,11 @@ def author_text_in(source):
 
 
 def test_every_note_in_the_template_fits_under_the_ceiling():
-    """`MAX_NOTE_CHARS` has room over this directory, and this is what says so.
+    """`MAX_NOTE_CHARS` has room over this directory.
 
-    THE CLAIM USED TO BE A COMMENT AND THE COMMENT WAS WRONG. `checklib` said
-    "the longest note in `model_template/` is 130 characters of the 200", and
-    the round that wrote the sentence added a 182-character note in the same
-    breath: 130 was the FOURTH longest, and the room was 18 characters rather
-    than 70. A figure about ANOTHER FILE has nothing to fail on, which is why it
-    is measured here instead -- the next note that outgrows the ceiling reddens
-    on this line rather than rotting in a comment.
-
-    IT ASSERTS THE LONGEST rather than each in turn, because the message is the
-    output: what an author wants to be told is which note is over and by how
-    much, not that some note somewhere is.
-
-    EVERY `.py` IN THE DIRECTORY and both of `measured()`'s text fields, since
-    the ceiling is a property of the CONSTRUCTOR and not of model.py -- a
-    template that grows a second module has its notes measured the day it
-    appears.
+    Asserts the longest note so the message says which note is over and by how
+    much. Covers every `.py` in the directory and both of `measured()`'s text
+    fields, since the ceiling belongs to the constructor, not to model.py.
     """
     texts, computed = [], []
     for path in sorted(TEMPLATE_DIR.rglob("*.py")):
@@ -1222,24 +927,12 @@ def test_every_note_in_the_template_fits_under_the_ceiling():
 
 
 def test_the_template_declares_fewer_numbers_than_metrics_json_lists():
-    """`MAX_LISTED` has room over this directory, and this is what says so.
+    """`MAX_LISTED` has room over this directory.
 
-    THE SAME SHAPE AS THE NOTE CEILING ABOVE, and for the same reason.
-    `provenance` carried the sentence "the starter template declares 28" in the
-    paragraph justifying `MAX_LISTED` -- a live number about ANOTHER FILE, kept
-    in a comment, with nothing to fail on. It was true the day it was written,
-    exactly as `checklib`'s "the longest note is 130 characters" was true the
-    day IT was written and false by the end of the same round.
-
-    WHAT IT PINS IS THE CLAIM AND NOT THE NUMBER: that a real model sits under
-    the ceiling, so the truncation `notes_omitted` and `estimates_omitted`
-    report is a thing that happens to a pathological push and not to the worked
-    example every author copies. It writes no count down -- the message prints
-    both sides, and neither is asserted to be any particular value.
-
-    IT NEEDS NO CAD KERNEL: the count comes off the syntax tree through
-    `declared_in`, the selector `test_the_selector_sees_the_shapes_a_model_is_
-    written_in` holds to the shapes the hub's own walk reads.
+    Pins the claim, not a number: a real model sits under the ceiling, so the
+    truncation `notes_omitted` and `estimates_omitted` report happens to a
+    pathological push, not to the worked example. Needs no kernel: the count
+    comes from `declared_in`.
     """
     declared = declared_in_template()
     assert declared, (
@@ -1257,32 +950,24 @@ def test_the_template_declares_fewer_numbers_than_metrics_json_lists():
 def test_the_template_warns_about_every_stem_the_build_takes_for_itself():
     """`parts()` must name all of RESERVED_STEMS, not just `assembled`.
 
-    The template is the one worked example every author copies, and a stem it
-    fails to mention is a `BuildError` on somebody else's first build with no
-    warning anywhere ahead of it — `print` above all, which is a completely
-    ordinary name for a single printed part. The names cannot be derived there:
-    model.py is a MODEL, it may import nothing from `src`, and a docstring is a
-    literal besides. So the copy is checked instead of avoided.
+    A stem the template does not mention is a `BuildError` on someone's first
+    build (`print` is an ordinary part name). model.py may import nothing from
+    `src`, so the copy in its docstring is checked instead.
     """
     tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
     doc = next(ast.get_docstring(node) for node in tree.body
                if isinstance(node, ast.FunctionDef) and node.name == "parts")
     for stem in RESERVED_STEMS:
-        # The FILE, not the bare stem: `print` on its own also appears in this
-        # docstring as the name of a view, so a docstring that had dropped the
-        # warning would still contain the word.
+        # The file, not the bare stem: `print` also appears in the docstring as
+        # a view name.
         assert f"{stem}.stl" in doc, (
             f"the build refuses a catalogue key {stem!r} (RESERVED_STEMS in "
             "cadbuild.parts) and the template never says so")
 
 
 def test_the_archive_the_hub_serves_is_this_directory():
-    """The bytes a `create` receives, compared against the files on disk.
-
-    Cheap, and it is what makes every assertion above an assertion about the
-    thing that is actually shipped rather than about a directory that happens to
-    sit beside it.
-    """
+    """The bytes a `create` receives, compared against the files on disk, so the
+    assertions above are about what is actually shipped."""
     with tarfile.open(fileobj=io.BytesIO(onboarding.template_bytes()),
                       mode="r:gz") as tar:
         served = {info.name: tar.extractfile(info).read()
@@ -1293,67 +978,44 @@ def test_the_archive_the_hub_serves_is_this_directory():
 
 
 # -- what the skill quotes out of this directory -----------------------------
-# The two sentences below are found in SKILL.md BY THE SUBSTITUTED VALUES, never
-# by the fixed words around them. The fixed words are what is being pinned, so a
-# pattern spelling them out would locate the quotation by the very wording it
-# then checks: reword the document and the pattern simply stops matching, which
-# is a pin that quietly stops pinning. Both patterns therefore key on what the
-# template PUTS INTO the sentence -- a count, and a `.stl` name with a byte
-# count -- and every match either finds is then held to the template.
-# THAT ARGUMENT IS ABOUT QUOTED_STL_MESSAGE. The fixed words the other pattern
-# spells out are printed by `run_checks`, not written by the skill's prose, so
-# naming them cannot make the pin circular: they are pinned elsewhere or not at
-# all, and never by this.
+# The quotations in SKILL.md are found by the substituted values (a count; a
+# `.stl` name with a byte count), never by the fixed words, which are what is
+# being pinned: a pattern spelling them out would stop matching on a reword
+# instead of failing. (QUOTED_CHECK_COUNT's fixed words are `run_checks`'s own
+# print, not the skill's prose.)
 
 # `checks: N passed` is `modelchecks.run_checks`'s own print. Only a literal
-# count matches: the skill also writes `checks: N passed` a few lines above, as
-# the shape rather than as a measured run, and that one is not a claim about the
-# template.
+# count matches; the skill also writes the shape with `N`.
 QUOTED_CHECK_COUNT = re.compile(r"`checks: (\d+) passed`")
 
 # A backticked sentence beginning with a `.stl` file name and holding a number:
 # `stl.name` and `size`, the two values the template substitutes in.
 QUOTED_STL_MESSAGE = re.compile(r"`([A-Za-z0-9_.-]+\.stl\b[^`\n]*?\d[^`\n]*)`")
 
-# The stretch of that message the template is searched by. Small on purpose: it
-# is enough to tell this f-string from the other messages in checks(), and the
-# less of the sentence it holds the more of it is left for the comparison to
-# actually check.
+# The stretch of that message the template is searched by: enough to tell this
+# f-string from the other messages in checks(), and small so the rest is left
+# for the comparison.
 STL_MESSAGE_NEEDLE = "printable mesh"
 
 
 def test_the_skill_quotes_the_number_of_checks_this_template_reports():
     """`checks: 10 passed` in SKILL.md, against what the counter says.
 
-    That sentence is the skill's worked example of a build whose checks ran to
-    the end about parts the catalogue no longer held, and the NUMBER is the whole
-    of the evidence: ten checks went green, and every section of that run but the
-    LAST measured a box and a lid that were not being built any more -- the last
-    one walks `parts()`, so it is the only one that landed on the catalogue that
-    was really there. Nothing went red, which is the whole of the lesson: the log
-    reports a count for a model none of the checks behind it were written about.
-    A check added to `checks()` here, or taken out of it, moves that number --
-    and the document is what the hub serves to every agent that installs the
-    skill, so a stale one teaches a run that never happens.
+    The skill's worked example of checks going green about parts the catalogue
+    no longer holds rests on that number, and the document is served to every
+    agent, so a check added to or removed from `checks()` must update it.
 
-    Counted with `modelchecks.count_checks`, applied to the template's real
-    `checks`. That is the counter the build STARTS from and no longer the whole
-    of what it prints: the build reports `count_checks(...) -
-    len(static_asserts(...))`, taking off every assert the module's own
-    constants settle on their own. The two numbers agree here because the
-    template carries no such assert, and what holds THAT is
-    `test_the_template_builds_the_way_the_hub_builds_it` below -- it fails the
-    template's build on any `warning:` line, and each static assert prints one.
-    `static_asserts` cannot be called from this test at all: it needs the
-    imported module's `vars()`, and model.py is never IMPORTED because importing
-    it needs the CAD kernel, which the test container has not got -- the pin
-    would then carry an `importorskip` and skip in exactly the place it has to
-    run, every push, in the containers the build test below already skips in.
+    Counted with `modelchecks.count_checks` on the template's real `checks`. The
+    build prints `count_checks(...) - len(static_asserts(...))`; the two agree
+    because the template has no static assert, which
+    `test_the_template_builds_the_way_the_hub_builds_it` holds (each one prints a
+    `warning:` line). `static_asserts` needs the imported module, and importing
+    model.py needs the kernel, so it is not called here: this pin must run on
+    every push without a kernel.
     """
     source = (TEMPLATE_DIR / "model.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
-    # EVERY match is collected rather than the first one taken: `next` would
-    # measure the first `def checks`, and python binds the name to the LAST.
+    # Every match: python binds the name to the last `def checks`.
     functions = [node for node in tree.body
                  if isinstance(node, ast.FunctionDef)
                  and node.name == "checks"]
@@ -1371,12 +1033,9 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
         f"Define checks() once rather than leaving this test to choose")
     function = functions[0]
 
-    # EXECUTING THE `def` ALONE IS SAFE ONLY WHILE IT STAYS A BARE ONE, so that
-    # is asserted rather than assumed. THREE kinds of expression are evaluated
-    # at definition time -- a decorator, a default argument, and an annotation
-    # on a parameter or on the return -- and every one of them is template code
-    # running inside this suite, whose first reach would be for the kernel that
-    # is not here.
+    # Executing the `def` alone is safe only while it is bare: decorators,
+    # default arguments and annotations are evaluated at definition time, and
+    # that would run template code that reaches for the kernel.
     assert function.decorator_list == [], (
         "the template's checks() has grown a decorator, which this test would "
         "evaluate: it executes the `def` to hand the real function to "
@@ -1385,14 +1044,9 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
     assert not function.args.defaults and not any(function.args.kw_defaults), (
         "the template's checks() has grown a default argument, which is an "
         "expression this test would evaluate when it executes the `def`")
-    # THE ANNOTATION IS THE ONE THAT SPLITS BY PYTHON VERSION, which is what
-    # makes it the dangerous one to leave unchecked. Under PEP 649 (3.14, this
-    # workstation) annotations are lazy, so an annotated checks() passes here;
-    # under 3.11 -- what BOTH workflows run this suite in, see the module
-    # docstring -- the annotation is evaluated at `def` time and the test dies
-    # with a bare NameError that says nothing about any of this. Every geometry
-    # builder in the template is annotated `-> cq.Workplane`, so making checks()
-    # match them is an ordinary edit rather than a far-fetched one.
+    # Annotations are lazy under PEP 649 (3.14) but evaluated at `def` time on
+    # 3.11, where CI runs this suite; the template's builders are annotated
+    # `-> cq.Workplane`, so annotating checks() is an ordinary edit.
     arguments = function.args
     annotated = [argument.arg
                  for argument in (*arguments.posonlyargs, *arguments.args,
@@ -1407,13 +1061,9 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
         f"Leave checks() unannotated, or count it another way rather than "
         f"running template code here")
 
-    # THE PADDING IS LOAD-BEARING. `count_checks` reads the body through
-    # `inspect.getsource`, which finds a function by the `co_firstlineno` of its
-    # code object inside the file that code object names -- so the `def` has to
-    # compile at the line it really occupies. Without the blank lines
-    # `co_firstlineno` is 1, `getsource` hands the counter model.py's MODULE
-    # DOCSTRING instead, and the count is of entirely the wrong text with nothing
-    # to show for it.
+    # The padding is load-bearing: `count_checks` reads the body through
+    # `inspect.getsource`, which locates the function by `co_firstlineno`. Without
+    # it the `def` compiles at line 1 and the counter reads model.py's docstring.
     padded = ("\n" * (function.lineno - 1)
               + ast.get_source_segment(source, function))
     namespace = {}
@@ -1450,27 +1100,19 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
     """`<name>.stl is <n> bytes, which is not a printable mesh`, by its form.
 
     The skill quotes that assertion so an agent recognises it when the block
-    preview phase reddens -- boxes export tiny meshes, so it is the message the
-    template's own `checks()` greets every first commit with, and being able to
-    read it as expected rather than as a fault is the difference between
-    rewriting `checks()` and abandoning the phase.
+    preview phase reddens (boxes export tiny meshes) as expected rather than a
+    fault.
 
-    THE FORM, NOT THE RUN. `bracket.stl` and `684` are one afternoon's build and
-    must not be frozen here; what is pinned is the fixed words the f-string puts
-    AROUND its substitutions -- one stretch between them and one after the last
-    of them, which is the half that carries the sentence and the `endswith`
-    anchor -- read out by AST and required to appear in the document's sentence,
-    in order and anchored at whichever end the f-string itself ends in a
-    literal. The message is not reassembled and no whole string is compared:
-    `stl.name` and `size` are values this test cannot know.
+    The form, not the run: the fixed words the f-string puts around its
+    substitutions are read by AST and required in the document's sentence, in
+    order and anchored at whichever end the f-string ends in a literal. `stl.name`
+    and `size` are values this test cannot know.
     """
     source = (TEMPLATE_DIR / "model.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
-    # Found by the words it must contain rather than by where it sits: the
-    # assertion moves every time a line is added above it. EVERY match is
-    # collected rather than the first one taken, because taking the first says
-    # nothing when there are several -- and `ast.walk` is breadth-first, so the
-    # one it reaches first is not even the one that comes first in the file.
+    # Found by the words it contains, not by position. Every match is collected:
+    # `ast.walk` is breadth-first, so the first one reached need not be the
+    # first in the file.
     messages = [node for node in ast.walk(tree)
                 if isinstance(node, ast.JoinedStr)
                 and any(isinstance(piece, ast.Constant)
@@ -1489,19 +1131,12 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
         f"here which of them is the quoted one -- rather than letting this "
         f"test pin whichever ast.walk happened to reach first")
     message = messages[0]
-    # Read the same way the selector above reads it, down to the `str` test:
-    # two lines asking the same question of the same nodes should not ask it
-    # two different ways.
+    # Read the same way the selector reads it, down to the `str` test.
     literals = [piece.value for piece in message.values
                 if isinstance(piece, ast.Constant)
                 and isinstance(piece.value, str)]
-    # UNREACHABLE AS THE SELECTOR STANDS, and kept knowingly rather than by
-    # oversight: `message` was chosen by a predicate that already demands a
-    # string Constant holding the needle, so `literals` cannot come out empty
-    # today. What it guards is the day that predicate is loosened -- found by
-    # position, by the name it asserts on, by anything that stops implying a
-    # literal -- because everything below reads `literals` as though it holds
-    # something.
+    # Unreachable while the selector demands a string Constant holding the
+    # needle; guards a looser selector, since everything below assumes literals.
     assert literals, (
         "the template's message is now all substitution and holds no fixed "
         "words, so there is nothing in it for the skill to quote")
@@ -1530,9 +1165,8 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
                 f"have it (or has it out of order). The document teaches the "
                 f"wording of a message an agent is told to recognise")
             cursor = found + len(literal)
-        # The ends, which the ordered search above cannot see: a sentence may
-        # not carry anything after the f-string's last literal, or before its
-        # first one, since neither could have come out of a substitution.
+        # The ends, which the ordered search cannot see: nothing may come after
+        # the last literal or before the first.
         if isinstance(message.values[-1], ast.Constant):
             assert sentence.endswith(literals[-1]), (
                 f"SKILL.md's {sentence!r} runs on past the end of the message "
@@ -1545,36 +1179,26 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
 
 # -- the build ---------------------------------------------------------------
 def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
-    """THE TEST THIS FILE EXISTS FOR: run the template through `run_build`.
+    """Run the template through `run_build`, as the hub does.
 
-    Not `cadbuild.build()` called in this process — `run_build` is the entry
-    point `src/jobs.py` uses on the push path, so what is exercised here is the
-    spawned interpreter, the ceilings, the OCCT cap, the gate, the exports and
-    the tessellation, in that order and with those arguments. A template that
-    passes this is a template that publishes.
+    `run_build` is the entry point `src/jobs.py` uses on the push path: spawned
+    interpreter, ceilings, OCCT cap, gate, exports and tessellation. A template
+    that passes this publishes.
 
-    It SKIPS where the CAD kernel does not import, which is no longer CI —
-    see this module's docstring. `exc_type=ImportError` is explicit because the
-    failure being skipped for is an ImportError that is NOT a
-    ModuleNotFoundError: the distribution is installed and its extension refuses
-    to load. pytest 9.1 changes that default, and without the argument this
-    guard would stop skipping and CI would go red.
+    It skips where the CAD kernel does not import (CI installs it).
+    `exc_type=ImportError` is explicit because the skip is for an ImportError
+    that is not a ModuleNotFoundError (an installed extension that refuses to
+    load), and pytest 9.1 changes that default.
     """
     pytest.importorskip(
         "cadquery", exc_type=ImportError,
         reason="the CAD kernel does not import in this interpreter, so the "
                "template cannot be built here — see the module docstring for "
                "what skipping it costs")
-    # AND THE RENDERING STACK, because this test asks for six PNGs. Without it
-    # `render_previews` writes nothing BY DESIGN — a python that cannot draw must
-    # still be able to publish geometry — and says so with a `warning:` line, so
-    # an interpreter carrying the kernel and not the renderer fails this test
-    # twice over (on the missing artefacts and on the warnings assertion) for a
-    # degradation the build supports on purpose. The MODULE is what is asked for
-    # rather than matplotlib by name: that is the import `render_previews`
-    # itself tries, so it covers numpy, trimesh and Pillow with it. `run_build`
-    # spawns the same interpreter this runs in, so the answer here is the
-    # child's answer.
+    # And the rendering stack: without it `render_previews` writes no PNGs by
+    # design and prints a `warning:` line, which this test would fail on twice
+    # for a supported degradation. Asking for the module covers numpy, trimesh
+    # and Pillow; `run_build` spawns this same interpreter.
     pytest.importorskip(
         "src.cadbuild.preview_png", exc_type=ImportError,
         reason="the preview renderer does not import in this interpreter, so "
@@ -1587,12 +1211,9 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         target = project / path.relative_to(TEMPLATE_DIR)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(path.read_bytes())
-    # The one file `hammerola create` writes and the template does not carry,
-    # in the shape that command really writes it: THREE keys, the third being
-    # the slug the project publishes under. It matters here rather than being
-    # decoration, because the warnings assertion below is absolute — a title
-    # with no slug in its brackets is a `warning:` line of its own, and the
-    # template would then fail its own build test over the fixture's wording.
+    # The file `hammerola create` writes, in its real shape with the slug in the
+    # title: a title without one is a `warning:` line, which the absolute
+    # warnings assertion below would fail on.
     (project / PROJECT_FILE).write_text(
         '{"id": "abc123def456", "project": "template-under-test",'
         ' "title": "Template under test (template-under-test)"}',
@@ -1608,34 +1229,17 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         f"the build published {sorted(outcome.files)}, missing "
         f"{sorted(set(EXPECTED_ARTEFACTS) - set(outcome.files))}")
 
-    # AND NOTHING AT ALL FOR WHAT IS NOT PRINTED — the other direction, which
-    # the subset above structurally cannot see: it catches a file that went
-    # MISSING and never one that APPEARED. WHAT IT IS FOR IS A REGRESSION ON THE
-    # BUILD SIDE, in the export path: the day exporting stops asking the kind and
-    # writes screw.stl, screw.step, screw.3mf and screw_preview.png, the page
-    # grows download buttons under a bought M3 screw — and the one model
-    # everybody copies is what offers them. Half (a) below sees that through the
-    # names filed under the record in meta.json, half (b) through the names the
-    # build declared at all. Asked of the catalogue the build PUBLISHED rather
-    # than of a list of names written out here, so renaming a part in the
-    # template leaves this covering it. Deliberately not a strict equality
-    # against EXPECTED_ARTEFACTS: that would freeze the whole list and fail on
-    # every unrelated addition.
-    #
-    # TWO THINGS IT CANNOT SEE, so that nobody reads more into it. An entry whose
-    # `kind` came back `printable` is not in `not_printed` at all, so neither
-    # half ever looks at it — a catalogue record with no kind is refused earlier
-    # and elsewhere, by `cadbuild.parts.read_catalogue`, which raises rather than
-    # defaulting one. And `outcome.files` is the DECLARED list rather than a
-    # listing of the output directory, so a file written and declared by nobody
-    # is invisible to both halves here.
+    # Nothing is exported for a part that is not printed, which the subset above
+    # cannot see: (a) no `files` under its meta.json record, (b) no declared
+    # file named after it. Asked of the published catalogue, so renaming a part
+    # keeps it covered. Not a strict equality against EXPECTED_ARTEFACTS, which
+    # would fail on every unrelated addition. A catalogue record without a kind
+    # is refused earlier (`cadbuild.parts.read_catalogue`), and `outcome.files`
+    # is the declared list, not a directory listing.
     meta = json.loads(
         (tmp_path / "out" / "meta.json").read_text(encoding="utf-8"))
-    # ALL THREE KINDS ARE REPRESENTED, asserted rather than assumed: the loop
-    # below passes by having nothing to say once the catalogue is printables
-    # only, and `not_printed` being non-empty does not catch that — deleting the
-    # screw leaves the board, and the template stops being the worked example of
-    # `hardware` with every test in this file green.
+    # All three kinds are represented, so the loop below has something to check
+    # and the template stays the worked example of every kind.
     kinds = {entry["kind"] for entry in meta["parts"].values()}
     assert kinds == set(KINDS), (
         f"the template's catalogue covers {sorted(kinds)}, not {sorted(KINDS)}. "
@@ -1656,20 +1260,16 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
             f"{entry['kind']}. Nothing is exported for a part that is bought "
             f"or is only there to show what the design fits around")
 
-    # THE GATE'S WARNINGS ARE FAILURES HERE, and only here: they are advice to
-    # an author about their own model, and this model is the example everybody
-    # copies. A template that publishes while telling its reader that a part is
-    # invisible, that an alpha is the worst available value or that a key is
-    # misspelt is teaching all three.
+    # The gate's warnings are failures here only: this model is the example
+    # everybody copies.
     warnings = [line for line in outcome.log.splitlines()
                 if line.startswith("warning:")]
     assert warnings == [], (
         f"the template built, but the gate warned about it:\n"
         + "\n".join(warnings))
 
-    # `checks()` is the third of the contract and the easiest to break into
-    # something that looks fine: a body the counter cannot read reports "count
-    # unknown", and one that provably holds no check fails the build outright.
+    # A body the counter cannot read reports "count unknown"; one that provably
+    # holds no check fails the build.
     assert any(line.startswith("checks: ") and " passed" in line
                and "unknown" not in line
                for line in outcome.log.splitlines()), (
@@ -1677,17 +1277,11 @@ def test_the_template_builds_the_way_the_hub_builds_it(tmp_path):
         f"so the example teaches a shape the counter cannot read:\n"
         f"{outcome.log}")
 
-    # AND THE INTERFERENCE SECTION LEFT ITS NUMBER BEHIND. The comment in the
-    # template telling the reader not to delete that section as a duplicate of
-    # the shared gate rests on exactly this file: the gate returns a verdict and
-    # records nothing, so `assembly.interference_mm3` is the only place a joint
-    # that started sharing volume shows up as a changed number between two
-    # revisions — which is what `hammerola diff` reads. Without this the
-    # argument is prose, and prose is what rots on this contract.
-    #
-    # THE PAIR, NOT THE VALUE. 0.0 today, but a seated lid is a face-to-face
-    # touch and the kernel is free to answer a rounding error there; what has to
-    # hold is that the pair is measured and written down at all.
+    # The interference section leaves its number: the gate records nothing, so
+    # `assembly.interference_mm3` is where a joint that starts sharing volume
+    # shows up between revisions (`hammerola diff` reads it); the template's
+    # comment against deleting that section rests on this. The pair is asserted,
+    # not the value: a seated lid may yield a rounding error.
     metrics = json.loads(
         (tmp_path / "out" / "metrics.json").read_text(encoding="utf-8"))
     measured = (metrics.get("assembly") or {}).get("interference_mm3") or {}

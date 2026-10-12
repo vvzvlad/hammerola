@@ -1,12 +1,8 @@
 """Malformed archives (SPEC 7.1).
 
-The uploaded tar is machine-generated, and a bug in whatever packed it can put any
-of these shapes on the wire. Every test here sends a genuinely
-malformed archive — built member by member with explicit TarInfo objects — and
-then asserts twice: that the push was refused, AND that nothing was written where
-it should not have been. The second assertion is the one that matters; a 422 with
-a file already on disk outside the build directory would be a pass on the status
-code and a compromise on the filesystem.
+Every test sends a malformed archive, built member by member with explicit TarInfo
+objects, and asserts twice: the push was refused, and nothing was written outside the
+build directory. The second assertion is the one that matters.
 """
 
 import errno
@@ -25,16 +21,11 @@ from harness import (DEFAULT_EXPORTS, TOKEN, chardev_entry, dir_entry,
                      raw_tar_gz, symlink_entry, view_bytes)
 from loguru import logger
 
-# Both modules, and which one a line names is load-bearing. The reader lives in
-# `src/archive.py` and `src/store.py` re-exports its names, so READING one
-# through either module gives the same object — but a monkeypatch is not a read:
-# it rebinds a name in ONE module's globals, and the code that looks the name up
-# does so in `archive`. So every `setattr` on one of the reader's OWN names says
-# `archive_module`, and a patch aimed at `store_module` instead would take
-# effect nowhere while the test went on passing for the wrong reason.
-# `store_module.os` and `store_module.uuid` stay as they are: there the module
-# named is only a route to the one `os` or `uuid` every module shares, and an
-# attribute set ON that object is seen from everywhere.
+# A monkeypatch rebinds a name in one module's globals, and the reader in
+# `src/archive.py` looks its own names up there, so patches of those names go on
+# `archive_module`; the same patch on `store_module` (which re-exports them) would
+# take effect nowhere. `store_module.os` and `store_module.uuid` are the shared
+# module objects, so an attribute set on them is seen everywhere.
 from src import archive as archive_module
 from src import store as store_module
 
@@ -59,15 +50,10 @@ def _payload_build() -> bytes:
 def _leftovers(hub, pid):
     """Every transient a refused push could have left behind, by name.
 
-    There are two places to look since the push became asynchronous (SPEC 8A.2
-    step 5), and a test that checked only one would go on passing while the other
-    filled the volume: `.src-<uuid>` at the ROOT of the data directory, which is
-    where a push is unpacked, and `.tmp-<commit>-<uuid>` inside the PROJECT,
-    which is where a build writes its output.
-
-    A project directory that does not exist at all is the strongest form of the
-    same answer, not a hole in this check: a push refused before its build was
-    ever queued never creates one, which is why it is not asserted to be there.
+    Two places: `.src-<uuid>` at the root of the data directory, where a push is
+    unpacked, and `.tmp-<commit>-<uuid>` inside the project, where a build writes
+    its output. A missing project directory counts as clean: a push refused before
+    its build was queued never creates one.
     """
     found = [p.name for p in hub.data.iterdir()
              if p.name.startswith(store_module.LEFTOVER_PREFIXES)]
@@ -178,8 +164,8 @@ def test_a_non_ascii_member_name_is_refused(hub):
 
 
 # -- one 422 for EVERY unusable name, and what it may repeat back ------------
-# Issue #42. A refusal that names one file at a time is the defect being fixed;
-# what it repeats back is held to MAX_REFUSED_NAMES_REPORTED names, each escaped.
+# The refusal names every bad file at once; what it repeats back is held to
+# MAX_REFUSED_NAMES_REPORTED names, each escaped.
 def test_every_unusable_member_name_is_named_at_once(hub):
     bad = [f"ref/сифон-{index}-чертёж.jpg" for index in range(5)]
     body = raw_tar_gz(_payload() + [file_entry(name, b"x") for name in bad])
@@ -214,13 +200,10 @@ def test_the_refusal_says_that_nothing_else_in_the_archive_was_checked(hub):
 
 
 def test_a_depth_refusal_and_a_name_refusal_travel_together(hub):
-    """Two different faults, one answer. Depth used to raise on its own, so an
-    archive with both was two pushes.
+    """Two different faults, one answer: depth and name refusals are reported together.
 
-    Asserted on the NAME and on the per-entry annotation, never on the word
-    "deep" alone: the opening sentence of every one of these refusals now
-    contains "at most 8 components deep", so `"deep" in error` is true of a
-    refusal that lost the depth check entirely.
+    Asserted on the name and the per-entry annotation, never on the word "deep"
+    alone: every one of these refusals opens with "at most 8 components deep".
     """
     deep = "/".join(f"d{i}" for i in range(store_module.MAX_PATH_DEPTH)) + "/x.json"
     body = raw_tar_gz(_payload() + [file_entry(deep, b"{}"),
@@ -269,17 +252,13 @@ def test_a_refusal_repeats_no_control_characters(hub):
 
 
 def test_a_survey_after_a_bad_name_still_stops_at_the_size_ceiling(hub_factory):
-    """The bound on the walk that follows the first bad name.
+    """The walk after the first bad name still stops at the size ceiling.
 
-    Collecting the rest of the names means iterating to the end of the archive,
-    and `tarfile` reaches each header by decompressing past the previous
-    member's data whether anyone reads it or not. Without counting declared
-    sizes, "the first member is badly named" would go from the cheapest refusal
-    there is to a free full decompression of a gzip bomb. 413 rather than the
-    list of names is the deliberate outcome: the ceiling comes first.
-
-    This is the case where the bad name is followed by WELL-named members; its
-    twin below is the one that actually caught a hole.
+    Collecting the remaining names iterates to the end of the archive, and
+    `tarfile` decompresses past each member's data to reach the next header, so
+    declared sizes are counted: a bad first name must not buy a free decompression
+    of a gzip bomb. 413 wins over the list of names. Here the bad name is followed
+    by well-named members.
     """
     cap = 64 * 1024
     small = hub_factory(max_build_bytes=cap)
@@ -293,15 +272,11 @@ def test_a_survey_after_a_bad_name_still_stops_at_the_size_ceiling(hub_factory):
 
 def test_a_survey_of_nothing_but_bad_names_still_stops_at_the_size_ceiling(
         hub_factory):
-    """The twin, and the one the first test could not have caught.
+    """The same ceiling when every member is badly named.
 
-    The size was counted on the branch a badly-named member never reached, so it
-    was only the WELL-named members of a refused archive that were charged for.
-    Name every member badly and the running total stayed at zero however much
-    the archive expanded: measured on a live hub, a 1 MB body decompressed to
-    1.07 GB and came back 422 instead of 413. At a production ceiling of 64 MiB
-    that is tens of gigabytes of decompression per request, times the number of
-    publish slots.
+    Sizes are charged on the bad-name branch too; otherwise the running total stays
+    at zero however far the archive expands (a 1 MB body decompressed to 1.07 GB and
+    was answered 422 instead of 413).
     """
     cap = 64 * 1024
     small = hub_factory(max_build_bytes=cap)
@@ -341,17 +316,12 @@ def _longest_legal_member_name() -> str:
 
 
 def test_the_longest_legal_member_name_is_unpacked(hub, tmp_path):
-    """The boundary from the accepting side: the longest name the path rules
-    admit, `./` prefix included, is unpacked.
+    """The longest name the path rules admit, `./` prefix included, is unpacked.
 
-    Driven at `_unpack` rather than through a publish, and the reason is worth
-    keeping: a 1031-character member cannot be COPIED by an ordinary
-    `shutil.copytree` on macOS, where PATH_MAX is 1024 rather than the 4096
-    MAX_PATH_DEPTH was reasoned against — the test builder does exactly that and
-    dies with ENAMETOOLONG. The hub itself does not: `_open_member_dir` walks
-    one component at a time against a directory descriptor, so no long path ever
-    reaches the kernel. So this asserts the unpacking, which is what the path
-    rules govern, and leaves the fake builder out of it.
+    Driven at `_unpack` rather than through a publish: the fake builder copies the
+    tree with `shutil.copytree`, which dies with ENAMETOOLONG on macOS (PATH_MAX
+    1024) for a 1031-character member. The hub walks one component at a time
+    against a directory descriptor, so no long path reaches the kernel.
     """
     longest = _longest_legal_member_name()
     body_path = tmp_path / "body.tar.gz"
@@ -407,10 +377,8 @@ def test_the_gzip_stream_is_closed_even_when_the_archive_is_refused(
 def _pax_record(key, value):
     """One pax record, `<len> <key>=<value>\\n`, with the length prefix correct.
 
-    Solved rather than guessed: the length counts its own digits, so a record
-    whose prefix is off by one is rejected as a bad header and never reaches the
-    parsing this is built to exercise — which is how an earlier version of the
-    chained-header test measured nothing at all.
+    The length counts its own digits; a record whose prefix is off by one is
+    rejected as a bad header and never reaches the parsing under test.
     """
     body = f" {key}={value}\n".encode()
     length = len(body) + 1
@@ -448,16 +416,11 @@ def _chained_pax_headers(links):
 
 
 def test_a_chain_of_extended_headers_is_refused_and_not_a_crash(hub):
-    """The stack, which none of the ceilings can see.
+    """A chain of pax headers recurses in the parser and must not exhaust the stack.
 
-    Parsing a pax header ends by reading the next one, so a chain of them
-    recurses. Four hundred links — 1 813 bytes compressed — exhausted the
-    interpreter, and `RecursionError` is not a TarError, not a ValueError, and
-    not in CORRUPT_ARCHIVE_ERRORS, so the pusher got a 500 and the log got a
-    187 KB traceback about an archive of their own making.
-
-    Nothing else here could have caught it: chained headers are not members, so
-    the member count never rises.
+    Four hundred links (about 1.8 KB compressed) raise `RecursionError`, which is
+    not in CORRUPT_ARCHIVE_ERRORS and must not surface as a 500. Chained headers are
+    not members, so the member-count ceiling never sees them.
     """
     body = gzip.compress(_chained_pax_headers(400))
     assert len(body) < 4096, "the body has to be the small half of this"
@@ -501,18 +464,12 @@ def test_a_chain_of_extended_headers_is_not_a_crash_wherever_it_sits(
 
 
 def test_a_malformed_sparse_map_is_a_refusal_and_not_a_crash(hub):
-    """The catch around `tarfile.open`, and why it catches by fact rather than by type.
+    """A sparse map whose numbers are not numbers is a refusal, not a 500.
 
-    A map whose numbers are not numbers raises a bare `ValueError` inside
-    `tarfile`'s own header parsing — out of the reach of CORRUPT_ARCHIVE_ERRORS,
-    which lists `TarError` and friends. So the pusher got a 500 and a stack trace
-    about an archive of their own making, which is the exact failure that list
-    exists to prevent.
-
-    Its message repeats the archive's own bytes — `invalid literal for int() with
-    base 10: '<whatever was there>'` — so the refusal escapes it like a member
-    name. `int()` builds that message with `repr()` already; the escaping is
-    kept because nothing promises the next exception will be so careful.
+    It raises a bare `ValueError` inside `tarfile`'s own header parsing, outside
+    CORRUPT_ARCHIVE_ERRORS, so `tarfile.open` is caught by fact rather than by type.
+    The message repeats the archive's own bytes, so the refusal escapes it like a
+    member name.
     """
     entry = tarfile.TarInfo("f.json")
     entry.type = tarfile.REGTYPE
@@ -579,34 +536,18 @@ def test_a_sparse_member_with_data_is_unpacked_hole_and_all(hub, tmp_path):
 @pytest.mark.parametrize("member", [0, 1], ids=["at-open", "during-the-walk"])
 def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
         hub, tmp_path, monkeypatch, member):
-    """The exception to "catch by fact", and the rule `_unpack` states absolutely.
+    """A disk read error inside `tarfile` is not reported as a corrupt archive.
 
-    Both broad catches refuse by WHERE the failure happened rather than by its
-    type, because enumerating types is what let a `RecursionError` out as a 500.
-    But `tarfile` READS the body off the disk while it parses, so a genuine read
-    error is raised from inside those very calls — and answering "archive is
-    corrupt" to it sends the pusher off to debug a file that is fine, which is
-    exactly what the `except OSError` arm a few lines below exists to prevent.
-    `_is_the_disk` is what keeps that rule from having a silent exception.
+    Both broad catches refuse by where the failure happened rather than by type,
+    but `tarfile` reads the body while it parses, so a genuine read error is raised
+    from inside those calls; `_is_the_disk` passes it to the `except OSError` arm
+    instead of answering "archive is corrupt".
 
-    PARAMETRIZED OVER WHICH CATCH, because there are two and they are in
-    different places: `TarFile.__init__` parses the first member, so a failure at
-    the head of the archive is consumed at open and one behind a valid member is
-    consumed during the walk. The failure is armed on the read of a member's
-    HEADER: the second member's is read inside `_members_of`, while a failure on
-    the first member's data would surface in the extraction loop and reach the
-    `except OSError` arm without ever passing `_is_the_disk`.
-
-    AND THE LOG LINE IS ASSERTED FOR BOTH, which is the half of the arm that
-    does any work. The status is the same either way — a 500 is what an
-    uncaught OSError becomes regardless — so a test that stopped at the status
-    could not tell a covered path from an uncovered one, and did not: while the
-    `except OSError` arm sat around the extraction alone, a read failure at open
-    went past it and the only record of a dying volume was the traceback
-    `app.py` logs for every unhandled exception. So the arm does not rescue this
-    from silence — it never was silent — it buys ATTRIBUTION: one line naming
-    `dest` and the filesystem, rather than a stack somebody has to read before
-    they can tell a dying volume from a bug in the hub.
+    Parametrized over the two catches: `TarFile.__init__` parses the first member,
+    so a failure at the head is consumed at open and one behind a valid member
+    during the walk (armed on the second member's header, read inside
+    `_members_of`). The log line naming `dest` and the filesystem is asserted for
+    both, since the status is a 500 either way.
     """
     body_path = tmp_path / "body.tar.gz"
     body_path.write_bytes(_payload_build())
@@ -659,21 +600,13 @@ def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
 
 def test_a_body_that_cannot_be_opened_is_attributed_to_the_filesystem(
         hub, tmp_path):
-    """The gap the test above left: `gzip.open`, the one line outside the arm.
+    """A body `gzip.open` cannot open is attributed to the filesystem.
 
-    It has to stay outside — it CREATES the stream the block's `finally` closes,
-    and pulling it in would leave that `finally` over an unbound name, which is
-    the trade the comment beside it explains. What does not follow is that the
-    line may go unattributed. It is the FIRST touch of the filesystem in
-    `_unpack` and it fails in the ordinary ways: EMFILE/ENFILE while several
-    pushes are unpacked at once (MAX_CONCURRENT_PUBLISHES), EIO on a volume that
-    is going, ENOENT if the spool went away underneath us — which is what this
-    test arranges, because it needs no monkeypatching to do it.
-
-    ASSERTED ON THE LOG LINE rather than the status, for the reason the test
-    above states: an uncaught OSError is a 500 either way and `app.py` writes a
-    traceback for it either way, so the status cannot tell a covered line from an
-    uncovered one. Only the sentence naming the file and the filesystem can.
+    `gzip.open` sits outside the arm because it creates the stream the `finally`
+    closes, but it is the first filesystem touch in `_unpack` and fails in ordinary
+    ways (EMFILE/ENFILE under concurrent publishes, EIO, ENOENT); this test uses a
+    missing spool. Asserted on the log line naming the file and the filesystem,
+    since the status is a 500 either way.
     """
     dest = tmp_path / "staging"
     dest.mkdir()
@@ -762,11 +695,8 @@ def test_a_name_claimed_by_both_a_file_and_a_directory_is_a_422(hub):
 def test_a_view_file_inside_a_subdirectory_is_refused(hub):
     """A tree is unpacked, but what the browser fetches is still a flat name.
 
-    Serving answers `/project/<pid>/<commit>/<name>` and nothing deeper, so a
-    view pointing into a subdirectory would pass every archive check, publish
-    with a 201 and then 404 in the viewer — a build accepted and unopenable.
-    This is the one place where accepting a tree could have opened a hole in
-    something that was previously guaranteed by the flatness itself.
+    Serving answers `/project/<pid>/<commit>/<name>` and nothing deeper, so a view
+    pointing into a subdirectory would publish with a 201 and then 404 in the viewer.
     """
     body = raw_tar_gz([
         file_entry("meta.json", meta_bytes(views=[
@@ -784,11 +714,9 @@ def test_a_view_file_inside_a_subdirectory_is_refused(hub):
 
 
 def test_a_download_inside_a_subdirectory_is_refused(hub):
-    # The same rule for the other kind of reference in meta.json: a download is
-    # a button that links to a build URL, and those are flat too. The reference
-    # hangs off the part it belongs to now (issue #75) rather than off a flat
-    # `downloads` map, which changes where it is written and nothing about the
-    # rule -- a name is checked the same wherever the document names one.
+    # The same rule for downloads: a download links to a build URL, which is flat
+    # too. The reference hangs off its part in meta.json; a name is checked the
+    # same wherever the document names one.
     body = raw_tar_gz([
         file_entry("meta.json", meta_bytes(
             parts={"lid": {"kind": "printable",
@@ -847,12 +775,9 @@ def test_directory_members_are_skipped_not_refused(hub):
 
 
 def test_an_archive_made_by_plain_tar_of_a_directory_publishes(hub, tmp_path):
-    # The end-to-end version of the case above, built by the real `tar` binary
-    # exactly the way a CI job would: cd into the build output and `tar -czf x .`.
-    # Extended for SPEC 8A.2 step 2 rather than rewritten: the tree the real
-    # `tar` walks now has a subdirectory in it, so what is asserted is the
-    # `./sub/file` spelling as the tar binary actually emits it — leading `./`,
-    # a directory entry for `./scripts` we ignore, and the file under it.
+    # Built by the real `tar` binary the way a CI job would: cd into the build
+    # output and `tar -czf x .`. Asserts the spelling tar emits: a leading `./`, a
+    # directory entry for `./scripts` that is ignored, and the file under it.
     src = tmp_path / "build"
     (src / "scripts").mkdir(parents=True)
     (src / "meta.json").write_bytes(meta_bytes())
@@ -870,13 +795,9 @@ def test_an_archive_made_by_plain_tar_of_a_directory_publishes(hub, tmp_path):
 
 
 def test_a_file_inside_a_directory_member_lands_in_a_directory_of_ours(hub):
-    # REWRITTEN for SPEC 8A.2 step 2. It used to assert that a file inside a
-    # directory member was refused, which was the whole point while the archive
-    # was flat. What survives the move is the half that was always the reason:
-    # the directory ENTRY is not trusted. It is skipped, the directory is created
-    # by the hub from the path of the file that needs it, and it gets OUR mode —
-    # so an entry claiming 0o777, or claiming to be a setgid directory, changes
-    # nothing about what appears on disk.
+    # The directory ENTRY is not trusted: it is skipped and the hub creates the
+    # directory from the path of the file that needs it, with OUR mode, so an entry
+    # claiming 0o777 or setgid changes nothing on disk.
     hostile = dir_entry("subdir")
     hostile[0].mode = 0o777
     body = raw_tar_gz(_payload() + [
@@ -891,10 +812,8 @@ def test_a_file_inside_a_directory_member_lands_in_a_directory_of_ours(hub):
 
 
 def test_a_nested_member_needs_no_directory_entry_at_all(hub):
-    # REWRITTEN for SPEC 8A.2 step 2: `sub/nested.json` used to be the canonical
-    # refusal. It is now the canonical ACCEPTANCE, and the property worth
-    # asserting is that it does not depend on the archive listing `sub/` first —
-    # `tar` can be told to store files only, and a model's source is still a tree.
+    # A nested member needs no `sub/` entry before it: `tar` can be told to store
+    # files only, and a model's source is still a tree.
     body = raw_tar_gz(_payload() + [file_entry("sub/nested.json", b"{}")])
     assert hub.publish("proj1", "abc123", body).status_code == 201
     assert (hub.project_dir("proj1") / "abc123" / "sub" / "nested.json"
@@ -1015,20 +934,12 @@ def test_a_member_repeated_in_another_case_is_refused(hub):
 
 def test_no_member_and_no_directory_of_one_is_opened_through_a_symlink(
         hub, monkeypatch):
-    # The flags are the whole reason a member cannot land on something that is
-    # already there — a planted symlink, or a name the extractor has already
-    # written. Nothing else in this file can see them: swapping O_EXCL for
-    # O_TRUNC leaves the entire suite green, because no other test ever gets two
-    # members as far as one name. So they are asserted directly, at the syscall.
-    #
-    # REWRITTEN for SPEC 8A.2 step 2, in two places, and both were forced by the
-    # move to `openat`. The old version selected the calls it cared about by
-    # looking for the staging prefix in the PATH — but a member is now opened
-    # relative to a directory descriptor, so the path is a bare component like
-    # `gen.py` and the filter matched nothing at all, silently. Selecting on
-    # O_CREAT instead is both narrower and impossible to make vacuous: it names
-    # the flag the check is about. And the walk down the directories is asserted
-    # as well, because that is where a tree can be led out of staging.
+    # The open flags are why a member cannot land on a planted symlink or a name
+    # already written, and no other test gets two members to one name, so they are
+    # asserted at the syscall. Calls are selected by O_CREAT, because members are
+    # opened relative to a directory descriptor and the path is a bare component.
+    # The walk down the directories is asserted too: that is where a tree can be
+    # led out of staging.
     original = os.open
     opened = []
 
@@ -1064,14 +975,10 @@ def test_no_member_and_no_directory_of_one_is_opened_through_a_symlink(
 def test_a_symlink_planted_in_the_staging_tree_is_not_followed():
     """The walk refuses to write THROUGH a symlink, not merely to land on one.
 
-    Unreachable from an archive — a link member is refused outright, two tests
-    up — so the situation is built by hand, exactly the way the serving-side
-    test below plants one: a directory component that is a link out of staging,
-    which is what a member of the same archive would have left behind if links
-    ever got through. The point is that this does not depend on the archive
-    checks at all. `openat` with O_NOFOLLOW makes the escape structurally
-    impossible rather than merely rejected, including against something planted
-    between two members by a process we do not control.
+    Unreachable from an archive (link members are refused), so the link is planted
+    by hand as a directory component pointing out of staging. `openat` with
+    O_NOFOLLOW makes the escape impossible independently of the archive checks,
+    including against something planted between two members by another process.
     """
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
@@ -1093,21 +1000,13 @@ def test_a_symlink_planted_in_the_staging_tree_is_not_followed():
 
 def test_the_realpath_check_holds_on_its_own_when_the_whitelist_is_relaxed(
         hub, monkeypatch):
-    """The second line of defence, with the first one deliberately removed.
+    """The realpath check holds on its own when the name whitelist is relaxed.
 
-    SPEC 7.1 calls the realpath check INDEPENDENT of the name whitelist, and
-    until now nothing tested that claim: no archive could reach it, because the
-    whitelist refused everything interesting first. So the whitelist is widened
-    to accept anything and a `../escaped.txt` is pushed through it. This is the
-    only test here that can see the check at all — delete the check and every
-    other test in this file still passes, while this one writes a file into the
-    project directory.
-
-    It matters more after step 2 than before it: the check moved from "the
-    member lands DIRECTLY in staging" to "the member lands INSIDE staging",
-    which is a strictly weaker question and had to be asked without loosening
-    into "anywhere whose path happens to start with these characters" (the test
-    below).
+    SPEC 7.1 makes the realpath check independent of the whitelist, but no archive
+    reaches it past the whitelist, so the whitelist is widened and `../escaped.txt`
+    is pushed through. Deleting the check fails only this test. The check asks
+    whether the member lands inside staging, which must not loosen into a
+    string-prefix test (the test below).
     """
     import re
 
@@ -1126,18 +1025,11 @@ def test_containment_is_by_path_component_and_not_by_string_prefix(
         hub, monkeypatch):
     """`<staging>-evil/` is not inside `<staging>/`, and only the separator says so.
 
-    The natural way to write "inside staging" for a tree is
-    `realpath(target).startswith(real_dest)` — and that also accepts every
-    SIBLING whose name merely begins with the staging directory's name. The
-    escape is real rather than theoretical: it lands in the project directory,
-    under a `.tmp-` name, which is dot-prefixed and therefore invisible to
-    `builds_of`, to the file server and to retention, i.e. it would sit on the
-    volume unnoticed until the next startup sweep.
-
-    Naming the sibling requires knowing the staging directory's random half, so
-    the uuid is pinned for the length of the request — the same trick the test
-    above uses on the whitelist, for the same reason: the check cannot be
-    reached from an archive any other way.
+    `realpath(target).startswith(real_dest)` also accepts every sibling whose name
+    begins with the staging directory's name. Such an escape lands in the project
+    directory under a dot-prefixed `.tmp-` name, invisible to `builds_of`, the file
+    server and retention until the next startup sweep. The uuid is pinned for the
+    request so the sibling can be named.
     """
     import re
     import uuid as uuid_module
@@ -1157,10 +1049,9 @@ def test_containment_is_by_path_component_and_not_by_string_prefix(
 
 
 # -- damaged archives -------------------------------------------------------
-# SPEC 7: a broken archive is a 422 with a message CI can act on. Opening the
-# file only proves the gzip header is there; the member table, the member data
-# and the trailing CRC are all read later, and every one of those used to escape
-# as a 500 with a stack trace and `{"error": "internal error"}`.
+# SPEC 7: a broken archive is a 422 with a message CI can act on, not a 500.
+# Opening the file only proves the gzip header is there; the member table, the
+# member data and the trailing CRC are all read later.
 def test_a_member_whose_data_is_cut_short_is_refused(hub):
     # The header declares 100000 bytes and the archive simply ends.
     header = tarfile.TarInfo("assembled.json")
@@ -1209,19 +1100,11 @@ def test_a_full_disk_is_not_reported_as_a_bad_archive(hub, monkeypatch):
         class Full:
             """The real file object, with every write answered by ENOSPC.
 
-            `fileno` is NOT scaffolding and must not be dropped as an unused
-            method: the extractor calls `os.fchmod(out.fileno(), 0o644)` BEFORE
-            its first write, so a fake without it dies of AttributeError one
-            line short of the write loop, and no ENOSPC is ever raised. That
-            still answers 500 — for the wrong reason — which is exactly how this
-            test spent a while asserting nothing at all after the extractor
-            started unpacking a tree. `wrote` below is the guard against the
-            next such edit: it fails the test if the write loop is not reached,
-            instead of letting some other exception hand back the same 500.
-
-            It delegates to the descriptor of the real staging file rather than
-            inventing one, so `fchmod` acts on the file the extractor thinks it
-            is acting on.
+            `fileno` is required: the extractor calls `os.fchmod(out.fileno(),
+            0o644)` before its first write, and without it the test dies of
+            AttributeError, which also answers 500. `wrote` below fails the test if
+            the write loop is not reached. It delegates to the real staging file's
+            descriptor, so `fchmod` acts on the file the extractor expects.
             """
 
             def __enter__(self):
@@ -1251,17 +1134,11 @@ def test_a_full_disk_during_the_directory_walk_is_not_a_bad_archive(
         hub, monkeypatch):
     """The same rule, one call earlier: the walk that creates the DIRECTORIES.
 
-    `_open_member_dir` classifies the errno it gets from `openat` — a symlink, a
-    regular file or an over-long name in the middle of the path is the pusher's
-    fault and a 422 — and everything outside that set has to stay an OSError.
-    Nothing looked in here before, so widening `LAYOUT_ERRNOS` by one entry was
-    an invisible change: adding ENOSPC to it turns a full volume into "your
-    archive cannot be unpacked", told to whoever pushed a perfectly good tree.
-
-    The errno is injected at `openat` rather than at `mkdir` because `openat` is
-    the call whose handler consults `LAYOUT_ERRNOS`; what is pinned is the
-    classification of a disk-level errno arriving from the walk, not any one
-    kernel path to it.
+    `_open_member_dir` classifies the errno from `openat`: a symlink, a regular
+    file or an over-long name mid-path is the pusher's fault (422), and anything
+    outside `LAYOUT_ERRNOS` stays an OSError, so a full volume must not become
+    "your archive cannot be unpacked". Injected at `openat` because that is the
+    call whose handler consults `LAYOUT_ERRNOS`.
     """
     real_open = os.open
     refused = []
@@ -1294,17 +1171,11 @@ def test_a_corrupt_archive_leaves_no_staging_tree(hub):
 def _record_spools_at_reply_time(hub, monkeypatch):
     """Every reply this hub writes, as (status, spool files present right then).
 
-    THE SNAPSHOT IS TAKEN IN THE SERVER THREAD, one statement before the status
-    line reaches the socket, which is what makes the test below deterministic
-    where `_leftovers` after a request is not. A test that looks at the volume
-    once the client has its answer is racing the handler's own `finally`: on an
-    idle laptop the request thread finishes cleaning up first and the assertion
-    passes for a reason that has nothing to do with the code, and on a loaded CI
-    runner it does not. The ORDER is the property; observe the order.
-
-    Wrapped at `_send` because it is the single funnel every reply goes through
-    (`_json` and `_error` both end here) and because it runs BEFORE
-    `end_headers`, which is where the first byte actually leaves.
+    The snapshot is taken in the server thread just before the status line is
+    sent, which keeps the test deterministic: looking at the volume after the
+    client has its answer races the handler's own `finally`. Wrapped at `_send`,
+    the single funnel every reply goes through (`_json` and `_error` end here),
+    which runs before `end_headers`.
     """
     handler = hub.server.RequestHandlerClass
     original = handler._send
@@ -1323,18 +1194,10 @@ def _record_spools_at_reply_time(hub, monkeypatch):
 def test_a_refusal_is_answered_only_after_the_spool_is_gone(hub, monkeypatch):
     """The spooled body is unlinked BEFORE the refusal is written, on every path.
 
-    The successful path has always had this order — `_queue_build` sits below the
-    `finally` — and the refusals did not: they answered from inside the `try`,
-    so a client that had just been told 400, 422 or 500 could look at the data
-    directory and still find the `.upload-<uuid>` its own push was spooled into.
-    That is what `test_a_corrupt_archive_leaves_no_staging_tree` failed on in CI
-    while passing everywhere else.
-
-    All three refusal clauses are driven, because they are three separate exits
-    and the fix is only worth anything if it covers each: the problem
-    `_spool_body` reports, the PublishError the store raises, and the unexpected
-    exception. The BrokenPipeError clause is deliberately not here — it answers
-    nobody at all, which is the one case with no reply to be ordered against.
+    Otherwise a client just told 400, 422 or 500 can still find its own
+    `.upload-<uuid>` in the data directory. All three refusal exits are driven: the
+    problem `_spool_body` reports, the PublishError the store raises, and an
+    unexpected exception. BrokenPipeError answers nobody, so it is not here.
     """
     seen = _record_spools_at_reply_time(hub, monkeypatch)
 

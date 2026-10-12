@@ -1,20 +1,19 @@
 """`source`, `artifacts`, `log` and `diff`, against a real hub over a real socket.
 
-THE SAME REASON `test_publishing.py` GIVES, pointed at the four verbs that READ.
-Each of them stands on a contract with the other half — which route serves what,
-behind which secret, in which shape — and the way that contract broke last time
-was two suites each staying green about their own side of it. So every test here
-drives `cli.main` with argv and looks at what came back or what landed on the
-disk, at a hub started by `harness.start_hub`.
+Each of these verbs stands on a contract with the other half — which route
+serves what, behind which secret, in which shape — and two suites each green
+about their own side would not catch a break. So every test here drives
+`cli.main` with argv and looks at what came back or what landed on the disk, at
+a hub started by `harness.start_hub`.
 
-WHAT IS BEING PINNED, beyond "it works":
+What is being pinned, beyond "it works":
 
   * `source` unpacks into a directory of its own, and the one that lands there
     by DEFAULT is hidden — a fetched tree beside model.py is a tree the next
     push would publish;
   * `artifacts` reaches for the PUBLIC build files while `source` reaches for
     the code behind the secret. The split is the reason there are two verbs;
-  * `log dev` is answered through the JOB the slot names (issue #79), and the
+  * `log dev` is answered through the JOB the slot names, and the
     header says which kind of push filled the slot — a `build`, or the commit
     that copied itself into it;
   * `diff` answers both halves of the question — what the geometry did, and what
@@ -33,7 +32,7 @@ from hammerola import artifacts, sources
 from hammerola.cli import main
 from hammerola.hub import Hub, HubError
 
-# The address and the token, from tests/client/conftest.py (issue #99).
+# The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
 
 
@@ -42,7 +41,7 @@ def run(model, *args):
 
 
 def metrics_bytes(volume=1000.0, faces=6, code="cc", parts=("body",)):
-    """A metrics.json in the shape `cadbuild.metrics` writes (issue #26).
+    """A metrics.json in the shape `cadbuild.metrics` writes.
 
     Written into the model directory because the suite's stand-in builder
     publishes the pushed tree unchanged — so this is what a real build's
@@ -71,12 +70,9 @@ CATALOGUE = {
     "lid": {"kind": "printable", "files": dict(LID_FILES),
             "preview": "lid_preview.png"},
     "m3": {"kind": "hardware", "note": "M3x8 DIN912"},
-    # THE REPEATED POINTER, and it is here rather than in one test because the
-    # dedup it exercises is a property of the walk over the WHOLE document.
-    # Nothing on the hub side forbids two records naming one file, and until
-    # this record existed no fixture had two: the six pointers the walk follows
-    # made five names, so `seen` could be deleted outright with the suite green.
-    # It sorts after `lid`, so `lid` is the record that gets the file and this
+    # The repeated pointer: the dedup it exercises is a property of the walk
+    # over the WHOLE document, and nothing on the hub side forbids two records
+    # naming one file. It sorts after `lid`, so `lid` is the record that gets the file and this
     # one is the repeat that must not be fetched, printed or counted a second
     # time.
     "shim": {"kind": "printable", "files": {"stl": LID_FILES["stl"]}},
@@ -87,13 +83,11 @@ ASSEMBLED_VIEW = {
     "preview": "assembled_preview.png", "card": "assembled_card.png",
 }
 # What a fetch of that build has to land on the disk, and nothing else. Built
-# out of LID_FILES rather than beside it: the two used to be one list written
-# twice, so a name changed in the catalogue and not here would have been fetched
-# under one spelling and expected under another.
+# out of LID_FILES so the two cannot spell a name differently.
 #
-# `assembled_card.png` IS DECLARED ABOVE AND IS DELIBERATELY ABSENT HERE — that
-# absence is the whole assertion, and line-for-line it is what keeps the walk
-# from following a pointer meant for the hub's front page. The card is the
+# `assembled_card.png` is declared above and deliberately absent here: that
+# absence keeps the walk from following a pointer meant for the hub's front
+# page. The card is the
 # view's picture with the title and the footer cut off; the author already has
 # the sheet that carries those, and the cropped twin beside it on their disk
 # would answer nothing (`hammerola/artifacts.py`, `DECLARING_FIELDS`).
@@ -323,9 +317,8 @@ def test_artifacts_brings_back_the_files_of_a_part_by_its_catalogue_key(
         hub, tmp_path, capsys):
     """The exports of one printable, reached through the record they sit on.
 
-    The key is the part's identity now (issue #75): the files are `{extension:
-    filename}` UNDER `lid`, rather than entries of a flat map whose label a
-    reader had to split back into a part and a suffix.
+    The key is the part's identity: the files are `{extension: filename}`
+    UNDER `lid`.
     """
     model = with_artifacts(tmp_path / "demo")
     revision = publish(model, capsys)
@@ -349,13 +342,8 @@ def test_artifacts_brings_back_the_pictures_and_the_whole_build_meshes(
     """The three pointers that draw no button, and the reason this verb exists.
 
     A part's picture is the cheapest check there is on a part that came out
-    lying face down, and while every file was declared through one flat map
-    there was no way to ask for one: declaring ten pictures meant ten buttons
-    under a menu whose other rows are things you print, and the instruction
-    that survived instead told an agent to assemble the URL by hand out of the
-    part name and a suffix. Ownership is what answers it — a picture belongs to
-    the part or the view it is OF — so all three are declared and none of them
-    is a button.
+    lying face down. A picture belongs to the part or the view it is OF, so all
+    three are declared and none of them is a button on the build page.
     """
     model = with_artifacts(tmp_path / "demo")
     revision = publish(model, capsys)
@@ -425,25 +413,19 @@ def test_artifacts_can_fetch_the_dev_slot(hub, tmp_path, capsys):
 
 def test_a_build_declaring_nothing_at_all_says_so_and_still_succeeds(
         hub, tmp_path, capsys):
-    """A shape NEITHER HALF produces any more — staged on the volume, as it must be.
+    """A shape NEITHER HALF produces — staged on the volume, as it must be.
 
-    IT USED TO BE A PUSH, and it cannot be one now. The build guaranteed the
-    shape was impossible on its side (`read_catalogue` refuses a catalogue with
-    nothing printable in it, and every printable is exported), while the hub
-    took a document of nothing but bought screws quite happily; the review of
-    this change closed that gap, so `render._catalogue` refuses both a
-    catalogue with no printable in it and a printable declaring no files, and
-    there is no longer any push that lands here.
+    No push lands here: `read_catalogue` and `render._catalogue` both refuse a
+    catalogue with no printable in it and a printable declaring no files.
 
-    THE BRANCH IS NOT DEAD CODE, which is why the test moved rather than went.
-    `data/` is writable by every build (SPEC §7.4), so one project's build can
+    The branch is not dead code. `data/` is writable by every build (SPEC §7.4), so one project's build can
     empty another's `meta.json`; and a hub of another version, or anything that
     rewrote the reply on the way, answers whatever it likes. The technique is
     the one
     test_a_declared_name_the_hub_could_never_serve_is_refused uses and for the
     same reason: the case exists only in an answer the hub did not write.
 
-    IT STILL SUCCEEDS, and that is the decision the message carries: the
+    It still succeeds, and that is the decision the message carries: the
     document is well formed and merely empty, so there is nothing to download
     and nothing that could be downloaded WRONGLY — which is what the refusals
     below are for.
@@ -502,18 +484,16 @@ def _plant(meta: dict, owner: str, field: str, value) -> None:
     ("part", "preview", BAD_NAME, "preview", "non-printable"),
     ("view", "overview", BAD_NAME, "overview", "non-printable"),
     ("view", "preview", BAD_NAME, "preview", "non-printable"),
-    # THE WRONG SHAPE, ON THE ONE FIELD THAT HAS ONE. A string is the case the
-    # walk used to hand on whole — `unservable_reason` passes a perfectly good
-    # file name, so one part's entire export was fetched and reported as a
-    # single file — and `{}` is refused by `render._catalogue` outright rather
-    # than dropped, so an empty map cannot come off a build the hub published
-    # either.
+    # The wrong shape, on the one field that has one. A string would pass
+    # `unservable_reason` as a perfectly good file name, and `{}` is refused by
+    # `render._catalogue` outright, so neither can come off a build the hub
+    # published.
     ("part", "files", "assembled.stl", "'files'", "not a shape"),
     ("part", "files", {}, "'files'", "not a shape"),
 ])
 def test_a_declared_name_the_hub_could_never_serve_is_refused(
         hub, tmp_path, capsys, owner, field, planted, said, because):
-    """THE CASE THE CLIENT'S RE-CHECK EXISTS FOR, and the one it used to miss.
+    """The case the client's re-check exists for.
 
     The hub validates every one of these pointers at publish time
     (`render._check_declared_file`), so a name of this shape cannot come from a
@@ -524,19 +504,16 @@ def test_a_declared_name_the_hub_could_never_serve_is_refused(
     because no push can carry such a name through the archive alphabet in the
     first place.
 
-    ONE CASE PER PLACE A POINTER CAN SIT, because the document is no longer one
-    walk over three maps of the same shape: a part's files are a map inside a
+    One case per place a pointer can sit: a part's files are a map inside a
     record and a view's mesh is a bare name on a list entry, so a check written
     against one of those shapes would leave a whole owner unwatched.
 
-    U+202E RIGHT-TO-LEFT OVERRIDE, and not a leading dot, because the dot is
-    what the hand-rolled version of this check already caught. This one is the
-    clause the shared rule has and the copy did not — and it names this very
-    command as its reason: the filename is printed on the line reporting the
+    U+202E RIGHT-TO-LEFT OVERRIDE, and not a leading dot, because this
+    command is the reason for that clause of the shared rule: the filename is printed on the line reporting the
     save and then written to the author's disk, so an override in it reverses
     the report of what just landed.
 
-    A NAME AND A SHAPE ARE ONE SUBJECT HERE, which is why the last two rows are
+    A name and a shape are one subject here, which is why the last two rows are
     in this table rather than in a test of their own: both say "the hub checks
     this at publish time, so this answer did not come from a build it
     published", both are staged the same way, and both have to name where in
@@ -577,22 +554,20 @@ def test_a_declared_name_the_hub_could_never_serve_is_refused(
 ])
 def test_a_document_shaped_wrong_is_refused_rather_than_walked_past(
         hub, tmp_path, capsys, planted, said):
-    """THE FOUR NODES THE WALK USED TO STEP OVER IN SILENCE.
+    """Four nodes the walk refuses rather than steps over.
 
     A `parts` that is not an object, a record that is not one, a `views` that
-    is not a list, an entry of it that is not an object: each was skipped, and a
-    skip is the one outcome this command must not produce. `data/` is writable
-    by every build (SPEC §7.4), so one project's build can rewrite another's
-    meta.json — and `"parts": []` then fetched the views' two pointers, printed
-    "2 files" and exited 0. An author handed an incomplete set of parts, told it
-    was complete, with nothing anywhere saying otherwise.
+    is not a list, an entry of it that is not an object: a skip is the one
+    outcome this command must not produce. `data/` is writable by every build
+    (SPEC §7.4), so one project's build can rewrite another's meta.json, and a
+    skip would hand the author an incomplete set reported as complete.
 
     The hub checks every one of these at publish time (`render._catalogue`,
     `render.build_meta`), which is why the refusal says the same thing the
     file-name one says — this answer did not come from a build the hub
     published — and why the case has to be staged on the volume.
 
-    NOTHING IS FETCHED FIRST: the walk runs before the destination directory is
+    Nothing is fetched first: the walk runs before the destination directory is
     made, so a refusal leaves no half-filled directory to be mistaken for a
     complete one.
     """
@@ -638,9 +613,9 @@ def test_log_of_a_named_revision(hub, model, capsys):
 
 
 def test_the_slot_names_its_job_and_a_revision_names_none(hub, model, capsys):
-    """The one field the whole of issue #79 rests on, and its other half.
+    """The slot's `job` field, and its absence from a revision.
 
-    The slot's meta.json and a revision's differ in exactly three keys now, and
+    The slot's meta.json and a revision's differ in exactly three keys, and
     `job` is the third: the slot is not addressed by a revision, so no log is
     stored under its name and the JOB that filled it is the only way back to
     one. A revision needs no such field — its log is in the store — and must
@@ -648,7 +623,7 @@ def test_the_slot_names_its_job_and_a_revision_names_none(hub, model, capsys):
     comparison read.
     """
     revision = publish(model, capsys)
-    # The commit filled the slot with itself (issue #78), so the sources have
+    # The commit filled the slot with itself, so the sources have
     # to move before a `build` is anything but "unchanged, nothing rebuilt".
     (model / "model.py").write_text("# moved on since\n")
     assert run(model, "build") == 0
@@ -663,8 +638,8 @@ def test_the_slot_names_its_job_and_a_revision_names_none(hub, model, capsys):
 
 def test_log_dev_prints_the_log_of_the_job_that_filled_the_slot(hub, model,
                                                                 capsys):
-    """The command that used to refuse. What comes back is the log of the very
-    build whose geometry is in the slot, not `latest`'s under another name."""
+    """What comes back is the log of the very build whose geometry is in the
+    slot, not `latest`'s under another name."""
     assert run(model, "build") == 0
     job = job_of(capsys.readouterr().out)
 
@@ -677,7 +652,7 @@ def test_log_dev_prints_the_log_of_the_job_that_filled_the_slot(hub, model,
 
 def test_log_dev_says_when_a_commit_is_what_filled_the_slot(hub, model,
                                                             capsys):
-    """A commit copies itself into the slot (issue #78), so `log dev` is often
+    """A commit copies itself into the slot, so `log dev` is often
     a revision's log — and the header has to say so rather than leave the
     reader to work it out from the contents afterwards."""
     assert run(model, "commit") == 0

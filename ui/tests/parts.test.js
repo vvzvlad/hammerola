@@ -102,12 +102,11 @@ describe('treeFromShapes', () => {
     for (const row of tree.children) expect(row.known).toBe(true)
   })
 
-  // -- the catalogue key (issue #75) ------------------------------------------
+  // -- the catalogue key -------------------------------------------------------
   //
   // THE FIXTURE CARRIES ITS OWN KEYS: `export_views` stamps the catalogue key
-  // on every leaf it writes, and the committed `assembled.json` was regenerated
-  // behind that — one key per leaf, each equal to that leaf's name, which holds
-  // here only because this model references no part twice.
+  // on every leaf it writes — one key per leaf, each equal to that leaf's name,
+  // which holds here only because this model references no part twice.
   //
   // WHAT THE TESTS BELOW DO TO THOSE KEYS IS NOT ONE THING, and the differences
   // are worth having straight before reading them:
@@ -165,14 +164,9 @@ describe('treeFromShapes', () => {
   it('leaves a leaf that names no key at `null` rather than guessing at its name', () => {
     // ARRANGED BY TAKING THE KEY AWAY, which is the one test in this block that
     // subtracts rather than adds: every leaf the exporter writes names a key,
-    // so an unkeyed one has to be made. THE READER OF THIS IS A HAND-MADE PUSH
-    // and not an old build — a document from before the catalogue never gets
-    // this far, since the page reads its `meta.views` unguarded before it
-    // fetches a view file at all and such a document named the list `variants`.
-    // A fallback to `name` would put back exactly the identity-by-string the
-    // catalogue replaced, and would be worse than the original: the key now
-    // EXISTS, so the fallback would hide its absence rather than stand in for a
-    // field nobody has.
+    // so an unkeyed one has to be made, and its reader is a hand-made push. A
+    // fallback to `name` would hide the key's absence and bring back
+    // identity-by-string.
     const unkeyed = {
       ...assembled,
       parts: assembled.parts.map((node) => {
@@ -209,23 +203,14 @@ describe('treeFromShapes', () => {
 
   it('gives a GROUP no key at all, not even one written into the file', () => {
     // A group is not a part: it has no record, so no files, no note and no
-    // kind. The build does not write one, and THIS SIDE IS THE ONLY SIDE THAT
-    // SAYS SO: `check_view_file` takes such a file — "EVERY `key` IN THE FILE
-    // GOES INTO THE SET, wherever it sits", in its own words, because a key is
-    // a claim about what the view shows and that walk is not the place to
-    // decide which nodes carry one. So a hand-made file with a key on a group
-    // is a document the hub ACCEPTS, and what refuses to let it make an
-    // assembly answer for a catalogue record is `treeFromShapes` here — the
-    // group branch returns before the line that reads `key`, so a group leaves
-    // this walk carrying no such field at all. THE SUBJECT IS THIS FUNCTION AND
-    // NOT `indexTree`, which is the distinction hub.js's own note on `key`
-    // exists to draw: that walk copies `key` across on whatever node it is
-    // handed, group or leaf, and enforces nothing — "THIS FIELD ENFORCES
-    // NOTHING AND COPIES WHAT IT IS GIVEN", in its words. What makes copying it
-    // safe is that on a tree which came through HERE a group has none to copy;
-    // the only way to hand that walk a keyed group is to build the tree BY
-    // HAND, which `ui/tests/repeats.test.js` does, and that walk reports the
-    // key it was given.
+    // kind. The build does not write a key on one, but `check_view_file`
+    // accepts a file that does (every `key` goes into the set, wherever it
+    // sits), so `treeFromShapes` is the only side that refuses: the group
+    // branch returns before the line that reads `key`, and a group leaves this
+    // walk carrying no such field. `indexTree` copies `key` from whatever node
+    // it is handed and enforces nothing (hub.js), so the subject is this
+    // function; a keyed group reaches that walk only from a tree built by
+    // hand, as `ui/tests/repeats.test.js` does.
     const [first, second, ...others] = keyed().parts
     const nested = {
       ...assembled,
@@ -684,7 +669,7 @@ describe('movePart and reconcileMoves', () => {
     expect(movePart(vp, ['/Group/not a part'], [1, 1, 1])).toBe(false)
   })
 
-  // -- a row that stands for several copies (issue #75) ------------------------
+  // -- a row that stands for several copies ------------------------------------
 
   it('moves EVERY path by the one delta, each from its own home', () => {
     const { homes, groups, vp } = crowd()
@@ -752,9 +737,9 @@ describe('movePart and reconcileMoves', () => {
     // the arithmetic is sound or not. This is the number a real drag produces:
     // `snap` in viewport/tools.js is `Math.round(v / step) * step` over a 1-2-5
     // step, and six steps of 0.1 come out of that as `0.6000000000000001`. Both
-    // sides of the comparison have to carry the SAME one — which is why `snap`
-    // rounds at the source now, so the map, the event and the document cannot
-    // end up holding three spellings of one offset.
+    // sides of the comparison have to carry the SAME one, which is why `snap`
+    // rounds at the source: the map, the event and the document cannot end up
+    // holding three spellings of one offset.
     const { groups, vp } = crowd()
     const delta = [Math.round(0.6 / 0.1) * 0.1, 0, 0]
     movePart(vp, [PATHS[0]], delta)
@@ -910,15 +895,14 @@ describe('partCentre', () => {
     // `movePart` moves a part by writing `group.position` — so between the write
     // and the next frame the matrix still says where the part was. The axis
     // arrows stand on this point and run a rAF loop that is not the library's:
-    // whenever their frame beats the render they read the stale matrix and trail
-    // the part across the screen by a frame, which is what a reader reported.
+    // whenever their frame beats the render they would read the stale matrix
+    // and trail the part across the screen by a frame.
     //
     // What is asserted is therefore the ORDER — recompose, then read — and a spy
-    // states exactly that. Modelling the composition in the fake instead would
-    // mean reimplementing `Object3D.updateMatrixWorld` here, and a first attempt
-    // at it quietly broke five tests about turns: `movePart` writes an ABSOLUTE
-    // position already compensated for the pivot, so "the base plus the position"
-    // is not the matrix three.js would have built.
+    // states exactly that. Modelling the composition in the fake would mean
+    // reimplementing `Object3D.updateMatrixWorld`, and `movePart` writes an
+    // ABSOLUTE position already compensated for the pivot, so "the base plus
+    // the position" is not the matrix three.js would build.
     //
     // OF THE GROUP AND NOT OF `front`: that method composes an object's world
     // matrix out of its PARENT's and walks down, never up, and the position that
@@ -974,9 +958,9 @@ describe('partCentre', () => {
 // TWO STANDS, AND THE SECOND ONE IS THE POINT. `turnable` is a part its view
 // left square, where `R` is the identity and every error in the orientation
 // cancels; `seated` is one its view turned over, where none of them do. A
-// `movePart` that wrote the reader's turn straight onto the group passed every
-// test built on the first stand while flipping a seated lid out of its pose on
-// an ordinary drag, which is what the second stand is here to catch.
+// `movePart` that wrote the reader's turn straight onto the group would pass
+// every test built on the first stand while flipping a seated lid out of its
+// pose on an ordinary drag.
 
 /**
  * A point turned by three DEGREES the way jscad turns a BODY.
@@ -1364,12 +1348,11 @@ describe('movePart, turning', () => {
   // -- the part its view seated, which is where the orientation is at stake ----
 
   it('leaves the pose the BUILD gave the part alone on a plain drag', () => {
-    // THE REGRESSION THIS BLOCK EXISTS FOR. A displacement asks for no rotation
-    // at all, so `quaternionOf` hands back the identity — and a `quaternion.set`
-    // of that identity is not "no change", it is the part flipped out of the
-    // pose its own view seated it in, under the reader's hand, on the gesture
-    // that worked before any of this existed. The group's quaternion is the only
-    // copy of `loc[1]` there is.
+    // A displacement asks for no rotation at all, so `quaternionOf` hands back
+    // the identity — and a `quaternion.set` of that identity is not "no
+    // change", it is the part flipped out of the pose its own view seated it
+    // in, under the reader's hand. The group's quaternion is the only copy of
+    // `loc[1]` there is.
     const { home, solid, vp } = seated()
 
     expect(movePart(vp, [PIN], [10, -5, 2])).toBe(true)
@@ -1440,14 +1423,11 @@ describe('movePart, turning', () => {
 })
 
 // -- the one predicate three gestures ask ------------------------------------
-// `grabbable` was spelled out three times -- in the canvas press, in the axis
-// arrows and in the rotation handles -- and issue #101 lifted it here. The
-// three layers still exercise it through their own gestures (gizmo.test.js,
-// rings.test.js, tools.test.js drive real presses over real selections); what
-// those cannot state is the predicate's own shape, which is what this block is
-// for. A refusal that stops being a refusal shows up in all three layers at
-// once, and an assertion about WHICH selections are refused belongs next to
-// the function rather than in a comment above a mock.
+// `grabbable` is shared by the canvas press, the axis arrows and the rotation
+// handles. The three layers exercise it through their own gestures
+// (gizmo.test.js, rings.test.js, tools.test.js drive real presses over real
+// selections); what those cannot state is the predicate's own shape, which is
+// what this block is for.
 
 describe('grabbable', () => {
   // `/Group` is the root `treeFromShapes` builds, and `proposal` is the group

@@ -1,27 +1,13 @@
-// The front page's memory, END TO END: a real `store.js` over a real storage,
-// read by the real component. The one question the other two files cannot
-// answer between them.
+// The front page's memory end to end: the real `store.js` over a real storage,
+// read by the real component. `entry.test.js` stubs store.js and `store.test.js`
+// has no component, so neither catches a stored value this build has no answer
+// for.
 //
-// `entry.test.js` stubs store.js, so what it proves is that the component obeys
-// whatever the module says. `store.test.js` has no component, so what it proves
-// is what the module says. Neither notices the failure that actually reaches a
-// reader — a cell holding a value this build has no answer for — because each
-// half is perfectly happy on its own: the stub can be told to return an id the
-// real module would have refused, and the module can refuse an id no component
-// ever asks it about.
+// A file of its own because Vitest isolates files: a file that never calls
+// `vi.mock` needs no registry/mock restore before its `await import()`s.
 //
-// A FILE OF ITS OWN, and that IS the mechanism rather than tidiness. Undoing a
-// `vi.mock` inside a file that declares one is a two-part restore — the module
-// registry and the mock registration — and the second part is easy to leave
-// out, at which point the next `await import()` added below it silently gets a
-// module nobody meant it to have. Vitest isolates files, so a file that never
-// mocks anything needs no restore at all.
-//
-// The storage double and the reason it is installed for the whole file are
-// `store.test.js`'s, and the reasoning there applies here unchanged: this runner
-// has no `localStorage`, every access in store.js reads its absence as "nothing
-// was remembered", and a gutted module would pass anything that only checks for
-// the absence of a throw.
+// The storage double follows `store.test.js`: this runner has no `localStorage`,
+// and store.js reads its absence as "nothing was remembered".
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -69,22 +55,13 @@ afterEach(() => {
 const built = () => new HammerolaProjects({ ...HammerolaProjects.defaultProps })
 
 /**
- * WHICH view was drawn, and WHETHER IT DREW ANYTHING — two questions, and the
- * second one is not optional.
+ * Which view was drawn, and whether it drew anything.
  *
- * `styles` is what makes the two bodies tellable apart, which
- * `expect(render()).toBeTruthy()` never was: `render()` returns an element
- * whichever body ran, so a page that drew tiles while the tab said rows passed.
- * Found by mutating the lookup to `VIEW_BODIES.grid`.
- *
- * But a marker alone answers only the first question, and it answered it
- * ASYMMETRICALLY: `ROWS` is the style of a row, so it exists only if something
- * was drawn, while `TILES` is the style of the grid CONTAINER, which every
- * tile body emits whether or not it has a card to put in it. So a grid that
- * drew nothing passed the whole suite while the same defect in the list was
- * caught twice — and an empty grid under a live header is precisely the screen
- * this file was written about. Every assertion about a view therefore counts
- * `links` as well: one `<a>` per project, in project order.
+ * `styles` tells the two bodies apart (`render()` returns an element either
+ * way). A marker alone is asymmetric: `ROWS` styles a row, so it exists only if
+ * something was drawn, while `TILES` styles the grid container, emitted even
+ * with no cards. So every assertion about a view also counts `links`: one `<a>`
+ * per project, in project order.
  */
 
 /** What only the tiles draw, and what only the dense rows draw. */
@@ -145,11 +122,8 @@ describe('a browser carrying a value this build has no answer for', () => {
   })
 
   it('still draws the default view, and draws it as the default view', () => {
-    // And the other half of the same failure: the view used to be a `grid ?
-    // … : …` branch, which drew the dense list for every id that was not
-    // `grid`, so an unknown one LOOKED like a working answer. Asserted by what
-    // is on the screen rather than by "something was returned" — the default is
-    // `grid`, so the tiles have to be what came back.
+    // An unknown id falls back to the default `grid`, asserted by what is on
+    // the screen: the tiles have to be what came back.
     localStorage.setItem(VIEW_KEY, 'kanban')
     const c = built()
     c.props = { ...c.props, projects: PROJECTS }

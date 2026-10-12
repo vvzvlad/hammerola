@@ -1,30 +1,22 @@
 // ui/src/viewport/scene3d.js — the scaffolding of a widget that lives IN the
 // library's scene rather than over it.
 //
-// THREE IS THE REAL ONE HERE, imported from the committed file the hub serves
-// (`static/_v/three.module.js`, the same two files hatch.test.js and
-// outline.test.js read as text). That is the whole reason this suite can say
-// anything: the module's claims are about a group in a scene, a uniform scale,
-// a material's flags, an object's layers and a ray cast through a camera — all
-// of them three's own arithmetic, and a hand-written stand-in for it would let
-// this file agree with itself. There is no GPU and nothing below looks at a
-// pixel; a `Scene` and a `Raycaster` need neither.
+// Three is the real one, imported from the committed file the hub serves
+// (`static/_v/three.module.js`, the same file hatch.test.js and outline.test.js
+// read as text), because the module's claims are three's own arithmetic: a
+// group in a scene, a uniform scale, material flags, layers and a ray cast
+// through a camera. No GPU and no pixels; a `Scene` and a `Raycaster` need
+// neither.
 //
-// WHAT DRIVES A FRAME HERE IS THE LIBRARY AND NOT A TIMER, which is the claim
-// this file exists to hold on to. The widget is placed from inside the render
-// pass — the fork's `onBeforeRender`, called at the top of `Viewer.update` — so
-// `rendered(viewer)` below is a frame the library drew, and `framesAsked()` is
-// checked after EVERY test in this file: a widget that went back to a loop of
-// its own would be invisible on an idle page and green in every other
-// assertion here.
+// A frame is driven by the library, not a timer: the widget is placed in the
+// fork's `onBeforeRender` at the top of `Viewer.update`, so `rendered(viewer)`
+// is a frame the library drew, and `framesAsked()` is checked after every test.
+// A widget with its own loop would be invisible on an idle page.
 //
-// THE CAMERA IS TWO OBJECTS, and which one a test uses says what it is asking.
-// `orthoCamera()` is the suite's own model of an ortho projection, and
-// everything in this directory that projects a point is measured against it;
-// `realCamera()` puts a real `THREE.OrthographicCamera` in the place
-// `getCamera()` answers with, for the tests that cast a ray, because a ray needs
-// matrices. The two are the same pose, which the press block asserts before it
-// leans on it.
+// The camera is two objects. `orthoCamera()` is the suite's own model of an
+// ortho projection; `realCamera()` puts a real `THREE.OrthographicCamera` where
+// `getCamera()` answers, for the tests that cast a ray. The two share a pose,
+// which the press block asserts first.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -68,14 +60,12 @@ const BOX_PX = 20
 /**
  * A viewport with a scene on it and one widget standing in the scene.
  *
- * THE CANVAS IS A REAL NODE, for the reason rings.test.js gives for its own: the
- * press is read in a capture-phase listener on the WINDOW that declines any
- * target but the canvas, so it has to be an event the DOM really dispatched at
- * one. The rect is stubbed on because jsdom computes no layout.
+ * The canvas is a real node: the press is read in a capture-phase window
+ * listener that declines any target but the canvas. The rect is stubbed because
+ * jsdom computes no layout.
  *
  * `place` puts the group at the origin and `press` takes every press, unless a
- * test says otherwise — the two questions those callbacks answer are asked one
- * at a time below.
+ * test says otherwise.
  */
 function stage({
   camera, wanted = () => true, place, press, cut = true, order = HANDLE_ORDER,
@@ -555,15 +545,12 @@ describe('the press', () => {
   })
 
   it('takes a press the ray lands on, and suppresses it only then', () => {
-    // The trackball is what the refusal keeps off: tools.js listens in the
-    // capture phase on the container and the library's controls on the canvas,
-    // and a press on a widget that reached either would orbit the model while
-    // dragging the handle. `stopImmediatePropagation` is the one call that does
-    // it -- it sets the propagation flag too, so a `stopPropagation` beside it
-    // would be a line that cannot change anything, and asking for THAT one would
-    // pin a spelling rather than the refusal. `preventDefault` is the other
-    // half: it suppresses the compatibility mouse events, so this press cannot
-    // turn into a double-click somewhere else.
+    // The refusal keeps the trackball off: tools.js listens in the capture phase
+    // on the container and the library's controls on the canvas, and either would
+    // orbit the model while dragging the handle. `stopImmediatePropagation` also
+    // sets the propagation flag, so a `stopPropagation` beside it would change
+    // nothing. `preventDefault` suppresses the compatibility mouse events, so the
+    // press cannot become a double-click elsewhere.
     const s = aimed()
     drawn(s)
 
@@ -574,16 +561,11 @@ describe('the press', () => {
   })
 
   it('takes the press away from the OTHER window listener too, not just onward', () => {
-    // The press is refused on the WINDOW, in the capture phase, and
-    // `stopPropagation` does not reach a second listener on the SAME node -- it
-    // only stops the event travelling on. Without `stopImmediatePropagation` a
-    // window listener added after the widgets' own would still see a press one
-    // of them had taken.
-    //
-    // WHAT THIS DOES AND DOES NOT SAY. It says the refusal reaches a listener on
-    // the same node, which is the mechanism. Which of two widgets keeps a press
-    // they could both take is the paint band, and the dispatcher's own tests
-    // below are what say so.
+    // The press is refused on the window in the capture phase, and
+    // `stopPropagation` does not reach a second listener on the same node.
+    // Without `stopImmediatePropagation`, a window listener added after the
+    // widgets' own would still see a press one of them had taken. Which of two
+    // widgets keeps a contested press is the paint band, tested below.
     const s = aimed()
     drawn(s)
     const later = vi.fn()

@@ -1,41 +1,26 @@
-// Five copies of one part are one row that says `pin ×5` — issue #75.
+// Five copies of one part are one row that says `pin ×5`.
 //
-// WHAT THE COUNT IS: how many times the row's key stands next to itself in the
-// tree being drawn. It is `leaves.length`, computed where it is drawn. There is
-// no `qty` anywhere — not in `meta.json`, not on a node, not in this file's
-// fixtures — because a stored number is one that can disagree with the assembly,
-// and the assembly is the thing the reader is looking at.
+// The count is how many times the row's key repeats in the tree being drawn:
+// `leaves.length`, computed where it is drawn. There is no stored `qty`, since a
+// stored number could disagree with the assembly on screen.
 //
-// THE FIXTURE KEEPS THE TWO NAMES APART ON PURPOSE, and that is the trap this
-// file exists to stay out of. A view holding two copies of `pin` gets leaves
-// NAMED `pin` and `pin(2)` — the tessellator numbers them so the paths stay
-// unique — and KEYED `pin` both. Written with the names left equal, every test
-// below would pass under a collapse that grouped by name, by path stem or by
-// colour. So the names are always spelled apart, and the keys are always the
-// thing that is equal.
+// The fixtures keep names and keys apart on purpose: two copies of `pin` get
+// leaves named `pin` and `pin(2)` (the tessellator keeps paths unique) and both
+// keyed `pin`. With equal names, every test would also pass under a collapse
+// that grouped by name, path stem or colour.
 //
-// THE TREES ARE WRITTEN OUT HERE, node by node; the only thing taken from
-// `tests/fixtures/assembled.json` is one colour (`REAL[0].color`), so a leaf
-// carries the field the real ones carry. That is fair here and would not be
-// everywhere: what is under test is `indexTree`, which reads `id`, `name`,
-// `key`, `children`, `color` and `known` exactly as given and asks nothing else
-// of a node, so a hand-written child exercises it as faithfully as a pushed
-// one. It is also unavoidable — the fixture's own model references no part
-// twice, so it holds no run of repeats to collapse, and none of its four leaves
-// (`plate`, `post`, `cap`, `reference_spacer`) is called `pin`.
+// The trees are written out by hand; only one colour (`REAL[0].color`) comes
+// from `tests/fixtures/assembled.json`. `indexTree` reads `id`, `name`, `key`,
+// `children`, `color` and `known` as given, so a hand-written node exercises it
+// faithfully, and the fixture model references no part twice.
 //
-// THE ROW'S OWN CHROME IS TESTED HERE TOO, past the last `describe`, and that
-// is a borrowed home rather than a subject: the caret a row expands from has
-// nothing to do with repeats, but this is the only file that already renders a
-// tree with a node and leaves under it (`component`, `rowFor`), so it is the one
-// place a row's drawn parts can be read without building a second harness.
+// The row's caret is also tested here, past the last `describe`, because this
+// is the only file that already renders a tree with a node and leaves under it.
 //
-// MOST OF IT NEVER MOUNTS: `component()` is the real prototype with the state
-// spelled out and `computed()` called on it, exactly as notes.test.js and
-// revswitch.test.js do it. Where a test needs the handler a VIEWPORT EVENT
-// actually reaches, `mounted()` runs `componentDidMount` so the page's own
-// listeners go on the window — the same helper, under the same name, as
-// revswitch.test.js's.
+// Most of it never mounts: `component()` is the real prototype with the state
+// spelled out. Where a test needs the handler a viewport event reaches,
+// `mounted()` runs `componentDidMount` so the page's own listeners are on the
+// window, as in revswitch.test.js.
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -193,15 +178,10 @@ describe('indexTree keeps apart what is not one row', () => {
   })
 
   it('never collapses two GROUPS, whatever key a hand-made TREE puts on them', () => {
-    // An assembly is not a part, so `lid ×2` over two groups would be the tree
-    // claiming a count of something that has no record.
-    //
-    // A PUSH CANNOT REACH THIS SHAPE, which is why the tree below is written
-    // out by hand rather than pushed: `treeFromShapes` sets `key` on its leaf
-    // branch alone, so a group loses whatever key the view file gave it one
-    // storey before `indexTree` sees it (parts.test.js pins that). What is held
-    // here is `leafKey`'s own rule — the second of the two places that decide,
-    // and the only one this function can be held to.
+    // An assembly is not a part, so `lid ×2` over two groups would claim a count
+    // of something that has no record. The tree is written by hand because
+    // `treeFromShapes` sets `key` only on leaves (parts.test.js pins that); this
+    // holds `leafKey`'s own rule.
     const tree = indexTree(model([
       { id: '/model/one', name: 'one', key: 'lid', children: [leaf('a', 'a')] },
       { id: '/model/two', name: 'two', key: 'lid', children: [leaf('b', 'b')] },
@@ -271,13 +251,12 @@ function component(tree, over = {}) {
 }
 
 /**
- * The same component with its REAL listeners on the window, so the handlers a
+ * The same component with its real listeners on the window, so the handlers a
  * viewport event reaches are the ones the page builds.
  *
- * `load` is stubbed out because `componentDidMount` starts with it and it would
- * reach a hub; `sync` is put back, since what these tests read is the event it
- * dispatches. The pattern — and the console stub, for a runner with no
- * `localStorage` — is revswitch.test.js's `mounted`.
+ * `load` is stubbed because `componentDidMount` calls it and it would reach a
+ * hub; `sync` is restored, since these tests read the event it dispatches. The
+ * console stub covers a runner with no `localStorage`.
  */
 function mounted(tree, over = {}) {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -350,10 +329,9 @@ describe('the row a run of copies draws as', () => {
   })
 
   it('isolates without touching the selection, because colour is an assertion', () => {
-    // `sel` reaches `selectSolid`, whose shader REPLACES the part's colour with
+    // `sel` reaches `selectSolid`, whose shader replaces the part's colour with
     // the selection blue, and on this page a colour is a statement about the
-    // part — grey means a mock. Isolate used to write it, so isolating a part
-    // destroyed the very thing the reader isolated it to look at (issue #83).
+    // part (grey means a mock). Isolate must not set it.
     const c = component(THREE_PINS, { sel: '/model/lid', selName: 'lid' })
     c.state.menu = { id: '/model/pin', x: 0, y: 0 }
     const isolate = c.computed().menuItems.find((m) => m.label === 'Isolate')
@@ -548,11 +526,8 @@ describe('a hidden row carried onto the next build', () => {
 
 // -- the row that arms that drag ----------------------------------------------
 //
-// Move used to be a button in the toolbar: it armed a gesture and left the
-// reader to find the part afterwards. It is a row of each object's own menu now,
-// which means the object is already named when the tool is armed — and a row
-// standing for three copies names all three, which is why this is the file that
-// holds it.
+// Move is a row of each object's own menu, so the object is already named when
+// the tool is armed, and a row standing for three copies names all three.
 
 describe('the Move row of the part menu', () => {
   /** The menu open on one row, and the row that arms the tool from it. */
@@ -607,19 +582,11 @@ describe('the Move row of the part menu', () => {
   })
 
   it('says the move is temporary, because that is the surprising half', () => {
-    // The sentence the button used to raise. A drag is a STATEMENT to the agent
-    // and the model is untouched, so the part is back where the build put it on
-    // the next rebuild — which nothing else on the screen says.
-    //
-    // AND IT NAMES BOTH HALVES OF THE WIDGET, which is what merging the tools
-    // left it owing. One manipulator stands on the part — arrows and plane
-    // quads that slide it, coloured discs that turn it — and a reader told only
-    // about the sliding never goes looking for the rest.
-    //
-    // AND IT NAMES WHAT THE HAND GRABS. `Drag it` described a press on the part
-    // itself, which moves nothing now (viewport/tools.js): a reader who took
-    // that sentence literally would drag the part, orbit the model, and decide
-    // the tool is broken.
+    // A drag is a statement to the agent and the model is untouched, so the part
+    // returns to its build pose on the next rebuild; nothing else on screen says
+    // so. The sentence names both halves of the widget (arrows and plane quads
+    // that slide, coloured discs that turn) and what the hand grabs, since a
+    // press on the part itself moves nothing (viewport/tools.js).
     const { c, row } = moveOn('/model/pin')
 
     row.onClick(click)
@@ -675,29 +642,22 @@ describe('the move node a drag writes', () => {
 
   /**
    * A drag reported by the viewport, with the fixture's own build stamped on it.
-   *
-   * `build` IS ON EVERY REAL REPORT: the viewport stamps the press with the key
-   * the interface handed it, and the handler drops one whose stamp is not the
-   * build now on screen — so a helper that left it off would test the drop and
-   * nothing else. `'abc1234'` is `component()`'s `meta.commit`, which is what
-   * `buildKey` answers with for a fixture that is not a dev slot.
+   * The handler drops a report whose stamp is not the build on screen.
+   * `'abc1234'` is `component()`'s `meta.commit`, which `buildKey` returns for a
+   * fixture that is not a dev slot.
    */
   const dragged = (over) => window.dispatchEvent(new CustomEvent(MOVED, {
     detail: { build: 'abc1234', ...over },
   }))
 
   it('says how many copies WENT, which is not how many the row holds', () => {
-    // The two can differ, and that is why `hmr:moved` reports a count instead
-    // of this side looking one up: the viewport sends the paths it actually
-    // moved and names the solid it started from (`tools.js` takes the name off
-    // the first dragged path). The SECOND event is what a drag of one copy out
-    // of a row of three looks like on the wire — it arrives as `pin(2)`, a name
-    // no row is drawn under once the run has collapsed into one, which it has
-    // here. The node answers with the row's.
-    // THE PATHS ARE THE ONES THE VIEWPORT WOULD SEND: a drag of the row moves
-    // every copy in it, so `count` and `paths.length` are the same number on the
-    // wire — a detail with one path and a count of three is a shape no gesture
-    // can produce.
+    // `hmr:moved` reports a count rather than this side looking one up: the
+    // viewport sends the paths it moved and names the solid it started from
+    // (`tools.js` takes the name off the first path). A drag of one copy out of
+    // a row of three arrives as `pin(2)`, a name no row is drawn under once the
+    // run has collapsed; the node takes the row's name.
+    // A drag of the row moves every copy, so `count` and `paths.length` are equal
+    // on the wire.
     const c = mounted(THREE_PINS)
     const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
     dragged({ id: row[0], name: 'pin', paths: row, count: row.length,
@@ -764,10 +724,9 @@ describe('the move node a drag writes', () => {
 
 // -- the two doors onto `composer.part` ---------------------------------------
 //
-// The describe above is the row lookup a DRAG goes through, which no longer
-// opens a composer at all — what it names is a node of the proposal. These two
-// are the ones that still fill `composer.part`. All of them word a name for a
-// person to read, and none may word it with one the tree does not draw.
+// A drag (above) opens no composer; it names a node of the proposal. These two
+// fill `composer.part`. Each words a name for a person to read, and none may
+// use one the tree does not draw.
 
 describe('the part a comment is opened against', () => {
   it('is the ROW where a point was placed on a later copy', () => {
@@ -802,15 +761,11 @@ describe('the part a comment is opened against', () => {
 
   it('agrees with the id it posts after a pick, a view tab and a measurement',
      () => {
-    // THE ROUTE THAT MAKES `selName` A ROW NAME AND NOT A SOLID's, walked end
-    // to end on a build nobody leaves. `measAdd` takes `partId` from `sel` and
-    // `part` from the row — or, where the tree cannot answer, from `selName` —
-    // and the tree stops answering on an ordinary view tab: `showView` writes
-    // to neither half of the pair, and neither does `onModel`, which replaces
-    // the tree.
-    //
-    // With `selName` left the picked solid's, this comment went to the hub
-    // anchored on the FIRST copy under the THIRD copy's name.
+    // `measAdd` takes `partId` from `sel` and `part` from the row or, where the
+    // tree cannot answer, from `selName`; the tree stops answering on an
+    // ordinary view tab (`showView` and `onModel` write neither half). So
+    // `selName` must be the row name, not the picked solid's, or the comment is
+    // anchored on the first copy under the third copy's name.
     const c = mounted(THREE_PINS)
     window.dispatchEvent(new CustomEvent(PICK,
       { detail: { id: '/model/pin(3)', name: 'pin(3)' } }))
@@ -843,13 +798,11 @@ describe('the part a comment is opened against', () => {
 
 // -- the fourth surface that draws a solid's name -----------------------------
 //
-// The section panel heads the cut with the part the plane was laid on, and it is
-// NOT a door onto `composer.part` — nothing here reaches a comment. It is on this
-// list because the failure is the same one, which is the lesson of #75 rather
-// than a fact about comments: `hmr:face` names the SOLID (`seedCut` takes the
-// name off the owner path, `reportCut` reads it back off the seed), so a cut
-// placed on the second copy arrives as `pin(2)`, and no row is drawn under that
-// name once the run has collapsed into one.
+// The section panel heads the cut with the part the plane was laid on. It does
+// not reach a comment, but fails the same way: `hmr:face` names the solid
+// (`seedCut` takes the name off the owner path, `reportCut` reads it back off
+// the seed), so a cut on the second copy arrives as `pin(2)`, a name no row is
+// drawn under once the run has collapsed.
 
 describe('the part the section plane says it is cut from', () => {
   it('is the ROW where the face was clicked on a later copy', () => {
@@ -892,11 +845,11 @@ describe('the part the section plane says it is cut from', () => {
   })
 
   it('names NO face once the grip`s rings have turned the plane', () => {
-    // The plane has stopped lying on the face it was placed from (issue #90,
-    // viewport/handle.js), and the seed goes on carrying that face's path and
-    // name for the row lookup above — so the report says so itself. It is not
-    // one of the fallbacks: those answer "which face is this", and the panel
-    // already has a subtitle for a cut with no face behind it.
+    // The plane no longer lies on the face it was placed from
+    // (viewport/handle.js), while the seed still carries that face's path and
+    // name for the row lookup, so the report says so itself. It is not one of the
+    // fallbacks: those answer "which face is this", and the panel already has a
+    // subtitle for a cut with no face behind it.
     const c = mounted(THREE_PINS)
     window.dispatchEvent(new CustomEvent(FACE,
       { detail: { id: '/model/pin(2)', name: 'pin(2)', turned: true, offset: 3,
@@ -909,28 +862,21 @@ describe('the part the section plane says it is cut from', () => {
 
 // -- the right-click on the section's own row ---------------------------------
 //
-// Issue #89: the section stopped being a MODE and became a THING in the tree,
-// and a thing in this tree answers a right-click. The row already had its eye
-// and its two ways into the popover; what was missing was the menu every part
-// row above it has had all along.
+// The section is a thing in the tree, and a thing in this tree answers a
+// right-click with the same menu as a part row.
 //
-// THE RISK IS THE SHARED MENU, not the two items. One popover, one `s.menu`, one
-// `menuItems`, and a subject resolved by `this.node(s.menu.id)` — so the section
-// rides in on an id that lookup must never answer, and the ways that can come
-// apart are the ways this block is written against: the id colliding with a tree
-// path, the part branch leaking its items onto the cut, the cut's branch leaking
-// onto a part, and the menu opening in a place the other two doors would not.
-// Another home would need a second tree harness; this file already has one.
+// The risk is the shared menu: one popover, one `s.menu`, one `menuItems`, and
+// a subject resolved by `this.node(s.menu.id)`, so the section's id must never
+// resolve there. The tests cover the id colliding with a tree path, part items
+// leaking onto the cut and vice versa, and the menu opening where the other two
+// doors would not.
 
 describe('the section row\'s context menu', () => {
   /**
    * The section row's own right-click, as `computed()` builds it.
    *
-   * THE DEFAULT IS ASSERTED HERE AND NOT IN A TEST OF ITS OWN, because every
-   * test in this block goes through this door and the claim is the same for all
-   * of them: without `preventDefault` the browser's own context menu opens on
-   * top of ours, and nothing else on the page would notice. It was the one
-   * mutation of this change that survived the suite.
+   * `preventDefault` is asserted here because every test goes through this door:
+   * without it the browser's context menu opens on top of ours.
    */
   const openSecMenu = (c, [clientX, clientY] = [40, 60]) => {
     const e = { stopPropagation: vi.fn(), preventDefault: vi.fn(), clientX, clientY }
@@ -1002,14 +948,10 @@ describe('the section row\'s context menu', () => {
   })
 
   it('and leaves the page where the row\'s own name leaves it', () => {
-    // THE TWO DOORS HELD EQUAL, the way Delete and the popover's reset are held
-    // equal below — and here it matters MORE, not less, because those two share
-    // a closure and these two cannot: `openSecPop` is `stop()`-wrapped for a DOM
-    // event a menu item does not have, so the menu spells the write out a second
-    // time. The day `openSecPop` starts writing a second field — `menu: null`, a
-    // tool reset — the menu item will not learn it, and nothing but this would
-    // fail. What is compared is the whole page, not the one flag: a difference
-    // anywhere is the drift this exists to catch.
+    // The two doors held equal. `openSecPop` is `stop()`-wrapped for a DOM event
+    // a menu item does not have, so the menu spells the write out a second time,
+    // and a field added to one would not reach the other. The whole page is
+    // compared, not one flag.
     const viaMenu = component(THREE_PINS, CUT)
     openSecMenu(viaMenu).menuItems.find((m) => m.label === 'Edit').onClick(click)
 
@@ -1130,22 +1072,12 @@ describe('the section row\'s context menu', () => {
 })
 
 describe('the caret a row expands from', () => {
-  // A STROKED PATH AND NOT A GLYPH, and why that is a test rather than a
-  // sentence beside the render: the point of leaving `▾` behind was that a
-  // glyph's ink is a fraction of the font size which the FONT decides, so the
-  // mark now comes from three numbers this interface sets — the box it is drawn
-  // in, the viewBox it is drawn on and the stroke it is drawn with. "The same
-  // weight as the buttons above the tree" cannot be re-checked as prose.
-  //
-  // READ OFF THE RENDER and not off `computed()`, which is the failure
-  // ui/tests/eltree.js records: `computed().slotTitle` was the whole of "the
-  // digest is within reach", so deleting `title={v.slotTitle}` from the render
-  // left 378 tests green. Deleting the whole `<svg>` from the row here does
-  // exactly that — `caretPath` goes on being computed for nobody.
-  //
-  // THE WEIGHT AND THE PRESENCE, NEVER THE `d` ITSELF: the chevron may be
-  // redrawn, and a test holding its path would fail for a change that is not a
-  // regression.
+  // The caret is a stroked path, not a glyph: a glyph's ink is a fraction of the
+  // font size that the font decides, while the path comes from three numbers
+  // this interface sets (box, viewBox, stroke). Read off the render, not
+  // `computed()`, so deleting the `<svg>` fails here (see ui/tests/eltree.js).
+  // The weight and presence are checked, never `d`, so the chevron can be
+  // redrawn.
 
   /** The one `<svg>` inside an element, as everything that decides what it puts
    *  on screen — the size AND the ink. `stroke` and `fill` are in here because

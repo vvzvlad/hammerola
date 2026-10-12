@@ -87,14 +87,11 @@ def test_a_hub_url_that_cannot_be_requested_is_refused_when_the_Hub_is_made(
         url, what_is_wrong):
     """Refused at the address, before anything is sent, saying so.
 
-    THE THREE ARE THREE DIFFERENT FAILURES and that is why they are listed
-    rather than represented by one: `urlsplit` itself raises on the first,
-    `.port` raises on the second (`urlsplit` and `urllib.request.Request` both
-    accept it happily — the comment that used to claim otherwise was checked and
-    was wrong), and the third fails nowhere in particular. Before this, the
-    first arrived as a `ValueError` traceback out of the constructor and the
-    second as `http.client.InvalidURL` — which is neither a ValueError nor an
-    OSError, so it fell through every clause in `_call`.
+    The three are three different failures, so they are listed rather than
+    represented by one: `urlsplit` itself raises on the first, `.port` raises
+    on the second (`urlsplit` and `urllib.request.Request` both accept it
+    happily, and `http.client.InvalidURL` is neither a ValueError nor an
+    OSError), and the third fails nowhere in particular.
 
     The message must name HUB_URL and must NOT read as a credential problem:
     `8O80` in an address is a typo, and telling somebody to run
@@ -144,10 +141,9 @@ def test_a_path_the_hub_named_that_cannot_be_sent_never_reaches_the_wire(
     The path comes out of the hub's own manifest, so `\\r\\n` in it is an attempt
     to append a header of somebody else's choosing to a request that carries the
     token — and a non-ASCII one is the same route to a different exception:
-    the request line is encoded as ASCII, so it raised `UnicodeEncodeError`,
-    which is a ValueError, and landed in the clause that says "the address and
-    the secret are both checked, so this is neither — please report it". A false
-    sentence, in the one place where the input is somebody else's.
+    the request line is encoded as ASCII, so it raises `UnicodeEncodeError`,
+    which is a ValueError and would land in the clause that says "the address
+    and the secret are both checked, so this is neither — please report it".
 
     Checked from both ends: a HubError comes back, and the server saw no
     request at all, so there is no version of this where the line went out and
@@ -196,10 +192,9 @@ def test_a_token_that_cannot_be_sent_is_refused_as_the_TOKEN(
         token, what_is_wrong):
     """Named explicitly, and the value never shown.
 
-    This is the half the `except ValueError` in `_call` used to assert of
-    everything that reached it. Now it is checked where the answer is actually
-    known, which is what lets that clause stop guessing — and the two failures
-    can carry opposite advice without either one being a guess.
+    Checked where the answer is actually known, so the `except ValueError` in
+    `_call` does not have to guess — and the two failures can carry opposite
+    advice.
     """
     with pytest.raises(HubError) as raised:
         Hub("http://hub.example", token, timeout=10)
@@ -220,9 +215,9 @@ def test_a_connection_dropped_after_the_request_is_reported_as_unreachable():
     """AND NOT AS "nothing was sent", WHICH WOULD BE A LIE ABOUT A PUSH.
 
     `RemoteDisconnected` inherits from `HTTPException` as well as from
-    `ConnectionResetError`, so a clause catching the parent took this case —
-    which fires AFTER the request has gone — out of the honest "cannot reach"
-    branch and told the pusher their archive was never sent. On a `commit` the
+    `ConnectionResetError`, so a clause catching the parent would take this
+    case — which fires AFTER the request has gone — and tell the pusher their
+    archive was never sent. On a `commit` the
     archive is up and the build may already be queued.
     """
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -415,11 +410,8 @@ def test_the_source_is_cut_before_it_is_escaped(payload):
     and ~16 MiB escaping first: three orders of magnitude, so the threshold sits
     nowhere near either and cannot flap.
 
-    BOTH BRANCHES, because the first version measured only `str` — and the
-    BYTES branch is the one the helper grew bytes support for, since three
-    callers hold a response body. A regression in the branch that matters was
-    invisible to a test written about the other one, which is the same "revert
-    it and the suite is green" this test exists to answer.
+    Both branches: `str`, and BYTES, since three callers hold a response
+    body.
     """
     from hammerola.hub import quoted
 
@@ -483,11 +475,9 @@ ROUTES = {
 
 @pytest.mark.parametrize("route", sorted(ROUTES))
 def test_no_route_prints_what_the_far_end_wrote_without_quoting_it(route):
-    """One assertion per call site, which is what "one per call site" meant.
+    """One assertion per call site.
 
-    The first version of this had seven parameters over six sites — two of them
-    landed on the same shared line — and left three sites unreached, which
-    coverage said and the test did not. These are the ordinary commands
+    These are the ordinary commands
     (`hammerola comments`, `rm`, `rename`, `status`), reached long before
     anybody meets an exotic transport failure, and each interpolated a string
     straight out of the reply body.
@@ -580,12 +570,12 @@ def test_the_build_log_is_the_deliberate_exception_and_comes_back_whole():
 
 
 def test_an_error_reply_whose_body_stops_early_is_named_and_not_a_traceback():
-    """The read of an ERROR body, which had no diagnosis at all.
+    """The read of an ERROR body is diagnosed like a 200's.
 
-    It used to happen inside `_call`'s own `except HTTPError` clause, and Python
-    does not offer an exception raised in a handler to the handlers beside it —
-    so a 500 with a truncated chunked body went past every clause as a
-    traceback, while the identical 200 was named properly.
+    Python does not offer an exception raised in a handler to the handlers
+    beside it, so the read cannot happen inside `_call`'s own
+    `except HTTPError` clause — a 500 with a truncated chunked body would go
+    past every clause as a traceback.
     """
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"

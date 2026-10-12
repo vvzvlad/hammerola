@@ -1,15 +1,13 @@
-// The project's comment queue on the build page — issue #33.
+// The project's comment queue on the build page.
 //
-// The rail used to hold what THIS session had posted and nothing else, because
-// the page had no other copy of a comment. It reads the queue now
-// (`GET /api/v1/comments?project=<pid>`, under the same EDIT_TOKEN the page
-// already holds), and every claim below is about what that changes:
+// The rail reads the queue (`GET /api/v1/comments?project=<pid>`, under the
+// same EDIT_TOKEN the page already holds), and every claim below is about it:
 //
 //   * the queue is per PROJECT (SPEC 7A.3), so it is fetched once, refetched
 //     after a write, and NOT re-asked for on a revision switch;
-//   * a comment is bound to the PRINTED ENTITY, which is its catalogue key
-//     (issue #75) — not to the tree path a rebuild is free to renumber, and not
-//     to a coordinate that is only true on the geometry it was measured on;
+//   * a comment is bound to the PRINTED ENTITY, which is its catalogue key —
+//     not to the tree path a rebuild is free to renumber, and not to a
+//     coordinate that is only true on the geometry it was measured on;
 //   * where the key names nothing in the catalogue any more the comment is
 //     ORPHANED, and that has to be VISIBLE in the rail rather than inferred by
 //     the reader from a pin that quietly did not appear.
@@ -203,8 +201,8 @@ describe('loadFeed', () => {
 
 describe('a comment that was just filed', () => {
   it('posts the catalogue key beside the path', async () => {
-    // The path is a number the next build is free to hand to something else; the
-    // key is what the pin follows through a rebuild (issue #75).
+    // The path is a number the next build is free to hand to something else;
+    // the key is what the pin follows through a rebuild.
     const fetching = answering({ status: 201 }, served([]))
     const c = page({
       composer: { part: 'plate(2)', partId: '/model/plate', key: 'plate',
@@ -246,9 +244,8 @@ describe('a comment that was just filed', () => {
   })
 
   it('is read back off the hub rather than appended here', async () => {
-    // The page used to invent a row — its own id, its own label, `just now` —
-    // because it had no other copy of the queue. What the rail shows now is the
-    // record the hub actually stored, with the id and the stamp the agent sees.
+    // What the rail shows is the record the hub actually stored, with the id
+    // and the stamp the agent sees — not a row the page invented.
     const stored = record({ id: 'real', created: '2026-08-27T19:00:00Z' })
     const fetching = answering({ status: 201 }, served([stored]))
     const c = page({
@@ -346,11 +343,9 @@ describe('a comment that was just filed', () => {
 // -- and it is filed ONCE, however many times Send was pressed ----------------
 //
 // The window between the press and the queue coming back is a frame grab, an
-// upload of it and two requests, and for its whole length the composer sat
-// unchanged with the draft still in it. So a reader who saw nothing happen
-// pressed Send again — and again — and the hub, which has no idempotency key
-// and deduplicates nothing (src/comments.py), stored one comment per press:
-// five identical rows in a queue an agent works from.
+// upload of it and two requests. A reader who sees nothing happen presses Send
+// again, and the hub, which has no idempotency key and deduplicates nothing
+// (src/comments.py), would store one comment per press.
 
 describe('a second press of Send', () => {
   const draft = {
@@ -372,12 +367,11 @@ describe('a second press of Send', () => {
   })
 
   it('is not raised at all by a press that sends nothing', async () => {
-    // THE ORDER IS THE POINT, and it is why this test exists rather than the
-    // sentence that used to carry it: the two refusals below — no text, no
-    // token — return BEFORE the `try`, so their `return` never reaches the
-    // `finally`. Raise the flag above them and a press on an empty draft leaves
-    // it up FOREVER: the button sits on 'Sending…' for a request that was never
-    // made, with the draft in a composer that can no longer send it.
+    // The order is the point: the two refusals below — no text, no token —
+    // return BEFORE the `try`, so their `return` never reaches the `finally`.
+    // Raise the flag above them and a press on an empty draft leaves it up
+    // FOREVER: the button sits on 'Sending…' for a request that was never made,
+    // with the draft in a composer that can no longer send it.
     const fetching = answering({ status: 201 }, served([]))
     const c = page({ composer: { ...draft, text: '   ' } })
 
@@ -437,9 +431,8 @@ describe('a second press of Send', () => {
   })
 
   it('leaves the button looking spent while the comment is on the wire', () => {
-    // The other half of the refusal: a button that ignores presses while still
-    // looking like a button is the failure the refusal was added to prevent,
-    // wearing the refusal's clothes (`bannerSwitchStyle` says the same).
+    // The other half of the refusal: the button must not keep looking like a
+    // button while it ignores presses (`bannerSwitchStyle` says the same).
     const idle = page({ composer: draft }).computed()
     const out = page({ composer: draft, sending: true }).computed()
 

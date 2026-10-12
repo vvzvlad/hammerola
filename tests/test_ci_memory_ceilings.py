@@ -1,24 +1,17 @@
 """Every container CI starts carries a memory ceiling, and it is a REAL one.
 
-Two assertions, and both used to live only as sentences in a comment. The comment
-is still there — the numbers and how they were measured have to be read by a
-human — but the part that has to STAY TRUE is here, because it is now spread over
-eleven places instead of two: `--memory=` appears eight times across the two
-workflows and `memory_flags` is used at three `docker run` sites in `ci/smoke.py`.
+`--memory=` appears in both workflows and `memory_flags` at the `docker run` sites
+in `ci/smoke.py`; the comment beside them explains the numbers.
 
     1. `--memory` WITHOUT `--memory-swap` IS NOT A CEILING. `--memory-swap` is the
        memory+swap TOTAL, so leaving it unset gives the container swap equal to
-       the limit: a process that ran away would thrash to twice the number
-       instead of being killed at it. The flag would still be written down while
-       no longer being enforced, which is worse than not having one — the ceiling
-       reads as measured and is not.
+       the limit: a runaway process thrashes to twice the number instead of being
+       killed at it.
 
-    2. A `docker run` in the gate WITHOUT a ceiling is the case issue #28 closed,
-       so a fourth container added later must not quietly reopen it.
+    2. Every `docker run` in the gate has a ceiling, including one added later.
 
-Neither can be caught by running CI: a build under a doubled effective ceiling
-passes exactly like one under the right ceiling, and a gate container with no
-limit at all passes best of all. They are only visible in the text.
+Neither shows up in a CI run: a build under a doubled ceiling, or under none,
+passes. They are only visible in the text.
 """
 
 import ast

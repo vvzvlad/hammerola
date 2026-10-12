@@ -27,7 +27,7 @@ from hammerola import gitsuggest
 from hammerola.cli import main
 from hammerola.limits import MAX_TEXT_CHARS
 
-# The address and the token, from tests/client/conftest.py (issue #99).
+# The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
 
 
@@ -74,9 +74,9 @@ def test_build_leaves_latest_and_the_site_index_alone(hub, model):
     """`dev` is the working copy, not a version: the shared surfaces go on
     meaning "the project as of some commit" (SPEC 7.6).
 
-    A local build DOES rewrite index.json now — that is how the `dev` chip on a
-    card appears — so what is asserted is the thing that actually matters and
-    always did: a project with no commit build has no CARD. The slot is not a
+    A local build DOES rewrite index.json — that is how the `dev` chip on a
+    card appears — so what is asserted is that a project with no commit build
+    has no CARD. The slot is not a
     version of the project, so it cannot put one on the front page.
     """
     assert run(model, "build") == 0
@@ -180,8 +180,8 @@ def test_changed_sources_get_a_different_revision(hub, model, capsys):
 
 
 def test_a_repository_free_directory_publishes_normally(hub, model, capsys):
-    """What used to be a refusal. `commit` means "publish a version of this",
-    and a directory with no git in it can always do that."""
+    """`commit` means "publish a version of this", and a directory with no
+    git in it can always do that."""
     assert not (model / ".git").exists()
     assert run(model, "commit", "-m", "no git here") == 0
     assert len(revisions_of(hub)) == 1
@@ -220,11 +220,9 @@ def _picker(hub, pid="demo0001"):
 
 def test_the_message_travels_from_the_command_line_into_the_picker(
         hub, model, capsys):
-    """The whole channel at once, and until issue #67 it stopped at the laptop.
+    """The whole channel of `-m`, end to end.
 
-    `-m` was read by `gitsuggest` alone: the hub never heard the text, so a
-    revision was a digest and a date on every surface that shows one. Every hop
-    here is somewhere else — the flag becomes a header on the push, the route
+    Every hop here is somewhere else — the flag becomes a header on the push, the route
     reads it, the task carries it into the worker, the publish writes it into
     the revision's own record — so what is worth holding is the END of it, which
     is the file the browser's picker actually reads.
@@ -344,9 +342,8 @@ def test_an_unchanged_revision_still_offers_the_commit(hub, model, capsys):
 # -- --force -----------------------------------------------------------------
 def test_force_travels_from_the_command_line_into_the_build(hub_factory, model,
                                                             monkeypatch):
-    """The whole channel at once, and it is new all the way along.
+    """The whole channel of `--force`, end to end.
 
-    No option has ever reached the build process from the command line before:
     `--force` goes into a query parameter on the publish URL, out of it in the
     request handler, through the task and the worker, and arrives as an argument
     of the call the builder is made with. Every hop is somewhere else, so what
@@ -454,18 +451,15 @@ def test_an_empty_message_is_refused_before_anything_is_packed(
 
 def test_the_hubs_refusal_survives_an_archive_worth_uploading(hub, tmp_path,
                                                               capsys):
-    """THE REGRESSION THAT MOVED THE VALIDATION BELOW THE BODY (issue #67).
+    """A refused message is refused after the body is read.
 
-    A message the hub refuses is refused after `_spool_body`, and that position
-    is the whole of it. Refused ABOVE the body — where it sat, next to the 401
-    and the 413 that genuinely belong there — the hub closes the connection while
-    this client is still writing the archive: urllib raises `Broken pipe`,
-    `Hub._call` reports it as "cannot reach <hub>", and the sentence saying what
-    was wrong with the message is never read. A 256 KiB body still delivered the
-    400 over loopback and 1 MiB did not, so every fixture in this suite was small
-    enough to hide it and a real tree with one vendored `.step` in it was not.
+    A message the hub refuses is refused after `_spool_body`. Refused ABOVE the
+    body, the hub would close the connection while this client is still writing
+    the archive: urllib raises `Broken pipe`, `Hub._call` reports it as "cannot
+    reach <hub>", and the sentence saying what was wrong is never read. A
+    256 KiB body still delivers the 400 over loopback and 1 MiB does not.
 
-    THREE MEGABYTES OF INCOMPRESSIBLE BYTES, therefore, and an angle bracket —
+    Three megabytes of incompressible bytes, therefore, and an angle bracket —
     the refusal a person is most likely to trip, since `clearance < 0.2 mm` is a
     sentence somebody would really type. What is asserted is the diagnosis: the
     hub's own words, and specifically NOT the sentence about reaching it.
@@ -695,7 +689,7 @@ def flaky_hub():
     The 404 is Traefik's own — Go's `http.NotFound`, byte for byte as it was
     measured on the deployment — so the client cannot identify it as the hub's
     verdict and outlives it; the build then reports `building` and `done`. That
-    is the incident of `tests/client/test_polling.py` driven through the actual
+    is `tests/client/test_polling.py`'s edge 404 driven through the actual
     command, which is the only place the two streams exist at all.
     """
     import http.server
@@ -759,13 +753,11 @@ def flaky_hub():
 
 def test_the_build_states_go_to_stdout_and_the_connection_goes_to_stderr(
         model, monkeypatch, capsys, flaky_hub):
-    """The two callbacks are bound to two streams and NOTHING observed it.
+    """The two callbacks are bound to two streams.
 
-    `_publish` hands `on_state` to stdout and `on_notice` to stderr with a
-    comment saying exactly that, and all three ways of breaking it survived the
-    suite: dropping the `on_notice=` argument entirely (the connection then goes
-    unreported, which is the silence that made the incident confusing), and
-    sending either callback to the other stream. `await_job` is tested against a
+    `_publish` hands `on_state` to stdout and `on_notice` to stderr. Dropping
+    the `on_notice=` argument would leave the connection unreported, and either
+    callback could be sent to the other stream. `await_job` is tested against a
     socket everywhere else, but the callbacks there are lists — the streams
     exist only here, at the end of the real command.
 

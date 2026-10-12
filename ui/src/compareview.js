@@ -1,22 +1,14 @@
 /**
  * The panel that stands where the tree stands while two revisions are compared.
+ * Not `compareView`: hub.js already uses that name for the view a comparison
+ * is of. This panel draws the comparison report.
  *
- * NOT `compareView`, WHICH IS TAKEN: hub.js already spends that name on the
- * view a comparison is OF. This is the panel that draws its report.
- *
- * ONE SECTION OF `computed()` IN THE BUILD PAGE, LIFTED WHOLE (issue #103): the
- * keys `render()` draws the comparison from, with the same values they had
- * while this was a block inside that method.
- *
- * IT ASKS THE STATE AND NOTHING ELSE. Every answer here is a read of the five
- * `cmp*` fields — which pair, which stage, what the hub said, which row is
- * picked — so the bag it takes is three doors out (`leaveCompare`,
- * `compareRevisions`, `set`), two pieces of the page's own chrome (`tab`,
- * `stop`) and the handful of readers of the hub's report
- * that stay beside the component because the legend's own sentence has to:
- * `tests/test_ui_source.py` reads `NOT_COMPARED_WHY` out of
- * HammerolaViewer.jsx as text and holds it against what the hub writes on
- * every `not compared` row.
+ * It reads only the five `cmp*` fields, so it takes three actions
+ * (`leaveCompare`, `compareRevisions`, `set`), two pieces of page chrome
+ * (`tab`, `stop`) and the readers of the hub's report. `NOT_COMPARED_WHY`
+ * stays in HammerolaViewer.jsx because `tests/test_ui_source.py` reads it
+ * there as text and checks it against what the hub writes on every
+ * `not compared` row.
  */
 import { DIFF_COLOURS, shortId } from './hub.js';
 import { tab } from './panelstyle.js';
@@ -32,12 +24,10 @@ export function comparePanel(s, deps) {
 
   // -- the comparison panel, which stands where the tree stands
   //
-  // FOUR THINGS CAN BE ON THE SCREEN HERE and only one of them is a list:
-  // waiting for the hub, a refusal because this browser has no token, a
-  // failure with the hub's own words in it, and the report. The first three
-  // are one paragraph with a heading — a panel that draws an EMPTY LIST for
-  // any of them would be saying "nothing changed", which is one of the
-  // answers this block has to be able to give truthfully.
+  // Four states, only one of them a list: waiting for the hub, refused (no
+  // token in this browser), failed (with the hub's words), and the report.
+  // The first three are a heading and a paragraph; an empty list would read as
+  // "nothing changed", which must stay a truthful answer.
   const cmpPair = Array.isArray(s.cmpPair) ? s.cmpPair : [];
   const cmpRows = compareRows(s.cmpReport);
   const cmpDone = s.cmpStage === 'ready';
@@ -55,7 +45,7 @@ export function comparePanel(s, deps) {
               + ' takes a second or two once the build queue reaches it.' };
 
   return {
-    // -- comparing two revisions (issue #10) --------------------------------
+    // -- comparing two revisions ----------------------------------------------
     cmpA: shortId(cmpPair[0] || ''), cmpB: shortId(cmpPair[1] || ''),
     // A method rather than a closure, because closing the panel has an
     // ADDRESS to put back when this page was opened as a comparison, and that
@@ -64,13 +54,11 @@ export function comparePanel(s, deps) {
     // The three ways of looking at one comparison. Each is one group hidden in
     // the scene (`diffHidden`), so they are `set` like any other viewport
     // state and cost no fetch.
-    // A FLEX BOX AND `min-width:0`, not `text-align:center`. Two of the three
-    // labels carry a revision identifier, which is a commit of seven
-    // characters or a pointer name of up to sixty-four — and a flex item does
-    // not shrink below its own content unless it is told it may, so a long
-    // one used to push the whole segmented control wider than the panel. The
-    // name inside then ellipses and the word beside it does not; `padding:0`
-    // because the box now centres its own children.
+    // Flex with `min-width:0`: two labels carry a revision identifier (up to
+    // sixty-four characters), and a flex item does not shrink below its content
+    // unless allowed to, so a long one would widen the whole control. The name
+    // ellipses, the word beside it does not; `padding:0` because the box
+    // centres its own children.
     dsBothStyle: tab(s.diffShow === 'both') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
     dsAStyle: tab(s.diffShow === 'a') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
     dsBStyle: tab(s.diffShow === 'b') + ';flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:4px;padding-left:0;padding-right:0',
@@ -94,21 +82,18 @@ export function comparePanel(s, deps) {
       + (cmpDone ? 'block' : 'none'),
     cmpRows: cmpRows.map((row) => ({
       key: row.key,
-      // THE CATALOGUE KEY IS WHAT IS DRAWN, and not a name looked up in the
-      // build's own catalogue: the pair being compared need not include the
-      // build this page is standing on, and a part that is `new` has no entry
-      // in the older revision's catalogue at all. The key is the identity
-      // (issue #75), it is what the author wrote, and it is what the agent
-      // will be told about.
+      // The catalogue key is drawn, not a name looked up in this build's
+      // catalogue: the compared pair need not include this build, and a `new`
+      // part has no entry in the older revision's catalogue. The key is the
+      // identity, what the author wrote and what the agent is told about.
       name: row.key,
       status: row.status,
       volume: [row.added > 0 ? `+${mm3(row.added)}` : '',
                row.removed > 0 ? `−${mm3(row.removed)}` : '']
         .filter(Boolean).join(' / ') + (row.added > 0 || row.removed > 0 ? ' mm³' : ''),
-      // A COLUMN, because a refused part has a second line under it. Every
-      // other row is one line and looks exactly as it did: the line itself is
-      // the flex box that used to be this element, and the sentence below it
-      // is `display:none` where there is nothing to say.
+      // A column, because a refused part has a second line under it; the
+      // first line is the flex row, and the sentence below is `display:none`
+      // where there is nothing to say.
       rowStyle: 'padding:4px 6px;border-radius:5px;cursor:pointer;background:'
         + (s.cmpSel === row.key ? 'var(--accent-bg)' : 'transparent'),
       nameStyle: `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px ${MONO};color:var(--text)`,

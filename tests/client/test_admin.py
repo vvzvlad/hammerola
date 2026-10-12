@@ -24,7 +24,7 @@ from modeldir import make_model
 from hammerola import limits
 from hammerola.cli import main
 
-# The address and the token, from tests/client/conftest.py (issue #99).
+# The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
 
 
@@ -181,7 +181,7 @@ def test_a_title_the_site_would_have_to_render_verbatim_is_refused(hub, model,
 def test_a_title_over_the_hubs_ceiling_is_refused_by_rename_as_well(
         hub, model, capsys):
     """`rename` and `create` share `_clean_title`, so `rename` inherits BOTH of
-    its refusals — and only the character one was covered here.
+    its refusals, the length one included.
 
     The ceiling is the far side's: `cadbuild.project.load_project` measures the
     title against `MAX_TITLE_CHARS`, so a longer one is a `BuildError` raised
@@ -198,15 +198,13 @@ def test_a_title_over_the_hubs_ceiling_is_refused_by_rename_as_well(
 
 def test_an_empty_rename_is_refused_instead_of_taking_the_directorys_name(
         hub, model, capsys):
-    """THE OTHER BRANCH OF `_clean_title`, AND THE ONE THAT MISADVISED.
+    """The other branch of `_clean_title`.
 
     `create` answers a missing title with the DIRECTORY's name, which is right
     for it and a guess here: `rename` was handed an argument saying what the
-    title should be. That stand-in also carries the ceiling on a directory name,
-    so `rename ""` under an over-long directory printed `create`'s remedy —
-    `Pass --title "..."` — for a command with no such flag. The guard in
-    `write_project_title` is what keeps this path off that branch, so the test
-    is that the refusal is about the ARGUMENT and mentions no flag at all.
+    title should be, and has no `--title` flag to advise. The guard in
+    `write_project_title` keeps this path off that branch, so the refusal is
+    about the ARGUMENT and mentions no flag at all.
     """
     publish(model, capsys)
     assert run(model, "rename", "") == 1
@@ -214,24 +212,22 @@ def test_an_empty_rename_is_refused_instead_of_taking_the_directorys_name(
     error = capsys.readouterr().err
     assert "--title" not in error
     assert "empty" in error
-    # Not renamed to the directory's own name, which is what it used to do.
+    # Not renamed to the directory's own name.
     assert project_json(model)["title"] == "Demo project"
     assert model.name not in error
 
 
 def test_each_remedy_the_create_note_names_ends_with_the_build_warning_gone(
         tmp_path, capsys, monkeypatch):
-    """WHAT ROUND 4 EXISTED FOR, asserted the only way that could have caught it.
+    """Each remedy `create`'s note names actually silences the build's warning.
 
     `hammerola create` prints a note when the directory and the title's brackets
-    name two different slugs, and its first version recommended renaming the
-    directory — which changes nothing, because the `project` key is written once
-    and read first. A substring assertion on the note could not tell the
-    difference. So this follows each remedy the note names through to the thing
-    the author is trying to stop: the line `cadbuild/build.py` prints on every
-    build.
+    name two different slugs. Renaming the directory would change nothing,
+    because the `project` key is written once and read first, so this follows
+    each remedy the note names through to the line `cadbuild/build.py` prints
+    on every build.
 
-    IT LIVES IN THIS FILE because the remedy is a COMMAND, and this is the file
+    It lives in this file because the remedy is a COMMAND, and this is the file
     with a hub behind it — `rename` writes the local file and then tells the
     hub. The build half is imported rather than transcribed: `load_project`
     resolves the published name and `title_problem` judges it, which is the pair

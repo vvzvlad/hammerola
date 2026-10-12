@@ -1,14 +1,9 @@
 """On-disk layout and atomic publication.
 
-NOTHING HERE EVER DELETES A PUBLISHED BUILD. There is no retention window and no
-age ceiling: a build that landed stays until somebody removes it by hand
-(decision of 2026-08-27, SPEC 5.3 and 7.3). A revision is tens of megabytes and
-disk is cheaper than a mechanism that has to be written, tested, explained and
-that can delete the wrong thing — and what the absence buys is exact: every
-build URL is served with a year of `immutable`, so a link that was pasted into
-chat goes on resolving for as long as the volume does. The cost is that the
-volume grows monotonically, and the day it runs out is manual work rather than
-automatic.
+Nothing here ever deletes a published build: there is no retention window and no
+age ceiling (SPEC 5.3, 7.3). Every build URL is served with a year of
+`immutable`, so a pasted link resolves for as long as the volume does; the
+volume grows monotonically, and running out of space is manual work.
 
 Layout under DATA_DIR (SPEC 3, 7.2). Everything here is runtime state and lives on
 the docker volume; templates and viewer assets deliberately live outside it,
@@ -27,44 +22,27 @@ because the volume would shadow them.
                                            until its build says whether to store it
     <data>/sources/<digest>/source.tar.gz  that body, kept: the code of one revision
     <data>/sources/<digest>/log.txt        what the build of that revision printed
-    <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison (issue #10)
+    <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison
 
-`compare/` IS OUTSIDE THE BUILD DIRECTORIES for the two reasons SPEC 8A.3 gives,
-and neither of them is survival: the pair's ends are published revisions and
-nothing deletes those. It is RIGHTS — a build directory is public and this is
-behind EDIT_TOKEN — and it is CACHING: a build URL carries a year of
-`immutable`, while a comparison whose end is a pointer moves whenever the
-pointer does. Putting it inside `<pid>/<a>/` would have given away both.
+`compare/` is outside the build directories (SPEC 8A.3) for rights — a build
+directory is public, a comparison is behind EDIT_TOKEN — and for caching: a
+build URL carries a year of `immutable`, while a comparison whose end is a
+pointer moves with the pointer. It is a cache written like a build (a staging
+directory beside the entry, then one rename); recomputing costs about as much
+as a build (~1.5 s a pair), and nothing prunes it.
 
-It is a CACHE and it is written like a build: a staging directory beside the
-entry, then one rename. Recomputing costs about as much as a build (issue #10
-measured 1.49 s a pair) and nothing here prunes it, exactly as nothing prunes
-anything else on this volume.
+`sources/` is the code of every published revision:
 
-`sources/` IS THE CODE OF EVERY PUBLISHED REVISION, and three things about it are
-decisions rather than arrangement (issue #17).
-
-It is OUTSIDE the build directory. A build directory is served publicly and with
-a year of `immutable`, so a mistake there cannot be taken back — the copies are
-already handed out. This tree is served by nothing: the only way out of it is
-`GET /api/v1/sources/<revision>`, behind EDIT_TOKEN, and the file server's
-`_safe_name` never reaches this far anyway.
-
-It is CONTENT-ADDRESSED, and that is not a second naming scheme to keep in step
-with anything: `<digest>` is `_payload_digest` of the sources, which is exactly
-what `mint_revision` names the revision after. The address of the code and the
-name of the revision are one string. It follows that pushing the same tree twice
-cannot produce a second archive — the second push resolves to the same name — and
-that a revision published under a name the CALLER chose (the route that still
-takes a `<commit>`) is stored under its digest instead, i.e. not at the name in
-its own URL.
-
-It is written ONLY AFTER A PUBLISH LANDS. The sources of a build that failed are
-not kept: the author is looking at the failure the moment the command returns and
-the tree is on their own disk, so the hub would be storing what nobody comes back
-for — and a stored tree that belongs to no published revision is a revision this
-store cannot answer for. Nothing prunes it afterwards; a revision's code lives
-exactly as long as the revision (SPEC 5.3).
+  * Outside the build directory, which is served publicly with a year of
+    `immutable`. This tree is served only by `GET /api/v1/sources/<revision>`,
+    behind EDIT_TOKEN; the file server's `_safe_name` never reaches it.
+  * Content-addressed: `<digest>` is `_payload_digest` of the sources, the same
+    string `mint_revision` names the revision after. Pushing the same tree twice
+    cannot produce a second archive, and a revision published under a name the
+    caller chose (the route that takes a `<commit>`) is stored under its digest,
+    not under the name in its URL.
+  * Written only after a publish lands; a failed build's sources are not kept.
+    A revision's code lives exactly as long as the revision (SPEC 5.3).
 
 `latest` and `dev` are the two names a build directory may not claim, for
 different reasons: `latest` is a symlink the store moves, and `dev` is the local
@@ -76,11 +54,9 @@ encoding nobody thought of: `<pid>` and `<commit>` come from the URL and may
 only be `[A-Za-z0-9_-]`, so they can never contain a separator or a dot
 component. `latest` and `dev` are reserved.
 
-THE UPLOADED TAR IS READ SOMEWHERE ELSE. Opening one, walking it and writing
-the source tree out is `src/archive.py`, together with the ceilings and the
-per-component alphabet that say what a member may be called. Those names are
-re-exported below, so `store.SAFE_COMPONENT` and the rest go on meaning what
-they always did; `Store._unpack` is a call into that module.
+The uploaded tar is read in `src/archive.py`, together with the ceilings and the
+per-component alphabet for member names. Those names are re-exported below as
+`store.<name>`, and `Store._unpack` calls into that module.
 """
 
 import hashlib
@@ -125,31 +101,17 @@ from src.errors import PublishError
 # newline in its name and put a bare LF into the `Location` header of the reply.
 SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
-# A VIEW ID, WHICH IS THE FOURTH SEGMENT OF A COMPARISON CACHE ENTRY and is NOT
-# an id this hub mints. `SAFE_ID` was the rule here for a while and it is the
-# wrong one: it is what a PROJECT and a BUILD are named with, while a view id is
-# the model author's own string, held at build time to
-# `cadbuild.hubspec.MEMBER_RE` -- which allows a dot and 128 characters. So a
-# model with a view called `top.v2` publishes, shows its tab, and answered a
-# comparison of that tab with a bare 404: the name was refused by a rule nobody
-# had ever told the author about, in the first place a view id becomes a path
-# segment.
+# A view id, the fourth segment of a comparison cache entry. It is the model
+# author's own string, held at build time to `cadbuild.hubspec.MEMBER_RE` (a dot
+# and 128 characters allowed), so `SAFE_ID` is the wrong rule for it.
 #
-# THE RULE IS "A NAME THAT MAY BE A DIRECTORY SEGMENT" and nothing narrower.
-# Written out here rather than imported from `cadbuild`: the serving half does
-# not import the build half (see COMPARE_FILES below for the same trade), and
-# `tests/test_compare.py` holds the two patterns equal so a view id a build
-# accepts and this cache refuses fails there instead of in somebody's panel.
-# It is also NOT `SAFE_COMPONENT` in `src/archive.py`, however identical the two
-# look today: that one is the alphabet of an ARCHIVE MEMBER's path on the way
-# IN, a different door with its own suite, and `hammerola/buildnames.py` records
-# the decision to keep the doors apart.
-#
-# What the alphabet buys is the whole point: a component must START
+# The rule is "a name that may be a directory segment": it must start
 # alphanumeric, so `.`, `..`, `.hidden` and the empty string are out, and the
-# class holds no `/`, no backslash, no NUL and nothing outside ASCII -- so a
-# name that passes can never be a separator, a traversal hop, or a lookalike of
-# one in another script. `\Z` and not `$` for the reason `SAFE_ID` gives.
+# class holds no `/`, no backslash, no NUL and nothing outside ASCII. Written out
+# rather than imported because the serving half does not import the build half;
+# `tests/test_compare.py` holds the two patterns equal. Kept separate from
+# `SAFE_COMPONENT` in `src/archive.py`, the alphabet of archive member paths (see
+# `hammerola/buildnames.py`). `\Z` and not `$` for the reason `SAFE_ID` gives.
 SAFE_VIEW_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # The two moving names of a project. Neither may ever be cached, and that is the
@@ -177,10 +139,9 @@ POINTER_NAMES = (LATEST_LINK, DEV_LINK)
 RESERVED_BUILD_NAMES = set(POINTER_NAMES)
 
 # The three documents this hub generates, one per level of the layout above: a
-# build's `meta.json`, a project's `builds.json` and the root `index.json`.
-# Named here rather than spelled again at every reader (issue #105), because the
-# layout is this module's to know — and because the URL of each of the three IS
-# its file name, so the name on disk and the address cannot be renamed apart.
+# build's `meta.json`, a project's `builds.json` and the root `index.json`. Named
+# here because the layout is this module's to know, and the URL of each is its
+# file name.
 BUILD_META_FILE = "meta.json"
 PROJECT_BUILDS_FILE = "builds.json"
 SITE_INDEX_FILE = "index.json"
@@ -201,29 +162,20 @@ SOURCES_DIR_NAME = "sources"
 # request body of the push, unmodified, which is what makes it possible to say
 # the code of a revision is the code that built it rather than a repacking of it.
 SOURCE_ARCHIVE_NAME = "source.tar.gz"
-# The build log, beside the code rather than only at the job (issue #17).
-# The job's copy is not going anywhere — no job is ever deleted — but it is
-# addressed by a JOB id, which is per attempt and recorded against nothing, so a
-# month later the log of a revision is unreachable from the revision. This copy is
-# the one half of "how did this revision come about" that would otherwise be
-# reachable only by whoever still had the id from the push.
+# The build log, beside the code. The job keeps its own copy, but that is
+# addressed by a per-attempt job id recorded against nothing, so it is not
+# reachable from the revision.
 SOURCE_LOG_NAME = "log.txt"
 
-# The comparison cache (issue #10): `compare/<pid>/<a>/<b>/<view>/`, holding
-# exactly the two files below. Not dot-prefixed, for the reason `sources/` is
-# not: nothing serves this tree by path — `_serve_compare` in app.py composes
-# the entry's path itself, from ids it has already checked — and a name somebody
-# will one day go looking for by hand is better plainly visible.
+# The comparison cache: `compare/<pid>/<a>/<b>/<view>/`, holding exactly the two
+# files below. Not dot-prefixed, for the reason `sources/` is not: nothing serves
+# this tree by path — `_serve_compare` in app.py composes the entry's path from
+# ids it has already checked.
 #
-# THE THREE IDS ARE THREE DIRECTORIES AND NOT ONE NAME, because a name needs a
-# separator and no separator is safe here. `SAFE_ID` accepts `_`, so a build may
-# legally be called `a__b`: joined with any run of underscores, `<a>="x"` with
-# `<b>="y__z"` and `<a>="x__y"` with `<b>="z"` spell the same directory, and one
-# comparison is then served the other's geometry. A directory boundary cannot be
-# spelled inside a segment `SAFE_ID` passed, so the nesting is unambiguous by
-# construction and needs no separator at all. The VIEW segment answers to
-# `SAFE_VIEW_ID` instead, and the argument survives that unchanged: no `/` is in
-# that alphabet either.
+# The ids are nested directories rather than one joined name because no
+# separator is safe: `SAFE_ID` accepts `_`, so `x` + `y__z` and `x__y` + `z`
+# would join to the same name. A directory boundary cannot appear inside a
+# segment `SAFE_ID` or `SAFE_VIEW_ID` passed.
 COMPARE_DIR_NAME = "compare"
 # What one entry holds, and the only names the file server will serve out of
 # one. `src/buildproc/comparechild.py` writes them and `runner._COMPARE_ARTEFACTS`
@@ -246,17 +198,12 @@ COMPARE_FILES = ("scene.json", "report.json")
 PROJECT_TITLE_FILE = "title.json"
 
 # The job of the last build pushed into this project's `dev` slot, written when
-# that build STARTS (issue #32). It is what lets the front page say that a
-# project's draft is building or has failed: the slot's own meta.json also
-# carries a `job`, but only a build that SUCCEEDED ever writes one there, so a
-# build in flight and a build that failed leave no trace inside the slot at all.
+# that build starts, so the front page can say a draft is building or has
+# failed: the slot's own meta.json carries a `job` only after a build succeeds.
 #
-# BESIDE `title.json` AND NOT INSIDE THE SLOT, and both halves matter.
-# `_swap_dev_slot` replaces the slot wholesale, so a file written into it before
-# the build is thrown away by the publish it was recording. And the slot's `job`
-# means "the job that FILLED this slot", which is a different fact from "the job
-# that was last asked to fill it" — a failed attempt must not overwrite the one
-# name from which the log of what is actually being served can be found.
+# Beside `title.json` and not inside the slot: `_swap_dev_slot` replaces the slot
+# wholesale, and the slot's `job` means "the job that filled this slot", which a
+# failed attempt must not overwrite.
 #
 # Unreachable from the outside for the same reason `title.json` is: `SAFE_ID` has
 # no dot in it, and `_serve_project` only takes a second segment that is a
@@ -270,10 +217,9 @@ STAGING_PREFIX = ".tmp-"        # a build's OUTPUT, on its way to <pid>/<commit>
 LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
 UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTES
 # The `dev` slot renamed out of the way while a new one takes its name. POSIX
-# cannot replace a non-empty directory under a fixed name in one step, so the old
-# slot has to go somewhere before the new one can arrive — see `_swap_dev_slot`.
-# This is the ONLY thing that parks a directory now: a published build is never
-# deleted (see the top of this module), so nothing else ever moves one aside.
+# cannot replace a non-empty directory under a fixed name in one step — see
+# `_swap_dev_slot`. Nothing else parks a directory: published builds are never
+# deleted.
 TRASH_PREFIX = ".trash-"
 # Any atomic write this module makes, for as long as it is not yet renamed into
 # place — a rule rather than a list, because naming three of them invites the
@@ -304,39 +250,13 @@ BODY_PREFIX = ".body-"
 LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
                      TRASH_PREFIX, JSON_TMP_PREFIX, SOURCE_PREFIX, BODY_PREFIX)
 
-# A leftover younger than this may belong to a publish running RIGHT NOW, in this
-# process or another one sharing the volume. An hour is far longer than any push
-# takes and short enough that a killed 64 MiB upload does not sit there for days.
-#
-# `.src-` and `.body-` stretched that assumption and still fit under it, which is
-# worth writing down because the next change to either number could break it
-# silently: both now live from the request until the build ENDS, so the longest
-# either can honestly be in use is the queue wait plus one build —
-# jobs.MAX_QUEUED_JOBS times buildproc's `wall_seconds`, divided by the workers.
-#
-# THAT IS THE ARITHMETIC THAT BROKE, and it broke silently exactly as predicted.
-# At 16, 120 s and 2 it was sixteen minutes, comfortably inside the hour. The
-# 2026-08-29 raise of `wall_seconds` to 900 s made it TWO HOURS — past an hour,
-# so this sweeper would have deleted the unpacked sources of a build still
-# sitting in the queue, and the build would then have failed on a tree that was
-# there when it was accepted. Nothing tests this and nothing would have said so;
-# the only reason it was caught is that the comment above did the multiplication
-# out loud.
-#
-# THE WAIT HAS COME DOWN TWICE SINCE, AND THIS NUMBER MOVED NEITHER TIME. The
-# workers went from two to four on 2026-09-09 (issue #80), halving it to an hour,
-# and `wall_seconds` came back down to 300 s on 2026-09-10 (issue #81), leaving
-# 16 × 300 / 4 = TWENTY MINUTES. Both times the reason for standing still was the
-# same: this side of the comparison is the safe one, and only a RISE in the wait
-# can break it. `tests/test_build_ceilings.py` is what says so rather than this
-# paragraph — it computes the worst honest wait out of the live constants and
-# asserts this one clears it.
-#
-# Four hours against twenty minutes is a great deal of room, and it is kept
-# rather than trimmed because the cost of the room is the cheap end: a killed
-# 64 MiB upload sits on the volume for up to four hours instead of one. A
-# leftover wastes space, a swept-out source loses a build, and only one of those
-# two is worth being close about.
+# A leftover younger than this may belong to a publish running right now, in
+# this process or another one sharing the volume. `.src-` and `.body-` live from
+# the request until the build ends, so this has to exceed the worst honest queue
+# wait: jobs.MAX_QUEUED_JOBS × buildproc's `wall_seconds` / the number of
+# workers. `tests/test_build_ceilings.py` computes that from the live constants
+# and asserts this clears it. The margin is generous on purpose: a leftover only
+# wastes space, while sweeping a queued build's sources fails that build.
 LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
 
 
@@ -513,12 +433,7 @@ class Store:
     def valid_build_id(name: str) -> bool:
         """Is this a name a commit build may be published and served under?
 
-        Only the two reserved names are out. The `dev-` PREFIX is deliberately not
-        reserved any more: it used to be, because dev ids were `dev-<digest>` and
-        a commit called `dev-1234` would have been filed with the local builds
-        rather than with the commit ones. There is no bucket of local builds now
-        — there is one slot, with no history — so `dev-1234` is just a commit id
-        like any other and gets the same permanent URL.
+        Only the two reserved names are out; `dev-1234` is an ordinary commit id.
         """
         return bool(SAFE_ID.match(name)) and name not in RESERVED_BUILD_NAMES
 
@@ -567,7 +482,7 @@ class Store:
         ~3e-8. Small, but the FAILURE it buys is not small and not repairable:
         two different source trees would map to one URL, the second would be
         refused 409 for ever, and the pusher has no other name to publish under
-        because the pusher does not choose the name any more.
+        because the pusher does not choose the name.
 
         `digest` comes from `_payload_digest`, so this can only fail if that
         function's output shape changes — base64 (`+`, `/`), a prefix, a longer
@@ -587,14 +502,10 @@ class Store:
             return self._locks.setdefault(pid, threading.Lock())
 
     # -- addresses on the volume -------------------------------------------
-    # ONE PLACE THAT KNOWS THE LAYOUT, and that is the whole of what this
-    # section buys (issue #105). A caller that assembles `projects_dir / pid /
-    # commit / "meta.json"` for itself has taken a copy of the layout, and the
-    # copies are what make the layout impossible to move: the file server would
-    # go on reading the old shape while this module wrote the new one. The five
-    # below are addresses and nothing else — none of them touches the disk, and
-    # none of them says the file is there. `resolve_inside` is the one that does
-    # reach the volume, and its own docstring says on what terms.
+    # The one place that knows the layout: callers ask these for addresses
+    # rather than assembling paths themselves, so the layout can move. None of
+    # the five below touches the disk; `resolve_inside` does, on the terms its
+    # docstring states.
     def project_dir(self, pid: str) -> Path:
         """Everything this hub holds about one project."""
         return self.projects_dir / pid
@@ -648,31 +559,21 @@ class Store:
                        body_size: int) -> "AcceptedPush":
         """Unpack one pushed SOURCE tree and hash it. Raises PublishError.
 
-        The first half of what `publish` used to do in one go. It stays in the
-        REQUEST because everything it can refuse is a property of the upload
-        itself — the ids, the size, the archive — and an archive that is not an
-        archive has to be a 4xx on the push, not a job the pusher has to poll to
-        find out about. What it deliberately does NOT do is touch the project's
-        directory: nothing here is published, and a push that never builds must
-        leave no trace of a project that was never pushed to successfully.
+        Runs in the request, because everything it can refuse is a property of
+        the upload itself — the ids, the size, the archive — and has to be a 4xx
+        on the push, not a job to poll. It does not touch the project's
+        directory: a push that never builds leaves no trace of the project.
 
-        Takes a PATH, not bytes: the body is already on disk by the time it gets
-        here, and reading it back into memory to hand it over would undo exactly
-        the peak this avoids.
+        Takes a path, not bytes: the body is already on disk, and reading it back
+        into memory would undo the peak this avoids.
 
-        The digest is of the SOURCES, and it is what tells an identical retry
-        from a colliding one from here on. It has to be, now that the hub builds:
-        the built output carries the wall clock of the build (`meta.json` and
-        `metrics.json` both stamp `built`), so hashing THAT would make every
-        rebuild of the same commit a 409 and take away the pusher's ability to
-        retry — the exact failure `_payload_digest` already refuses to walk into
-        with the rewritten meta.json. What the pusher supplied is the sources; that is
-        what "the same push" can honestly mean.
+        The digest is of the sources, and it tells an identical retry from a
+        colliding one. The built output stamps the wall clock (`built` in
+        `meta.json` and `metrics.json`), so hashing it would make every rebuild
+        of the same commit a 409.
 
-        `commit` is None when the URL carried no name for this push, which is
-        how a pusher asks the hub to name the revision: the digest computed here
-        BECOMES that name (`mint_revision`). It is the same number either way —
-        what changes is only whether it is also the address.
+        `commit` is None when the URL carried no name for this push; the digest
+        computed here then becomes the name (`mint_revision`).
         """
         if not self.valid_pid(pid):
             raise PublishError(422, f"invalid project id: {pid!r}")
@@ -718,7 +619,7 @@ class Store:
 
         Raises PublishError(409) when the name is taken by different content.
 
-        `message` is the ONE thing a repeat push can still change (issue #67).
+        `message` is the one thing a repeat push can still change.
         The tree is identical, so there is nothing to rebuild and nothing else to
         write — but what the author says this revision is may well be the reason
         they pushed again, and the answer to "which revision was that" lives in
@@ -740,10 +641,8 @@ class Store:
         """
         pdir = self.projects_dir / pid
         if commit == DEV_LINK:
-            # The slot has no 409: it is overwritten by every push by design
-            # (SPEC 7.6). The comparison is here only so an unchanged rebuild
-            # does no work — and now that the hub builds, "no work" means the
-            # build itself, not just the swap.
+            # The slot has no 409: every push overwrites it (SPEC 7.6). The
+            # comparison only spares an unchanged rebuild the build itself.
             if _read_digest(pdir / DEV_LINK) == digest:
                 logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
                 return 200, _build_url(pid, DEV_LINK)
@@ -761,17 +660,11 @@ class Store:
         # immutable cache, so silently replacing it would make every cached copy
         # a lie (SPEC 7).
         #
-        # STILL REACHABLE ON A MINTED NAME, which is worth saying because the
-        # arithmetic looks like it cannot be. When the hub names the revision the
-        # name IS this digest, so "same name, different content" would take a
-        # sha256 collision — but that is not the only way to get here. The other
-        # way is a directory at that name whose `.payload.sha256` is missing or
-        # unreadable, and `data/` is a volume every build can write anywhere in
-        # (SPEC 8A.4): a half-written directory, a file removed by another
-        # build, an unlink that lost its race. There is nothing to compare
-        # against then, and answering 200 would claim a publication that may
-        # never have finished. On the NAMED route — the one a caller still uses
-        # with an id of its own — this is the ordinary case it always was.
+        # Reachable on a minted name too, without a sha256 collision: a
+        # directory at that name whose `.payload.sha256` is missing or
+        # unreadable (`data/` is writable by every build, SPEC 8A.4) leaves
+        # nothing to compare, and answering 200 would claim a publication that
+        # may never have finished.
         raise PublishError(
             409, f"build {commit} already exists with different content")
 
@@ -779,34 +672,21 @@ class Store:
                          message: str) -> None:
         """Put a new message on a revision that is already published.
 
-        ONLY WHEN THERE IS ONE AND IT DIFFERS. A push without `-m` leaves the
-        stored message alone, and that is a decision rather than an omission:
-        there is no way to clear a message and this is not it — `commit` with the
-        flag left off is the ordinary re-push, not a statement that the revision
-        has nothing to say.
+        Only when there is one and it differs: a push without `-m` is the
+        ordinary re-push and leaves the stored message alone; there is no way to
+        clear a message.
 
-        UNDER THE PROJECT LOCK, unlike the comparison that leads here: that one
-        is a read whose answer can only go stale in one direction, and this
-        WRITES — to the very file `_write_builds_json` reads back through
-        `builds_of` on the next line.
+        Under the project lock, unlike the comparison that leads here, because
+        this writes the file `_write_builds_json` reads back through `builds_of`.
 
-        WHAT A READER SEES IS ALWAYS THE NEW TEXT, and it is worth writing down
-        why, because the arrangement looks like it should go stale and does not.
-        Every surface that SHOWS a message reads `builds.json`
-        (`render._picker_entry` -> the revision list), and that file is served
-        `no-cache` and rewritten on the line below — so the picker is current the
-        moment anybody opens it. The copy that does get frozen is the `message`
-        key inside the revision's own meta.json, which is served `immutable` for
-        a year; nothing renders it. It is read exactly twice, both times on this
-        side of the wire and both times off the disk rather than out of a cache:
-        here, to compare against, and by `builds_of` when the picker is composed.
+        Readers always see the new text: every surface that shows a message reads
+        `builds.json` (`render._picker_entry`), which is served `no-cache` and
+        rewritten here. The copy inside the revision's meta.json is served
+        `immutable`, but nothing renders it; it is read only here and by
+        `builds_of`, off the disk.
 
-        So nothing here busts a cache and nothing needs to: the immutability of a
-        build URL is what the whole scheme rests on (SPEC 3.2), and what this
-        rewrite puts out of date is a field no page fetches.
-
-        BEST EFFORT. The revision is published and the answer is 200 either way,
-        so a volume that will not take this write costs the message and never the
+        Best effort: the revision is published and the answer is 200 either way,
+        so a volume that will not take this write costs the message, never the
         push.
         """
         if not message:
@@ -861,13 +741,10 @@ class Store:
         owns `staging`: on the success path it is renamed away and there is
         nothing left, and on every other path the caller removes it.
 
-        `job` reaches only the COPY this makes into the slot: the revision's own
-        document does not carry one (issue #79, `render.build_meta`).
-
-        `message` goes the other way — into the REVISION's document, because it
-        is what that revision says about itself (issue #67). The mirror below
-        copies it into the slot along with everything else that is the same
-        build's.
+        `job` reaches only the copy this makes into the slot; the revision's own
+        document does not carry one (`render.build_meta`). `message` goes into
+        the revision's document, and the mirror copies it into the slot with
+        the rest.
         """
         files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
@@ -907,45 +784,20 @@ class Store:
                     f"build {commit} already exists with different content",
                 ) from error
 
-            # PAST THE POINT OF NO RETURN. The rename above IS the publication
-            # (SPEC 7.2): the build is at its permanent URL and anyone can
-            # already fetch it. Everything from here on is bookkeeping DERIVED
-            # from what is now on disk — which build `latest` names, what the
-            # picker lists, what the index shows — and every one of those is
-            # recomputed from scratch by the next publish of this project, so a
-            # failure is recoverable and a lie is not. Reporting failure here
-            # would tell the pusher the push did not land
-            # while its URL serves the build; since step 5 it would also mark a
-            # job `failed` for a build that is live, which is the worst answer
-            # available.
+            # Past the point of no return: the rename above is the publication
+            # (SPEC 7.2). Everything from here on is bookkeeping derived from
+            # what is on disk — `latest`, the picker, the index — and the next
+            # publish of this project recomputes all of it, so a failure here is
+            # logged rather than reported (reporting it would mark a live
+            # build's job `failed`). Nothing else repairs it: startup recomputes
+            # none of this, so an abandoned project keeps whatever this leaves.
             #
-            # RECOVERABLE IS NOT REPAIRED, and the difference is worth being
-            # exact about. What repairs it is the next publish OF THIS PROJECT
-            # and nothing else: startup recomputes none of this, and another
-            # project's publish never touches these files. So a project that was
-            # pushed to once and then abandoned keeps whatever this leaves —
-            # `latest` on the previous build, a picker missing the newest one —
-            # for as long as nobody pushes to it again, which for an abandoned
-            # project is for ever.
-            #
-            # ORDER STILL MATTERS on the success path, and there are three steps
-            # in it: the slot is filled with this revision, then `latest` moves
-            # onto it, then the picker is written — last, from what is on disk
-            # once both have settled. The symlink still moves before the picker,
-            # so a reader following `latest` is on the new build before the
-            # picker starts offering it.
-            #
-            # What the MIRROR has to come before is `_write_builds_json` and
-            # `_refresh_index`, because both are written from what is on disk:
-            # `has_dev` in `builds.json` and the card on the front page are
-            # answers about the slot, and a slot filled after they were written
-            # would not appear in either until the next publish of this project.
-            # Against `_switch_latest` there is no such argument either way, and
-            # it sits after the mirror only because the three steps are stated
-            # in the order above. The price of that is that `latest` moves later
-            # by however long a full `copytree` takes, and it is acceptable: the
-            # revision is already published at its own permanent URL — `latest`
-            # is a pointer to it, not the publication.
+            # Order: fill the slot with this revision, move `latest`, then write
+            # the picker from what is on disk. The mirror has to come before
+            # `_write_builds_json` and `_refresh_index`, which describe the slot
+            # (`has_dev`, the front-page card). `latest` moving before the picker
+            # means a reader following it is on the new build before the picker
+            # offers it.
             try:
                 self._mirror_into_dev_slot(pid, pdir, final, meta, digest, job)
                 # A rename is superseded by the push that follows it: the build
@@ -953,17 +805,10 @@ class Store:
                 # statement of what the project is called. Before the picker is
                 # written, so the file is rebuilt from the state that survives.
                 self.clear_title(pid)
-                # AND SO IS A DRAFT, for the same reason and one line later. The
-                # mirror above has just put this revision INTO the slot, so
-                # `_uncommitted_in_slot` is false and the `dev` chip goes -- and
-                # a draft status left behind would outlive the draft it is about:
-                # a card whose local work is gone would keep saying that work
-                # failed, until some later DRAFT push, which may be weeks away.
-                #
-                # THE COST, so it is a decision: a draft build in flight right
-                # now loses its `building` chip to this commit. That is the
-                # right way round -- the chip comes back wrong for the rest of
-                # one build, against a red chip that is wrong for ever.
+                # The draft status goes too: the mirror has just put this
+                # revision into the slot, so a draft status left behind would
+                # outlive the draft it is about. A draft build in flight loses
+                # its `building` chip to this commit, which is the lesser error.
                 self.clear_draft_job(pid)
                 self._switch_latest(pid)
                 self._write_builds_json(pid)
@@ -1005,9 +850,9 @@ class Store:
         build is even queued, and is repeated here for the push that arrived
         while an identical one was building.
 
-        `job` goes into the slot's meta.json (issue #79). The slot is the one
-        build no revision addresses, so the job that filled it is the only place
-        its log exists, and this field is what remembers which job that was.
+        `job` goes into the slot's meta.json: the slot is the one build no
+        revision addresses, so the job that filled it is the only place its log
+        exists.
         """
         files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
@@ -1116,32 +961,22 @@ class Store:
         if occupied:
             shutil.rmtree(parked, ignore_errors=True)
 
-    # -- the comparison cache (issue #10) -----------------------------------
+    # -- the comparison cache ----------------------------------------------
     def compare_dir(self, pid: str, old: str, new: str, view: str) -> Path:
         """Where one computed comparison lives. Raises ValueError on a bad id.
 
-        `compare/<pid>/<a>/<b>/<view>/`, and every one of the four segments has
-        to be a name this store would put in a path — the first three to
-        `SAFE_ID`, the id a project and a build are held to, and the VIEW to
-        `SAFE_VIEW_ID`, because a view id is the author's own string and not an
-        id this hub mints (see the constant). Both rules keep a `..`, a `/` and
-        a leading dot out of a path assembled here, which is the whole of what
-        either is for. RAISED rather than returned as a bool: the callers are
-        the route, which turns it into an answer, and the worker, which never
-        gets that far because the route already asked.
+        `compare/<pid>/<a>/<b>/<view>/`: the first three segments are held to
+        `SAFE_ID` and the view to `SAFE_VIEW_ID`, which keeps `..`, `/` and a
+        leading dot out of the path assembled here. Raised rather than returned
+        as a bool: the route turns it into an answer, and the worker never gets
+        that far. Four directories rather than one joined name — see
+        COMPARE_DIR_NAME.
 
-        FOUR DIRECTORIES AND NOT ONE NAME, for the reason the constant block
-        above gives at length: `SAFE_ID` accepts `_`, so any separator a joined
-        name could use is a character a build id may itself contain, and two
-        different pairs would then name one entry.
-
-        NEITHER END IS EVER A POINTER, and that is what makes every entry here
-        immutable. An entry is filed under the names it was ASKED with, so one
-        under `latest` would go on answering for a pair that has moved on — a
-        stale file, which no cache header fixes. Both routes that name an entry
-        (`_serve_compare` and `_handle_compare` in app.py) refuse `latest` and
-        `dev` outright, and the client resolves `latest` to a commit before it
-        asks; `dev` has no commit id at all, so the slot is not comparable.
+        Neither end is ever a pointer, which keeps every entry immutable: an
+        entry under `latest` would go on answering for a pair that has moved on.
+        `_serve_compare` and `_handle_compare` in app.py refuse `latest` and
+        `dev`, and the client resolves `latest` to a commit before it asks;
+        `dev` has no commit id, so the slot is not comparable.
         """
         for segment in (pid, old, new):
             if not isinstance(segment, str) or not SAFE_ID.match(segment):
@@ -1195,42 +1030,22 @@ class Store:
         """Put a revision that has just been published into `<pid>/dev/` too.
 
         The slot is the freshest state the hub knows about the project, not the
-        last call to `build` (issue #78): without this a commit leaves the slot
-        showing geometry OLDER than `latest`.
+        last call to `build`; without this a commit would leave the slot showing
+        geometry older than `latest`.
 
-        A COPY of the published tree, because the rename that publishes it is
-        what emptied the staging directory. Nothing is validated a second time
-        and `_finish_staging` is not called again: AT THIS MOMENT a revision's
-        meta.json and the slot's differ in exactly three keys, `commit`, `dev`
-        and `job` (`render.build_meta`), and every other field is the same
-        build's. The third one is why this takes a `job` at all — the slot names
-        the build that filled it, and a commit fills it as much as a `build`
-        does, so the id has to be carried across with the tree (issue #79).
+        A copy of the published tree, since the publishing rename emptied the
+        staging directory. Nothing is validated again: at publication a
+        revision's meta.json and the slot's differ in exactly `commit`, `dev` and
+        `job` (`render.build_meta`). A later repeat push can rewrite `message` on
+        the revision alone (`_restate_message`); the slot's copy then goes stale,
+        which is harmless because nothing reads the slot's `message`.
 
-        "AT THIS MOMENT" IS LOAD-BEARING AND THE SENTENCE USED TO LACK IT. The
-        three hold at publication and a fourth can appear afterwards: a repeat
-        push of the same tree rewrites `message` on the REVISION alone
-        (`_restate_message`, issue #67), and this copy is not made again — the
-        build never runs — so the slot keeps the text the revision carried when
-        it filled the slot. That is a difference in the documents, not a defect
-        in either: nothing reads the slot's `message`, because the picker lists
-        commits and the slot is not one of them (SPEC 7.6). Left as a copy that
-        goes stale rather than as a second place to keep in step, which is what
-        the field would become the moment anything did read it.
+        The swap is unconditional, even when the slot already holds these
+        sources: the slot has to carry this revision's meta.json, not the
+        `built` and `published` stamps of an earlier `build`.
 
-        THE SWAP IS UNCONDITIONAL, including where the slot already holds these
-        very sources — the case `publish_dev_built` short-circuits on, to spare
-        an open page a needless re-render. It is not an oversight to optimise
-        away: what has to end up in the slot is THIS REVISION's meta.json, and a
-        slot filled by an earlier `build` of the same sources holds a different
-        document — a build's `built` and `published` stamps rather than the
-        revision's. Skipping the copy would leave the two disagreeing about when
-        the thing on screen was made.
-
-        NEVER RAISES. It runs past the point of no return, so a slot that could
-        not be written must not unpublish the revision or fail the job that
-        pushed it — and the slot has no history to lose, because the next writer
-        overwrites it.
+        Never raises: it runs past the point of no return, and the slot has no
+        history to lose.
         """
         tmp = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
         try:
@@ -1239,13 +1054,10 @@ class Store:
                 json.dumps(dict(meta, commit=DEV_LINK, dev=True, job=job),
                            indent=1),
                 encoding="utf-8")
-            # Redundant against the `copytree` above, which already brought
-            # this exact digest across, and written anyway: the slot's digest is
-            # what makes a later `build` of these same sources answer 200 out of
-            # the slot instead of rebuilding, and what tells the front page the
-            # slot holds nothing the commit does not (`_uncommitted_in_slot`).
-            # A link that load-bearing belongs in the method that establishes
-            # it, not inherited from a tree copy where nothing names it.
+            # Already copied by `copytree`, written explicitly anyway: the
+            # slot's digest makes a later `build` of these sources answer 200
+            # and tells the front page the slot holds nothing the commit does
+            # not (`_uncommitted_in_slot`).
             (tmp / PAYLOAD_DIGEST_FILE).write_text(digest, encoding="utf-8")
             self._swap_dev_slot(pdir, tmp)
         except Exception:
@@ -1339,20 +1151,12 @@ class Store:
                         job=None, message=None) -> dict:
         """Validate meta.json and write everything the build page needs.
 
-        `staging` is what the BUILD wrote (SPEC 8A.2 step 5), so the meta.json
-        read here is the build's own — the same wire format the archive used to
-        carry, produced one step closer to the model. Nothing else about this
-        changed, which is the point of pointing the build at the directory that
-        gets renamed into place.
+        `staging` is what the build wrote (SPEC 8A.2 step 5), so the meta.json
+        read here is the build's own.
 
-        `job` is the id of the job that produced this tree. It is handed on and
-        not read here: `build_meta` records it in the SLOT's document only
-        (issue #79), so it is ignored on the revision path.
-
-        `message` is the mirror image of that: what the PUSH said this revision
-        is (issue #67). It came off a header rather than out of the tree, which
-        is why it arrives as an argument at all — nothing in `staging` knows
-        about it — and it is already validated (`render.revision_message`).
+        `job` is handed on to `build_meta`, which records it in the slot's
+        document only. `message` came off a push header rather than out of the
+        tree, and is already validated (`render.revision_message`).
         """
         raw = self._read_meta(staging)
         try:
@@ -1395,57 +1199,27 @@ class Store:
 
     # -- project-level state -----------------------------------------------
     def empty(self) -> bool:
-        """Has anything ever been published here? The ONE fact given anonymously.
+        """Has anything ever been published here? The one fact given anonymously.
 
-        Read by `/start` (src/onboarding.py), which is the only route on this
-        service that answers a question about the deployment without a token —
-        so what this returns is a boolean and there is deliberately nothing here
-        that could turn into a count, a name or a date.
+        Read by `/start` (src/onboarding.py), the only route that answers a
+        question about the deployment without a token — so this returns a
+        boolean and nothing that could turn into a count, a name or a date. The
+        sign-in page draws its onboarding block when it is true
+        (`ui/src/HammerolaEntry.jsx`).
 
-        THE QUESTION IS "IS THERE A PROJECT", NOT "IS THERE A CARD". A project
-        whose only build sits in the `dev` slot has no entry in `index.json` —
-        the index is built from committed revisions (SPEC 7.6) — and this hub is
-        emphatically not empty: somebody has pushed to it and `hammerola status`
-        has something to say about it. Reading the index instead would call that
-        hub empty and hand its owner instructions for a first push they have
-        already made.
+        The question is "is there a project", not "is there a card": a project
+        whose only build is in the `dev` slot has no entry in `index.json`
+        (SPEC 7.6), but the hub is not empty.
 
-        A PROJECT DIRECTORY WITH NOTHING IN IT DOES NOT COUNT, and that is the
-        difference between this and "does `project/` have entries". The reason
-        is `build_staging`: it creates `project/<pid>/` before the build runs,
-        and NOTHING removes that directory when the build then fails the gate —
-        the caller removes the staging tree inside it and leaves the shell. So
-        counting bare directories meant the first push of a new hub turned
-        `empty` false FOREVER by failing, which lands on precisely the person
-        the answer exists for: somebody whose very first build did not pass.
-        The old wording defended the in-flight case with "which is what the
-        answer will be a moment later anyway" — true of a build that succeeds,
-        and false of one that does not.
+        A project directory holding nothing but residue does not count:
+        `build_staging` creates `project/<pid>/` before the build runs and
+        nothing removes it when the build fails, and `set_draft_job` writes
+        `draft.json` before there is anything else under the id. Counting either
+        would leave a new hub non-empty for ever after a failed first push. A
+        directory with a build in flight counts, because its staging tree is
+        inside it; so does a `dev`-only project.
 
-        A directory in flight still counts, and now for a reason rather than by
-        accident: the staging tree is INSIDE it while the build runs, so it is
-        not empty. A `dev`-only project counts too, because its slot is a
-        directory in there. What is left out is exactly the residue.
-
-        THE DRAFT'S POINTER IS RESIDUE TOO, and it is the second thing a build
-        that fails can leave behind (issue #32). `set_draft_job` writes
-        `draft.json` when a draft build STARTS, before there is a slot or
-        anything else under the id — so without this name being skipped, a hub
-        whose very first push was a draft that did not build would answer "not
-        empty" for ever, which is the exact failure the paragraph above is
-        about, arriving by a second road.
-
-        FAILS CLOSED. An unreadable `project/` answers "not empty", so no
-        onboarding block is shown on a hub that could not be asked; the
-        alternative would be to tell somebody their hub is empty on the strength
-        of an error.
-
-        WHAT CONSUMES THE ANSWER is the sign-in page: `/start` serves this
-        boolean and the door draws its block for an agent when it is true
-        (`ui/src/HammerolaEntry.jsx`, issue #48; `src/onboarding.py` has
-        the accounting). The fail-closed rule was pinned before that page
-        existed, and it held: it is a property of the answer, so the page
-        inherited it rather than having to reinvent it.
+        Fails closed: an unreadable `project/` answers "not empty".
         """
         try:
             return not any(
@@ -1474,14 +1248,11 @@ class Store:
         directory tree stays the single source of truth: a build removed by hand,
         or one restored by hand, needs no bookkeeping anywhere else.
 
-        Which is exactly why a meta.json here cannot be assumed to be one WE
-        wrote. Everything downstream — `_switch_latest`,
-        `render.builds_json`, `render.index_card` — subscripts these dicts
-        directly, so one `{}` left by a half-finished restore used to take out the
-        next publish of that project with a 500, after the build was already on
-        disk and before `latest` had moved. A meta that cannot answer those
-        questions is skipped exactly like an unreadable one: the build stops being
-        listed, and the project keeps working.
+        So a meta.json here cannot be assumed to be one this hub wrote:
+        `_switch_latest`, `render.builds_json` and `render.index_card`
+        subscript these dicts directly, so a meta that cannot answer them
+        (`_usable_meta`) is skipped like an unreadable one, and the project
+        keeps working.
         """
         pdir = self.projects_dir / pid
         if not pdir.is_dir():
@@ -1603,37 +1374,28 @@ class Store:
     def _uncommitted_in_slot(self, pid: str) -> bool:
         """Whether the local slot holds sources that no commit has published.
 
-        The question behind the `dev` chip on the front page, and deliberately
-        NOT the `has_dev` that `_write_builds_json` writes: that one asks whether
-        the slot EXISTS, because the picker uses it to decide whether to offer a
-        `/dev/` link at all. The two were the same question until a commit began
-        filling the slot with itself (issue #78); since then "occupied" is true
-        of every project that has ever committed, so a chip built on it would sit
-        on every card and say nothing.
+        The question behind the `dev` chip on the front page, deliberately not
+        the `has_dev` that `_write_builds_json` writes: that asks whether the
+        slot exists, and since a commit fills the slot with itself it is true of
+        every committed project.
 
-        THE DIGEST IS WHAT SEPARATES THEM. It is the digest of the SOURCES a
-        push carried, and the mirror writes the revision's own digest into the
-        slot — so a slot whose digest equals the newest commit's publishes
+        Answered by digest: the mirror writes the revision's own source digest
+        into the slot, so a slot whose digest equals the newest commit's holds
         nothing that commit does not, while a `build` push of edited sources
-        lands a different one. Comparing the trees would answer a weaker
-        question anyway: two builds of the same sources can differ byte for byte
-        in their timestamps alone.
+        lands a different one. Comparing the trees would be weaker: two builds
+        of the same sources differ in their timestamps.
 
-        ERRING TOWARDS TRUE on a digest that will not read is deliberate: the
-        slot is there, nothing accounts for what is in it, and True is the answer
-        this gave for the whole time before the slot could hold a commit. The
-        failure it chooses is a chip on a card that did not need one, rather than
-        work on somebody's laptop that the front page quietly stops mentioning.
+        Errs towards True on a digest that will not read: a needless chip is
+        better than the front page silently not mentioning local work.
         """
         if self._dev_meta(pid) is None:
             return False
         commit = self.latest_commit(pid)
         if commit is None:
             # `latest` does not read: the symlink is gone, or a previous
-            # publish did not get as far as setting it. There is nothing to
-            # compare the slot against, so the chip stays -- see ERRING TOWARDS
-            # TRUE above. Not "no commits at all": the only caller reaches this
-            # with the project's commit builds already in hand.
+            # publish did not get as far as setting it. Nothing to compare the
+            # slot against, so the chip stays (see the docstring). The only
+            # caller reaches this with the project's commit builds in hand.
             return True
         pdir = self.projects_dir / pid
         in_slot = _read_digest(pdir / DEV_LINK)
@@ -1643,26 +1405,16 @@ class Store:
     def _refresh_index(self) -> None:
         """Rebuild the root index.json from every project's newest COMMIT build.
 
-        The local slot is left out for the same reason it does not move `latest`
-        (SPEC 7.6): the front page is the most public surface there is, and a card
-        that quietly starts describing uncommitted work from somebody's laptop is
-        that promise broken in the one place everybody looks. It costs nothing to
-        arrange — `builds_of` already excludes the slot. A project whose only
-        build is a local one therefore has no card yet, which is the honest
-        answer: nothing has been published from a commit.
+        The local slot is left out for the same reason it does not move
+        `latest` (SPEC 7.6): the front page must not describe uncommitted work.
+        `builds_of` already excludes it, so a project whose only build is local
+        has no card yet.
 
-        Two of the card's fields are properties of the PROJECT rather than of the
-        build the rest of it comes from, so they are read here and handed over:
-        whether the slot holds sources no commit has published
-        (`_uncommitted_in_slot` — the front page says only THAT there is such
-        work, never what it is), and the oldest build still on disk, which is as
-        close to "since when" as anything here gets. `render.index_card` says
-        what each is for.
-
-        The first of those is NOT the `has_dev` that `_write_builds_json` writes
-        from `_dev_meta`, and the two must not be collapsed back into one call:
-        that one asks whether the slot exists, which a commit filling the slot
-        with itself (issue #78) made true of every committed project.
+        Two of the card's fields belong to the project rather than the build, so
+        they are read here and handed over: whether the slot holds sources no
+        commit has published (`_uncommitted_in_slot`, not the same question as
+        `has_dev` in `builds.json`), and the oldest build still on disk.
+        `render.index_card` says what each is for.
         """
         with self._index_lock:
             cards = []
@@ -1688,39 +1440,24 @@ class Store:
 
     # -- the draft's last build --------------------------------------------
     def draft_job(self, pid: str) -> str | None:
-        """The job of the last build pushed AS A DRAFT, or None.
+        """The job of the last build pushed as a draft, or None.
 
-        "As a draft" and not "into the slot", and the difference is the one this
-        repository has already tripped over once: a commit fills the slot with
-        itself too (issue #78), so "the last build in the slot" is a description
-        a commit build answers — and a commit build deliberately moves no
-        pointer here (`test_a_commit_build_moves_no_pointer`). What is published
-        as a commit has a revision to be addressed by and a card of its own; only
-        the local slot has a state nothing else can report.
+        "As a draft", not "into the slot": a commit fills the slot with itself
+        too, and a commit build moves no draft pointer
+        (`test_a_commit_build_moves_no_pointer`). Only the local slot has a
+        state nothing else reports.
 
-        None for a project nobody has ever pushed a draft to, and None for
-        anything unreadable — a torn file, a payload of the wrong shape, a
-        volume that refuses the read. The caller turns every one of those into
-        the same answer it gives for a job the registry no longer has, so there
-        is nothing here for a second kind of failure to mean.
+        None for a project nobody has pushed a draft to, and for anything
+        unreadable — a torn file, a payload of the wrong shape, a refused read.
+        The caller treats all of those like a job the registry no longer has.
 
-        A JOB ID AND NOT A STATUS WORD, which is the whole reason this file is
-        worth having rather than a `state` written twice. The job is the thing
-        that knows how it ended, and it keeps knowing across a restart: a job
-        left `building` by a SIGKILL is failed by `JobStore._load` at the next
-        start, so the card reads `failed` instead of sticking on `building` for
-        the life of the volume. A word copied in here would have to be corrected
-        by somebody, and there is nobody: the process that would have written it
-        is the one that died.
+        A job id rather than a status word: the job knows how it ended across a
+        restart (`JobStore._load` fails a job left `building` by a SIGKILL),
+        while a copied word would have nobody to correct it.
 
         Read off the volume on every call rather than cached, like
-        `project_title` — a cache would have to be invalidated from the BUILD
-        thread, which is the sort of coupling `data/` is deliberately free of.
-        The cost is stated rather than waved at, because this is the line
-        somebody will read while pricing the front page: it is one small open
-        per card, and it is the only thing `/index.json` reads besides
-        `index.json` itself, which until this pointer existed was the one file
-        that route touched.
+        `project_title`: a cache would have to be invalidated from the build
+        thread. The cost is one small open per card on `/index.json`.
         """
         try:
             payload = json.loads(
@@ -1749,11 +1486,11 @@ class Store:
     def clear_draft_job(self, pid: str) -> None:
         """Forget the draft, because a commit has just replaced what was in the slot.
 
-        The exact shape of `clear_title` above and for the same kind of reason:
-        a commit mirrors itself into the slot (issue #78), so after it there is
-        no draft to have a state — and a pointer left behind would go on
-        reporting the last draft build's ending on a card whose local work is
-        gone. `publish_built` is the only caller, one line after `clear_title`.
+        Same shape as `clear_title`: a commit mirrors itself into the slot, so
+        afterwards there is no draft to have a state, and a pointer left behind
+        would keep reporting the last draft build's ending on a card whose local
+        work is gone. `publish_built` is the only caller, one line after
+        `clear_title`.
 
         Best effort, and called from inside the publish path: a volume that will
         not take the unlink must not turn a published build into a failed one.
@@ -1845,7 +1582,7 @@ class Store:
         permanent URL, which is the one thing the service promises; removing the
         project takes the promise away with the thing it was about. This is for
         "I made a test project and I am done with it", and it is meant to be the
-        big rare hammer rather than a tidying tool (issue #26).
+        big rare hammer rather than a tidying tool.
 
         THE CODE OF THE REMOVED REVISIONS GOES TOO, AND ONLY IF NOTHING ELSE
         POINTS AT IT. `sources/` is addressed by the digest of a source tree and
@@ -1921,13 +1658,10 @@ class Store:
     def _digests_of(self, pid: str) -> set:
         """Every payload digest recorded in one project's build directories.
 
-        The `dev` slot is included, and since issue #78 the ORDINARY case is
-        that its digest is a published revision's: a commit fills the slot with
-        itself, and that revision's own directory carries the same digest, so
-        including the slot changes no answer. The other case is a slot filled by
-        a `build` push, whose sources are never stored — that digest matches
-        nothing in `sources/`. Leaving the slot out would answer the same and be
-        a special case to explain.
+        The `dev` slot is included. Usually its digest is a published
+        revision's (a commit fills the slot with itself), so including it
+        changes no answer; a slot filled by a `build` push has a digest nothing
+        in `sources/` matches.
         """
         digests = set()
         try:
@@ -1958,16 +1692,9 @@ def _usable_meta(meta, dir_name: str) -> bool:
     meta restored into the wrong directory — would produce a dangling symlink,
     i.e. the one failure the atomic switch exists to prevent.
 
-    WHAT IT ASKS OF EACH FIELD IS WHAT THE SUBSCRIPT DOWNSTREAM NEEDS, and
-    issue #75 moved two of them without moving the question. `views` replaced
-    `variants` and `index_card` sums `v["gzip"]` over it, so that is asked of
-    every entry. `parts` used to be an int on each view — the biggest of which
-    was the card's part count — and is now the CATALOGUE, out of which the card
-    counts the printables; so the type asked about has to move from the view to
-    the record, and the field checked has to be the one actually read.
-    `isinstance(v.get("parts"), list)` would be the shape of the old line with
-    none of its content: nothing subscripts a view's key list here, while a
-    record whose `kind` is missing is exactly what makes that count raise.
+    Each field is asked what the subscript downstream needs: every view a
+    `gzip` int (`index_card` sums them), and every catalogue record a `kind`
+    string (the card counts printables).
     """
     if not isinstance(meta, dict):
         return False
@@ -2017,37 +1744,23 @@ def _payload_digest(files: dict) -> str:
 def _hash_output(directory: Path, names) -> dict:
     """`{relative path: sha256}` for the files a build declared it ships.
 
-    The same shape `_unpack` produces — `{path: sha256}` — but not the same
-    journey, and this said "because it feeds the same consumer" until
-    2026-08-31, which is no longer so: `_unpack`'s mapping is of an upload's
-    members and goes to `_payload_digest` alone. THIS one is what
-    `render.build_meta` reads, and it is the only mapping that reaches it:
-    build_meta decides whether a view or a download names a file that is really
-    there by asking whether it is a KEY of this mapping.
+    The same shape `_unpack` produces, but a different consumer: `_unpack`'s
+    mapping goes to `_payload_digest` alone, while this one is the only mapping
+    `render.build_meta` reads — a pointer is valid when its name is a key here.
 
     The names come from `BuildOutcome.files`, which the build process claimed and
     the PARENT then checked one by one — inside `directory`, in normal form, no
     symlink in any component, a regular file that exists (`runner._verified_files`).
     That check is why this can open them directly. Taking the list rather than
-    walking the tree is also what keeps the mapping to what the build SHIPS: an
-    output directory may hold files a build wrote and never declared, and a view
-    file that was never declared has no business validating.
+    walking the tree keeps the mapping to what the build ships: a file a build
+    wrote and never declared has no business validating.
 
-    WHAT THIS DOES NOT DO IS PRUNE, and issue #53 did not change it: publication
-    is a whole-directory move — `os.rename(staging, final)` on the commit route,
-    the two renames of `_swap_dev_slot` on the `dev` one — and nothing anywhere
-    deletes a file that is not a key of this mapping. So a model can write an
-    arbitrary file into its output, never declare it, and have it land at a
-    permanent public URL without `render._check_declared_file` ever seeing the
-    name. #53 closed the other half — the maps are all declared now, and a
-    declared name has to be one the file server will answer — so read that as
-    "nothing DECLARED can be unservable", never as "nothing undeclared can be
-    served".
-
-    WHAT HOLDS THE UNDECLARED HALF IS THE FILE SERVER, and it answers in more
-    than one place. Read the list below as what is really there rather than as
-    a claim of completeness: an undeclared file it lets through is served, and
-    that is the accepted position rather than an oversight.
+    This does not prune: publication moves the whole directory, so a file the
+    model wrote and never declared lands at a public URL without
+    `render._check_declared_file` seeing it. "Nothing declared can be
+    unservable" holds; "nothing undeclared can be served" does not. The file
+    server holds the undeclared half, and what it lets through is served by
+    design:
 
       * the NAME. `app._safe_name` asks `buildnames.unservable_reason` of every
         name requested under `/project/<pid>/<commit>/`, so a name that starts
@@ -2128,15 +1841,12 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
     that sweep walks `self.root` and the project directories, and neither
     `data/jobs/` nor a job directory is one of them.
 
-    WHAT IT IS NOT is a defence against a build making one write fail. That was
-    the reason it was first proposed and it does not work, so it is written down
-    here to stop it being proposed again: `rename(tmp, dir/name)` needs write
-    permission on the DESTINATION directory, exactly as `open(dir/tmp)` did, so
-    `chmod 0500` on a job directory refuses both. Measured, not reasoned:
-    PermissionError either way. The only layout that would defuse it is one
-    where no per-job directory exists at all, and what makes a pointwise
-    failure survivable here is instead that nothing shared between records is
-    written per record at all (see the note on `order.json` in `src/jobs.py`).
+    It is not a defence against a build making one write fail:
+    `rename(tmp, dir/name)` needs write permission on the destination directory
+    just as `open(dir/tmp)` does, so `chmod 0500` on a job directory refuses both
+    (measured: PermissionError either way). What makes a pointwise failure
+    survivable is that nothing shared between records is written per record
+    (see the note on `order.json` in `src/jobs.py`).
     """
     parent = path.parent if tmp_dir is None else Path(tmp_dir)
     tmp = parent / f"{JSON_TMP_PREFIX}{path.name}-{uuid.uuid4().hex}"
@@ -2148,14 +1858,10 @@ def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None
         os.chmod(tmp, 0o644)
         os.rename(tmp, path)
     except BaseException:
-        # The temp name is dot-prefixed, so a leftover is invisible to every
-        # reader and would sit on the volume until the next startup sweep. That
-        # is tolerable after a SIGKILL and not tolerable once per failed
-        # request, which is the rate the comment queue can produce them at: a
-        # caller retrying a rejected write drives this path as fast as it likes.
-        # (It is not a PUBLIC endpoint -- both halves of the comment API have
-        # taken EDIT_TOKEN since step 0 -- but the rate argument never needed
-        # that and is what this line is about.)
+        # The temp name is dot-prefixed, so a leftover would sit on the volume
+        # until the next startup sweep. Tolerable after a SIGKILL, not once per
+        # failed request: a caller retrying a rejected comment write can drive
+        # this path as fast as it likes.
         try:
             os.unlink(tmp)
         except OSError:

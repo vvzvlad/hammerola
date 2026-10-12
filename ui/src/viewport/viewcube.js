@@ -1,28 +1,16 @@
-// The view cube: a small cube drawn over the canvas that turns WITH the camera
-// and snaps it to a standard view when a cell of it is clicked. Fusion's widget,
-// and Fusion's subdivision — 6 faces + 12 edges + 8 corners = 26 targets, all of
-// them cells of one 3x3 grid per face.
+// The view cube: a small cube drawn over the canvas that turns with the camera
+// and snaps it to a standard view when a cell is clicked. Fusion's widget and
+// subdivision: 6 faces + 12 edges + 8 corners = 26 targets, all cells of one
+// 3x3 grid per face.
 //
-// It lives in the viewport rather than in React for the reason overlay.js gives
-// at length: what it draws is a projection through a camera that moves sixty
-// times a second, and routing that through React state would re-render the whole
-// interface on every mouse move. Nothing crosses the boundary here at all — the
-// widget reads the camera and writes the camera, and the interface never hears
-// about either.
+// It lives in the viewport rather than in React for overlay.js's reason: it is
+// a projection through a camera that moves sixty times a second. Nothing
+// crosses the boundary; the widget reads and writes the camera only.
 //
-// IT REPLACES THE STATIC AXIS TRIAD that used to sit in this corner
-// (issues #23 and #24). That triad was three fixed SVG lines: right by accident
-// while the model was still in its opening pose, and confidently wrong about
-// where X, Y and Z had gone the moment anybody rotated the scene. A marker that
-// lies about which way is up is worse than no marker, so it is gone rather than
-// fixed — a cube that turns with the camera answers the same question and cannot
-// drift out of step with it.
-//
-// NOT A SECOND three.js SCENE. A unit cube is eight corners and six quads; a
-// second WebGL context to draw them would cost a context, a render loop and the
-// library's bundle over again. The projection here is done by hand and is
-// ORTHOGRAPHIC BY CONSTRUCTION — the camera-space z is dropped and nothing else
-// — so it neither needs nor assumes anything about the scene's own projection.
+// Not a second three.js scene: a unit cube is eight corners and six quads, not
+// worth a second WebGL context. The projection is done by hand and is
+// orthographic (camera-space z dropped), independent of the scene's own
+// projection.
 
 import { internals } from "./internals.js";
 
@@ -49,17 +37,13 @@ const VISIBLE_EPS = 1e-6;
 /** Caption sizing.
  *
  * `GLYPH_EM` is the average advance of an upper-case semibold sans glyph as a
- * fraction of the em, which is what lets the text be sized without a layout
- * pass — and a layout pass is the thing worth avoiding here, since measuring
- * means reading a geometry property back out of the DOM inside a loop that runs
- * every frame. MEASURED rather than guessed: `getComputedTextLength()` in Chrome
- * on the three labels of the iso view came back at 0.725, 0.664 and 0.715 em per
- * character, so 0.75 is the round number just above all of them.
+ * fraction of the em, so text is sized without reading geometry back from the
+ * DOM every frame. Measured with `getComputedTextLength()` in Chrome on the iso
+ * view's three labels: 0.725, 0.664 and 0.715 em per character, so 0.75.
  *
- * `CAPTION_MARGIN` is then how much of the face's width the label may take. The
- * face is a RHOMBUS and the chord is measured through its centre, so a label
- * that filled the chord would still run out through the sloping sides above and
- * below the centre line — which is what the first version of this did.
+ * `CAPTION_MARGIN` is how much of the face's width the label may take: the face
+ * is a rhombus and the chord is measured through its centre, so a label filling
+ * the chord would cross the sloping sides above and below it.
  */
 const GLYPH_EM = 0.75;
 const CAPTION_MARGIN = 0.72;
@@ -77,19 +61,16 @@ const HOVER_FILL = "#9fc6f2";
  * direction, the outward normal, and the two in-plane axes the 3x3 grid runs
  * along.
  *
- * TWO VOCABULARIES MEET HERE and they disagree on exactly one word: what the
- * label calls BACK the library calls `rear` (`defaultDirections.z_up` in
- * static/_v/three-cad-viewer.esm.js). `preset` is always the library's spelling
- * and is the only one that may be passed to an API call; `label` is always the
- * reader's and never leaves the drawing.
+ * The two vocabularies differ on one word: the label BACK is the library's
+ * `rear` (`defaultDirections.z_up` in static/_v/three-cad-viewer.esm.js).
+ * `preset` is the library's spelling, the only one passed to the API; `label`
+ * never leaves the drawing.
  *
- * `u` and `v` span the face, so its four corners are `n ± u ± v` and the cell at
- * grid offset (su, sv) points at `n + su*u + sv*v`. Which of the two is "across"
- * and which is "up" makes no difference to the directions — every combination of
- * signs is enumerated either way — so they are chosen to be right-handed with
- * the normal (`u × v = n`), which winds all six quads the same way round. They
- * also happen to be the screen axes of that face's own preset view, which is
- * what makes the grid line up with what the reader gets after clicking it.
+ * `u` and `v` span the face: its corners are `n ± u ± v` and the cell at grid
+ * offset (su, sv) points at `n + su*u + sv*v`. They are right-handed with the
+ * normal (`u × v = n`), winding all six quads the same way, and match the screen
+ * axes of that face's preset view, so the grid lines up with the result of a
+ * click.
  */
 export const FACES = [
   { label: "TOP", preset: "top", n: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },
@@ -104,16 +85,12 @@ export const FACES = [
 const PRESET_BY_NORMAL = new Map(FACES.map((face) => [face.n.join(","), face.preset]));
 
 /**
- * Rotate `v` by the CONJUGATE of the unit quaternion `q = [x, y, z, w]`.
+ * Rotate `v` by the conjugate of the unit quaternion `q = [x, y, z, w]`.
  *
- * `getCameraQuaternion()` hands back the camera object's own rotation, which
- * takes a direction from camera space out into the world. What is wanted here is
- * the other way round — the cube as seen FROM the camera — so the conjugate is
- * applied, which for a unit quaternion is its inverse.
- *
- * The arithmetic is three.js's `Vector3.applyQuaternion` with the vector part
- * negated. Kept here rather than in math.js: that module's header pins it as a
- * verbatim port of the previous viewer's helpers, and this is the only caller.
+ * `getCameraQuaternion()` is the camera's rotation, camera space to world; the
+ * cube as seen from the camera needs the inverse, which for a unit quaternion
+ * is the conjugate. The arithmetic is three.js's `Vector3.applyQuaternion` with
+ * the vector part negated; this is its only caller.
  */
 export function rotateByConjugate(q, v) {
   const w = q[3];
@@ -151,18 +128,15 @@ function facePoint(q, face, a, b) {
 }
 
 /**
- * The faces turned towards the reader, BACK TO FRONT.
+ * The faces turned towards the reader, back to front.
  *
- * A face is visible when its outward normal, rotated the same way the corners
- * are, has a positive camera-space z. For a cube centred on the origin the
- * normal IS the face centroid, so ordering by that same z orders the faces by
- * depth. Three come back in a general orientation and one or two in the
- * axis-aligned ones — those are the views where the cube is a square or a
- * rectangle, and drawing the edge-on faces would draw slivers.
+ * A face is visible when its rotated outward normal has positive camera-space
+ * z. For a cube centred on the origin the normal is the face centroid, so the
+ * same z orders the faces by depth. Three are visible in general, one or two in
+ * axis-aligned views (edge-on faces would be slivers).
  *
- * The visible faces of a convex body cannot overlap, so the ordering buys
- * nothing on its own; it costs one comparison and means the drawing is right
- * whatever is added to it later.
+ * Visible faces of a convex body cannot overlap, so the order is only a cheap
+ * safeguard.
  */
 export function visibleFaces(q) {
   return FACES
@@ -193,50 +167,36 @@ export function cellDirection(face, col, row) {
  * How a direction has to be given to the viewer: the library's preset path, or a
  * relative camera position.
  *
- * THE SIX FACES GO ONE WAY AND THE OTHER TWENTY GO THE OTHER, and that split is
- * not a matter of taste — unifying it puts a randomly rolled top view on screen.
- * Read out of the vendored library (static/_v/three-cad-viewer.esm.js):
+ * The six faces go one way and the other twenty the other; unifying them puts
+ * a randomly rolled top view on screen. From the vendored library
+ * (static/_v/three-cad-viewer.esm.js):
  *
- *   * `setCameraPosition(position, relative, notify)` calls `camera.setPosition`,
- *     which sets the POSITION and never aims the camera, and then
- *     `controls.update()`. Aiming is that call's job: `TrackballControls.update()`
- *     ends, for an orthographic camera, in `this.object.lookAt(this.target)`.
- *   * `lookAt` — `Object3D.lookAt`, the one bullet here that is three's own code
- *     and is read in static/_v/three.core.js rather than in the bundle —
- *     derives the camera's ROLL from `camera.up`, which is `[0, 0, 1]`
- *     here (`up: "Z"` in options.js). When the view direction is PARALLEL to up
- *     the cross product that fixes the roll degenerates, and the roll that comes
- *     out is arbitrary.
- *   * Looking straight down (`top`) or straight up (`bottom`) is exactly that
- *     case. That is why `defaultDirections.z_up` carries an explicit quaternion
- *     for those two entries and for no others, and why `presetCamera` applies it
- *     AFTER the `lookAt` that would otherwise have decided the roll.
+ *   * `setCameraPosition(position, relative, notify)` calls `camera.setPosition`
+ *     (position only, no aiming) and then `controls.update()`;
+ *     `TrackballControls.update()` ends, for an orthographic camera, in
+ *     `this.object.lookAt(this.target)`.
+ *   * `Object3D.lookAt` (three's code, static/_v/three.core.js) derives the roll
+ *     from `camera.up`, `[0, 0, 1]` here (`up: "Z"` in options.js). With the view
+ *     direction parallel to up the cross product degenerates and the roll is
+ *     arbitrary.
+ *   * Looking straight down (`top`) or up (`bottom`) is that case, which is why
+ *     `defaultDirections.z_up` carries an explicit quaternion for those two and
+ *     `presetCamera` applies it after the `lookAt`.
  *
- * So `top` and `bottom` must go through the library's own path and never through
- * `setCameraPosition`. `front`, `rear`, `left` and `right` go through it too:
- * they are in the same table, it is the library's own entry point, and
- * `presetCamera(dir, zoom = null)` defaults the zoom to the camera's CURRENT
- * one, so the snap turns the model without also rescaling it.
+ * So the faces go through `presetCamera` (`front`, `rear`, `left`, `right` too:
+ * same table, the library's own entry point, and `presetCamera(dir, zoom =
+ * null)` keeps the current zoom).
  *
- * The twelve edges and eight corners have no preset to go through. None of those
- * twenty directions is parallel to `[0, 0, 1]`, so the degenerate roll cannot
- * arise for them, and `relative: true` makes the vector a DIRECTION — the
- * library normalises it and multiplies by the current camera distance.
+ * The twelve edges and eight corners have no preset. None is parallel to
+ * `[0, 0, 1]`, so the roll is well defined, and `relative: true` makes the
+ * vector a direction (normalised and scaled by the current camera distance).
+ * The `lookAt` in that chain does not run under this configuration; see
+ * `applyCameraTarget`.
  *
- * AND THE `lookAt` IN THAT CHAIN NEVER RUNS UNDER THIS CONFIGURATION — see
- * `applyCameraTarget`, which is what puts it back.
- *
- * THE TARGET IS THE THIRD DIFFERENCE, and it is the one a reader can see. The
- * library's `presetCamera` opens by re-seating the camera target on the bounding
- * box centre — `camera.target` and `controls.target` both — so a click on a FACE
- * throws away whatever panning was done by hand. The edge/corner path has no
- * such step of its own, which used to leave the two answering differently for
- * one gesture: FRONT recentred and FRONT-TOP did not. `applyCameraTarget` now
- * recentres on both paths, DELIBERATELY: a click on this cube means "go to a
- * standard view", a standard view is centred, and a widget that keeps the pan
- * for twenty of its twenty-six targets and discards it for the other six is
- * worse than either consistent answer. The cost is stated rather than hidden —
- * ANY click on the cube discards a pan.
+ * The target: `presetCamera` re-seats the camera target on the bounding box
+ * centre (`camera.target` and `controls.target`), discarding any pan.
+ * `applyCameraTarget` recentres on the edge/corner path too, so every click on
+ * the cube goes to a centred standard view; any click discards a pan.
  */
 export function cameraTarget(dir) {
   const preset = PRESET_BY_NORMAL.get(dir.join(","));
@@ -245,43 +205,28 @@ export function cameraTarget(dir) {
 }
 
 /**
- * Point the camera at one of the 26 directions. See `cameraTarget` for which of
- * the two paths a direction takes and why.
+ * Point the camera at one of the 26 directions (see `cameraTarget` for the two
+ * paths).
  *
- * THE EDGE/CORNER PATH TAKES A SECOND CALL, and this is the part that had to be
- * MEASURED rather than read. `setCameraPosition` ends in `controls.update()`,
- * and stock `TrackballControls.update()` does aim an orthographic camera at its
- * target. But this viewport runs `control: "trackball"`, which is
- * `CADTrackballControls`, and that subclass OVERRIDES `update()` and skips the
- * `lookAt` whenever `holroyd` is on — which is its default, and the property the
- * option was chosen for (options.js). Its own comment says why: holroyd sets the
- * quaternion directly, and a `lookAt` would undo the tilted rotation axis that
- * makes the trackball non-tumbling.
+ * The edge/corner path needs a second call. `control: "trackball"` is
+ * `CADTrackballControls`, whose `update()` skips the `lookAt` while `holroyd`
+ * is on (its default, and why the option was chosen, options.js): holroyd sets
+ * the quaternion directly and a `lookAt` would undo the tilted rotation axis.
  *
- * So under this configuration `setCameraPosition` moves the eye and leaves the
- * camera pointing wherever it already pointed. Driven from a browser against the
- * fixture build: from the top view, `setCameraPosition([-1, 1, 1], true, true)`
- * put the camera at (-49, 49, 56.6) and left the quaternion at (0, 0, 0, 1) —
- * the eye at a corner, still staring straight down. `camera.lookAtTarget()`, the
- * one call the override skips, fixes it exactly, and the roll it produces is the
- * same `camera.up`-derived one every preset gets.
+ * So `setCameraPosition` alone moves the eye and leaves the camera pointing
+ * where it was. Measured against the fixture build: from the top view,
+ * `setCameraPosition([-1, 1, 1], true, true)` put the camera at
+ * (-49, 49, 56.6) with quaternion (0, 0, 0, 1), still staring down, and 19 of
+ * the 20 edge/corner targets put the whole model outside the frustum (an empty
+ * canvas, no error). `camera.lookAtTarget()`, the call the override skips,
+ * fixes it with the same `camera.up`-derived roll every preset gets.
  *
- * WHAT THAT LOOKS LIKE FROM THE OUTSIDE IS "THE MODEL DISAPPEARED", which is how
- * it was first reported. A camera moved off to one side and still aimed the old
- * way has the model outside its frustum entirely, so the canvas goes empty — no
- * error, no warning, nothing in the console. Sweeping all twenty edge and corner
- * targets through the un-aimed path against the fixture build, 19 of them put
- * every one of the model's eight bounding-box corners outside the NDC box. The
- * twentieth was the direction the camera was ALREADY at, where nothing moved.
+ * It goes through `internals()` because the only public alternative,
+ * `setCameraQuaternion`, would mean reimplementing the library's roll
+ * convention here.
  *
- * It comes through `internals()` because there is no public equivalent: the
- * Viewer exposes `setCameraQuaternion`, which would mean computing the lookAt
- * here — a second implementation of the very roll convention that has to agree
- * with the library's. This borrows the library's.
- *
- * The aiming is therefore checked BEFORE the move and the move is abandoned
- * without it: a camera that moved without turning shows the model from the wrong
- * place AND facing the wrong way, which is worse than a click that did nothing.
+ * The aiming is checked before the move, and the move is abandoned without it:
+ * a camera moved without turning is worse than a click that did nothing.
  */
 export function applyCameraTarget(viewer, dir) {
   if (!viewer) return;
@@ -298,9 +243,8 @@ export function applyCameraTarget(viewer, dir) {
       return;
     }
     recentre(viewer, g);
-    // `notify: false` on the move, because the frame is only half-built until
-    // the aiming lands; `viewer.update(true, true)` below is the one that
-    // renders it and tells the library's subscribers about it.
+    // `notify: false` on the move, since the frame is half-built until aimed;
+    // `viewer.update(true, true)` below renders it and notifies subscribers.
     viewer.setCameraPosition(target.position, true, false);
     g.camera.lookAtTarget();
     if (typeof viewer.update === "function") viewer.update(true, true);
@@ -310,23 +254,19 @@ export function applyCameraTarget(viewer, dir) {
 }
 
 /**
- * Put the camera target back on the bounding box centre, the way `presetCamera`
- * opens — see the last paragraph of `cameraTarget` for why both paths do it.
+ * Put the camera target back on the bounding box centre, as `presetCamera`
+ * does (see `cameraTarget`).
  *
- * BOTH TARGETS, because the library keeps two and they are separate objects.
- * `Camera.target` is what `setupCamera(relative)` measures the new eye position
- * from and what `lookAtTarget()` aims at; `controls.target` is what the trackball
- * turns around afterwards. `Viewer.presetCamera` writes the first and copies it
- * into the second (three-cad-viewer.esm.js, `presetCamera`), and NOTHING ELSE in
- * the library ever writes `Camera.target` — a pan moves `controls.target` alone.
- * So writing one of the two here would leave a camera aimed at one point and
- * spinning about another.
+ * Both targets, separate objects in the library: `Camera.target` is what
+ * `setupCamera(relative)` measures the new eye position from and what
+ * `lookAtTarget()` aims at; `controls.target` is what the trackball turns
+ * around. `Viewer.presetCamera` writes the first and copies it into the second,
+ * and nothing else writes `Camera.target` (a pan moves `controls.target` only).
+ * Writing one alone would aim at one point and spin about another.
  *
- * `Camera.target` is mutated in place rather than replaced, because the only
- * `Vector3` constructor is inside the bundle and there is no public export of
- * it. Everything is guarded one field at a time: a widget that cannot recentre
- * should still snap to the direction that was clicked, which is what the reader
- * asked for.
+ * `Camera.target` is mutated in place, since the only `Vector3` constructor is
+ * inside the bundle. Each field is guarded: a widget that cannot recentre
+ * should still snap to the clicked direction.
  */
 function recentre(viewer, g) {
   const bbox = viewer.bbox;
@@ -343,12 +283,9 @@ function recentre(viewer, g) {
 
 /** Face fill: lighter the more squarely the face faces the reader.
  *
- * OPAQUE, AND THE SAME IN BOTH THEMES on purpose. The canvas under this widget
- * is white or near-black depending on the reader's answer (`readTheme` in
- * ui/src/store.js), so the cube brings its own ground instead of borrowing
- * one: light grey faces inside a dark outline read on either. A palette that
- * followed the theme would have to be measured against both canvases, and
- * nothing here has been measured.
+ * Opaque and the same in both themes: the canvas is white or near-black
+ * (`readTheme` in ui/src/store.js), so light grey faces in a dark outline
+ * bring their own ground and read on either.
  */
 function shade(nz) {
   const value = 214 + Math.round(32 * Math.min(1, Math.max(0, nz)));
@@ -356,18 +293,16 @@ function shade(nz) {
 }
 
 /**
- * Half the HORIZONTAL chord of a face's projected parallelogram, taken through
- * its centre — the room its upright caption has to fit into.
+ * Half the horizontal chord of a face's projected parallelogram, through its
+ * centre: the room its upright caption has.
  *
- * A face is `{ c + a*pu + b*pv : |a| <= 1, |b| <= 1 }` once projected, and the
- * horizontal line through `c` is where `a*pu.y + b*pv.y = 0`. Pushing whichever
- * of the two has the larger y component all the way to its edge is what puts the
- * other one inside its own bound, which is why the branch is on that comparison
- * rather than on a sign.
+ * A projected face is `{ c + a*pu + b*pv : |a| <= 1, |b| <= 1 }`, and the
+ * horizontal line through `c` is where `a*pu.y + b*pv.y = 0`. Pushing the axis
+ * with the larger y component to its edge keeps the other within its bound,
+ * hence the branch on that comparison.
  *
- * Needed because the faces are rhombi that change shape as the cube turns: a
- * fixed font size is either too big for the narrow ones — the label spills over
- * the neighbours and reads as a rendering fault — or too small for all of them.
+ * The faces are rhombi that change shape as the cube turns, so a fixed font
+ * size is either too big for narrow ones or too small for all.
  */
 export function halfChord(q, face) {
   const c = facePoint(q, face, 0, 0);
@@ -392,19 +327,14 @@ function polygon(points) {
 
 export function createViewCube(vp) {
   const root = document.createElement("div");
-  // NO CLASS NAME ON IT, unlike the overlay's root. A class here would be a
-  // promise the interface's stylesheet keeps a rule for it — which is what
-  // tests/test_ui_source.py checks, and rightly: a pin is an empty div that is
-  // zero pixels across without one. This widget is styled entirely from inside,
-  // because its whole look is a legibility requirement over two themes rather
-  // than a palette the designer owns, so there is no rule for a class to name.
+  // No class name, unlike the overlay's root: a class promises a stylesheet
+  // rule (tests/test_ui_source.py checks that), and this widget is styled
+  // entirely from inside for legibility on both themes.
   //
-  // The corner the static triad occupied, and the only one that is free — every
-  // other corner of the viewport has interface chrome in or near it.
+  // The bottom-left corner is the only one free of interface chrome.
   //
-  // `pointer-events: none` on the layer and back on for the cells, exactly as
-  // the overlay does it: this sits over the canvas, and a layer that swallowed
-  // presses would kill rotation in the patch it covers.
+  // `pointer-events: none` on the layer and back on for the cells, as in the
+  // overlay, so the layer does not block rotation in the patch it covers.
   root.style.cssText = "position:absolute;left:16px;bottom:14px;"
     + `width:${SIZE}px;height:${SIZE}px;pointer-events:none`;
 
@@ -419,11 +349,8 @@ export function createViewCube(vp) {
   let frame = 0;
   // The four floats of the last quaternion drawn, or null for "nothing drawn".
   let last = null;
-  // The cell path under the pointer, or null. Held HERE and consulted by `draw`,
-  // rather than living in the `fill` attribute the way it used to: `draw` writes
-  // that attribute on every cell of every frame the camera moves, so a highlight
-  // that existed only in the attribute was wiped on the first frame of a drag —
-  // the cell under the cursor went grey the moment the model started turning.
+  // The cell path under the pointer, or null. Kept here and used by `draw`,
+  // which rewrites every cell's `fill` each frame the camera moves.
   let hovered = null;
   // Whether the last read of the camera threw AND has already been reported.
   let warned = false;
@@ -434,29 +361,22 @@ export function createViewCube(vp) {
   const quaternion = () => {
     try {
       const viewer = vp && vp.viewer;
-      // `viewer.ready` — the guard internals.js opens with, and the convention
-      // in this directory — and NOT an exception used as control flow. The
-      // library's `get rendered()` THROWS ("Viewer.render() must be called
-      // before this operation") for as long as `_rendered` is null, and
-      // `getCameraQuaternion` reads through it. A page whose view file failed to
-      // render leaves `vp.viewer` standing (element.js sets `loadFailed` and
-      // emits `hmr:error` but keeps the viewer), so without this the loop below
-      // built an Error, captured a stack and warned about it SIXTY TIMES A
-      // SECOND for as long as the page stayed open.
+      // `viewer.ready`, as in internals.js, rather than catching: the library's
+      // `get rendered()` throws until `render()` succeeds, and
+      // `getCameraQuaternion` reads through it. A failed view file leaves
+      // `vp.viewer` standing (element.js sets `loadFailed`, emits `hmr:error`),
+      // and this loop runs every frame.
       if (!viewer || !viewer.ready
           || typeof viewer.getCameraQuaternion !== "function") return null;
       const q = viewer.getCameraQuaternion();
       if (!Array.isArray(q) || q.length !== 4 || !q.every(Number.isFinite)) {
         return null;
       }
-      // Whatever was wrong is over. A fault that comes back afterwards is worth
-      // a second line in the console.
+      // Whatever was wrong is over; a recurring fault gets a new console line.
       warned = false;
       return q;
     } catch (error) {
-      // ONCE, not once a frame. The guard above closes the failure that is
-      // known; anything else still able to throw in here is inside a rAF loop,
-      // and a `console.warn` there is the same defect wearing another hat.
+      // Once, not every frame: this runs inside a rAF loop.
       if (!warned) {
         warned = true;
         console.warn("viewcube", error);
@@ -466,21 +386,12 @@ export function createViewCube(vp) {
   };
 
   /**
-   * Every element of one face, built ONCE: nine cells, an outline and a caption.
+   * Every element of one face, built once: nine cells, an outline and a caption.
+   * `draw` only writes `d`, `fill` and `display` on them, so a moving camera
+   * costs attribute writes, not a rebuild.
    *
-   * THE WIDGET USED TO BE REBUILT ON EVERY FRAME THE CAMERA MOVED — ~33 SVG
-   * elements created, 81 listeners attached and a `replaceChildren` — i.e.
-   * exactly the rewrite the loop's own comment says is the thing worth avoiding.
-   * The quaternion dirty-check made the STILL case free and left the moving one
-   * at its worst: a full SVG repaint on every frame of a drag, alongside the
-   * WebGL frame the reader is dragging. `draw` now only ever writes `d`, `fill`
-   * and `display` on what is already here.
-   *
-   * THE LISTENERS ARE NOT HERE EITHER: three per cell became one per event on
-   * the `svg`, resolved back to a cell through `dataset`. That is what makes 27
-   * cells cost four listeners instead of 81, and it is why `dataset` carries the
-   * indices — the elements are the only place a delegated listener can read them
-   * from.
+   * Listeners are delegated: one per event type on the `svg`, resolved back to a
+   * cell through `dataset`, which is why `dataset` carries the indices.
    */
   const buildFace = (face, index) => {
     const group = document.createElementNS(SVG_NS, "g");
@@ -506,16 +417,13 @@ export function createViewCube(vp) {
     border.style.pointerEvents = "none";
     group.appendChild(border);
 
-    // The face's name, upright at its centre, and hidden when it will not fit.
+    // The face's name, upright at its centre, hidden when it does not fit.
     //
-    // HORIZONTAL AND NOT IN THE PLANE OF THE FACE. Laying the text into the face
-    // would read as more of a cube, and it would also turn upside down at half
-    // the orientations the reader can reach — the trackball has no pole to stop
-    // at (options.js, `control: "trackball"`). Upright text is legible from every
-    // one of them, and it is the CUBE that carries the orientation.
+    // Horizontal, not in the face's plane: in-plane text would turn upside down
+    // at half the reachable orientations (the trackball has no pole, options.js);
+    // the cube itself carries the orientation.
     //
-    // Only the position and the size move; the label itself never changes, so it
-    // is written once here.
+    // Only position and size change, so the label is written once.
     const text = document.createElementNS(SVG_NS, "text");
     text.setAttribute("text-anchor", "middle");
     text.setAttribute("dominant-baseline", "central");
@@ -556,34 +464,26 @@ export function createViewCube(vp) {
     path.setAttribute("fill", hovered === path ? HOVER_FILL : found.entry.fill);
   };
 
-  // `pointerover`/`pointerout` and NOT `pointerenter`/`pointerleave`: the latter
-  // pair does not bubble, so it cannot be delegated at all. Moving between two
-  // cells fires the `out` of the old one BEFORE the `over` of the new one, which
-  // is the order this pair of handlers needs.
+  // `pointerover`/`pointerout`, not `pointerenter`/`pointerleave`, which do not
+  // bubble and cannot be delegated. Moving between cells fires the old `out`
+  // before the new `over`, the order these handlers need.
   svg.addEventListener("pointerover", (event) => hover(event.target, true));
   svg.addEventListener("pointerout", (event) => hover(event.target, false));
 
-  // Belt and braces, and NOT the thing that keeps a press off the canvas —
-  // read it as no more than it is. The cube's root is a SIBLING of `vp.box`,
-  // and every press listener a cell's press could bubble INTO is attached to
-  // `vp.box` or to `window` (tools.js, orbit.js, live.js, wheel.js), so a press
-  // on a cell never traverses any of them: they are not on its event path at
-  // all. overlay.js listens for a press too, but on the pin buttons
-  // themselves, which are no ancestor of the cube either. The one that does
-  // listen in the CAPTURE phase, tools.js, additionally bails
-  // on `event.target !== g.canvas` — that check, not this call, is what makes
-  // it safe. This stays for the day the cube is reparented under `vp.box`.
+  // A safeguard only. The cube's root is a sibling of `vp.box`, and every press
+  // listener (tools.js, orbit.js, live.js, wheel.js) is on `vp.box` or `window`,
+  // so a cell press never traverses them; overlay.js listens on the pin buttons.
+  // tools.js, the capture-phase one, also checks `event.target !== g.canvas`,
+  // which is what actually keeps it safe. This matters only if the cube is ever
+  // reparented under `vp.box`.
   svg.addEventListener("pointerdown", (event) => {
     if (cellAt(event.target)) event.stopPropagation();
   });
 
-  // AND THE `click` IS DELIBERATELY LET THROUGH, which the press above is not.
-  // The interface closes every open menu — the tree row's, the revision
-  // dropdown, Downloads, the token popup — from one `onClick` on its root div
-  // (HammerolaViewer.jsx, `rootClick`). Stopping the click here stopped it
-  // before React ever saw it, so with the Downloads menu open a click on the
-  // cube turned the model behind a menu that stayed up. Nothing needs the click
-  // stopped: the press is the half that has to be kept off the canvas.
+  // The `click` is let through: the interface closes every open menu (tree
+  // row, revision dropdown, Downloads, token popup) from one `onClick` on its
+  // root div (HammerolaViewer.jsx, `rootClick`). Only the press must be kept
+  // off the canvas.
   svg.addEventListener("click", (event) => {
     const found = cellAt(event.target);
     if (!found) return;
@@ -593,11 +493,9 @@ export function createViewCube(vp) {
 
   /** Place and size one face's caption, or hide it.
    *
-   * The size is taken from the face rather than fixed, because the faces are
-   * rhombi whose width changes as the cube turns and the six labels are three to
-   * six characters long. A face turned nearly edge-on gets NO caption: a name
-   * drawn across its neighbours reads as a rendering fault, and the cube still
-   * says which face that is by which way it is turned.
+   * Sized from the face, since the rhombi change width and the labels are three
+   * to six characters. A face nearly edge-on gets no caption: a name drawn
+   * across its neighbours reads as a rendering fault.
    */
   const caption = (q, entry) => {
     const room = 2 * halfChord(q, entry.face) * CAPTION_MARGIN;
@@ -656,10 +554,9 @@ export function createViewCube(vp) {
         hovered = null;
       }
     }
-    // BACK TO FRONT, and by MOVING the groups rather than rebuilding them —
-    // `appendChild` on a node that is already a child relocates it. Guarded on
-    // the order having actually changed, which during a drag it almost never
-    // does: it changes only when the camera crosses an axis-aligned view.
+    // Back to front, by moving the groups (`appendChild` relocates an existing
+    // child), and only when the order changed, which happens only when the
+    // camera crosses an axis-aligned view.
     const key = visible.map(({ face }) => face.label).join(",");
     if (key !== order) {
       order = key;
@@ -689,21 +586,15 @@ export function createViewCube(vp) {
   };
 
   /**
-   * ONE rAF LOOP THAT NEVER STOPS, and four float comparisons inside it.
+   * One rAF loop that never stops, with four float comparisons per frame.
    *
-   * The overlay's loop stops itself when it has nothing to place, which works
-   * there because the ordinary page has no pins; the cube always has something
-   * to draw, so the same shape would spin a loop forever on every page. What is
-   * cheap is not the loop but the DOM: four comparisons a frame are nothing,
-   * a rewrite of thirty elements a frame is not — which is why the elements are
-   * built once (`buildFace`) and a moving camera costs attribute writes rather
-   * than a rebuild. The browser suspends rAF for a hidden tab by itself, so
-   * there is no bookkeeping to do beyond this.
+   * Unlike the overlay (whose loop stops when there are no pins), the cube
+   * always has something to draw. The loop is cheap; the DOM is what costs, so
+   * elements are built once and a moving camera costs attribute writes. The
+   * browser suspends rAF for hidden tabs.
    *
-   * NOT the trackball's `change` event, for the reason overlay.js gives: it
-   * fires on camera moves and NOT on the frames a live build swap or a
-   * visibility change redraws — and a swap re-seats the camera, which is exactly
-   * the moment the cube must not be stale.
+   * Not the trackball's `change` event, which does not fire on frames redrawn
+   * for a live build swap or a visibility change; a swap re-seats the camera.
    */
   const tick = () => {
     frame = requestAnimationFrame(tick);
@@ -715,10 +606,8 @@ export function createViewCube(vp) {
     root,
     refresh,
     destroy() {
-      // `if (frame)` is safe because a browser rAF handle is non-zero by spec
-      // (HTML §8.10: the id is a positive integer). It would silently cancel
-      // nothing under a shim that returns 0, which is the one way this loop
-      // could outlive the element.
+      // `if (frame)` is safe because a browser rAF handle is a positive integer
+      // (HTML §8.10).
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
       last = null;

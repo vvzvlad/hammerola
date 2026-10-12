@@ -1,20 +1,14 @@
 /**
  * The rules both pages write more than once, written once.
  *
- * A MODULE OF ITS OWN FOR THE REASON `style.jsx` IS ONE, and it is the same
- * reason: two entry points draw one interface, and a rule spelled in both of
- * them is two rules that no longer have to agree. `style.jsx` holds what every
- * rule is made OF — `css()`, the font stacks, the four palette roles two
- * components import by name. This holds the rules THEMSELVES: the popover
- * recipe five panels share, the three controls (`btn`, `tab`, `chip`), the four
- * tree icons, and the declarations that were written out 2 to 19 times each.
+ * Two entry points draw one interface, and a rule spelled in both is two rules
+ * that no longer have to agree. `style.jsx` holds what every rule is made of —
+ * `css()`, the font stacks, the palette roles. This holds the rules themselves:
+ * the popover recipe five panels share, the three controls (`btn`, `tab`,
+ * `chip`), the tree icons, and the declarations repeated across call sites.
  *
- * NOTHING HERE IS A CLASS OR A STYLESHEET, deliberately. Every rule on these
- * pages is an inline style string through `css()`, which beats a class rule on
- * specificity and is what lets one `data-theme` attribute repaint the whole
- * interface — `style.jsx` argues that at length. What was wrong was never the
- * strings; it was the COPIES of them. So a name here resolves to exactly the
- * string its call sites used to spell, character for character.
+ * Nothing here is a class or a stylesheet: every rule is an inline style string
+ * through `css()` (see `style.jsx` for why).
  *
  * THE STRINGS ARE PINNED BY TESTS AS STRINGS. `ui/tests` asserts on the values
  * `computed()` answers with — `toBe('430px')`, `toContain('background:…')` —
@@ -91,11 +85,9 @@ export const tab = (active) => `padding:5px 13px;border-radius:5px;font:500 12px
   + (active ? TAB_ON : TAB_OFF);
 
 /**
- * A HEADER BUTTON. `off` is a THIRD state, beside resting and active, and it is
- * not `hide`: the button stays where the reader left it and stops working,
- * which is what a control that is out of service FOR NOW has to look like — the
- * argument `bannerSwitchStyle` makes at length, and the two properties
- * `compareBtnStyle` already spells an unpressable button with. Last in the
+ * A HEADER BUTTON. `off` is a third state, beside resting and active, and it is
+ * not `hide`: the button stays where the reader left it and stops working, as a
+ * control out of service for now should (see `bannerSwitchStyle`). Last in the
  * string, so its `color` and `cursor` beat the resting pair above (`css` keeps
  * the last spelling of a property), and `pointer-events:none` is the half that
  * actually refuses the click.
@@ -126,12 +118,10 @@ export const ghostIcon = (on) => 'width:11px;height:11px;border-radius:3px;' + (
 export const skipIcon = (on) => 'width:11px;height:11px;border-radius:3px;border:1px solid '
   + (on ? 'var(--text-soft);background:var(--text-soft)' : 'var(--line-strong);background:transparent');
 
-/* -- the declarations that were written out once per call site -------------- *
+/* -- declarations shared by several call sites ------------------------------ *
  *
- * Nothing below is new: each is the string its call sites already spelled,
- * moved here because they spelled it 2 to 19 times. A name is the ROLE where
- * the page has one — a card, a sunken field, the chosen tab — and the SHAPE
- * where it does not, which is most of the type.
+ * A name is the ROLE where the page has one — a card, a sunken field, the
+ * chosen tab — and the SHAPE where it does not, which is most of the type.
  *
  * THIS IS NOT A DESIGN SYSTEM and must not grow into one. A new rule belongs at
  * its call site until a SECOND site wants the same string; that is the only
@@ -196,7 +186,7 @@ export const LABEL_SANS = `font:400 11.5px ${SANS}`;
 export const BADGE_SANS = `font:600 10.5px ${SANS};border:1px solid var(--line);`;
 export const BODY_SANS = `font:400 11px/1.55 ${SANS};color:var(--text-muted);margin-top:5px`;
 export const ACCENT_MONO = `font:600 12px ${MONO};color:var(--accent-text)`;
-/* The catalogue key, which is the identity and may be any length (issue #75). */
+/* The catalogue key, which is the identity and may be any length. */
 export const KEY_MONO = `font:600 12px ${MONO};background:var(--chip-bg);padding:2px 7px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
 export const META_MONO = `font:400 11px ${MONO};color:var(--text-muted)`;
 export const META_MONO_ONE_LINE = `font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis`;

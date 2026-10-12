@@ -2,25 +2,22 @@
 // axis arrows and three plane quads. Its fourth piece, the rotation handles, is
 // rings.js and has its own file beside this one.
 //
-// There is no GPU here and nothing below looks at a pixel, which is the same
-// discipline the rest of this suite keeps — but the widget is a group of MESHES
-// in the library's scene now, so what is assertable has moved with it exactly as
-// it did for the grip and the rings. Where it stands is a world point rather
-// than a projection; which way an arrow points is a rotation taken into the
-// world rather than a CSS angle; how long it is drawn is geometry and the camera
-// does the foreshortening; how big it is drawn is `scene3d.js`'s one scale, and
-// that module's own suite asks about it. Left here are the questions only this
-// file can answer: WHAT each of the seven pieces is built out of, WHEN one is
-// taken off the screen, WHICH of the six that take a press one lands on, and
-// what one whole drag does to the part and says at the end of it.
+// There is no GPU here and nothing below looks at a pixel. The widget is a
+// group of MESHES in the library's scene: where it stands is a world point
+// rather than a projection; which way an arrow points is a rotation taken into
+// the world; how long it is drawn is geometry and the camera does the
+// foreshortening; how big it is drawn is `scene3d.js`'s one scale, and that
+// module's own suite asks about it. Left here are the questions only this file
+// can answer: WHAT each of the seven pieces is built out of, WHEN one is taken
+// off the screen, WHICH of the six that take a press one lands on, and what one
+// whole drag does to the part and says at the end of it.
 //
 // THE ONE CLAIM THIS FILE EXISTS FOR is that a drag is CONSTRAINED. Under an
 // ortho camera a screen gesture carries a world displacement on all three axes
-// at once, and each piece puts that displacement back on its own geometry —
-// which is the whole of why this widget exists, gizmo.js says, and why the free
-// drag it replaced is gone from tools.js. Every drag below therefore travels
-// diagonally, and the assertion is about what did NOT move. The origin dot is
-// the drawn centre those six are measured from and takes no press at all.
+// at once, and each piece puts that displacement back on its own geometry
+// (gizmo.js says why). Every drag below therefore travels diagonally, and the
+// assertion is about what did NOT move. The origin dot is the drawn centre
+// those six are measured from and takes no press at all.
 //
 // AND THE TWO CONSTRUCTIONS ARE NOT ONE, which is the thing the quad tests are
 // really guarding. An arrow takes the NEAREST POINT of its line, because a line
@@ -359,10 +356,9 @@ const stands = (group) => [group.position.x, group.position.y, group.position.z]
  * it and nothing else. A drag that went straight along one screen axis would
  * pass with no projection in the module at all.
  *
- * FROM THE PRESS AND NOT FROM A FIXED POINT, which is the whole of what changed
- * when the press moved onto the canvas: every gesture here is measured as a
- * DIFFERENCE of two ndc readings, so the numbers below are the numbers the DOM
- * layer produced as long as the hand travels the same distance.
+ * FROM THE PRESS AND NOT FROM A FIXED POINT: every gesture here is measured as
+ * a DIFFERENCE of two ndc readings, so the numbers below are the numbers the
+ * DOM layer produced as long as the hand travels the same distance.
  */
 const DRAG = [200, 60]
 const dragged = (from) => [from[0] + DRAG[0], from[1] + DRAG[1]]
@@ -593,12 +589,10 @@ describe('what an arrow is built out of', () => {
   })
 
   it('stands the ink on a white casing inside a dark rim, drawn under it', () => {
-    // THE CONSTRUCTION AND NOT A PALETTE (options.js, `GIZMO_CASE_PX`). The
-    // arrows used to bring their own contrast as a CSS `filter` halo, which is
-    // a picture over a box and there is no box any more — so they take the
-    // geometry every other piece of this widget and of the rings already takes:
-    // a light casing inside a dark rim, legible on a red part and on either
-    // canvas.
+    // THE CONSTRUCTION AND NOT A PALETTE (options.js, `GIZMO_CASE_PX`): the
+    // arrows take the geometry every other piece of this widget and of the
+    // rings takes — a light casing inside a dark rim, legible on a red part and
+    // on either canvas.
     //
     // UNDER IT, not merely present: with no depth test the renderer's order IS
     // the stacking, so a casing that sorted after the ink would paint the arrow
@@ -629,9 +623,8 @@ describe('what an arrow is built out of', () => {
   })
 
   it('takes its press over a fat cylinder that starts at the dot`s rim', () => {
-    // THE TARGET IS FAT AND THE INK IS THIN, which is the requirement the DOM
-    // box carried and the reason `GIZMO_HIT_PX` survives the move: a hand
-    // cannot reliably hit a 2 px shaft.
+    // THE TARGET IS FAT AND THE INK IS THIN (`GIZMO_HIT_PX`): a hand cannot
+    // reliably hit a 2 px shaft.
     //
     // AND IT STARTS AT `GIZMO_DOT_PX / 2` OUT, which is what leaves the middle
     // of the widget answering no ray at all: the dot is drawn there and takes
@@ -877,9 +870,8 @@ describe('where the dot is drawn', () => {
     //
     // AND `transparent` IS WHAT MAKES THE BAND MEAN ANYTHING: three sorts into
     // its opaque and its transparent lists by that flag before it looks at any
-    // order, so an opaque manipulator beside the blended rings is drawn FIRST
-    // whatever number it carries — which is exactly how the rings came to cover
-    // it.
+    // order, so an opaque manipulator beside the blended rings would be drawn
+    // FIRST whatever number it carries, and the rings would cover it.
     const s = scene()
     expect(s.group.renderOrder).toBe(GIZMO_ORDER)
     for (const node of s.group.children) {
@@ -990,10 +982,9 @@ describe('what takes the press', () => {
   })
 
   it('takes no press and offers no cursor on the origin dot', () => {
-    // THE DOT IS DRAWN AND NEVER PRESSED. It used to be the free drag's own
-    // handle and that gesture is gone (tools.js), so nothing of it may answer a
-    // ray: a cursor over it would promise a grab the press then refuses, and a
-    // press it swallowed would be an orbit the reader never got.
+    // THE DOT IS DRAWN AND NEVER PRESSED: nothing of it may answer a ray. A
+    // cursor over it would promise a grab the press then refuses, and a press
+    // it swallowed would be an orbit the reader never got.
     //
     // FACE ON IS WHERE THE ARROWS DO NOT COVER FOR IT, which is what makes this
     // a claim about the dot. Their hit cylinders start at its rim IN THE WORLD
@@ -1022,8 +1013,7 @@ describe('what takes the press', () => {
   it('gives an overlapping press to the quad rather than to the arrow', () => {
     // THE OTHER RUNG OF THE SAME LADDER. A quad is filled to its edges and an
     // arrow's target is a 14 px cylinder round a 2 px shaft, so where the two
-    // cross the reader is aiming at the quad — which is what the flat widget
-    // got from building the quads after the arrows.
+    // cross the reader is aiming at the quad.
     //
     // THE CAMERA IS WHAT MAKES THEM CROSS: looking down `(1, 1, -1)`, the world
     // direction `X + Y` and the world axis Z project onto the SAME screen ray,
@@ -1056,8 +1046,8 @@ describe('what takes the press', () => {
 })
 
 /** A row of two copies of one part, which is what the interface sends as the
- *  selection for a `pin x2` row (issue #75): one gesture applies one delta to
- *  every path of it.
+ *  selection for a `pin x2` row: one gesture applies one delta to every path
+ *  of it.
  *
  * BOTH COPIES STAND ON THE SAME CENTRE, and nothing below reads where either of
  * them is DRAWN — the widget stands on the first selected path, so this is what
@@ -1189,8 +1179,8 @@ describe('one whole drag', () => {
   })
 
   it('speaks up when the ANCHOR came back but its siblings did not', async () => {
-    // THE GUARD IS ASKED OF EVERY PATH, and this is the gesture that made it
-    // have to be. One copy is dragged out on its own, so the row stands apart:
+    // THE GUARD IS ASKED OF EVERY PATH, and this is the gesture that needs it.
+    // One copy is dragged out on its own, so the row stands apart:
     // one at the offset, one at home. The row is then selected with the
     // DISPLACED copy FIRST — it is the anchor, so the drag starts from its
     // offset — carried out and brought back to exactly where it began. Nothing
@@ -1300,11 +1290,10 @@ describe('one whole drag', () => {
     // document still saying it is turned. `moveRecord` reads the anchor's turn
     // once at the press and hands it back on every step.
     //
-    // NO PIVOT IS SEEDED, unlike the version of this that lived in
-    // tools.test.js: `solid()` above carries real positions and a bounding box,
-    // so `partCentre` answers and `partPivot` fills itself on the first turn
-    // (parts.js). A part whose centre cannot be read is one `movePart` refuses
-    // to turn at all, which parts.test.js pins separately.
+    // NO PIVOT IS SEEDED: `solid()` above carries real positions and a
+    // bounding box, so `partCentre` answers and `partPivot` fills itself on the
+    // first turn (parts.js). A part whose centre cannot be read is one
+    // `movePart` refuses to turn at all, which parts.test.js pins separately.
     const s = row()
     for (const path of PINS) {
       s.vp.moved.set(path, { delta: [0, 0, 0], turn: [0, 0, 90] })
@@ -1759,11 +1748,11 @@ describe('one whole drag of a quad', () => {
 
 describe('a press this widget does take', () => {
   it('ends every other gesture that could be live', () => {
-    // THREE THINGS CAN BE RUNNING WHEN A PIECE IS PRESSED, and until the tools
-    // were merged only the first could: this widget's own drag, the rotation
-    // handles' drag, and the canvas gesture in tools.js — which under `move` is
-    // either a cut the hold key put up or the ordinary press that missed every
-    // piece of the widget. The first two write the same part through
+    // THREE THINGS CAN BE RUNNING WHEN A PIECE IS PRESSED: this widget's own
+    // drag, the rotation handles' drag, and the canvas gesture in tools.js —
+    // which under `move` is either a cut the hold key put up or the ordinary
+    // press that missed every piece of the widget. The first two write the
+    // same part through
     // `movePart`, which sets position AND orientation together from its own
     // snapshot of the other's half, so the two live at once overwrite each
     // other frame by frame and both report at the release; the third goes on

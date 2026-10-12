@@ -1,12 +1,9 @@
 // The one description of how this camera moves sideways, and the projection
 // maths every gesture is built out of.
 //
-// Ported from the page viewer this interface replaced. Three gestures — the
-// cursor zoom, the swipe pan and the cursor pivot — all end in `panCamera`, and
-// all three compute what to pass it from `ndcOffset`. That is deliberate: a
-// second copy of either would be a second thing to get subtly wrong, and the
-// symptom of "subtly wrong" here is a model that drifts under the reader by a
-// pixel per event.
+// Three gestures — the cursor zoom, the swipe pan and the cursor pivot — all end
+// in `panCamera` and compute its argument from `ndcOffset`. A second copy of
+// either would let the model drift under the reader by a pixel per event.
 
 import { dot3, sub3, unit3 } from "./math.js";
 
@@ -80,21 +77,14 @@ export function ndcOffset(g, eye, view, nx, ny) {
  * The world ray a canvas pixel looks along, as `{ origin, dir }` with `dir` a
  * unit vector — or null, ORTHO ONLY.
  *
- * The companion of `ndcOffset`, built out of the same single `unproject` call and
- * for the same reason: it goes through the matrix the camera is actually drawing
- * with, so an off-centre or offset frustum needs no handling of its own here.
- * What the two do with the point differs because what they are asked differs. A
- * pan wants the depth along the view axis REMOVED; a ray wants it to be
- * irrelevant, and under ortho it is: every point of a pixel's ray carries the
- * same offset from the camera, so the unprojected point IS a point on the ray
- * and the direction is the view axis. Taking the eye as the origin instead would
- * send the ray down the middle of the screen whatever pixel was asked about.
+ * The companion of `ndcOffset`, from the same single `unproject` call. Under
+ * ortho every point of a pixel's ray has the same offset from the camera, so
+ * the unprojected point is on the ray and the direction is the view axis.
+ * (Taking the eye as origin would send every ray down the screen's centre.)
  *
- * A camera that is not orthographic is DECLINED rather than served, which is
- * this viewport's standing answer to that question — `gestureInternals`
- * (internals.js) refuses the same way and says why at length. The viewport is
- * ortho by construction (options.js), so a perspective branch here would be code
- * nothing can reach and no test can honestly exercise.
+ * A non-orthographic camera is declined, like `gestureInternals`
+ * (internals.js): the viewport is ortho by construction (options.js), so a
+ * perspective branch would be unreachable.
  */
 export function ndcRay(g, eye, view, nx, ny) {
   if (!g.cam.isOrthographicCamera) return null;
@@ -108,16 +98,13 @@ export function ndcRay(g, eye, view, nx, ny) {
 /**
  * Move camera and target by the SAME world vector — a pure pan.
  *
- * Why every gesture here ends up in this call and not in something cleverer: the
- * view direction is untouched, the distance along it is untouched, and the
- * trackball keeps no state in either. That is what lets these corrections ride
- * ON TOP of the controls instead of fighting them, so rotation keeps the
- * library's holroyd projection, its speeds and its whole feel.
+ * The view direction and the distance along it are untouched and the trackball
+ * keeps no state in either, so these corrections ride on top of the controls
+ * and rotation keeps the library's holroyd projection and feel.
  *
- * `setCameraLocationSettings` is the library's own entry point for placing the
- * camera and ends in the `controls.update()` + `update()` pair that keeps the
- * trackball's eye vector and the render in step. Quaternion and zoom stay null —
- * the rotation is not ours to touch and the zoom is already the reader's.
+ * `setCameraLocationSettings` is the library's entry point for placing the
+ * camera and ends in `controls.update()` + `update()`, keeping the trackball's
+ * eye vector and the render in step. Quaternion and zoom stay null.
  */
 export function panCamera(viewer, b, d) {
   viewer.setCameraLocationSettings(
@@ -129,10 +116,8 @@ export function panCamera(viewer, b, d) {
  * A world point in NDC, or null — for anything the interface draws OVER the
  * canvas at a place on the model (pins, a measurement label).
  *
- * Same borrowed-`Vector3` trick as `ndcOffset`, and for the same reason. Reading
- * `projectionMatrix.elements` by hand would work too and is one assumption
- * worse: it would hard-code three.js's column-major layout here, where the
- * library's own `project` reads it from the matrix that is actually in use.
+ * Same borrowed-`Vector3` trick as `ndcOffset`. The library's `project` reads
+ * the matrix in use, rather than hard-coding three.js's column-major layout.
  */
 export function projectPoint(g, point) {
   const eye = g.camera.getPosition();
@@ -147,31 +132,18 @@ export function projectPoint(g, point) {
  * NDC depth alongside — `[x, y, z]`, or null for a point the projection cannot
  * place.
  *
- * THE TWO RECTS ARE PASSED IN rather than measured here, and for ONE caller
- * that is the difference between this and a synchronous reflow per point: the
- * pin overlay walks its pins and its label, and each `put()` WRITES styles
- * before the next one projects, so a `getBoundingClientRect()` between two of
- * them would force the browser to flush the layout the previous write
- * invalidated — inside a rAF loop that runs right through a pinch. The other
- * three do not have that shape. The rotation handles take their four points in
- * one breath, in `frameAt`, and place nothing until afterwards; the section
- * grip and the arrows project one point each. Those three would pay a
- * measurement per frame rather than a reflow, which is reason enough to hand
- * the rects in but is not the reason above.
+ * The two rects are passed in rather than measured here: the pin overlay WRITES
+ * styles between projections, so a `getBoundingClientRect()` per point would
+ * force a reflow each time inside a rAF loop. Neither rect changes within one
+ * frame (nothing here writes the canvas or the layer's container).
  *
- * Neither rect can change between two placings of one frame anyway: they are
- * the canvas and the layer's own container, and nothing here writes to either.
+ * The canvas rect gives the pixel size of the NDC cube and the container rect is
+ * what an absolutely-positioned child is placed against, so the corner
+ * difference is the offset. All four layers (pin overlay, section grip,
+ * manipulator arrows, rotation handles) use this one sum.
  *
- * THE CANVAS'S RECT GIVES THE PIXEL SIZE OF THE NDC CUBE and the container's is
- * what an absolutely-positioned child is placed against, so the difference of
- * the two corners is the offset between them. All four layers spell the same
- * sum — the pin overlay, the section grip, the manipulator's arrows and the
- * rotation handles, which project four points a frame — and a second copy of it
- * is a widget that drifts by the width of a border.
- *
- * `z > 1` IS FOR THE CALLER TO READ: it is behind the camera's far plane, i.e.
- * behind the reader, which under an ortho projection is a real case rather than
- * a curiosity — the frustum has a back and the model rotates through it.
+ * `z > 1` is for the caller to read: behind the far plane, i.e. behind the
+ * reader, which happens as the model rotates through the frustum's back.
  */
 export function spot(g, rect, box, point) {
   const ndc = projectPoint(g, point);

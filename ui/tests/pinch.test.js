@@ -399,9 +399,9 @@ describe('one frame per gesture, and none outside one', () => {
 
 describe('the overlay measures once per frame', () => {
   it('reads each rect once however many pins there are', () => {
-    // `place()` used to read the canvas and the container itself, and `draw()`
-    // calls it in a loop that WRITES styles — so every iteration invalidated the
-    // layout and the next one forced the browser to flush it. One synchronous
+    // `place()` must not read the canvas and the container itself: `draw()`
+    // calls it in a loop that WRITES styles, so every iteration would
+    // invalidate the layout and the next would force a flush — one synchronous
     // reflow per pin, inside a rAF loop that runs right through a pinch.
     const { viewer } = scene()
     const canvasRect = vi.spyOn(viewer.canvas, 'getBoundingClientRect')

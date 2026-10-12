@@ -1,44 +1,27 @@
 """`hammerola rename` and `hammerola rm` — the two commands that unmake something.
 
-`rename` CHANGES THE TITLE AND NOTHING ELSE, and the absence of the other command
-is the design rather than an omission. A project has an id and a name, separated
-on purpose (SPEC 3.1): the id may not be derived from the name, because it would
-then change at exactly the moment it exists to survive. Every permanent URL of
-the project is built from that id, the builds behind those URLs went out with a
-year of `immutable` and cannot be recalled, so renaming an id would not rename
-anything — it would abandon a project and start an empty one beside it. There is
-no flag for it here, no route for it on the hub, and neither is an oversight.
+`rename` changes the title and nothing else. The project id is never derived from
+the name (SPEC 3.1): every permanent URL is built from the id, and the builds behind
+those URLs are cached as `immutable`, so there is deliberately no way to rename an id.
 
 It writes in TWO PLACES, in this order:
 
     project.json in the working directory   the name the NEXT push will carry
     the hub                                 the name the site shows right now
 
-Both, because each answers a different question and neither implies the other.
-The hub takes its title from whatever the newest build declared, so a rename made
-only there is undone by the next push; `project.json` is what a build reads, so a
-rename made only in it does not show up until something is published. The local
-file goes first: it is the one that survives, and a project that has never been
-pushed has nothing on the hub to rename at all — which is reported as the
-ordinary situation it is, not as a failure.
+The hub takes its title from the newest build, so a rename only there is undone by
+the next push; `project.json` alone shows nothing until something is published.
+The local file goes first, and a project never pushed has nothing on the hub to
+rename, which is reported as normal.
 
-`rm` REMOVES THE PROJECT WHOLE, AND ONLY THE PROJECT. There is deliberately no
-way to remove one build: a build's URL is permanent, so deleting one turns a
-promise into a 404 while the project goes on standing. Removing the project takes
-the promise away with everything it was about. There is no retention anywhere on
-this service (SPEC 5.3), so this is the ONLY thing that ever takes bytes off the
-volume — which is the argument for it being big, rare and loud rather than a
-tidying tool (issue #26).
+`rm` removes the whole project and only the project: a build's URL is permanent, so
+single builds cannot be removed. There is no retention on this service (SPEC 5.3),
+so this is the only thing that frees space on the volume.
 
-IT ASKS BEFORE IT DOES IT. Not a y/n — the id has to be typed, because a y/n is
-answered by reflex and this cannot be undone: the hub keeps no copy, and the
-builds, the comment queue, the PROPOSAL somebody drew over the model and the
-stored code of every revision go together. `--yes` exists for a script, and it
-is the flag a person should have to think about typing.
+It asks first, and the id has to be typed, because this cannot be undone: builds,
+comments, proposals and stored sources go together. `--yes` exists for scripts.
 
-NOTHING LOCAL IS DELETED, ever. `rm` is a command about the hub; the checkout on
-the disk belongs to whoever is running it, and a tool that removed a directory
-because a server call succeeded would be a different and much worse tool.
+Nothing local is ever deleted: `rm` acts on the hub only.
 """
 
 from hammerola import project

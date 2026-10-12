@@ -1,12 +1,8 @@
 """Where each name in this package is taken FROM, read off the syntax tree.
 
-`from .views import hub_text_problem` resolved perfectly and was wrong: the
-function had moved to `hubspec`, and `views` only still had the name because it
-imports it itself. Nothing fails on that -- until the day `views` stops needing
-it, when a module that never mentioned `views` breaks. The first cost arrives
-earlier and never announces itself: `project.py` is about project.json and a
-pure function over a string, and that one line made it drag in `views` and with
-it `checklib`, `parts`, `palette` and `geometry`.
+An import through a module that merely re-imports the name resolves fine, then
+breaks the day that module stops needing it -- and meanwhile drags its whole
+dependency tree into the importer.
 
 So every `from .<module> import <name>` inside `src/cadbuild/` has to name a
 module that DEFINES the name, and re-export has to be a decision somebody wrote
@@ -119,8 +115,7 @@ def test_the_deliberate_re_exports_are_still_re_exports(package, sibling_imports
     only ever grow by somebody deciding to add to it, so an entry left behind
     after a name moved back home would silently widen the sweep above.
 
-    IT TAKES BOTH HALVES TO SAY THAT, and the second is the one that was
-    missing. "Still re-exported" only asks whether `metrics` still hands the
+    It takes both halves to say that. "Still re-exported" only asks whether `metrics` still hands the
     name on; it says nothing about anybody taking it from there. The day
     `build.py` writes `from hammerola.metricsdiff import METRICS_NAME` instead, the
     entry excuses no line of the sweep above -- and the sweep above is the only

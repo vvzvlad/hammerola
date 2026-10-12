@@ -59,21 +59,16 @@ def payload(result):
 
 
 def import_works(name):
-    """Whether `import name` really WORKS -- decided by trying it, elsewhere.
+    """Whether `import name` really works, decided by trying it in a subprocess.
 
-    `importlib.util.find_spec` is the obvious call and it is WRONG here, in the
-    one environment these marks exist for: a checkout that installed
-    requirements.txt without the system libraries the Dockerfile adds -- which is
-    what CI's container was before issue #27 and what a bare workstation still is.
-    There `find_spec("cadquery")` answers yes -- the distribution is on disk --
-    while `import cadquery` dies with `libGL.so.1: cannot open shared object
-    file`. A mark built on find_spec therefore does not skip, and the tests that
-    need real geometry fail for a reason that has nothing to do with them.
+    `importlib.util.find_spec` is wrong here: on a checkout that installed
+    requirements.txt without the system libraries the Dockerfile adds,
+    `find_spec("cadquery")` answers yes while `import cadquery` dies with
+    `libGL.so.1: cannot open shared object file`, so a mark built on it would
+    not skip.
 
-    In a process of its own so that a pytest run does not end up with the whole
-    CAD stack (and an OCCT thread pool) resident just to answer a question about
-    it. Run once at import, which is what makes it two subprocesses per session
-    rather than two per test.
+    In a process of its own so a pytest run does not load the whole CAD stack
+    (and an OCCT thread pool) to answer the question. Run once at import.
     """
     finished = subprocess.run(
         [sys.executable, "-s", "-c", f"import {name}"],

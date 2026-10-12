@@ -1,17 +1,13 @@
-// What a build swap has to carry across, and when it is allowed to happen.
+// What a build swap carries across, and when it is allowed to happen.
 //
-// The feature this serves is ui-brief block 11: a new build arrives while
-// somebody is looking at the old one, and the page picks it up WITHOUT losing
-// the angle. That last part is the whole thing — somebody aims the camera at
-// what they are complaining about, and a swap that puts them back at the default
-// iso view has taken away the one piece of state they set by hand.
+// A new build arriving while somebody looks at the old one is picked up without
+// losing the camera angle the reader set by hand.
 //
-// The POLLING is not here. The interface owns meta.json, the build picker and
-// the "new build waiting" notice, and block 11 is explicit that an arriving
-// build must not be substituted silently. What the viewport owns is the pair of
-// operations only it can perform — read the frame off a scene about to be torn
-// down, and put it back on the one that replaced it — plus the one question the
-// interface cannot answer for it: is a gesture in progress right now.
+// Polling is not here: the interface owns meta.json, the build picker and the
+// "new build waiting" notice, and never substitutes a build silently. The
+// viewport owns what only it can do: read the frame off a scene about to be torn
+// down, put it back on the replacement, and say whether a gesture is in
+// progress.
 
 import { internals } from "./internals.js";
 import { IDLE_MS } from "./options.js";
@@ -58,15 +54,12 @@ export function captureLive(vp) {
 /**
  * Put back what `captureLive` took, on the freshly rendered scene.
  *
- * THE ORDER IS FIXED, and each step is where it is for a reason:
+ * The order is fixed: states -> camera -> tab -> section.
  *
- *   states -> camera -> tab -> section
- *
- * Tree first, because hiding a part runs an update of its own and the camera
- * should have the final say on what the frame looks like. The tab before the
- * section, because switching INTO the library's Clip tab turns local clipping on
- * and switching OUT of it turns clipping off — so a plane put back before the
- * tab moved would be a plane the library then un-cuts.
+ * Tree first, because hiding a part runs its own update and the camera should
+ * have the final say. The tab before the section, because switching into the
+ * library's Clip tab turns local clipping on and switching out turns it off, so
+ * a plane restored before the tab would be un-cut by the library.
  */
 export function restoreLive(vp, keep) {
   const viewer = vp.viewer;
@@ -106,27 +99,19 @@ export function restoreLive(vp, keep) {
 /**
  * True while the viewport is in the reader's hands and must not be re-rendered.
  *
- * The rule this encodes: a stale model is a smaller loss than anything the
- * person in front of it is in the middle of. The interface has reasons of its
- * own to defer a swap — a half-typed comment is the clearest — and asks this for
- * the ones only the viewport can see: a gesture ON THE CANVAS in progress, and
- * the moment just after one, because a swap re-seats the camera and doing that
- * between a mousedown and the mouseup pulls the model out from under the
- * pointer.
+ * A stale model is a smaller loss than interrupting the reader. The interface
+ * has its own reasons to defer a swap (a half-typed comment); this answers for
+ * what only the viewport sees: a gesture on the canvas in progress, or one that
+ * ended under IDLE_MS ago, since re-seating the camera between mousedown and
+ * mouseup pulls the model out from under the pointer.
  *
- * ON THE CANVAS is the whole qualifier, and `lastTouch` only ever records one of
- * those — see `installIdleClock`. A click anywhere else on the page is not the
- * reader holding the model, and counting it here made this answer true for
- * IDLE_MS after EVERY click in the interface, the press on the "Switch" button
- * that asks for the swap included.
+ * Only canvas presses count (`lastTouch` records only those, see
+ * `installIdleClock`); otherwise every click in the interface, including the
+ * "Switch" button that asks for the swap, would defer it.
  */
 export function isBusy(vp) {
-  // A SET OF POINTER IDS AND NOT A FLAG, because one bit cannot count fingers —
-  // `installIdleClock` carries the whole story. Read for its SIZE and never for
-  // its truthiness: an EMPTY Set is truthy, so the boolean-shaped test this line
-  // used to be would report "busy" for ever. The field was renamed along with
-  // its shape for that reason alone — the old name resolves nowhere now, so no
-  // such test can survive the change unnoticed.
+  // A set of pointer ids, not a flag, to count fingers (see
+  // `installIdleClock`). Read its size: an empty Set is truthy.
   if (vp.pointersDown.size > 0) return true;
   return performance.now() - vp.lastTouch < IDLE_MS;
 }
@@ -145,37 +130,25 @@ export function installIdleClock(vp) {
   // one clock's bookkeeping about its own recovery, and nothing outside asks.
   let clearedMidGesture = false;
 
-  // THE ID AND NOT A FLAG, because one bit cannot count fingers. With two down,
-  // the FIRST `pointerup` cleared the flag while the second was still on the
-  // glass, and the answer fell through to the IDLE_MS window — which
-  // `pointermove` does not refresh, only a press or a wheel does. A pinch or a
-  // drag that ran on for longer than IDLE_MS past that first lift therefore
-  // reported "not busy", and the swap it let through re-seated the camera under
-  // the fingers still doing it. A mouse never showed it: one pointer, and a set
-  // of one is a flag.
+  // Ids rather than a flag because one bit cannot count fingers: with two down,
+  // the first `pointerup` would clear the flag while the second was still on
+  // the glass, and since `pointermove` does not refresh the IDLE_MS window a
+  // long pinch or drag would read as idle and a swap would re-seat the camera
+  // under it.
   const onDown = (event) => {
     vp.pointersDown.add(event.pointerId);
     touched();
   };
 
-  // ONLY A RELEASE THAT ENDS A PRESS OF OUR OWN, which is now "an id this clock
-  // recorded" — `delete` says whether it was one and removes it in the same
-  // call. This listener is on the window (see below) and therefore hears every
-  // release on the page, and TWO different things arrive here as an id nobody
-  // pressed the canvas with. The reader's press on "Switch" is the first: it
-  // reaches the window BEFORE React dispatches the click that acts on it, so a
-  // stamp for it made `isBusy` mean "somebody clicked something recently" and
-  // the swap the button asks for deferred for the whole of IDLE_MS on a page
-  // nobody had touched the model on. The second exists only on a touchscreen — a
-  // finger that came down on the interface rather than the canvas, lifting while
-  // a finger of ours is still down — and it is the one the id buys: under the
-  // flag it took our finger's press with it.
+  // Only a release that ends a press recorded by this clock: `delete` checks
+  // and removes in one call. The listener is on the window and hears every
+  // release on the page, including the press on "Switch" (which reaches the
+  // window before React dispatches the click, and would otherwise defer the swap
+  // it asks for) and, on a touchscreen, a finger lifting from the interface
+  // while one of ours is still down.
   //
-  // AND ONE UNPAIRED RELEASE IS LET BACK IN, exactly one, and only after a blur
-  // that found presses outstanding. That is the tail `onBlur` would otherwise
-  // take away in the middle of a gesture — read its comment for the sequence.
-  // The id guard still holds for everything else, the "Switch" button included:
-  // no blur, no exemption.
+  // Exception: exactly one unpaired release is accepted after a blur that found
+  // presses outstanding (see `onBlur`).
   const onUp = (event) => {
     if (!vp.pointersDown.delete(event.pointerId)) {
       if (!clearedMidGesture) return;
@@ -186,47 +159,28 @@ export function installIdleClock(vp) {
     touched();
   };
 
-  // THE RECOVERY FOR A PRESS WHOSE RELEASE NEVER ARRIVES — a drag let go of over
-  // another window, a tab that lost focus mid-press. It used to be free: the
-  // flag was global, so any release anywhere cleared it. Ids take that away
-  // exactly where it was worth having, because a finger is given a FRESH id per
-  // touch and nothing on the page ever names the stranded one again. (A mouse
-  // keeps one id for the life of the page and so still clears itself on the next
-  // click, but a mouse is not what strands a press for long.) The interface's
-  // BUSY_WAIT_MS deadline is still the backstop; this is the cheap way out.
+  // Recovery for a press whose release never arrives: a drag let go over
+  // another window, a tab that lost focus mid-press. A touch gets a fresh id per
+  // touch, so nothing would ever name the stranded id again. The interface's
+  // BUSY_WAIT_MS deadline is the backstop; this is the cheap way out.
   //
-  // `blur` ALONE of the candidates, because it is the only one that fires for
-  // both cases above: a tab sent to the background blurs the window, and so does
-  // another window taking the focus while this page stays perfectly visible —
-  // which is precisely what `visibilitychange` would NOT report.
-  // `lostpointercapture` cannot help by construction, since the capture is
-  // released by the very `pointerup` that went missing.
+  // `blur` is the only event that fires for both cases: a backgrounded tab
+  // blurs the window, and so does another window taking focus while this page
+  // stays visible (which `visibilitychange` does not report).
+  // `lostpointercapture` cannot help, since the capture is released by the very
+  // `pointerup` that went missing.
   //
-  // NOT REGISTERED WITH `opts`, and that is the trap: `blur` does not bubble,
-  // but it does propagate in the CAPTURE phase, so a capturing listener on the
-  // window would also hear the element-level blur that an ordinary press causes
-  // when focus leaves whatever had it — clearing the press at the start of the
-  // gesture this exists to protect. Passive it stays, like everything else here.
+  // Not registered with `opts`: `blur` does not bubble but does propagate in
+  // the capture phase, so a capturing window listener would also hear the
+  // element-level blur an ordinary press causes and clear the press at its start.
   //
-  // NO `lastTouch` STAMP HERE, AND THAT IS A TRADE RATHER THAN A PURE WIN. The
-  // reason for it stands: this is the clock admitting it lost track of a press,
-  // not a gesture ending, and the release it stands in for may have happened
-  // long before the focus moved. What it costs is the case where the focus left
-  // WHILE THE GESTURE WAS STILL RUNNING — alt-tab with a button held, an OS
-  // notification, devtools opening. The set empties, the drag carries on,
-  // `pointermove` refreshes nothing, and `isBusy()` answers false for the rest
-  // of it; the final `pointerup` then matches no recorded id, so under the id
-  // guard alone it made no stamp either. A live swap arriving in that window
-  // re-seats the camera under fingers still dragging it — the very failure the
-  // set was introduced to remove, reached through a focus change instead of a
-  // second finger.
-  //
-  // So the two cases are told apart rather than merged: the flag says the clock
-  // lost a press it had, and the next UNPAIRED release — the missing half of
-  // that gesture — stamps after all and forgets the flag (`onUp`). The residue
-  // is one deferred swap of IDLE_MS in the sequence "blur mid-press, come back,
-  // press something in the interface", which is a delay rather than a camera
-  // pulled out from under a hand.
+  // No `lastTouch` stamp here: the release this stands in for may have happened
+  // long before the focus moved. But focus can also leave while the gesture is
+  // still running (alt-tab with a button held, a notification, devtools); then
+  // the set empties, the drag goes on, and the final `pointerup` matches no id.
+  // So `clearedMidGesture` records that a press was lost, and the next unpaired
+  // release stamps and clears it (`onUp`). The residue is one IDLE_MS delay in
+  // "blur mid-press, come back, press something in the interface".
   const blurOpts = { passive: true };
   const onBlur = () => {
     if (vp.pointersDown.size > 0) clearedMidGesture = true;

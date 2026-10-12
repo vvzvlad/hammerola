@@ -117,26 +117,14 @@ def test_a_model_that_does_not_import_is_a_failed_build(project):
 
 
 def test_a_note_that_cannot_be_published_is_a_failed_build(project):
-    """END TO END on what the note ceiling is actually FOR: the exit code.
+    """A note the build cannot publish exits EXIT_BUILD_FAILED, not EXIT_CRASHED.
 
-    A note carrying a lone surrogate -- which arrives without malice, from
-    `bytes.decode(errors="surrogateescape")` -- used to be accepted by the
-    constructor and then raise UnicodeEncodeError from `print()` and from
-    `json.dumps(..., ensure_ascii=False)`. Neither is a BuildError, so the
-    branch above caught it as a BaseException and the build ended in
-    EXIT_CRASHED: the hub reporting its OWN fault for a string the model wrote.
-    Refused at the declaration, it is a ValueError raised while model.py is
-    being imported, `geometry.load_model` turns that into a BuildError, and this
-    is where that becomes a number.
-
-    IT IS HERE AND NOT IN `tests/cadbuild/` because the exit code exists only
-    here. Two tests over there used to carry this docstring between them and
-    assert on message substrings instead -- neither could see a code, so nothing
-    anywhere checked the one thing the story is about. What is left over there is
-    the unit half: the door turns it into a BuildError
-    (`test_model_doors.py::test_every_door_answers_for_the_model_in_build_error_terms[importing model.py at geometry.load_model]`)
-    and the message names the model's line
-    (`test_geometry.py::test_the_import_names_the_line_the_model_failed_on`).
+    A lone surrogate (from `bytes.decode(errors="surrogateescape")`) is refused
+    at the declaration as a ValueError while model.py is imported, and
+    `geometry.load_model` turns it into a BuildError. This test holds the exit
+    code; the unit halves are in tests/cadbuild
+    (`test_model_doors.py::test_every_door_answers_for_the_model_in_build_error_terms[importing model.py at geometry.load_model]`
+    and `test_geometry.py::test_the_import_names_the_line_the_model_failed_on`).
 
     No kernel is needed: the model fails on its third line, long before anything
     reaches `import cadquery`.
@@ -173,29 +161,20 @@ def test_a_model_that_never_returns_is_killed_by_the_wall_clock(project):
 
 
 def test_the_hang_dump_names_the_line_of_the_model_it_stuck_on(project):
-    """Second echelon, and the only one that answers "where".
+    """The hang dump names the line of the model it stuck on.
 
-    SPEC 8A.2 step 4 asks for `faulthandler` specifically because it is
-    implemented in C and does not take the GIL: a hang inside a native OCCT
-    call never returns to the interpreter, so a watchdog thread and a signal
-    handler both stay unscheduled while this one still prints.
+    SPEC 8A.2 step 4 asks for `faulthandler` because it is implemented in C and
+    does not take the GIL: a hang inside a native OCCT call never returns to the
+    interpreter, so a watchdog thread or a signal handler stays unscheduled
+    while this one still prints.
 
-    THE BUDGET HAS TO BE BIGGER THAN A LEGITIMATE START, and that is why the
-    number here is twelve seconds rather than the 1.5 it used to be. The child
-    arms the watchdog TWICE (child.py, steps 1 and 5) and each arming gets the
-    whole budget, so a budget under the cost of the start is spent by the
-    START's window: the dump then prints a stack inside runpy and the import
-    machinery, which is a true report of a start that took longer than a build
-    may hang for -- and not the thing this test is about.
-
-    Measured on this workstation, a start costs 0.8-1.8 s quiet, 2.4-3.9 s with
-    the cores oversubscribed, and 4.2-7.6 s at a load average of 300 on ten
-    cores; nearly all of it is the OCP import inside `_cap_occt_threads`. At
-    1.5 s that lost the race two runs in three under ordinary load. Twelve is
-    three times the realistic worst and still over the pathological one, and the
-    test costs about that long on every run, because a watchdog can only be
-    observed by waiting for it. The cheap half of the same change is the test
-    below, which pins the arming ORDER without waiting for anything.
+    The budget has to exceed a legitimate start: the child arms the watchdog
+    twice (child.py, steps 1 and 5) with the whole budget each time, so a budget
+    below the start cost fires inside runpy and the import machinery. A start
+    measured 0.8-1.8 s quiet, 2.4-3.9 s with the cores oversubscribed and
+    4.2-7.6 s at a load average of 300 on ten cores, nearly all of it the OCP
+    import in `_cap_occt_threads`; twelve seconds covers that. The test below
+    pins the arming order without waiting.
     """
     limits = BUILD_LIMITS.replace(wall_seconds=30.0, hang_dump_seconds=12.0)
     outcome = project.build("""
@@ -217,29 +196,16 @@ def test_the_hang_budget_is_armed_again_where_the_model_starts(
         project, run_program, tmp_path):
     """`hang_dump_seconds` means "the model has been stuck this long".
 
-    It used to mean "this process has existed this long", because the only
-    arming was the first line of `child.main` -- before the OCP import in
-    `_cap_occt_threads`, before the chdir, before the build half is imported.
-    Whatever that start cost came out of the model's budget, and on a hub that
-    is now the builder and runs several of these at once it can cost more than
-    the budget outright: the dump then fires during the child's OWN start and
-    the pusher is handed a build log accusing their model of a hang that never
-    happened.
+    The watchdog is re-armed after the child's own start (the OCP import in
+    `_cap_occt_threads`, the chdir, importing the build half), so a slow start
+    neither comes out of the model's budget nor gets reported as a model hang.
 
-    Written against the ORDER of the two armings rather than against a stack,
-    because the order is the whole change and it can be pinned without waiting
-    for a timer: the budget here is deliberately smaller than the start and is
-    never allowed to go off. That the SECOND arming is the one in force is a
-    property of `faulthandler` itself -- `dump_traceback_later` cancels the
-    pending timer before arming a new one, so calling it twice replaces rather
-    than accumulates -- and the end-to-end proof that a dump really does name
-    the model's line is the test above.
-
-    The slow start is injected rather than waited for. Where the kernel imports
-    the real one costs 0.8-3.9 s (see the test above) and would make the point on
-    its own; on a machine with no usable OCP there is nothing to wait for at all,
-    so without the injection the start is fast enough that a test written here
-    would pass against the broken code.
+    Pinned by the order of the two armings rather than by a stack: the budget
+    here is smaller than the injected start and must never fire.
+    `dump_traceback_later` cancels the pending timer before arming a new one,
+    so the second arming is the one in force; the test above proves a dump
+    names the model's line. The slow start is injected so the test also bites
+    on a machine with no usable OCP, where the start is fast.
     """
     budget = 0.5
     slow = 1.0
@@ -318,33 +284,18 @@ def test_the_hang_budget_is_armed_again_where_the_model_starts(
 
 
 def test_a_model_that_closes_the_log_is_not_reported_as_a_hang(project):
-    """EXIT 1 IS SHARED, and this is the ordinary way a build lands on it.
+    """A model that closes its own log is reported as a crash, not a hang.
 
-    `EXIT_HANG_DUMP` is 1 because that is what `faulthandler` exits with -- and
-    1 is also what the interpreter exits with on an exception nobody caught. So
-    any raise that escapes `child.main` is read by `runner` as STATUS_HANG, and
-    the author is told the build stopped responding and its stack is in the log.
-    That is the HUB reporting the wrong thing about its own crash, and it sends
-    a person looking for a thread that is not stuck.
+    `EXIT_HANG_DUMP` is 1 because that is what `faulthandler` exits with, and 1
+    is also what the interpreter exits with on an uncaught exception, which
+    `runner` would read as STATUS_HANG. Here the model closes its own log, so
+    every later `print` in the child raises, including the handler's
+    `traceback.print_exc()`.
 
-    THE MODEL HERE CLOSES ITS OWN LOG, which is one line somebody writes without
-    meaning anything by it (a `with` around `sys.stdout`, a redirect that got
-    away). From then on every `print` in the child raises: the build's first
-    `print` fails, the handler reporting it calls `traceback.print_exc()`, that
-    fails too, and the interpreter exits 1.
-
-    OF THE THREE GUARDS ON THAT PATH exactly ONE is load-bearing here, measured
-    in every combination rather than inferred. `_say`'s `try` and the blanket
-    handler in `child.main` can both be deleted, TOGETHER, and this still
-    passes; replace `_print_exc_quietly`'s body with a bare
-    `traceback.print_exc()` and this fails with `status 'hang', exit 1`. So this
-    test is the SOLE witness for that one guard and no witness at all for the
-    other two, which the two tests below supply one guard at a time, each of
-    them removable-and-red.
-
-    THE LOG IS EMPTY ON PURPOSE and nothing here asserts otherwise: the model
-    closed it. The exit code is the whole of what survives, which is exactly why
-    it has to be the right one.
+    Of the three guards on that path only `_print_exc_quietly` is held by this
+    test (measured by removing each); the two tests below hold `_say` and the
+    blanket handler in `child.main`. The log is empty because the model closed
+    it; the exit code is all that survives.
     """
     outcome = project.build("""
         import sys
@@ -461,11 +412,10 @@ def test_the_model_cannot_read_the_hubs_token(project, hub_secrets):
 def test_the_build_starts_in_the_models_own_directory(project):
     """The working directory is part of the contract with a model.
 
-    Nine projects are written against this package (src/cadbuild/__init__.py)
-    and they read their own files -- meshes, profiles, a CSV of hole positions
-    -- by relative path, because until this step they ran from a checkout on
-    somebody's laptop. The child chdirs into the unpacked tree so that keeps
-    working; without it every one of those reads resolves inside the hub.
+    Projects written against this package (src/cadbuild/__init__.py) read their
+    own files -- meshes, profiles, a CSV of hole positions -- by relative path.
+    The child chdirs into the unpacked tree so those reads resolve there rather
+    than inside the hub.
     """
     (project.root / "beside-the-model.txt").write_text("here", encoding="utf-8")
 
@@ -526,18 +476,15 @@ def test_no_usable_occt_is_not_a_refusal(monkeypatch, capsys):
     """An interpreter with no usable kernel is not a hole -- there is no pool to
     cap and no model can compute anything either. It says so and carries on.
 
-    BOTH ways that happens are here, because they arrive as different
-    exceptions and only the second one is easy to get wrong. `name == "OCP"` is
-    what they share, and it is the whole rule.
+    Both ways that happens are here, because they arrive as different
+    exceptions; `name == "OCP"` is what they share, and it is the whole rule.
 
       * not installed: `ModuleNotFoundError(name="OCP")`.
-      * installed and refusing to load: plain `ImportError(name="OCP")`. Measured
-        on a checkout that installed requirements.txt without the system
-        libraries the Dockerfile adds -- `python:3.11-slim` bare, which is what
-        CI's container was before issue #27 -- where `import OCP` gives
-        `libGL.so.1: cannot open shared object file` and `import cadquery` fails
-        identically. Reading THAT as a refusal turns the suite red on every
-        machine where the kernel is installed but cannot load.
+      * installed and refusing to load: plain `ImportError(name="OCP")`, as on a
+        bare `python:3.11-slim` with requirements.txt but without the system
+        libraries the Dockerfile adds (`libGL.so.1: cannot open shared object
+        file`). Reading that as a refusal would fail the suite on every machine
+        where the kernel is installed but cannot load.
 
     Simulated with a meta-path blocker rather than with `sys.modules` (see
     `probes.block_import`): the sys.modules trick produces an exception naming
@@ -575,12 +522,11 @@ class _Answering:
 def test_an_occt_that_loaded_but_hides_its_pool_is_not_read_as_no_occt(monkeypatch):
     """OCP LOADED and its thread pool out of reach is a REFUSAL, not a shrug.
 
-    The distinction the old `except Exception` could not make, and it fails in
-    the dangerous direction: OCP having loaded means the kernel is in this
-    interpreter, so a pool comes up at one thread per core the moment cadquery
-    touches it -- against an RLIMIT_CPU sized for `occt_threads`. On a
+    It fails in the dangerous direction: OCP having loaded means the kernel is
+    in this interpreter, so a pool comes up at one thread per core the moment
+    cadquery touches it -- against an RLIMIT_CPU sized for `occt_threads`. On a
     twenty-core host that ceiling then fires ten times sooner than its number
-    says, and the build dies with nothing in the log to connect the two.
+    says, with nothing in the log to connect the two.
 
     Both shapes are covered because they arrive as different exceptions, and
     what makes them the same verdict is that neither names `OCP`: a submodule
@@ -588,22 +534,12 @@ def test_an_occt_that_loaded_but_hides_its_pool_is_not_read_as_no_occt(monkeypat
     whose symbol is gone (`ImportError(name="OCP.OSD")`, which is a version
     skew).
     """
-    # THE SUBMODULE HAS TO GO FIRST, and the two lines below are the whole of a
-    # failure that pre-dated the numbers work: `from OCP.OSD import
-    # OSD_ThreadPool` is answered out of `sys.modules["OCP.OSD"]` without the
-    # import system ever looking at the parent, so replacing `OCP` alone did
-    # nothing whenever some earlier test in the same process had imported the
-    # real kernel. This test then capped the REAL pool at two threads and
-    # reported DID NOT RAISE.
-    #
-    # THE STALE SUBMODULE IS PLANTED HERE RATHER THAN WAITED FOR, and that is
-    # what makes the `delitem` load-bearing on every run instead of on the
-    # unlucky ones. Without the plant this test passed in a CI container with no
-    # OCP whether the deletion was there or not -- the line was correct and
-    # nothing held it, so deleting it went green and the failure came back the
-    # next time a workstation ran the suite in a different order. `_Answering`
-    # stands in for the real pool: reached, it caps and returns, and the
-    # `pytest.raises` below fails.
+    # The submodule has to go: `from OCP.OSD import OSD_ThreadPool` is answered
+    # from `sys.modules["OCP.OSD"]` without looking at the parent, so replacing
+    # `OCP` alone does nothing once an earlier test imported the real kernel.
+    # A stale submodule is planted so the `delitem` is exercised on every run,
+    # not only in an unlucky test order; `_Answering` stands in for the real
+    # pool, and reaching it makes the `pytest.raises` below fail.
     stale = type(sys)("OCP.OSD")
     stale.OSD_ThreadPool = _Answering
     monkeypatch.setitem(sys.modules, "OCP.OSD", stale)
@@ -763,31 +699,23 @@ def test_the_baseline_reaches_the_child_as_a_copy_in_its_own_scratch(tmp_path,
 
 def test_the_child_hands_the_parsed_baseline_on_to_the_build(tmp_path,
                                                              monkeypatch):
-    """THE LAST JOINT, and the one that was holding nothing.
+    """`_run` passes `baseline=opts["baseline"]` on to the build.
 
-    Every other link of issue #59's wire is pinned: the slot's path
+    The other links of the baseline wire are pinned elsewhere: the slot's path
     (`store.dev_metrics_path`), the copy and the command line (the test above),
     `_parse`, the worker's call (`tests/test_jobs.py`), and `build()`'s call to
-    `report_metrics`. This one is `baseline=opts["baseline"]` in `_run`, and
-    deleting those four words left the whole suite green while putting the hub
-    back exactly where #59 found it -- no build anywhere printing a comparison,
-    and nothing red to say so.
+    `report_metrics`.
 
-    `_run` IS CALLED IN THIS PROCESS, which no other test here does: the rest of
-    this suite starts real children, because what they check is a property of an
-    operating-system process. What is checked here is an argument passed between
-    two functions, and a real child would need a CAD kernel to reach the call at
-    all. So the THREE steps that reach past this call are replaced -- capping the
-    OCCT pool, absolutising `sys.path`, and arming `faulthandler`, which would
-    otherwise leave this process's fatal-signal handler pointed at a captured
-    stderr whose descriptor pytest closes when the test ends -- and everything
-    `_run` mutates besides, the working directory and `paths._root`, is put back
-    by `monkeypatch` rather than by this test remembering to.
+    `_run` is called in this process, unlike the rest of this suite, because
+    what is checked is an argument passed between two functions and a real
+    child would need a CAD kernel. The steps past the call are replaced --
+    capping the OCCT pool, absolutising `sys.path`, and arming `faulthandler`
+    (which would leave this process's fatal-signal handler on a captured stderr
+    pytest closes) -- and what `_run` mutates besides (the working directory,
+    `paths._root`) is restored by `monkeypatch`.
 
-    Importing `src.cadbuild.build` is safe from here and is not an accident of
-    this machine: the module imports no cadquery at module scope (that is why
-    `_run` can defer it), so neither of the kernel's two names appears in
-    `sys.modules` and the autouse fixture in conftest stays satisfied.
+    `src.cadbuild.build` imports no cadquery at module scope, so importing it
+    here keeps the autouse kernel fixture in conftest satisfied.
     """
     from src.cadbuild import build as build_module
     from src.cadbuild import paths
@@ -832,14 +760,10 @@ def test_the_exit_codes_do_not_collide():
 
     They are read by `runner._read_outcome` to decide what happened, and 1 is
     deliberately unassigned: `faulthandler.dump_traceback_later(exit=True)`
-    exits with it after printing the stack.
-
-    IT IS NOT THE ONLY WAY A 1 CAN COME OUT, which this used to say and which
-    `child.py`'s own comment on the codes contradicts: the interpreter exits 1
-    on an uncaught exception too, so 1 is SHARED and "the watchdog fired" is
-    what the child's guards make true rather than what the number means. The
-    two isolating tests above are where that is held; here the assertion is
-    only that nothing this component ASSIGNS collides with it.
+    exits with it after printing the stack. The interpreter also exits 1 on an
+    uncaught exception; the isolating tests above hold that the child's guards
+    prevent that. Here the assertion is only that nothing this component
+    assigns collides with 1.
     """
     from src.buildproc.limits import WRAPPER_EXIT_CODES
 

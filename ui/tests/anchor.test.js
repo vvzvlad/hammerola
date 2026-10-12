@@ -1,19 +1,17 @@
 // Where a comment hangs on a build that is not the one it was written on.
 //
-// A comment is bound to the PRINTED ENTITY, and the entity is its catalogue key
-// (issue #75). Everything below is a claim about that binding surviving — or
-// visibly not surviving — a rebuild: the tessellator renumbers paths, the
-// geometry moves, and the key is the only field that means the same thing on the
-// next commit.
+// A comment is bound to the printed entity, i.e. its catalogue key. These tests
+// check that binding survives (or visibly fails to survive) a rebuild: the
+// tessellator renumbers paths, the geometry moves, and the key is the only
+// field that means the same on the next commit.
 //
-// THE TREES ARE WRITTEN OUT HERE, node by node, like repeats.test.js's and for
-// the same reason: what is under test reads `id`, `name`, `key` and `children`
-// exactly as given, so a hand-written child exercises it as faithfully as a
-// pushed one — and the fixture's model references no part twice, so it holds no
-// run of repeats to hang the "first instance only" rule on.
+// The trees are written out node by node (as in repeats.test.js): the code
+// under test reads `id`, `name`, `key` and `children` as given, and the
+// fixture's model references no part twice, so it has no repeats to test the
+// "first instance only" rule on.
 //
-// NAMES AND KEYS ARE ALWAYS SPELLED APART, so no assertion here can pass by
-// accident under an anchor written on the display name or on the path.
+// Names and keys are always spelled differently, so no assertion can pass by
+// accident on an anchor written on the display name or the path.
 
 import { describe, expect, it } from 'vitest'
 
@@ -121,9 +119,8 @@ describe('anchorFor trusts the coordinate on its own build only', () => {
 
   it('never takes the point when either side carries no stamp', () => {
     // `undefined === undefined` and `null === null` are both true, so without
-    // the guard a record written before the field existed would match a build
-    // whose meta.json declares none — a false positive on exactly the pair the
-    // field was added for.
+    // the guard a record with no stamp would match a build whose meta.json
+    // declares none.
     for (const stamp of [undefined, null, '']) {
       expect(anchorFor(record({ published: stamp, point: [1, 2, 3.5] }),
                        on(TREE, { published: stamp })).state).toBe('part');

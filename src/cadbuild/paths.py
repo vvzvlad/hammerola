@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Where the project being built lives, and how it is found.
 
-This code used to be a script inside the project, so `__file__` was the answer:
-`Path(__file__).resolve().parent.parent` was the checkout, always. It stopped
-being one when it became a package that lives nowhere near the project, so the
-project has to be FOUND instead -- and it has to be found the same way from
-every direction the build is entered from, which now includes the hub
-unpacking somebody's source tree into a staging directory of its own.
+The package lives apart from the project, so the project has to be found, the
+same way from every entry point (including the hub's staging directory).
 
 The rule: an explicitly set root wins; otherwise the nearest directory at or
 above the working directory that holds a project.json. project.json is the
@@ -15,8 +11,7 @@ project id, every published URL contains that id, and a build that guessed the
 wrong directory would publish under the wrong one. A worktree, a subdirectory
 and a checkout with no git at all all land on the same answer.
 
-Nothing here caches across a change: set_project_root() replaces the answer,
-which is what the tests use and what --root would use if it ever grows one.
+Nothing here caches across a change: set_project_root() replaces the answer.
 """
 
 from pathlib import Path

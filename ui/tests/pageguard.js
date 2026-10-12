@@ -1,33 +1,17 @@
 // The autouse cleanliness check for `PAGE`, which is module-level MUTABLE state.
 //
-// `PAGE` used to be derived once at import and never written again. Switching
-// revisions in place (SPEC §8, entry 62) made it a record the page EDITS: the URL
+// Switching revisions in place makes `PAGE` a record the page EDITS: the URL
 // moves by `history.pushState`, and `rereadPage` writes the new pid/slot/base
-// onto the same object, because every module here imported the object itself and
-// reads its fields at the moment of use. The mechanism is sound — nothing
-// destructures it at module scope — but it is exactly the shape this project
-// insists is guarded: a module-level singleton gets a fixture asserting it is
-// clean BOTH before and after every test (AGENTS.md; the Python side does the
-// same for the `lru_cache`s in src/onboarding.py through tests/conftest.py).
+// onto the same object, because every module here imports the object itself and
+// reads its fields at the moment of use (nothing destructures it at module
+// scope). A module-level singleton gets a fixture asserting it is clean BOTH
+// before and after every test (AGENTS.md; the Python side does the same for the
+// `lru_cache`s in src/onboarding.py through tests/conftest.py).
 //
-// WHAT IS ASSERTED IS NOT "THE ADDRESS IS WHERE IT STARTED", and the correction
-// is the point of this paragraph, because the obvious reading of "clean" says it
-// is. The file this guards is the file about SWITCHING REVISIONS: most of its
-// tests end with `PAGE` on another build, deliberately, because moving it is the
-// thing under test. A hook demanding it be back would fail every one of those —
-// which is most of the file, comfortably more than half — and the only way to
-// satisfy it would be for each of them to put the record back by hand, which is
-// the fixture asking the tests to do its job.
-//
-// THAT USED TO BE A COUNT AND IS NOW A PROPORTION, deliberately. The count went
-// stale inside the very commit that wrote it (the same commit added a dozen
-// tests to revswitch.test.js, five of which end on another build) and was stale
-// again one round later. Nothing recomputes it, nothing fails when it drifts,
-// and a number in a comment that nobody checks is the shape this project keeps
-// removing — see AGENTS.md on the word "six" and the count in
-// tests/test_workflow_steps.py, which are held in step BY A TEST. There is no
-// test to hold this one, so it says the thing that stays true instead: whoever
-// wants the figure can restore the strict assertion for one run and read it off.
+// WHAT IS ASSERTED IS NOT "THE ADDRESS IS WHERE IT STARTED". The file this
+// guards is about SWITCHING REVISIONS: most of its tests end with `PAGE` on
+// another build, deliberately, and a hook demanding it be back would make each
+// of them put the record back by hand.
 //
 // What is asserted instead is the INVARIANT that holds however far the page has
 // moved: `PAGE` describes the address the browser is on. That is the production
@@ -85,8 +69,7 @@ const browserPath = () => (BROWSER && BROWSER.get
  * happens before AND after each test and is judged both times; the argument is
  * passed to `rereadPage` explicitly rather than left to `location`, so the RESET
  * still lands in a test that stood `window.location` in for something else. The
- * READ is held to the same standard by `browserPath` above, which is the other
- * half of that promise and used to be missing from it.
+ * READ is held to the same standard by `browserPath` above.
  */
 export function guardPage(pathname) {
   window.history.replaceState(null, '', pathname)
@@ -99,20 +82,17 @@ export function guardPage(pathname) {
 /**
  * One hook: read `PAGE` as the test left it, put it back, then judge it.
  *
- * IN THAT ORDER, and the order is what the check used to be missing. The
- * snapshot was taken AFTER the reset, off `rereadPage(pathname)` — whose answer
- * is the record `clean` itself was built from — so it equalled `clean` whatever
- * the test had done, and the hook was a silent reset with an assertion drawn
- * over it. Read first, and there is something to judge.
+ * IN THAT ORDER: a snapshot taken after the reset, off `rereadPage(pathname)`,
+ * would equal `clean` whatever the test had done. Read first, and there is
+ * something to judge.
  *
  * The reset still happens BEFORE the assertions rather than after them, because
  * `expect` throws: a check that failed and left `PAGE` where it lay would fail
  * every test behind it as well, which is the cascade this fixture exists to
  * stop, spelled with the fixture instead of with the code.
  *
- * EXPORTED so the guard can be caught going red (`pageguard.test.js`). Vitest
- * gives a file no way to assert on its own hooks, and a fixture with no proof
- * that it can fail is worth exactly what the silent one was.
+ * EXPORTED so the guard can be caught going red (`pageguard.test.js`): Vitest
+ * gives a file no way to assert on its own hooks.
  */
 export function pageCheck(pathname, clean, when) {
   return () => {

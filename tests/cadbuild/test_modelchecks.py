@@ -54,13 +54,10 @@ class Model:
 # --------------------------------------------------------------------------
 # Which line a failure is blamed on
 # --------------------------------------------------------------------------
-# TWO BRANCHES OF `fail_site` HAD NOTHING ON THEM, and both were found by
-# mutation rather than by reading: `last = (outside or frames)[-1]` cut down to
-# `outside[-1]`, and `if not frames: return ""` deleted outright, each left the
-# whole suite green. Neither is decoration -- the regression they guard is an
-# IndexError raised INSIDE the `except` handler of `call_model`, which REPLACES
-# the BuildError being built and turns exit 3 (the model said no) into exit 4
-# (the hub fell over).
+# The two fallbacks in `fail_site` (`(outside or frames)[-1]` and
+# `if not frames: return ""`) guard against an IndexError raised INSIDE the
+# `except` handler of `call_model`, which would REPLACE the BuildError being
+# built and turn exit 3 (the model said no) into exit 4 (the hub fell over).
 
 def test_a_failure_with_no_frame_outside_the_package_still_names_a_file():
     """The fallback, reached the way it is really reached.
@@ -170,7 +167,8 @@ def test_augmented_assignment_into_the_returned_list_counts():
 
 
 def test_a_plain_assignment_from_a_call_counts():
-    """The spelling that used to count zero and go red on a working model."""
+    """A list assigned from a call counts; a zero here would go red on a
+    working model."""
     def checks():
         problems = _helper()
         return problems
@@ -225,10 +223,8 @@ def test_a_body_that_only_calls_something_is_uncountable_not_empty():
 # count is read out of the SOURCE of checks(), and a checks() whose body holds
 # no check fails the build outright -- so a decorator that moved the body into
 # helpers would leave every model that marked its timings with an "empty
-# checks()". A `with` leaves the asserts where they are. That was true of the
-# counter as it stood, before section() existed, and these two tests are what
-# keep it true: without them the template's own checks() could stop counting
-# and take down every project made from it.
+# checks()". A `with` leaves the asserts where they are, and these two tests
+# keep the template's own checks() counting.
 
 def test_asserts_inside_a_with_block_are_counted():
     def checks():
@@ -515,8 +511,8 @@ def test_a_stdout_that_cannot_be_written_to_does_not_replace_the_verdict(
         out_dir, monkeypatch):
     """The failure the RESCUE print introduces, on the run that went red.
 
-    Reproduced before the inner guard: the build reported `ValueError: I/O
-    operation on closed file` and the assert that actually failed was gone.
+    Without the inner guard the build reports `ValueError: I/O operation on
+    closed file` and the assert that actually failed is gone.
 
     The section is load-bearing, not decoration: with nothing recorded
     `print_check_sections` returns before printing anything, so a table that
@@ -738,13 +734,12 @@ def test_a_nested_function_name_is_not_a_constant():
 # and never run, which is what lets each hold exactly the one form under test.
 
 def test_a_match_capture_is_not_a_constant():
-    """All three binders a pattern can carry, because all three had to be added.
+    """All three binders a pattern can carry.
 
     `case (WALL,)` is a MatchAs, `*GAP` a MatchStar, `**SIZES` a MatchMapping
     rest -- three node types, none of them an Assign, and every one of them a
-    name this module holds a number under. Before they were listed, `case (WALL,
-    other):` bound nothing as far as the analysis could see and the assert below
-    was read against the module's 1.2.
+    name this module holds a number under. Missing one, the assert below would
+    be read against the module's 1.2.
     """
     def checks():
         match _helper():
@@ -872,14 +867,13 @@ def test_a_checks_with_no_readable_source_yields_nothing_and_does_not_raise():
 
 def test_an_assert_too_deep_to_analyse_does_not_take_the_build_down_with_it(
         tmp_path):
-    """The same promise, on the path that used to break it.
+    """The same promise, under RecursionError.
 
     `static_value` recurses by expression DEPTH, so a long enough chain of terms
-    raises RecursionError -- which is not one of the three the reading used to
-    catch, and which escaped into `run_checks` AFTER every check of the model
-    had already passed. A green build then crashed over a printed note.
+    raises RecursionError, which must not escape into `run_checks` after every
+    check of the model has passed.
 
-    IT NEEDS A REAL FILE ON DISK: `inspect.getsourcelines` is the first thing
+    It needs a real file on disk: `inspect.getsourcelines` is the first thing
     `static_asserts` does, and a function compiled from a string fails there
     instead -- which is the test above, and would pass here whatever the
     analysis did afterwards. What is asserted is that the call RETURNS rather
@@ -920,9 +914,8 @@ def test_run_checks_warns_about_a_constant_assert_and_takes_it_off_the_count(
 def test_a_checks_made_only_of_constant_asserts_still_builds(out_dir, capsys):
     """`passed` goes to None -- "count unknown" -- and NEVER to 0.
 
-    DO NOT "FIX" THIS INTO A REFUSAL. 0 is what the refusal above is written
-    against ("checks() is defined but contains no check"), and this is
-    deliberately not one: `assert FIT_MIN < FIT_MAX` is a guard on the
+    This is not a refusal. 0 is what the refusal above is written against
+    ("checks() is defined but contains no check"), and this is not one: `assert FIT_MIN < FIT_MAX` is a guard on the
     parameter table with the identical shape, this file is shared by every
     project in the organisation, and a false red on somebody's working model
     costs far more than an unprinted number. The build goes through and the log

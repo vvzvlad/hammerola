@@ -53,11 +53,9 @@ def test_published_meta_is_normalized_for_the_viewer(hub):
         extra_files={"model.stl": b"solid"}))
     meta = json.loads((hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
 
-    # `views` STAYS `views` (issue #75). It used to be renamed to `variants` on
-    # the way through, and the rename is gone rather than moved: the browser is
-    # the only reader, one word is what the author wrote, and a second word for
-    # it made every question about a view ("which name does this side use?") a
-    # lookup. The sizes are still measured here rather than trusted.
+    # `views` keeps the author's word on the way through: the browser is the only
+    # reader, and one name for a view avoids a lookup on every question about it.
+    # The sizes are measured here rather than trusted.
     assert [v["id"] for v in meta["views"]] == ["assembled"]
     view = meta["views"][0]
     assert view["bytes"] == len(view_bytes("a", keys=("lid",)))
@@ -86,25 +84,18 @@ def test_builds_json_and_root_index_are_written(hub):
 def test_a_card_carries_the_first_picture_any_view_of_the_build_declared(hub):
     """The front page's preview, which is a file the build already writes.
 
-    Nothing on the build side changed for issue #34: a view may declare a
-    `preview`, the hub checks it is a file this build published and copies the
-    name onto the view, and the card now reads the first view that has one. The
-    picture in the archive is what makes the declaration legal — an undeclared
-    name is a 422 (`render._check_declared_file`) — so it travels with the push.
+    A view may declare a `preview`; the hub checks it is a file this build
+    published, copies the name onto the view, and the card reads the first view
+    that has one. An undeclared name is a 422 (`render._check_declared_file`), so
+    the picture travels with the push.
 
-    AND A BUILD WITHOUT ONE PUTS `None` THERE rather than leaving the key out. An
-    image with no rendering stack ships no PNGs at all, so this is an ordinary
-    build and not a broken one; the front page draws its neutral plate for it,
-    and it can only do that if the field is written either way.
+    A build without one puts `None` there rather than leaving the key out: an image
+    with no rendering stack ships no PNGs, and the front page draws its neutral
+    plate only if the field is written either way.
 
-    THE FIRST VIEW HERE HAS NO PICTURE, and that is the whole point of building
-    two. `index_card` takes the first view that HAS one, which is a different
-    rule from "the first view's" — and a build declaring one view cannot tell
-    them apart, so a card reading `views[0]["preview"]` and crashing on the
-    views that have none would pass a one-view test exactly as this one does.
-    Which order a model's views come in is the model's own business: the build
-    hangs pictures on the two ids it knows, and nothing makes either of them
-    first.
+    The first view here has no picture: `index_card` takes the first view that HAS
+    one, and a one-view build could not tell that from `views[0]["preview"]`. The
+    order of a model's views is the model's own business.
     """
     hub.publish("proj1", "abc123", good_build(
         views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
@@ -158,18 +149,13 @@ def test_a_card_carries_the_picture_that_was_drawn_for_a_card(hub):
 
 
 def test_a_build_that_named_no_card_still_publishes_and_still_gets_one(hub):
-    """EVERY BUILD ON THIS HUB TODAY IS ONE OF THESE, which is the whole test.
+    """A build that names no card still publishes and its card still draws.
 
-    `card` arrived after builds were published, and a published build is
-    immutable — there is nothing to migrate and nothing that could be rebuilt
-    into the new shape. So a document that never heard of the field has to
-    publish exactly as it did, and its card has to keep drawing: the front page
-    falls back to the sheet (`ui/src/HammerolaEntry.jsx`), which is the picture
-    those builds have always shown.
-
-    A 422 here would take every project on the hub off the front page at once,
-    and `card: null` is what tells the browser to fall back rather than leaving
-    it to read a field that is not there.
+    Builds published before `card` existed are immutable and cannot be migrated,
+    so a document without the field publishes exactly as before and the front
+    page falls back to the sheet (`ui/src/HammerolaEntry.jsx`). `card: null` tells
+    the browser to fall back rather than read a missing field; a 422 here would
+    take every such project off the front page.
     """
     r = hub.publish("proj1", "abc123", good_build(
         views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
@@ -205,12 +191,11 @@ def _message(text):
 
 
 def test_a_revision_pushed_without_a_message_is_the_document_it_always_was(hub):
-    """The field is written only when there is one (issue #67).
+    """The message field is written only when there is one.
 
-    Which is what makes the whole change invisible to every revision that came
-    before it: no key in the record, no key in the picker, and a row that draws
-    exactly as it drew — so a hub full of old builds does not have to be
-    migrated, and nothing downstream may start subscripting the field.
+    No key in the record, no key in the picker, and a row that draws as before, so
+    revisions without a message need no migration and nothing downstream may
+    subscript the field.
     """
     assert hub.publish("proj1", "abc123", good_build()).status_code == 201
 
@@ -267,11 +252,9 @@ def test_a_message_with_an_angle_bracket_is_refused(hub):
 def test_a_message_of_nothing_but_spaces_is_refused(hub):
     """`-m "   "` asked for a subject and gave none.
 
-    It used to strip to "" and then evaporate at every `if message:` between here
-    and the document — the flag typed, the push accepted, and nothing on the row
-    to show for it. Refused instead, exactly as `project_title` refuses a blank
-    title: the one thing this route may not do with a message is take it and lose
-    it.
+    Stripped to "" it would evaporate at every `if message:` between here and the
+    document. Refused instead, as `project_title` refuses a blank title: this
+    route may not take a message and lose it.
     """
     r = hub.publish("proj1", "abc123", good_build(), headers=_message("   "))
     assert r.status_code == 400
@@ -280,15 +263,14 @@ def test_a_message_of_nothing_but_spaces_is_refused(hub):
 
 def test_a_repeat_push_restates_the_message_and_mints_nothing(hub):
     """The same tree is the same revision, and its message is the one thing
-    about it a second push can still change (issue #67).
+    about it a second push can still change.
 
     `Store.settled` answers 200 out of the request thread and never queues a
-    build, so this update happens there or nowhere. What it has to reach is the
-    PICKER: `builds.json` is the file every surface that shows a message reads,
-    and it is the one that answers "which revision was that".
+    build, so this update happens there or nowhere. It has to reach the PICKER:
+    `builds.json` is what every surface showing a message reads.
 
-    And a push with no message leaves the stored one standing: there is no way
-    to clear a message, and an ordinary re-push is not one.
+    A push with no message leaves the stored one standing: there is no way to
+    clear a message, and an ordinary re-push is not one.
     """
     body = good_build()
     assert hub.publish("proj1", "abc123", body,
@@ -306,12 +288,10 @@ def test_a_repeat_push_restates_the_message_and_mints_nothing(hub):
     # The 200 path wrote the message and NOTHING ELSE: one build directory
     # where there was one before.
     #
-    # THIS IS NOT THE MINTING CLAIM, and the comment here used to say it was.
-    # These pushes go by the NAMED route, where the directory is called what the
-    # URL called it — so a second name could not appear whatever the digest did,
-    # and the line would pass with the message mixed straight into it. What
-    # proves the message stays out of the name is the push where the HUB does
-    # the naming: `tests/client/test_publishing.py`,
+    # This is not the minting claim: on the NAMED route the directory is called
+    # what the URL called it, whatever the digest did. That the message stays out
+    # of a minted name is tested where the hub does the naming:
+    # `tests/client/test_publishing.py`,
     # `test_a_second_push_of_the_same_tree_restates_it_without_minting_a_revision`.
     assert [entry.name for entry in hub.project_dir("proj1").iterdir()
             if entry.is_dir() and not entry.is_symlink()
@@ -514,17 +494,13 @@ def test_missing_meta_json_is_422(hub):
 
 
 # -- every place this document names a file ----------------------------------
-# There are SIX and they are enumerated here once. The old document had three
-# flat maps of file pointers (`downloads`, `overview`, `previews`) beside
-# `views[].file`, and issue #75 moved every pointer next to the thing it is
-# about: a view names its own file, its overview, its picture and the card cut
-# of that picture, and a part names what it was exported to and its own picture.
+# There are SIX and they are enumerated here once. A view names its own file, its
+# overview, its picture and the card cut of that picture; a part names what it
+# was exported to and its own picture.
 #
-# ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test, because a
-# pointer that quietly stops being checked is a 404 under an immutable URL a
-# year of cache is served for — and a per-test list is one that goes stale an
-# entry at a time, silently, exactly like the four inline copies of the name
-# rule that issue #53 was about.
+# ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test: a pointer
+# that quietly stops being checked is a 404 under an immutable URL, and per-test
+# lists go stale one entry at a time.
 FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
                  "part files", "part preview")
 
@@ -566,27 +542,18 @@ def _pointing_at(where, name):
 
 
 def _pointing_archive(fields, extra=None):
-    """The archive a `_pointing_at` document implies — members and all.
+    """The archive a `_pointing_at` document implies, members and all.
 
-    THE DOCUMENT AND THE MEMBERS IT NEEDS ARE ONE THING, and this is the one
-    place they are tied together. `_pointing_at` builds a catalogue of one
-    printable exporting `PART_EXPORT` and a view showing that one key, so the
-    archive has to carry the export and a view file naming `lid` — and a
-    document naming a file the archive does not hold is refused BEFORE the
-    pointer under test is ever looked at.
+    `_pointing_at` builds a catalogue of one printable exporting `PART_EXPORT` and
+    a view showing that one key, so the archive must carry the export and a view
+    file naming `lid`; a document naming a file the archive does not hold is
+    refused BEFORE the pointer under test is looked at. Keeping the document and
+    its members in one function stops tests from passing on a refusal about the
+    fixture.
 
-    Written as a helper because the alternative had already failed twice, in
-    silence: two of the three tests below packed their own members, `lid.stl`
-    was not among them, and both went green against
-    "the stl of part 'lid' points at 'lid.stl', which this build did not
-    declare" — a refusal about the fixture rather than about the rule each was
-    written for. A pointer is not a member; keeping the two in one function is
-    what stops them drifting apart again.
-
-    `PART_EXPORT` rides along UNCONDITIONALLY, exactly as `good_build` splices
-    in `DEFAULT_EXPORTS`: where the pointer under test IS the part's export,
-    the document names something else and this is a member nobody's document
-    mentions, which costs one entry in `files` and changes no verdict here.
+    `PART_EXPORT` rides along UNCONDITIONALLY, as `good_build` splices in
+    `DEFAULT_EXPORTS`: where the pointer under test IS the part's export, it is an
+    unreferenced member, which costs one entry in `files` and changes no verdict.
     """
     members = {"meta.json": meta_bytes(**fields),
                "assembled.json": view_bytes(keys=("lid",)),
@@ -642,11 +609,8 @@ def test_a_pointer_at_a_missing_file_is_422(hub, where):
 
 
 # -- what a view SELECTS out of the catalogue --------------------------------
-# `views[].parts` used to be a COUNT and is a list of catalogue keys now
-# (issue #75). The count was a fact about the view FILE that no reader could
-# reconcile with anything else — five pins are five references to one record, so
-# it disagreed with the map beside it — and answering "what is in this tab"
-# meant fetching a multi-megabyte view file.
+# `views[].parts` is a list of catalogue keys, so "what is in this tab" can be
+# answered without fetching a multi-megabyte view file.
 
 
 def _selecting(refs):
@@ -667,23 +631,13 @@ def _refuse_selection(hub, refs, commit="abc123"):
 
 @pytest.mark.parametrize("refs", (2, "lid", {"lid": 1}, None))
 def test_a_view_whose_parts_are_not_a_list_is_refused(hub, refs):
-    """`2` is the shape this field had until issue #75, and it must not linger.
+    """A `parts` that is not a list of keys is refused, including a bare count.
 
-    A hub that read the old number as "two parts" would publish a build whose
-    views claim to show parts nothing can name — and a client asking what is in
-    a tab gets an integer where it expects keys, which is the failure mode of
-    every silent format change. Refusing is what makes the change visible on the
-    push that still writes the old shape.
-
-    "catalogue keys" WAS THE FRAGMENT HERE AND IT WAS NOT ENOUGH, which is the
-    same trap the two cases below it fell into. `_match_selection` ends its
-    refusal with "`parts` has to be exactly the catalogue keys the view file
-    names", so those two words are printed by two rules — and with the shape
-    clause taken out of `_view_parts` the `{"lid": 1}` row stayed GREEN: a dict
-    of one key is under the ceiling, iterates to a key the catalogue declares,
-    and is answered by `_match_selection` for showing a `pin` it never declared.
-    Measured; the other three rows went red. "as an array of strings" is written
-    once in render.py, in the clause under test.
+    A hub reading a number as "two parts" would publish views claiming parts
+    nothing can name. The fragment asserted is "as an array of strings", written
+    once in render.py in the clause under test: "catalogue keys" is also printed
+    by `_match_selection`, which would answer the `{"lid": 1}` row if the shape
+    clause in `_view_parts` were removed.
     """
     assert "as an array of strings" in _refuse_selection(hub, refs), refs
 
@@ -692,20 +646,14 @@ def test_a_view_naming_a_part_the_catalogue_does_not_declare_is_refused(hub):
     """The other half of the pair `check_view_file` holds up, and it asserts
     the same kind of fragment for the same reason.
 
-    "does not declare" ALONE SAYS NOTHING HERE: `_match_selection` prints those
-    three words about this very document — the view file shows `pin`, which a
-    selection of `['lid', 'ghost']` does not declare — so with the membership
-    clause taken out of `_view_parts` the push is still a 422 and this still
-    passed. Measured: removing that clause failed nothing in the suite.
-
-    Nor can the fixture be made to break only this rule. For `_match_selection`
-    to stay quiet the view file would have to show `ghost` too, and then
-    `check_view_file` refuses it against the same catalogue. Two rules whatever
-    the document does, exactly as in
-    `test_a_leaf_key_the_catalogue_does_not_declare_is_refused` below — so what
-    makes the case honest is the message. `_view_parts` names the ref bare;
-    `check_view_file` puts "a part keyed" in front of it and `_match_selection`
-    says "which it does not declare" without naming the catalogue at all.
+    "does not declare" alone says nothing here: `_match_selection` prints it about
+    this very document (the view file shows `pin`, which `['lid', 'ghost']` does
+    not declare), so without the membership clause in `_view_parts` the push is
+    still a 422. The fixture cannot break only this rule either: for
+    `_match_selection` to stay quiet the file would have to show `ghost`, and
+    `check_view_file` would refuse that. So the message decides: `_view_parts`
+    names the ref bare, `check_view_file` says "a part keyed", and
+    `_match_selection` says "which it does not declare".
     """
     error = _refuse_selection(hub, ["lid", "ghost"])
     assert "shows 'ghost', which the `parts` catalogue" in error, error
@@ -837,16 +785,13 @@ def test_a_part_that_ships_nothing_may_not_declare_files(hub):
 
 
 def test_a_printable_that_declares_no_files_is_refused(hub):
-    """THE OTHER HALF OF THE CLAUSE ABOVE, and it was missing while that one stood.
+    """A printable that declares no files is refused.
 
     A build exports STEP, STL and 3MF for every printable it finds
-    (`cadbuild.printables.export_printables`) and `cadbuild.build` files them
-    under the record, so "printable" and "has files" are one statement made
-    twice — and a record making only half of it is one no build wrote. The cost
-    of taking it is the same as the cost of taking its mirror: the browser draws
-    a record BY its kind, so this publishes a row promising download buttons
-    that are not there, under an immutable URL, from a push that cannot be taken
-    back.
+    (`cadbuild.printables.export_printables`) and `cadbuild.build` files them under
+    the record, so "printable" and "has files" are one statement made twice. The
+    browser draws a record BY its kind, so taking it would publish download
+    buttons that are not there, under an immutable URL.
     """
     body = tar_gz({
         "meta.json": meta_bytes(
@@ -1024,7 +969,7 @@ def test_the_same_sources_mint_the_same_revision(hub):
     assert again.json()["url"] == f"/project/proj1/{first.json()['revision']}/"
 
     # The slot is not a second address for the sources: it is the same build
-    # mirrored into the one name that is rewritten in place (issue #78).
+    # mirrored into the one name that is rewritten in place.
     builds = [entry.name for entry in (hub.project_dir("proj1")).iterdir()
               if entry.is_dir() and not entry.is_symlink()
               and entry.name != DEV_LINK]
@@ -1034,15 +979,10 @@ def test_the_same_sources_mint_the_same_revision(hub):
 def test_force_is_not_part_of_the_name_the_sources_are_given(hub):
     """`?force=1` changes how a build RUNS, never what it is called.
 
-    `src/app.py` carries this as a comment calling itself "the line somebody
-    would be tempted to change", which is the project's own definition of a
-    sentence that belongs in a test. A flag folded into the digest would give
-    one tree two permanent addresses — the one thing a minted name may never be
-    — and the same tree pushed again would rebuild instead of answering
-    "unchanged", forced or not.
-
-    Structurally true today: `accept_sources` is not passed `force` at all. This
-    pins it so, rather than repairing anything.
+    `src/app.py` flags this as a line somebody would be tempted to change. A flag
+    folded into the digest would give one tree two permanent addresses, and the
+    same tree pushed again would rebuild instead of answering "unchanged". Today
+    `accept_sources` is not passed `force` at all; this pins it.
     """
     first = hub.publish_async("proj1", None, good_build())
     assert hub.await_job(first.json()["job"]).status_code == 201
@@ -1107,17 +1047,16 @@ def test_the_local_slot_is_still_a_named_route(hub):
 
 def test_only_the_publish_route_s_own_query_parameter_turns_force_on(
         hub_factory):
-    """The query used to be thrown away here, and now one name is read out of it.
+    """Only the publish route's own query parameter turns force on.
 
-    `?force=1` is the client's own spelling (`Hub.publish`) and it asks the
-    build to skip the model's own checks(). Everything else in the query stays
-    ignored: a parameter nobody here anticipated must not become a boolean by
-    being present, which is what the second push is for — and the first is the
-    control that makes the second mean something at all.
+    `?force=1` is the client's own spelling (`Hub.publish`) and asks the build to
+    skip the model's own checks(). Everything else in the query is ignored: an
+    unanticipated parameter must not become a boolean by being present, which is
+    what the second push checks, with the first as the control.
 
-    Two NAMED routes rather than one pushed twice: the same sources under the
-    same name are already published by the second push and `Store.settled`
-    answers 200 without building anything, so there would be no call to look at.
+    Two NAMED routes rather than one pushed twice: the same sources under the same
+    name are already published by the second push and `Store.settled` answers 200
+    without building anything, so there would be no call to look at.
     """
     seen = []
 
@@ -1219,15 +1158,13 @@ def _publish_view(hub, view, **meta):
     """Push a document whose one view file is `view`.
 
     `**meta` reaches `meta_bytes`, because the file and the document are held
-    against each other now (`render._match_selection`): a view naming parts the
-    default catalogue does not declare needs the catalogue to say so, and the
-    forwarding is what lets a case say it in one line.
+    against each other (`render._match_selection`): a view naming parts the default
+    catalogue does not declare needs the catalogue to say so.
 
-    The default catalogue's exports travel with it, so that a case whose meta
-    is the ordinary one is answered by the VIEW FILE and not by a printable
-    with nothing exported. A case handing its own `parts` carries its own
-    files; the two extra members are then just files nobody points at, which is
-    what an honest build ships anyway (`meta.json`, `metrics.json`).
+    The default catalogue's exports travel with it, so a case with the ordinary
+    meta is answered by the VIEW FILE and not by a printable with nothing exported.
+    A case with its own `parts` carries its own files; the extra members are then
+    unreferenced, as an honest build ships `meta.json` and `metrics.json`.
     """
     body = tar_gz({"meta.json": meta_bytes(**meta), "assembled.json": view,
                    **DEFAULT_EXPORTS})
@@ -1248,31 +1185,19 @@ def _keys_in(nodes):
 def _showing_archive(nodes, undeclared=()):
     """The members of a document whose one view file shows `nodes`.
 
-    VALID BY CONSTRUCTION, and that is the whole of why it exists. Three
-    separate rules refuse a view now — the two DOM strings, the leaf's `key`,
-    and `views[].parts` against what the file shows — so a hand-written fixture
-    breaking one of them almost always breaks a second, and a case asserting
-    only `422` then passes on the rule it was NOT written for. That is not a
-    hypothetical: with `_check_part_name` and `_check_color` taken out of
-    `check_view_file` entirely, the three name-and-colour cases below went on
-    passing, because their unkeyed leaves were refused by the `key` rule
-    instead.
+    VALID BY CONSTRUCTION. Three rules refuse a view (the two DOM strings, the
+    leaf's `key`, and `views[].parts` against what the file shows), so a
+    hand-written fixture breaking one usually breaks a second, and a case asserting
+    only `422` passes on the rule it was not written for. So the catalogue and the
+    selection are DERIVED from the tree: every `key` a node carries is declared as
+    a printable exporting a file this archive also holds, and `views[].parts` is
+    exactly that list. A case then varies ONE thing.
 
-    So the catalogue and the selection are DERIVED from the tree rather than
-    written beside it: every `key` a node carries is declared as a printable
-    exporting a file this archive also holds, and `views[].parts` is exactly
-    that list. A case then varies ONE thing — a hostile name, a hostile colour —
-    and nothing else in the document can answer for it.
-
-    `undeclared` is how a case varies the one thing that IS the agreement: those
-    keys are left out of the catalogue AND out of the selection, so the file
-    names a record the catalogue does not have. Out of the selection because
-    `_view_parts` holds that list against the catalogue too AND runs before the
-    view file is opened, so a key left in it would be answered there and the
-    file never read — the drop is what lets `check_view_file` be reached at all.
-    A second rule still breaks whatever this does, and it is `_match_selection`
-    rather than `_view_parts`: the file shows a key the selection does not
-    declare. Which of the two ANSWERS is what the message assertion pins down
+    `undeclared` keys are left out of the catalogue AND the selection, so the file
+    names a record the catalogue lacks. Out of the selection because `_view_parts`
+    checks that list against the catalogue before the file is opened. A second rule
+    still breaks (`_match_selection`: the file shows a key the selection does not
+    declare); the message assertion pins which one answers
     (`render.check_view_file` says "shows a part keyed", `_match_selection` says
     "shows ... which it does not declare").
     """
@@ -1303,12 +1228,10 @@ def _publish_showing(hub, nodes, undeclared=(), commit="abc123"):
 def test_the_document_the_cases_below_mutate_publishes_untouched(hub):
     """The floor under every case that follows, and it has to be a test.
 
-    Each case below hands `_showing_archive` a tree with one thing wrong with
-    it and asserts which rule answered. That reasoning is worth nothing if the
-    document is refused for a reason the helper itself put there — which is the
-    exact failure the helper was written to end, so leaving it to inspection
-    would be repeating it. A group with no key, a leaf with one, one printable
-    per key: the same shape `cadbuild.views.export_views` writes.
+    Each case below hands `_showing_archive` a tree with one thing wrong and
+    asserts which rule answered, which means nothing if the unmodified document is
+    refused. A group with no key, a leaf with one, one printable per key: the
+    shape `cadbuild.views.export_views` writes.
     """
     r = _publish_showing(hub, [
         {"name": "lid", "key": "lid"},
@@ -1343,25 +1266,17 @@ def test_markup_in_a_part_name_is_refused_at_any_depth(hub):
 
 @pytest.mark.parametrize("name", (7, 1.5, True, ["lid"]))
 def test_a_part_name_that_is_not_a_string_is_refused(hub, name):
-    """The clause `_check_part_name` opens with, and it had no witness at all.
+    """The clause `_check_part_name` opens with: a non-string name.
 
-    Measured before it was written: with `render.py`'s non-string clause
-    replaced by `pass` the whole suite stayed green, so nothing anywhere said
-    what a `"name": 7` does. It matters because of what is one line further on —
-    `_plain_text` asks `len(value)`, which on a number is a TypeError, i.e. a
-    500 out of a rule whose whole job is to produce a 422 about a bad push. The
-    refusal has to be the ValueError, and asserting the message is how that
-    stays true.
+    One line further on, `_plain_text` asks `len(value)`, which on a number is a
+    TypeError, a 500 out of a rule meant to produce a 422. The refusal must be the
+    ValueError, so the message is asserted.
 
-    A NUMBER, A BOOL AND A LIST rather than one row: `True` is what a JSON
-    `true` parses to and passes an `isinstance(value, str)` written as a
-    truthiness test, and a list is the value that would reach `"<" in value`
-    without raising if the clause moved below the bracket check.
-
-    An object is deliberately NOT on the list. `_view_fields` is the parser's
-    `object_pairs_hook`, so a nested object arrives here stripped to the fields
-    the walk keeps — `{"lid": 1}` becomes `{}` — and a row asserting the value
-    back would be asserting the parser's edit rather than this rule.
+    A number, a bool and a list: `True` passes an `isinstance(value, str)` written
+    as a truthiness test, and a list would reach `"<" in value` without raising if
+    the clause moved below the bracket check. An object is not on the list:
+    `_view_fields` is the parser's `object_pairs_hook`, so `{"lid": 1}` arrives as
+    `{}`, and asserting it back would test the parser.
     """
     r = _publish_showing(hub, [{"name": name, "key": "lid"}])
     assert r.status_code == 422, r.text
@@ -1434,13 +1349,9 @@ def test_a_view_nested_past_the_parsers_limit_is_refused(hub):
 
 
 # -- the leaf's `key`, which is the identity the whole document is built on ---
-# It is new with issue #75 and it is the string this walk had NO opinion about
-# for as long as it existed: `_view_fields` keeps only the four keys the walk
-# reads, so a `key` was thrown away by the PARSER before the walk could see it —
-# and it then reached the browser through the very same file, because
-# `check_view_file` validates a copy while the file itself is served untouched.
-# That is the one shape of hole this walk cannot have: a push-borne string on an
-# immutable same-origin URL that nothing looked at.
+# `_view_fields` keeps only the keys the walk reads, while the file itself is
+# served untouched (`check_view_file` validates a copy), so a `key` the walk did
+# not check would be a push-borne string on an immutable same-origin URL.
 
 
 def test_a_leaf_key_the_catalogue_declares_publishes(hub):
@@ -1512,20 +1423,15 @@ def test_a_leaf_key_is_checked_at_any_depth(hub):
 
 
 def test_a_leaf_with_no_key_is_refused(hub):
-    """The document this refusal exists for, and it used to publish.
+    """A leaf with no key is refused.
 
-    Everything else in this section is about a key that is WRONG. This is about
-    the file that carries none at all — the shape that made `views[].parts` a
-    promise nothing kept: two unkeyed leaves published under
-    `"parts": ["lid", "pin"]`, and the reader was told about two parts the
-    browser could resolve to nothing. Into an immutable directory.
+    Two unkeyed leaves under `"parts": ["lid", "pin"]` would tell the reader about
+    two parts the browser can resolve to nothing, in an immutable directory.
 
-    A GROUP IS STILL FINE WITHOUT ONE, which is the other half of the rule and
-    the reason it can be written at all: `grp` below carries `parts` and no key,
-    exactly as `cadbuild.views.export_views` writes it, and the push is refused
-    for the leaves rather than for it. What a node IS is read off `parts` — the
-    same question this walk asks to decide whether to descend, and the same one
-    the vendored viewer's `isShapeTree` asks.
+    A GROUP is still fine without one: `grp` below carries `parts` and no key, as
+    `cadbuild.views.export_views` writes it, and the push is refused for the leaves.
+    What a node IS is read off `parts`, the same question the walk asks to decide
+    whether to descend and the vendored viewer's `isShapeTree` asks.
     """
     view = _view([{"name": "lid"}, {"name": "grp", "parts": [{"name": "pin"}]}])
     r = _publish_view(hub, view)
@@ -1549,27 +1455,20 @@ def test_a_leaf_with_no_key_is_refused(hub):
 def test_whether_a_node_is_a_leaf_is_the_presence_of_parts(hub, node, refusal):
     """`"parts": null` is a GROUP here, because it is a group to the viewer.
 
-    THE RULE IS THE VIEWER'S, quoted from the copy this hub serves
+    The rule is the viewer's, from the copy this hub serves
     (`static/_v/three-cad-viewer.esm.js`):
 
         function isShapeTree(shape) {
             return "parts" in shape;
         }
 
-    and its caller then walks `for (const shape of shapes.parts)`. So the
-    browser calls a node with a null `parts` a group and iterates the null,
-    while a hub asking `node.get("parts") is None` called the same node a leaf
-    and published it — 201, into an immutable directory under a year of cache,
-    opening for nobody. That is the shape of refusal issue #53 named and
-    `hammerola/buildnames.py` exists to end: accepted and impossible to open, from a
-    push that can never be taken back. `"parts": "x"` was never the danger — it
-    is refused by the list check either way; `null` was the one value the two
-    sides read differently, so the fix is to ask the question the way the
-    viewer asks it and let `null` fall through to that same list check.
+    and its caller then walks `for (const shape of shapes.parts)`. A hub asking
+    `node.get("parts") is None` would call that node a leaf and publish a build
+    that never opens. So the question is asked the viewer's way and `null` falls
+    through to the list check, which refuses it like `"parts": "x"`.
 
-    The four rows are every combination of the two fields, and the last two are
-    the point: the `key` does not rescue a null `parts`, because what makes the
-    node a group is the field being there.
+    The four rows are every combination of the two fields; the last two show the
+    `key` does not rescue a null `parts`.
     """
     # The file under the root shows one part, so the document has to select
     # one: the default meta names both catalogue keys, and the row that is
@@ -1589,14 +1488,9 @@ def test_whether_a_node_is_a_leaf_is_the_presence_of_parts(hub, node, refusal):
 def test_a_view_file_that_is_not_an_object_is_refused(hub):
     """The root of the file, and the one shape the walk cannot start on.
 
-    Uncovered until this was written — measured, like every case in this
-    section, by replacing the clause with `pass`: the suite stayed green. What
-    it costs is not a 422 the other way round but a 500, since the walk pushes
-    the document straight onto its stack and then calls `.get` on it.
-
-    The message is asserted because a file that is not a JSON OBJECT is one step
-    from a file that is not JSON at all, and the two are refused by adjacent
-    clauses with adjacent wordings.
+    Without this clause the walk pushes the document onto its stack and calls
+    `.get` on it: a 500. The message is asserted because "not a JSON OBJECT" and
+    "not JSON at all" are refused by adjacent clauses with adjacent wordings.
     """
     r = _publish_view(hub, b'["lid", "pin"]')
     assert r.status_code == 422, r.text
@@ -1608,10 +1502,8 @@ def test_a_node_under_parts_that_is_not_an_object_is_refused(hub):
     """The other half of the row above it: `parts` is a list OF OBJECTS.
 
     `test_whether_a_node_is_a_leaf_is_the_presence_of_parts` covers a `parts`
-    that is not a list; this is a list whose entries are not nodes, and until
-    now nothing said so. Same ending as every shape clause in this walk — the
-    entry goes on the stack and the next turn of the loop calls `.get` on a
-    string.
+    that is not a list; this is a list whose entries are not nodes, which would
+    otherwise go on the stack and have `.get` called on a string.
     """
     r = _publish_view(hub, _view(["lid", "pin"]))
     assert r.status_code == 422, r.text
@@ -1647,13 +1539,10 @@ def test_a_view_promising_parts_its_file_does_not_show_is_refused(hub):
 
 
 def test_a_view_declaring_no_parts_beside_a_file_full_of_them_is_refused(hub):
-    """`"parts": []` published, and that is the same hole written the other way.
+    """`"parts": []` beside a file full of parts is refused.
 
-    Worth its own case rather than a row in the test above: an empty list passes
-    every rule `_view_parts` has — it is a list, it is under the ceiling, it
-    names no key the catalogue lacks and repeats nothing — so it was the one
-    spelling of "this tab shows nothing" that a file full of parts could sit
-    behind.
+    An empty list passes every rule `_view_parts` has (a list, under the ceiling,
+    no undeclared key, no repeat), so it needs its own case.
     """
     r = _publish_view(
         hub, _view([{"name": "lid", "key": "lid"}]),
@@ -1712,28 +1601,17 @@ def test_ordinary_part_names_and_colours_still_publish(hub):
 def test_markup_in_an_exported_file_s_extension_is_refused(hub):
     """The extension is what the download button is captioned with.
 
-    It was the key of the flat `downloads` map and it is the key of a part's own
-    `files` now, which is the one thing that changed: the caption rule
-    (`SAFE_LABEL`, 32 characters of a short token) followed the job rather than
-    the field name. The page builds the button with textContent, so this is the
-    second line of defence rather than the only one — but an extension is a
-    short token by nature and there is no reason to accept anything else.
+    It is the key of a part's `files`, held to `SAFE_LABEL` (a short token of up to
+    32 characters). The page builds the button with textContent, so this is a
+    second line of defence, but the extension is whitelisted rather than escaped
+    and nothing downstream looks at it again.
 
-    The KEY OF `parts` ITSELF is a different rule and is checked elsewhere: it
-    is a part name, held to `_check_part_name`, and a real push carrying markup
-    in one is refused in tests/test_notes.py, which is where the part-name rule
-    is paired against the build gate's copy of it.
+    The key of `parts` itself is a part name, held to `_check_part_name` and
+    paired against the build gate in tests/test_notes.py.
 
-    THE VIEW IS NARROWED WITH THE CATALOGUE, AND THE MESSAGE IS ASSERTED,
-    because without either this case proved nothing at all. It handed
-    `meta_bytes` a catalogue of ONE part and left `views` at its default, which
-    selects the TWO the default catalogue has — so the push was answered by
-    `_view_parts` ("names 2 parts, more than the 1 the catalogue declares") and
-    the extension was never looked at. Measured the way every such case here is:
-    with the whitelist clause taken out of `render.py` the whole suite stayed
-    green, i.e. the clause had no witness anywhere. It is worth having one — the
-    extension is a caption that is whitelisted rather than escaped, so nothing
-    downstream of this line looks at it again.
+    The view is narrowed with the catalogue and the message is asserted: with the
+    default `views` (two parts) and a one-part catalogue, `_view_parts` would
+    answer first and the extension would never be looked at.
     """
     body = tar_gz({
         "meta.json": meta_bytes(
@@ -1761,17 +1639,10 @@ def test_markup_in_an_exported_file_s_extension_is_refused(hub):
 def test_a_pointer_at_a_generated_file_is_refused(hub, where):
     """`GENERATED_FILES`, in every place a name can be written.
 
-    meta.json and index.html are rewritten by the hub AFTER this validation, so
-    a pointer aiming at one would be measured against the upload and then
-    served as ours.
-
-    THE REFUSAL IS READ, not just counted, and that is what makes this a
-    witness for `GENERATED_FILES` rather than for whatever the archive happened
-    to be missing. Until the review of this change the archive carried no
-    `lid.stl`, so ten of the twelve cases were refused for the catalogue's own
-    export and this went green with the rule under test never reached — the
-    same silence `render.py` describes on the historical `views` bug, where an
-    inline copy of the check had no `GENERATED_FILES` clause at all.
+    meta.json and index.html are rewritten by the hub AFTER this validation, so a
+    pointer aiming at one would be measured against the upload and then served as
+    ours. The refusal is read, not just counted, so the test witnesses
+    `GENERATED_FILES` rather than whatever the archive happened to be missing.
     """
     for name in ("meta.json", "index.html"):
         body = tar_gz(_pointing_archive(_pointing_at(where, name),
@@ -1781,9 +1652,8 @@ def test_a_pointer_at_a_generated_file_is_refused(hub, where):
         error = r.json()["error"]
         assert f"points at {name!r}, which the hub rewrites" in error, (
             where, name, error)
-        # The refusal the fixture used to produce, named so it cannot come back
-        # unnoticed: a message about the export is a message about a missing
-        # member, not about this rule.
+        # A message about the export would be about a missing member, not about
+        # this rule.
         assert PART_EXPORT not in error, (where, name, error)
 
 
@@ -1795,24 +1665,14 @@ def test_an_optional_field_that_is_falsy_but_not_an_object_is_refused(
         hub, where, value):
     """`0` is not "no pictures", and reading it as one would publish in silence.
 
-    Every optional field on this document is read with an explicit `is None` for
-    this: `record.get(field) or {}` swallows every falsy non-object, so a push
-    that described something entirely different would be accepted and the
-    difference would show up nowhere. `downloads` was the last field that did not
-    follow the rule — it read `or {}` until the review of issue #53, so
-    `downloads: 0` published a build whose download buttons had silently
-    vanished — and the map is gone, but the reading it got wrong is the reading
-    every field below is written to.
+    Every optional field on this document is read with an explicit `is None`:
+    `record.get(field) or {}` swallows every falsy non-object, so a push that
+    described something different would be accepted with the difference shown
+    nowhere. `parts` follows the same rule and is checked in tests/test_notes.py;
+    `views` has a non-empty list check.
 
-    `parts` itself is on the same rule and is checked in tests/test_notes.py,
-    where the catalogue's own shape lives; `views` has had a non-empty list
-    check since long before this.
-
-    WHAT THE REFUSAL SAYS IS ASSERTED, and it has to be: nine of the twelve
-    cases this test then had were refused for a `lid.stl` the archive never
-    carried, so the rule was witnessed on exactly one field of four and
-    `if overview:` could have come back with the suite green. The document below is a VALID one with
-    one field overwritten, so the falsy value is the only thing wrong with it.
+    The refusal's words are asserted, and the document is a VALID one with one
+    field overwritten, so the falsy value is the only thing wrong with it.
     """
     # The name here is replaced by `value` on the very next lines — every
     # `where` puts the pointer in the field the mutation then overwrites — so
@@ -1849,17 +1709,13 @@ def _falsy_refusal(where, value):
 
 
 def test_a_part_key_longer_than_a_button_caption_still_publishes(hub):
-    """The regression that decided which rule a part's KEY is held to.
+    """A part key longer than a button caption still publishes.
 
-    A part name has a ceiling of its own and it is four times a caption's — 128
-    characters on the build side (MEMBER_RE), MAX_TEXT here — which is what
-    makes the difference reachable at all: the key below is legal under both and
-    refused by SAFE_LABEL. It used to be the STEM of the `overview` and
-    `previews` maps; issue #75 made it the key of the catalogue, which is a
-    stronger version of the same trap, because now every part in the document is
-    filed under one. Holding it to SAFE_LABEL — the 32-character rule for a
-    button caption — would refuse an ordinary project with the name of its own
-    part as the reason, and nothing about a key is a caption.
+    A part name's ceiling is 128 characters on the build side (MEMBER_RE) and
+    MAX_TEXT here; the key below is legal under both and refused by SAFE_LABEL, the
+    32-character rule for a button caption. Every part is filed under its key, so
+    holding keys to SAFE_LABEL would refuse ordinary projects over their own part
+    names.
     """
     key = "bracket_" + "x" * 40
     # The export beside the picture is not decoration: a printable declaring no
@@ -1914,23 +1770,15 @@ SERVABLE_NAMES = (
 def _view_declarable(name, files: dict, staging) -> bool:
     """Would `build_meta` accept a `views` entry pointing at `name`?
 
-    THROUGH `build_meta` AND NOT THROUGH THE HELPER, which is the whole reason
-    this walk is a third one rather than a second call to the same function.
-    The `views` loop had a check inlined in it for as long as the shared rule
-    existed beside it, and a test that asked `_check_declared_file` directly
-    would have been perfectly green the entire time.
+    Through `build_meta` and not through the helper, so a check inlined in the
+    `views` loop instead of the shared rule shows up here.
 
-    AN OSError MEANS THE NAME WAS ACCEPTED, and saying so is what keeps a
-    reverted rule visible here. `build_meta` opens exactly one file — the view
-    the entry points at — and it opens it only AFTER `_check_declared_file`, which
-    is pure. So a name this walk wrongly accepts runs on into `check_view_file`
-    and dies on a file the table never wrote (`FileNotFoundError` for a name that
-    could be one, `IsADirectoryError` for `.`, `..` and `""`), and that exception
-    is evidence the name got past the rule rather than evidence it was refused.
-    Reporting it as "refused" would agree with the table for the wrong reason and
-    go green on precisely the regression this exists for; letting it escape would
-    make the same case an ERROR rather than an assertion. It is neither: the
-    answer is True, and the assertion below is what fails.
+    AN OSError MEANS THE NAME WAS ACCEPTED. `build_meta` opens exactly one file,
+    the view the entry points at, and only AFTER `_check_declared_file`, which is
+    pure. A name wrongly accepted runs on into `check_view_file` and dies on a file
+    the table never wrote (`FileNotFoundError`, or `IsADirectoryError` for `.`,
+    `..` and `""`). Reporting that as "refused" would go green on exactly the
+    regression this exists for; the answer is True, and the assertion fails.
     """
     raw = json.loads(meta_bytes(
         views=[{"id": "assembled", "file": name, "parts": ["lid"]}]))
@@ -1948,21 +1796,12 @@ def test_the_file_server_and_a_push_agree_on_what_a_build_file_may_be_called(
         tmp_path):
     """Three doors onto one rule, over a table of names, with the answers pinned.
 
-    THE DEFECT THIS EXISTS FOR IS SILENT (issue #53): the declaration took a
-    leading dot and the file server refuses one, so a build declaring
-    `.lid_preview.png` published with a 201 into an immutable directory under a
-    year of cache and answered 404 for every GET of a file it had named — a
-    build accepted and impossible to open, from a push that can never be taken
-    back. Neither side was wrong on its own; they were two copies of one rule.
-
-    So the rule moved into `buildnames.unservable_reason` and this compares its
-    CALLERS rather than the function — a re-inlined copy goes red here — and it
-    compares each of them against the expected answer as well, so weakening the
-    shared rule cannot leave the callers agreeing about the wrong thing. There
-    are THREE of them now: the file server, the declaration helper the three
-    file-declaring maps go through, and `views`, which kept a check of its own
-    until the review of #53 and so had neither the dot clause nor the
-    non-printable one — on the one map without which a build page draws nothing.
+    If the declaration and the file server disagree, a build declaring e.g.
+    `.lid_preview.png` publishes with a 201 into an immutable directory and answers
+    404 for a file it named. The rule is `buildnames.unservable_reason`, and this
+    compares its CALLERS (a re-inlined copy goes red) and each against the expected
+    answer (so weakening the shared rule cannot leave them agreeing about the wrong
+    thing). The three: the file server, the declaration helper, and `views`.
     """
     # Every row is in `files`, so the membership question — the one thing
     # `_check_declared_file` asks that the server does not — never fires and
@@ -2000,25 +1839,18 @@ def _built(store, pid, commit, meta_json, extra=(),
            extra_bytes=b"\x89PNG\r\n\x1a\n"):
     """A finished build's output in staging, as the build process leaves it.
 
-    THE BUILD PATH AND NOT THE ARCHIVE PATH, which is the whole reason the two
-    tests below are written this way rather than as a push. An archive member
-    has to match SAFE_COMPONENT, so an upload cannot carry a name with a leading
-    dot at all and a declaration of one would be refused for not being in the
-    archive — the right answer for the wrong reason, and a test that stays green
-    with the rule deleted. A BUILD writes its own output directory and nothing
-    applies an alphabet to a name in it: `runner._verify_output_file` checks the
-    path shape, the symlinks and that the file exists, and the names themselves
-    are chosen by model code (src/buildproc/child.py). This is the door those
-    names come through, so this is the door they are refused at.
+    The BUILD path, not the archive path: an archive member must match
+    SAFE_COMPONENT, so an upload cannot carry a leading dot at all, and a
+    declaration of one would be refused for not being in the archive (green with
+    the rule deleted). A build writes its own output directory and nothing applies
+    an alphabet there: `runner._verify_output_file` checks the path shape, the
+    symlinks and existence, and model code chooses the names
+    (src/buildproc/child.py). So this is the door they are refused at.
 
-    `extra_bytes` IS THERE SO THE FAILURE STAYS ON THE NAME. The default is PNG
-    magic, which is what a `previews` entry really points at; a `views` entry
-    points at a view file, and PNG bytes there are refused for being undecodable
-    JSON — by `check_view_file`, which runs AFTER the name rule. So the test
-    below passed while asking nothing about the name, and would have gone red on
-    a reverted rule with `'utf-8' codec can't decode byte 0x89` as its whole
-    explanation. Handing that caller real view JSON is what makes the name the
-    only thing left for the push to be refused over.
+    `extra_bytes` keeps the failure on the name. The default is PNG magic, what a
+    picture entry points at; a `views` entry points at a view file, and PNG bytes
+    there would be refused as undecodable JSON by `check_view_file`, which runs
+    AFTER the name rule. Callers declaring a view pass real view JSON.
     """
     staging = store.build_staging(pid, commit)
     staging.mkdir()
@@ -2075,20 +1907,12 @@ def test_a_build_declaring_a_view_the_hub_cannot_serve_is_refused(tmp_path, name
     """The same two names, on the map whose loss empties the page.
 
     `views` is the map the viewer reads: a build whose only view 404s shows
-    nothing at all, so this is the most expensive place for the declaration and
-    the file server to disagree — and it is exactly where they still did after
-    the rule was shared, because this loop kept an inline check that asked
-    membership, `/` and the generated names and neither of the other two
-    clauses.
+    nothing, so this is the most expensive place for the declaration and the file
+    server to disagree.
 
-    Through the BUILD path for the reason `_built` gives: an archive member
-    cannot carry either of these names, so a push-based test would go green on
-    the membership question and stay green with the rule deleted.
-
-    AND THE FILE IS A REAL VIEW, for the reason `_built`'s `extra_bytes`
-    explains: this member is the one `check_view_file` opens, so anything that
-    is not view JSON refuses the push one step past the name rule and answers
-    this test's question by accident.
+    Through the BUILD path for the reason `_built` gives, and with a real view
+    file for the reason its `extra_bytes` explains: this member is the one
+    `check_view_file` opens.
     """
     store = Store(data_dir=tmp_path / "data", max_build_bytes=8 * 1024 * 1024)
     # The catalogue is spelled out rather than left to the default, and for the
@@ -2153,27 +1977,19 @@ def test_more_views_than_the_build_has_files_is_refused(hub):
 
 @pytest.mark.parametrize("spread", ("one record", "one pointer each"))
 def test_more_file_pointers_than_the_build_has_files_is_refused(hub, spread):
-    """Every entry legal, in numbers no build produces: the `notes` failure again.
+    """Every entry legal, in numbers no build produces.
 
     A hundred thousand pointers each naming one real file pass every per-entry
-    check there is and make a `meta.json` that every visitor of that build
-    downloads, under a year of `immutable`, from a push that cannot be taken
-    back. It was three flat maps and each was bounded by the build's own file
-    count; issue #75 spread the pointers over the catalogue's records, and the
-    bound had to move with them — ONE BUDGET FOR THE WHOLE CATALOGUE and not a
-    ceiling per record, because `MAX_PARTS` records of `len(files)` pointers each
-    is 200 × the archive's member limit, an order of magnitude worse than the
-    maps this replaced, out of a change that was supposed to move a bound rather
-    than loosen one.
+    check and make a `meta.json` every visitor downloads, under a year of
+    `immutable`. The bound is ONE BUDGET FOR THE WHOLE CATALOGUE, not a ceiling per
+    record: `MAX_PARTS` records of `len(files)` pointers each would be 200 x the
+    archive's member limit.
 
-    BOTH SPREADS ARE HERE because a per-record ceiling passes the first and fails
-    only the second: piling the pointers into one record is what a per-record
-    bound catches, and handing each record a single pointer is what only a
-    document-wide budget can see.
-
-    The bound is the build's OWN file count, so the first half of each case
-    matters as much as the second: a catalogue naming every file the build
-    published sits AT the ceiling and has to publish.
+    Both spreads are here: piling the pointers into one record is what a
+    per-record bound catches, and one pointer per record is what only a
+    document-wide budget sees. The bound is the build's OWN file count, so a
+    catalogue naming every file the build published sits AT the ceiling and has
+    to publish.
     """
     def archive(count):
         if spread == "one record":

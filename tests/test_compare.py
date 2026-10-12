@@ -1,32 +1,25 @@
-"""`POST /api/v1/compare/<pid>/<old>/<new>[/<view>]` — the way to the engine (#10).
+"""`POST /api/v1/compare/<pid>/<old>/<new>[/<view>]`, the way to the engine.
 
-`src/cadbuild/shapediff.py` can say how much material a part gained and lost
-between two revisions. NOTHING IN THE SERVICE COULD REACH IT until this route
-existed, and everything between the request and the engine is what this file is
-about: the door, the two revisions being real, the job the request is answered
-with, and the worker taking that job to the COMPARER rather than to the builder.
+`src/cadbuild/shapediff.py` says how much material a part gained and lost between
+two revisions. This file covers everything between the request and the engine:
+the door, the two revisions being real, the job the request is answered with, and
+the worker taking that job to the COMPARER rather than the builder.
 
-THE GEOMETRY ITSELF IS NOT HERE AND CANNOT BE. Measuring two solids needs the
-CAD kernel, which costs ~450 MB resident and minutes per part — that is the
-entire reason the comparison runs in a child process — so the suite substitutes
-the runner exactly as it substitutes the builder (`harness.reading_comparer`).
-The one test that crosses back over to the real function is the last one, which
-binds the call the worker makes against `run_compare`'s real signature.
+The geometry is not tested here: measuring two solids needs the CAD kernel
+(~450 MB resident, minutes per part, hence the child process), so the suite
+substitutes the runner as it substitutes the builder (`harness.reading_comparer`).
+The last test binds the worker's call against `run_compare`'s real signature.
 
-WHAT THE JOB CARRIES is worth stating before the tests, because it is the whole
-of the contract with the client: the record names the NEWER revision, since
-`jobs.create` takes one commit and that is the one a person means by "which
-build was this about" — and the LOG's first line names BOTH, because the report
-is the log and a report that did not say what it compared would be unreadable.
+The job record names the NEWER revision, since `jobs.create` takes one commit and
+that is the build a person means; the log's first line names BOTH, because the
+report is the log.
 
-THE SECOND HALF OF THIS FILE IS THE ARTEFACT (cut 2). A fourth segment names a
-VIEW, and with it the same job also leaves a viewer document and a summary in
-the comparison cache — `data/compare/<pid>/<a>/<b>/<view>/` — which the page at
-`/project/<pid>/<a>/compare/<b>/` then fetches. The geometry is still not here:
-`scene_comparer` below writes two files a real child would write and says
-nothing about what is in them, because what this file is about is the carrying —
-which directory, which cache header, which door, and what happens to a job that
-produced nothing.
+The second half is the artefact. A fourth segment names a VIEW, and the same job
+then leaves a viewer document and a summary in the comparison cache
+(`data/compare/<pid>/<a>/<b>/<view>/`), which the page at
+`/project/<pid>/<a>/compare/<b>/` fetches. `scene_comparer` writes two placeholder
+files; what is tested is the carrying: which directory, which cache header, which
+door, and what happens to a job that produced nothing.
 """
 
 import inspect
@@ -83,17 +76,11 @@ def finished(hub, reply, token=TOKEN):
 def scene_comparer(old_dir, new_dir, *, pid, out_dir=None, view=None, **kw):
     """`reading_comparer`, plus the two files a real child leaves behind.
 
-    The stand-in for the ARTEFACT half, and it stands in for exactly the part
-    this suite cannot run: building a scene needs the kernel and the geometry
-    module that tessellates with it. What it writes is two JSON documents naming
-    the view they were made for, which is enough for every question here — is
-    the directory the one the store named, did the rename happen, is the file
-    served under the right cache header — and nothing about their CONTENT is
-    asserted anywhere, because nothing in the hub reads it.
-
-    It also declares the two names in `files`, because the real runner does: the
-    parent checks they arrived and that check is what tells a job with something
-    to publish from one without.
+    Building a scene needs the kernel, so this writes two JSON documents naming the
+    view they were made for: enough to check the directory, the rename and the
+    cache header. Nothing in the hub reads their content. It declares the two names
+    in `files` like the real runner, because the parent's check of them tells a job
+    with something to publish from one without.
     """
     outcome = reading_comparer(old_dir, new_dir, pid=pid)
     if out_dir is None:
@@ -121,10 +108,10 @@ def fetch(hub, name, pid=PID, old=OLD, new=NEW, view=VIEW, token=TOKEN):
 # -- the door ----------------------------------------------------------------
 @pytest.mark.parametrize("token", [None, "not-the-token"])
 def test_a_comparison_is_refused_without_the_token(hub, token):
-    """One secret guards this like it guards a push (SPEC 7.4, issue #26).
+    """One secret guards this like it guards a push (SPEC 7.4).
 
     A comparison reads two revisions and spends what a build spends, so it is on
-    the writing side of the token whichever way you look at it.
+    the writing side of the token.
     """
     two_revisions(hub)
     assert ask(hub, token=token).status_code == 401
@@ -378,16 +365,13 @@ def test_a_queued_comparison_is_dropped_by_the_stop_without_a_tree_to_remove(
 # -- the seam nothing else in this file crosses ------------------------------
 def test_the_worker_calls_the_real_run_compare_the_way_it_is_declared(
         hub_factory, monkeypatch):
-    """The comparer is substituted everywhere above, exactly as the builder is.
+    """The worker calls the real `run_compare` the way it is declared.
 
-    So nothing else in the suite exercises the join between
-    `_compare_and_record` and `src.buildproc.run_compare`, and a parameter
-    renamed there would leave every test green and fail on the first real
-    request. This is the copy of `test_jobs.py`'s builder-side test, pointed at
-    the other runner, and it holds the same two things: the call is captured as
-    the worker really made it, and `compare_arguments` reports that it is the
-    one that built it — so the signature check below is aimed at the real call
-    rather than at a copy that has stopped following the worker.
+    The comparer is substituted everywhere above, so nothing else exercises the
+    join between `_compare_and_record` and `src.buildproc.run_compare`. Like the
+    builder-side test in `test_jobs.py`, it captures the call as the worker made it
+    and has `compare_arguments` confirm it built that call, so the signature check
+    is aimed at the real call.
     """
     class CallRecorder:
         def __init__(self):
@@ -480,17 +464,14 @@ def test_the_stand_in_comparer_answers_what_the_job_machinery_expects(tmp_path):
     assert "old -> new" in outcome.log and "1 parts" in outcome.log
 
 
-# -- the artefact: what the job leaves behind (cut 2) ------------------------
+# -- the artefact: what the job leaves behind --------------------------------
 def test_the_three_spellings_of_the_two_artefact_names_are_one_list():
     """The child writes them, the parent checks them, the server serves them.
 
-    Three modules name the same two files and none of them may import another:
-    `comparechild` runs in the build process and reaching it from the hub would
-    put `src.cadbuild` in the hub's own interpreter, which is the one thing the
-    serving side does not do. So the tuple is written three times and held equal
-    here — the arrangement `render.py` already uses for the build half's
-    constants. A name added in one place and not the others is a comparison the
-    parent calls a crash, or a file nothing will serve.
+    None of the three modules may import another (`comparechild` runs in the build
+    process and would pull `src.cadbuild` into the hub), so the tuple is written
+    three times and held equal here. A name added in one place only is a
+    comparison the parent calls a crash, or a file nothing serves.
     """
     assert comparechild.ARTEFACTS == COMPARE_FILES
     assert runner_module._COMPARE_ARTEFACTS == COMPARE_FILES
@@ -614,25 +595,17 @@ def test_a_view_the_two_revisions_do_not_both_have_is_404(hub_factory):
 ])
 def test_a_view_whose_name_cannot_be_a_directory_is_refused_in_words(
         hub_factory, view):
-    """422 AND A SENTENCE, and this is the one refusal here that is not a 404.
+    """A view id that cannot be a directory is a 422 with a sentence, not a 404.
 
-    A view id is the author's own string, held on the way in to
-    `hubspec.MEMBER_RE` and to `render._plain_text` — neither of which knows
-    anything about directories. This route is the first place it has to BE one,
-    so the restriction is new here, and a bare 404 told the reader nothing about
-    the name being the reason: the view published, drew its tab, and answered a
-    comparison with silence.
+    A view id is the author's string, held at build time to `hubspec.MEMBER_RE`
+    and `render._plain_text`, neither of which knows about directories; this route
+    is the first place it has to be one, and a bare 404 would not say the name is
+    the reason. Percent-encoded, because a space cannot travel in a request line.
 
-    PERCENT-ENCODED, because a space cannot travel in a request line as itself.
-
-    TWO NAMES ARE DELIBERATELY NOT IN THIS LIST and both are in the store's own
-    test below, which is where they can be asked at all. `a/b` in any spelling
-    is a FIFTH segment — `_split` unquotes before it splits — so the shape check
-    two lines earlier answers it. And `..` never reaches this hub from a client:
-    httpx resolves `%2E%2E` back to `..` and collapses the path before it sends,
-    so the request that arrives is a different URL entirely.
-
-    Nothing is queued and nothing is written, exactly as for the 404s.
+    Two names are tested in the store's own test below instead: `a/b` in any
+    spelling is a fifth segment (`_split` unquotes before it splits), and `..`
+    never arrives (httpx collapses `%2E%2E` before sending). Nothing is queued and
+    nothing is written, as for the 404s.
     """
     hub = hub_factory(compare_runner=scene_comparer)
     two_revisions(hub)
@@ -664,15 +637,12 @@ def test_a_view_name_the_hub_cannot_file_is_not_echoed_back(hub_factory):
 
 
 def test_a_view_a_build_can_really_publish_is_comparable(hub_factory):
-    """A DOT IN A VIEW NAME IS LEGAL, and this is the whole of issue's cut 2
-    finding: the cache held every segment to `SAFE_ID`, which has no dot in it,
-    while a view id is held at build time to `hubspec.MEMBER_RE`, which does.
+    """A dot in a view name is legal, and such a view is comparable end to end.
 
-    So `top.v2` published, showed its tab, and answered a comparison of that tab
-    with a bare 404 — a name refused by a rule nobody had ever told the author
-    about. The end-to-end path is what this asserts, because the defect was in
-    the seam: the POST is taken, the entry is filed under the name as given, and
-    the two files come back from the address the page fetches.
+    A view id is held at build time to `hubspec.MEMBER_RE`, which allows a dot, so
+    the cache must accept `top.v2` too. Asserted end to end: the POST is taken, the
+    entry is filed under the name as given, and the two files come back from the
+    address the page fetches.
     """
     hub = hub_factory(compare_runner=scene_comparer)
     dotted = {"views": [{"id": "top.v2", "name": "top", "file": "top.v2.json",
@@ -695,11 +665,8 @@ def test_a_view_a_build_can_really_publish_is_comparable(hub_factory):
 def test_a_view_only_one_of_the_revisions_published_is_404(hub_factory):
     """The half that a name-shape check cannot answer: both, or neither.
 
-    THE COMMON WAY TO REACH THAT REFUSAL, and the reason it is worded: `top` is
-    a real view of a real revision, drawn as a tab on the page the reader is
-    standing on, and the other end of the pair simply predates it. Nothing is
-    broken and nothing needs renaming, so the sentence says which of the two
-    revisions is short of what — not `not found`.
+    The common case is a real view whose other revision predates it. Nothing is
+    broken, so the refusal says which revision is short of what, not `not found`.
     """
     hub = hub_factory(compare_runner=scene_comparer)
     assert hub.publish(PID, OLD, good_build(
@@ -841,15 +808,12 @@ def test_a_comparison_nobody_has_computed_is_404(hub):
 @pytest.mark.parametrize("name", COMPARE_FILES)
 def test_a_computed_comparison_is_served_with_a_year_when_both_ends_are_commits(
         hub_factory, name):
-    """`immutable`, and the reasoning is the build URL's: a commit cannot
-    change, so a comparison of two of them is an answer that cannot either.
+    """`immutable`, like a build URL: a comparison of two commits cannot change.
 
-    PRIVATE, AND THAT WORD IS THE DIFFERENCE FROM EVERY OTHER YEAR HERE. This
-    is the only GET on the site that is both cacheable and behind the token,
-    and RFC 9111 section 3.5 lets a shared cache keep a response to a request
-    that carried `Authorization` exactly when the response says `public`,
-    `must-revalidate` or `s-maxage`. Saying `public` would therefore hand a
-    proxy written permission to hold a comparison for a year and serve it to
+    PRIVATE, unlike every other year here: this is the only GET that is both
+    cacheable and behind the token, and RFC 9111 section 3.5 lets a shared cache
+    keep a response to a request with `Authorization` when it says `public`,
+    `must-revalidate` or `s-maxage`. `public` would let a proxy serve it to
     somebody who never presented the token.
     """
     hub = hub_factory(compare_runner=scene_comparer)
@@ -871,16 +835,11 @@ def test_a_pointer_is_not_an_end_of_a_pair_on_the_SERVING_side_either(hub, old,
                                                                       new):
     """The page and the two files refuse a pointer exactly as the POST does.
 
-    THE SAME REFUSAL IN BOTH HALVES, and this test is what holds them together:
-    an entry in the comparison cache is filed under the names it was ASKED with,
-    so one under `latest` goes on answering for a pair that has moved on — a
-    stale file, which no `no-cache` header fixes. Both slots are real
-    directories on this hub, so these 404s are about the names being POINTERS
-    and not about the revisions being absent.
-
-    The client resolves `latest` to the commit `builds.json` says it stands for
-    and asks with that; `dev` has no commit id at all, which is why the picker
-    offers no comparison of the local slot.
+    A cache entry is filed under the names it was asked with, so one under `latest`
+    would keep answering for a pair that has moved on, and no `no-cache` header
+    fixes that. Both slots exist here, so these 404s are about the names being
+    pointers. The client resolves `latest` to the commit `builds.json` gives; `dev`
+    has no commit id, so the picker offers no comparison of the local slot.
     """
     two_revisions(hub)
     assert hub.publish_dev(PID, good_build(marker="d")).status_code == 201
@@ -939,16 +898,11 @@ def test_the_cache_refuses_a_segment_that_is_not_an_id(tmp_path, segments):
 
 
 def test_the_cache_can_name_every_view_a_build_is_allowed_to_publish(tmp_path):
-    """THE FOURTH SEGMENT IS NOT AN ID THIS HUB MINTS, and holding it to
-    `SAFE_ID` made a legal view uncomparable.
+    """The view segment is the author's id, not one this hub mints.
 
-    A project id and a build id are the hub's own names; a view id is the
-    author's, and what a build holds it to is `hubspec.MEMBER_RE` — a dot, and
-    128 characters rather than 64. `SAFE_ID` has no dot at all, so `top.v2`
-    published, showed its tab and had no comparison. The store's own rule is
-    what has to cover that, and the two patterns are compared rather than
-    described so a view id a build accepts and this cache refuses fails HERE
-    instead of in somebody's panel.
+    A build holds a view id to `hubspec.MEMBER_RE` (a dot, 128 characters), while
+    `SAFE_ID` has no dot, so the cache uses its own rule. The two patterns are
+    compared so that a view id a build accepts and this cache refuses fails here.
     """
     from src.cadbuild.hubspec import MEMBER_RE
     from src.store import SAFE_VIEW_ID
@@ -967,12 +921,10 @@ def test_the_cache_can_name_every_view_a_build_is_allowed_to_publish(tmp_path):
 ])
 def test_the_cache_refuses_a_view_name_that_is_not_a_segment(tmp_path, view):
     """WIDER IS NOT ANYTHING. The rule the view is held to is "a name that may be
-    a directory segment", so what it must go on refusing is every name that is
-    not one: the two relative names, anything carrying a separator in any of its
-    spellings, and the empty string. A leading alphanumeric is what does most of
-    that work — it takes `.`, `..` and `.hidden` in one clause — and the alphabet
-    does the rest, since it holds no `/`, no backslash, no NUL and nothing
-    outside ASCII.
+    a directory segment", so it must refuse the two relative names, anything with
+    a separator in any spelling, and the empty string. A leading alphanumeric
+    takes `.`, `..` and `.hidden` in one clause, and the alphabet holds no `/`, no
+    backslash, no NUL and nothing outside ASCII.
 
     `\\n` is in the list for the reason `SAFE_ID` uses `\\Z` rather than `$`, and
     a non-string for the reason the other three segments check their type: this
@@ -987,14 +939,11 @@ def test_the_cache_refuses_a_view_name_that_is_not_a_segment(tmp_path, view):
 
 def test_two_pairs_that_would_share_a_joined_name_land_in_different_places(
         tmp_path):
-    """THE PAYOFF FOR A COLLISION HERE IS THE WRONG GEOMETRY, so there is none.
+    """A collision here would serve the wrong geometry, so the layout is nested.
 
-    `SAFE_ID` accepts `_`, so `a__b` is a build id somebody may publish today.
-    Joined into one directory name with any separator — and `__` was the
-    separator — `<a>="x"` against `<b>="y__z"` and `<a>="x__y"` against
-    `<b>="z"` spell one entry, and whichever pair was computed second is served
-    to both. Nested directories cannot express that: a `/` is the one character
-    no segment `SAFE_ID` passed can contain.
+    `SAFE_ID` accepts `_`, so with any joining separator (`__`, say) `x` against
+    `y__z` and `x__y` against `z` would spell one entry. A `/` is the one
+    character no segment `SAFE_ID` passes can contain.
     """
     store = Store(data_dir=tmp_path / "data", max_build_bytes=1024)
 
@@ -1035,11 +984,9 @@ def test_a_comparison_stages_beside_the_entry_it_becomes(tmp_path):
 def test_a_staging_directory_left_by_a_kill_is_swept_at_startup(tmp_path):
     """The comparison cache is a second place staging directories live.
 
-    The sweep walks the root and every project directory; a comparison stages
-    beside its entry, which is `compare/<pid>/<a>/<b>/` — THREE levels down, and
-    nothing else looks in there, so a `.tmp-` left by a SIGKILL would have
-    stayed on the volume for good. The depth is the part a nested layout has to
-    tell the sweep about, and this is what says it was told.
+    A comparison stages beside its entry, `compare/<pid>/<a>/<b>/`, three levels
+    down where nothing else looks, so the startup sweep must know that depth or a
+    `.tmp-` left by a SIGKILL stays on the volume.
     """
     data = tmp_path / "data"
     store = Store(data_dir=data, max_build_bytes=1024)

@@ -1,9 +1,8 @@
 """The local slot: `<pid>/dev/`, one directory per project (SPEC 7.6).
 
 The author edits model.py, runs the build and wants to see the result at once,
-without committing. That work has no commit to be addressed by — and, the part
-that decides the whole design, no history worth keeping: attempt seventeen of an
-evening is not a version of the project, it is the working copy as it stands.
+without committing. That work has no commit to be addressed by and no history worth
+keeping: attempt seventeen of an evening is the working copy, not a version.
 
 So there is exactly one slot, like there is exactly one `latest`, and every push
 overwrites it. Four claims carry it and all four are tested here:
@@ -13,10 +12,9 @@ overwrites it. Four claims carry it and all four are tested here:
     is the whole licence to rewrite a URL in place, and the commit route's year
     of `immutable` is never allowed anywhere near it;
   * `latest` does not move, and the site index gains no CARD for the project.
-    Those are the shared surfaces and they go on meaning "the project as of some
-    commit". The index file is rewritten by a local push — a card carries a
-    `dev` chip saying the project holds work no commit has published — but a
-    project with no commit build still has no card at all;
+    The index file is rewritten by a local push (a card carries a `dev` chip
+    saying the project holds work no commit has published), but a project with
+    no commit build still has no card at all;
   * a push is still atomic: the tree is unpacked out of sight and swapped in.
 """
 
@@ -95,9 +93,8 @@ def test_the_slot_is_a_directory_and_not_a_pointer_at_a_build(hub):
 def test_the_same_payload_twice_is_a_200_that_writes_nothing(hub):
     """Idempotency survives, as an optimisation rather than as an address.
 
-    The digest is still compared, and it still buys the 200 — but nothing in the
-    URL is derived from it any more. What it buys now is a page somebody has open
-    NOT being taken through a swap for a build identical to the one on screen.
+    The digest is compared and buys the 200, but nothing in the URL is derived from
+    it: an open page is not taken through a swap for an identical build.
     """
     body = _build("v1")
     assert hub.publish_dev("proj1", body).status_code == 201
@@ -175,9 +172,8 @@ def test_local_builds_stay_out_of_the_public_index(hub):
     assert [c["commit"] for c in cards] == ["abc123"]
     # ...and the card that appears describes the commit and only the commit: the
     # `d1` in the slot moves neither the id on it nor the chip. The chip is gone
-    # BECAUSE of the commit — it published the slot's successor and filled the
-    # slot with it (issue #78), so there is no longer work here that no commit
-    # accounts for.
+    # because the commit filled the slot with itself, so no work here is
+    # unaccounted for by a commit.
     assert cards[0]["dev"] is False
     # And a later local push does not slip into the card that is now there —
     # it brings the chip back and changes nothing else.
@@ -190,11 +186,9 @@ def test_local_builds_stay_out_of_the_public_index(hub):
 def test_the_chip_is_about_the_sources_in_the_slot_not_about_the_slot(hub):
     """The card's `dev` asks a question a directory listing cannot answer.
 
-    It used to be "is the slot occupied", and a commit filling the slot with
-    itself (issue #78) made that true of every project that has ever committed —
-    a chip on every card, and a tooltip about uncommitted work that is false on
-    all of them. What is asked instead is whether the slot's SOURCES are the ones
-    the newest commit published, which is what their digests say.
+    Every project that has committed has an occupied slot, since a commit fills the
+    slot with itself. The chip asks whether the slot's SOURCES are the ones the
+    newest commit published, which is what their digests say.
     """
     hub.publish("proj1", "abc123", _build("c1"))
     # The slot is there — the commit just filled it — and there is no chip all
@@ -296,11 +290,9 @@ def test_a_project_with_only_a_local_build_has_no_latest(hub):
 def test_local_pushes_never_touch_the_commit_history(hub):
     """An evening at the laptop is twenty-odd pushes, and none of them count.
 
-    The slot is one directory that every push overwrites, so thirty local
-    pushes leave the commit side of the project exactly as they found it: the
-    same directories, the same `latest`, the same picker. That is what removed
-    RETENTION_DEV_BUILDS long before retention itself went; there was never a
-    second bucket for it to size.
+    The slot is one directory that every push overwrites, so local pushes leave
+    the commit side of the project exactly as they found it: the same directories,
+    the same `latest`, the same picker.
     """
     commits = [f"c{i}" for i in range(1, 5)]
     for i, commit in enumerate(commits, start=1):
@@ -357,7 +349,7 @@ def test_dev_is_still_a_reserved_build_name(hub):
 
     # With nothing published at all the slot does not exist, and the URL 404s
     # rather than falling back to something. Asked BEFORE the push: a commit
-    # fills the slot with itself now (issue #78), so every later state has one.
+    # fills the slot with itself, so every later state has one.
     assert hub.get("/project/proj1/dev/").status_code == 404
 
     # Not a ban on the letters: only the two exact names are taken.
@@ -366,12 +358,10 @@ def test_dev_is_still_a_reserved_build_name(hub):
 
 
 def test_a_commit_may_now_be_called_dev_1234(hub):
-    """The `dev-` PREFIX is no longer reserved, and nothing needs it to be.
+    """The `dev-` prefix is not reserved: `dev-1234` is an ordinary commit id.
 
-    It was reserved for exactly one reason: local ids were `dev-<digest>`, so a
-    commit called `dev-1234` would have been filed with the throwaway local
-    builds instead of with the real ones. There is no bucket of local builds
-    now, so the rule went with it and `dev-1234` is an ordinary commit id.
+    Local builds have no ids of their own (there is one slot), so no commit id can
+    be filed among them.
     """
     assert hub.publish("proj1", "dev-1234", good_build("one")).status_code == 201
     assert hub.get("/project/proj1/dev-1234/assembled.json").content == \
@@ -392,12 +382,10 @@ def test_a_commit_may_now_be_called_dev_1234(hub):
 
 
 def test_commit_builds_still_refuse_to_be_overwritten(hub):
-    """SPEC 7's 409, unchanged. The local slot exists so this can stay strict.
+    """SPEC 7's 409. The local slot exists so this can stay strict.
 
-    A commit id names one immutable build; the slot is the answer for the case
-    that used to tempt one into relaxing this — content that changes under a
-    name that does not — and it answers it by giving that content a URL where
-    nothing was ever promised to stay put.
+    A commit id names one immutable build; content that changes under a fixed name
+    goes to the slot, where nothing was ever promised to stay put.
     """
     assert hub.publish("proj1", "abc123", good_build("one")).status_code == 201
     assert hub.publish("proj1", "abc123", good_build("two")).status_code == 409
@@ -427,12 +415,11 @@ def test_the_slots_meta_says_it_is_a_local_build(hub):
 def test_the_slots_metrics_json_is_what_the_next_build_is_given_to_compare(hub):
     """The baseline is a FILE IN THE SLOT, and this is the hub's half of it.
 
-    `dev_metrics_path` is asked on the way INTO a build
-    (`jobs._build_and_publish`), and the file it names is copied into that
-    build's scratch before the child starts — so the only thing it has to settle
-    is whether there is something there to copy. A path when the slot published
-    one; None when it did not, which covers a project nobody has pushed, a slot
-    from before builds wrote metrics, and a pid that does not exist.
+    `dev_metrics_path` is asked on the way INTO a build (`jobs._build_and_publish`),
+    and the file it names is copied into that build's scratch before the child
+    starts, so all it settles is whether there is something to copy: a path when
+    the slot published one, None otherwise (no push yet, a slot without metrics, a
+    pid that does not exist).
     """
     assert hub.store.dev_metrics_path("proj1") is None
 
@@ -481,9 +468,8 @@ def test_builds_json_offers_the_two_names_only_when_they_resolve(hub):
 
 
 def test_a_project_whose_only_build_is_a_commit_still_offers_the_slot(hub):
-    """It used to offer none, and issue #78 is what changed that: a commit fills
-    the slot with itself, so the picker written by that same publish offers a
-    `dev` that resolves to the revision just published."""
+    """A commit fills the slot with itself, so the picker written by that same
+    publish offers a `dev` that resolves to the revision just published."""
     hub.publish("proj1", "abc123", _build("c1"))
     info = _builds_json(hub, "proj1")
     assert info["has_dev"] is True

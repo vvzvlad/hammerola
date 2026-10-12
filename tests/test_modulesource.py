@@ -1,19 +1,12 @@
 """The sweep that decides which modules a scratch project left behind.
 
-WHY A TEST HELPER HAS TESTS. `modulesource` is asked in a `finally`, by three
-sweeps that delete from `sys.modules`, and both of its failure directions are
-silent. Too narrow and a module survives the test that created it, answering
-every later `import mocks` in the session out of a directory that has been
-deleted -- which is the bug it was written to fix. Too wide and it deletes
-somebody else's modules, and the failure lands on whichever test happened to run
-next. Neither shows up as a red test in the run that caused it, so the only
-place either can be caught is here.
-
-TWO OF ITS SHAPES WERE MEASURED AND FOUND FALSE, and those two are the reason
-this file exists rather than a note: a string `__path__` came back as one
-location per CHARACTER, and a `pathlib.Path` `__file__` came back as nothing at
-all. Both are things a stub or an importer writes without meaning anything by
-it, and both are silent.
+`modulesource` is asked in a `finally` by three sweeps that delete from
+`sys.modules`, and both failure directions are silent. Too narrow, and a module
+survives the test that created it, answering every later `import mocks` out of a
+deleted directory. Too wide, and it deletes somebody else's modules and the failure
+lands on whichever test runs next. Neither is red in the run that caused it.
+A string `__path__` and a `pathlib.Path` `__file__` are the shapes a stub or an
+importer writes casually, and both are covered below.
 """
 
 import pathlib
@@ -66,12 +59,10 @@ def test_a_namespace_package_is_found_by_its_path_alone():
 
 
 def test_a_pathlib_file_is_a_path_and_not_a_module_with_no_location():
-    """MEASURED AND FOUND FALSE, which is why this test is here.
+    """A `__file__` holding a `Path` is a location, not a module without one.
 
-    The check used to be `isinstance(origin, str)`, so a `__file__` holding a
-    `Path` -- an ordinary thing for a stub or a test to write -- was dropped in
-    silence and the module became invisible to every sweep. That is the same
-    outcome as the namespace hole above, reached from the other side.
+    An `isinstance(origin, str)` check would drop it in silence and make the module
+    invisible to every sweep, the same outcome as the namespace hole above.
     """
     assert modulesource.module_locations(
         a_module(__file__=pathlib.Path("/tmp/proj/mocks.py"))) == [
@@ -79,13 +70,11 @@ def test_a_pathlib_file_is_a_path_and_not_a_module_with_no_location():
 
 
 def test_a_string_path_is_refused_whole_rather_than_read_letter_by_letter():
-    """The other measurement: `__path__ = "abcdef"` used to be six locations.
+    """`__path__ = "abcdef"` is refused whole, not read as six locations.
 
-    A string is iterable and every character of one is a string, so the
-    per-entry `isinstance(entry, str)` guard let all six through -- and
-    `came_from` then compared each single character against a base path. It is
-    not that a module with a string `__path__` is likely; it is that the
-    docstring above the function promised this could not happen.
+    A string is iterable and every character of one is a string, so a per-entry
+    `isinstance(entry, str)` guard would let all six through to `came_from`. The
+    function's docstring promises this cannot happen.
     """
     assert modulesource.module_locations(a_module(__path__="abcdef")) == []
     assert modulesource.module_locations(a_module(__path__=b"/tmp/proj")) == []
