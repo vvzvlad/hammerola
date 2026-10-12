@@ -1,10 +1,8 @@
 """Which project — the one answer the working directory has to give.
 
-There used to be a second one here, WHICH REVISION, worked out from git HEAD
-with a refusal on a dirty tree. It is gone with the machinery: the hub names a
-revision out of the sources it receives, so there is nothing for the client to
-derive and nothing for it to refuse. What remains is `project.json` and the
-reasons it, and not the directory name, decides where a push lands.
+The hub names a revision out of the sources it receives, so the client derives
+only the project: `project.json`, and not the directory name, decides where a
+push lands.
 """
 
 import json

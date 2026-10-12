@@ -1,62 +1,17 @@
-"""The build ceilings have to agree with each other, and nothing made them.
+"""The build ceilings have to agree with each other, and nothing else makes them.
 
-Four numbers in three files are derived from `Limits.wall_seconds`, none of them
-imports it, and every one of them fails SILENTLY when it goes stale -- which is
-why they are here rather than in a comment. The 2026-08-29 raise (120 s -> 900 s,
-made because the first real model needed ~500 s of checks) walked into two of
-them at once, and both were caught by reading, not by running:
+Several numbers in different files are derived from `Limits.wall_seconds` without
+importing it, and each fails SILENTLY when it goes stale: `LEFTOVER_MAX_AGE_SECONDS`
+would sweep the sources of builds still queued, and a `cpu_seconds` under wall x
+threads would become the binding ceiling instead of the backstop. Each check is
+one multiplication.
 
-  * `LEFTOVER_MAX_AGE_SECONDS` would have started sweeping the unpacked sources
-    of builds still sitting in the queue -- the build then fails on a tree that
-    was there when the hub accepted it;
-  * `cpu_seconds` at the requested 900 would have become the BINDING ceiling
-    rather than the backstop it is documented as: at `occt_threads` = 2 a
-    parallel build may legitimately burn 2 x the wall clock, so the kernel would
-    have killed exactly the builds the raise was made to allow.
-
-A comment cannot catch either. These are one multiplication each, so they cost
-nothing to run and they fail on the commit that breaks them.
-
-THE 2026-09-10 DROP (900 s -> 300 s, issue #81, made possible by the heavy models
-moving to check units) went the other way, and a drop is NOT the harmless
-direction it reads as. Four of the assertions below are between the wall and a
-number that follows it -- `cpu_seconds`, `hang_dump_seconds`,
-`LEFTOVER_MAX_AGE_SECONDS`, `JOB_TIMEOUT` -- and none of those can break on a
-drop: each number either falls with the wall by formula, or clears a wait that
-got shorter. The hang-dump gap is the flattest of them, pinned at ten seconds
-at 900 and at 300 alike.
-
-`SLOW_BUILD_SECONDS` IS THE ONE THAT TIGHTENS, and it is the reason to run this
-file on the way down rather than only to read the sources. It is a judgement and
-a copy of nothing, so it does not move when the wall does: the room between it
-and the ceiling was 720 s at a wall of 900 and is 120 s at 300, and a wall taken
-to 180 would put the client's slow-build warning at or past the point where no
-green build can reach it. That assertion is not decoration on a drop -- it is
-the one thing here a drop can break.
-
-What ALSO goes stale on a drop is the PROSE: a comment still promising "room to
-spare" over a wait four times what it now is. THERE IS NO LIST OF THOSE PLACES
-HERE, and the omission is deliberate. This one drop had to rewrite the wall out
-of fifteen files, across the service, the client, the docs and the tests' own
-docstrings, some naming the number and some only a duration in words -- and a
-roll-call of them written down here would be one more paragraph going stale on
-the next drop, which is the very failure being described. Worse, it would read
-as complete: the first attempt at this paragraph named four of the fifteen and
-was believed. Find them with a grep for the number and for `wall`, not from
-memory and not from a list.
-
-WHAT IS EXECUTABLE INSTEAD, so far, is the skill: `tests/test_onboarding.py`
-reads the four sentences `skill/SKILL.md` states the build ceilings in back out
-of the document the hub actually serves and compares them with the constants
-here. That file earned it -- it is the one document served to a model author
-over HTTP, the one a `checks()` is sized against, and the one this drop left
-teaching fifteen minutes for a whole release. It is NOT wholly pinned even so:
-the concurrency it quotes ("four builds at a time") and the slow-build threshold
-("past three minutes") are still only prose, so a change to
-`MAX_CONCURRENT_BUILDS` or `SLOW_BUILD_SECONDS` still has to go and read it.
-Every one of these was caught by review rather than by a run, which is the
-argument for moving them into tests one at a time rather than for cataloguing
-them.
+On a drop of the wall, `SLOW_BUILD_SECONDS` is the one that tightens: it is a
+judgement that does not follow the wall, so it can end up at or past the point no
+green build reaches. Prose that quotes the wall goes stale too; find it with a grep
+for the number and for `wall`. `tests/test_onboarding.py` checks the ceilings that
+`skill/SKILL.md` states against these constants; the concurrency and slow-build
+threshold it quotes are still prose only.
 """
 
 from src.buildproc.limits import BUILDS_SHARING_THE_HOST, DEFAULT_LIMITS
@@ -79,12 +34,10 @@ def worst_honest_wait():
 def test_the_cpu_ceiling_stays_a_backstop_and_not_the_binding_limit():
     """RLIMIT_CPU sums over threads, so it has to clear wall x threads.
 
-    Its documented job is to hold the leash when the parent is gone -- the one
-    case the wall timer cannot cover. Below `wall_seconds * occt_threads` it
-    stops doing that job and starts doing a different one: killing a healthy
-    parallel build from inside its wall clock, reported as a signal rather than
-    as a timeout, which sends whoever reads the log looking for a bug in the
-    model.
+    Its job is to hold the leash when the parent is gone, the one case the wall
+    timer cannot cover. Below `wall_seconds * occt_threads` it kills a healthy
+    parallel build inside its wall clock, reported as a signal rather than a
+    timeout.
     """
     limits = DEFAULT_LIMITS
     assert limits.cpu_seconds is not None
@@ -142,14 +95,11 @@ def test_the_client_waits_at_least_as_long_as_the_hub_may_honestly_take():
 def test_the_slow_build_warning_fires_well_inside_the_hubs_own_wall():
     """The client's threshold is only worth having BELOW the ceiling.
 
-    Every other number in this file is a copy that goes stale; this one is a
-    judgement and a copy of nothing, so what has to hold is not equality but the
-    ORDER. `SLOW_BUILD_SECONDS` exists for the zone where a build is green and
-    slow -- between it and `wall_seconds` -- and at or above the wall there is
-    no such zone: the only builds that could reach it are the ones the hub has
-    already killed, which carry their own diagnosis and are the two the client
-    deliberately says nothing to (`cli.SELF_DIAGNOSING`). The warning would then
-    be advice nobody sees, on runs that were answered already.
+    `SLOW_BUILD_SECONDS` is a judgement, not a copy, so what must hold is the
+    order. It exists for builds that are green and slow, between it and
+    `wall_seconds`; at or above the wall the only builds that reach it are the ones
+    the hub already killed, which the client deliberately says nothing to
+    (`cli.SELF_DIAGNOSING`).
     """
     assert SLOW_BUILD_SECONDS < DEFAULT_LIMITS.wall_seconds, (
         f"SLOW_BUILD_SECONDS={SLOW_BUILD_SECONDS} is not under the hub's own "

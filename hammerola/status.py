@@ -1,28 +1,12 @@
 """`hammerola status` — what the hub has for this project, in one screen.
 
-ASSEMBLED OUT OF WHAT THE SITE ALREADY SERVES, and no route was added for it:
-`builds.json` is the file the project page fetches to build its picker, and the
-local slot's `meta.json` is the file the viewer fetches to caption it. So this
-command cannot come to disagree with the pages — there is one answer and both
-read it — and the hub gained no endpoint that exists only for a CLI.
+Built from what the site already serves: `builds.json` (the project page's
+picker) and the local slot's `meta.json`, so it cannot disagree with the pages.
 
-WHAT IT DELIBERATELY DOES NOT SHOW IS THE LAST BUILD JOB, which issue #26
-lists beside the rest. It is not an omission and it is not waiting on anybody's
-next commit: a job is addressable by its id and by nothing else
-(`GET /api/v1/jobs/<id>`), and the order jobs were created in is stored
-NOWHERE — deliberately, because the only thing that ever read it was retention,
-and there is no retention (SPEC §5.3, and the docstring of `src/jobs.py`). "The
-last job of this project" is therefore not a fact the hub can be asked for.
-
-WHAT NARROWED SINCE, and the sentence above used to overstate it: the dev
-slot's `meta.json` names the job that FILLED it (`render.build_meta`, issue
-#79), which is how `hammerola log dev` reads that build's log back without
-rebuilding. That is a smaller fact than "the last job", and the difference is
-exactly the two states somebody would want from it — the field is written on
-the successful path alone, so a build that failed and a build still in flight
-are both absent from it (`test_a_failed_build_moves_neither_latest_nor_the_slot`
-is what holds that). Showing the newest build stays the honest neighbouring
-answer, and the id of a job in flight is printed by the push that started it.
+It does not show the last build job: jobs are addressable only by id and their
+order is stored nowhere (SPEC §5.3, `src/jobs.py`). The dev slot's `meta.json`
+names the job that filled it (`render.build_meta`), but only on success, so a
+failed or in-flight build is absent from it.
 
 THE THREE THINGS IT ANSWERS, in the order somebody asks them:
 
@@ -37,9 +21,7 @@ from hammerola.hub import Hub
 from hammerola.limits import DEV_SLOT
 from hammerola.sources import hub_for
 
-# How many revisions are listed before the tail is summarised. A project with a
-# year of history is a list nobody reads; the newest few plus a count is what
-# the question "what is on the hub" actually wants.
+# How many revisions are listed before the tail is summarised as a count.
 DEFAULT_LIMIT = 10
 
 
@@ -72,19 +54,9 @@ def run(args) -> int:
 def _limit(given) -> int:
     """How many revisions to list, refusing the numbers a slice would misread.
 
-    CHECKED RATHER THAN CLAMPED, and checked BEFORE the hub is asked anything,
-    because both bad values are silent: `-n 0` is falsy, so it used to fall
-    through to the default and print ten revisions to somebody who asked for
-    none, and a negative one goes straight into `builds[:limit]`, where Python
-    reads it from the OTHER end — `-n -3` drops the three oldest and lists the
-    rest, then reports `len(builds) + 3` more "older" ones that do not exist.
-    Neither fails, and neither is what was asked for.
-
-    NO `None` ARM. The parser declares `-n` with `default=DEFAULT_LIMIT` and
-    neither `nargs` nor SUPPRESS, so every parse sets it and the only caller
-    passes `args.limit` straight in. The arm that turned `None` into the
-    default was a guard against a namespace argparse cannot build, and it was
-    the one unexecuted line in this module (#108).
+    Checked before the hub is asked: a negative value in `builds[:limit]`
+    would count from the other end. The parser always sets `-n`
+    (`default=DEFAULT_LIMIT`), so there is no None case.
     """
     if not isinstance(given, int) or isinstance(given, bool) or given < 1:
         raise ClientError(
@@ -104,10 +76,8 @@ def _print_pointers(hub: Hub, pid: str, picker: dict) -> None:
     if not picker.get("has_dev"):
         print("  dev     empty")
         return
-    # The slot's timestamp lives in its own meta and nowhere else: it is not
-    # part of the project's HISTORY (SPEC 7.6), so `builds.json` carries only
-    # the fact that the slot is occupied. Best effort — a slot being overwritten
-    # while this runs is an ordinary thing, and it must not fail the command.
+    # The slot's timestamp lives only in its own meta (SPEC 7.6). Best effort:
+    # a slot being overwritten must not fail the command.
     meta = hub.build_meta(pid, DEV_SLOT) or {}
     built = meta.get("built") or meta.get("published")
     print(f"  dev     occupied, built {built}" if built else
@@ -122,10 +92,8 @@ def _print_builds(picker: dict, limit: int) -> None:
     if not builds:
         return
     print()
-    # Newest first, which is the order `builds.json` is written in
-    # (`Store._write_builds_json`) — not re-sorted here, because the picker on
-    # the page shows that order and the two must not disagree about which build
-    # is the newest.
+    # Newest first, as `builds.json` is written (`Store._write_builds_json`);
+    # not re-sorted, so it matches the page's picker.
     for entry in builds[:limit]:
         mark = "  (latest)" if entry["commit"] == latest else ""
         print(f"  {entry['commit']}  {entry.get('built', '')}{mark}")

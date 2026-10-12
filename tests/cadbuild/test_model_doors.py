@@ -7,27 +7,16 @@ as a `BuildError`, which the build process turns into EXIT_BUILD_FAILED -- "the
 model said no" -- rather than into EXIT_CRASHED, which the hub reports to
 whoever pushed as "the build crashed".
 
-IT WAS TRUE OF HALF OF THEM, and the half it was false of was the half nobody
-had written a test for. `checklib.measured/derived/estimated` refuse a note that
-cannot be published with a `ValueError`, and refusing THERE is only worth
-anything because the build then blames the model; written inside `parts()` or
-`views()`, the identical typo travelled out as a bare ValueError and the pusher
-was told the hub had fallen over.
+`checklib.measured/derived/estimated` refuse a note that cannot be published
+with a `ValueError`, and refusing there is only worth anything because the
+build then blames the model, wherever the note is written.
 
-WHAT THIS FILE IS NOT ABOUT, said plainly because most of it used to be: a
-model.py that is fighting the hub. There is nobody here to fight it -- the file
-is the owner's own code, pushed with the owner's own secret, from the owner's
-own repository -- so everything below is about the author who made a MISTAKE and
-has to be told which line it is on. AGENTS.md and SPEC 7.9 carry the reasoning
-and what it cost to learn.
+This file is not about a model.py fighting the hub: the file is the owner's own
+code, so everything below is about the author who made a MISTAKE and has to be
+told which line it is on.
 
-EACH DOOR IS DRIVEN, AND THE DRIVER IS WHAT MAKES THE LIST WORTH ANYTHING. The
-first version of this file held a table mapping each entry to the NAME of a
-test, and asserted that some file defined a function by that name. That is a
-check on spelling: it went green with `call_model` deleted from a door, and
-green again with `return` inserted as the first line of the test it named.
-`DRIVERS` below holds callables instead -- one per entry, each of which reaches
-ITS door and no other -- and the parametrised test drives them.
+Each door is driven: `DRIVERS` below holds callables -- one per entry, each of
+which reaches ITS door and no other -- and the parametrised test drives them.
 
 THE SITE IS READ OUT OF THE TRACEBACK rather than written down twice.
 `MODEL_DOORS` gives each entry a site, and `door_site` below derives the same
@@ -103,9 +92,8 @@ def names_the_model_and_not_the_hub(message):
     """The message sends the author to their own file.
 
     `checklib.py` is where the refusal is RAISED -- it is the deepest frame --
-    and it is a file the author did not write and cannot open. Naming it was the
-    defect `fail_site` was changed to fix, so both halves are asserted: the
-    model's file is named, and ours is not.
+    and it is a file the author did not write and cannot open. So both halves
+    are asserted: the model's file is named, and ours is not.
     """
     assert "model.py:" in message, message
     assert "checklib.py" not in message, message
@@ -246,13 +234,10 @@ def doors(isolated_project, out_dir, monkeypatch, forget_the_model):
 # --------------------------------------------------------------------------
 
 def _drive_the_import(doors):
-    """The door that was right about the ERROR and silent about the LINE.
+    """The import door names the line too.
 
-    `importing model.py failed: <the ValueError>` carried no file and no line
-    while every other door answered `(model.py:5)`, and this is where that
-    silence landed most often: `provenance` looks only at module-level names, so
-    a refused note is almost always written at the top of the file and raised
-    during the import.
+    `provenance` looks only at module-level names, so a refused note is almost
+    always written at the top of the file and raised during the import.
 
     Not written through `a_model`: the whole point of this door is that the
     model is executed by `load_model` itself, so a helper that imported the file
@@ -392,10 +377,8 @@ def test_every_door_answers_for_the_model_in_build_error_terms(doors, door):
 def test_every_door_on_the_list_has_a_driver():
     """An entry with nobody behind it is the failure this list exists to catch.
 
-    `MODEL_DOORS` was added because a number in prose had rotted eight times;
-    the list fixes the COUNT and not the coverage, and an entry can be appended
-    to it just as easily as a sentence could be edited. This is the half that
-    makes appending one cost something.
+    The list fixes the COUNT and not the coverage; this is the half that makes
+    appending an entry cost a driver.
     """
     assert set(DRIVERS) == set(MODEL_DOORS), (
         "MODEL_DOORS and the drivers standing for it have diverged. Doors with "
@@ -454,19 +437,15 @@ def test_the_shape_itself_is_outside_every_door(isolated_project):
     is an ORDINARY ROAD and not an edge: every object a model hands over travels
     it.
 
-    THE PER-SITE GUARD STILL STOPS HERE, and the first half below is what says
-    so: a bare `ValueError` comes out of the gate, because wrapping the geometry
-    would mean wrapping essentially the whole of `build()` and reporting a
-    genuine bug of the hub's to the author as "the model said no".
+    The per-site guard stops here: a bare `ValueError` comes out of the gate,
+    because wrapping the geometry would mean wrapping essentially the whole of
+    `build()` and reporting a genuine bug of the hub's as "the model said no".
 
-    WHAT CHANGED IS WHAT THAT COSTS. It used to decide the exit code -- the hub
-    telling whoever pushed that it had fallen over, for a class they wrote --
-    and the second half is what says it no longer does: driven through `build()`
-    with the same class written in a real model.py, the top-level handler sees
-    the author's own frame on the traceback and answers in BuildError terms. The
-    per-site door is now about the MESSAGE, and this is the shape of what it
-    costs when one is missing: `model.py's own code raised ValueError` instead
-    of a sentence naming the entrance.
+    The exit code is still right: driven through `build()` with the same class
+    in a real model.py, the top-level handler sees the author's own frame and
+    answers in BuildError terms. A missing per-site door costs only the
+    MESSAGE: `model.py's own code raised ValueError` instead of a sentence
+    naming the entrance.
     """
     class Refusing:
         def isValid(self):
@@ -596,14 +575,13 @@ def test_what_counts_as_a_frame_of_the_models_own(isolated_project):
 
 
 def test_a_frame_reached_through_a_symlink_is_still_the_models_own(tmp_path):
-    """The `realpath` half of `_inside`, which no test had ever run.
+    """The `realpath` half of `_inside`.
 
     `paths.set_project_root` RESOLVES what it is given, while a frame carries
     whatever string the import used -- so on a host where the project sits under
     a symlinked directory the two spellings disagree for every file of the
     model's, and comparing names alone answers "not the model's" for the whole
-    tree. That is the failure the second comparison exists to prevent, and
-    deleting the line left the suite green.
+    tree.
 
     THE LINK IS BUILT HERE rather than borrowed from the host, and that is the
     test rather than a convenience. Left to the ambient filesystem the branch

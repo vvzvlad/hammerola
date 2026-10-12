@@ -67,69 +67,36 @@ Routing (SPEC 3, 7.4):
                                               whatever was there       EDIT_TOKEN
     DELETE /api/v1/proposals/<pid>            put it away              EDIT_TOKEN
 
-ONE SECRET GUARDS EVERY WRITE AND EVERY PRIVATE READ (issue #26, step 0
-of the plan), and there is exactly one string on the private side of it. There
-used to be two, PUBLISH_TOKEN and COMMENT_READ_TOKEN, and writing a comment used
-to be on the PUBLIC side; both facts are gone, and `_handle_comment_post` below
-is no longer the odd one out on this service.
+ONE SECRET, EDIT_TOKEN, guards every write and every private read.
 
-WHERE THE LINE RUNS IS NOT "pages public, API private", and it is worth being
-exact because the two halves look inconsistent side by side. A BUILD is public:
-its page, its meta.json, its geometry, all anonymous and cached for a year. That
-is the product — a permanent link somebody was given and pasted into a chat, and
-a link that asks the recipient for a secret is not one. THE LIST OF WHAT EXISTS
-is not: `/index.json` answers "what is on this hub", `builds.json` answers "what
-else this project has" — every revision and whether a draft exists — and nobody
-is handed either. So the rule is that being given a link gets you that build,
-and nothing gets you the enumeration.
+The line is not "pages public, API private". A BUILD is public: its page,
+meta.json and geometry, anonymous and cached for a year, because a shared link
+must work without a secret. THE ENUMERATION is not: `/index.json` (what is on
+this hub) and `builds.json` (every revision of a project, and whether a draft
+exists) need the token. A link gets you that build; nothing gets you the list.
 
-`/start` IS THE ONE EXCEPTION TO THE SECOND HALF OF THAT, at the width of a
-single boolean. It is public because it exists to be read by somebody who has no
-token — the person who has just deployed this and is looking at a login form —
-and it says whether anything has ever been published here, so that the sign-in
-page offers what a first run needs instead of nothing. That page is written
-(`ui/src/HammerolaEntry.jsx`, issue #48): when the boolean says the hub is
-empty, the form carries five lines somebody hands to their agent, built out of
-`skill` and `client` and the browser's own origin. Every one of the manifest's
-fields is read now, where the route once had no reader at all —
-`hammerola create` follows `template`, `hammerola/update.py` reads
-`client_version` and the skill's own header reads `skill_version`, and the door
-reads `empty` (the gate on whether it draws the block) and then `skill` and
-`client`. The COUNT is deliberately not written here: `src/onboarding.py` names
-the reader of each, and `tests/test_onboarding.py` pins the set, which is what
-kept "four" from being noticed here after the sixth arrived. What the
-route must never grow is a number, a name or a date: `src/onboarding.py` carries
-that argument in full, and `Store.empty` is the only thing on this service that
-answers a question about the deployment without a token.
+`/start` is the one exception, at the width of a single boolean: it is read
+before login and says whether the hub is empty, so the sign-in page
+(`ui/src/HammerolaEntry.jsx`) can offer first-run instructions. It must never
+grow a number, a name or a date; see `src/onboarding.py`, which also names the
+reader of each manifest field (`tests/test_onboarding.py` pins the set).
+`Store.empty` is the only answer about the deployment given without a token.
 
-WHY THE COMMENT WRITE MOVED (SPEC 8A.1). This hub now BUILDS the code it is
-sent, and an anonymous write was the first step of a path with no vulnerability
-anywhere in it: anyone writes a comment -> it lands in the queue -> an agent
-reads the queue as a task -> the agent edits model.py -> the hub executes
-model.py. Closing the first step is what breaks the chain.
+Writing a comment needs the token (SPEC 8A.1): the hub executes the code it is
+sent, and an anonymous comment could become an agent's task to edit model.py.
 
-THE CODE OF A REVISION IS THE ONE THING THE SITE SERVES THAT IS NOT PUBLIC. A
-build directory is world-readable and cached for a year; the sources that
-produced it are behind EDIT_TOKEN and live in a tree the file server cannot
-reach at all (issue #17). The hub is a forge, so it has to HOLD the code —
-that is not the same as showing it.
+The code of a revision is the one thing served that is not public: it is
+behind EDIT_TOKEN and lives in a tree the file server cannot reach.
 
-THE TWO PROJECT ROUTES ARE THE ONLY ONES THAT UNMAKE SOMETHING, and what each of
-them may touch is fixed by SPEC 3.1 rather than by convenience. `title` renames
-the project and NOTHING ELSE: the id is what every permanent URL is built from,
-those URLs serve builds cached for a year that cannot be recalled, so there is no
-route that changes an id and there is not going to be one. `DELETE` removes the
-whole project — never one build, because removing a build breaks a permanent URL
-while removing the project takes away the thing the URL was about.
+The two project routes are the only ones that unmake something (SPEC 3.1):
+`title` renames and nothing else, since no route ever changes an id; `DELETE`
+removes the whole project, never one build, since that would break a permanent
+URL.
 
-A PUSH IS TWO THINGS NOW, and the split runs right through `_handle_post`. What
-arrives is a model's SOURCE, and the hub builds it (SPEC 8A.2 step 5), which is
-minutes of CPU and does not belong in a request: the socket timeout is 30 s and
-a `ThreadingHTTPServer` holds one thread per connection. So everything that can
-be decided FROM THE UPLOAD is decided here and answered here — the token, the
-size, the archive, and whether this exact push is already published — and the
-build itself becomes a job (`src/jobs.py`) the answer points at with a 202. The
-two job endpoints are what replaces the CI job log the pusher used to read.
+A push is two things. Everything decidable from the upload (token, size,
+archive, whether this exact push is already published) is answered in the
+request; the build itself (minutes of CPU, while the socket timeout is 30 s)
+becomes a job (`src/jobs.py`) the 202 points at.
 
 Cache-Control is not a detail here, it is the load-bearing half of the URL scheme:
 a commit directory is immutable by construction, so it gets a year; `latest` and
@@ -152,10 +119,8 @@ from urllib.parse import parse_qs, unquote
 from loguru import logger
 
 from hammerola import buildnames
-# `proposals` AS A MODULE AND NOT BY NAME, unlike the imports below it: it
-# exports a `validate_payload` of its own, `src.comments` already supplies one
-# here, and two functions of that name in one file are a rename away from being
-# silently swapped for each other.
+# `proposals` as a module: it exports a `validate_payload` of its own, and so
+# does `src.comments`.
 from src import onboarding, proposals, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
@@ -173,12 +138,9 @@ from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK,
 # only honest because a build directory can never change: republishing the same
 # commit with different content is refused with a 409 rather than overwriting.
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
-# THE SAME YEAR, BUT ONLY IN THE READER'S OWN BROWSER. RFC 9111 section 3.5 lets
-# a shared cache store a response to a request that carried `Authorization`
-# exactly when the response says `public`, `must-revalidate` or `s-maxage` -- so
-# `public` on an answer behind EDIT_TOKEN is the one word that would hand a proxy
-# permission to keep it for a year and serve it on to somebody with no token.
-# `private` earns the same freshness without saying that.
+# The same year, only in the reader's own browser. RFC 9111 section 3.5 lets a
+# shared cache store a response to an `Authorization` request when it says
+# `public`, so an answer behind EDIT_TOKEN must say `private`.
 CACHE_IMMUTABLE_PRIVATE = "private, max-age=31536000, immutable"
 CACHE_NONE = "no-cache"
 
@@ -197,48 +159,24 @@ GZIP_TYPE = "application/gzip"
 # HTML to find that link.
 FAVICON_ASSET = "favicon.svg"
 
-# The pages load everything from this origin and nothing is inline, so the policy
-# can be the strictest useful one. It is the BACKSTOP for the validation done on
-# the way in — `render._plain_text` on every displayed string and
-# `render.check_view_file` on every part name and colour inside a view — not a
-# substitute for it: this stops an injected <script> from running, but it says
-# nothing about a <form> posting elsewhere or an <a> stretched over the page, and
-# a build URL is permanent and shared with every other project on the host.
+# The pages load everything from this origin, so the policy is strict. It is
+# the backstop for the validation on the way in (`render._plain_text`,
+# `render.check_view_file`), not a substitute: it stops script, not a <form> or
+# an overlaid <a>.
 #
-# `img-src 'self' data:` is not a relaxation to trade away. The vendored viewer
-# css carries its whole toolbar as several dozen `--tcv-icon-*:
-# url("data:image/svg+xml,…")` custom properties (SPEC 2.2) — declared twice
-# over, once per theme — and `'self'` does NOT cover the `data:` scheme, so
-# a bare `default-src 'self'` silently blanks every button in the toolbar. Inline
-# SVG in a data: URI cannot execute script — it is fetched as an image — so this
-# costs nothing. `script-src` inherits `default-src 'self'` and must stay there.
+# `img-src 'self' data:`: the vendored viewer css carries its toolbar icons as
+# `data:image/svg+xml` custom properties (SPEC 2.2), which `'self'` does not
+# cover; an SVG fetched as an image cannot run script. `script-src` inherits
+# `default-src 'self'` and must stay there.
 #
-# `style-src 'self' 'unsafe-inline'` is the other half of the same problem, and it
-# is far less obvious than the icons because the page still renders: the vendored
-# viewer lays its tab bar out with `style="flex: 1"` ATTRIBUTES written into the
-# markup, and CSP without 'unsafe-inline' makes the browser keep the attribute text
-# but never parse it. Measured on a live page: the span reports the attribute while
-# `getComputedStyle` returns the default `0 1 auto`, so the tabs collapse from 59px
-# to 13px and read "T." "C" "M..." instead of "Tree" "Clip" "Material". Setting the
-# same value from JS fixes it, which is what identifies CSP as the cause — the CSSOM
-# path is not restricted, only the attribute is.
-#
-# Styles cannot be locked down with a hash or a nonce here: the library writes those
-# attributes at runtime, with values that depend on the model. 'unsafe-inline' for
-# STYLES is a much smaller concession than for scripts — it cannot execute code — and
-# the injection it could otherwise assist is already closed on the way in by
-# `render.check_view_file`.
+# `style-src 'unsafe-inline'`: the viewer writes `style="flex: 1"` attributes at
+# runtime with model-dependent values (no hash or nonce possible), and without
+# it the tab bar collapses. Inline styles cannot execute code.
 CSP_HTML = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
 
-# What every one of the three HTML pages carries besides the headers on every
-# reply, and the reason it is a constant rather than three literals: the pages
-# are rendered in the theme the reader's cookie asks for (`render.cookie_theme`),
-# so the SAME URL answers with two different documents. `Vary: Cookie` is what
-# tells a cache — the browser's own, and any proxy in front of this hub — that it
-# may not hand a dark page to the next reader. The pages are `no-cache` anyway,
-# which makes this belt and braces rather than the only thing holding it: a
-# `no-cache` response may still be STORED and revalidated, and it is the stored
-# copy this header is about.
+# Extra headers on the three HTML pages: they are rendered in the theme the
+# cookie asks for (`render.cookie_theme`), so one URL has two documents. The
+# pages are `no-cache`, but a stored copy may still be revalidated.
 PAGE_HEADERS = {"Vary": "Cookie"}
 
 # Per-connection socket timeout, in seconds. See HubHandler.timeout below.
@@ -246,45 +184,23 @@ SOCKET_TIMEOUT = 30
 
 # Ceiling on how long ONE request body may take to arrive, end to end.
 #
-# The socket timeout above is not enough on its own, and the gap is not academic:
-# it is rearmed by every packet, so a client sending one byte every 29 seconds
-# never trips it and holds its publish slot forever. Four such clients own all of
-# MAX_CONCURRENT_PUBLISHES and every real push gets a 503 — a denial of service
-# that costs the attacker four sockets and no bandwidth.
-#
-# 300 s against a 64 MiB ceiling asks for ~1.7 Mbit/s sustained, which is far
-# below what a CI runner pushing to a VPS actually does and far above what a
-# slowloris can pretend to be.
+# The socket timeout is rearmed by every packet, so a byte every 29 s would
+# hold a publish slot forever (slowloris). 300 s against a 64 MiB ceiling asks
+# for ~1.7 Mbit/s sustained.
 BODY_DEADLINE_SECONDS = 300
 
-# How many publishes may be in flight at once. Each one holds a body on disk, a
-# tar reader and a staging tree, so this is the ceiling on that work — and CI
-# retries of several projects at once are exactly the case that would otherwise
-# multiply it. Publishing is rare and slow; queueing behind a permit is fine,
-# being refused is not.
-#
-# It is the ceiling on RECEIVING and nothing else. What a push costs to BUILD has
-# its own number, `jobs.MAX_CONCURRENT_BUILDS`, because the two are sized by
-# different things: this one by a body on disk and a tar reader, that one by
-# MEMORY and by how long one hung build may hold a worker — not by cores, which
-# the 2026-09-09 measurement settled (issue #80: the build is effectively
-# single-threaded and the cores sit idle). Merging them would tie two unrelated
-# ceilings together, and the day either is retuned the other would move for no
-# reason anybody could reconstruct. That the two read 4 today is a coincidence of
-# two independent decisions, and `tests/test_jobs.py` says so rather than
-# asserting a relation between them.
+# How many publishes may be RECEIVED at once (a body on disk, a tar reader and
+# a staging tree each); queueing behind a permit is fine. Building has its own,
+# independent ceiling, `jobs.MAX_CONCURRENT_BUILDS`, sized by memory; that both
+# are 4 is a coincidence.
 MAX_CONCURRENT_PUBLISHES = 4
 
-# Ceiling on the body of a resolve, which is one optional `note`. Not an env var:
-# it is behind EDIT_TOKEN, the note itself is capped at a couple of hundred
-# characters by `records.MAX_FIELD_CHARS`, and this only exists so the endpoint
-# cannot be handed a megabyte to parse.
+# Ceiling on the body of a resolve (one optional `note`, itself capped by
+# `records.MAX_FIELD_CHARS`), so the endpoint is never handed a megabyte.
 MAX_RESOLVE_BODY_BYTES = 8 * 1024
 
-# The rename body: one JSON object with one short string in it. Deliberately
-# smaller than the resolve ceiling above — a note explains what was done about a
-# comment and can be a paragraph, while a title is a caption and `render` refuses
-# anything past MAX_TEXT characters a moment later.
+# The rename body: one JSON object with one short string (`render` refuses a
+# title past MAX_TEXT).
 MAX_TITLE_BODY_BYTES = 2 * 1024
 
 # How long a publish waits for a permit before giving up. Long enough to outlast
@@ -292,21 +208,14 @@ MAX_TITLE_BODY_BYTES = 2 * 1024
 # rather than a thread parked until the socket times out.
 PUBLISH_WAIT_SECONDS = 60
 
-# The header a push carries its revision's message on (issue #67). The client
-# spells the same name in `hammerola/hub.py` and percent-encodes the value, which
-# is what lets a message written in Russian travel on a header at all; the route
-# unquotes it. `X-`, because it is ours and nobody else's.
+# The header carrying a revision's message. The client (`hammerola/hub.py`)
+# percent-encodes it so non-latin-1 text can travel; the route unquotes it.
 MESSAGE_HEADER = "X-Hammerola-Message"
 
-# Why a comparison of one view cannot be asked for at all (issue #10). A view id
-# is the model author's own string and is held at build time to a rule of its
-# own — `cadbuild.hubspec.MEMBER_RE`, which every id below also passes — while
-# the comparison cache has to spell it as a DIRECTORY, so this is the one shape
-# a published view can carry and still have nothing to compare with. It is a
-# sentence and not a 404 because a name is a thing somebody can change: the
-# author renames the view, and the tab that never answered starts answering.
-# The rule is stated rather than the offending name echoed — see the refusal
-# itself in `_handle_compare`.
+# A view id passes `cadbuild.hubspec.MEMBER_RE` at build time, but the
+# comparison cache spells it as a directory, which is stricter. A sentence
+# rather than a bare 404, because the author can rename the view. The name is
+# not echoed (see `_handle_compare`).
 VIEW_NOT_NAMEABLE_ERROR = (
     "this view cannot be compared: its name has to be a plain directory "
     "segment — letters, digits, dot, dash and underscore, starting with a "
@@ -314,15 +223,9 @@ VIEW_NOT_NAMEABLE_ERROR = (
     "again."
 )
 
-# Why a comparison of one view cannot be built even though both revisions are
-# here (issue #10). A scene is made out of the two published view documents, so
-# a view only ONE of the pair declares has nothing to be compared against — and
-# that is an ORDINARY thing rather than a fault: the author is free to add a
-# view or drop one between two revisions. It stays a 404, because the pair of
-# documents this address names really is not there; what it stops being is the
-# bare word, which the panel printed to the reader as the whole explanation. The
-# view is not echoed back, exactly as the sentence above does not echo one — the
-# reader has the name in their own URL.
+# A view declared by only one of the two revisions has nothing to compare
+# against: an ordinary case, still a 404, explained in words. The view is not
+# echoed.
 VIEW_NOT_IN_BOTH_ERROR = (
     "this view is not published in both revisions, so there is no pair of "
     "documents to build a comparison from. Compare a view both of them declare."
@@ -339,28 +242,14 @@ CONTENT_TYPES = {
     ".txt": "text/plain; charset=utf-8",
 }
 
-# Types a file that ARRIVED IN A PUSH may be served as, and nothing else. The
-# archive's member names are whitelisted but their extensions are not, so a build
-# could contain `page.html` or `logo.svg` — and a build URL is a permanent,
-# immutable, same-origin URL shared with every other project on the host. Serving
-# either as its "natural" type would be a stored XSS that cannot even be recalled,
-# because the year-long immutable caches are already handed out. So: JSON for the
-# viewer, the model formats the download buttons point at, and everything else
-# becomes an opaque attachment.
+# Types a file that ARRIVED IN A PUSH may be served as; everything else is an
+# opaque attachment. A build could contain `page.html` or `logo.svg`, and a
+# build URL is permanent, immutable and same-origin with every other project, so
+# serving either natively would be an unrecallable stored XSS.
 #
-# WHAT LETS A TYPE ONTO THIS LIST is that a browser handed it cannot be made to
-# EXECUTE anything with it — not that the type is common or that some file here
-# happens to be one. `.png` qualifies: a decoder renders it and there is no
-# script in it, so the build's previews (`assembled_preview.png` and the rest)
-# are shown rather than downloaded. `image/svg+xml` does NOT and must never be
-# added, however image-shaped it looks in a list of extensions: an SVG is a
-# document that runs script in this origin. That is the same reason an SVG is
-# refused on the way IN as a comment attachment — by `comments.sniff_image`,
-# which decides an upload's type from its leading BYTES and names SVG explicitly
-# to refuse it. `ATTACHMENT_CONTENT_TYPES` below is the other end of that one
-# decision rather than the decision itself: a different table, for a different
-# source of files, closed on three extensions because those three are all
-# `sniff_image` ever stores.
+# A type qualifies only if a browser cannot execute anything with it. `.png`
+# does; `image/svg+xml` must NEVER be added: an SVG runs script in this origin
+# (which is also why `comments.sniff_image` refuses SVG uploads).
 BUILD_CONTENT_TYPES = {
     ".json": "application/json",
     ".stl": "model/stl",
@@ -371,11 +260,8 @@ BUILD_CONTENT_TYPES = {
 }
 
 
-# Types a comment attachment may be served as. The set is closed by construction:
-# `comments.sniff_image` only ever stores one of these three extensions, and it
-# decides which by reading the file's first bytes rather than by believing the
-# uploader. SVG is absent from both ends for the same reason it is refused on the
-# way in — it executes.
+# Types a comment attachment may be served as: the three extensions
+# `comments.sniff_image` stores, decided from the file's leading bytes. No SVG.
 ATTACHMENT_CONTENT_TYPES = {
     ".jpg": "image/jpeg",
     ".png": "image/png",
@@ -404,57 +290,22 @@ def build_content_type(name: str) -> tuple[str, dict]:
 def _safe_name(name: str) -> bool:
     """One ordinary filename, and nothing that navigates.
 
-    THE RULE IS NOT WRITTEN HERE, and that is the point of the indirection. It
-    lives in `buildnames.unservable_reason`, because the other halves of it are
-    the check every name a push DECLARES goes through
-    (`render._check_declared_file`, from all six of the places a pointer can
-    sit — a view's `file`, its `overview`, its `preview` and its `card`, and a
-    catalogue record's exported `files` and its own `preview`) and the client's
-    own re-check of every name it is about to write to a disk
-    (`hammerola/artifacts.py`) — and two copies of one rule is how a build came
-    to publish with a 201 into an immutable directory and then answer 404 for a
-    file it had named: the declaration took a leading dot and this did not
-    (issue #53). Keeping the rule in one module is what stops that recurring,
-    and `tests/test_publish.py` compares the answers over a table of names.
+    The rule is `buildnames.unservable_reason`, shared with the check on every
+    name a push declares (`render._check_declared_file`) and with the client's
+    re-check before writing (`hammerola/artifacts.py`), so a build can never
+    declare a file it then cannot serve (`tests/test_publish.py` compares
+    them).
 
-    Rejecting every name that starts with a dot does two jobs at once: it kills
-    `.` and `..` outright, and it hides the bookkeeping files the store writes
-    beside a build — `.payload.sha256` above all, which is what tells a retry
-    from a collision and is nobody's business to read.
-
-    SERVING GOT STRICTER WHEN THE RULE MOVED, and that was inherited rather than
-    chosen: this used to be `bool(name) and not name.startswith(".") and "/" not
-    in name`, and the shared rule adds the non-printable category to it. Through
-    a URL that newly refuses `Cc` and `Cf` — a `%01`, a U+202E — and NOT a lone
-    surrogate: the segment arrives via `unquote` (`_split` below), whose default
-    is `errors='replace'`, so an undecodable byte is already a U+FFFD, category
-    `So`. Lone surrogates are a DECLARATION-side matter, and only in ONE range:
-    `\\udc80`-`\\udcff` is what `surrogateescape` turns back into a byte at the
-    `os` layer, so a name carrying one can exist on disk (`os.stat('/tmp/x')`
-    with `x = '\\udcff'` raises `FileNotFoundError` — the encode succeeded),
-    while any other lone surrogate never reaches the filesystem at all
-    (`'\\ud800'` raises `UnicodeEncodeError: surrogates not allowed`). Even in
-    that range the `Cs` clause is the SECOND thing such a name meets:
-    `render._check_declared_file` asks `name not in files` first, so a name out
-    of a build's JSON reads as "did not declare" unless the build really wrote
-    it AND declared it. Builds already on disk sit in immutable directories and
-    cannot be re-pushed, so a name that got in before could now stop being
-    served. What makes that acceptable is NOT
-    `store.SAFE_COMPONENT` — that alphabet holds the members of the uploaded
-    ARCHIVE, which since the move is the model's SOURCE tree, while what gets
-    served is what the BUILD wrote, and no alphabet is applied to an output name
-    anywhere: `runner._verify_output_file` checks the path's shape, its symlinks
-    and that the file exists, and stops there. It is that an honest `cadbuild`
-    writes only
+    Rejecting a leading dot kills `.` and `..` and hides the store's
+    bookkeeping files (`.payload.sha256`). Non-printable names (categories Cc,
+    Cf) are refused too; a URL segment arrives via `unquote` with
+    `errors='replace'`, so it never carries a lone surrogate. Output names get
+    no alphabet elsewhere (`runner._verify_output_file` checks shape, symlinks
+    and existence only); an honest `cadbuild` writes only
     `<stem>.stl|.step|.3mf`, `<vid>.json`, `<stem>_preview.png`, `meta.json` and
-    `metrics.json`. A DISHONEST model could have written such a name — it names
-    its own output — which is exactly why the tightening is recorded here rather
-    than passed over: "the file server started refusing a name it used to serve"
-    is invisible until somebody opens a two-year-old build.
+    `metrics.json`.
 
-    It sits at MODULE level rather than on the handler — where it used to be —
-    so a test can ask it directly: a rule that is pinned against another
-    module's copy has to be reachable without standing a server up.
+    Module-level so tests can call it without a server.
     """
     return buildnames.unservable_reason(name) is None
 
@@ -496,9 +347,8 @@ def _route_project(handler, rest, query, trailing_slash, with_body):
             else handler._error(404, "not found", {"Connection": "close"}))
 
 
-# ONE ENTRY PER ROUTE, TRIED IN ORDER, and the order is part of what
-# each entry means: a narrow route that comes before a wide one
-# keeps its answer only while it stays above it (issue #105).
+# One entry per route, tried in order: a narrow route must stay above a wider
+# one that would also match.
 GET_ROUTES = (
     (((), 0),
      lambda handler, rest, query, trailing_slash, with_body:
@@ -516,13 +366,9 @@ GET_ROUTES = (
     (((onboarding.START_SEGMENT,), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_start(rest, with_body)),
-    # SVG bytes at a `.ico` URL, deliberately. Every page links the
-    # icon by its real name, so this path is only ever taken by a
-    # client that arrived without parsing any HTML — and what
-    # decides how one renders is the Content-Type, which
-    # `_serve_asset` derives from the file's own extension. The
-    # alternative is generating and committing a binary .ico nobody
-    # would ever regenerate, for a URL almost nothing takes.
+    # SVG bytes at a `.ico` URL, deliberately: pages link the icon by
+    # its real name, and the Content-Type comes from the file's own
+    # extension.
     ((("favicon.ico",), 1),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_asset([FAVICON_ASSET], with_body)),
@@ -543,17 +389,12 @@ GET_ROUTES = (
          handler._serve_sources(rest, with_body)),
 )
 
-# One entry per route, tried in order, like `_handle_get`. PUBLISH
-# IS NOT IN IT: what answers that route is the body of `_handle_post`
-# rather than a handler, so it stays below the table, where it has
-# always been — last, after every narrower route has had its look.
+# One entry per route, tried in order. Publish is not in it: the body of
+# `_handle_post` answers it, last, after every narrower route.
 POST_ROUTES = (
     # Two routes share this shape: `<pid>/<commit>` to leave a
-    # comment and `<id>/resolve` to close one. `resolve` decides
-    # between them, which reserves it as a commit name for the
-    # comment API — a build called `resolve` can still be published
-    # and served, it just cannot be commented on. That is a cheaper
-    # price than a fifth path segment on the comment endpoint.
+    # comment and `<id>/resolve` to close one. A build named
+    # `resolve` can be published and served but not commented on.
     ((("api", "v1", "comments"), 5), _route_comment),
     ((("api", "v1", "proposals"), None), _route_proposal),
     ((("api", "v1", "projects"), None), _route_project),
@@ -581,12 +422,8 @@ class HubHandler(BaseHTTPRequestHandler):
     server_version = "hammerola"
     sys_version = ""
 
-    # BaseHTTPRequestHandler passes this to the socket, and without it every
-    # read blocks forever. The connection is accepted BEFORE the token is
-    # checked — it has to be, the token is in a header — so an unauthenticated
-    # client that opens a socket and then sends one byte a minute would
-    # otherwise hold a thread indefinitely. Thirty seconds is far more than a
-    # real request needs between packets and far less than a slowloris wants.
+    # Passed to the socket; without it a read blocks forever, and the
+    # connection is accepted before the token (in a header) can be checked.
     timeout = SOCKET_TIMEOUT
 
     # -- plumbing --------------------------------------------------
@@ -599,10 +436,8 @@ class HubHandler(BaseHTTPRequestHandler):
                  cache: str, extra: dict | None = None):
         """The one place a response line and its headers are written.
 
-        Two headers go out on EVERY reply. `nosniff`, because the whole
-        content-type policy above is worthless if the browser is free to
-        disagree with it and render an octet-stream as HTML. And on HTML, a
-        CSP, which is the backstop for the DOM-building the pages do.
+        `nosniff` on every reply, so the browser cannot override the
+        content-type policy; on HTML, the CSP.
         """
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -635,10 +470,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def _split(path: str) -> list[str]:
         """Decoded, non-empty path segments.
 
-        Unquoting BEFORE validation is deliberate: `%2e%2e` has to become `..`
-        here so that the whitelist further down gets a look at it. Validating
-        the raw form and decoding afterwards is the classic way to let a
-        traversal through.
+        Unquoted BEFORE validation, so `%2e%2e` becomes `..` and the
+        whitelist sees it.
         """
         return [s for s in unquote(path).split("/") if s]
 
@@ -660,9 +493,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 if rest is not None:
                     return call(self, rest, query, trailing_slash, with_body)
         except (BrokenPipeError, ConnectionResetError):
-            # The browser navigated away mid-download, or the client reset
-            # the connection. Ordinary during a 2 MB view fetch, not an error
-            # worth a stack trace, and nothing can be sent on a dead socket.
+            # The client went away mid-download: ordinary, not an error.
             self.close_connection = True
             return None
 
@@ -671,13 +502,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_page(self, page, with_body: bool):
         """One of the three HTML documents, in this reader's own theme.
 
-        ONE PLACE FOR ALL THREE, and that is what the helper buys. Every page
-        here answers differently depending on one cookie, and three things
-        have to be true of each of them: the theme comes from the request, the
-        reply says `Vary: Cookie`, and neither is left out of the next page
-        somebody adds. `page` names only WHICH template — everything else is
-        decided here, so the three call sites have nothing left to disagree
-        about.
+        One place for all three: the theme comes from the cookie and the reply
+        carries `Vary: Cookie`. `page` names only the template.
         """
         theme = render.cookie_theme(self.headers.get("Cookie", ""))
         self._send(200, page(theme).encode("utf-8"), HTML_TYPE, CACHE_NONE,
@@ -687,41 +513,18 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_index_json(self, with_body: bool):
         """The project cards — EDIT_TOKEN. Absent until the first push.
 
-        THE ONE LIST OF EVERYTHING ON THIS HUB, and the only document here
-        that answers "what exists". That is what puts it behind the token
-        while a build page stays public, and the distinction is worth stating
-        because it looks inconsistent from the outside: a build URL is a
-        permanent link somebody was GIVEN, shared into a chat and cached for
-        a year, and closing those would break what the service is for. This
-        file is the opposite — nobody is given it, it is how you would find
-        out that a project exists at all, and every id in it is the prefix of
-        every permanent URL that project will ever have.
+        The enumeration of the hub, hence behind the token (see the module
+        docstring). The token is checked before the file is touched, so the
+        refusal reveals nothing about the volume, not even by timing.
 
-        Checked BEFORE the file is touched, like every other guarded route
-        here: an unauthenticated caller must not be able to make the hub read
-        anything off the volume, and must not be able to tell a hub with no
-        projects from one with forty by how long the refusal takes.
+        `status` (what the project's draft is doing now) is live, so
+        `render.index_card` writes it as null and it is filled here from the
+        draft pointer and the job registry. Commit builds in flight write no
+        pointer and stay invisible: a card describes what was published
+        (SPEC 7.6).
 
-        COMPUTED RATHER THAN SERVED AS BYTES, for one field: `status`, what
-        the project's DRAFT is doing right now (issue #32). It is a live
-        fact, so the file cannot hold it — `_refresh_index` runs at a
-        publish, which is the one moment nothing is building — and a card
-        answering it from disk would be `idle` for a project that is
-        rebuilding as somebody looks at it. `render.index_card` therefore
-        writes the key as null and this is what fills it in, from the
-        project's pointer and the job registry, per request.
-
-        A COMMIT BUILD IN FLIGHT STAYS INVISIBLE HERE, deliberately: only a
-        DRAFT build writes the pointer and a commit build writes none, and
-        the front page's whole promise is that a card describes what has
-        been PUBLISHED from a commit (SPEC 7.6).
-
-        The read and the fill are one operation, so the answer is the whole
-        computed list or nothing. A file that is not this hub's index —
-        torn, hand-written, left by an older shape of it — is answered `[]`
-        with a log line, exactly as an absent one already is, rather than
-        half filled in or dropped on the socket as an exception out of a
-        request handler.
+        A file that is not a valid index is answered `[]` with a log line, as
+        an absent one is.
         """
         if not self._require_token(with_body):
             return None
@@ -742,10 +545,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def _draft_status(self, pid: str) -> str:
         """One card's `status`: what this project's draft is doing.
 
-        Three steps and each of them may come up empty — no pointer, a
-        pointer at a job the registry no longer has, a job in any state at
-        all — and `render.card_status` is what turns every one of those into
-        one of its three words, in the one place that mapping lives.
+        No pointer, an unknown job or any state: `render.card_status` maps
+        each to one of its three words.
         """
         job_id = self.server.store.draft_job(pid)
         record = None if job_id is None else self.server.jobs.get(job_id)
@@ -756,47 +557,20 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_start(self, rest: list[str], with_body: bool):
         """`/start` and the three files it names. PUBLIC, all four.
 
-        The whole argument for that — including why the manifest may say
-        whether this hub is empty and may say nothing else about it — is in
-        `src/onboarding.py`. In one line: these are read by somebody who does
-        not have the token yet, and they are the software rather than a
-        statement about what is published here.
+        Read before login; see `src/onboarding.py` for why the manifest may
+        say whether the hub is empty and nothing else. No cache: the files
+        change with the image under stable names.
 
-        No cache. The three files change with the image under stable names,
-        exactly like `site.css` and the bundle in `_serve_asset`, and the
-        manifest carries a value that changes with the first push.
-
-        THREE KINDS OF BREAKAGE ARE CAUGHT HERE and they are one thing: a
-        defect of the ARTEFACT rather than of the request. An OSError means
-        the image is missing a file the smoke gate checks for
-        (`ci/smoke.py`, REQUIRED_PATHS). A ValueError means an archive
-        cannot honestly be built out of what is here — the template tree
-        holds a path no client would unpack
-        (`onboarding._refuse_unservable`), or a module the client imports
-        did not reach the image (`onboarding._refuse_unimportable`). An
-        ImportError means the same defect arriving by the other road: the
-        template builder borrows the CLIENT's own unpacking rules at call
-        time, so a client module `.dockerignore` kept out takes this route
-        down as well, and it does it with a ModuleNotFoundError rather than
-        with either of the other two. Without that clause it was the one
-        failure here that reached the socket as a dropped connection
-        instead of an answer.
-
-        All three are logged as such and answered 404 rather than 500,
-        because "this hub does not serve that" is the true and useful answer
-        to whoever asked. THE MANIFEST IS HELD TO THE SAME RULE, which it
-        did not need while it opened no file: it now reads the version out
-        of the shipped skill, so the two failures of that read get the same
-        treatment one line further down.
+        Defects of the ARTEFACT are logged and answered 404: OSError (a file
+        missing from the image, cf. `ci/smoke.py` REQUIRED_PATHS), ValueError
+        (`onboarding._refuse_unservable` or `_refuse_unimportable`) and
+        ImportError (a client module missing from the image, met by the
+        template builder). The manifest reads the skill's version and is held
+        to the same rule.
         """
         if not rest:
-            # THE MANIFEST OPENS A FILE TOO, since it began carrying the
-            # version of the skill this image ships — so it can fail the
-            # one way the three files below can, on an image whose
-            # `SKILL.md` is missing or whose frontmatter lost its
-            # `version:`. Same answer for the same reason: a defect of the
-            # ARTEFACT is a logged 404, never an exception out of a request
-            # handler, which reaches the browser as a dropped connection.
+            # The manifest reads `SKILL.md`'s version, so it can fail the
+            # same way: a logged 404.
             try:
                 document = onboarding.manifest(empty=self.server.store.empty())
             except (OSError, ValueError) as error:
@@ -810,9 +584,7 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
         builders = {
             onboarding.SKILL_NAME: (onboarding.skill_bytes, MARKDOWN_TYPE, {}),
-            # Handed over as an attachment, like everything else here whose
-            # bytes are not text: it is a zip with a shebang on it, and a
-            # browser asked to display one has no better idea than to save it.
+            # An attachment: a zip with a shebang.
             onboarding.CLIENT_NAME: (onboarding.client_bytes, OCTET_TYPE,
                                      {"Content-Disposition": "attachment"}),
             onboarding.TEMPLATE_NAME: (onboarding.template_bytes, GZIP_TYPE,
@@ -825,11 +597,7 @@ class HubHandler(BaseHTTPRequestHandler):
         try:
             body = build()
         except (OSError, ValueError, ImportError) as error:
-            # All three causes the docstring names, because the reader of
-            # this line has nothing else: the image is missing a file the
-            # gate checks for, or holds a template path no client would
-            # unpack, or did not carry a module the client imports. The
-            # third was the one missing here.
+            # The three artefact defects named in the docstring.
             logger.error(f"cannot serve /start/{rest[0]}: {error}. The "
                          f"image is missing a file ci/smoke.py checks for, "
                          f"carries a template path no client would unpack, "
@@ -842,13 +610,9 @@ class HubHandler(BaseHTTPRequestHandler):
                    uploaded: bool = False, content: tuple | None = None):
         """Stream a file, refusing anything that resolves outside the store.
 
-        The path was already assembled from whitelisted segments, so this
-        check is defence in depth rather than the primary control — but it is
-        the one that keeps holding if a future edit relaxes a segment rule,
-        and it costs one stat. Note it must be done on the RESOLVED path:
-        `latest` is a symlink, and following it is the whole point, so the
-        question is not "is there a symlink" but "where did it land".
-        `store.resolve_inside` is what asks both halves of that.
+        Defence in depth over whitelisted segments, done on the RESOLVED path
+        (`store.resolve_inside`): `latest` is a symlink and following it is
+        intended; the question is where it lands.
 
         `uploaded` says whether the bytes came out of a push, which decides
         how narrowly the content type is whitelisted. `content` overrides
@@ -861,11 +625,8 @@ class HubHandler(BaseHTTPRequestHandler):
         except (OSError, ValueError):
             return self._error(404, "not found", with_body=with_body)
 
-        # Opened BEFORE the first header goes out. stat-then-open leaves a
-        # window in which the file disappears between the two — the `dev`
-        # slot being swapped, or somebody clearing space by hand — and the
-        # client then gets a Content-Length with nothing behind it while the
-        # log gets a traceback for a situation that is entirely normal.
+        # Opened before the first header: the file may vanish (e.g. the `dev`
+        # slot being swapped), and a sent Content-Length cannot be retracted.
         try:
             handle = open(resolved, "rb")
         except OSError:
@@ -878,14 +639,11 @@ class HubHandler(BaseHTTPRequestHandler):
                 ctype, extra = build_content_type(resolved.name)
             else:
                 ctype, extra = content_type_for(resolved.name), {}
-            # Size from the OPEN handle, so it describes the very bytes about
-            # to be sent rather than whatever was at that name a moment ago.
+            # Size from the open handle: the bytes about to be sent.
             self._headers(200, ctype, info.st_size, cache, extra)
             if not with_body:
                 return None
-            # Copied in chunks rather than read whole: a view is ~2 MB and a
-            # STEP export can be larger, and there is no reason to hold either
-            # in memory per concurrent reader.
+            # In chunks: views and STEP files are megabytes.
             while True:
                 chunk = handle.read(64 * 1024)
                 if not chunk:
@@ -896,9 +654,7 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_asset(self, rest: list[str], with_body: bool):
         """/_v/<file> — the shared viewer bundle, from the IMAGE not from data/.
 
-        One copy for the entire site. Per-build copies would add 3.6 MB to
-        every commit (SPEC 2.3), which is why this path does not go anywhere
-        near the store.
+        One copy for the entire site, not per build (SPEC 2.3).
         """
         if len(rest) != 1 or not _safe_name(rest[0]):
             return self._error(404, "not found", with_body=with_body)
@@ -916,38 +672,16 @@ class HubHandler(BaseHTTPRequestHandler):
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
                 return self._error(404, "not found", with_body=with_body)
-            # NOTHING under `static/_v/` gets the immutable year: every file
-            # here changes under a stable name with the image, and a year on
-            # such a name pins a reader to the page that shipped the day they
-            # first loaded the site, with no way to recall the cached copy.
-            # `three-cad-viewer.esm.js` used to be the exception, on the
-            # grounds that its name carried the library's identity and a new
-            # version would arrive as a new name. That stopped being true when
-            # the library was forked into `viewer/`: `make viewer` rewrites
-            # this exact name, so a patch to the viewer has to reach browsers
-            # the same way a patch to `hammerola.js` does.
+            # No immutable year here: every file under `static/_v/` changes
+            # under a stable name with the image (`make viewer` rewrites
+            # `three-cad-viewer.esm.js` too).
             #
-            # WHICH IS ONLY AFFORDABLE WITH THE VALIDATOR BELOW. `no-cache`
-            # means "ask before reusing", not "do not store" — but a reply
-            # carrying no validator gives the browser nothing to ask WITH, so
-            # it sends a plain GET and is handed the whole file again. This
-            # directory now holds 3.6 MB of viewer and three, and without an
-            # ETag every visit to a build page would refetch all of it. With
-            # one, the question costs a round trip and a 304, and the bytes
-            # move only when they actually changed.
-            #
-            # WEAK, and built from size and mtime rather than from the bytes:
-            # hashing 3.6 MB per request to save sending it is the wrong
-            # trade. A weak tag is all `no-cache` needs — it answers "is this
-            # the same representation", not "is it byte-identical" — and both
-            # halves move together here, because every file under this
-            # directory is written by `make ui`, `make viewer` or a COPY in
-            # the image build, each of which lands a fresh mtime. The worst
-            # a stale pair can cost is a refetch, never a wrong file.
+            # `no-cache` is affordable only with a validator, or every visit
+            # refetches megabytes. Weak, from size and mtime rather than a
+            # hash: every file here is written by `make ui`, `make viewer` or
+            # the image build, which set a fresh mtime.
             etag = 'W/"{:x}-{:x}"'.format(info.st_size, info.st_mtime_ns)
-            # Browsers echo the tag they were given, so equality is the whole
-            # comparison: no list to split and no `*` to honour, both of which
-            # belong to requests this hub never receives.
+            # Browsers echo the tag they were given; equality suffices.
             if self.headers.get("If-None-Match") == etag:
                 self._headers(304, content_type_for(path.name), 0,
                               CACHE_NONE, {"ETag": etag})
@@ -966,20 +700,13 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_build_page(self, build_dir: Path, with_body: bool):
         """The shell of a build page — from the IMAGE, never from the build.
 
-        It is byte-for-byte the same for every build and every project, and it
-        CHANGES with the image: the day the browser code needs one more
-        element, every page has to have it. A copy written into each build directory
-        and served with the year of `immutable` that a commit URL carries
-        would freeze each published build on the markup that shipped the day
-        it was pushed — and that permanent URL is the one thing this service
-        promises. So it is served like `/` is: from the template, no-cache.
-        Everything build-specific is fetched from meta.json at runtime, which
-        is exactly what makes one shell enough.
+        The same for every build and changing with the image, so it is served
+        from the template with no-cache rather than frozen into an immutable
+        build directory. Everything build-specific comes from meta.json at
+        runtime.
 
-        Existence is decided by meta.json rather than by the directory: the
-        build directory can exist without being publishable (nothing else
-        creates one, but a restore or a hand-copy can), and a page that then
-        fails every fetch is worse than a 404.
+        Existence is decided by meta.json, not the directory (a restore or a
+        hand-copy can leave a directory without one).
         """
         try:
             self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
@@ -990,15 +717,9 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_pointer_page(self, pid: str, with_body: bool):
         """`/project/<pid>/` — the tiny page that picks a pointer (SPEC 9).
 
-        `no-cache`, like the two pointer pages it hands over to: it stands in
-        for a redirect that used to be recomputed on every visit, and a
-        cached copy of a decision page is a decision frozen.
-
-        404 for a project nobody has ever pushed, rather than a page that
-        resolves to a 404 one navigation later. The directory is the test,
-        not a build inside it: a project whose builds somebody has cleared
-        out by hand is still a project, and `latest` is the honest thing to
-        answer with.
+        `no-cache`: a cached decision page would freeze the decision. 404 for
+        a project never pushed; the project directory is the test, not a
+        build inside it.
         """
         if not self.server.store.project_dir(pid).is_dir():
             return self._error(404, "not found", with_body=with_body)
@@ -1012,9 +733,7 @@ class HubHandler(BaseHTTPRequestHandler):
                        with_body: bool, query: str = ""):
         """Everything under /project/.
 
-        `query` is read by exactly one branch below — a comparison's files
-        are per VIEW, and `?v=` is how this site has always said which view
-        (SPEC 3). Every other route here ignores the query entirely.
+        `query` is read only by the comparison branch (`?v=<view>`, SPEC 3).
         """
         if not rest:
             return self._error(404, "not found", with_body=with_body)
@@ -1022,15 +741,10 @@ class HubHandler(BaseHTTPRequestHandler):
         if not self.server.store.valid_pid(pid):
             return self._error(404, "not found", with_body=with_body)
 
-        # /project/<pid>/ names no pointer, and is therefore the one URL
-        # allowed to open whichever of them this reader last looked at
-        # (SPEC 9). That answer is a localStorage key, so it cannot be given
-        # here: what is served is a page that reads it and leaves.
+        # /project/<pid>/ opens whichever pointer this reader last looked at
+        # (SPEC 9), a localStorage key, so a page reads it and leaves.
         if len(rest) == 1:
-            # The trailing slash is load-bearing for the same reason it is on
-            # a build URL: the resolver leaves by a RELATIVE url, and its
-            # no-script link is a relative href, so this directory has to be
-            # what they resolve against.
+            # The trailing slash matters: the page navigates by relative URL.
             if not trailing_slash:
                 return self._redirect(f"/project/{pid}/", with_body)
             return self._serve_pointer_page(pid, with_body)
@@ -1042,28 +756,19 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._send_file(self.server.store.builds_json_path(pid),
                                    CACHE_NONE, with_body)
 
-        # A COMPARISON OF TWO REVISIONS (issue #10), and the word sits in
-        # the FOURTH position rather than the second for one reason:
-        # `compare` is a valid build id today (`SAFE_ID` accepts it), so a
-        # project may already have published a build called that and
-        # `/project/<pid>/compare/...` would take its permanent URL away.
-        # Here there is nothing to collide with — a build URL is at most
-        # three segments after the project and this shape is four or five —
-        # so `compare` stays a name a build may claim and
-        # `RESERVED_BUILD_NAMES` is left alone.
+        # A comparison of two revisions. `compare` is in the fourth position
+        # because it is a valid build id, so `/project/<pid>/compare/` could
+        # be a published build; build URLs are at most three segments deep.
         if len(rest) in (4, 5) and rest[2] == "compare":
             return self._serve_compare(
                 pid, rest[1], rest[3],
                 rest[4] if len(rest) == 5 else None,
                 query, trailing_slash, with_body)
 
-        # The two moving names — `latest` for a commit, `dev` for the
-        # author's laptop (SPEC 7.6) — are the only moving targets on the
-        # whole site, so they are the only things that may not be cached; a
-        # commit directory can never change and gets a year (SPEC 3.2, 7.4).
-        # Checked FIRST, and that order is the safety property: `dev` is
-        # rewritten in place, so it reaching the immutable branch would hand
-        # out a year-long cache of a build that is about to be replaced.
+        # `latest` and `dev` (SPEC 7.6) are the only moving targets, so no
+        # cache; a commit directory never changes and gets a year (SPEC 3.2,
+        # 7.4). Checked FIRST: `dev` is rewritten in place and must never
+        # reach the immutable branch.
         if second in POINTER_NAMES:
             cache = CACHE_NONE
         elif self.server.store.valid_build_id(second):
@@ -1073,17 +778,15 @@ class HubHandler(BaseHTTPRequestHandler):
 
         build_dir = self.server.store.build_dir(pid, second)
         if len(rest) == 2:
-            # The viewer derives every relative fetch from its own directory,
-            # so the trailing slash is not cosmetic: without it `meta.json`
-            # would be looked up one level too high.
+            # The viewer fetches relative to its directory, so the slash
+            # matters.
             if not trailing_slash:
                 return self._redirect(f"/project/{pid}/{second}/", with_body)
             return self._serve_build_page(build_dir, with_body)
 
         if len(rest) != 3 or not _safe_name(rest[2]):
             return self._error(404, "not found", with_body=with_body)
-        # Same page, spelled out. It is generated, so it never comes off the
-        # build directory even if a push put a file of that name there.
+        # Generated, never read from the build directory.
         if rest[2] == "index.html":
             return self._serve_build_page(build_dir, with_body)
         # meta.json is written by the hub after validation; everything else in
@@ -1093,35 +796,20 @@ class HubHandler(BaseHTTPRequestHandler):
         return self._send_file(build_dir / rest[2], cache, with_body,
                                uploaded=uploaded)
 
-    # -- one comparison of two revisions (issue #10) ----------------
+    # -- one comparison of two revisions ----------------------------
     def _serve_compare(self, pid: str, old: str, new: str,
                        name: str | None, query: str, trailing_slash: bool,
                        with_body: bool):
         """`/project/<pid>/<a>/compare/<b>/` and the two files under it.
 
-        THE PAGE IS PUBLIC AND THE FILES ARE NOT, and the split is the same
-        one the rest of this service makes rather than a new rule. The page
-        is the build page's shell — identical bytes for every build, every
-        comparison and every project, straight out of the image — so serving
-        it anonymously says nothing about what this hub holds. What it then
-        fetches is a computed answer about two revisions, which is on the
-        writing side of the token exactly as asking for the computation is
-        (`_handle_compare`).
+        The page is public (the build page's shell, identical everywhere,
+        no-cache per SPEC 7.4); the files are a computed answer behind the
+        token, like asking for the computation (`_handle_compare`).
 
-        ALWAYS `no-cache` FOR THE PAGE (SPEC 7.4): it is generated HTML and
-        it changes with the image, so a year on it would pin every reader to
-        the markup of the day they first opened one.
-
-        THE FILES GET THE YEAR, because both ends of a pair are always
-        commits. A POINTER IS REFUSED HERE exactly as it is on the POST
-        (`_handle_compare`): a comparison is cached on disk under the names
-        it was asked with, so an entry filed under `latest` is a stale file
-        the moment `latest` moves — and a response header cannot fix a file
-        that is wrong. The client resolves the pointer BEFORE it asks:
-        `builds.json` carries the commit `latest` stands for, and `dev` has
-        no commit id at all, so the local slot is not a revision anybody can
-        compare. What is left is two commits, and a comparison of two
-        immutable things is an answer that cannot change.
+        The files get the year: both ends are always commits. Pointers are
+        refused, as on the POST, because the cache is filed under the names
+        asked with; the client resolves `latest` from `builds.json` first, and
+        `dev` has no commit id.
         """
         # The token first for the files, and BEFORE the ids are looked at,
         # for the reason `_serve_jobs` gives: an unauthenticated caller must
@@ -1129,9 +817,7 @@ class HubHandler(BaseHTTPRequestHandler):
         if name is not None and not self._require_token(with_body):
             return None
         for revision in (old, new):
-            # The same check the POST makes, and `latest` and `dev` fail it
-            # along with every other name a build may not have: a pair is
-            # two commits or it is not a pair this hub answers about.
+            # The POST's check: `latest` and `dev` fail it.
             if not self.server.store.valid_build_id(revision):
                 return self._error(404, "not found", with_body=with_body)
 
@@ -1139,28 +825,18 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._serve_compare_page(pid, old, new, trailing_slash,
                                             with_body)
         if name not in COMPARE_FILES:
-            # Nothing else is ever written into a cache entry, so this is a
-            # whitelist over a directory that already holds only these two —
-            # kept because the alternative is a route whose answer depends
-            # on what happens to be on the volume.
+            # A whitelist, so the answer never depends on what is on disk.
             return self._error(404, "not found", with_body=with_body)
         view = (parse_qs(query).get("v") or [None])[0]
         try:
             entry = self.server.store.compare_dir(pid, old, new, view)
         except ValueError:
             # No `?v=`, or a name no entry could be filed under
-            # (`store.valid_view_id`) — there is no comparison this could
-            # be naming. A 404 and not the sentence the POST answers with:
-            # this is a FILE fetch, its 404 already means "nobody has
-            # computed that", and the page asks the POST next — which is
-            # where the reader is told the name is the reason.
+            # (`store.valid_view_id`). A plain 404: the page asks the POST
+            # next, which explains the name.
             return self._error(404, "not found", with_body=with_body)
-        # A comparison nobody has computed is a missing file, and
-        # `_send_file` answers that with the 404 it deserves. The year is
-        # unconditional: both ends got past `valid_build_id` above, so this
-        # entry is a pair of commits and cannot come to mean anything else.
-        # PRIVATE, unlike every other year on this site, because this one is
-        # behind the token -- see the constant.
+        # Uncomputed means a missing file and a 404. The year is safe: both
+        # ends are commits. Private, because it is behind the token.
         return self._send_file(entry / name, CACHE_IMMUTABLE_PRIVATE,
                                with_body)
 
@@ -1168,24 +844,15 @@ class HubHandler(BaseHTTPRequestHandler):
                             trailing_slash: bool, with_body: bool):
         """The shell, once both ends of the pair are really there.
 
-        Existence is decided by each revision's meta.json, exactly as
-        `_serve_build_page` decides it: a page that then 404s on every fetch
-        is worse than a 404. It says nothing about whether the comparison
-        has been COMPUTED — that answer is behind the token, and the page is
-        what asks for it.
+        Existence is decided by each revision's meta.json, as in
+        `_serve_build_page`; whether the comparison is computed is asked by
+        the page, behind the token.
 
-        THE SAME BYTES AS `<a>`'s BUILD PAGE, AND THAT IS THE WHOLE MEANING
-        OF THIS ADDRESS: it is the page of build `<a>`, comparing against
-        `<b>`. Everything the shell then fetches that is not the scene —
-        meta.json, builds.json, the downloads, the comment queue — is
-        `<a>`'s, because the bundle reads this pathname that way
-        (`pageFrom` in ui/src/hub.js, which takes `<a>` as the base and
-        `<b>` as the pair's other end). Nothing here has to be told: this
-        hub serves one generated page for every build and every comparison.
+        The same bytes as `<a>`'s build page: the bundle reads the pathname as
+        build `<a>` compared against `<b>` (`pageFrom` in ui/src/hub.js).
         """
         if not trailing_slash:
-            # Load-bearing for the reason a build URL's is: the viewer
-            # derives every fetch from its own directory.
+            # The viewer fetches relative to its own directory.
             return self._redirect(f"/project/{pid}/{old}/compare/{new}/",
                                   with_body)
         for revision in (old, new):
@@ -1245,27 +912,13 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_attachment(self, cid: str, kind: str, with_body: bool):
         """An uploaded photo, or the viewer's render of the frame.
 
-        These are the only bytes on the service that arrived outside the
-        archive rules and are then handed back, so the content type comes
-        from the closed set above and never from the request.
-        `Content-Disposition: attachment` on top of it: the queue is read by
-        a tool, not browsed, and an inline image is one content-type mistake
-        away from being a page. Cached not at all — the URL is behind a
-        token and the reader is an agent.
+        Bytes that arrived outside the archive rules: the content type comes
+        from the closed set above, never the request, plus
+        `Content-Disposition: attachment`. Not cached.
 
-        `O_NOFOLLOW` KEEPS THE ANSWER HONEST TO ITS URL, and it
-        is not a barrier against anybody: this route takes EDIT_TOKEN, the
-        symlink would be planted by a build, and a build takes EDIT_TOKEN
-        too — there is nothing here for a stranger to reach. What it is
-        against is an ORDINARY MISTAKE. `data/comments/` is written by
-        builds like the rest of the volume, one stray `os.symlink` in
-        `model.py` puts a link where the photo goes, and the hub then serves
-        somebody else's file under `/comments/<cid>/photo`, typed as a JPEG
-        because the NAME ends in `.jpg`. `_safe_attachment_name` has already
-        established the name is one ordinary component belonging to this
-        comment, so the last component BEING a link is the only way left for
-        the bytes and the URL to disagree. O_NOFOLLOW settles it in the open
-        rather than in a stat somebody has to trust afterwards.
+        `O_NOFOLLOW` guards against a mistake, not an attacker: builds can
+        write `data/comments/`, and a stray symlink in a model would otherwise
+        make the hub serve another file under this URL.
         """
         path = self.server.comment_store.attachment(cid, kind)
         if path is None:
@@ -1286,15 +939,9 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_proposal(self, rest: list[str], with_body: bool):
         """GET /api/v1/proposals/<pid> — this project's one proposal.
 
-        The token is checked BEFORE the shape of the request is, for the
-        reason `_serve_comments` states: without it, a caller must not be
-        able to use the difference between 401 and 404 to find out which
-        projects somebody is drafting against.
-
-        A project with no proposal and an id that is not one this hub could
-        ever have get the same 404: the id is checked before anything is
-        joined onto the store's root, and neither answer says more than the
-        other.
+        The token is checked before the shape of the request, as in
+        `_serve_comments`. A missing proposal and an invalid id get the same
+        404; the id is checked before it touches the store's root.
         """
         if not self._require_token(with_body):
             return None
@@ -1309,16 +956,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         """Constant-time check of the bearer token (SPEC 7, 7A.2).
 
-        ONE SECRET, so no parameter. This used to take the expected value
-        because two tokens guarded two different things and neither could be
-        accepted where the other belonged; since step 0 there is one string
-        for the whole system (issue #26) and a parameter here would
-        only be a place for a second one to reappear.
-
-        `hmac.compare_digest` rather than `==` because `==` on bytes short
-        circuits at the first differing byte, and the time it takes is
-        therefore a measurement of how much of the token the caller already
-        has — enough, over many requests, to recover it one byte at a time.
+        One secret, so no parameter. `hmac.compare_digest` rather than `==`,
+        which short-circuits and leaks the token byte by byte through timing.
         Encoded to bytes first: compare_digest raises on non-ASCII str.
         """
         header = self.headers.get("Authorization", "")
@@ -1352,22 +991,11 @@ class HubHandler(BaseHTTPRequestHandler):
     def _revision_message(self):
         """What this revision says it is, off the push's own header. Or None.
 
-        A HEADER AND NOT A FIELD OF THE BODY (issue #67): the archive is what
-        gets hashed into the revision's NAME, so a message carried inside it
-        would make the same tree with a different subject a different
-        revision.
-
-        PERCENT-DECODED, because a header value is latin-1 and these are
-        written in Russian as often as in English; the client encodes with
-        `quote` for exactly that (`hammerola/hub.py`).
-
-        REFUSED AND NOT DROPPED when it fails the rule: a message silently
-        thrown away is a flag the author typed, a push that succeeded, and a
-        row that says nothing. Raised as a PublishError so it leaves through
-        the path every other refusal about the CONTENT of a push takes —
-        logged with the target, answered without `Connection: close`, because
-        by the time this is called the body has been read and the connection
-        is clean.
+        A header, not part of the archive whose digest names the revision.
+        Percent-decoded: the client `quote`s it (`hammerola/hub.py`) because
+        header values are latin-1. An invalid message is refused, not
+        dropped, as a PublishError; the body has been read by then, so the
+        connection stays open.
         """
         raw = self.headers.get(MESSAGE_HEADER)
         if not raw:
@@ -1381,11 +1009,7 @@ class HubHandler(BaseHTTPRequestHandler):
         try:
             return self._handle_post()
         except (BrokenPipeError, ConnectionResetError):
-            # The same thing _handle_get already treats as ordinary: CI timed
-            # out, or the runner was cancelled mid-upload. Nothing can be sent
-            # on a dead socket, and with access logs at DEBUG a stack trace
-            # here would be the only thing on INFO — masking the failures that
-            # are actually worth reading.
+            # The client went away mid-upload: ordinary, not a traceback.
             logger.info("publish aborted: the client closed the connection")
             self.close_connection = True
             return None
@@ -1403,8 +1027,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 len(segments) not in (4, 5):
             return self._error(404, "not found", {"Connection": "close"})
 
-        # Auth BEFORE the body is read: an unauthenticated caller must not be
-        # able to make us receive 64 MiB just to be told no.
+        # Auth before the body: no 64 MiB upload just to be told no.
         if not self._authorized():
             logger.warning(
                 f"publish refused: bad or missing token from "
@@ -1420,35 +1043,19 @@ class HubHandler(BaseHTTPRequestHandler):
             return None
 
         pid = segments[3]
-        # FOUR SEGMENTS IS THE MINTING ROUTE and five is the named one, and
-        # the missing segment is the whole difference: the pusher has no name
-        # for this revision, so the hub makes one out of the sources it
-        # receives (`Store.mint_revision`). `dev` arrives as a name like any
-        # other and stays the local slot (SPEC 7.6).
-        #
-        # A path segment rather than a query parameter or a header, because
-        # the ABSENCE of the id is what is being expressed and a URL says
-        # that by not having it. It also keeps the one rule this endpoint has
-        # always had: where a build lands is decided by the URL, never by the
+        # Four segments: the hub mints the name from the sources
+        # (`Store.mint_revision`). Five: a named one; `dev` is the local slot
+        # (SPEC 7.6). Where a build lands is decided by the URL, never by the
         # body.
         commit = segments[4] if len(segments) == 5 else None
-        # HOW to build, next to WHERE it lands. This is the only parameter
-        # this route reads out of the query, and it is read by NAME and
-        # compared against the one spelling the client sends (`?force=1`,
-        # `Hub.publish`) — so a query nobody here anticipated, `?debug=yes`
-        # or a repeated `force` with something else in it, cannot become a
-        # boolean by being present. Everything else in the query is ignored,
-        # exactly as it is on the comment listing.
+        # How to build: only the exact `?force=1` the client sends counts;
+        # the rest of the query is ignored.
         forced = (parse_qs(query).get("force") or [None])[0] == "1"
-        # For the log lines BEFORE the sources are hashed, where there is no
-        # name yet on the minting route.
+        # For log lines before the sources are hashed.
         target = f"{pid}/{commit}" if commit is not None else f"{pid} (new)"
 
-        # Reading the body, unpacking it and hashing it all cost real memory
-        # and disk, and nothing above this point limits how many connections
-        # do it at once. The permit is taken BEFORE the body is read, so an
-        # overloaded hub stops pulling bytes instead of accepting work it
-        # cannot do.
+        # The permit is taken before the body is read, so an overloaded hub
+        # stops pulling bytes rather than accepting work it cannot do.
         if not self.server.publish_slots.acquire(timeout=PUBLISH_WAIT_SECONDS):
             logger.warning(
                 f"publish {target} refused: no free slot after "
@@ -1458,66 +1065,29 @@ class HubHandler(BaseHTTPRequestHandler):
                 {"Connection": "close", "Retry-After": "30"})
         try:
             spool = self.server.store.upload_path()
-            # WHAT TO ANSWER IS DECIDED HERE AND SENT BELOW THE CLEANUP, the
-            # order `_queue_build` already keeps for the same reason: a
-            # client that has been answered is entitled to assume the hub is
-            # done with its push. `_error` writes to the socket where it is
-            # called, so answering inside the `try` left every REFUSAL
-            # racing its own `finally` — the pusher had its 408, 422 or 500
-            # and the spool file was still on the volume. The successful
-            # path never had that window (`_queue_build` is below the
-            # `finally`), which is what made this look like a flaky test
-            # rather than an ordering bug: it takes a loaded machine for the
-            # request thread to lose the race, and CI is one.
+            # The answer is decided here and sent after the cleanup: a client
+            # that has been answered may assume the hub is done with its push.
             refusal = None          # (status, why, extra headers)
             accepted = None
             message = None
             try:
                 problem = self._spool_body(length, spool)
                 if problem is not None:
-                    # `why` and not `message`: THIS route already has a
-                    # `message`, and it is the revision's own (read off the
-                    # header below and handed to `_queue_build`). Rebinding
-                    # that name to refusal text was correct only because
-                    # both branches return immediately, which is not a
-                    # property anybody should have to re-derive from a
-                    # hundred lines away.
+                    # `why`, not `message`, which is the revision's message.
                     status, why = problem
                     logger.warning(
                         f"publish {target} refused: {why}")
-                    # Closed, like every other refusal that leaves bytes
-                    # unread: on a keep-alive connection the remains of the
-                    # body would be parsed as the next request.
+                    # Closed: unread body bytes would be parsed as the next
+                    # request.
                     refusal = (status, why, {"Connection": "close"})
                 else:
-                    # BELOW THE BODY, AND THAT POSITION IS THE WHOLE
-                    # CORRECTNESS OF IT. This used to be read and refused up
-                    # with the `Content-Length` checks, which looked like the
-                    # same kind of question and is not: 401 and 413 are
-                    # refused before the body because the point of them is
-                    # NOT to receive 64 MiB, while there is nothing to save
-                    # here — every ordinary push is read in full a line
-                    # later. What the early position cost was the refusal
-                    # itself. The client is still writing the archive when
-                    # the header is parsed, so closing on it lands as a
-                    # broken pipe at the pusher's end (measured: a 256 KiB
-                    # body still delivers the 400 over loopback, 1 MiB does
-                    # not, and a real network is far less forgiving) — and
-                    # `Hub._call` then reports the hub as unreachable, which
-                    # is a true sentence about what it saw and the wrong
-                    # diagnosis entirely. Down here the body is drained and
-                    # the 400 arrives, for exactly the reason
-                    # `accept_sources`' own 422 always has.
+                    # After the body is drained: refusing earlier would close
+                    # while the client is still writing, and it would see a
+                    # broken pipe instead of the 400.
                     message = self._revision_message()
-                    # `<pid>/dev` is the laptop's route (SPEC 7.6): the work
-                    # has no commit to be addressed by, so it goes into the
-                    # project's one local slot, overwriting whatever was
-                    # there — the same name, the same meaning as in the URL
-                    # people read. It is a reserved build name, so this can
-                    # never shadow a commit that could otherwise have been
-                    # published. Both routes are accepted identically; only
-                    # the last step differs, and that step happens in the
-                    # worker.
+                    # `<pid>/dev` goes into the project's one local slot
+                    # (SPEC 7.6), a reserved name. Both routes are accepted
+                    # identically; only the worker's last step differs.
                     accepted = self.server.store.accept_sources(
                         pid, commit, spool, length)
             except PublishError as error:
@@ -1525,12 +1095,8 @@ class HubHandler(BaseHTTPRequestHandler):
                     f"publish {target} refused: {error.message}")
                 refusal = (error.status, error.message, None)
             except (BrokenPipeError, ConnectionResetError):
-                # Handed to do_POST above rather than to `except Exception`
-                # below: these are subclasses of OSError, so without this
-                # clause a disconnect became `logger.exception` plus a second
-                # traceback from trying to answer on the closed socket. It
-                # still leaves through the `finally`, so the spool goes
-                # either way — there is simply nobody left to answer.
+                # To `do_POST`, not `except Exception`: nobody is left to
+                # answer. The `finally` still removes the spool.
                 raise
             except Exception:
                 logger.exception(f"publish {target} failed")
@@ -1539,11 +1105,8 @@ class HubHandler(BaseHTTPRequestHandler):
                 try:
                     spool.unlink(missing_ok=True)
                 except OSError:
-                    # Swallowed for the reason the same `finally` in
-                    # `_queue_build` gives: this now runs BEFORE the reply is
-                    # written, so a volume that will not take the unlink
-                    # would turn an ordinary refusal into a dropped
-                    # connection. The leftover is dot-prefixed and swept by
+                    # Swallowed: this runs before the reply, which must
+                    # still be sent. The dot-prefixed leftover is swept by
                     # `Store._sweep_leftovers`.
                     logger.exception(
                         f"publish {target}: the spooled body could not be "
@@ -1560,62 +1123,33 @@ class HubHandler(BaseHTTPRequestHandler):
                      force: bool, message: str = None):
         """Hand an accepted source tree to the build pool. 200, 202 or 503.
 
-        200 rather than 202 when this exact push is already published: the
-        answer is on disk, and rebuilding minutes of geometry to arrive at it
-        would be work done to learn nothing. 409 leaves here as a
-        PublishError for the same reason — both codes stay where CI has
-        always seen them, on the push itself, instead of moving into a job
-        the pusher would have to poll to be told no.
+        200 rather than 202 when this exact push is already published; 409 is
+        a PublishError. Both are answered on the push itself, not via a job.
 
-        The permit is still held while this runs. It is a queue insertion and
-        three writes, and holding it means the number of source trees on the
-        volume with no worker yet is bounded by the accept slots plus the
-        queue rather than by how fast a client can open connections.
+        The permit is still held: it bounds source trees waiting for a worker
+        by the accept slots plus the queue.
 
-        WHAT TO ANSWER IS DECIDED FIRST AND SENT LAST, below the cleanup,
-        for the reason `_build_and_publish` gives for the same order: a
-        client that has been answered is entitled to assume the hub has
-        finished with its push. `_json` writes to the socket where it is
-        called, so answering inside the `try` left a window — short, and real
-        — in which the pusher had its 200, 409 or 503 and an unpacked source
-        tree was still sitting on the volume with nobody owning it.
+        The answer is decided first and sent after the cleanup, so an answered
+        client never races an unowned source tree on the volume.
 
-        `minted` says the hub chose the name, and it decides one thing: the
-        reply then carries `revision`, because the pusher has no other way to
-        learn it. TWO IDENTIFIERS LEAVE HERE ON A 202 AND THEY ARE NOT THE
-        SAME KIND OF THING — `job` addresses this BUILD (its progress, its
-        log; it is unpredictable and per-attempt), `revision` addresses what
-        the build will PUBLISH (permanent, immutable, the thing that gets
-        pasted into a chat). A second push of the same sources gets a
-        different job and the same revision, which is the whole point.
+        `minted` (the hub chose the name) adds `revision` to the reply. A 202
+        carries `job` (this build attempt) and `revision` (what it publishes);
+        the same sources pushed twice get two jobs and one revision.
 
-        `force` rides PAST `accepted` rather than inside it, like `minted`
-        above and for the same reason: `AcceptedPush` records what was
-        accepted, and this is a request about how to build it.
-
-        `message` rides the same way and for a third reason: it is what the
-        push SAYS about the revision (issue #67), and the revision is named
-        by the digest of the sources alone. So it reaches both endings — the
-        task, for a build that is about to run, and `settled`, where a tree
-        the hub already has still gets to be re-described.
+        `force` and `message` travel beside `accepted`, not in it: they are
+        not part of what was accepted. `message` reaches both endings, so an
+        already-published tree can still be re-described.
         """
         commit = accepted.commit
-        # Only on the minting route: on the named one the caller already
-        # knows the id it chose, and adding it would change a reply every
-        # existing pusher parses.
+        # Only on the minting route: a named push already knows its id.
         named = {"revision": commit} if minted else {}
         handed_over = False
         job_id = None
         reply = None            # (status, payload, extra headers)
         try:
-            # THE DIGEST IS OF THE SOURCES AND `force` IS NOT IN IT, and
-            # this is the line somebody would be tempted to change. A push
-            # the hub has already published answers 200 "unchanged" and
-            # builds nothing, forced or not: the tree that would be
-            # published is identical either way, so there is nothing to
-            # rebuild — and a flag mixed into the digest would make the same
-            # sources two different revisions, which is the one thing a
-            # minted name may never be.
+            # The digest is of the sources only; `force` is not in it. An
+            # already-published push answers 200 "unchanged", forced or not:
+            # the same sources must never become two revisions.
             settled = self.server.store.settled(pid, commit, accepted.digest,
                                                 message=message)
             if settled is not None:
@@ -1633,18 +1167,13 @@ class HubHandler(BaseHTTPRequestHandler):
                     status_url = f"/api/v1/jobs/{job_id}"
                     logger.info(
                         f"publish {pid}/{commit}: queued as job {job_id}")
-                    # 202 with `Location`, which is what the code means: the
-                    # request was understood and accepted, and the thing it
-                    # created is over there.
                     reply = (202,
                              {"job": job_id, "status_url": status_url,
                               "log_url": f"{status_url}/log", **named},
                              {"Location": status_url})
                 elif outcome == SUBMIT_QUEUE_FULL:
-                    # Refused rather than queued, and the job says so rather
-                    # than sitting in `queued` for ever: a job nothing will
-                    # ever pick up is a status endpoint that never changes
-                    # its answer.
+                    # The job is finished as failed, not left `queued`
+                    # forever.
                     self.server.jobs.finish(job_id, state=STATE_FAILED,
                                             code=503, error=QUEUE_FULL_ERROR)
                     logger.warning(
@@ -1654,15 +1183,9 @@ class HubHandler(BaseHTTPRequestHandler):
                              {"Retry-After":
                               str(QUEUE_FULL_RETRY_AFTER_SECONDS)})
                 else:
-                    # The hub is stopping. A DIFFERENT refusal from the one
-                    # above, and told apart here because both halves of the
-                    # answer differ. The pusher is not waiting for a queue to
-                    # empty, so there is no Retry-After to give — the hub is
-                    # going away and coming back — and the JOB has already
-                    # been answered, by the drain inside `shutdown` or by
-                    # `submit` itself. Writing over it with "the build queue
-                    # is full" replaced the one true sentence the hub had
-                    # left to say with a sentence that was not true.
+                    # The hub is stopping: no Retry-After, and the job has
+                    # already been answered by `shutdown` or `submit`, so it
+                    # is not overwritten.
                     logger.warning(
                         f"publish {pid}/{commit} refused: the hub is "
                         f"stopping")
@@ -1672,11 +1195,8 @@ class HubHandler(BaseHTTPRequestHandler):
                 f"publish {pid}/{commit} refused: {error.message}")
             reply = (error.status, {"error": error.message}, None)
         except (BrokenPipeError, ConnectionResetError):
-            # The JOB outlives the socket, so it is answered before this
-            # goes on its way to `do_POST`. Every other clause here answers
-            # the PUSHER; a job left `queued` by an exception between
-            # `jobs.create` and the handover is answered by nobody at all —
-            # see `_fail_handover`.
+            # The job outlives the socket, so it is failed before re-raising
+            # (see `_fail_handover`).
             self._fail_handover(job_id, handed_over)
             raise
         except Exception:
@@ -1684,21 +1204,15 @@ class HubHandler(BaseHTTPRequestHandler):
             self._fail_handover(job_id, handed_over)
             reply = (500, {"error": "internal error"}, None)
         finally:
-            # The worker owns the tree AND the body it came out of from the
-            # moment the task is submitted, and nobody does before that —
-            # including on the paths where this answered 200, 409 or 503.
-            # None of those paths builds anything, so none of them publishes
-            # a revision, so the body is not the code of one: it goes.
+            # The worker owns the tree and the body once submitted; on every
+            # other path (200, 409, 503) nothing is built, so both go.
             if not handed_over:
                 shutil.rmtree(accepted.sources, ignore_errors=True)
                 try:
                     accepted.archive.unlink(missing_ok=True)
                 except OSError:
-                    # Swallowed like `rmtree`'s failures right above it: this
-                    # is a `finally` whose caller still has a reply to send,
-                    # and a volume that will not take the unlink must not
-                    # turn a 200 into a dropped connection. The leftover is
-                    # dot-prefixed and swept by `Store._sweep_leftovers`.
+                    # Swallowed: a reply is still to be sent. The leftover is
+                    # swept by `Store._sweep_leftovers`.
                     logger.exception(
                         f"publish {pid}: the accepted body could not be "
                         f"removed after the push was answered")
@@ -1707,45 +1221,26 @@ class HubHandler(BaseHTTPRequestHandler):
         return self._json(status, payload, CACHE_NONE, extra)
 
     def _handle_compare(self, rest: list[str]):
-        """POST /api/v1/compare/<pid>/<old>/<new> — 202 and a job (issue #10).
+        """POST /api/v1/compare/<pid>/<old>/<new> — 202 and a job.
 
-        THE GEOMETRY ENGINE IS NOT IN THIS PROCESS and this route is what
-        reaches it: the comparison runs in a child, like a build, because
-        importing the CAD kernel costs ~450 MB resident and the hub is the
-        one process that may not pay that. So the answer is a job to poll,
-        and the job's LOG is the report — there is nothing else to fetch.
+        The comparison runs in a child, like a build: importing the CAD kernel
+        costs ~450 MB resident, which the hub must not pay. The job's log is
+        the report.
 
-        Behind EDIT_TOKEN, and checked BEFORE the segments are looked at,
-        for the reason `_serve_jobs` gives: an unauthenticated caller must
-        not be able to tell "no such project" from "wrong token" and use the
-        difference to find out what this hub holds.
+        The token is checked before the segments, as in `_serve_jobs`.
 
-        THREE SEGMENTS AND NO BODY. Which revisions to compare is a question
-        about WHERE, exactly like which project a push lands in, and this
-        service says where in the URL. `latest` and `dev` are not resolved
-        here and are not meant to be: every client resolves a revision
-        before it asks — `hammerola/revdiff.py` for the CLI, `commitOf` in
-        ui/src/HammerolaViewer.jsx for the picker — so what arrives is two
-        permanent ids. A comparison against a slot that is rewritten while
-        it runs would be a report about nothing in particular, and one
-        CACHED under a moving name would go on answering for a pair that has
-        moved on (`store.compare_dir`).
+        Revisions are path segments, no body. `latest` and `dev` are refused:
+        clients resolve them first (`hammerola/revdiff.py`, `commitOf` in
+        ui/src/HammerolaViewer.jsx), since a result cached under a moving name
+        would go stale (`store.compare_dir`).
 
-        A FOURTH SEGMENT NAMES A VIEW, and it is what asks for the artefact:
-        the same job then also builds the scene a browser opens at
-        `/project/<pid>/<old>/compare/<new>/` and caches it. Optional, and
-        the absence is not a default gone missing — `hammerola diff
-        --material` wants the measurement and reads the log, and making it
-        pay for a tessellated scene it never fetches would be a minute of
-        CPU per call for nothing.
+        An optional fourth segment names a view: the job then also builds and
+        caches the scene for `/project/<pid>/<old>/compare/<new>/`.
+        `hammerola diff --material` omits it and reads only the log.
 
-        SO EVERY REPLY HERE CLOSES THE CONNECTION, refusals and 202 alike.
-        This handler never reads a request body, and `protocol_version` is
-        HTTP/1.1: bytes nobody read stay in the socket and are parsed as the
-        start of the next request on it. Our own client sends none, and that
-        is exactly the kind of thing that holds until a `curl -d` or a proxy
-        says otherwise. `publish` avoids this by reading its body; this route
-        has none to read, so it hangs up instead.
+        Every reply closes the connection: this handler reads no body, and
+        unread bytes on an HTTP/1.1 connection would be parsed as the next
+        request.
         """
         if not self._require_token(close=True):
             return None
@@ -1753,9 +1248,6 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", {"Connection": "close"})
         pid, old, new = rest[:3]
         view = rest[3] if len(rest) == 4 else None
-        # The same helpers every other route validates with, and nothing
-        # else: a second spelling of "what a safe id looks like" is a second
-        # place for the two to drift apart.
         if not (self.server.store.valid_pid(pid)
                 and self.server.store.valid_build_id(old)
                 and self.server.store.valid_build_id(new)):
@@ -1764,45 +1256,14 @@ class HubHandler(BaseHTTPRequestHandler):
             if not self.server.store.build_dir(pid, revision).is_dir():
                 return self._error(404, "not found", {"Connection": "close"})
         if view is not None:
-            # Asked of the STORE, which is what has to be able to name a
-            # cache entry out of these four ids — so the shape of a view id
-            # is decided in one place and not spelled again here.
-            #
-            # AND REFUSED IN WORDS, which is the one refusal on this route
-            # that is not a 404. A view id is the author's own string,
-            # published under a rule of its own (`hubspec.MEMBER_RE`), and
-            # this is the first place it ever has to be a directory
-            # segment: a name that cannot be one is a build that publishes,
-            # shows the tab and then answers a comparison of it with
-            # nothing at all. 422 and a sentence — the reader is told the
-            # NAME is the reason, and the author has something to rename.
-            # It says nothing a 404 would not: both ends of the pair are
-            # already known to exist by the lines above.
-            #
-            # THE NAME ITSELF IS NOT ECHOED BACK, for the reason
-            # `_refused_names_error` gives at length about member names:
-            # the segment is the caller's own bytes, and a message built
-            # out of them is this hub repeating whatever was sent, at
-            # whatever length the request line allowed. The rule is what
-            # the reader needs, and the name is already in their URL.
+            # Asked of the store, which names the cache entry. A 422 with a
+            # sentence (VIEW_NOT_NAMEABLE_ERROR), so the author knows to
+            # rename the view; the caller's bytes are not echoed.
             if not self.server.store.valid_view_id(view):
                 return self._error(
                     422, VIEW_NOT_NAMEABLE_ERROR, {"Connection": "close"})
-            # AND THE VIEW HAS TO BE IN BOTH REVISIONS. A scene is built out
-            # of the two published view documents, so a view one of them
-            # never had cannot produce one — and queueing a job that is
-            # certain to fail is the same mistake as queueing a comparison
-            # of a revision that is not there, two lines up.
-            #
-            # 404 AND A SENTENCE, which is a pair this route otherwise does
-            # not make. The status is right — the pair of documents this
-            # address names is not on the volume — but the BODY was the bare
-            # word, and the panel prints the body: a reader comparing two
-            # revisions across a view the author added or dropped between
-            # them was told "The comparison did not finish · not found",
-            # which reads as a hub that lost something. The 422 beside it
-            # already answers in a sentence; this one now says which of the
-            # two ordinary things happened, without echoing the name back.
+            # The view must be in both revisions, or the job would certainly
+            # fail. A 404 with a sentence, since the panel prints the body.
             for revision in (old, new):
                 document = (self.server.store.build_dir(pid, revision)
                             / f"{view}.json")
@@ -1810,19 +1271,15 @@ class HubHandler(BaseHTTPRequestHandler):
                     return self._error(404, VIEW_NOT_IN_BOTH_ERROR,
                                        {"Connection": "close"})
 
-        # THE JOB IS NAMED AFTER THE NEWER REVISION, because `jobs.create`
-        # takes one commit and that is the one a person means by "which
-        # build was this about". Both are in the log's first line, which the
-        # worker writes (`jobs._compare_and_record`).
+        # The job is filed under the newer revision; both are in the log's
+        # first line (`jobs._compare_and_record`).
         record = self.server.jobs.create(pid, new)
         job_id = record["id"]
         outcome = self.server.builds.submit(
             CompareTask(job_id=job_id, pid=pid, old=old, new=new,
                         view=view))
         if outcome == SUBMIT_QUEUE_FULL:
-            # The job is failed here rather than left `queued`, exactly as
-            # `_queue_build` does it: a job nothing will pick up is a status
-            # endpoint that never changes its answer.
+            # Failed rather than left `queued`, as in `_queue_build`.
             self.server.jobs.finish(job_id, state=STATE_FAILED, code=503,
                                     error=QUEUE_FULL_ERROR)
             logger.warning(
@@ -1852,26 +1309,11 @@ class HubHandler(BaseHTTPRequestHandler):
     def _fail_handover(self, job_id, handed_over: bool) -> None:
         """Answer a job the handover threw underneath. Never raises.
 
-        The window is two statements wide — `jobs.create` returns, and
-        `builds.submit` is next — and the invariant it protects has no
-        window in it: a job that never becomes terminal is one nothing can
-        reclaim — the status endpoint answers `queued` about a build nobody
-        is running, and goes on doing so until the hub restarts and `_load`
-        fails it. Every
-        other outcome of `_queue_build` already answers its job — the queue
-        was full, the pool was stopping, a worker took it — and this is the
-        one that used to answer nothing, because both handlers were written
-        about the PUSHER and a 500 is not something a job can read.
-
-        `handed_over` is what keeps this from lying in the other direction.
-        Once `submit` has returned SUBMIT_ACCEPTED the task belongs to a
-        worker, which is going to finish that job itself; anything thrown
-        after that point — a logger, the reply tuple — must not fail a build
-        that is at that moment running.
-
-        The failure is recorded as a 500 because it is the hub's, not the
-        push's: nothing about the sources was wrong, and the honest advice
-        is the same one a restart gives, which is to push again.
+        Between `jobs.create` and `builds.submit` an exception would leave a
+        job `queued` forever (until a restart's `_load` fails it). Once
+        `submit` has accepted, the worker owns the job, so `handed_over`
+        prevents failing a running build. Recorded as a 500: the hub's fault,
+        not the push's.
         """
         if job_id is None or handed_over:
             return
@@ -1879,23 +1321,17 @@ class HubHandler(BaseHTTPRequestHandler):
             self.server.jobs.finish(job_id, state=STATE_FAILED, code=500,
                                     error=HANDOVER_ERROR)
         except Exception:
-            # `finish` is written not to raise; this runs from an exception
-            # handler that must reach its own `raise` or its own reply, so
-            # it cannot be the thing that replaces one failure with another.
+            # Runs inside an exception handler that must still reach its own
+            # `raise` or reply.
             logger.exception(
                 f"job {job_id}: could not be failed after the handover "
                 f"threw; it stays queued until the hub restarts")
 
     # -- build jobs ------------------------------------------------
     def _serve_jobs(self, rest: list[str], with_body: bool):
-        """GET /api/v1/jobs/<id>[/log] — for whoever pushed (SPEC 8A.2 step 5).
+        """GET /api/v1/jobs/<id>[/log] — for whoever pushed (SPEC 8A.2).
 
-        Behind EDIT_TOKEN, and checked BEFORE the id is looked at, so a
-        caller without it cannot use the difference between 401 and 404 to
-        find out which jobs exist. An id this hub never issued and an id
-        belonging to somebody else's push get the SAME 404: the id is the
-        only thing separating one pusher's build log from another's, so a
-        reply that confirms existence would hand out half of it.
+        The token is checked before the id, so 401 vs 404 reveals nothing.
         """
         if not self._require_token(with_body):
             return None
@@ -1910,9 +1346,8 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
 
         if len(rest) == 2:
-            # text/plain, because it is a build log and it is read by a
-            # person or printed by CI. Never text/html — this is output the
-            # model produced, on an origin that serves other people's builds.
+            # text/plain, never HTML: output the model produced, on an origin
+            # serving other people's builds.
             return self._send(
                 200, (self.server.jobs.log(job_id) or "").encode("utf-8"),
                 "text/plain; charset=utf-8", CACHE_NONE,
@@ -1924,27 +1359,14 @@ class HubHandler(BaseHTTPRequestHandler):
 
     # -- the code of a revision ------------------------------------
     def _serve_sources(self, rest: list[str], with_body: bool):
-        """GET /api/v1/sources/<revision>[/log] (issue #17).
+        """GET /api/v1/sources/<revision>[/log].
 
-        THE CODE IS NOT PUBLIC, and this is the only way out of the store.
-        Behind EDIT_TOKEN — the same secret that publishes, because there
-        is one secret on this service and holding it means being allowed to
-        do anything — and checked BEFORE the revision is looked at, so the
-        difference between 401 and 404 cannot be used to find out which
-        revisions the hub has the code of.
-
-        EVERY MISS IS THE SAME 404: a revision that was never published, one
-        whose build failed, one this hub stored before somebody removed the
-        file by hand, and a segment that is not a revision id at all. The
-        hub does not confirm what it holds — a build page is public, so
-        "which revisions exist" is already known, but "whose code is on
-        disk" is a different question and this endpoint answers it only by
-        handing the code over.
+        The code is not public; this is its only way out of the store. The
+        token is checked before the revision. Every miss (never published,
+        failed, removed, malformed id) is the same 404.
 
         The archive decides existence, not the directory (`source_archive`):
-        a directory holding only a log is what a rename killed half way
-        through leaves, and it must read as absent rather than as half a
-        revision.
+        a directory holding only a log is what an interrupted rename leaves.
         """
         if not self._require_token(with_body):
             return None
@@ -1954,10 +1376,7 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
 
         revision = rest[0]
-        # The same alphabet a build directory is named with, and for the same
-        # reason: a revision id IS a build id (SPEC 7.7 — the hub names a
-        # revision after the digest of its sources). So nothing here can
-        # carry a separator or a dot component, and the path below is one
+        # A revision id is a build id (SPEC 7.7), so the path below is one
         # segment deep by construction.
         if not self.server.store.valid_build_id(revision):
             return self._error(404, "not found", with_body=with_body)
@@ -1966,11 +1385,8 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
 
         if len(rest) == 2:
-            # text/plain for the same reason the job log is: this is output
-            # the MODEL produced, on an origin that serves everybody's
-            # builds. An empty body rather than a 404 when the log is
-            # missing — the code is there, so the revision is, and 404 would
-            # say something different and untrue.
+            # text/plain, as for the job log. A missing log is an empty body,
+            # not a 404: the revision exists.
             log = self.server.store.source_log(revision)
             try:
                 raw = log.read_bytes()
@@ -1979,10 +1395,8 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._send(200, raw, "text/plain; charset=utf-8",
                               CACHE_NONE, with_body=with_body)
 
-        # An opaque attachment, never a type a browser will act on: these are
-        # bytes a pusher supplied, handed back whole. The filename is built
-        # from the revision, which has just been through the id whitelist, so
-        # there is nothing in it to quote or escape.
+        # An opaque attachment. The filename is the whitelisted revision id,
+        # so nothing needs quoting.
         return self._send_file(
             archive, CACHE_NONE, with_body,
             content=(OCTET_TYPE, {
@@ -1993,18 +1407,9 @@ class HubHandler(BaseHTTPRequestHandler):
     def _handle_rename(self, pid: str):
         """POST /api/v1/projects/<pid>/title — the TITLE and nothing else.
 
-        A project has an id and a name, and they are separate on purpose
-        (SPEC 3.1): the id may not be derived from the name, because it would
-        then change at exactly the moment it exists to survive. So this route
-        renames and there is no route that re-identifies — every permanent
-        URL of the project is built from the id, and the builds behind those
-        URLs went out with a year of `immutable` and cannot be recalled.
-
-        Behind EDIT_TOKEN, checked BEFORE anything about the project is
-        looked at or touched. A project that does not exist and an id that is
-        not one this hub could ever have get the SAME 404 with the same body,
-        so the reply says nothing about which projects are on the volume that
-        the public index does not already say.
+        No route changes an id (SPEC 3.1): every permanent URL is built from
+        it. The token is checked first; a missing project and an invalid id
+        get the same 404.
         """
         if not self._require_token(close=True):
             return None
@@ -2019,17 +1424,13 @@ class HubHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._error(422, "body must be a JSON object")
         try:
-            # The same rule a build's own title goes through on the way in,
-            # asked of the same function: a title set here is shown in the
-            # same two places, so a second, looser rule here would be a way
-            # to put on the index page what a push cannot.
+            # The same rule a build's own title goes through.
             title = render.project_title(payload.get("title"))
         except ValueError as error:
             return self._error(422, str(error))
 
-        # The body is read and validated BEFORE the project is looked for, so
-        # that every refusal above happens without this hub saying whether
-        # the project is there.
+        # Validated before the project is looked up, so no refusal above
+        # reveals whether it exists.
         if not self.server.store.valid_pid(pid) or \
                 not self.server.store.set_title(pid, title):
             return self._error(404, "not found")
@@ -2047,43 +1448,26 @@ class HubHandler(BaseHTTPRequestHandler):
         """DELETE /api/v1/projects/<pid> — the whole project, all of it,
         and DELETE /api/v1/proposals/<pid> — the stored proposal alone.
 
-        THE ONLY WAYS ANYTHING LEAVES THE VOLUME. There is no retention
-        (SPEC 5.3) and no route that removes a single build, and the second
-        of those is the deliberate half: a build's URL is permanent and
-        immutable, so removing one build turns a promise into a 404 while
-        leaving the project standing. Removing the PROJECT takes the promise
-        away together with everything it was about — its builds, its
-        pointers, its comment queue, its proposal and the stored code of its
-        revisions — which is the honest shape for "I made a test project and
-        I am done with it" (issue #26). A proposal is the other kind of
-        thing entirely: nobody was ever given a link to it, it is the
-        reader's own working document, and putting it away breaks no promise
-        to anybody. That is also why it is a second COLLECTION rather than a
-        narrower delete under the first: what may be unmade here is decided
-        by the name in the URL, and `projects` still means all of it.
+        The only ways anything leaves the volume: there is no retention
+        (SPEC 5.3) and no route removes a single build, whose URL is a
+        permanent promise. Removing the project removes its builds, pointers,
+        comment queue, proposal and stored code. A proposal is a working
+        document nobody was given a link to, so it can be removed alone.
 
-        Behind EDIT_TOKEN and checked first, so nothing is read or touched
-        without it, and every miss is the same 404.
+        The token is checked first; every miss is the same 404.
         """
         if not self._require_token(close=True):
             return None
         path, _, query = self.path.partition("?")
         segments = self._split(path)
 
-        # ONE ENTRY PER ROUTE, TRIED IN ORDER, like `_handle_get` and
-        # `_handle_post`, and the order means the same thing here: a narrow
-        # route keeps its answer only while it stays above a wider one
-        # (issue #105). The two checks under the match are shared by both
-        # routes and are made only once one of them has matched, so a path
-        # this hub does not answer at all is still a 404 rather than a
-        # complaint about its body.
+        # Tried in order, as in `_handle_get`. The checks below run only after
+        # a match, so an unknown path is a 404, not a complaint about a body.
         for pattern, call in DELETE_ROUTES:
             rest = _route_rest(pattern, segments)
             if rest is None:
                 continue
-            # A body would sit unread on the socket and be parsed as the next
-            # request. Nothing about these routes takes one, so it is refused
-            # rather than drained.
+            # An unread body would be parsed as the next request; refused.
             if self.headers.get("Transfer-Encoding") or \
                     (self.headers.get("Content-Length") or "0").strip() \
                     not in ("", "0"):
@@ -2097,9 +1481,7 @@ class HubHandler(BaseHTTPRequestHandler):
     def _remove_proposal(self, pid: str):
         """DELETE /api/v1/proposals/<pid> — the reader's working document.
 
-        No 404 for a project with nothing stored: the caller asked for this
-        document to be gone and it is, which is the same answer either way —
-        and the boolean is what says which it was.
+        200 either way; the boolean says whether anything was stored.
         """
         return self._json(
             200, {"removed": self.server.proposal_store.remove(pid)})
@@ -2109,13 +1491,9 @@ class HubHandler(BaseHTTPRequestHandler):
         removed = self.server.store.remove_project(pid)
         if removed is None:
             return self._error(404, "not found")
-        # After the project, and only for a project that existed: the queue
-        # anchors to <pid>/<commit> (SPEC 7A.1), so once the builds are gone
-        # every entry in it points at something nobody can open.
+        # Only for a project that existed: comments anchor to <pid>/<commit>
+        # (SPEC 7A.1).
         removed["comments"] = self.server.comment_store.remove_project(pid)
-        # And the proposal, for the same reason: it is a statement about
-        # THIS project's geometry, so once the builds are gone there is
-        # nothing left for it to be about.
         removed["proposal"] = self.server.proposal_store.remove_project(pid)
         logger.info(f"project {pid} removed: {removed}")
         return self._json(200, removed)
@@ -2127,13 +1505,9 @@ class HubHandler(BaseHTTPRequestHandler):
             return None
         length = self.headers.get("Content-Length")
         note = None
-        # THE BODY IS OPTIONAL HERE and that is the one difference left
-        # between the five routes that take one: a resolve with no
-        # Content-Length at all is a resolve with no note rather than a
-        # 411, which `test_resolve_without_a_note_is_fine` pins. So the
-        # shared preamble is entered only when there is a body to take —
-        # or when the framing says there is one this service cannot read,
-        # which is what it refuses.
+        # The body is optional: no Content-Length means no note, not a 411
+        # (`test_resolve_without_a_note_is_fine`). The shared preamble runs
+        # only when there is a body, or a framing it must refuse.
         if self.headers.get("Transfer-Encoding") or (
                 length and length.isdigit() and int(length) > 0):
             body = self._take_body(MAX_RESOLVE_BODY_BYTES,
@@ -2159,54 +1533,27 @@ class HubHandler(BaseHTTPRequestHandler):
     def _handle_comment_post(self, pid: str, commit: str):
         """POST /api/v1/comments/<pid>/<commit> — EDIT_TOKEN (SPEC 7A.2).
 
-        THE TOKEN IS CHECKED FIRST, ahead of the route and ahead of
-        Content-Length, and that ordering is the point of step 0 rather than
-        a detail. A caller without the secret must not be able to make this
-        hub receive twenty megabytes and parse them as a multipart document
-        just to be told no — and must not learn from a 404 which builds
-        exist either, though that one is a formality here, because the build
-        page is public anyway.
-
-        This used to be the one endpoint that read a body from an
-        unauthenticated caller, and everything below it was ordered around
-        that. It no longer is (SPEC 8A.1: a hub that EXECUTES what it is
-        sent cannot also take anonymous input into a queue an agent works
-        from), so what remains below is ordinary bounding: refuse everything
-        that can be refused without reading, then read.
-
-        Every early refusal closes the connection, for the same reason a
-        refused publish does: the unread remains of the body would otherwise
-        be parsed as the next request on a keep-alive connection.
+        The token is checked first, before the route and Content-Length, so
+        no unauthenticated caller makes the hub read and parse a body (SPEC
+        8A.1). Then everything refusable without reading, then the read.
+        Early refusals close the connection (unread body bytes).
         """
         if not self._require_token(close=True):
             return None
 
-        # The local slot answers here as well as any commit does, and is
-        # exactly the thing somebody looking over the author's shoulder wants
-        # to comment on (SPEC 7.6). `latest` deliberately does NOT: it means
-        # a different build tomorrow, so a comment filed against it would
-        # stop naming the geometry it was about. The slot has the same
-        # property in principle, but its whole audience is the one person who
-        # can see what is on the screen right now.
+        # Commits and the local slot can be commented on (SPEC 7.6); `latest`
+        # cannot, since it will name a different build tomorrow.
         if not self.server.store.valid_pid(pid) or not (
                 self.server.store.valid_build_id(commit)
                 or commit == DEV_LINK):
             return self._error(404, "not found", {"Connection": "close"})
-        # The build has to exist. A comment on a build that was never
-        # published is spam by construction — nobody can have been looking at
-        # it. The reverse is explicitly fine: a comment whose build somebody
-        # later removes by hand stays in the queue (SPEC 7A.3), because the
-        # check is here, at write time, and nothing revisits it.
+        # The build has to exist at write time; a comment whose build is
+        # later removed stays in the queue (SPEC 7A.3).
         if not self.server.store.build_meta_path(pid, commit).is_file():
             return self._error(404, "not found", {"Connection": "close"})
 
-        # NOTHING THROTTLES THIS ROUTE and nothing counts what is already in
-        # the queue (SPEC 7A.4). A rate limit stood exactly here until
-        # 2026-08-27, keyed on the client address read out of Traefik's
-        # X-Forwarded-For; it was written when anybody who knew the URL could
-        # post, and once the door took EDIT_TOKEN the only caller it could
-        # ever refuse was the one holding the secret that also erases the
-        # project. Everything from here down is about SIZE.
+        # No rate limit (SPEC 7A.4): the only caller holds EDIT_TOKEN.
+        # Everything from here down is about size.
         body = self._take_body(
             self.server.settings.comment_max_body_bytes,
             too_large="body is {length} bytes, limit is {limit}")
@@ -2256,16 +1603,9 @@ class HubHandler(BaseHTTPRequestHandler):
 
         record = self.server.comment_store.add(pid, commit, payload,
                                                attachments)
-        # Only the id comes back, and the text is never echoed to the caller
-        # (SPEC 7A.4). It used to be true that the text was never rendered on
-        # a page either, and this comment used to claim that was what kept
-        # the endpoint off the XSS surface — issue #33 ended that: the build
-        # page now draws the whole queue in its rail. The boundary moved
-        # rather than went. It is that the text reaches the DOM AS TEXT and
-        # never as markup, which is a property of the page and is pinned by a
-        # test there (`ui/tests/feed.test.js`); this route's own share of it
-        # is `_body_text`, which refuses the control characters, and this
-        # reply, which stays a bare id because nothing needs more.
+        # Only the id comes back; the text is never echoed (SPEC 7A.4). The
+        # build page renders the queue as text, never markup
+        # (`ui/tests/feed.test.js`); `_body_text` refuses control characters.
         return self._json(201, {"id": record["id"]})
 
     # -- the stored proposal, write side ---------------------------
@@ -2275,18 +1615,9 @@ class HubHandler(BaseHTTPRequestHandler):
         ONE PROPOSAL PER PROJECT: this replaces whatever was stored rather
         than adding to it, which is what saving a working document means.
 
-        The token is checked first, ahead of the route and ahead of
-        Content-Length, for the reason `_handle_comment_post` gives: a
-        caller without the secret must not be able to make this hub read a
-        body and parse it just to be told no. Every early refusal closes the
-        connection, because the unread remains of the body would otherwise
-        be parsed as the next request on a keep-alive connection.
-
-        The project does not have to exist and is deliberately not looked
-        for: a proposal is a statement somebody is drafting, the id is the
-        only thing joined onto the store's root, and asking the volume would
-        be a second answer about what is published here for no reader that
-        needs one.
+        The token is checked first, as in `_handle_comment_post`; early
+        refusals close the connection. The project need not exist and is not
+        looked up: only the validated id touches the store's root.
         """
         if not self._require_token(close=True):
             return None
@@ -2312,25 +1643,15 @@ class HubHandler(BaseHTTPRequestHandler):
     def _body_length(self, limit: int, *, too_large: str) -> int | None:
         """The declared length of a body this route will read. Or None.
 
-        None means the request has already been answered. This is the
-        preamble every body-taking route on this service shares (issue
-        #105), and each of its refusals closes the connection, because the
-        unread remains of the body would otherwise be parsed as the next
-        request on a keep-alive connection.
+        None means the request has already been answered. The preamble every
+        body-taking route shares; each refusal closes the connection, since
+        unread body bytes would be parsed as the next request.
 
-        The CEILING AND ITS WORDING ARE THE CALLER'S — a title is bounded
-        far below a push — so `limit` comes in and `too_large` is the 413
-        text, formatted with `length` and `limit`. The 413 is answered
-        without reading, so the ceiling saves the work rather than
-        reporting it afterwards.
+        `limit` and the 413 text `too_large` (formatted with `length` and
+        `limit`) are the caller's; the 413 is answered without reading.
 
-        A CHUNKED BODY IS REFUSED HERE LIKE A MISSING LENGTH IS, on all
-        five routes. Nothing in this service decodes chunked, and the
-        ceiling is applied to Content-Length, so a body of unknown length
-        cannot be bounded before it is read. Two of the five used to let
-        one through as far as the length parse and refuse it only for
-        carrying no Content-Length; they now answer the same as the other
-        three, with the same code and the same text.
+        A chunked body is refused like a missing length: nothing here decodes
+        chunked, and the ceiling is applied to Content-Length.
         """
         if self.headers.get("Transfer-Encoding"):
             self._error(411, "Content-Length is required",
@@ -2355,10 +1676,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def _take_body(self, limit: int, *, too_large: str) -> bytes | None:
         """The whole body, or None once the refusal has been written.
 
-        The preamble above and then the read, for the four routes that take
-        their body into memory. A publish takes the length alone, because
-        what it does with it is spool 64 MiB to disk rather than read them
-        here.
+        For the routes that read their body into memory; a publish spools to
+        disk instead (`_spool_body`).
         """
         length = self._body_length(limit, too_large=too_large)
         if length is None:
@@ -2373,16 +1692,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def _read_body(self, length: int):
         """Read exactly `length` bytes into memory. (bytes, problem or None).
 
-        The in-memory twin of `_spool_body`, and the difference is deliberate:
-        a publish is up to 64 MiB and goes straight to disk, while a comment
-        is capped at COMMENT_MAX_BODY_BYTES — single-digit megabytes — and
-        has to be parsed as one multipart document anyway. The ceiling was
-        already applied to Content-Length by the caller, so this cannot grow
-        past it.
-
-        `read1` rather than `read`, for the reason spelled out in
-        `_spool_body`: the deadline has to be checked once per packet, not
-        once per buffer fill, or a dribbling client is never noticed.
+        The in-memory twin of `_spool_body`, for bodies of a few megabytes at
+        most, already bounded by the caller. `read1`, as in `_spool_body`.
         """
         deadline = time.monotonic() + BODY_DEADLINE_SECONDS
         chunks = bytearray()
@@ -2407,19 +1718,13 @@ class HubHandler(BaseHTTPRequestHandler):
         caller to answer with, because both ways this can fail are the
         client's and neither should be reported as a corrupt archive:
 
-        * the client stopped early — `rfile.read(n)` on a socket can return
-          short, and a truncated tarball would otherwise surface as a
-          confusing 422 about the archive rather than the connection;
-        * the body did not finish inside BODY_DEADLINE_SECONDS. The socket
-          timeout cannot see this case at all: it measures the gap between
-          packets and is rearmed by each one, so it is the deadline here that
-          decides how long one client may keep a publish slot.
+        * the client stopped early (otherwise a truncated tarball would be
+          reported as a bad archive);
+        * the body did not finish inside BODY_DEADLINE_SECONDS, which the
+          per-packet socket timeout cannot see.
 
-        Straight to disk rather than into a list of chunks joined at the end.
-        That join is a second full copy, so a 64 MiB push peaked at 128 MiB of
-        resident memory, and a few concurrent CI retries turned that peak into
-        the OOM killer. `length` was checked against the ceiling above, so the
-        file cannot outgrow it.
+        Straight to disk, so a 64 MiB push is never held in memory. `length`
+        was already checked against the ceiling.
         """
         deadline = time.monotonic() + BODY_DEADLINE_SECONDS
         remaining = length
@@ -2429,13 +1734,9 @@ class HubHandler(BaseHTTPRequestHandler):
                     return (408,
                             f"request body did not arrive within "
                             f"{BODY_DEADLINE_SECONDS}s")
-                # read1, NOT read: `rfile` is a BufferedReader, and its
-                # `read(n)` loops internally until it has all n bytes or hits
-                # EOF. That is the whole 256 KiB, so control would not come
-                # back here — and the deadline above would go unchecked for
-                # exactly as long as the dribbling client cared to keep
-                # dribbling. `read1` comes back with whatever one syscall
-                # produced, so the check runs once per packet.
+                # read1, not read: BufferedReader.read(n) loops until it has
+                # all n bytes, so the deadline would go unchecked. read1
+                # returns after one syscall.
                 chunk = self.rfile.read1(min(remaining, 256 * 1024))
                 if not chunk:
                     return 400, "request body ended early"
@@ -2449,43 +1750,28 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
                   build_queue_size=None) -> ThreadingHTTPServer:
     """Bind the listening socket and return the server, not yet serving.
 
-    Binding here rather than inside serve_forever() is what lets a test ask for
-    port 0 and then read back the port the OS actually chose.
+    Binding here lets a test ask for port 0 and read back the real port.
 
-    `build_runner` replaces `src.buildproc.run_build` for the build pool. It is a
-    parameter rather than a setting because it is not configuration: a deployment
-    has exactly one way to build a model, and the only caller that passes
-    anything is a test that has to drive the whole pipeline without CadQuery, a
-    subprocess or a real model — none of which the pipeline is about. Same for
-    the two sizes: they have module defaults in `src.jobs` and are here so a test
-    can stand up a one-worker pool with a queue of one and observe a full one.
-
-    `compare_runner` is the same seam for the other kind of task
-    (`src.buildproc.run_compare`), and it is separate from `build_runner` for
-    the reason `BuildQueue` gives: a test that substitutes both is what shows a
-    comparison went to the comparer and not to the builder.
+    `build_runner`, `compare_runner`, `build_workers` and `build_queue_size` are
+    test seams, not configuration: they replace `src.buildproc.run_build` /
+    `run_compare` and the `src.jobs` defaults so a test can drive the pipeline
+    without CadQuery or observe a full queue.
     """
     store = Store(
         data_dir=settings.data_dir,
         max_build_bytes=settings.max_build_bytes,
     )
-    # A separate tree under the same data directory, and a separate object: a
-    # comment is not part of the build it is about, so it must not inherit that
-    # directory's year of `immutable` or its public reach (SPEC 7A.3).
+    # A separate tree: a comment must not inherit a build directory's
+    # immutable caching or public reach (SPEC 7A.3).
     comment_store = CommentStore(
         data_dir=settings.data_dir,
         max_text_chars=settings.comment_max_text_chars,
         max_photo_bytes=settings.comment_max_photo_bytes,
     )
-    # A third tree beside it, for the reason the second one is separate: a
-    # proposal is about the PROJECT rather than about the build it was drawn
-    # over, so it must not inherit a build directory's year of `immutable` or
-    # its public reach (src/proposals.py).
+    # A third tree, for the same reason (src/proposals.py).
     proposal_store = proposals.ProposalStore(data_dir=settings.data_dir)
-    # Constructed HERE and not lazily, because its constructor is what fails the
-    # jobs a previous run left in flight: a hub that has started has no build
-    # running, so anything still `queued` or `building` on the volume is stale by
-    # definition and must stop claiming otherwise before the first status poll.
+    # Constructed eagerly: its constructor fails the jobs a previous run left
+    # `queued` or `building`, before the first status poll.
     job_store = JobStore(settings.data_dir)
     extra = {}
     if build_workers is not None:
@@ -2502,30 +1788,12 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
         allow_reuse_address = True
 
         def server_close(self):
-            # The build workers are stopped by the same call that closes the
-            # socket, so there is one way to shut a hub down rather than two.
-            # A worker that is mid-build is waited for: it is holding a staging
-            # directory and is about to rename it into place, and killing it
-            # there is how a half-published build happens.
+            # One call stops the socket and the workers. A worker mid-build is
+            # waited for, so a build is never half-published.
             #
-            # THE SOCKET GOES FIRST — and be precise about what that buys,
-            # because the obvious reading is wrong. It is NOT that the hub would
-            # otherwise accept a push during the stop: `serve_forever` has
-            # already returned by the time this runs, so nothing is calling
-            # `accept()` any more and no connection is being served from the
-            # loop. The listening socket is unattended, not active.
-            #
-            # What it buys is that the socket stops LISTENING. An unattended
-            # listening socket still completes handshakes in the kernel and
-            # stacks them in the accept backlog, so for the whole of the stop —
-            # the drain, then the join budget — a client that connects gets a
-            # connection that looks established, sends its push into it and
-            # waits for an answer nobody will ever write, until the process exits
-            # and the connection dies unexplained. Closed first, the same client
-            # is refused at once and can retry against whatever comes up next,
-            # which is what a stopping service owes it. Nothing is waited for any
-            # less: the join below still covers a worker in the middle of
-            # publishing.
+            # The socket closes first so it stops LISTENING: otherwise the
+            # kernel keeps completing handshakes into the backlog during the
+            # stop, and those clients wait for an answer nobody writes.
             super().server_close()
             builds.shutdown()
 

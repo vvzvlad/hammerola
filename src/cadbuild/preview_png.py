@@ -10,39 +10,15 @@ so the two are interchangeable at the call site):
 
 Exactly one STL per call, as there.
 
-WHY THIS FILE EXISTS INSTEAD OF THE SKILL'S preview.py
-------------------------------------------------------
-The pictures have to be made where the geometry is made -- inside the hub's own
-build process (`src/buildproc/`), which is the only place the CAD kernel and the
-meshes exist -- so they land in the staging directory beside the geometry and
-get published with it. That rules out both halves of the obvious answer:
+The pictures are made inside the hub's build process (`src/buildproc/`), the
+only place the meshes exist. The builder image has no OpenGL context (no
+OSMesa/EGL), so neither pyrender nor VTK can render there. The picture is
+therefore rasterised in numpy: project the triangles orthographically, cull
+back faces, and resolve the rest against a z-buffer. A z-buffer decides
+occlusion per pixel, unlike painter's-algorithm renderers, and its cost is
+dominated by pixels covered rather than triangle count.
 
-  * the skill is not in the image, and shipping preview.py in the source
-    tar does not help: it renders with pyrender on top of PyOpenGL, and the
-    builder image has neither, nor the OSMesa/EGL context they need. Installing
-    them per build costs ~20 s of apt+pip on every gate run and still does not
-    work -- the PyPI PyOpenGL has no usable OSMesa binding on python 3.11 and
-    the image has no EGL driver.
-  * the image's own VTK cannot render either, for the same missing context.
-
-So the picture is rasterised here, in numpy, with no 3-D library under it at
-all: project the triangles orthographically, cull the ones facing away, and
-resolve what is left against a z-buffer. trimesh, numpy and Pillow are all
-present in the builder image, and that is the only place a model is built --
-there is no local build path any more.
-
-THIS USED TO BE mplot3d, and what replaced it was not a preference. mplot3d
-sorts polygons by depth and paints them in order (painter's algorithm) -- there
-is no z-buffer anywhere in it, so the far wall of a box shows through the near
-one and a big triangle in front of small detail wins the pixel by being drawn
-later. A z-buffer decides that per pixel and is right by construction. It is
-also the faster of the two, measured on a real build: 0.06-0.10 s per 900-pixel
-view against 0.4 s, and 0.31 s for a 325k-triangle assembly. mplot3d's cost rose
-with the triangle count -- every triangle became a polygon patch -- which is why
-this file used to decimate the mesh before drawing it; this one's cost is
-dominated by the pixels covered, and the decimation went with the reason for it.
-
-WHAT IS DRAWN AND WHAT THE FOOTER DESCRIBES ARE TWO DIFFERENT DOCUMENTS for a
+What is drawn and what the footer describes are two different documents for a
 picture of a whole scene. `assembled_preview.png` and `print_preview.png` are
 drawn from the TESSELLATED VIEW FILE the browser itself loads (`scene=`), so
 every part is in its catalogue colour, at its own alpha, standing where its
@@ -63,13 +39,9 @@ import sys
 
 import numpy as np
 
-# matplotlib is imported for EXACTLY ONE THING: `_font()` reads DejaVuSans out
-# of matplotlib's own data directory, because the builder image carries no
-# system fonts at all and PIL's default is a 6-pixel bitmap. Nothing here draws
-# with it any more -- no Agg backend, no pyplot, no mplot3d. The dependency is
-# still real and still declared for this module: requirements.txt names it under
-# "The preview picture" and ci/smoke.py pins its version, and the footer being
-# readable is what it buys.
+# matplotlib is imported only so `_font()` can read DejaVuSans from its data
+# directory: the builder image has no system fonts and PIL's default is a
+# 6-pixel bitmap. requirements.txt and ci/smoke.py declare it for this.
 import matplotlib
 
 import trimesh
@@ -80,19 +52,12 @@ from PIL import Image, ImageDraw, ImageFont
 DEFAULT_VIEW_SIZE = 600
 ISO_SCALE = 1.5
 
-# The shape of one rendered tile: width over height. IT IS THE RENDER'S ASPECT
-# AND NOT THE SHEET'S -- `_compose` puts a title band above the tiles and a
-# footer under them, so the PNG that ships is always taller than this says.
+# The shape of one rendered tile: width over height. It is the render's aspect,
+# not the sheet's: `_compose` adds a title band and a footer.
 #
-# A LANDSCAPE TILE IS FOR THE WIDE CARDS THE FRONT PAGE DRAWS, and the number is
-# chosen for that rather than derived from any box's pixels. Those cards CROP
-# NOTHING now -- they fit the whole picture (`ui/src/HammerolaEntry.jsx`) -- so
-# the shape of the picture decides how much of a card it fills: in a card roughly
-# twice as wide as it is tall, a square render is letterboxed to half its width
-# and the part is drawn at half the size the card had room for. A landscape
-# render fills it. It is deliberately NOT the card's own aspect, because the card
-# has none to match: its width is fluid (`minmax(min(320px,100%),1fr)`) and its
-# ratio wanders with the window, which is exactly why fitting replaced cropping.
+# Landscape because the front page's wide cards fit the whole picture without
+# cropping (`ui/src/HammerolaEntry.jsx`); a square render would be letterboxed.
+# The card's own width is fluid, so there is no exact aspect to match.
 VIEW_ASPECT = 16 / 9
 
 # The six views of the technical sheet, in reading order: (elev, azim, label).
@@ -119,39 +84,21 @@ FACING_TOL = 1e-3
 
 # How many (triangle, scanline) pairs `_fragments` expands in one step.
 #
-# WHAT IT BOUNDS is the first of the two whole-array stages below: the (triangle,
-# row) stage, one entry per row every triangle touches. That is NOT the widest
-# array here -- the PIXEL stage it feeds is 10-20x wider, one entry per pixel of
-# every run -- and it does not need to be, because the pixels are expanded FROM
-# the rows of one chunk: bounding the rows is what bounds the pixel stage after
-# it.
-#
-# THE NUMBER IS MEASURED AND THE ONE IT REPLACED WAS NOT. At 4,000,000 the
-# chunking was dead code on any real model: a whole assembly does not reach
-# "tens of millions" of rows, and 327k triangles at 900 pixels expand about 506k
-# of them -- one chunk, always. Measured on a 1,310,720-triangle mesh at 900 px,
-# one part, as peak RSS over the process's baseline and the render's own time:
+# It bounds the (triangle, row) stage; the pixel stage is expanded from one
+# chunk's rows, so it is bounded too. Measured on a 1,310,720-triangle mesh at
+# 900 px, one part, as peak RSS over baseline and render time:
 #
 #     budget      peak RSS    render
 #     4,000,000     514 MB     0.40 s
 #       500,000     467 MB     0.36 s
 #       100,000     357 MB     0.30 s
 #
-# Smaller chunks are leaner AND slightly faster, so this is not memory bought
-# with time. THE VALUE BELOW IS NOT ITSELF ONE OF THOSE ROWS, and saying so is
-# the point of this sentence: 250,000 sits in the middle of the measured
-# bracket, where the last halving of the budget was worth 110 MB and 0.06 s.
-# Nothing in the shape of that curve picks a number more exactly than that, and
-# a row invented for it afterwards would be the kind of arithmetic that gave
-# `MAX_RENDER_FACES` its false justification.
-# The ceiling the whole thing runs under is the build process's own:
-# RLIMIT_AS = 6 GiB (`src/buildproc/limits.py`, `memory_bytes`), which a mesh an
-# order of magnitude past anything printable could otherwise walk into.
+# Smaller chunks are leaner and slightly faster. 250,000 sits inside the
+# measured bracket (not itself a measured row). The process ceiling is
+# RLIMIT_AS = 6 GiB (`src/buildproc/limits.py`, `memory_bytes`).
 #
-# Yielding in chunks bounds the peak without changing the answer: the caller
-# resolves every chunk against the same z-buffer, so where the chunk boundaries
-# fall cannot move a pixel -- which is a claim about behaviour and therefore
-# lives in a test, `test_where_a_chunk_boundary_falls_cannot_move_a_pixel`.
+# Chunking cannot move a pixel: every chunk is resolved against the same
+# z-buffer (`test_where_a_chunk_boundary_falls_cannot_move_a_pixel`).
 FRAGMENT_BUDGET = 250_000
 
 
@@ -303,11 +250,8 @@ def _shading(normals, base):
     points up -- without it the Bottom (Z-) view of the six-view sheet is a
     black rectangle, which is exactly the view a first-layer problem shows up in.
 
-    `base` is the part's own colour rather than one constant for the whole
-    picture, and that is the only thing about these lights that changed when the
-    previews began to be drawn in the catalogue's palette: the levels below are
-    the ones measured for the old single-colour picture and they hold, because
-    what they were tuned for is which faces read as lit, not which hue does.
+    `base` is the part's own colour; the levels are tuned for which faces read
+    as lit, independent of hue.
     """
     key = np.array([0.40, -0.70, 0.60])
     fill = np.array([-0.60, 0.30, 0.40])
@@ -473,20 +417,14 @@ def framing(parts, views):
     `scale = min(width / (2 * half_w), height / (2 * half_h))` and nothing
     outside them is in frame.
 
-    THE TWO AXES ARE MEASURED SEPARATELY because the frame is no longer square:
-    a tile is VIEW_ASPECT wide for its height, and one number could only be
-    right for one of the two axes. Each carries the 1.02 margin of its own.
+    The two axes are measured separately because a tile is VIEW_ASPECT, not
+    square. Each carries its own 1.02 margin.
 
-    IT IS MEASURED ON THE PROJECTION, NOT ON THE BOUNDING BOX, and that is the
-    whole of this function. A box of half-edge h seen corner-on is h*sqrt(3)
-    across the screen, so scaling by h crops every isometric view of anything
-    that fills its own box -- the box's corners arrive outside the frame. This
-    used to scale by h and did not show, because mplot3d owned the framing: it
-    fitted the rotated silhouette itself and then over-sized its axes by 1.28,
-    which came to a field of h*1.313 whatever the angle. Nothing inherits that
-    now, so the extent is measured.
+    It is measured on the projection, not the bounding box: a box of half-edge
+    h seen corner-on is h*sqrt(3) across, so scaling by h would crop isometric
+    views.
 
-    ONE FRAME FOR EVERY VIEW, which is why the views are passed in together
+    One frame for every view, which is why the views are passed in together
     rather than each picture measuring itself: the six tiles of a sheet are read
     against each other and a part that changed size between them would say
     something false about the part. So each axis is the largest extent any of
@@ -496,11 +434,8 @@ def framing(parts, views):
     `centre` is the middle of the scene's bounding box, not of each view's own
     silhouette: it is one point for every view, for the same reason.
 
-    NO PART AT ALL is answered rather than refused, and the answer is an empty
-    frame. A view whose every leaf sits at alpha 0 is legal -- `prepare_views`
-    warns about it and only the `assembled` view is held to showing anything --
-    so this is reachable from a model that builds, and a picture of nothing is a
-    better account of it than a build that dies inside numpy.
+    No part at all yields an empty frame rather than an error: a view whose
+    every leaf is at alpha 0 is legal (`prepare_views` only warns).
     """
     if not parts:
         return np.zeros(3), 1.0, 1.0
@@ -621,13 +556,8 @@ def _info_lines(mesh, parts=None):
     """The two footer lines: what the part is, and whether the mesh is sane.
 
     `parts` is how many parts went into the file, and the caller has to say:
-    it is a fact about the build, not about the mesh. Counting the mesh's own
-    bodies was tried and is wrong. `merge_vertices` welds the seam where two
-    parts touch, an assembly of touching parts comes back as ONE body, and the
-    footer then says "NOT watertight" -- which for an assembly is both true and
-    meaningless. Every assembly of every project was signed that way, including
-    the template's own, and a flag that is always on is a flag nobody reads by
-    the time a real part is open in front of them.
+    `merge_vertices` welds touching parts into one body, so the mesh cannot
+    count them, and an assembly would always read "NOT watertight".
     """
     extents = mesh.bounding_box.extents
     first = (f"Bounding box: {extents[0]:.1f} x {extents[1]:.1f} x "
@@ -711,25 +641,13 @@ def render(stl_path, output_path, views="iso", title=None, subtitle=None,
     watertight. Those are facts about the file somebody downloads, and they stay
     true of it whatever the picture above them was drawn from.
 
-    `parts` is how many parts the file holds. The caller knows -- the build
-    wrote the file and counted them -- and the footer needs it, because a mesh
-    cannot be asked: touching parts weld into one body when the vertices are
-    merged, and every assembly then reports itself as one body that is not
-    watertight. Leave it None for a file that is one part, or when there is
-    genuinely nobody to ask.
+    `parts` is how many parts the file holds (see `_info_lines`). Leave it
+    None for a single-part file.
 
-    `card_path` IS A SECOND PICTURE OF THE SAME RENDER and not a second render:
-    the bare tile, saved before `_compose` puts a title band above it and a
-    footer under it. The front page fits a card's picture whole rather than
-    cropping it, so the bands would be shown along with the part and the part
-    would be drawn smaller to make room for them. Nothing is redrawn for it and
-    nothing about the sheet changes.
-
-    FOR `views="multi"` IT IS THE FIRST TILE, the isometric one, so the argument
-    means something in both modes rather than being quietly ignored in one.
-    MULTI_VIEWS opens on the angle ISO_VIEW names, so a card is the same view of
-    the part whichever mode drew it -- framed for six tiles rather than for one,
-    which is the sheet's own arithmetic and not a second decision here.
+    `card_path` saves the bare tile, before `_compose` adds the title and
+    footer, for the front page's cards; nothing is re-rendered. For
+    `views="multi"` it is the first tile, the isometric one (MULTI_VIEWS opens
+    on ISO_VIEW's angle).
     """
     mesh = load_mesh(stl_path)
     drawn = (load_scene(scene) if scene else
@@ -760,10 +678,7 @@ def render(stl_path, output_path, views="iso", title=None, subtitle=None,
         tiles = [(render_view(drawn, elev, azim, width, height, frame_at), "")]
         columns = 1
 
-    # The tile as it was rendered, saved before anything is composed around it:
-    # `_compose` pastes onto a canvas of its own and leaves the tiles untouched,
-    # so the order of these two lines is free and this one stands first to say
-    # that the card is the render and the sheet is what is built out of it.
+    # `_compose` leaves the tiles untouched, so the order of these lines is free.
     if card_path is not None:
         tiles[0][0].save(card_path)
     _compose(tiles, mesh, title, subtitle, columns, parts).save(output_path)

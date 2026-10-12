@@ -1,35 +1,22 @@
-"""The author's note on a part, on the receiving side (issue #11).
+"""The author's note on a part, on the receiving side.
 
-A note is written by the AUTHOR in model.py, travels with the build in
-meta.json and is addressed to whoever opens the model. That makes it the third
-kind of text on this hub and the two neighbours are worth naming, because they
-are not this one: the READER's note lives in a browser's localStorage and never
-leaves it, and a COMMENT is written by a viewer, goes into a queue and is
-addressed to the agent (SPEC 7A). Different source, different direction,
-different rights.
+A note is written by the AUTHOR in model.py, travels with the build in meta.json
+and is addressed to whoever opens the model. It is not the READER's note (kept in a
+browser's localStorage) and not a COMMENT (written by a viewer into a queue for the
+agent, SPEC 7A). It sits inside the catalogue record it is about,
+`parts[<key>]["note"]`.
 
-A NOTE IS NO LONGER A MAP OF ITS OWN (issue #75): it sits inside the catalogue
-record it is about, `parts[<key>]["note"]`, which is the only thing that
-changed. The rules are the ones it always had, and so is everything below.
+What this file guards is the boundary. `build_meta` rebuilds every record field by
+field and drops what it does not read, and a note passed through unchecked would be
+a stored-XSS hole on a permanent URL, immutable for a year, sharing an origin with
+every other project. The text comes from anybody who can land a commit in a model
+repository, so it is held to the rules `title` and a part name are held to.
 
-WHAT THIS FILE IS ACTUALLY GUARDING is the boundary rather than the feature.
-`build_meta` rebuilds every record field by field and drops what it does not
-read, so an unvalidated note would simply never reach the browser — and a note
-passed through unchecked is a stored-XSS hole on a URL that is permanent,
-immutable for a year and shares an origin with every other project on the host.
-The text comes from a push, i.e. from anybody who can land a commit in a model
-repository, so it is held to the rules `title` and a part name are held to,
-whatever the browser half later decides to do with it.
-
-THE LAST TWO SECTIONS IMPORT THE BUILD HALF, which nothing else on this side
-does, and that is the point of putting them here: `src/cadbuild/views.py` and
-`src/cadbuild/project.py` check the same text before the geometry is computed
-and may not import this module, so the rules are written twice and this file is
-the only place allowed to see both copies at once. FOUR texts cross that
-boundary and all four are paired here -- a note, a part name, a view's caption,
-and the project's own title and slug. The file is named after the first pair
-rather than after the boundary, which is the only reason the other three are
-not in a file of their own.
+The last two sections import the build half: `src/cadbuild/views.py` and
+`src/cadbuild/project.py` check the same text before the geometry is computed and
+may not import this module, so the rules are written twice and this file is the one
+place that sees both copies. Four texts cross that boundary and all are paired
+here: a note, a part name, a view's caption, and the project's title and slug.
 """
 
 import json
@@ -45,18 +32,12 @@ from src.cadbuild.parts import read_catalogue
 from src.cadbuild.views import prepare_views
 from src.render import MAX_PARTS, MAX_TEXT
 
-# NOTE ON THE PART-NAME CEILING BELOW, because it stopped being symmetrical.
-# The build half no longer has one of its own: a part's name in a view file is a
-# catalogue key now, held to `hubspec.MEMBER_RE` (128 characters, an alphabet
-# rather than a length for text). What is left to compare against is the hub's,
-# and the hub has no constant for it either -- `render._check_part_name` defers
-# to `_plain_text`, whose ceiling is `MAX_TEXT`. So the cases below are
-# generated from `MAX_TEXT` DIRECTLY, and deliberately not from a local alias of
-# it: a second name for one number, sitting one line under the import of the
-# number, is the shape this whole change is removing. What the two sides owe
-# each other at that ceiling is answered in
-# test_the_gate_takes_no_part_key_the_hub_would_refuse below: containment, not
-# equality, and the asymmetry is argued there.
+# The part-name ceiling below: the build half has no length ceiling of its own (a
+# part name is a catalogue key held to `hubspec.MEMBER_RE`, 128 characters), and
+# the hub's `render._check_part_name` defers to `_plain_text`, whose ceiling is
+# `MAX_TEXT`. So the cases are generated from `MAX_TEXT` directly, not from a local
+# alias. What the two sides owe each other there is containment, not equality:
+# see test_the_gate_takes_no_part_key_the_hub_would_refuse below.
 
 
 # THE EXPORT THE CATALOGUE'S ONE PRINTABLE DECLARES — an archive member and a
@@ -72,24 +53,16 @@ PRINTABLE_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
 def publish_notes(hub, notes, commit="abc123"):
     """Push one build whose catalogue carries these notes, keyed by part.
 
-    The view names every key, because that is what a real document does — the
-    catalogue is what a view selects from — and because it keeps the two halves
-    of the document in step whatever key a case puts in. THE VIEW FILE NAMES
-    THEM TOO, for the same reason and now as a requirement: the hub holds a
-    view's declared `parts` against the keys its file actually carries
-    (`render._match_selection`), so a stand-in file naming the default pair
-    would answer every case below with a mismatch instead of a verdict about
-    the note.
+    The view and the view file both name every key: the hub holds a view's
+    declared `parts` against the keys its file carries (`render._match_selection`),
+    so a stand-in naming the default pair would answer every case with a mismatch
+    instead of a verdict about the note.
 
-    THE FIRST KEY IS THE PRINTABLE AND THE REST ARE HARDWARE, which is forced
-    rather than chosen: every key used to be `printable` with nothing exported,
-    a record no build writes and one the hub refuses now. Which key carries the
-    export changes nothing any case below asks — `_catalogue` reads `note`
-    after `kind` and independently of it, so a note is answered the same on
-    either kind — while making them ALL printable would spend one pointer of
-    the catalogue's file budget per key, and
-    test_a_catalogue_bigger_than_the_ceiling_is_refused pushes MAX_PARTS of
-    them through here.
+    The first key is the printable and the rest are hardware: the hub refuses a
+    printable with nothing exported, and making them all printable would spend one
+    pointer of the file budget per key (test_a_catalogue_bigger_than_the_ceiling_is_refused
+    pushes MAX_PARTS through here). `_catalogue` reads `note` independently of
+    `kind`, so the kind changes no verdict.
     """
     parts = {}
     for index, (key, note) in enumerate(notes.items()):
@@ -164,14 +137,13 @@ def test_a_control_character_in_a_note_is_refused(hub):
 
 
 def test_a_catalogue_that_is_not_an_object_is_refused(hub):
-    """The map the notes now live in, and the trap it must not fall into.
+    """A catalogue that is not a non-empty object is refused.
 
-    `[]`, `""` and `0` are the interesting ones: a falsy non-object read as
-    `raw.get("parts") or {}` becomes "no parts at all", which would publish a
-    push that described something else entirely without a word about it. `{}`
-    is on the list for a different reason — a catalogue with nothing in it is
-    not a build this hub can have written, and accepting one here would publish
-    a document `store._usable_meta` then silently declines to list.
+    `[]`, `""` and `0` matter most: read as `raw.get("parts") or {}`, a falsy
+    non-object becomes "no parts at all" and publishes a push that described
+    something else. `{}` is refused because a build cannot have written it, and
+    accepting it would publish a document `store._usable_meta` then declines to
+    list.
     """
     for bad in ([], [["lid", "M3x8"]], "", "M3x8", 0, 7, {}):
         body = tar_gz({"meta.json": meta_bytes(
@@ -186,15 +158,11 @@ def test_a_catalogue_that_is_not_an_object_is_refused(hub):
 
 
 def test_a_catalogue_record_that_is_not_an_object_is_refused(hub):
-    """The map is an object; so is every ROW of it, and that was unwitnessed.
+    """The map is an object; so is every ROW of it.
 
-    The case above asks the question of the catalogue as a whole. This asks it
-    of one entry — and until it was written nothing did: replacing the clause in
-    `render._catalogue` with `pass` left the entire suite green. What it costs
-    is not a laxer 201 but a 500, because the very next line is
-    `record.get("kind")` and a string has no `.get`. So the rule that turns a
-    malformed push into a 422 is the one being checked here, and the message is
-    read for that reason.
+    Without the row check in `render._catalogue`, the next line,
+    `record.get("kind")`, fails on a string with a 500 instead of a 422, so the
+    message is read too.
 
     THE RECORD BESIDE IT IS A GOOD ONE, and `views` names only that good key,
     which is what keeps `_view_parts` and `_match_selection` out of the way.
@@ -222,26 +190,18 @@ def test_a_note_that_is_not_a_string_is_refused(hub):
 
 
 def test_a_note_written_null_is_a_part_with_no_note(hub):
-    """`null` was on the list above until issue #75, and taking it off is a
-    decision rather than a test bent around the code.
+    """A note written `null` is a part with no note.
 
-    A note used to be a VALUE in a flat `notes` map, where a null row is a
-    broken row and nothing else. It is an optional field inside a record now,
-    and every optional field in `_catalogue` is read `is None` -- so `null` is
-    the JSON spelling of "no note", the same as leaving the key out.
-
-    What the old refusal actually protected is still closed, and closed harder:
-    a non-string note must never reach the browser. It does not, because the key
-    is not emitted at all -- the served record is byte-identical to one from a
-    push that never mentioned a note. The verdict on the PUSH changed; what is
-    served did not.
+    Every optional field in `_catalogue` is read `is None`, so `null` is the JSON
+    spelling of "no note", the same as leaving the key out. A non-string note still
+    never reaches the browser: the key is not emitted, and the served record is
+    byte-identical to one from a push that never mentioned a note.
     """
     assert publish_notes(hub, {"lid": None}).status_code == 201
     served = hub.get("/project/proj1/abc123/meta.json").json()["parts"]
-    # Still an EXACT comparison, which is the whole point of it — the record has
-    # to carry no `note` key at all, not merely a falsy one. What it compares
-    # against grew the export `publish_notes` now has to declare for the hub to
-    # take the push (see PRINTABLE_EXPORT); nothing about the note changed.
+    # An EXACT comparison: the record must carry no `note` key at all, not merely
+    # a falsy one. It includes the export `publish_notes` declares for the hub to
+    # take the push (see PRINTABLE_EXPORT).
     assert served["lid"] == {"kind": "printable",
                              "files": {"stl": PRINTABLE_EXPORT}}
 
@@ -261,12 +221,9 @@ def test_a_catalogue_bigger_than_the_ceiling_is_refused(hub):
     """The COUNT, which a per-record ceiling does not bound on its own: every
     one of these entries is legal, and the document they make is not.
 
-    IT COUNTS RECORDS AND NOT NOTES, which is the whole of the rename in
-    issue #75: the second half below carries no note anywhere and is refused
-    just the same, because a hundred thousand bought screws make the same
-    unloadable meta.json — served under a year of `immutable`, from a push that
-    can never be taken back — and the ceiling that counted notes could not see
-    one of them.
+    It counts RECORDS, not notes: the second half below carries no note and is
+    refused the same, because a hundred thousand bought screws make the same
+    unloadable meta.json, served under a year of `immutable`.
     """
     error = refused(hub, {f"part {i}": "x" for i in range(MAX_PARTS + 1)})
     assert str(MAX_PARTS) in error
@@ -290,26 +247,20 @@ def test_a_catalogue_bigger_than_the_ceiling_is_refused(hub):
 # The build gate and this one, held to ONE answer
 #
 # `src/cadbuild/parts.py` checks a note before the geometry is computed and
-# this module checks it again on the way in. That is deliberate -- the build
-# half may not import the serving half, because it runs inside the build
-# process -- so the rules are written twice, and the two copies are held
-# together HERE, from the one side that is allowed to import both.
-#
-# What the duplication buys, and what its failure costs, are the same fact seen
-# from two ends: a note the build accepts and the hub then refuses is minutes
-# of geometry answered with a 422, over a character. `clearance < 0.2 mm` is
-# ordinary CAD prose and was exactly that until the gate learned the rule.
+# this module checks it again on the way in. The build half may not import the
+# serving half (it runs inside the build process), so the rules are written
+# twice and held together HERE, from the one side allowed to import both. A note
+# the build accepts and the hub then refuses is minutes of geometry answered
+# with a 422 over a character (`clearance < 0.2 mm` is ordinary CAD prose).
 # --------------------------------------------------------------------------
 
 class Shape:
     """The one attribute `cadbuild.geometry.as_shape` looks for.
 
-    tests/cadbuild/fakes.py has a fuller stand-in, and reaching for it from
-    here would be a bet on collection order: that directory lands on sys.path
-    only because pytest inserted it while collecting the suite next door, so
-    `pytest tests/test_notes.py` on its own would not find it. Nothing below
-    needs geometry anyway -- read_catalogue only asks whether it was handed
-    some.
+    tests/cadbuild/fakes.py has a fuller stand-in, but that directory is on
+    sys.path only when pytest collects the suite next door, so
+    `pytest tests/test_notes.py` alone would not find it. read_catalogue only asks
+    whether it was handed a shape.
     """
 
     def isValid(self):
@@ -342,31 +293,21 @@ DISAGREEMENT = (
 def text_cases(limit):
     """One set of inputs for both sides, plus the two lengths around a ceiling.
 
-    WHITESPACE USED TO BE EXCLUDED HERE and the reason given was false, which
-    is worth writing down because the exclusion was a blind spot in exactly the
-    place these loops exist to look. It said the build half strips a note, a
-    name and a title, "so the hub never sees the outside of one" — but the hub
-    sees whatever a HAND-MADE push sends, and it was accepting `"   "` as a note
-    while the gate refused it. That is in the set now, as the last entry before
-    the ceilings, and both halves refuse it: the gate because a note is empty
-    once stripped, the hub because `render._check_note` refuses text that did
-    not arrive stripped. (A view's caption is stripped by neither side and a
-    blank title falls back to the directory name, so the other two loops answer
-    it "accepted by both" — which is why one entry can serve all three.)
+    Whitespace-only text is included, as the last entry before the ceilings: the
+    hub sees whatever a hand-made push sends. As a note both halves refuse it (the
+    gate because it is empty once stripped, the hub because `render._check_note`
+    refuses text that did not arrive stripped); a caption is stripped by neither
+    side and a blank title falls back to the directory name, so the other two
+    loops answer "accepted by both".
 
-    WHAT STAYS OUT IS PADDED TEXT WITH SOMETHING INSIDE IT — ` M3x8 ` — and it
-    stays out because its two verdicts differ BY DESIGN while this loop asserts
-    they are equal: the gate accepts it and publishes `M3x8`, the hub refuses
-    the padded spelling outright. It is pinned in
-    test_the_hub_refuses_the_padding_the_gate_strips_off, together with the
-    reason that divergence is the safe kind.
+    Padded text with content (` M3x8 `) stays out: its verdicts differ by design
+    (the gate publishes `M3x8`, the hub refuses the padded spelling), pinned in
+    test_the_hub_refuses_the_padding_the_gate_strips_off.
 
-    NOTHING HERE IS EMPTY EITHER, and that exclusion is a decision rather than
-    a gap in the set: this one set is read by three loops — a note, a view's
-    caption and a title — and an empty string means something different on
-    each, so it is pinned per field instead. The note's answer is
-    test_both_halves_refuse_an_empty_note_and_only_the_gate_an_empty_key, where
-    the two halves now agree and the empty KEY is the divergence that is left.
+    Nothing here is empty: this set is read by three loops (a note, a view's
+    caption, a title) and an empty string means something different on each, so it
+    is pinned per field; the note's answer is
+    test_both_halves_refuse_an_empty_note_and_only_the_gate_an_empty_key.
     """
     return [
         ("ordinary text", "M3x8 DIN912"),
@@ -448,34 +389,19 @@ def test_the_two_halves_agree_about_a_note_s_text(hub):
 def test_the_gate_takes_no_part_key_the_hub_would_refuse(hub):
     """CONTAINMENT here, not equality, and the asymmetry is a decision.
 
-    The other loops in this file demand one answer from both sides. This one
-    cannot and must not: a part's name is a CATALOGUE KEY now (issue #75), and
-    the build holds a key to `hubspec.MEMBER_RE` — 128 characters of letters,
-    digits, dot, dash and underscore — while the hub holds it to
-    `_check_part_name`, which is 200 characters of anything printable without
-    an angle bracket. MEMBER_RE is strictly the narrower of the two, so half
-    the cases below are refused by the gate and accepted by the hub: a key with
-    a space in it, a Cyrillic key, a key of 129 characters.
+    A part's name is a CATALOGUE KEY: the build holds it to `hubspec.MEMBER_RE`
+    (128 characters of letters, digits, dot, dash and underscore), the hub to
+    `_check_part_name` (200 characters of anything printable without an angle
+    bracket). MEMBER_RE is strictly narrower, so a key with a space, a Cyrillic key
+    or a 129-character key is refused by the gate and accepted by the hub. That is
+    the safe direction; what must never happen is a key the build accepts and the
+    hub refuses. The implication is checked through a REAL PUSH;
+    tests/cadbuild/test_naming.py compares the two rules as functions.
 
-    THAT IS THE SAFE DIRECTION AND IT IS THE ONE THIS ASSERTS. What may never
-    happen is the other one — a key the build accepts and the hub then refuses,
-    which is a whole model computed and answered with a 422 over a character.
-    So this checks the implication rather than the equality, and it checks it
-    through a REAL PUSH: tests/cadbuild/test_naming.py compares the two rules as
-    functions, which is a different witness and misses anything the document
-    does to a key on the way (it is also, on its own, why neither file's version
-    of this makes the other redundant).
-
-    A key is why the gate can be the narrow one at all: unlike a note, it has to
-    survive being a FILE STEM (`lid.stl`) and a path component, so the alphabet
-    is not a second opinion about text — it is the rule that keeps the exported
-    file nameable.
-
-    THE CASES ARE KEY-SHAPED AND NOT `text_cases`, which is what this loop asks
-    that the note loops do not: `text_cases` is free text and MEMBER_RE refuses
-    every entry in it, so run against that set the implication below would hold
-    without a single key ever reaching the hub's half. The first entries here
-    are keys the gate ACCEPTS, and they are the ones the containment is about.
+    The gate can be the narrow one because a key must survive being a FILE STEM
+    (`lid.stl`) and a path component. The cases are key-shaped, not `text_cases`:
+    MEMBER_RE refuses every free-text entry, so the implication would hold with no
+    key ever reaching the hub. The first entries are keys the gate ACCEPTS.
     """
     verdicts = []
     for index, (what, name) in enumerate(key_cases()):
@@ -505,34 +431,20 @@ def test_the_gate_takes_no_part_key_the_hub_would_refuse(hub):
 def test_both_halves_refuse_an_empty_note_and_only_the_gate_an_empty_key(hub):
     """The empty string, on the two fields it can land on, kept out of the loops.
 
-    `text_cases` carries nothing empty, and that exclusion is a DECISION rather
-    than a hole in the set: the set is shared by three loops (a note, a view's
-    caption, a title) and an empty string means something different on each, so
-    the note's answer is pinned here instead. Whitespace-only text used to be
-    excluded beside it and is not any more: the two halves answer it ALIKE on
-    all three fields — refused by both as a note, accepted by both as a caption
-    and as a title — which is the only thing those loops ask of an entry. That
-    docstring has the story.
+    `text_cases` carries nothing empty because an empty string means something
+    different for a note, a caption and a title (see its docstring).
 
-    THE NOTE IS NOW REFUSED BY BOTH HALVES, and the change is the hub's. It used
-    to take `""` — there is no character in it to be too long, to file under
-    category C or to be an angle bracket — and emit `"note": ""`, which is the
-    one thing the document's own rule forbids: absent rather than empty, so a
-    reader never has two ways of asking whether there is something to say about
-    a part. `_check_note` refuses it now rather than dropping it, because
-    dropping it would be the hub editing a document it did not write. Nothing
-    honest is turned away: `cadbuild.build` writes the key under `if
-    record["note"]:`, so only a hand-made push can carry the value at all.
+    An empty NOTE is refused by both halves. The document's rule is "absent rather
+    than empty", so a reader never has two ways of asking whether there is
+    something to say about a part; `_check_note` refuses `""` rather than dropping
+    it, because dropping it would be the hub editing a document it did not write.
+    Only a hand-made push can carry it: `cadbuild.build` writes the key under
+    `if record["note"]:`.
 
-    THE EMPTY KEY IS STILL THE HUB'S TO TAKE, and that half of the old
-    divergence stands. An empty part name is a label the viewer's tree cannot
-    show and a nested_ok pair cannot point at — visible in model.py, which is
-    where it can still be fixed — while the hub, by the time a push arrives, has
-    a string and no model to judge it against. The direction is the safe one:
-    the gate refuses what the hub would take, so nothing is computed for minutes
-    and then answered with a 422.
-
-    This test is what keeps both halves decisions rather than untested gaps.
+    An empty KEY is refused only by the gate: it is a label the viewer's tree
+    cannot show and a nested_ok pair cannot point at, fixable in model.py, while
+    the hub has a string and no model to judge it against. The gate refusing what
+    the hub would take is the safe direction.
     """
     assert build_refuses(name="lid", note="")
     assert hub_refuses(hub, {"lid": ""}, commit="empty01")
@@ -543,27 +455,19 @@ def test_both_halves_refuse_an_empty_note_and_only_the_gate_an_empty_key(hub):
 def test_an_empty_files_map_is_refused_exactly_as_an_empty_note_is(hub):
     """The record's OTHER optional field, and the same question asked of it.
 
-    A NOTE'S NEIGHBOUR IS `files`, and until this test the two answered the
-    empty spelling in opposite ways inside one walk: `_check_note` refused
-    `""` on the argument that the hub does not edit a document it did not
-    write, while `entry["files"] = exported` sat under an `if exported:` a
-    dozen lines away and DROPPED `{}` in silence — publishing a 201 whose
-    served record is byte-identical to one from a push that never mentioned a
-    file. One document, one rule, two answers, and the one nobody could see was
-    the drop.
+    `files` answers the empty spelling like `note`: `{}` is refused rather than
+    dropped, since a silent drop would publish a 201 byte-identical to a push that
+    never mentioned a file. Neither value can come off a build (`cadbuild.build`
+    writes each key only when it has something: `if key in part_files:`,
+    `if record["note"]:`), so there is no gate-side verdict to pair with and this
+    is one test over two fields rather than an entry in the loops above.
 
-    Both are the hub's to answer alone: `cadbuild.build` writes each key under a
-    test that it has something to put there (`if key in part_files:`, `if
-    record["note"]:`), so neither value can come off a build at all and there is
-    no gate-side verdict to pair with. That is why this is one test over two
-    fields rather than another entry in the loops above.
-
-    `preview` is deliberately not a third case here: `""` is not a file the
-    build declared, so `_check_declared_file` has always refused it.
+    `preview` is not a third case: `""` is not a file the build declared, so
+    `_check_declared_file` refuses it.
     """
-    # THE NOTE CASE CARRIES A REAL `files`, and it has to: a printable that
-    # declares none is refused before the walk reaches `note` at all, so
-    # without it this half would be asserting the wrong verdict's message.
+    # The note case carries a real `files`: a printable that declares none is
+    # refused before the walk reaches `note`, and the wrong message would be
+    # asserted.
     for record, fragment in (
             ({"kind": "printable", "files": {}}, "empty `files`"),
             ({"kind": "printable", "files": {"stl": PRINTABLE_EXPORT},
@@ -583,27 +487,17 @@ def test_an_empty_files_map_is_refused_exactly_as_an_empty_note_is(hub):
 def test_the_hub_refuses_the_padding_the_gate_strips_off(hub):
     """` M3x8 `: the one input whose two verdicts differ on purpose.
 
-    THE GATE NORMALIZES AND THE HUB DOES NOT, and that is the whole of it:
-    `cadbuild.parts._check_note` strips a note and returns the STRIPPED string,
-    which is what `cadbuild.build` then writes into meta.json, while
-    `render._check_note` refuses a note that did not arrive stripped. So this
-    pair answers "build accepts / hub refuses" — the direction DISAGREEMENT
-    above calls the bug — and it is not one here for a reason that has to be
-    ASSERTED rather than written in a comment: what the build sends is never the
-    padded string. The three lines below are that assertion, in order: what the
-    gate makes of it, what the hub does with the padded spelling, and what the
-    hub does with the value the gate actually produced.
+    The gate normalizes and the hub does not: `cadbuild.parts._check_note` returns
+    the STRIPPED string, which `cadbuild.build` writes into meta.json, while
+    `render._check_note` refuses a note that did not arrive stripped. "Build
+    accepts / hub refuses" is safe here only because the build never sends the
+    padded string, and the three lines below assert that: what the gate makes of
+    it, what the hub does with the padded spelling, and what the hub does with the
+    gate's output.
 
-    WHY THE HUB REFUSES IT AT ALL, rather than shrugging at a spelling only a
-    hand-made push can send: ` M3x8 ` and `M3x8` are one authored note, and
-    while both published they were two different documents depending on which
-    half wrote the push — so a byte comparison of two revisions reported a
-    change nobody made (issue #10). `render._check_note` has the rest of the
-    argument, including why the hub refuses instead of stripping.
-
-    It is HERE and not in `text_cases` because that set is read by three loops
-    asserting the two halves answer alike, and this input is the one where they
-    must not.
+    The hub refuses it because ` M3x8 ` and `M3x8` are one authored note, and two
+    spellings would make a byte comparison of revisions report a change nobody
+    made; `render._check_note` explains why it refuses instead of stripping.
     """
     padded = " M3x8 "
     catalogue = read_catalogue(Model(
@@ -616,13 +510,10 @@ def test_the_hub_refuses_the_padding_the_gate_strips_off(hub):
 def test_a_note_that_is_falsy_and_not_a_string_is_still_refused(hub):
     """`0`, `[]` and `False` are refused as NON-STRINGS, not as empty ones.
 
-    Worth its own test beside the empty string, because the two verdicts come
-    from two different lines and the new one sits right above the old. A reader
-    of `_check_note` could take the `if not value:` clause for the check that
-    covers all of these — it would, if it ran first — and then move it above the
-    isinstance check, turning a `0` into "empty note" and a `[]` into the same,
-    which is a message about the wrong thing. `null` is deliberately absent from
-    this list: it is the JSON spelling of "no note" and publishes
+    The two verdicts come from two lines in `_check_note`; moving the
+    `if not value:` clause above the isinstance check would turn these into
+    "empty note", a message about the wrong thing. `null` is absent from this list:
+    it is the JSON spelling of "no note" and publishes
     (test_a_note_written_null_is_a_part_with_no_note).
     """
     for bad in (0, [], False):
@@ -632,18 +523,15 @@ def test_a_note_that_is_falsy_and_not_a_string_is_still_refused(hub):
 # --------------------------------------------------------------------------
 # The same pairing for the other two texts that cross the boundary
 #
-# A note and a part name were the first pair to be held together this way. They
-# are not the only text a build hands the hub: the caption of a view and the
-# project's own title and slug travel in the same meta.json and are checked
-# there by the same `_plain_text`. Each got its own homemade check on the build
-# side and each was WEAKER than the hub's -- a 201-character view name and a
-# title carrying U+202E both passed the gate and were refused on arrival.
+# The caption of a view and the project's title and slug travel in the same
+# meta.json and are checked there by the same `_plain_text`, so the build-side
+# checks must be at least as strict as the hub's (a 201-character view name or a
+# title carrying U+202E must not pass the gate).
 #
-# Angle brackets are the one rule that is NOT shared here, and that is the
-# hub's asymmetry rather than a gap: our own pages write a title, a project
-# name and a view name with `textContent`, while the vendored viewer assigns a
-# PART name to `innerHTML`. Transcribing that faithfully is what keeps these
-# loops green; see `cadbuild.views.hub_text_problem`.
+# Angle brackets are the one rule NOT shared here, and that is the hub's
+# asymmetry rather than a gap: our own pages write a title, a project name and a
+# view name with `textContent`, while the vendored viewer assigns a PART name to
+# `innerHTML`. See `cadbuild.views.hub_text_problem`.
 # --------------------------------------------------------------------------
 
 def hub_refuses_meta(hub, commit, **fields):
@@ -659,10 +547,9 @@ def hub_refuses_meta(hub, commit, **fields):
 def build_refuses_view_name(name):
     """Does the gate turn away a view captioned this way, before any geometry?
 
-    The view names one catalogue key, because that is all a view is now
-    (issue #75) -- and the catalogue is built by `read_catalogue` rather than
-    written out here, so this asks `prepare_views` the question with the shape
-    it is really handed at build time.
+    The view names one catalogue key, and the catalogue is built by
+    `read_catalogue`, so `prepare_views` is asked with the shape it is really
+    handed at build time.
     """
     catalogue = read_catalogue(
         Model({"lid": {"shape": Shape(), "kind": "printable"}}))

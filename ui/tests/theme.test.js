@@ -1,34 +1,22 @@
-// The theme — which of the two palettes the whole interface is painted in, and
-// the one remembered answer the SERVER has to know about.
+// The theme: which of the two palettes the whole interface is painted in, and
+// the one remembered answer the server has to know about.
 //
-// IT IS A COOKIE AND IT USED TO BE A localStorage KEY, and that is the change
-// this file was rewritten for (issue #35). While the theme meant "the colour of
-// the 3D canvas" it was a viewport setting, kept in
-// `ui/src/viewport/options.js` under `hammerola.viewport_theme`, and nothing
-// outside the browser ever needed to know it. It is the whole page's palette
-// now: every `var(--…)` in the interface resolves against `data-theme` on
-// `<html>`, and that attribute has to be right in the first byte the browser
-// parses or the page flashes the other theme. Only the server can do that, the
-// two script-side ways of avoiding the flash are both closed (the CSP refuses an
-// inline pre-paint script; the resolver page runs no bundle at all), and a
-// cookie is the one thing a browser sends WITH the request for the page. So the
-// reader and the writer moved to ui/src/store.js, with the rest of the
-// per-reader state, and what is checked here is the cookie.
+// It is a cookie. Every `var(--…)` in the interface resolves against
+// `data-theme` on `<html>`, which must be right in the first byte the browser
+// parses or the page flashes the other theme. Only the server can do that: the
+// CSP refuses an inline pre-paint script and the resolver page runs no bundle,
+// and a cookie is the one thing the browser sends with the page request. The
+// reader and writer live in ui/src/store.js with the rest of the per-reader
+// state.
 //
-// THE JAR IS REAL AND ITS ABSENCE WOULD BE SILENT, which is the lesson this file
-// inherits word for word from the localStorage version and from
-// ui/tests/store.test.js. Every access in store.js sits inside a try/catch that
-// reads a failure as "nothing was remembered", so against a runner with no
-// working `document.cookie` a `writeTheme` that stores nothing passes every
-// assertion below. jsdom has one; `expectTheJar()` runs before each test and
-// says so out loud, because the failure it guards against does not look like a
-// failure — it looks like a green suite.
+// The jar is real, and its absence would be silent: store.js reads any failure
+// as "nothing was remembered", so without a working `document.cookie` a
+// `writeTheme` that stores nothing would pass. jsdom has one; `expectTheJar()`
+// checks before each test.
 //
-// The cookie's name is written out here rather than imported, exactly as
-// store.test.js writes out its keys: it is the OBSERVABLE — what a reader's
-// browser carries between visits, and what `src/render.py` reads on the other
-// side of the wire — so reusing the module's own expression would give a test
-// that agrees with itself whatever the name is changed to.
+// The cookie's name is written out rather than imported, as store.test.js does
+// with its keys: it is the observable, what the browser carries between visits
+// and what `src/render.py` reads on the server.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -118,21 +106,18 @@ describe('the remembered theme', () => {
   })
 
   it('sends it to every page of this hub, for a year', () => {
-    // `Path=/` because the answer is the reader's and not the project's: it is
-    // written on a build page under /project/<pid>/<commit>/ and has to be read
-    // on `/` and on the resolver. A cookie with no Path is scoped to the
-    // DIRECTORY it was written in, so the front page would never see it.
+    // `Path=/` because the answer is the reader's, not the project's: written on
+    // a build page under /project/<pid>/<commit>/ and read on `/` and on the
+    // resolver. A cookie with no Path is scoped to the directory it was written
+    // in.
     //
     // `Max-Age` because a session cookie forgets the answer when the browser
-    // closes, and this is a preference rather than a login. And NO `Secure`:
-    // the hub is reachable over plain HTTP, where a Secure cookie is simply
-    // never sent — the setting would look like a hub that does not remember.
+    // closes, and this is a preference, not a login. No `Secure`: the hub is
+    // reachable over plain HTTP, where a Secure cookie is never sent.
     //
-    // `SameSite=Lax` is checked with the other three rather than left to the
-    // paragraph about it in store.js. It is what every browser now defaults an
-    // unmarked cookie to, which is exactly what makes it the attribute somebody
-    // deletes as noise — and "the default happens to agree today" is a property
-    // of browsers rather than of this cookie.
+    // `SameSite=Lax` is checked too: it is what browsers default an unmarked
+    // cookie to, which makes it easy to delete as noise, but that default is a
+    // property of browsers, not of this cookie.
     const written = []
     const jarNow = document.cookie
     Object.defineProperty(document, 'cookie', {
@@ -231,36 +216,28 @@ describe('what the library is started with', () => {
   })
 
   it('is the one implementation, with no second name pointing at it', () => {
-    // The viewport RE-EXPORTED `readTheme`/`writeTheme` for exactly one caller:
-    // HammerolaViewer.jsx had always asked this module for them, and could not
-    // be touched while the palette was being moved out of it. It imports them
-    // from store.js now and the alias is gone — and what is asserted here is
-    // that it stays gone, because a name is free to become an implementation
-    // and a second implementation is the failure that hides: it would read the
-    // same cookie, pass every test above, and write no attribute at all.
+    // The viewport must not export `readTheme`/`writeTheme`: a second
+    // implementation would read the same cookie, pass every test above, and
+    // write no attribute. HammerolaViewer.jsx imports them from store.js.
     //
     // The test above is the other half: `displayOptions.theme` still follows
-    // `writeTheme`, so the viewport is reaching the one implementation rather
-    // than having stopped asking.
+    // `writeTheme`, so the viewport reaches the one implementation.
     expect(Object.keys(viewport)).not.toContain('readTheme')
     expect(Object.keys(viewport)).not.toContain('writeTheme')
   })
 })
 
-// -- the button, which now stands beside the comments ------------------------
+// -- the button, which stands beside the comments ----------------------------
 //
-// WHERE it is drawn is ui/tests/narrow.test.js's — that file has both widths
-// and reads the header row off the render. What is here is what the button
-// SAYS and what pressing it does.
+// Where it is drawn is ui/tests/narrow.test.js's (both widths, header row read
+// off the render). Here: what the button says and what pressing it does.
 //
-// The component is built the way ui/tests/downloads.test.js builds it — the
-// prototype, a state object spelled out in full, and the real `computed()` — for
-// the same reason: what is under test is a DECISION, and the decision is only
-// visible once the thing that makes it has run.
+// The component is built as in ui/tests/downloads.test.js: the prototype, a
+// full state object, and the real `computed()`.
 //
-// `setState` is the one thing replaced. `Object.create(prototype)` has no
-// updater behind it, so React's own would throw; and what the assertions want is
-// the PATCH rather than a re-render, which is exactly what the double keeps.
+// `setState` is the one thing replaced: `Object.create(prototype)` has no
+// updater behind it, so React's would throw, and the assertions want the
+// patch rather than a re-render.
 
 /** The component, with a fake viewport element under `el()`. */
 function component({ theme = 'light', viewer = {} } = {}) {
@@ -282,15 +259,11 @@ function component({ theme = 'light', viewer = {} } = {}) {
 
 describe('the theme toggle', () => {
   it('names the mode the reader is IN and offers the other one', () => {
-    // The button is a STATE READOUT with the action in its tooltip, like the
-    // access button beside the token. A label naming the destination and a
-    // tooltip naming the destination too would leave nothing on screen saying
-    // which of the two the page is actually in.
+    // The button is a state readout with the action in its tooltip, like the
+    // access button beside the token; if both named the destination, nothing
+    // would say which theme is on.
     //
-    // AND IT SAYS "INTERFACE", NOT "CANVAS", which is the wording half of the
-    // move: while this lived under the model it named what it changed — "the
-    // model sits on a light canvas" — and that sentence is now false in the
-    // half of the page that is not the canvas.
+    // It says "interface", not "canvas": the theme covers the whole page.
     const light = component({ theme: 'light' }).computed()
     expect(light.themeLabel).toBe('Light')
     expect(light.themeDark).toBe(false)

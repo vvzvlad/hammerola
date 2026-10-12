@@ -5,23 +5,17 @@ its length, sample a grid over a seat, confirm a boss is solid where a screw
 lands. There are two ways to answer it and they differ by three orders of
 magnitude -- a boolean against a small cube, or a point classifier.
 
-WHAT IS PROVED HERE IS NOT "they are the same". It is the pair of facts a
-migration needs: away from surfaces they agree exactly, and within reach of the
-cube they do not, because a cube asks about a NEIGHBOURHOOD and a classifier
-asks about a POINT. The first test alone would be a comfortable half-truth --
-it was written that way first, with a point 0.2 mm off a fillet in the list,
-and it went red. That red is now the second test.
+What is proved here is not "they are the same": away from surfaces they agree
+exactly, and within reach of the cube they do not, because a cube asks about a
+NEIGHBOURHOOD and a classifier asks about a POINT.
 
-THE SECOND SUBJECT HERE IS WHAT THE PROBE REFUSES TO ANSWER ABOUT, and it is
-the same question asked from the other end: a body that a boolean emptied is
-still an object, still truthy, and a classifier built on it says IN at every
-point in the universe. Every `assert solid(...)` in every model then passes. So
-`material_at` refuses such a part, `volume`/`is_empty` are how a model asks
-whether anything survived, and the tests for all three are below.
+The probe also refuses a body that a boolean emptied: it is still a truthy
+object, and a classifier built on it says IN at every point, so every
+`assert solid(...)` would pass. `volume`/`is_empty` are how a model asks
+whether anything survived.
 
-Every test here needs the CAD kernel and skips without it. The image CI runs the
-suite in carries it (issue #27), so this file contributes there too; on a machine
-with no kernel it contributes nothing, and what holds these there is the pair below.
+Most tests here need the CAD kernel and skip without it; the CI image carries
+it.
 """
 
 import sys
@@ -163,16 +157,11 @@ def test_something_that_is_not_geometry_is_refused_by_name():
 def test_the_refusal_does_not_need_the_cad_kernel(monkeypatch):
     """A bad argument answers TypeError even where OpenCASCADE is absent.
 
-    Note what this test does NOT do: call `_cq()`. It runs everywhere, and it
-    has to, because the machine without the kernel is the case it is about.
-
-    The first version of `material_at` imported OCP at the top of the function,
-    before looking at its argument, so passing a string answered
-    `ImportError: libGL.so.1` -- an error about the environment for a mistake
-    in the code. CI caught it by going red on the test above, back when its
-    container had no importable kernel at all. Where the kernel IS installed
-    neither test can see the difference, which is why the import is blocked here
-    rather than assumed absent -- and since issue #27 that includes CI.
+    This test does not call `_cq()`: it runs everywhere, because the machine
+    without the kernel is the case it is about. The argument is checked before
+    OCP is imported, so a string gets a TypeError, not an ImportError about the
+    environment. The import is blocked here rather than assumed absent, since
+    CI has the kernel installed.
     """
     for name in ("OCP", "OCP.BRepClass3d", "OCP.gp", "OCP.TopAbs"):
         monkeypatch.setitem(sys.modules, name, None)
@@ -392,13 +381,11 @@ def test_the_probe_is_right_where_two_bodies_TOUCH():
 
 
 def test_the_probe_is_right_where_one_body_is_INSIDE_another():
-    """A part with an insert added into it -- and the case that made the
-    compound worse than what it replaced.
+    """A part with an insert added into it.
 
     Measured: over a compound of the two, (4, 0, 0) and (8, 0, 0) read as no
-    material, though both are well inside the 20 mm box. A classifier built the
-    OLD way, on `val()`, answers correctly here -- so a compound would have been
-    a regression, not a partial fix, for any model that added an insert.
+    material, though both are well inside the 20 mm box, while a classifier on
+    `val()` answers correctly -- so a compound is no fix for this case.
     """
     cq = _cq()
     nested = (cq.Workplane().box(20, 20, 20)
@@ -458,8 +445,7 @@ def test_volume_is_what_tells_an_emptied_body_apart():
 
 
 def test_a_bounding_box_is_not_an_alternative_way_to_ask():
-    """The line the missing check used to stand over: reaching for extents on an
-    emptied body dies with a message about a box."""
+    """Reaching for extents on an emptied body dies with a message about a box."""
     with pytest.raises(Exception, match="Bnd_Box is void"):
         _emptied().val().BoundingBox()
 

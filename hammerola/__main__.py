@@ -1,39 +1,22 @@
 """`python3 -m hammerola` — the entry point that needs no installation.
 
-RUN FROM THE CHECKOUT ROOT, AND THE MODEL DIRECTORY IS AN ARGUMENT. `-m`
-resolves `hammerola` against the directory the command was started in, so out of
-a checkout this door opens where the repository is and nowhere else — inside a
-model directory the same line is `No module named 'hammerola'`, which is the one
-mistake this file is read after making. Both working forms, and they are the same command from two directions:
+Run it from the checkout root and pass the model directory as an argument: `-m`
+resolves `hammerola` against the current directory, so inside a model directory
+the same line fails with `No module named 'hammerola'`. The two working forms:
 
     cd <this checkout> && python3 -m hammerola -C <model dir> status
     cd <model dir> && PYTHONPATH=<this checkout> python3 -m hammerola status
 
-`-C` is a flag of the tool (`cli.py`), applied AFTER the interpreter has found
-this package, which is why it can point at a directory the import never had to
-see. The other door has neither problem: it brings the package with it, so it
-runs from anywhere and needs no `-C` at all.
+`-C` is a flag of the tool (`cli.py`), applied after the interpreter has found
+this package.
 
-THIS IS THE CHECKOUT'S DOOR, and there are two. The other is not in this file:
-the hub builds a one-file zipapp out of `hammerola/` and serves it at
-`/start/hammerola`, for a machine without a checkout
-(`src/onboarding.CLIENT_MAIN`). A zip's entry point has to sit at the archive's
-root, so that one is generated rather than taken from here — both are two lines
-calling `cli.main`, and a test runs the downloaded file to prove the generated
-one still does.
+The other entry point is the one-file zipapp the hub builds from `hammerola/` and
+serves at `/start/hammerola` (`src/onboarding.CLIENT_MAIN`). A zip's entry point
+must sit at the archive root, so that one is generated; both are two lines calling
+`cli.main`, and a test runs the downloaded file.
 
-There used to be one more, `bin/hammerola`, and it is gone rather than
-overlooked: it existed to be symlinked onto PATH by `make client`, and the hub's
-own bootstrap writes to that same name with `curl -o`, which follows the symlink
-and overwrites the file in the repository. It was never part of the zipapp
-either — `onboarding.client_members()` carries this package and nothing above
-it.
-
-`python3` and not the checkout's `.venv`, wherever this is written down: every
-module of this package imports the standard library and nothing else, on
-purpose, so the machine's own interpreter is enough — and pointing an entry
-point at a virtualenv is pointing it at a path that breaks the moment the
-checkout moves.
+Use the machine's `python3`, not the checkout's `.venv`: the package is stdlib
+only, and a path into a virtualenv breaks when the checkout moves.
 """
 
 import sys

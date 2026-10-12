@@ -1,28 +1,17 @@
 """What each version of this tool changed, written for the agent using it.
 
-WHY THE ENTRIES ARE STATEMENTS ABOUT THE INTERFACE AND NOT PROSE. `hammerola
-update` replaces the program an agent is in the middle of using, and the
-question it has to answer for that agent is not "what is new" but "what did I
-know that has stopped being true": a verb that was renamed, a flag that went
-away, a default that moved. So an entry is a list of finished sentences of that
-shape, one per line, each naming what to write INSTEAD. A release note nobody
-can act on is worse than none, because it is read at the one moment the reader
-has already been changed under.
+`hammerola update` replaces the program an agent is in the middle of using, so an
+entry answers "what did I know that is no longer true": one finished sentence per
+renamed verb, removed flag or moved default, each naming what to write instead.
 
-WHY IT TRAVELS INSIDE THE ZIPAPP. The client doing the printing is the OLD one,
-and an old client's copy of this file knows nothing about the versions that came
-after it — printing out of the running program would print nothing, always. So
-`update` reads this module out of the archive it has just downloaded and prints
-the entries strictly between the version it is and the version it fetched
-(`update._read_client`). That is the whole reason the changelog is a module in
-the package rather than a document beside it: `client_members()` globs
-`hammerola/*.py`, so this rides into the archive with the code it describes and
-nothing has to remember to carry it.
+It is a module in the package so it travels inside the zipapp (`client_members()`
+globs `hammerola/*.py`): the old client doing the printing reads this module out
+of the archive it just downloaded (`update._read_client`), since its own copy
+knows nothing about later versions.
 
-VERSIONS ARE READ AS INTEGERS SEPARATED BY DOTS, and `as_tuple` is the one place
-that reading happens — the ordering is what decides which entries a reader is
-shown and whether a client is behind its hub (`update.refuse_if_behind`), so
-both questions are answered by the same three lines.
+Versions are dot-separated integers, parsed only by `as_tuple`; the same ordering
+decides which entries are shown and whether a client is behind its hub
+(`update.refuse_if_behind`).
 """
 
 # {version: (statement, ...)}. The version is the one that SHIPPED the change,
@@ -67,17 +56,11 @@ def between(entries, old, new):
 
     -> [(version, lines), ...]
 
-    STRICTLY AFTER THE OLD VERSION AND INCLUDING THE NEW ONE, which is the only
-    reading that makes the output true. An entry is filed under the version that
-    shipped it, so the running client has already lived with its own entry and
-    everything below it, while the version it is moving TO is exactly the one it
-    has not seen. Get this off by one and every update either repeats what the
-    reader already knew or hides the change it was run for.
+    Strictly after `old` and including `new`: an entry is filed under the version
+    that shipped it, so the running client already knows its own entry.
 
-    A KEY THAT IS NOT A VERSION IS SKIPPED rather than refused: this dict comes
-    out of a downloaded archive that is by definition newer than this code, and
-    something added to the file later must not be able to stop the rest of it
-    from being printed.
+    A key that is not a version is skipped rather than refused, because the dict
+    comes from a newer downloaded archive.
     """
     here, there = as_tuple(old), as_tuple(new)
     if here is None or there is None:

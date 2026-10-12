@@ -1,15 +1,8 @@
 """Finding the project, and reading project.json.
 
-This is the part the packaging changed. The code used to be a script inside the
-project, so its own location was the answer; now it lives somewhere else
-entirely and has to find the project it is being run against. Getting that
-wrong means building under someone else's id, and every published URL is
-permanent.
-
-What is NOT here any more: the two derived paths (`out_dir`, `archive_path`) and
-`resolve_commit`. They addressed a local build writing `_out.tar.gz` beside the
-model and a revision named after a git commit, and the hub does neither -- it
-unpacks a pushed tree and mints the name from its digest.
+The code lives outside the project and has to find the project it is being run
+against. Getting that wrong means building under someone else's id, and every
+published URL is permanent.
 """
 
 import json
@@ -94,14 +87,12 @@ def test_the_slug_comes_from_the_title_not_the_directory(tmp_path):
 
 def test_a_project_nothing_names_publishes_under_its_id_and_never_the_directory(
         tmp_path):
-    """THE INCIDENT, reproduced with the directory that caused it.
+    """The unpack directory's name is never the project name.
 
-    `hammerola create` used to write only `id` and `title`, so a title with no
-    brackets left `load_project` falling through to `root.name` — and inside the
-    hub `root` is the directory a push was unpacked into,
-    `.src-<uuid4 hex>` (`store.SOURCE_PREFIX`). The front page then carried a
-    card called `.src-89fb7abdeb1d48b5985bcb519850b284`: a name belonging to
-    nobody, different on the next push.
+    Inside the hub `root` is the directory a push was unpacked into,
+    `.src-<uuid4 hex>` (`store.SOURCE_PREFIX`), so falling through to
+    `root.name` would put a card called `.src-89fb...` on the front page: a name
+    belonging to nobody, different on the next push.
 
     The directory is named like the real one rather than like an abstraction,
     because the two halves of the failure are exactly that the name is
@@ -117,10 +108,10 @@ def test_a_project_nothing_names_publishes_under_its_id_and_never_the_directory(
 
 
 def test_a_project_with_no_title_falls_back_to_its_id_as_well(tmp_path):
-    """The same fallback one line up, and it was the same directory name.
+    """The same fallback for `title`.
 
     `title` is shown on the index card beside `project`, so a hand-written
-    project.json with no title published the unpack directory's name there too.
+    project.json with no title must not publish the unpack directory's name.
     Here nothing names the project either, so both land on the id -- which is
     the id only because that is where `project` itself ended up; the next test
     is the one that separates the two.
@@ -137,9 +128,7 @@ def test_a_missing_title_falls_back_to_the_project_and_not_to_the_id(tmp_path):
 
     `render.build_meta` resolves `title = raw["title"] or project`, so a
     project.json naming a slug and no title has to show that slug -- not the
-    twelve hex characters of the id. Reaching for `pid` here instead would be
-    one half of the system silently correcting the other, which is the drift
-    that made this whole change necessary.
+    twelve hex characters of the id.
     """
     root = write_project(tmp_path / ".src-89fb7abdeb1d48b5985bcb519850b284",
                          id="2486c8fd2b05", project="slip-pump")
@@ -176,8 +165,7 @@ def test_an_explicit_project_field_wins_over_the_title(tmp_path):
 
 
 def test_a_project_without_an_id_names_the_command_that_mints_one(tmp_path):
-    """It named `make init`, a target of a Makefile that no longer exists
-    anywhere (issue #20). The id is minted by `hammerola create`."""
+    """The message names `hammerola create`, which mints the id."""
     root = write_project(tmp_path / "widget", id="", title="x (widget)")
     set_project_root(root)
     with pytest.raises(BuildError) as exc:
@@ -267,12 +255,8 @@ def test_the_refusal_says_how_to_run_the_pipeline_anyway(tmp_path):
     """The message has to name the way out, or the flag is just a wall -- and
     the way out has to be a command that exists.
 
-    It named `make build LOCAL=1 NOPUBLISH=1` and `make init TITLE=...` long
-    after both were dead (issue #20): the local build path was abolished, and
-    the Makefile those targets belonged to went with the model repository. So
-    both halves are asserted -- the surviving command is named, and the four
-    dead strings are gone, because it is those that were printed at people for
-    months with nothing failing.
+    Both halves are asserted: the surviving command is named, and the dead
+    `make` targets are not.
     """
     root = write_project(tmp_path / "widget", id=TEST_ID, title="Тест (widget)")
     set_project_root(root)

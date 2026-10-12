@@ -1,14 +1,9 @@
 """The gates that read a whole view: the plate, coverage, and interference.
 
-All three have caught real defects and all three are cheap to get subtly wrong,
-so they are pinned here on stand-in geometry (see fakes.py) rather than left to
-whichever project happens to trip over them next.
+All three are cheap to get subtly wrong, so they are pinned here on stand-in
+geometry (see fakes.py).
 
-COVERAGE IS A SET MEMBERSHIP NOW, and the tests that went with the old answer
-are gone rather than ported: a fingerprint of each solid (volume, face count,
-face areas) used to be matched against `printables()` by a bipartite matching,
-with a whole-word match on names as a courtesy. What that machinery got wrong
-cannot be expressed here any more -- a decoy solid has no catalogue key, and a
+Coverage is set membership on catalogue keys: a decoy solid has no key, and a
 part renamed in a view is a reference to the same key.
 """
 
@@ -115,7 +110,7 @@ def test_two_bodies_of_the_same_object_are_not_compared():
 
 
 def test_a_second_body_standing_in_a_neighbour_is_caught():
-    """`val()` is the first body only, which is how this used to be missed."""
+    """`val()` is the first body only; every body has to be checked."""
     two = Workplane(Shape(Box(0, 0, 0, 10, 10, 10)),
                     Shape(Box(50, 0, 0, 60, 10, 10)))
     other = Workplane(Shape(Box(52, 2, 2, 58, 8, 8)))
@@ -431,9 +426,7 @@ def test_one_declaration_covers_every_instance_of_that_pair_of_keys():
     Five references to `pin` are ten pin-against-pin pairs, all of them
     standing in one another here. `("pin", "pin", ...)` is one declaration and
     it takes the check off all ten -- there is nothing to name a single
-    reference by, so this is what "by catalogue key" has to mean. Written down
-    because it is a decision and not an accident: it is generous, and the
-    generosity is what the pin case buys.
+    reference by, so this is what "by catalogue key" has to mean.
     """
     pins = [node("pin", solid(0), label=f"'pin' #{n}") for n in range(1, 6)]
     with pytest.raises(BuildError) as exc:
@@ -513,11 +506,9 @@ class Shell(Shape):
 def test_a_placed_fake_is_still_the_fake_it_was():
     """A stand-in that stops being itself when it is moved is a green lie.
 
-    `Shape.moved` used to construct a plain `Shape` and to drop `solids`, so
-    `Broken(...).moved(at)` was an ordinary solid that intersects perfectly and
-    a shell-shaped stand-in came back with a solid in it. Nothing in the gate
-    tests gives a node an `at` today, which is exactly why this is pinned: the
-    day one does, the test would pass for the wrong reason and say nothing.
+    `Shape.moved` must keep the subclass and its `solids`; otherwise a moved
+    `Broken` would intersect perfectly and a gate test that gives a node an
+    `at` would pass for the wrong reason.
     """
     at = Location(5.0, 0.0, 0.0)
 
@@ -564,18 +555,13 @@ class Counting(Shape):
 def test_a_refused_boolean_stops_the_whole_part_pair(capsys):
     """One body pair the kernel drops makes the PART pair unanswerable.
 
-    The multi-body case the single-body test above cannot reach, and the one
-    that used to go wrong: the failure was warned about, the loop went on, and
-    the verdict was then passed on the sum of the OTHER bodies. That partial sum
-    understates the overlap and reads exactly like a verdict -- here it would
-    have come to 0 mm3 and published a build nothing measured. It is what
-    `checklib.pairwise_interference` decided in the same package, and the two
-    now answer alike.
+    The multi-body case the single-body test above cannot reach: a verdict
+    summed over the OTHER bodies understates the overlap and reads exactly like
+    a verdict (here 0 mm3). `checklib.pairwise_interference` answers alike.
 
-    THE BODY THAT FALLS OVER IS ONE WHOSE BOX OVERLAPS, and that is the half
-    this test has to keep pinning: a body pair the boxes settle never reaches a
-    boolean now, so it cannot bury anything (the test below is that half). What
-    buries the pair is a boolean that was genuinely asked and genuinely refused.
+    The body that falls over is one whose box overlaps: a body pair the boxes
+    settle never reaches a boolean, so it cannot bury anything (the test below
+    is that half).
     """
     two = Workplane(Broken(Box(0, 0, 0, 10, 10, 10)),
                     Shape(Box(50, 0, 0, 60, 10, 10)))
@@ -636,19 +622,13 @@ def test_a_part_is_resolved_into_bodies_once_for_the_whole_gate(capsys):
 
     A node with no `at` holds the model's own object verbatim, and a model is
     arbitrary python this build runs -- so a second `vals()` is a second answer,
-    and nothing promises it matches the first. The gate used to take the boxes
-    off one walk and resolve the bodies again per pair, addressing them by
-    index into the walk that had been thrown away: a different order would have
-    put the wrong two solids into the kernel and reported a verdict about
-    neither, and a different length would have raised IndexError outside the
-    `try`, as a bare traceback rather than a BuildError. Neither can be
-    provoked with fakes, which is exactly why the property is pinned by COUNT
-    instead: one resolution per node means there is no second answer to differ.
+    and nothing promises it matches the first (a different order or length
+    would put the wrong solids into the kernel). Fakes cannot provoke that, so
+    the property is pinned by COUNT: one resolution per node.
 
     Three parts whose boxes all overlap, on `Ghost` bodies that intersect in
     nothing -- so every pair really does reach a boolean and the pass runs to
-    the end. Before this, each part was resolved once for its box and once more
-    for each of the two pairs it is in.
+    the end.
     """
     stacks = [Resolved(Ghost(Box(0, 0, 0, 10, 10, 10))),
               Resolved(Ghost(Box(5, 0, 0, 15, 10, 10))),

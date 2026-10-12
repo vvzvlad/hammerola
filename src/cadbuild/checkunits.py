@@ -1,41 +1,26 @@
 #!/usr/bin/env python3
 """The registered check units, run several at a time and each on a leash.
 
-WHY THIS EXISTS, measured rather than assumed. On prod the model's own checks
-are 47-95% of a build's wall clock -- ford-cup-4 spent 160 seconds of 169 in
-them -- and 27% of all the machine time the hub burned went to seven builds
-that HUNG, at 891 seconds each. `checks()` is one function in one process, so
-neither number has anywhere to go: the whole budget before a kill is the
-build's own wall clock, and one endless `while` inside a model's checks holds a
-worker for that entire wall clock with twenty cores idle beside it. Measured
-against the wall of the day that was a quarter of an hour; it follows the
-constant rather than the sentence, which is why it is written this way round.
+On prod a model's own checks are 47-95% of a build's wall clock, and
+`checks()` is one function in one process: an endless loop in it holds a
+worker for the whole wall clock with the other cores idle.
 
-A unit fixes both at once, and the second half is the one that pays first. K
-persistent workers pull units off ONE shared queue and report back each on a
-CHANNEL OF ITS OWN, and each unit gets a budget -- so a hung check costs
-`UNIT_BUDGET_SECONDS` and ONE worker, the rest of the units finish on the
-others, and the log names the check that hung. The channels are one per worker
-rather than one queue for all of them because a worker that dies holding a
-shared queue's lock silences the survivors; the reasoning is at the `Pipe` in
-`run_units`.
+K persistent workers pull units off one shared queue and report back each on
+its own channel, and each unit has a budget, so a hung check costs
+`UNIT_BUDGET_SECONDS` and one worker, the other units finish, and the log
+names the check that hung. One channel per worker because a worker dying while
+holding a shared queue's lock silences the survivors (see the `Pipe` in
+`run_units`).
 
-WHY IT IS HERE AND NOT IN `src/buildproc/`. That package is forbidden the words
-`fork`, `preexec_fn` and `multiprocessing` in executable code, and
-`tests/buildproc/test_isolation.py` holds it to that with a tokenizer: what
-runs the model must be a fresh interpreter, never a copy of a threaded parent
-whose OCCT pool would deadlock. Nothing here weakens that -- the context below
-is `spawn`, which is the same fork-and-exec-in-C `subprocess` does -- but the
-rule is about a directory, and this is a different one.
+Not in `src/buildproc/`: that package may not contain `fork`, `preexec_fn` or
+`multiprocessing` in executable code (`tests/buildproc/test_isolation.py`
+enforces it with a tokenizer). The context here is `spawn`, a fresh
+interpreter like `subprocess`, so the rule's intent holds.
 
-WHY THERE IS NO SCHEDULER. Units are NOT grouped by the builders they need. A
-worker is persistent and the builders are `@cache`-decorated, so the second
-unit that needs `build_lid()` gets it for free from the first one that did,
-whatever order they arrive in; grouping is a pure optimisation on top of that,
-and what it would buy is a number the timings table below has to measure first.
-The order is deliberately RANDOM instead, so a unit that secretly depends on
-another one having run first fails on the build that introduces it rather than
-on some later build that happened to shuffle differently.
+No scheduler: workers are persistent and builders are `@cache`-decorated, so a
+second unit needing `build_lid()` gets it free whatever the order. The order is
+random, so a unit that secretly depends on another having run first fails on
+the build that introduces it.
 """
 
 import collections
@@ -56,112 +41,75 @@ from .paths import project_root
 
 
 # --- how many units run at once --------------------------------------------
-# THE BINDING CONSTRAINT IS MEMORY AND NOT CORES, which is what settles this
-# number low. The arithmetic, from the figures measured on the deployed hub
+# Memory, not cores, is the binding constraint. With
+# `buildproc.limits.BUILDS_SHARING_THE_HOST` = 4 and the deployed hub's figures
 # (SPEC, MAX_CONCURRENT_BUILDS: 20 cores, ~12 GB free, ~450 MB resident per
-# build) and from `buildproc.limits.BUILDS_SHARING_THE_HOST`, which is 4:
+# build):
 #
-#   * rlimits are PER PROCESS and are INHERITED, so a worker does not share the
-#     build's ceiling with it -- it gets a second one of its own. K workers
-#     multiply the memory and CPU ceilings by K rather than dividing them.
-#   * a worker holds the model's whole geometry, because that is what its
-#     builders produce, so its working set is the build's own and not a share
-#     of it: 4 builds x (1 parent + K workers) x ~450 MB.
-#   * K=2 is 5.4 GB of the ~12 GB free, K=3 is 7.2 GB and K=4 is 9.0 GB.
+#   * rlimits are per process and inherited, so each worker gets its own copy
+#     of the build's ceilings: K workers multiply them by K.
+#   * a worker holds the model's whole geometry, so its working set is the
+#     build's own: 4 builds x (1 parent + K workers) x ~450 MB.
+#   * K=2 is 5.4 GB of the ~12 GB free, K=3 is 7.2 GB, K=4 is 9.0 GB.
 #
-# AND 450 MB IS A FLOOR, NOT A PEAK -- it was measured right after `import
-# cadquery`, before a model has built anything -- so the real multiplier is
-# above it by an unknown amount. Two workers is the number that stays under
-# half the free memory at that floor and still has room when the real figure
-# turns out to be twice it. Raise it when the timings table this module prints
-# has measured what a unit actually costs; that measurement is the reason the
-# table is part of the same change.
+# 450 MB is a floor (measured right after `import cadquery`), so the real
+# figure is higher. Two workers stay under half the free memory at the floor.
+# Raise it once the timings table this module prints shows what units cost.
 #
-# CORES ARE NOT WHAT LIMITS IT EITHER -- but the arithmetic is NOT the one this
-# comment used to give. It said "two workers fit inside the share this build
-# already had", which reads the OCCT pool as something a worker inherits. It is
-# not: the pool is per PROCESS and per interpreter, `buildproc.child`
-# `_cap_occt_threads` sizes it once in the build process before cadquery is
-# imported, and a SPAWNED worker starts a fresh interpreter where none of that
-# has happened. So a build running units holds 1 + K pools rather than one
-# divided K ways: with the cap repeated in the worker (`_cap_occt_threads`
-# below) that is 3 x 5 = 15 threads on the 20-core hub, against a nominal share
-# of 5. The oversubscription is accepted deliberately -- the threads are a POOL
-# and sit idle unless a unit is inside a parallel kernel operation, memory is
-# what binds first (above), and dividing the share by K would make each unit
-# slower than the same check was inside `checks()`.
+# The OCCT pool is per interpreter and a spawned worker starts uncapped, so the
+# cap is repeated in each worker (`_cap_occt_threads` below): a build running
+# units holds 1 + K pools, 3 x 5 = 15 threads on the 20-core hub against a
+# share of 5. Accepted: the threads sit idle outside parallel kernel
+# operations, memory binds first, and dividing the share would make each unit
+# slower than inside `checks()`.
 #
-# WHAT REPEATING THE CAP BUYS IS THE CPU CEILING, and that is why it is not
-# optional. `RLIMIT_CPU` is inherited per process and is summed over a process's
-# THREADS, so every worker gets its own copy of `limits.DEFAULT_CPU_SECONDS`
-# (1875 s = 300 x 5 x 1.25, sized for a pool of five). A worker whose pool came
-# up at one thread per logical core -- twenty on the hub -- burns that ceiling
-# four times faster than the number says, and the kernel's SIGKILL arrives with
-# nothing in the log connecting the two: the unit is reported dead or lost and
-# not one word of the report says CPU.
+# Repeating the cap is required for the CPU ceiling: each worker inherits
+# `limits.DEFAULT_CPU_SECONDS` (1875 s = 300 x 5 x 1.25, sized for a pool of
+# five), summed over its threads. An uncapped pool (twenty threads on the hub)
+# burns it four times faster, and the SIGKILL leaves nothing in the log that
+# says CPU.
 CHECK_WORKERS = 2
 
-# What ONE unit may take before its worker is killed and the unit is reported
+# What one unit may take before its worker is killed and the unit is reported
 # failed.
 #
-# IT MUST STAY UNDER `buildproc.limits.DEFAULT_HANG_DUMP_SECONDS`, and by a
-# margin: that ceiling is the whole build's, and a unit budget anywhere near it
-# would mean a hung unit still costs the build everything -- which is the failure
-# this module is for. `tests/cadbuild/test_checkunits.py` holds the two numbers
-# in that order, and asks for a factor of two rather than for mere inequality.
+# Must stay well under `buildproc.limits.DEFAULT_HANG_DUMP_SECONDS` (the whole
+# build's ceiling), or a hung unit would still cost the build everything.
+# `tests/cadbuild/test_checkunits.py` requires a factor of two. At 290 s that
+# ceiling makes this 41% of it.
 #
-# THE MARGIN IS THINNER THAN IT WAS AND IS STILL A MARGIN. This budget was
-# written against a hang-dump ceiling of 890 s, where 120 s was a seventh of the
-# build; issue #81 took `wall_seconds` to 300 on 2026-09-10, so the ceiling is
-# 290 s and this budget is 41% of it. The order and the factor of two both still
-# hold, and the causation runs the way it should: units are WHY the wall could
-# come down (limits.py says so at `wall_seconds`), so a hung unit costing 120 s
-# of a 300 s build is the bargain being taken, not a regression in it.
-#
-# 120 s is the top of the band the owner set, and it is picked there rather
-# than lower for one reason: the slowest checks phase measured on prod is 160 s
-# for the WHOLE of ford-cup-4's checks(), so a single unit at 120 s would
-# already be three quarters of the slowest model's entire checking. Nothing
-# legitimate measured so far comes close, and a hang costs 120 s instead of the
-# whole wall clock, with the rest of the units still finishing beside it.
+# 120 s: the slowest whole checks() measured on prod is 160 s, so a single
+# unit at 120 s is already three quarters of the slowest model's checking.
 UNIT_BUDGET_SECONDS = 120.0
 
-# How long the parent waits on the workers' channels before it looks at the
-# clock. Small, because it is what bounds how far past its budget a hung unit
-# runs, and how long a worker's death goes unnoticed; not smaller, because it is
-# also how often a build that is behaving wakes up for nothing.
+# How long the parent waits on the workers' channels before looking at the
+# clock. It bounds how far past its budget a hung unit runs and how long a
+# worker's death goes unnoticed, and is how often an idle build wakes.
 _POLL_SECONDS = 0.2
 
-# How long a worker is given to exit on its own once there is nothing left to
-# do. It is waiting on `Queue.get` and has a sentinel coming, so this covers
-# interpreter shutdown and nothing more. It is also what `_collect` waits for an
-# exit code with, which is the same wait: a worker whose channel has closed is
-# already on its way out.
+# How long a worker is given to exit once there is nothing left to do (it has
+# a sentinel coming), so it covers interpreter shutdown only. `_collect` uses
+# the same wait for an exit code: a worker whose channel closed is exiting.
 _SHUTDOWN_SECONDS = 5.0
 
-# What a worker says. `_STARTED` is what makes the budget possible at all: the
-# parent has to know WHICH unit a worker took and WHEN, or it has nothing to
-# kill and nothing to name when the time runs out.
+# What a worker says. `_STARTED` tells the parent which unit a worker took and
+# when, which the budget depends on.
 _STARTED = "started"
 _DONE = "done"
 
 # What became of one unit. `seconds` is wall clock measured in the worker, so
-# it excludes the queue wait and is comparable between units that ran on
-# different workers.
+# it excludes the queue wait.
 UnitResult = collections.namedtuple("UnitResult", "name status message seconds")
 
 PASSED = "passed"
 FAILED = "failed"
 TIMED_OUT = "timed out"
-# The worker ended while the unit was still running, and NOT because the budget
-# ran out. Separate from TIMED_OUT because it sends the reader somewhere else
-# entirely: a timeout is a check that will not return, a death is the kernel or
-# the interpreter ending the process under it.
+# The worker ended while the unit was still running, not because the budget
+# ran out: a kernel or interpreter death, not a check that will not return.
 DIED = "died"
 LOST = "lost"
 
-# The hub's own repository root -- the directory `src/` sits in. See
-# `_hub_root_first`, which is the only thing that wants it.
+# The hub's repository root (where `src/` sits), for `_hub_root_first`.
 _HUB_ROOT = str(Path(__file__).resolve().parents[2])
 
 
@@ -169,31 +117,22 @@ _HUB_ROOT = str(Path(__file__).resolve().parents[2])
 def _hub_root_first():
     """Put the hub ahead of the project on `sys.path` while a worker starts.
 
-    A MODEL PROJECT MAY CARRY A DIRECTORY CALLED `src`, and everything around
-    here is built so that it may. `geometry.load_model` puts the project root on
-    `sys.path` FIRST on purpose -- a model's `import mocks` has to find the
-    model's own mocks.py -- which hands the project the name `src` for the rest
-    of the process; `geometry._shadowed_src_hint` exists to explain that to an
-    author, and the `checklib.py` shim at the repository root resolves this
-    package BY PATH precisely so that it never says the word `src` at all.
+    A model project may carry a directory called `src`. `geometry.load_model`
+    puts the project root first on `sys.path` (a model's `import mocks` must
+    find its own mocks.py), handing the project the name `src`; the root
+    `checklib.py` shim resolves this package by path for that reason.
 
-    A spawned worker breaks the arrangement from the other end. `spawn` copies
-    the parent's `sys.path` into the child -- `get_preparation_data`, taken
-    inside `Process.start()` -- and the child then has to `import
-    src.cadbuild.checkunits` in a FRESH interpreter to reach `_work`. With the
-    project first that import resolves into the MODEL. Reproduced: a model with
-    an ordinary `src/` beside its model.py died with `ModuleNotFoundError: No
-    module named 'src.cadbuild'` in every worker and reported `check units: 0 of
-    1 passed`, and the identical model without the directory was green.
+    `spawn` copies the parent's `sys.path` into the child inside
+    `Process.start()` (`get_preparation_data`), and the child must import
+    `src.cadbuild.checkunits` to reach `_work`. With the project first, that
+    resolves into the model: a model with its own `src/` died with
+    `ModuleNotFoundError: No module named 'src.cadbuild'` in every worker.
 
-    So the hub goes in front for the duration of the start and the path is put
-    back the moment it is over: this process goes on being one where the project
-    owns `src`, and the child is born with the hub ahead of it. The worker's own
-    `load_model` then moves the project back to the head before it imports
-    anything of the model's, so the project owns the head of the path there as
-    it does here. The hub sits one place behind it rather than at the end, where
-    `buildproc.child._absolutise_sys_path` appends it -- a difference that can
-    only show on a top-level name the hub root and site-packages share.
+    So the hub goes in front only for the start and the path is restored
+    afterwards. The worker's `load_model` then puts the project back at the
+    head, with the hub one place behind (not at the end, where
+    `buildproc.child._absolutise_sys_path` appends it; that only matters for
+    a top-level name the hub root and site-packages share).
     """
     saved = list(sys.path)
     sys.path.insert(0, _HUB_ROOT)
@@ -204,29 +143,19 @@ def _hub_root_first():
 
 
 def _occt_pool_size():
-    """How many threads THIS process's OCCT pool has, or None when there is none.
+    """How many threads this process's OCCT pool has, or None when there is none.
 
-    The number a worker has to repeat -- see `_cap_occt_threads` for why it must
-    be repeated at all. It is read off the live pool rather than recomputed,
-    because what the worker owes the CPU ceiling is the number the build process
-    actually got: `buildproc.child` takes it from `--occt-threads`, which the
-    wrapper may set to something other than `limits.DEFAULT_OCCT_THREADS`.
+    The number a worker must repeat (see `_cap_occt_threads`). Read off the
+    live pool rather than recomputed, because `buildproc.child` takes it from
+    `--occt-threads`, which may differ from `limits.DEFAULT_OCCT_THREADS`.
 
-    `DefaultPool_s` is a singleton getter -- OCCT builds the pool on the FIRST
-    call and returns that same one forever after, argument and all ignored -- so
-    the `-1` here reads the pool `child.py` already sized and cannot resize it.
-    The argument is spelled out rather than left to a default because the OCP
-    binding's defaults are not ours to rely on.
+    `DefaultPool_s` is a singleton getter: OCCT builds the pool on the first
+    call and ignores the argument afterwards, so `-1` reads the pool `child.py`
+    sized. The argument is explicit because the OCP binding's defaults are not
+    ours to rely on. In a process with no pool yet this call would create one
+    at a thread per core; here `buildproc.child` has always sized it first.
 
-    IN A PROCESS THAT HAS NO POOL YET THIS CALL IS WHAT MAKES ONE, at the
-    interpreter's own default of a thread per logical core. That is a fact about
-    the getter and not a hazard here: this runs deep inside a build, after the
-    geometry phase, in a process where `buildproc.child` sized the pool before
-    cadquery was imported.
-
-    None on a python with no usable OCP, which is every machine without the CAD
-    stack, this suite included: there is no pool to measure and no model that
-    could compute anything either.
+    None on a python without usable OCP (no pool, and no model could compute).
     """
     try:
         from OCP.OSD import OSD_ThreadPool
@@ -241,24 +170,18 @@ def _occt_pool_size():
 def _cap_occt_threads(count, index):
     """Repeat the build process's OCCT cap in this worker. Runs in the worker.
 
-    A FRESH INTERPRETER HAS AN UNCAPPED POOL, and nothing carries the cap across
-    for it. The environment variables that look like they would -- OMP_NUM_THREADS
-    and its family -- ARE inherited and are not what holds OCCT: the pool is
-    sized by an in-process call, `buildproc.child._cap_occt_threads`, made once
-    before cadquery is imported. Without this line a worker takes one thread per
-    logical core, twenty on the hub against the five its `RLIMIT_CPU` was sized
-    for, and burns that ceiling four times faster than its number says. See the
-    arithmetic at CHECK_WORKERS.
+    A fresh interpreter has an uncapped pool. OMP_NUM_THREADS and its family
+    are inherited but do not hold OCCT; the pool is sized by an in-process call
+    (`buildproc.child._cap_occt_threads`) before cadquery is imported. Without
+    this a worker takes a thread per core, twenty on the hub against the five
+    its `RLIMIT_CPU` was sized for (see CHECK_WORKERS).
 
-    IT PRINTS, for the reason `child.py` prints the same line: the thread count
-    a build actually ran with is not otherwise recoverable from its log, and it
-    is the first number anybody asks for when a worker is killed by a signal.
+    It prints, as `child.py` does: the thread count is otherwise not in the
+    log, and it is the first number asked for when a worker is killed by a
+    signal.
 
-    A failure to cap is a printed warning and not a refusal. The build process
-    refuses to start uncapped because its whole CPU ceiling is sized against the
-    cap; a worker that cannot cap is a degraded worker whose own ceiling fires
-    early, which is now reported as the death it is (`DIED`) rather than as a
-    hang.
+    A failure to cap is a warning, not a refusal: the worker's own ceiling
+    fires early and is reported as a death (`DIED`).
     """
     if count is None:
         print(f"check unit worker {index}: this build process has no OCCT pool "
@@ -287,51 +210,34 @@ def run_units(report):
     """Run every registered unit, K at a time, and fold them into `report`.
 
     Returns the `CheckReport` `run_checks` produced with the units added to its
-    count: one registered unit is one check. A model that has moved all of its
-    checks into units therefore reports the number it always did, and
-    metrics.json goes on being able to say that a project lost a check.
+    count: one registered unit is one check, so a model that moved its checks
+    into units reports the same number, and metrics.json can still say a
+    project lost a check. This relies on `run_checks` distinguishing a count of
+    zero from an uncountable one: an unknown count stays unknown here, a zero
+    gets the units added (`modelchecks.run_checks`).
 
-    THAT LAST SENTENCE IS ONLY TRUE BECAUSE `run_checks` DISTINGUISHES A COUNT
-    OF ZERO FROM AN UNCOUNTABLE ONE, and it did not: a half-migrated model -- an
-    empty `checks()`, whose refusal the units now waive, plus eight units --
-    counted 0, went through `(0 - 0) or None`, and arrived here as "unknown". A
-    number added to `None` is still `None`, so metrics.json carried
-    `checks_passed: null` for a model with eight checks and `report_metrics`
-    could no longer say the project had lost one. An unknown count stays unknown
-    here, which is right; what it must not be handed is a zero dressed up as
-    one (`modelchecks.run_checks`).
+    Nothing happens when nothing is registered -- no process, no output -- so
+    models written against `checks()` behave as before.
 
-    NOTHING HAPPENS AT ALL WHEN NOTHING IS REGISTERED -- no process is started,
-    nothing is printed -- which is what leaves every model written against
-    `checks()` behaving exactly as it did.
-
-    Raises BuildError naming every unit that did not pass. A unit that hung is
-    one of those: it is reported by name, with the budget it exceeded, on a
-    build that finished the rest of its checks.
+    Raises BuildError naming every unit that did not pass, including a hung
+    one, with the budget it exceeded, after the rest finished.
     """
-    # checklib is imported HERE and not at module level for
-    # `modelchecks.print_check_sections`'s reason: this has to reach the module
-    # the MODEL filled, and the model's own `import checklib` may be what loads
-    # it, through the shim at the repository root.
+    # Imported here, as in `modelchecks.print_check_sections`: this must reach
+    # the module the model filled, which the model's own `import checklib` may
+    # have loaded through the root shim.
     from . import checklib
 
     names = list(checklib.registered_units())
     if not names:
         return report
-    # See the module docstring: a hidden dependency between two units surfaces
-    # on the build that introduces it, rather than on whichever later build
-    # happens to draw them the other way round.
-    #
-    # A GENERATOR OF ITS OWN and not `random.shuffle`, which draws from the
-    # module's global one. A model.py that calls `random.seed(...)` at import
-    # time -- and models do, to keep a pattern or a sample reproducible -- would
-    # otherwise pin the order this exists to vary, silently and for every build
-    # after.
+    # Random order (see the module docstring), from a generator of its own:
+    # `random.shuffle` uses the global one, and a model.py calling
+    # `random.seed(...)` at import would pin the order.
     random.Random().shuffle(names)
 
-    # `spawn`, which is what SPEC 8A.2 step 4 requires of anything that runs a
-    # model: a fork of this process would carry its OCCT thread pool into a
-    # child where no thread survives to release its locks.
+    # `spawn`, as SPEC 8A.2 step 4 requires of anything that runs a model: a
+    # fork would carry the OCCT thread pool into a child where no thread
+    # survives to release its locks.
     context = multiprocessing.get_context("spawn")
     tasks = context.Queue()
     for name in names:
@@ -341,18 +247,13 @@ def run_units(report):
     for _ in range(CHECK_WORKERS):
         tasks.put(None)
 
-    # ONE CHANNEL PER WORKER AND NOT ONE QUEUE FOR ALL OF THEM. A
-    # `multiprocessing.Queue` is a pipe plus a feeder THREAD plus a lock, and
-    # the lock is shared by every process that writes to it: a worker killed
-    # while its feeder held that lock -- an OCCT crash, the OOM killer, a
-    # `sys.exit` out of a check -- leaves the semaphore taken for good, and the
-    # messages of the SURVIVING workers stop arriving. Reproduced: three runs of
-    # one model gave three different verdicts, a unit that had finished in three
-    # seconds was reported "timed out", the one still running was reported
-    # "lost", and a healthy neighbour was SIGKILLed on the way out. A
-    # `Connection` has no thread and no lock -- `send` writes to the fd in the
-    # calling thread -- so a poisoned channel can only ever be the dead worker's
-    # own, and its closing is also what tells the parent it is gone.
+    # One channel per worker, not one queue: a `multiprocessing.Queue` has a
+    # feeder thread and a lock shared by every writer, and a worker killed
+    # while its feeder held the lock (OCCT crash, OOM killer, `sys.exit` in a
+    # check) leaves it taken, so the survivors' messages stop arriving. A
+    # `Connection` has no thread or lock (`send` writes the fd in the calling
+    # thread), so only the dead worker's own channel can be poisoned, and its
+    # closing tells the parent the worker is gone.
     root = str(project_root())
     threads = _occt_pool_size()
     channels = [context.Pipe(duplex=False) for _ in range(CHECK_WORKERS)]
@@ -364,14 +265,13 @@ def run_units(report):
         for index in range(CHECK_WORKERS)
     ]
     # See `_hub_root_first`: the child's `sys.path` is taken from this one
-    # INSIDE `.start()`, and the hub has to be in front of the project in it.
+    # inside `.start()`.
     with _hub_root_first():
         for worker in workers:
             worker.start()
-    # The parent's own copies of the writing ends, dropped now that each worker
-    # holds the one that is its own. While this process holds a writer, the
-    # reader beside it never reaches EOF -- and EOF is the whole of how a
-    # worker's death is noticed.
+    # Drop the parent's copies of the writing ends: while this process holds a
+    # writer, the reader never reaches EOF, and EOF is how a worker's death is
+    # noticed.
     for _reader, writer in channels:
         writer.close()
     try:
@@ -383,10 +283,9 @@ def run_units(report):
                      reverse=True)
     failed = [result for result in ordered if result.status != PASSED]
     _print_timings(ordered, len(failed))
-    # The sections the units filled are in this process now, so the table can
-    # be printed against the whole run. A model that still has a `checks()`
-    # gets this table twice -- `run_checks` printed the first one before the
-    # units ran -- and the second is the superset.
+    # The units' sections are in this process now. A model that still has a
+    # `checks()` gets this table twice (`run_checks` printed one before the
+    # units ran); the second is the superset.
     print_check_sections()
 
     if failed:
@@ -425,30 +324,19 @@ def _exit_note(worker):
 def _collect(names, workers, readers):
     """Read results until every unit is accounted for, enforcing the budget.
 
-    THE PARENT IS THE ONLY THING THAT CAN ENFORCE IT. A worker cannot time
-    itself out -- the hang this is for is inside the CAD kernel, where a Python
-    signal handler does not run until the kernel comes back -- so the budget is
-    a deadline the parent holds and a SIGKILL it sends. The worker is not
-    replaced: one hung unit costs one worker, and the rest of the queue drains
-    on the others.
+    Only the parent can enforce it: the hang is inside the CAD kernel, where a
+    Python signal handler does not run, so the budget is a deadline the parent
+    holds and a SIGKILL it sends. The worker is not replaced; the rest of the
+    queue drains on the others.
 
-    A WORKER'S DEATH IS NOTICED AS ITSELF AND NOT AS A DEADLINE. Death used to
-    be invisible until the budget ran out, and was then reported as "still
-    running after 120s, so the worker was killed", about a process that had not
-    existed for two minutes -- a sentence that sends its reader to look for an
-    endless loop inside a check the OOM killer ended.
+    A worker's death is reported as a death, not as a timeout, so nobody looks
+    for an endless loop in a check the OOM killer ended. It is noticed by the
+    channel closing: a worker holds the only other end of its own `Pipe`, so
+    its death is an EOF here. The `is_alive()` check only shortens the wait by
+    a poll; the exit code is then waited for.
 
-    WHAT NOTICES IT IS THE CHANNEL CLOSING. A worker holds the only other end of
-    its own `Pipe`, so its death is an EOF here and `live` loses that index --
-    which is what the per-worker channel bought, and it is load-bearing. The
-    `is_alive()` question below is asked of the index the unit is outstanding ON
-    rather than of all of them, but that only shortens the wait by a poll: the
-    verdict is reached from the closed channel either way, and the exit code is
-    then waited for rather than guessed at.
-
-    Every result MERGES ITS RECORDS as it arrives rather than at the end, so a
-    build that dies half way still has the interference and clearance numbers
-    of the units that finished.
+    Each result merges its records as it arrives, so a build that dies half way
+    keeps the interference and clearance numbers of finished units.
     """
     from . import checklib
 
@@ -463,9 +351,7 @@ def _collect(names, workers, readers):
                 # A worker closes its end by ending, and by nothing else.
                 del live[index]
                 continue
-            # `==` and never `is`: these strings came back through a pickle, so
-            # the interned constant above is a different object from what
-            # arrived.
+            # `==`, not `is`: these strings came back through a pickle.
             if message[0] == _STARTED:
                 _, name = message
                 started = time.monotonic()
@@ -495,13 +381,10 @@ def _collect(names, workers, readers):
                     UNIT_BUDGET_SECONDS)
                 continue
             if reader is not None and reader.poll():
-                # It is gone, but its verdict is already in the channel: read it
-                # next round rather than declaring a death over the top of it.
+                # Gone, but its verdict is in the channel: read it next round.
                 continue
-            # Either the channel is closed, or the worker is gone and the
-            # channel is empty. Nothing more can arrive on it either way,
-            # whatever `is_alive()` happens to say this instant -- so the exit
-            # code is waited for rather than guessed at.
+            # The channel is closed, or the worker is gone with an empty
+            # channel; nothing more can arrive, so wait for the exit code.
             worker.join(timeout=_SHUTDOWN_SECONDS)
             del outstanding[index]
             collected[name] = UnitResult(
@@ -537,17 +420,15 @@ def _collect(names, workers, readers):
 def _shut_down(workers, tasks, readers):
     """Leave no worker and no queue thread behind, whatever went wrong above.
 
-    In a `finally`, because the build must not be held by a worker after the
-    verdict is known -- including when `_collect` itself raised.
+    Called in a `finally`, including when `_collect` raised.
     """
     for worker in workers:
         worker.join(timeout=_SHUTDOWN_SECONDS)
         if worker.is_alive():
             worker.kill()
             worker.join(timeout=_SHUTDOWN_SECONDS)
-    # `cancel_join_thread` FIRST: unread sentinels and names are worth nothing
-    # now, and waiting for a feeder thread to push them into a pipe whose
-    # readers are dead is a way for a finished build to hang.
+    # `cancel_join_thread` first: unread sentinels are worthless, and waiting
+    # for a feeder thread to push into a pipe with dead readers could hang.
     tasks.cancel_join_thread()
     tasks.close()
     for reader in readers:
@@ -557,10 +438,8 @@ def _shut_down(workers, tasks, readers):
 def _print_timings(ordered, failed):
     """The units, slowest first -- the table the next K is chosen from.
 
-    Longest first for `print_check_sections`'s reason: the question this is
-    read for is always which one to look at. Every unit gets a row, including
-    the fast ones, because the shape of the list is what says whether the work
-    is spread or sitting in one unit.
+    Every unit gets a row: the shape of the list shows whether the work is
+    spread or sitting in one unit.
     """
     total = len(ordered)
     if failed:
@@ -568,10 +447,8 @@ def _print_timings(ordered, failed):
     else:
         print(f"check units: {total} passed")
     for result in ordered:
-        # THE NAME IS THE MODEL'S, and it is the one field of this table that
-        # is. `check()` refuses a non-string and scans it for nothing else, so
-        # a newline in it would turn one row into two and a table read as a
-        # ranking into a list nobody can rank.
+        # The name is the model's and `check()` only refuses non-strings, so
+        # it goes through `shown_text` (a newline would split a row).
         note = "" if result.status == PASSED else f" -- {result.status}"
         print(f"  {shown_text(result.name)}: {result.seconds:.1f}s{note}")
 
@@ -579,29 +456,21 @@ def _print_timings(ordered, failed):
 def _work(root, threads, tasks, results, index):
     """One persistent worker: import the model once, then pull units forever.
 
-    PERSISTENT IS THE WHOLE DESIGN. The model is imported once per worker and
-    its builders are `@cache`-decorated, so the geometry a unit needs is built
-    the first time some unit on this worker asks for it and is free for every
-    unit after -- which is what makes a queue of small units cheaper than one
-    big `checks()` instead of `CHECK_WORKERS` times more expensive.
+    Persistence is the design: the model is imported once per worker and its
+    builders are `@cache`-decorated, so geometry is built once per worker and
+    free for every later unit.
 
-    Runs in a spawned interpreter, so this is a top-level function taking only
-    picklable arguments: it is reached by name in a fresh process, not carried
-    there.
+    Runs in a spawned interpreter, so it is a top-level function with picklable
+    arguments.
 
-    THE FIRST TWO LINES ARE THE START `buildproc.child` MAKES, in the same order
-    and for the same reasons -- this is a fresh interpreter, and neither of them
-    is inherited. `faulthandler` goes FIRST because the line after it is itself
-    the risky one: capping the pool imports OCP, which is 2-3 seconds of loading
-    the kernel, and a native crash in there with the handler not yet armed is a
-    bare signal number in the parent's `DIED` line. Armed first, it covers that
-    import and every check after it. The cap still lands before anything that
-    could import the kernel for real (see `_cap_occt_threads`) -- `faulthandler`
-    is stdlib and pulls in nothing.
+    The first two lines repeat `buildproc.child`'s start, neither being
+    inherited. `faulthandler` goes first because capping the pool imports OCP
+    (2-3 s), and a native crash there would otherwise be a bare signal number
+    in the parent's `DIED` line. The cap still lands before anything imports
+    the kernel for real.
 
-    `dump_traceback_later` is deliberately NOT armed beside it: a unit's budget
-    is a deadline the PARENT holds (see `_collect`), and a second timer in here
-    would be a worker killing itself on a clock the parent cannot see.
+    No `dump_traceback_later`: the unit budget is a deadline the parent holds
+    (see `_collect`).
     """
     faulthandler.enable()
     _cap_occt_threads(threads, index)
@@ -612,8 +481,7 @@ def _work(root, threads, tasks, results, index):
 
     paths.set_project_root(root)
     load_model()
-    # Whatever importing the model recorded belongs to no unit, and reporting
-    # it against the first one drawn would attribute it at random.
+    # Whatever importing the model recorded belongs to no unit.
     checklib._take_records()
 
     while True:
@@ -633,9 +501,9 @@ def _work(root, threads, tasks, results, index):
 def _run(name):
     """Call one unit with its builders' output. Returns `(status, message)`.
 
-    `BaseException` and not `Exception`, for `modelchecks.run_checks`'s reason:
-    a unit that calls `sys.exit()` would otherwise end this worker silently and
-    take every unit still queued behind it with it. A check reports by raising.
+    `BaseException`, not `Exception`, as in `modelchecks.run_checks`: a unit
+    calling `sys.exit()` would otherwise end this worker and every unit queued
+    behind it. A check reports by raising.
     """
     from . import checklib
 
@@ -644,9 +512,8 @@ def _run(name):
         unit.func(**{parameter: build()
                      for parameter, build in unit.needs.items()})
     except AssertionError as exc:
-        # `shown` calls `str()` itself: an assert message is usually an f-string
-        # over the author's own objects, and a `__str__` with a bug in it would
-        # otherwise raise out of this handler.
+        # `shown` calls `str()` itself, so a buggy `__str__` in an assert
+        # message cannot raise out of this handler.
         text = shown(exc, str, limit=MAX_MESSAGE_CHARS).strip()
         return FAILED, (f"assertion failed{fail_site(exc)}: "
                         f"{text or 'no message given'}")

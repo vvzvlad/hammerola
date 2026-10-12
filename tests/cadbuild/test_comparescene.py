@@ -1,8 +1,7 @@
 """The comparison scene: two revisions merged, the difference put where it belongs.
 
 Split where the CAD kernel is, like `test_shapediff.py` and for the same reason:
-everything except the last test runs on a python with no OCCT at all, which is
-any machine without the kernel — CI's container has it (issue #27). What is
+everything except the last test runs on a python with no OCCT at all. What is
 arithmetic here is nearly all of it -- merging two
 documents, rebuilding ids, recolouring leaves, placing pieces and counting
 volumes are operations over dicts, and a dict can be typed by hand.
@@ -250,7 +249,7 @@ def test_the_difference_is_drawn_where_the_part_stands(tessellator):
 def test_a_part_the_view_shows_twice_gets_its_difference_at_both_places(
         tessellator):
     """A view references the catalogue and may reference one entry many times
-    (`pin` x5, issue #75). A part that changed changed at every occurrence."""
+    (`pin` x5). A part that changed changed at every occurrence."""
     both = document(leaf("pin", key="pin", loc=at(1)),
                     leaf("pin(2)", key="pin", loc=at(9)))
     built = scene(both, both, {"pin": measurement(removed=["cut"])})
@@ -363,7 +362,7 @@ def test_the_part_that_appeared_keeps_its_neutral_shell_as_well(tessellator):
 
 
 def test_a_part_dropped_from_this_view_is_gone_from_this_view(tessellator):
-    """THE CASE THE TWO HALVES USED TO CONTRADICT EACH OTHER ON.
+    """A part this view stopped showing is gone from this view.
 
     Both revisions still export `clip` -- it is in the catalogue of each, and
     the fuse found nothing to say about it -- but this view stopped showing it.
@@ -542,10 +541,8 @@ def summary(diffs=None, shows_a=(), shows_b=(), view_id="assembled",
     demands the argument, so every test here says which parts were refused --
     usually none.
 
-    `covered` IS THE SET THE WALK COMPARED, and the default here spells out the
-    assumption every test in this file used to make silently: an ALL-PRINTABLE
-    view, where the walk covered every part both views show. That assumption is
-    what let a `hardware` leaf be published as unchanged for three rounds, so a
+    `covered` is the set the walk compared; the default assumes an
+    ALL-PRINTABLE view, where the walk covered every part both views show. A
     test about a part nothing measured passes the set itself.
     """
     shown_in_both = set(shows_a) & set(shows_b)
@@ -679,22 +676,20 @@ def test_a_refused_measurement_is_not_reported_as_unchanged():
 
 
 def test_a_part_nothing_ever_measured_is_published_as_not_compared():
-    """THE SECOND ROAD TO THE SAME DEFECT, and the one every test here missed.
+    """A part nothing ever measured is `not compared`, never `unchanged`.
 
     A view's leaves are every kind of catalogue entry (`parts.KINDS`), while the
     walk behind `diffs` and `refused` is over `*.step` files -- and a build
     exports one of those per PRINTABLE. So `reference_spacer`, the `hardware`
-    entry in `ui/tests/fixtures/assembled.json`, is in neither map for the one
-    reason that nothing ever looked at it, and it used to come out
-    `{"status": "unchanged"}`: swap an M3x8 for an M3x12 and the panel says
-    "identical -- all N parts unchanged".
+    entry in `ui/tests/fixtures/assembled.json`, is in neither map because
+    nothing ever looked at it; reading that as `unchanged` would let an M3x8
+    swapped for an M3x12 show as "identical -- all N parts unchanged".
 
-    ITS OWN WORD, AND NOT THE GATE'S. Nothing is wrong with a bought screw
-    having no geometry of ours -- it is a property of the part rather than an
-    event in this revision -- so it says `not compared`, which the browser draws
-    muted and sorts with the parts nothing happened to. Sharing `not measured`
-    with the gate's refusal put the warning colour and the top of the list on
-    every bought part a model has, and most have several.
+    ITS OWN WORD, AND NOT THE GATE'S. A bought screw having no geometry of ours
+    is a property of the part rather than an event in this revision, so it says
+    `not compared`, which the browser draws muted and sorts with the parts
+    nothing happened to. `not measured` would put the warning colour and the
+    top of the list on every bought part a model has.
 
     NOTHING IN THE DOCUMENT SAYS WHICH KIND A LEAF IS -- a published leaf is a
     mesh with a key on it, and hardware looks exactly like a printable here --
@@ -725,13 +720,13 @@ def test_the_reason_is_true_of_a_part_that_changed_KIND_between_revisions():
     in the other is shown by both views and is outside `covered` all the same:
     the walk saw one `<key>.step` and called it `new` or `removed`, which is
     exactly the verdict that keeps a key out of the set
-    (`comparechild._compare`). So this row is given to a part ONE BUILD DID
-    EXPORT A STEP FOR, and a sentence saying hardware and mocks have no
-    geometry of ours is then simply false about the part it is printed under.
+    (`comparechild._compare`). So this row is also given to a part ONE BUILD
+    DID EXPORT A STEP FOR, and the sentence must not give "hardware and mocks
+    have no geometry of ours" as the reason.
 
     What is true of every row that carries the word is that no PAIR of files
     came from the two builds, so nothing was fused -- which is what the sentence
-    now leads with, hardware and mocks following as the example they are. The
+    leads with, hardware and mocks following as the example they are. The
     order is asserted rather than the wording, because the wording is prose and
     the order is the claim.
     """
@@ -812,11 +807,11 @@ def test_a_key_the_walk_did_not_cover_is_never_unchanged(diffs, refused):
     `unchanged` is a positive claim, so it may only be concluded from a
     membership: the key is one the walk covered and neither map holds it. Read
     off an ABSENCE instead -- "in neither map, so nothing changed" -- it is the
-    most confident possible answer to a question nobody asked, and the shape of
-    this defect twice over. The value in `diffs` is irrelevant on purpose: a
-    row for a key nothing measured is decided before anything looks at one.
+    most confident possible answer to a question nobody asked. The value in
+    `diffs` is irrelevant on purpose: a row for a key nothing measured is
+    decided before anything looks at one.
 
-    TWO ACCEPTABLE ANSWERS NOW AND NOT ONE, because the silence has two words:
+    TWO ACCEPTABLE ANSWERS AND NOT ONE, because the silence has two words:
     the gate's refusal travels in `refused` and keeps `not measured`, and
     everything else the walk never covered is `not compared`. Which of the two
     is the parametrisation's business; that neither is `unchanged` is this
@@ -892,7 +887,7 @@ def test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed(tmp_path)
     loc -- so a change that started baking the placement into either one would
     show up as the geometry being applied twice.
 
-    Skips where the kernel is missing; CI's image carries it (issue #27).
+    Skips where the kernel is missing.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real fuse and tessellation need the kernel")

@@ -5,30 +5,23 @@ BOTH STAND ON ONE ROUTE PAIR the hub already serves (SPEC 7.8):
     GET /api/v1/sources/<revision>      the pushed body, byte for byte
     GET /api/v1/sources/<revision>/log  what that build printed
 
-Behind the publishing secret, because the code is the one thing on this service
-that is held and not shown: a build directory is public and cached for a year,
-and the sources that produced it are not (issue #17). That is the whole
-reason `artifacts` is a separate verb rather than a flag on this one.
+Behind the token: a build directory is public, the sources that produced it
+are not (hence `artifacts` is a separate verb).
 
-`source` NEVER WRITES OVER THE WORKING COPY BY DEFAULT, and that default is the
-substance of the command rather than a preference. The obvious behaviour —
-"restore this revision here" — eats whatever is uncommitted in the directory, and
-the person running it is usually running it *because* they are unsure what state
-the directory is in. So the ordinary form unpacks into a directory of its own and
-the destructive form is a flag that additionally requires git to say the tree is
-clean; then every file it replaces is one `git checkout` away.
+`source` never writes over the working copy by default: it unpacks into its own
+directory. Writing over the working copy is a flag that also requires a clean
+git tree, so every replaced file is one `git checkout` away.
 
-`log` IS ADDRESSED THREE WAYS (issue #26) because a build in the `dev`
-slot has no revision at all:
+`log` is addressed three ways, because a build in the `dev` slot has no
+revision:
 
     hammerola log              the newest revision this project has published
     hammerola log <revision>   that one
     hammerola log dev          what is in the local slot — see `_dev_log`, which
                                reaches the log through the JOB the slot names
 
-The job id stays the emergency entrance for a build IN FLIGHT, where no revision
-exists yet: `hammerola build` prints the id, and `GET /api/v1/jobs/<id>/log`
-serves it.
+A build in flight has no revision yet: `hammerola build` prints its job id,
+and `GET /api/v1/jobs/<id>/log` serves the log.
 """
 
 from pathlib import Path
@@ -38,30 +31,21 @@ from hammerola.errors import ClientError
 from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
 from hammerola.limits import DEV_SLOT, SAFE_ID
 
-# The moving name a revision argument may be spelled with. `dev` is deliberately
-# not one of these: it is a slot, not a revision, and the two commands here are
-# about things the store holds by revision.
+# The moving name a revision argument may be spelled with. `dev` is a slot,
+# not a revision.
 LATEST = "latest"
 
-# How much of a revision id goes into a default directory name. Twelve hex
-# characters is the width of a project id (SPEC 3.1) and the width `git` shows a
-# commit at — long enough to be unambiguous among a project's revisions, short
-# enough to type and to read in a `ls`.
+# How much of a revision id goes into a default directory name: the width of a
+# project id (SPEC 3.1).
 SHORT_ID_CHARS = 12
 
 
-# Where anything this tool FETCHES lands by default, under the directory the
-# command was run in. Hidden, and that is the whole point rather than tidiness:
-# an unpacked revision written beside model.py is a directory `pack.collect`
-# would put in the NEXT push — a source tree publishing a copy of an older
-# source tree — and `pack` drops hidden entries, so a dot name is excluded by
-# the rule that already exists instead of by a new list of names to remember.
+# Where anything this tool fetches lands by default. Hidden, so `pack` drops it
+# and fetched trees never end up in the next push.
 SCRATCH_DIR = ".hammerola"
 
-# Written into that directory the first time it is created. It makes git ignore
-# the fetched trees AND the file itself, which matters for a second reason: the
-# `git commit` this tool offers after a publish is `git add -A`, so an untracked
-# directory here would otherwise be staged by the very command the tool printed.
+# Makes git ignore the directory, so the offered `git add -A` does not stage
+# it.
 SCRATCH_GITIGNORE = "# Written by hammerola. Fetched builds and sources.\n*\n"
 
 
@@ -69,10 +53,8 @@ def hub_for(root) -> Hub:
     """The hub handle every project-addressing verb builds. -> Hub.
 
     Shared by `admin`, `artifacts`, `proposal`, `queue`, `revdiff`, `sources`
-    and `status`, so a timeout or a header added to the client has ONE place to
-    go: four of those carried a byte-identical copy of these three lines until
-    they all became this call. Publishing deliberately does not come through
-    here — `cli.py` builds its own with the longer push budget.
+    and `status`. Publishing does not use it: `cli.py` builds its own with the
+    longer push timeout.
     """
     return Hub(config.hub_url(root), config.edit_token(root),
                timeout=QUERY_TIMEOUT)
@@ -81,19 +63,10 @@ def hub_for(root) -> Hub:
 def public_hub(hub_url: str) -> Hub:
     """The hub handle for the routes that present no secret. -> Hub.
 
-    Shared by `create`'s template download, `skill`, `skill update`, `update`
-    and the version question `build` and `commit` ask before they publish — five
-    byte-identical copies of one line until they became this call (issue #108),
-    so a timeout or a header added to the client has ONE place to go.
-
-    THE EMPTY TOKEN IS THE ANSWER AND NOT A DEFAULT LEFT TO FILL IN. `/start`
-    and the files it names are public on purpose (`src/onboarding.py`): the
-    reader of the instructions has not been handed a password yet, and a machine
-    whose client is too old to publish may never have been logged in at all.
-
-    AN ADDRESS AND NOT A PROJECT ROOT, which is what tells this apart from
-    `hub_for` above: none of these verbs addresses a project, so none of them
-    has a directory to read a setting out of.
+    Used by `create`'s template download, `skill`, `skill update`, `update` and
+    the version check before a publish. The empty token is deliberate: `/start`
+    and the files it names are public (`src/onboarding.py`). Takes an address,
+    not a project root: none of these verbs addresses a project.
     """
     return Hub(hub_url, "", timeout=QUERY_TIMEOUT)
 
@@ -101,8 +74,7 @@ def public_hub(hub_url: str) -> Hub:
 def scratch_dir(base, name: str):
     """`<base>/.hammerola/<name>`, with the directory and its .gitignore made.
 
-    Shared with `artifacts`, because both commands bring something back from the
-    hub and neither may drop it where the next push would pick it up.
+    Shared with `artifacts` and `queue`.
     """
     root = Path(base) / SCRATCH_DIR
     try:
@@ -118,17 +90,13 @@ def scratch_dir(base, name: str):
 def resolve_revision(hub: Hub, root, name: str) -> str:
     """A revision argument to the id the store is addressed by.
 
-    `latest` is resolved HERE rather than passed through, because the store has
-    no such name: it holds one directory per revision and the moving pointer
-    lives in the project (`builds.json`). Resolving it needs the project, which
-    is why a directory with no project.json can only ask for a revision by id.
+    `latest` is resolved here from the project's `builds.json` (the store has
+    no such name), so it needs a project.json.
     """
     if name == LATEST:
         return _latest_of(hub, root)
     if name == DEV_SLOT:
-        # THE LOG HALF OF THIS SENTENCE STOPPED BEING TRUE IN #79: the slot now
-        # names the job that filled it, so `hammerola log dev` answers without a
-        # commit. Only the SOURCE is still missing, and only that is refused.
+        # The slot has no stored code; its log is read via `_dev_log`.
         raise ClientError(
             f"`{DEV_SLOT}` is the local slot, not a revision, and the hub "
             f"stores no code for it.\n"
@@ -193,15 +161,9 @@ def run_source(args) -> int:
 def _fresh_directory(args, default_name: str) -> Path:
     """Where to unpack, and the refusal to unpack into something already there.
 
-    A directory that exists and is EMPTY is fine — `mkdir out && hammerola
-    source <rev> -o out` is an ordinary thing to type. One with anything in it is
-    refused rather than merged into: a merge produces a tree that is neither the
-    revision nor what was there before, and nothing afterwards can tell which
-    file came from where.
-
-    `-o` is taken as given, including a path inside the project: somebody who
-    names a directory has said where they want it. Only the DEFAULT is steered
-    into `.hammerola/`, because a default is what lands somewhere nobody chose.
+    An existing empty directory is fine; a non-empty one is refused rather
+    than merged into. `-o` is taken as given; only the default goes under
+    `.hammerola/`.
     """
     base = Path(args.directory).expanduser() if args.directory else Path.cwd()
     given = args.output
@@ -224,19 +186,12 @@ def _fresh_directory(args, default_name: str) -> Path:
 def _into_working_copy(root, revision: str, body: bytes) -> int:
     """Make the working copy BE this revision. Only on a clean git tree.
 
-    THE FLAG IS NOT THE SAFETY, GIT IS. What this does is destructive by
-    definition — it replaces the files in a directory somebody is working in —
-    and the only reason it is offered at all is that a clean tree makes every
-    byte it touches recoverable with `git checkout`. Without a repository there
-    is no undo, so there is no way to ask for this.
+    The safety is git: a clean tree makes every touched byte recoverable with
+    `git checkout`, so there is no way to ask for this without a repository.
 
-    WHAT IT REMOVES is the narrowest set that still makes the answer true: files
-    git TRACKS, which `pack` would publish, and which this revision does not
-    have. Tracked, because those are exactly the ones git can give back;
-    publishable, because those are the ones that decide what the next push is.
-    Anything else — a gitignored `data.csv`, `.env`, `out/`, `.venv` — is left
-    where it is and named in the output, because deleting a file git cannot
-    restore is not something a `--flag` should be able to buy.
+    It removes only files that git tracks, `pack` would publish, and this
+    revision lacks. Anything else (gitignored files, `.env`, `out/`) is left
+    and named, because git could not restore it.
     """
     if root is None:
         raise ClientError(
@@ -295,9 +250,7 @@ def run_log(args) -> int:
     target = args.revision or LATEST
     hub = hub_for(root)
     if target == DEV_SLOT:
-        # The slot belongs to a PROJECT, so this address needs one — unlike a
-        # revision, which is named by the hub out of its sources and is unique
-        # across the whole service.
+        # The slot belongs to a project, unlike a globally unique revision.
         return _dev_log(hub, project.find_project_root(args.directory))
 
     revision = resolve_revision(hub, root, target)
@@ -307,29 +260,21 @@ def run_log(args) -> int:
     if text.strip():
         print(text if text.endswith("\n") else text + "\n", end="")
     else:
-        # An empty log is a real answer: the hub stores one for every published
-        # revision, and a build can publish without printing anything.
+        # A build can publish without printing anything.
         print("(the build printed nothing)")
     print("--- end of build log ---")
     return 0
 
 
 def _dev_log(hub: Hub, root) -> int:
-    """The log of the build that last filled the local slot (issue #79).
+    """The log of the build that last filled the local slot.
 
-    THE SLOT NAMES ITS JOB, and that one field in its meta.json is the whole
-    mechanism. No log is stored under the slot's name and none can be: a log is
-    kept per revision and the slot is not addressed by one (SPEC 7.8). But the
-    JOB that filled the slot goes on serving what that build printed, so
-    remembering which job it was turns an unanswerable address into a lookup —
-    and what comes back is the log of the very build whose geometry is on
-    screen, not `latest`'s log handed over under another name.
+    Logs are stored per revision (SPEC 7.8), so the slot's meta.json names the
+    job that filled it, and that job serves the log.
 
-    THE HEADER SAYS WHICH KIND OF PUSH FILLED THE SLOT, because two kinds do. A
-    `build` leaves `dev` as its job's commit; a `commit` mirrors itself into the
-    slot (issue #78) and leaves the revision it published. A reader not told
-    which one this is would work it out from the contents, after having already
-    read the log as something it is not.
+    The header says which kind of push filled the slot: a `build` leaves `dev`
+    as its job's commit, a `commit` mirrors itself into the slot with its
+    revision.
     """
     pid = project.read_project_id(root)
     meta = hub.build_meta(pid, DEV_SLOT)
@@ -349,9 +294,7 @@ def _dev_log(hub: Hub, root) -> int:
             f"recorded that. `hammerola build`\n"
             f"  fills the slot again and records the job with it.")
 
-    # THE RECORD IS DECORATION AND THE LOG IS THE ANSWER, so a hub that will not
-    # hand the record over must not take the log away with it — the header just
-    # says less.
+    # The record only decorates the header; failing to get it is not fatal.
     record = None
     try:
         record = hub.job(job)
@@ -361,14 +304,9 @@ def _dev_log(hub: Hub, root) -> int:
     try:
         text = hub.job_log(job)
     except HubError as error:
-        # ONLY A 404 IS EVIDENCE THAT THE JOB IS GONE, and only for that does
-        # this say why and what to do. The same call also fails on a stale token
-        # and on a hub that is not answering, and both of those used to be
-        # reported as a wiped volume with the advice to run `hammerola build` —
-        # a push that would fail for the very same reason a moment later. Those
-        # arrive already carrying the sentence that fits them (`login`, `cannot
-        # reach`), so they are passed through with the context this command has
-        # and nothing else added.
+        # Only a 404 means the job is gone. Other failures (stale token,
+        # unreachable hub) already carry their own sentence and are passed
+        # through.
         if error.status != 404:
             raise ClientError(
                 f"the `{DEV_SLOT}` slot of project {pid} names job {job}, and "
@@ -389,10 +327,8 @@ def _dev_log(hub: Hub, root) -> int:
     if text.strip():
         print(text if text.endswith("\n") else text + "\n", end="")
     else:
-        # A REVISION'S EMPTY LOG AND A JOB'S MEAN DIFFERENT THINGS, so they are
-        # not worded the same. A published revision printed nothing and never
-        # will; a job serves "" while it is still queued or still building, and
-        # the same command a minute later answers with the whole log.
+        # Unlike a revision's, a job's log is empty while it is still queued or
+        # building.
         print("(nothing in this job's log yet)")
     print("--- end of build log ---")
     return 0

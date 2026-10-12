@@ -1,16 +1,14 @@
-// ONE guarded door into the library's internals.
+// One guarded door into the library's internals.
 //
 // Everything reached through `viewer.clipping`, `viewer.idPicker`,
-// `viewer.controls` and `camera.getCamera()` is the library's own plumbing
-// rather than its public API. It is all funnelled through this one function for
-// a single reason: THIS IS THE FIRST PLACE A three-cad-viewer UPGRADE WILL
-// BREAK. When a piece goes missing the tools go quiet — a button stops doing
-// anything, the wheel goes back to the library's own zoom — instead of throwing
-// into a page that has already painted.
+// `viewer.controls` and `camera.getCamera()` is the library's plumbing rather
+// than its public API, and the first thing a three-cad-viewer upgrade will
+// break. When a piece goes missing the tools go quiet (a button stops working,
+// the wheel falls back to the library's zoom) instead of throwing into a page
+// that has already painted.
 //
-// The door is deliberately WIDER than any single caller needs: the cursor zoom
-// does not use the clip plane, but it asks the same question anyway. One guarded
-// door is worth more than a second, differently-wrong copy of it.
+// The door is wider than any single caller needs (the cursor zoom does not use
+// the clip plane but asks anyway), so there is only one copy of the check.
 
 import { SECTION_INDEX } from "./options.js";
 
@@ -34,8 +32,8 @@ export function internals(viewer) {
     const canvas = viewer.renderer && viewer.renderer.domElement;
     const picker = viewer.idPicker;
     if (!cam || !canvas || !picker) return null;
-    // `distanceToPoint` is the one thing the clip-value maths leans on, so a
-    // plane that no longer has it counts as a missing plane.
+    // `distanceToPoint` is what the clip-value maths relies on, so a plane
+    // without it counts as missing.
     if (!plane || typeof plane.distanceToPoint !== "function") return null;
     if (typeof camera.getPosition !== "function") return null;
     return {
@@ -43,11 +41,9 @@ export function internals(viewer) {
       controls: viewer.controls,
       display: viewer.display,
       nestedGroup: viewer.nestedGroup,
-      // Where the widgets in scene3d.js stand. Read THROUGH THIS DOOR and not off
-      // the viewer, because the getter THROWS before a render and after a
-      // `clear()` — `viewer.scene` is `this.rendered.scene`, and `rendered`
-      // refuses when there is none. The `viewer.ready` check above is what makes
-      // this line safe, and the `try` around it is what makes it safe anyway.
+      // Where the widgets in scene3d.js stand. Read here, not off the viewer:
+      // `viewer.scene` is `this.rendered.scene` and throws before a render and
+      // after `clear()`. The `viewer.ready` check and the `try` keep it safe.
       scene: viewer.scene,
     };
   } catch (error) {

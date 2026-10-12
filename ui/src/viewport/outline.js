@@ -1,89 +1,64 @@
 // ui/src/viewport/outline.js — the dark contour of each part's cut face.
 //
-// The library clips fragments on the GPU, so a cut face ends at the plane as a
-// bare coloured silhouette: nothing marks WHERE the solid was cut open. The
-// hatch (hatch.js) fills the face; this draws its edge. For every solid the
-// section plane is intersected with the solid's own triangles and the
-// resulting segments are laid down as a dark line in the plane, on the
-// library's fat-line stack — `LineSegments2` over a `LineSegmentsGeometry`
-// under a `LineMaterial`, harvested off a live solid's edge overlay because
-// the bundle exports none of the three. The fork (`viewer/`) did not change
-// that: what `viewer/src/index.ts` re-exports is three's own namespace, and
-// all three of these are `three/examples/jsm` addons, which are not in it.
+// The library clips fragments on the GPU, so nothing marks where a solid was
+// cut open. The hatch (hatch.js) fills the face; this draws its edge. For every
+// solid the section plane is intersected with its triangles and the segments
+// are drawn as a dark line on the library's fat-line stack (`LineSegments2`,
+// `LineSegmentsGeometry`, `LineMaterial`). Those are `three/examples/jsm`
+// addons that neither the bundle nor the fork's re-exported three namespace
+// provide, so they are harvested off a live solid's edge overlay.
 //
-// ONE outline object per solid, a child of that solid's ObjectGroup: a
-// ghosted or rebuilt part carries its outline along for free. The
-// intersection runs in the solid's LOCAL frame — the triangle positions are
-// read exactly as stored and only the PLANE is transformed — which saves
-// transforming every triangle into world coordinates. It does NOT save a
-// rebuild when the part moves: the plane stands in the WORLD, so a moved part
-// cuts differently through it, and the move path (`movePart`/`reconcileMoves`)
-// drops the memo and calls `refreshSectionOutline` since no plane write is
-// coming to rebuild for it. The memo below (on the viewport object, never at
-// module scope) holds the rebuild off whenever the PLANE did not move.
+// One outline per solid, a child of its ObjectGroup, so ghosting and rebuilds
+// carry it along. The intersection runs in the solid's local frame (only the
+// plane is transformed). The plane stands in the world, so moving a part
+// changes its cut: the move path (`movePart`/`reconcileMoves`) calls
+// `refreshSectionOutline`. The memo (on the viewport object, never at module
+// scope) skips the rebuild while the plane has not moved.
 
 import { cross3, unit3 } from "./math.js";
 import { SECTION_INDEX } from "./options.js";
 
-// The name the outline child carries inside its ObjectGroup — ours by
-// CONVENTION only: `renderShape` names the library's own children from the
-// payload's shape name, so nothing in the hub's alphabet keeps a part from
-// being called exactly this, and `outlineChild` therefore requires the
-// fat-line marker beside the name. What the library DOES reserve is the
-// "clipping" prefix — `_forEachMaterial` skips children named that, and the
-// name deliberately stays outside it, which is what lets ghosting reach the
-// outline with everything else.
+// The name the outline child carries inside its ObjectGroup, by convention
+// only: `renderShape` names the library's children from the payload's shape
+// names, so a part may be called this too, and `outlineChild` therefore looks
+// for the userData mark instead. The library reserves the "clipping" prefix
+// (`_forEachMaterial` skips it); this name stays outside it so ghosting reaches
+// the outline.
 export const OUTLINE_NAME = "sectionOutline";
 
 /** Where an outline keeps the WORLD normal of the plane it was cut by. */
 const CUT_PLANE_KEY = "sectionOutlineNormal";
 
-// THE SAME WIDTH THE LIBRARY GIVES A MODEL'S OWN EDGE, and that is the owner's
-// decision of 2026-09-18: the cut has no edge of its own — measured, by hiding
-// every contour in the browser, which leaves the boundary of a cut face with no
-// line on it at all — so what this draws is the edge that a section opens up,
-// and an edge is what it should look like. It was 2 before, which read as a
-// heavier line than anything else in the picture.
+// The same width the library gives a model's own edge: the cut opens up an
+// edge (the cut face has no boundary line of its own), so it should look like
+// one.
 //
-// IN CSS PIXELS, because that is the only measure that is the same on every
-// face. A width taken off the MODEL was tried twice — a tenth of the solid's
-// smallest bounding-box dimension, then `2 * Area / Perimeter` of the cut face
-// — and both gave the same picture: a fat black rim around a wide face and no
-// line at all around a narrow one, where the width fell under a pixel.
-//
-// What a constant pixel width does NOT promise: pulled far enough back, a wall
-// only a few pixels wide still has the contours on its two sides meet, and the
-// face between them disappears. Zooming in is the answer there — which is the
-// whole difference from a width on the model, where the ratio holds however
-// close the reader leans in.
+// In CSS pixels, the only measure that is the same on every face. A width
+// derived from the model gives a fat rim around wide faces and no line around
+// narrow ones. Pulled far enough back, a thin wall's two contours still merge;
+// zooming in is the answer.
 const OUTLINE_WIDTH = 1;
 const OUTLINE_COLOR = 0x303030;
 
 /**
- * What the fat-line shader does NOT do, and this puts back.
+ * What the fat-line shader does not do, and this puts back.
  *
- * A fat line is a quad widened in SCREEN space: the shader shifts `clip.xy` by
- * the half-width and leaves `clip.z` at the value the segment's endpoint had.
- * The band's depth is therefore CONSTANT ACROSS ITS WIDTH, while the cut plane
- * the band lies in recedes across it. Half of every band sits behind the plane,
- * and the depth test hands those pixels to whatever is drawn there — the cut's
- * own opaque cap on one side, the solid's faces on the other, each a hair in
- * front. What survives is the sliver that happens to land in front, which is
- * how one contour came out fat along one edge, hairline along the next and
- * absent along a third. Measured on the owner's model: widening the contour to
- * 8 px turned every gap into a continuous line of varying thickness, which is
- * the same defect with more ink.
+ * A fat line is a quad widened in screen space: the shader shifts `clip.xy` by
+ * the half-width and leaves `clip.z` at the endpoint's value, so the band's
+ * depth is constant across its width while the cut plane recedes across it.
+ * Half of every band sits behind the plane and loses the depth test to the cap
+ * or the solid's faces, so the contour comes out fat on one edge, hairline on
+ * the next and absent on a third.
  *
- * The correction puts the shifted corner back ON the plane. The shift is known
- * in view units, the plane's normal is known in view space, and a plane is
- * flat, so one step is exact rather than an approximation:
+ * The correction puts the shifted corner back on the plane. The shift is known
+ * in view units and the plane's normal in view space, and a plane is flat, so
+ * one step is exact:
  *
  *     n . (d + dz) = 0   ->   dz = -(n.x * d.x + n.y * d.y) / n.z
  *
- * ORTHOGRAPHIC ONLY, which is the camera this app builds (`options.js`,
- * `ortho: true`). Under a perspective projection a corner's `clip.w` moves with
- * its depth and the correction would have to move both; rather than pretend,
- * the branch reads the projection and does nothing there.
+ * Orthographic only (`options.js`, `ortho: true`). Under perspective a corner's
+ * `clip.w` moves with its depth, so the branch checks the projection and does
+ * nothing there.
  */
 const CUT_DEPTH_GLSL = `
   if ( hmrCutNormal.w > 0.5 && projectionMatrix[2][3] == 0.0
@@ -106,17 +81,14 @@ const NO_SEGMENTS = new Float32Array(0);
 const read3 = (v) => (Array.isArray(v) ? [v[0], v[1], v[2]] : [v.x, v.y, v.z]);
 
 /**
- * The contour child of a part's group, if it has one — found by a MARK WE PUT
- * ON IT, never by its name and never by its class.
+ * The contour child of a part's group, if it has one, found by a mark we put
+ * on it, never by its name or class.
  *
- * Neither of those two identifies it. `renderShape` names the library's own
- * children from the payload's shape name, so a part may legitimately be called
- * `sectionOutline`, and then its `front` answers a name scan with a geometry
- * `setPositions` throws on — while its EDGES answer name AND class both, being
- * a `LineSegments2` of that same name, and would quietly receive the contour
- * in place of the part's own edges. A key we write on our own object is the
- * only answer that cannot collide: nothing else in the group has it, whatever
- * the model is called. The name stays for whoever reads the scene graph.
+ * A part may legitimately be named `sectionOutline` (`renderShape` names
+ * children from the payload): its `front` would match a name scan with a
+ * geometry `setPositions` throws on, and its edges, a `LineSegments2` of that
+ * name, would match name and class and receive the contour. A key on our own
+ * object cannot collide. The name stays for whoever reads the scene graph.
  */
 export function outlineChild(group) {
   if (!group || !Array.isArray(group.children)) return null;
@@ -154,18 +126,13 @@ function lineClasses(g) {
  * The outline material for one solid: the library's own edge material, dark and
  * `OUTLINE_WIDTH` across.
  *
- * Cloned rather than built, so it keeps what the factory already got right —
- * the polygon offset toward the camera, no tone mapping, shader clipping on.
- * It must NOT be clipped by the plane it lies IN, so it carries what the cap
- * materials carry: only the OTHER two planes, in the library's own order.
+ * Cloned, so it keeps the polygon offset toward the camera, no tone mapping and
+ * shader clipping. It must not be clipped by the plane it lies in, so like the
+ * cap materials it carries only the other two planes, in the library's order.
  *
- * `resolution` matters again, now that the PIXEL branch of the fat-line shader
- * is the one in use: `linewidth` counts CSS pixels unless the material is told
- * otherwise, and that branch is where the quad's offset is divided by the
- * canvas size. Nothing here tells it otherwise. The write below is also what
- * the library's own edge materials carry and what `onBeforeRender` rewrites
- * from the viewport before every draw, so a clone that quietly dropped it would
- * be the odd one out for no gain.
+ * `resolution` is needed: `linewidth` counts CSS pixels, and the pixel branch
+ * of the fat-line shader divides the offset by the canvas size. The library's
+ * `onBeforeRender` rewrites it before every draw.
  */
 function outlineMaterial(classes, g) {
   const material = classes.edges.material.clone();
@@ -174,27 +141,22 @@ function outlineMaterial(classes, g) {
   material.clippingPlanes = g.clipping.clipPlanes.filter(
     (_, index) => index !== SECTION_INDEX);
   material.resolution.set(g.nestedGroup.width, g.nestedGroup.height);
-  // The cut plane's normal IN VIEW SPACE, rewritten before every draw by the
+  // The cut plane's normal in view space, rewritten before every draw by the
   // hook `sectionOutline` installs and read by the correction above. `w` stays
-  // 0 until that hook has run once, which keeps the branch off before anything
-  // has been measured. A plain array rather than a `Vector4`, which the fork
-  // now does put within reach (`viewer/src/index.ts` re-exports three): three's
-  // uniform setter takes an array for a `vec4` exactly as it takes a vector, so
-  // constructing one would buy nothing here.
+  // 0 until that hook has run, keeping the branch off. A plain array: three's
+  // uniform setter takes one for a `vec4`.
   const cutNormal = { value: [0, 0, 1, 0] };
   material.userData = { ...(material.userData || {}), cutNormal };
-  // NO `customProgramCacheKey` OF OUR OWN, for the reason `hatch.js` already
-  // writes out for the cap patch: three's default returns
-  // `onBeforeCompile.toString()`, so every contour — whose patch is spelled the
-  // same — lands on ONE compiled program, and the library's own edge material,
-  // whose hook is a different function, cannot land on it.
+  // No `customProgramCacheKey` of our own (see `hatch.js`): three's default is
+  // `onBeforeCompile.toString()`, so every contour shares one compiled program
+  // and the library's own edge material cannot land on it.
   material.onBeforeCompile = (shader) => {
     shader.uniforms.hmrCutNormal = cutNormal;
     const patched = shader.vertexShader.replace(
       CUT_DEPTH_ANCHOR, CUT_DEPTH_ANCHOR + "\n" + CUT_DEPTH_GLSL);
     if (patched === shader.vertexShader) {
       // The vendored shader moved. Say so, rather than drawing a contour that
-      // is silently back to losing most of its width.
+      // silently loses most of its width.
       console.warn("section outline: the fat-line shader no longer carries the"
         + " line the depth correction hangs off");
       return;
@@ -205,14 +167,12 @@ function outlineMaterial(classes, g) {
 }
 
 /**
- * Put the cut plane's normal into the material's uniform, in VIEW space.
+ * Put the cut plane's normal into the material's uniform, in view space.
  *
- * Per frame rather than per placement: the plane stands still in the world
- * while the reader orbits, and what the shader needs is the normal as the
- * CAMERA sees it. The three columns of `matrixWorld` dotted with the world
- * normal are exactly the inverse rotation applied to it, a camera's matrix
- * carrying no scale. Which way the normal points does not matter: it cancels in
- * the ratio the shader takes.
+ * Per frame: the plane stands still in the world while the reader orbits. The
+ * three columns of `matrixWorld` dotted with the world normal apply the inverse
+ * rotation (a camera matrix carries no scale). The normal's sign cancels in the
+ * shader's ratio.
  */
 function writeCutNormal(outline, camera) {
   const uniform = outline.material && outline.material.userData
@@ -229,30 +189,15 @@ function writeCutNormal(outline, camera) {
 /**
  * Put a new set of segments into an outline that already exists.
  *
- * A FRESH GEOMETRY EVERY TIME, and that is the whole of this function rather
- * than a tidiness. `setPositions` does replace the instanced buffer on the
- * geometry it is called on — and three caches HOW MANY INSTANCES IT MAY DRAW on
- * that same geometry, in `_maxInstanceCount`: `WebGLBindingStates
- * .setupVertexAttributes` (static/_v/three.module.js:1908) writes the field only
- * while it `=== undefined`, and `renderBufferDirect`
- * (static/_v/three.module.js:17116) then draws
- * `min(instanceCount, _maxInstanceCount)`. Nothing recomputes it while the
- * geometry lives — the one thing that clears it is the geometry's dispose event
- * (`delete geometry._maxInstanceCount`, static/_v/three.module.js:4254) — so an
- * outline built at one plane position and refilled at another goes on drawing
- * the number of segments it had AT BIRTH, silently, with the rest of the buffer
- * correct and never rasterised.
- *
- * Measured in the browser on the owner's own model (xmas-ball), a cut laid on
- * the outer face and then dragged in through the spherical cavity: the carrier's
- * contour held 185 segments with 48 drawn, the insert's 86 with 17 — a few
- * straight edges inked and the whole curve of the cavity missing, which is what
- * "the contour disappears in places" was. Nothing else draws there: hiding every
- * contour leaves the boundary of a cut face with no line on it at all.
- *
- * A geometry object that the renderer has never seen carries no such cache, so
- * it is drawn whole. The old one owns a GPU buffer and a vertex-array object and
- * nothing else refers to it, so it is disposed here.
+ * A fresh geometry every time. `setPositions` replaces the instanced buffer,
+ * but three caches the drawable instance count on the geometry in
+ * `_maxInstanceCount`: `WebGLBindingStates.setupVertexAttributes`
+ * (static/_v/three.module.js:1908) writes it only while it is `undefined`, and
+ * `renderBufferDirect` (static/_v/three.module.js:17116) draws
+ * `min(instanceCount, _maxInstanceCount)`. Only the dispose event clears it
+ * (static/_v/three.module.js:4254), so a refilled outline would keep drawing
+ * only as many segments as it had at birth, silently. A new geometry has no
+ * cache; the old one is disposed to free its GPU buffer and VAO.
  */
 function writeSegments(outline, segments) {
   const previous = outline.geometry;
@@ -284,51 +229,29 @@ function planeMayCut(box, n, c) {
 
 /**
  * Where the local plane cuts one solid's triangles, as the flat xyz xyz list
- * `setPositions` takes. A triangle is crossed where an edge's endpoints land
- * on opposite sides; its two crossings are one segment. THE SIGN TEST COUNTS
- * ZERO AS THE NEGATIVE SIDE, so a triangle with one vertex exactly ON the
- * plane and the other two on the POSITIVE side reports both edges at that
- * vertex as crossings — two of them at the same point, i.e. a ZERO-LENGTH
- * segment, not nothing (with the other two negative, no edge crosses and
- * nothing is emitted). The segment is harmless: the fat-line vertex shader
- * expands its screen-space quad along the segment's own direction, and with
- * both endpoints identical there is no direction to expand along, so the quad
- * degenerates and nothing rasterises — which is why it is left in the buffer
- * rather than special-cased out. A distance that is not finite (a degenerate
- * solid) skips the triangle, so nothing reaches the buffer as NaN.
+ * `setPositions` takes. A triangle is crossed where an edge's endpoints land on
+ * opposite sides; its two crossings are one segment.
  *
- * EACH CHORD IS DIRECTED, from the crossing where the walk LEAVES the positive
- * side to the one where it comes back — never in the order the edge walk met
- * them. That direction is a property of THIS ROUTINE, pinned by its own tests
- * and by nothing downstream: the fat line and the parity test in
- * `insideSection` do not care either way, and the one reader that did care — a
- * contour width summed off the chords as a signed area — has been withdrawn.
+ * The sign test counts zero as the negative side, so a triangle with one vertex
+ * on the plane and the other two positive yields a zero-length segment. It is
+ * harmless: the fat-line shader expands along the segment's direction, and with
+ * none the quad degenerates and nothing rasterises. A non-finite distance (a
+ * degenerate solid) skips the triangle, so no NaN reaches the buffer.
  *
- * WALK ORDER IS NOT THAT ORDER, and taking it for one silently halves or zeroes
- * the signed area the chords enclose — which is the quantity that reads the
- * direction back off the buffer, and it lives in the tests (`signedArea` in
- * outline.test.js) rather than in this module. The two crossings are met at
- * edges `(0,1) (1,2) (2,0)` in that sequence, and which of them comes first
- * depends on where corner 0 happens to sit relative to the plane: with
- * `d = (-, +, -)` the walk meets the entry before the exit, with `d = (+, -, +)`
- * the other way round. Both are the same mesh with the same winding, and a
- * tessellator has no reason to list a triangle from one corner rather than
- * another — measured on the payload fixture, a cylinder's lateral chords came
- * out reversed against its end caps' and the two cancelled to an area of
- * exactly zero. The SIGN the edge leaves on is what identifies an end: an edge
- * running `+` to `-` carries the chord's start, one running `-` to `+` its end.
+ * Each chord is directed from the crossing where the walk leaves the positive
+ * side to the one where it returns, not in edge-walk order (which depends on
+ * which corner the triangle is listed from: `d = (-, +, -)` meets the entry
+ * first, `d = (+, -, +)` the exit). An edge running `+` to `-` carries the
+ * chord's start, `-` to `+` its end. The direction is pinned only by this
+ * routine's tests (`signedArea` in outline.test.js); the fat line and
+ * `insideSection` do not care.
  *
- * WHAT THAT IS FREE OF IS THE LISTING ORDER — which of its three corners a
- * triangle happens to be written from — and not the winding, which it still
- * depends on entirely: reverse a triangle to `(v0, v2, v1)` and its edges are
- * walked the other way, so the `+`-to-`-` edge becomes the `-`-to-`+` one and
- * the chord turns round. A consistently wound MESH is the one thing the
- * direction asks of the tessellation, and it is a real requirement rather than a
- * formality — the suite's own cube did not satisfy it until this was written,
- * which is why outline.test.js pins the fixture's winding beside the chords.
+ * It is independent of listing order but not of winding: reversing a triangle
+ * reverses its chord, so a consistently wound mesh is required, and
+ * outline.test.js pins the fixture's winding.
  *
- * With exactly two crossings there is one of each, always: signs alternate
- * around a closed walk, so an odd count of one kind is impossible.
+ * With exactly two crossings there is one of each: signs alternate around a
+ * closed walk.
  */
 function planeThroughTriangles(positions, index, n, c) {
   const flat = [];
@@ -349,9 +272,8 @@ function planeThroughTriangles(positions, index, n, c) {
       if (!Number.isFinite(da) || !Number.isFinite(db) || (da > 0) === (db > 0)) {
         continue;
       }
-      // No zero-divide guard, and none is possible: the test above passed, so
-      // one of the two is strictly positive and the other is not, and both are
-      // finite — `da - db` is therefore strictly positive.
+      // No zero-divide is possible: one of the two is strictly positive, the
+      // other is not, and both are finite, so `da - db` is strictly positive.
       const t = da / (da - db);
       const a = index[triangle + corner] * 3;
       const b = index[triangle + next] * 3;
@@ -374,15 +296,13 @@ function planeThroughTriangles(positions, index, n, c) {
  * as `{ n, c }`.
  *
  * With a column-major `matrixWorld` (e), p_world = R p_local + t, so
- * `n . p + c` reads `(R^T n) . p_local + (n . t + c)`: ONLY THE PLANE CROSSES
- * OVER and the triangles are read exactly as stored, which is what saves
- * transforming a whole tessellation. The local normal is not unit — the matrix
- * may scale — but every comparison downstream is a sign or a ratio, which a
- * common factor survives.
+ * `n . p + c` reads `(R^T n) . p_local + (n . t + c)`: only the plane is
+ * transformed and the triangles are read as stored. The local normal is not
+ * unit (the matrix may scale), but every comparison downstream is a sign or a
+ * ratio.
  *
- * Shared by the contour and by the containment test that answers a right-click
- * on a cut face (picking.js), because two copies of this transposition would be
- * two chances to read the matrix down a row instead of across.
+ * Shared by the contour and by the containment test for a right-click on a cut
+ * face (picking.js).
  */
 function localPlane(matrixWorld, nx, ny, nz, constant) {
   const e = matrixWorld.elements;
@@ -400,16 +320,11 @@ function localPlane(matrixWorld, nx, ny, nz, constant) {
  * One solid's cross-section by the WORLD plane `normal . p + constant = 0`, as
  * the flat `xyz xyz` segment list `planeThroughTriangles` produces, carried into
  * WORLD coordinates. Empty when the plane misses the solid; null when the solid
- * has no tessellation to intersect at all.
+ * has no tessellation.
  *
- * The contour draws its segments as a child of the solid's own group, so it
- * keeps them local and lets the scene graph place them. This answers a question
- * asked in the world — "is the point the cursor lands on inside this shape" —
- * and the ONLY other way to compare the two is to carry the point the other way,
- * which needs the INVERSE of `matrixWorld`. So the segments come out instead:
- * they are the boundary of one cut face, a few dozen points, against a matrix
- * inversion done per solid per click and a scale the library is free to put in
- * that matrix.
+ * Used for "is the cursor's point inside this shape", asked in the world.
+ * Carrying the few dozen boundary points to world coordinates avoids inverting
+ * `matrixWorld` per solid per click.
  */
 export function sectionSegments(front, normal, constant) {
   const geometry = front && front.geometry;
@@ -438,28 +353,20 @@ export function sectionSegments(front, normal, constant) {
 }
 
 /**
- * Does `point` lie inside the cross-section `segments` bounds? A CROSSING-PARITY
- * TEST, in the plane, and pure.
+ * Does `point` lie inside the cross-section `segments` bounds? A crossing-parity
+ * test in the plane, and pure.
  *
- * The cross-section of a solid is a set of CLOSED LOOPS — the plane enters the
- * body and leaves it — so a ray cast from the point in any direction crosses the
- * boundary an odd number of times exactly when the point is inside. A hole comes
- * out right for free: its boundary is another loop, so a point in the hole
- * crosses twice and reads as outside, which is what the reader sees there.
+ * A cross-section is a set of closed loops, so a ray from the point crosses the
+ * boundary an odd number of times exactly when it is inside; a hole is another
+ * loop, so a point in it reads as outside.
  *
- * THE SEGMENTS DO NOT HAVE TO BE ORDERED, which is why this can eat
- * `planeThroughTriangles`' output as it stands: parity counts crossings, and a
- * crossing does not care which loop it belongs to or which way round the loop
- * runs. The zero-length segments that function can emit (a triangle with one
- * vertex exactly on the plane) are skipped by the first test below rather than
- * special-cased, both endpoints being on the same side of the ray.
+ * The segments need not be ordered or oriented, so `planeThroughTriangles`'
+ * output is used as is. Its zero-length segments are skipped by the first test
+ * below, both endpoints being on the same side of the ray.
  *
- * The two axes are an orthonormal in-plane basis: `u` is the world axis LEAST
- * aligned with the normal, rotated flat by a cross product so it is never
- * degenerate whatever the plane's orientation, and `v` completes it. Parity
- * would survive any invertible projection, but an orthonormal one keeps the
- * numbers the same size as the model, which is what keeps a 2 mm part and a 2 m
- * one on the same footing.
+ * `u` is the world axis least aligned with the normal, flattened by a cross
+ * product so it is never degenerate, and `v` completes an orthonormal in-plane
+ * basis, which keeps the numbers on the model's scale.
  */
 export function insideSection(segments, point, normal) {
   // Two segments is the smallest closed loop, i.e. twelve numbers; anything
@@ -489,11 +396,9 @@ export function insideSection(segments, point, normal) {
     const bv = v[0] * segments[at + 3] + v[1] * segments[at + 4]
       + v[2] * segments[at + 5];
     // The half-open rule: a segment counts when the ray's v lies in [av, bv)
-    // one way round or the other. It is what keeps a ray passing exactly
-    // through a shared endpoint from counting that endpoint twice — and it
-    // answers a NaN coordinate by skipping the segment, since neither
-    // comparison can be true. A segment that survives it has `bv !== av`, so
-    // the division below cannot divide by zero.
+    // one way round or the other, so a ray through a shared endpoint counts it
+    // once. A NaN coordinate fails both comparisons and is skipped. A surviving
+    // segment has `bv !== av`, so the division cannot divide by zero.
     if ((av > pv) === (bv > pv)) continue;
     if (pu < au + ((pv - av) / (bv - av)) * (bu - au)) inside = !inside;
   }
@@ -503,25 +408,20 @@ export function insideSection(segments, point, normal) {
 /**
  * Rebuild every solid's outline for the plane standing at `normal` through
  * slider value `value`. The two plane-write sites in section.js call this
- * BEFORE the library's own write, because those calls end in a render the
+ * before the library's own write, because that write ends in a render the
  * outline has to exist by.
  *
- * Memoised on the plane's normal and value ON THE VIEWPORT: a drag fires this
- * several times a second, and when the plane did not move there is nothing to
- * rebuild. The memo does not cover a MOVED PART — the plane stands in the
- * world, so moving a part through it changes the cut — which is why the move
- * path calls `refreshSectionOutline` instead of trusting the key. `show()`
- * clears the memo when it swaps the scene, because the old outline objects
- * died with the groups they hung on.
+ * Memoised on the plane's normal and value on the viewport: a drag fires this
+ * several times a second. The memo does not cover a moved part, so the move
+ * path calls `refreshSectionOutline`. `show()` clears the memo when it swaps the
+ * scene, since the old outlines died with their groups.
  *
- * `normal` MUST BE UNIT, the same precondition `sectionValueFor` states in
- * section.js and for the same reason: the world constant below is
- * `value - normal . centre`, which is `CenteredPlane.setConstant` only when the
- * normal has length one. Give it a longer one and this draws a contour on a
- * different plane from the one the library is clipping with — silently, since
- * both are perfectly good planes. Every caller satisfies it: the seed is
- * normalised in `placeSectionPlane`, and the other two read the library's own
- * plane, which `setClipNormal` normalised.
+ * `normal` must be unit (as `sectionValueFor` in section.js requires): the
+ * world constant is `value - normal . centre`, which matches
+ * `CenteredPlane.setConstant` only for a unit normal; otherwise the contour is
+ * drawn on a different plane from the clipping one, silently. Every caller
+ * satisfies it: the seed is normalised in `placeSectionPlane`, and the others
+ * read the library's plane, which `setClipNormal` normalised.
  */
 export function sectionOutline(vp, g, normal, value) {
   const [nx, ny, nz] = read3(normal);
@@ -557,20 +457,18 @@ export function sectionOutline(vp, g, normal, value) {
     const { n, c } = localPlane(front.matrixWorld, nx, ny, nz, constant);
     let outline = outlineChild(group);
     if (!planeMayCut(geometry.boundingBox, n, c)) {
-      // The box test only saves the triangle walk — the plane still has to be
-      // WRITTEN, because a solid it just left must not keep the contour cut
-      // where the plane used to be. A miss with nothing to overwrite creates
-      // nothing.
+      // The box test only saves the triangle walk; the plane must still be
+      // written, so a solid the plane just left loses its old contour. A miss
+      // with nothing to overwrite creates nothing.
       if (outline) writeSegments(outline, NO_SEGMENTS);
       continue;
     }
     const segments = planeThroughTriangles(
       position.array, geometry.index.array, n, c);
     if (outline) {
-      // An update, not a rebuild: the object keeps its place in the group, and
-      // it keeps the material it was built with — the width does not vary with
-      // the face, so a rebuild has nothing to say about it. Its GEOMETRY is
-      // replaced rather than refilled, for the reason `writeSegments` gives.
+      // An update: the object keeps its place in the group and its material
+      // (the width does not vary). Its geometry is replaced, see
+      // `writeSegments`.
       writeSegments(outline, segments);
     } else {
       // The same construction order `_renderEdges` uses: fill the geometry,
@@ -580,31 +478,19 @@ export function sectionOutline(vp, g, normal, value) {
       outline = new classes.LineSegments2(
         lineGeometry, outlineMaterial(classes, g));
       outline.name = OUTLINE_NAME;
-      // LAST IN THE FRAME, above every face and every edge the library draws.
+      // Last in the frame, above every face and edge the library draws.
       //
-      // Every material the library gives a SHAPE — front, back and edges — is
-      // `transparent: true`, so the model itself is sorted in the transparent
-      // pass by `renderOrder` first. (The cut's own cap is not: it is opaque,
-      // and an opaque pass is drawn before the whole transparent one, which is
-      // why the contour reads over the cap no matter what this number says.)
-      // The library puts its own edges at 999 unconditionally, and a part's
-      // FACES at 999 too — but only when the part is translucent. A contour
-      // left at the default 0 therefore draws before every translucent face in
-      // the scene, and those faces, writing no depth of their own, blend
-      // straight over it: a dark line under a half-transparent lid came out
-      // pale blue and under two layers of one came out as nothing at all. That
-      // is what "the contour is on some faces and missing on others" was — not
-      // a contour that failed to build. Measured on the owner's model: the
-      // lines this recovers are exactly the ones that ran under translucent
-      // parts, and the opaque latch beside them never lost its own.
+      // Every material the library gives a shape is `transparent: true`, so the
+      // model is sorted in the transparent pass by `renderOrder` first. (The cap
+      // is opaque and drawn earlier, so the contour reads over it regardless.)
+      // The library puts its edges at 999, and translucent parts' faces at 999
+      // too; a contour at 0 would draw before them, and those faces, writing no
+      // depth, blend over it until it vanishes under translucent parts.
       //
-      // 1000 and not 999: inside one `renderOrder` bucket the order comes from
-      // the depth of each object's bounding-sphere centre, which is decided per
-      // solid and changes as the model turns — the same lottery in a narrower
-      // room. Above the bucket there is no lottery. It is also the library's own
-      // spelling of this: its highlight points carry 1000 and the comment beside
-      // them reads "after faces/edges". Depth testing still holds, so an opaque
-      // part in front hides the contour as it always did.
+      // 1000, not 999: within one bucket the order follows each object's
+      // bounding-sphere depth, which changes as the model turns. The library's
+      // highlight points also use 1000 ("after faces/edges"). Depth testing
+      // still lets an opaque part in front hide the contour.
       outline.renderOrder = 1000;
       // The mark `outlineChild` finds it by. Written here and nowhere else.
       outline.userData = { ...(outline.userData || {}), [OUTLINE_NAME]: true };
@@ -616,22 +502,14 @@ export function sectionOutline(vp, g, normal, value) {
         if (typeof inherited === "function") inherited.apply(this, arguments);
         writeCutNormal(this, camera);
       };
-      // BORN MATCHING ITS PART, read off the part rather than off a list. The
-      // two places that carry hiding and ghosting onto an outline (parts.js)
-      // reach one that already exists, and an outline can be created after
-      // them: a live reload applies the hidden list inside `show()` and only
-      // then restores the cut, so a hidden part would get a fresh contour
-      // floating over nothing until the reader touched the list again. The
-      // part's own front material is what the library's `setStates` writes, so
-      // it is the state to copy — no second trigger, and no hidden list in
-      // here.
-      // Both answers come off that ONE material and never off `group.opacity`,
-      // which `applyGhost` writes when it ghosts and never writes back — so a
-      // part ghosted and un-ghosted again still reads the ghost's own
-      // multiplier there rather than the part's own opacity. The face's
-      // own opacity is what `setTransparent` maintains in both directions, and
-      // it carries the model's own alpha too, which is the owner's decision of
-      // 2026-08-31: the cut face inherits the body's transparency.
+      // Born matching its part. parts.js carries hiding and ghosting onto
+      // existing outlines, but an outline can be created later: a live reload
+      // applies the hidden list inside `show()` before restoring the cut. So the
+      // state is copied off the part's front material, which `setStates` writes.
+      // Not off `group.opacity`, which `applyGhost` writes and never resets:
+      // the face's own opacity is maintained by `setTransparent` both ways and
+      // includes the model's alpha, so the cut face inherits the body's
+      // transparency.
       const face = front.material;
       if (face) {
         outline.visible = face.visible !== false;

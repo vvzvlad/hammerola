@@ -60,16 +60,12 @@ def test_a_model_that_will_not_import_says_why(isolated_project):
 def test_the_import_names_the_line_the_model_failed_on(isolated_project):
     """`importing model.py failed (model.py:3)` -- the door that named nothing.
 
-    THIS IS THE DOOR IT MATTERS MOST AT, and it was the one door with no line.
     `provenance` looks only at MODULE-LEVEL names, so a note the constructor
     refuses is almost always written at the top of model.py and is raised during
-    the IMPORT rather than inside parts(), views() or checks() -- the three that
-    already answered `(model.py:5)`. Without it an author with forty constants
-    is told only that one of them has a newline in it, and finds out which by
-    reading.
+    the IMPORT rather than inside parts(), views() or checks(). Without the line
+    an author with forty constants cannot tell which one is wrong.
 
-    THE END-TO-END WITNESS FOR THIS PATH IS THE EXIT CODE and lives where an
-    exit code exists:
+    The end-to-end witness for this path is the exit code:
     `tests/buildproc/test_build_child.py::test_a_note_that_cannot_be_published_is_a_failed_build`.
     """
     (isolated_project / "model.py").write_text(
@@ -159,9 +155,8 @@ def test_a_model_from_before_the_catalogue_is_told_the_contract_changed(
 
     "model.py does not define parts()" is true and useless to them: the name is
     not missing by accident, it replaced the `printables()` their file has, and
-    a message that does not say so sends them hunting for a typo. This is the
-    sentence and nothing more -- the translator for the old shape was written
-    and then deleted on purpose, so the build is still refused.
+    a message that does not say so sends them hunting for a typo. The build is
+    still refused: there is no translator for the old shape.
     """
     (isolated_project / "model.py").write_text(
         "def printables():\n    return {}\n\n\ndef views():\n    return []\n",
@@ -266,12 +261,10 @@ def test_drop_mesh_walks_every_body(monkeypatch):
     """Per body, not `val()`: each body carries its own triangulation, so one
     left meshed makes the next BoundingBox() read that body off its mesh.
 
-    THE WALK IS ALL THIS CAN SEE. `Clean_s` is a stub here, so nothing about
+    The walk is all this can see. `Clean_s` is a stub here, so nothing about
     what a mesh does to a box, or about which copies of a shape share one, can
-    be asserted from this test -- that used to be a sentence in this docstring
-    ("a shape shares its triangulation through the TShape") standing in for
-    evidence, and it was half wrong: a `translate()` copy shares nothing.
-    `test_drop_mesh.py` is where those claims are measured on the real kernel.
+    be asserted from this test; `test_drop_mesh.py` measures those on the real
+    kernel.
     """
     cleaned = []
     monkeypatch.setitem(

@@ -1,30 +1,17 @@
 """Reading a revision's archive back: in memory for `diff`, onto disk for `source`.
 
-WHY THE MEMBERS ARE CHECKED AGAIN HERE, when the hub already refused everything
-this refuses on the way in (`Store._unpack`, SPEC 7.1). Because "the other side
-validated it" is not a control on the machine doing the WRITING. What runs here
-runs on the author's laptop, under their account, with their home directory in
-reach, and it is being handed a tar by a network service over a token that a
-compromised hub — or a hub somebody was talked into pointing at — also holds. A
-tar member named `../.ssh/authorized_keys` costs nothing to refuse and everything
-to accept once.
+Members are checked again here although the hub refused the same things on
+the way in (`Store._unpack`, SPEC 7.1): this writes onto the author's machine,
+and a compromised or wrong hub must not be able to write
+`../.ssh/authorized_keys`.
 
-It is also not the same check twice for a second reason: what the hub enforces is
-what it will SERVE, and it may relax that one day for its own reasons. This one is
-about what may be written into somebody's directory, and the two happen to agree
-today.
+Not `tarfile.extractall(filter="data")`: `filter=` needs Python 3.11.4+, and
+the client must run on older ones (`hammerola/__init__.py`). The rules below
+(the hub's alphabet) are stricter anyway.
 
-NOT `tarfile.extractall(filter="data")`. The filter is the right idea and it is
-what a fresh interpreter would use, but this tool has to import and run under
-whatever python3 a laptop has (`hammerola/__init__.py`), and `filter=` arrived in
-3.11.4/3.12 — on an older one the keyword is a TypeError and the default is the
-unfiltered extraction. The rules below are stricter anyway, because they are the
-hub's own alphabet rather than a general-purpose safety net.
-
-THE CEILINGS ARE THE SAME NUMBERS THE PUSH USES, from `limits.py`, and they are
-what makes this safe against an archive that is small on the wire and enormous
-unpacked: the total is counted from the member headers before a byte is written,
-and again as it is written, because a header can lie.
+The ceilings are the push's (`limits.py`): the total is counted from the
+member headers before anything is written, and again while writing, since a
+header can lie.
 """
 
 import io
@@ -41,9 +28,7 @@ from hammerola.limits import (
     SAFE_COMPONENT,
 )
 
-# How much of one member is moved at a time. A source file is kilobytes; this
-# exists so that a member which lied about its size is caught partway rather than
-# after it has been written whole.
+# Copy chunk size, so a member that lied about its size is caught partway.
 CHUNK = 64 * 1024
 
 
@@ -63,25 +48,13 @@ class Rules(NamedTuple):
 # alphabet, applied to every component, with no exceptions at all.
 PUSH_RULES = Rules(SAFE_COMPONENT)
 
-# The one archive that is NOT a push: the starter template `hammerola create`
-# fetches from `<hub>/start/template.tar.gz`. It has to be able to write a
-# `.gitignore`, which a push never can — `SAFE_COMPONENT` requires an
-# alphanumeric first character, which is exactly why `pack.py` DROPS hidden
-# entries on the way up.
+# The starter template `hammerola create` fetches from
+# `<hub>/start/template.tar.gz`, which must be able to write a `.gitignore`.
 #
-# AN EXACT NAME IN THE LAST COMPONENT, and not "a leading dot is allowed". The
-# wider rule was written first and it was a remote code execution: applied per
-# component it also accepts `.git/config` and `.ssh/authorized_keys`, and the
-# first of those is executed by the next `git status` anybody runs in the
-# project — `core.fsmonitor` is a shell command, git does not overwrite an
-# existing config on `git init`, and the skill tells the author to commit
-# `project.json`. Writing INSIDE the project directory is no defence when
-# `.git/` is inside the project directory.
-#
-# So the exception is exactly as wide as its reason: one file name, in the leaf
-# position, where a name cannot name a directory to descend into. Adding an
-# entry here is adding a file the hub can drop into somebody's fresh checkout —
-# weigh it against what reads that file and when.
+# An EXACT name in the LAST component, never "a leading dot is allowed": that
+# would accept `.git/config`, whose `core.fsmonitor` is a shell command the next
+# `git status` runs. Every entry here is a file the hub can drop into a fresh
+# checkout.
 TEMPLATE_RULES = Rules(SAFE_COMPONENT, frozenset({".gitignore"}))
 
 
@@ -89,9 +62,7 @@ def read_members(body: bytes, where: str = "the archive",
                  rules: Rules = PUSH_RULES) -> dict:
     """Every file in the archive as `{path: bytes}`, checked. Never touches disk.
 
-    For `diff`, which compares two revisions' sources and has no reason to write
-    either of them anywhere — and for `create`, which has to know what the
-    template would write before it writes any of it.
+    For `diff`, and for `create`, which checks the template before writing.
     """
     members = {}
     with _open(body, where) as tar:
@@ -111,20 +82,15 @@ def extract(body: bytes, dest: Path, where: str = "the archive",
             rules: Rules = PUSH_RULES) -> list:
     """Unpack the archive under `dest`. -> the member paths, sorted.
 
-    `dest` is created if it is not there. Directories are created by this
-    function rather than taken from the archive, exactly as the hub does it: a
-    tar's own directory entries carry modes and can be members of shapes nobody
-    wants, and every path here is already known to be a chain of checked
-    components.
+    `dest` is created if needed. Directories are created here rather than
+    taken from the archive's own entries, as the hub does.
     """
     dest = Path(dest)
     written = []
     with _open(body, where) as tar:
         for info in _checked(tar, where, rules):
             target = dest.joinpath(*info.name.split("/"))
-            # Defence in depth over an already-checked name: the components
-            # cannot be `.`, `..` or absolute, so this can only fail if the rule
-            # above is loosened one day. It costs one resolve per file.
+            # Defence in depth over an already-checked name.
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.parent.resolve().relative_to(dest.resolve())
@@ -151,9 +117,8 @@ def extract(body: bytes, dest: Path, where: str = "the archive",
 def _copy(source, out, info, where: str) -> None:
     """Move one member, refusing to write more than its header declared.
 
-    The header is the only thing the ceilings were counted from, so a member that
-    goes on producing bytes past its declared size would be a way past all of
-    them. tarfile does not itself promise to stop.
+    The ceilings were counted from headers, and tarfile does not promise to
+    stop at the declared size.
     """
     remaining = info.size
     while True:
@@ -179,10 +144,8 @@ def _open(body: bytes, where: str):
 def _checked(tar, where: str, rules: Rules = PUSH_RULES) -> list:
     """The members that may be unpacked, or a refusal naming the first that may not.
 
-    REFUSES RATHER THAN SKIPS, for the reason `pack.py` gives from the other
-    direction: a silently dropped member produces a tree that is missing a file
-    and fails later at something that looks unrelated. Here it would be worse
-    still — a `diff` would report the missing file as deleted.
+    Refuses rather than skips: a dropped member would show up in `diff` as a
+    deleted file.
     """
     try:
         infos = tar.getmembers()
@@ -198,9 +161,7 @@ def _checked(tar, where: str, rules: Rules = PUSH_RULES) -> list:
     total = 0
     for info in files:
         if not info.isfile():
-            # Symlinks, hard links, devices, fifos. The hub refuses all of them
-            # on the way in, so one arriving here means the archive did not come
-            # from a push this hub accepted.
+            # Links, devices, fifos: the hub refuses them on the way in.
             raise ClientError(
                 f"{where} holds {info.name!r}, which is not a regular file; "
                 f"only regular files are unpacked")
@@ -220,22 +181,14 @@ def check_name(name: str, where: str = "the archive",
                rules: Rules = PUSH_RULES) -> None:
     """One member path: `/`-separated, every component on the rules' alphabet.
 
-    That alphabet is what makes traversal impossible rather than a separate
-    check: `SAFE_COMPONENT` requires an alphanumeric first character, so `..`,
-    `.`, an empty component and a leading `/` are all outside it, and a
-    backslash or a colon cannot appear anywhere in a component either.
+    The alphabet makes traversal impossible: `SAFE_COMPONENT` requires an
+    alphanumeric first character, so `..`, `.`, empty components and a leading
+    `/` fail, and no backslash or colon can appear.
 
-    `hidden_leaves` is the one way past it and it is checked ONLY on the last
-    component — an exact name, in a position that cannot be descended into. Any
-    exception applied to every component would accept `.git/config` and
-    `.ssh/authorized_keys`, and the first of those is a shell command the next
-    `git status` runs.
+    `hidden_leaves` applies only to the last component (see TEMPLATE_RULES).
 
-    PUBLIC because there is a second caller and it must not be a second COPY of
-    this loop: the hub checks the template tree against these very rules before
-    it serves it (`src/onboarding._refuse_unservable`). A hand-written copy there
-    already drifted once — it checked the alphabet and forgot the depth, so the
-    hub built and served an archive its own client then refused.
+    Public: the hub checks the template tree with this same function before
+    serving it (`src/onboarding._refuse_unservable`).
     """
     parts = name.split("/")
     if not name or len(parts) > MAX_PATH_DEPTH:

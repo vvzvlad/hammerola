@@ -9,23 +9,13 @@
 //     /project/<pid>/, so that opening a project does not flash another design.
 //
 // None of them can import JavaScript, so what they carry are NAMES the bundle
-// also uses, and a name is only worth anything while both sides still spell it
-// the same. What makes this file trustworthy rather than another parser is WHICH
-// SIDE is read as text: the interface's values are IMPORTED and executed —
-// `PAGE_BG`, `FONTS`, `Mark` — and only the documents, which are static
-// declarative files with no comments worth confusing anything, are matched
-// against them.
+// also uses. The interface's values are imported and executed — `PAGE_BG`,
+// `FONTS`, `Mark` — and only the static documents are matched as text: a regex
+// over code that could be executed instead also matches its comments.
 //
-// That distinction is the lesson of two failures in this area. A colour check
-// written in Python survived a mutation because it found the hex in a sentence
-// explaining the hex; a key check written in Python passed on the defect it was
-// written for because a trailing comment held a comma. Both were regexes over
-// code that could have been executed instead.
-//
-// WHY NOT PYTHON: it cannot import a React component, so it could only ever go
-// back to reading `style.jsx` as text. The trade is that these checks are
-// skipped on a machine with no node — `make test` says so out loud when it skips
-// the JS suite — and both CI workflows run it.
+// Written in JS because Python cannot import a React component. These checks
+// are skipped on a machine with no node (`make test` says so when it skips the
+// JS suite); both CI workflows run them.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -47,14 +37,10 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 /**
  * Every file under `rel` whose base name `wanted` accepts, as `[label, text]`.
  *
- * Recursive and sorted. It does NOT refuse an empty result, and that is a
- * decision rather than an omission: a throw here happens while the module is
- * being evaluated, so it takes the whole file down — the page colour, the fonts,
- * the mark — and blames the CI tar for it. The condition is legitimate in the
- * direction this branch is already moving, too: the day pointer.js moves into
- * the bundle, `static/_v/*.js` is correctly empty. The named list in
- * `searches every file that could hold a second copy` answers the same question
- * more precisely and fails as ONE test naming ONE missing file.
+ * Recursive and sorted. It does not refuse an empty result: a throw here runs
+ * at module evaluation and takes the whole file down. The named list in
+ * `searches every file that could hold a second copy` fails as one test naming
+ * one missing file instead.
  */
 function tree(rel, label, wanted) {
   const base = fileURLToPath(new URL(rel, import.meta.url))
@@ -72,18 +58,12 @@ function tree(rel, label, wanted) {
 }
 
 /**
- * A file named the way the rest of the repository names it — the path from the
- * repository root, which is two levels above this test.
+ * A file named by its path from the repository root, two levels above this
+ * test.
  *
- * The point is that a NAME is the only input. Constants that hold a file's text
- * beside a constant that holds its name are two facts nothing ties together:
- * `RAW = new Map([[COMPONENT, STYLE_JSX], …])` was written that way, its guard
- * compared the map against ITSELF, and pointing both names at one file passed
- * 41/41 — taking the "exactly one drawing" check off `style.jsx` while every
- * name still read correctly. Derived from the name there is nothing to point
- * anywhere: a wrong name throws in `readFileSync`, which is the same failure
- * `doc()` gives for a document, and re-deriving is what lets the guard at the
- * bottom of the mark block compare rather than agree with itself.
+ * The name is the only input, so a file's text and its name cannot point at
+ * different files; a wrong name throws in `readFileSync`, as `doc()` does for a
+ * document.
  */
 const fromRepoRoot = (path) => read(`../../${path}`)
 
@@ -196,17 +176,9 @@ function deltaE(a, b) {
 
 // -- the palette -------------------------------------------------------------
 //
-// ONE FILE DEFINES IT AND EVERY DOCUMENT REFERENCES IT, which is what this block
-// is about and what it replaces. What used to be here compared a colour written
-// in `templates/build.html` against a colour written in `templates/index.html`
-// against a colour written in `static/_v/site.css` against a constant in the
-// bundle — four copies of one value, held together by this test and by nothing
-// else, with two MORE copies in site.css that nothing held at all (one of which
-// had already drifted: #1f6fd0 against the bundle's #1f7ae0). There is one
-// definition now, so what is worth checking has moved with it: that the two
-// themes define the same names, that every document links the file instead of
-// answering for itself, and that no document has quietly kept a colour of its
-// own beside it.
+// tokens.css defines the palette and every document references it. Checked
+// here: both themes define the same names, every document links the file, and
+// no document keeps a colour of its own beside it.
 
 /** `--name: value` pairs of one rule in tokens.css, with duplicates reported. */
 function tokensOf(selector) {
@@ -241,15 +213,9 @@ describe('the palette', () => {
   })
 
   it('keeps apart the roles that were split because one value could not do both', () => {
-    // FOUR ROLES EXIST ONLY AS A DIFFERENCE, and each of them was added after a
-    // conversion folded it into its neighbour and something the reader had been
-    // using went away (issue #35). A role that exists to be different from
-    // another one is a role somebody will later "simplify" by giving it that
-    // other one's value — the names stay, both themes stay in step, every other
-    // check here stays green, and the distinction is gone a second time.
-    //
-    // WHAT EACH PAIR CARRIES, so the next person can weigh the simplification
-    // rather than guess at it:
+    // These four roles exist only as a difference from a neighbour. Giving one
+    // its neighbour's value keeps every other check green and loses the
+    // distinction. What each pair carries:
     //
     //   accent-bg / accent-bg-soft   the row you PICKED against the row you are
     //                                ON — same hue, adjacent panels, told apart
@@ -305,32 +271,16 @@ describe('the palette', () => {
   })
 
   it('keeps a chip visible against every surface a chip is laid on', () => {
-    // A CHIP IS ITS EDGES. A pill, a rev-id chip, a segmented track: what says
-    // each of them is an object rather than a run of text is the boundary
-    // between its fill and the surface under it, and nothing else — no border,
-    // no shadow, no weight change. So "can that boundary be seen" is the whole
-    // specification of `--chip-bg`, and it is a number rather than a taste.
+    // A chip is its edges: a pill, a rev-id chip or a segmented track has no
+    // border, shadow or weight change, only the boundary between its fill and
+    // the surface under it. So `--chip-bg` is specified by whether that
+    // boundary can be seen, as CIELAB dE76 (WCAG contrast is about legible
+    // text, and every value here would pass it). `--sunken-bg` is the other
+    // recessed fill, meant to barely separate, and is not a chip ground.
     //
-    // THE FAILURE THIS IS WRITTEN FOR ALREADY HAPPENED. The palette conversion
-    // put chips and tracks on `--sunken-bg`, which is the OTHER recessed fill —
-    // the one that exists to barely separate, because a field at rest should
-    // read as part of its card. On `--header-bg` that took the rail's count
-    // pill from dE 6.5 to 1.7, and on the front page it took the switcher track
-    // past invisible to inverted: lighter than the page it lies on, a groove
-    // drawn as a ridge. Both still rendered, in both themes, with no test
-    // anywhere going red.
-    //
-    // CIELAB AND NOT A CONTRAST RATIO, because WCAG contrast answers a question
-    // about TEXT — will these glyphs be legible — and every value here would
-    // pass it comfortably while looking like nothing at all. dE76 is the crude
-    // one of the perceptual metrics and is right for exactly this: two greys a
-    // step apart, where hue barely moves.
-    //
-    // 2.5 IS THE FLOOR because the just-noticeable difference is about 2.3, and
-    // a boundary at the JND is one somebody has to look for. The real values
-    // clear it at 2.9 in light and 2.9 in dark on their tightest ground, which
-    // is thin — deliberately: this is the check saying the chip may not get any
-    // closer to its ground than it already is, not a wide berth.
+    // 2.5 is the floor because the just-noticeable difference is about 2.3. The
+    // real values clear it at 2.9 in both themes on their tightest ground,
+    // deliberately thin: the chip may not get any closer to its ground.
     const GROUNDS = ['--card-bg', '--header-bg', '--page-bg']
     for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
       for (const ground of GROUNDS) {
@@ -392,22 +342,13 @@ describe('the palette', () => {
   })
 
   it('hands the vendored viewer its page colour where the library will look', () => {
-    // THE RULE THAT LOOKS LIKE A TYPO AND IS NOT, checked because the version
-    // before it looked perfectly reasonable and did nothing at all.
-    //
-    // `Display.setTheme` stamps `data-theme` on `document.body` AND on its own
-    // container — the `div.hmr_canvas` our adapter hands it — and the vendored
-    // stylesheet declares `--tcv-bg-color` under `[data-theme="…"]`. So the
-    // variable is DECLARED on that box, and everything painted from it is a
-    // descendant inheriting it from there. This rule was `html[data-theme] body`
-    // and therefore reached the document and never the widget: deleting it left
-    // both suites green while the canvas kept the library's colour.
-    //
-    // The property is not specificity alone — `html[data-theme] body` outweighs
-    // `[data-theme="dark"]` and still loses, because it never MATCHES the
-    // element the declaration is on. What is needed is a selector made of the
-    // attribute and nothing else, repeated so it outweighs the library's on the
-    // elements they share. A type selector anywhere in it is the old bug.
+    // `Display.setTheme` stamps `data-theme` on `document.body` and on its own
+    // container (the `div.hmr_canvas` our adapter hands it), and the vendored
+    // stylesheet declares `--tcv-bg-color` under `[data-theme="…"]`, so the
+    // variable is declared on that box. `html[data-theme] body` outweighs
+    // `[data-theme="dark"]` and still loses, because it never matches that
+    // element. The override has to be made of the attribute alone, repeated so
+    // it outweighs the library's; a type selector anywhere in it breaks it.
     const match = /([^{}]+)\{[^}]*--tcv-bg-color\s*:([^;}]+)/.exec(withoutComments(TOKENS_CSS))
     expect(match, 'tokens.css no longer shadows the vendored --tcv-bg-color, so the '
       + 'canvas is the one surface left with its own idea of the theme').toBeTruthy()
@@ -435,8 +376,7 @@ describe('the palette', () => {
   })
 
   it('is what site.css spends, with nothing of its own left in it', () => {
-    // The resolver's chrome used to hold six colours: four copied from the
-    // bundle and checked here, two copied and checked nowhere. It holds none.
+    // The resolver's chrome holds no colours of its own.
     const css = withoutComments(SITE_CSS)
     const hexes = [...css.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(([hex]) => hex)
     expect(hexes, 'static/_v/site.css writes a colour of its own again. Every one of them '
@@ -477,71 +417,41 @@ describe('the resolver\'s copy of the header', () => {
 // -- the mark ----------------------------------------------------------------
 
 describe('the mark', () => {
-  // The one value whose stale copy cannot fail harmlessly: a colour that lags
-  // looks slightly out of date, a redrawn logo CHANGES WHEN YOU NAVIGATE. So
-  // every element is compared as a WHOLE — an earlier check asked only whether
-  // each `d` string appeared somewhere in the file, which is why swapping two
-  // stroke widths, recolouring one shape and deleting an opacity all passed.
+  // The mark: a stale copy of the logo changes when you navigate, so every
+  // element is compared as a whole.
   //
-  // THREE DOCUMENTS SINCE 2026-08-28, not two, and the third one changed what
-  // this block is about. The mark used to be drawn here — two outlined paths
-  // that `style.jsx` authored and `pointer.html` copied — so the only question
-  // was whether the copy still matched the original. It is now the designer's
-  // drawing, kept as `brand/mark-on-light.svg`, and BOTH renderings are
-  // transcriptions of that file: neither can import it (an imported asset would
-  // make the bundle emit a second output file; the resolver must not fetch a
-  // second thing on the one page whose job is to leave quickly), so there are
-  // three copies of one drawing and the file is the one that is right by
-  // definition. Both are therefore compared against IT, rather than one against
-  // the other — which also means a transcription error is reported against the
-  // document that has it instead of as "these two disagree, pick one".
+  // `brand/mark-on-light.svg` is the designer's drawing and right by
+  // definition. `style.jsx` and `pointer.html` are transcriptions of it
+  // (neither can import it: an imported asset makes the bundle emit a second
+  // output file, and the resolver must not fetch a second thing), so both are
+  // compared against the file, and a transcription error is reported against
+  // the document that has it.
   //
-  // AND THE SECOND INK IS HELD TO THE SAME DRAWING. `brand/mark-on-dark.svg` is
-  // the pair's other half, for a dark background. Nothing renders that FILE even
-  // now — the mark is a transcription on every page, as the paragraph above says
-  // — but its two colours stopped being unused the moment the theme covered the
-  // interface (issue #35): they are the dark values of `--mark-ink` and
-  // `--mark-hole`, and the last check in this block holds the palette to them.
-  // Its GEOMETRY is compared here for the reason it always was — an unrendered
-  // file is exactly the thing that drifts in silence — and what has changed is
-  // that a drift in it would now be a drift in something on screen.
+  // `brand/mark-on-dark.svg` is the pair's other half, for a dark background.
+  // No page renders the file, but its two colours are the dark values of
+  // `--mark-ink` and `--mark-hole` (the last check in this block), and its
+  // geometry is compared here.
   //
-  // TWO OF THESE CHECKS ASK A DIFFERENT QUESTION, and they are here because
-  // "the same drawing" is not the same as "a drawing at all". Everything else
-  // in this block parses a document into shapes and attributes and compares
-  // those, which means a file can render WRONG while comparing EQUAL: an
-  // attribute name misspelled in a way the comparison normalises away
-  // (`strokewidth`, `CX`), or an element the parsing does not look at
-  // (`<style>` — which is what a drawing editor exports by default, and what
-  // the favicon replaced in this same commit actually had). So the raw text is
-  // held to two things besides: every attribute name spelled the way SVG spells
-  // it, and nothing inside the `<svg>` but shapes.
-  //
-  // Those two run over a FOURTH document, `static/_v/favicon.svg`, which is not
-  // the mark and is compared to it nowhere. It is here because it is the only
-  // one of the four that a browser fetches, and because it is where the
-  // `<style>` block in the paragraph above actually came from — leaving the
-  // proof out of the check it proves is how such a block comes back.
+  // Two checks read the raw text, because a document can render wrong while
+  // comparing equal: every attribute name spelled the way SVG spells it (the
+  // comparison normalises `strokewidth` and `CX` away), and nothing inside the
+  // `<svg>` but shapes (a `<style>` block is what editors export by default).
+  // Those two also run over `static/_v/favicon.svg`, which is not the mark and
+  // is compared to it nowhere, but is the one SVG a browser fetches.
   //
   // `Mark({})` is called rather than rendered: a function component returns its
   // element tree, and the six children are right there in `children` with the
   // props already resolved.
 
   // Every shape SVG can carry, matched whether it self-closes (`<rect …/>`) or
-  // is written with an end tag (`<rect …></rect>`). NO DOCUMENT HERE USES THE
-  // SECOND FORM — all four write self-closing tags and none contains a single
-  // `</rect>` — so that branch of the regex is uncovered by anything in the
-  // repository and is here for the copy somebody pastes out of an editor that
-  // writes end tags: it has to be FOUND and then compared, not silently seen as
-  // zero elements, which would pass every comparison below by comparing
-  // nothing. The tag list is wider than the three kinds the mark draws today
-  // (six shapes: a rect, a path and four circles) for the same reason — a copy
-  // that redrew a hole as an `<ellipse>` must fail, not be skipped.
+  // has an end tag (`<rect …></rect>`). No document here uses the second form;
+  // it is matched so a copy pasted from an editor that writes end tags is found
+  // and compared rather than seen as zero elements. The list is wider than what
+  // the mark draws (a rect, a path, four circles) so a hole redrawn as an
+  // `<ellipse>` fails instead of being skipped.
   //
-  // It is a LIST rather than a literal regex because `draws with nothing but
-  // shapes` reads the same list from the other end: anything inside the `<svg>`
-  // that is not on it is refused outright, so the two can never disagree about
-  // what "a shape" means.
+  // `draws with nothing but shapes` reads the same list: anything inside the
+  // `<svg>` not on it is refused, so the two agree on what "a shape" means.
   const SHAPE_TAGS = ['rect', 'circle', 'ellipse', 'path', 'line', 'polyline',
                       'polygon', 'g', 'use']
   const SHAPE = new RegExp(`<(${SHAPE_TAGS.join('|')})\\b([^>]*?)/?>`, 'g')
@@ -550,45 +460,25 @@ describe('the mark', () => {
   // found instead of skipping it.
   const TAG = /<\/?([a-zA-Z][\w:.-]*)/g
 
-  // An attribute in ALL THREE FORMS the markup languages allow: double-quoted,
-  // single-quoted, and (HTML only) bare. Double quotes alone is what every
-  // document here happens to use, and reading only those is not "close enough":
-  // an attribute ADDED in the other quoting is not compared against `undefined`
-  // on the far side, it is INVISIBLE — it never enters the union of keys, which
-  // is the one thing the union was introduced for. Changing an existing one
-  // fails either way; adding one is the hole, and it is exactly the shape of
-  // edit somebody makes by hand at 2am.
+  // An attribute in all three forms markup allows: double-quoted, single-quoted
+  // and (HTML only) bare. An attribute added in a form not matched here would
+  // never enter the union of keys and would go uncompared.
   const ATTR = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
 
   /**
-   * ONE SPELLING OF AN ATTRIBUTE NAME, applied to both sides before either is
+   * One spelling of an attribute name, applied to both sides before either is
    * looked up: lower case, hyphens gone. `strokeWidth` in JSX and
    * `stroke-width` in a document both land on `strokewidth`.
    *
-   * Not React's own table, and deliberately not: React hyphenates most
-   * presentation attributes (`strokeWidth` -> `stroke-width`) and leaves a
-   * handful of SVG ones camelCase (`viewBox`, `preserveAspectRatio`), so a
-   * one-way translation has to KNOW which — and getting that wrong does not
-   * fail loudly, it compares an attribute against `undefined` on the other side.
+   * Not React's own table: React hyphenates most presentation attributes and
+   * leaves a handful of SVG ones camelCase (`viewBox`, `preserveAspectRatio`),
+   * and a wrong one-way translation compares against `undefined` silently.
    *
-   * WHAT IT GIVES UP IS BOTH HALVES OF WHAT IT COLLAPSES, and neither is
-   * harmless in a document — this is the correction of a claim that stood here
-   * and was wrong. Case: `CX=` is a different, unknown attribute in XML, so the
-   * circle keeps its radius and its ink and SLIDES to `cx`'s default of 0 — a
-   * hole punched off the ribbon, at the left edge of the box. The hyphen:
-   * `strokewidth` is not in the HTML parser's rewriting table and is not an SVG
-   * presentation attribute either, so the ribbon's arc is drawn at `stroke-width`'s
-   * default of 1 — a hair where the mark has a band.
-   * Both were verified to survive against every one of the documents. And
-   * the danger is not two VALID names colliding (SVG has no such pair); it is
-   * an INVALID name collapsing onto a valid one, which is a much easier thing
-   * to write by accident.
-   *
-   * So the collapse is only allowed to happen where the far side is React,
-   * which has no other spelling to offer. Every name as WRITTEN in a document
-   * is held to `SPELLINGS` by `writes every attribute name the way SVG spells
-   * it`, and that check is what makes this function safe rather than merely
-   * convenient.
+   * The collapse hides invalid names: `CX=` is unknown in XML, so the circle
+   * slides to `cx`'s default of 0; `strokewidth` is drawn at `stroke-width`'s
+   * default of 1. So every name as written in a document is held to
+   * `SPELLINGS` by `writes every attribute name the way SVG spells it`, which
+   * is what makes this function safe.
    */
   const canon = (key) => key.toLowerCase().replace(/-/g, '')
 
@@ -597,19 +487,12 @@ describe('the mark', () => {
     .map(([, key, dq, sq, bare]) => [canon(key), dq ?? sq ?? bare]))
 
   /**
-   * THE EXACT SPELLING OF EVERY ATTRIBUTE THESE DOCUMENTS MAY USE.
+   * The exact spelling of every attribute these documents may use.
    *
-   * A closed vocabulary that FAILS CLOSED: a name not on it is a failure, not a
-   * skip, so this is not the "list somebody chose" that has bitten this file
-   * three times — that failure mode is a check looking at a SUBSET of what it
-   * claims to examine, and this one refuses everything outside the list. Adding
-   * an attribute to the mark therefore costs one line here, spelled once,
-   * deliberately, with the case and the hyphens looked at.
-   *
-   * It is wider than what is drawn today on purpose: the entries that nothing
-   * uses are the correct spellings of the attributes somebody would REACH for
-   * next, so the failure they produce says "you spelled it wrong" rather than
-   * "this test has not heard of it".
+   * Fails closed: a name not on the list is a failure, not a skip, so adding an
+   * attribute to the mark costs one deliberately spelled line here. It includes
+   * attributes nothing uses yet, so a likely next one fails as "spelled wrong"
+   * rather than "unknown".
    */
   const SPELLINGS = [
     // The root
@@ -625,25 +508,13 @@ describe('the mark', () => {
   ]
 
   it('allows exactly the elements it says it allows', () => {
-    // THE ONE LIST HERE THAT MUST NOT GROW QUIETLY, and the only one whose
-    // guard is membership rather than a property. `SPELLINGS` may grow freely —
-    // a new attribute still gets compared, because the comparison is a union of
-    // both sides. `SHAPE_TAGS` is the opposite: it is the definition of "an
-    // element this file knows how to compare", read from both ends, so widening
-    // it does not extend a check, it EXEMPTS whatever was added.
-    //
-    // For the three documents whose geometry is compared that is survivable —
-    // a new element changes the shape count and fails. For the FAVICON it is
-    // not: its geometry is compared with nothing, so `draws with nothing but
-    // shapes` is its only structural check, and adding a tag here removes it
-    // outright. Both halves of that were tried and both passed.
-    //
-    // The realistic path is not sabotage, it is economy: somebody adds a
-    // `<title>` to the favicon for a screen reader, reads the failure, and the
-    // cheapest thing that makes it green is one word on this list. (The right
-    // answer for that case is that the icon already carries `role="img"` and an
-    // `aria-label`; if a `<title>` is genuinely wanted, this file has to learn
-    // to compare one first.)
+    // `SPELLINGS` may grow freely: the comparison is a union of both sides.
+    // `SHAPE_TAGS` must not: it defines what this file knows how to compare,
+    // so widening it exempts whatever was added. For the favicon, whose
+    // geometry is compared with nothing, `draws with nothing but shapes` is the
+    // only structural check. A `<title>` for a screen reader is unnecessary
+    // (the icon carries `role="img"` and an `aria-label`); if one is wanted,
+    // this file has to learn to compare it first.
     expect([...SHAPE_TAGS].sort(), 'SHAPE_TAGS has changed. Adding an element here '
       + 'exempts it from every comparison in this block rather than including it — for '
       + 'the favicon, whose geometry is compared with nothing, it removes the only '
@@ -700,65 +571,31 @@ describe('the mark', () => {
       Object.entries(el.props).map(([k, v]) => [canon(k), String(v)])),
   }))
 
-  // EVERY SVG THIS BLOCK IS RESPONSIBLE FOR, NAMED ONCE.
-  //
-  // Naming them here and checking every list below against this naming is the
-  // only thing standing between those lists and the worst failure a check can
-  // have — the one `AGENTS.md` describes for `ci/smoke.py`: a probe that
-  // quietly stops probing prints nothing, fails nothing and exits 0, so the run
-  // is green PRECISELY BECAUSE a check disappeared. Deleting one line from
-  // `ROOTS` used to take the resolver's root comparison out of the suite — the
-  // comparison this whole block was written for — and both workflows stayed
-  // green, with only the test count moving and nobody asserting that.
-  //
-  // BY NAME AND NOT BY COUNT, for the reason `searches every file that could
-  // hold a second copy` gives one screen down: a count moves whenever anybody
-  // adds a check, so it gets edited to whatever the run produced rather than
-  // thought about. A missing NAME cannot be resolved that way — the failure
-  // says which document stopped being checked.
+  // Every SVG this block is responsible for, named once. Every list below is
+  // checked against these names, so a dropped entry fails instead of silently
+  // removing a check while the run stays green. By name rather than by count,
+  // so the failure says which document stopped being checked.
   const COMPONENT = 'ui/src/style.jsx'
   const RESOLVER = 'templates/pointer.html'
   const ON_LIGHT_FILE = 'brand/mark-on-light.svg'
   const ON_DARK_FILE = 'brand/mark-on-dark.svg'
   const FAVICON_FILE = 'static/_v/favicon.svg'
 
-  // EVERY STANDALONE .svg IN THE REPOSITORY, FOUND BY WALKING the two
-  // directories that hold one — not written out by hand.
+  // Every standalone .svg in the repository, found by walking the two
+  // directories that hold them rather than written out by hand.
   //
-  // The hand-written version of this list said "every SVG in the repository"
-  // and meant "the three somebody remembered". Two new .svg files dropped into
-  // these directories — one of them served to browsers, both carrying a
-  // `<style>` block and misspelled attributes — passed with the suite green,
-  // because a list checked against ANOTHER hand-written list is checked against
-  // nothing on disk. That is the same defect as `SEARCHED` below before it was
-  // computed from the directories, and this is the same fix.
-  //
-  // NO EXCLUSIONS TODAY, deliberately. `static/_v/` also holds the compiled
-  // bundle, but the build emits JavaScript and nothing else (the Makefile's
-  // UI_FILES), so there is no generated `.svg` to skip. If one ever appears it
-  // fails here loudly, which is the right way round: a drawing that is not held
-  // to these checks has to be an argued exclusion written out by name, never a
-  // file nobody noticed.
+  // No exclusions: `static/_v/` also holds the compiled bundle, but the build
+  // emits only JavaScript (the Makefile's UI_FILES). A generated `.svg` would
+  // fail here; an exclusion has to be written out by name.
   const STANDALONE = [
     ...tree('../../brand', 'brand', (name) => name.endsWith('.svg')),
     ...tree('../../static/_v', 'static/_v', (name) => name.endsWith('.svg')),
   ].map(([where, source]) => [where, svgOf(source, where)])
 
-  // NAME -> PARSED DOCUMENT, and the ONLY way anything below reaches a parse.
-  //
-  // The lists used to be written as literal `[name, document]` pairs, and the
-  // guard over them read the NAME and nothing else — so the pairing could be
-  // severed with a one-token edit that left every name in place:
-  // `[ON_DARK_FILE, ON_LIGHT, …]` checks the light file twice, and the dark
-  // one's root then took an `opacity="0.2"` and a different `viewBox` with 439
-  // tests green and the count unmoved. The same edit hid a `<style>` block in
-  // the favicon and a second component in `style.jsx`.
-  //
-  // So a name is now the only thing a list may carry, and the document comes
-  // from here. There is nothing left to disagree: `doc()` throws on a name this
-  // never found, and the guard at the bottom still checks the pairs by
-  // IDENTITY, because "derived by a helper" is a property of today's code and
-  // the identity check is a property of the run.
+  // Name -> parsed document, the only way anything below reaches a parse.
+  // Lists carry names only, so a name cannot be paired with the wrong document;
+  // `doc()` throws on an unknown name, and the guard at the bottom still checks
+  // the pairs by identity.
   const PARSED = new Map([
     [RESOLVER, svgOf(fromRepoRoot(RESOLVER), RESOLVER)], ...STANDALONE])
 
@@ -774,17 +611,12 @@ describe('the mark', () => {
   const ON_LIGHT = doc(ON_LIGHT_FILE)
   const ON_DARK = doc(ON_DARK_FILE)
 
-  // EVERY SVG DOCUMENT, for the two checks about a document being a VALID
-  // drawing rather than the same one. Both questions are gone by the time
-  // anything is parsed into shapes: how a name was spelled, and what else was
-  // inside the `<svg>`.
+  // Every SVG document, for the two checks about a document being a valid
+  // drawing: how its names are spelled and what else is inside the `<svg>`.
   //
-  // The favicon is in here and in `NAMESPACED` and nowhere else. It is not the
-  // mark — its tile, hole size and centring are deliberately its own — so
-  // holding it to the geometry would be wrong; but it is the one drawing that
-  // ships in the image and is served to browsers, and it is the file whose
-  // `<style>` block is the reason the second check exists at all. Leaving the
-  // proof out of the check it proves is how that block comes back.
+  // The favicon is here and in `NAMESPACED` only. It is not the mark (its tile,
+  // hole size and centring are its own), but it ships in the image and is
+  // served to browsers.
   const DOCUMENTS = [[RESOLVER, POINTER], ...STANDALONE]
 
   it.each(DOCUMENTS)('%s writes every attribute name the way SVG spells it', (where, doc) => {
@@ -839,7 +671,7 @@ describe('the mark', () => {
   /**
    * A `var(--…)` reference resolved through the LIGHT palette, anything else
    * unchanged.
-   *
+   * that it follows the page, while the designer's file has to hold
    * The component draws the mark in `var(--mark-ink)` / `var(--mark-hole)` so
    * that it follows the page (issue #35), while the designer's file has to hold
    * real ink — it is a document an image viewer opens. Resolving one side here
@@ -1032,10 +864,9 @@ describe('the mark', () => {
   })
 
   it('is drawn the same way on the resolver page', () => {
-    // AGAINST THE FILE, not against the component, which is what the prose at
-    // the top of this block says and what the argument used to contradict. The
-    // triangle closes either way, but a transcription error should be reported
-    // against the document that has it rather than as "these two disagree".
+    // Against the file, not against the component: a transcription error
+    // should be reported against the document that has it rather than as
+    // "these two disagree".
     compare(POINTER.children, ON_LIGHT.children, 'templates/pointer.html')
   })
 
@@ -1105,7 +936,7 @@ describe('the mark', () => {
   // meaning the INK, and read as a theme name each one says the opposite of
   // what it is; putting the wrong one on a page does not look wrong in a diff
   // and does not fail anything else — it is simply a logo the colour of the
-  // page it is on, i.e. an empty space where the mark used to be.
+  // page it is on, i.e. an empty space where the mark should be.
   //
   // So the name is turned into an assertion. On a light background the ribbon
   // is the dark ink and the holes show the light page through it; on a dark one
@@ -1139,16 +970,11 @@ describe('the mark', () => {
   })
 
   it.each(INKED)('%s is the ink the palette draws the mark in', (where, document, background) => {
-    // WHAT FINALLY RENDERS THE SECOND FILE. `brand/mark-on-dark.svg` sat in this
-    // repository from 2026-08-28 with nothing drawing it, kept only because an
-    // unrendered asset is the one that drifts in silence — and everything above
-    // could do no more than hold its GEOMETRY to the other file, since no page
-    // could choose between the two inks. `--mark-ink` / `--mark-hole` are that
-    // choice (issue #35): the component's defaults are those two tokens, and
-    // site.css repaints the resolver's transcription from them, so both
-    // renderings of the mark follow `data-theme`. This is what says the values
-    // in tokens.css are the DESIGNER'S two pairs and not a third pair that looks
-    // about right.
+    // `--mark-ink` / `--mark-hole` are the choice between the two inks: the
+    // component's defaults are those two tokens, and site.css repaints the
+    // resolver's transcription from them, so both renderings of the mark follow
+    // `data-theme`. This is what says the values in tokens.css are the
+    // DESIGNER'S two pairs and not a third pair that looks about right.
     const tokens = background === 'light' ? LIGHT : DARK
     const { ribbon, hole } = inks(document.children, where)
     expect(colour(tokens['--mark-ink']), `the ${background} --mark-ink is not the ribbon `
@@ -1160,34 +986,24 @@ describe('the mark', () => {
   })
 
 
-  // WHERE A THIRD COPY COULD APPEAR — a SET, computed from the directories, and
-  // not a list of files written out by hand.
+  // Where a third copy could appear: a set computed from the directories, not a
+  // hand-written list of files — a second copy can turn up in a component no
+  // hand-written list would have had a reason to contain.
   //
-  // Two files used to be named here, `HammerolaEntry.jsx` and
-  // `HammerolaViewer.jsx`, and that is the same defect as a hardcoded index one
-  // level up: a check that says "the only copy" while looking at two places
-  // somebody chose. A third copy inlined into `templates/build.html` — a
-  // document this very file reads two blocks earlier — passed, and so did a `d`
-  // string appearing in `ui/src/hub.js`. It is also how the regression that this
-  // block exists for actually happened: a second copy turned up in a component
-  // that no hand-written list would have had a reason to contain.
+  // Three roots, and each exclusion is a file allowed to hold the mark:
+  // `style.jsx` draws it, `pointer.html` is the sanctioned copy this block
+  // compares, `three-cad-viewer.esm.js` is the viewer library (built out of
+  // `viewer/`), with `three.module.js` and `three.core.js` beside it (three's
+  // own npm builds, here because three is external to that bundle), and
+  // `hammerola*` under static/_v is this bundle compiled (AGENTS.md), so it
+  // contains style.jsx by construction. `brand/` is not a root: it holds the
+  // original, not a copy.
   //
-  // Three roots, and each exclusion is a file ALLOWED to hold the mark:
-  // `style.jsx` draws it, `pointer.html` is the sanctioned copy this whole block
-  // compares, `three-cad-viewer.esm.js` is the viewer library — built out of
-  // `viewer/` rather than written here — with `three.module.js` and
-  // `three.core.js` beside it, which are three's own npm builds and are in this
-  // directory at all because three is external to that bundle, and `hammerola*`
-  // under static/_v is this bundle COMPILED (AGENTS.md), so it contains
-  // style.jsx by construction — the local one really does, which is why the exclusion is
-  // load-bearing rather than tidy. `brand/` is not a root at all for the same
-  // reason `pointer.html` is excluded from one: it is the original, not a copy.
-  //
-  // THAT LAST EXCLUSION IS A HOLE, and it is empty by other people's rules
-  // rather than by anything decided here: a hand-written `hammerola_widget.js`
-  // would be skipped. What keeps the prefix meaning "generated" is `.gitignore`,
-  // `.dockerignore` and the named paths in both workflows' tar — none of which
-  // this file checks. Narrow the prefix if a hand-written name ever wants it.
+  // The `hammerola*` exclusion would also skip a hand-written
+  // `hammerola_widget.js`. What keeps the prefix meaning "generated" is
+  // `.gitignore`, `.dockerignore` and the named paths in both workflows' tar,
+  // none of which this file checks. Narrow the prefix if a hand-written name
+  // ever wants it.
   const SEARCHED = [
     ...tree('../src', 'ui/src', (name) => /\.jsx?$/.test(name) && name !== 'style.jsx'),
     ...tree('../../templates', 'templates',
@@ -1198,16 +1014,10 @@ describe('the mark', () => {
   ]
 
   it('searches every file that could hold a second copy', () => {
-    // THE GUARD, and it has to name every file the CI tar sends for this search
-    // — one per path on that line, or the sweep silently narrows. It did:
-    // `static/_v/pointer_pref.js` was on the tar line and not on this list, so a
-    // tar built without it left 19 files and 380 tests green while one of the
-    // two files that line was lengthened for stopped being searched at all.
-    // `tree()` cannot see that, because the OTHER file in the directory keeps
-    // the root non-empty.
-    //
-    // Named files rather than counts: a count moves whenever anybody adds a
-    // module, and would be edited to match rather than thought about.
+    // The guard names every file the CI tar sends for this search, one per path
+    // on that line, or the sweep silently narrows: `tree()` cannot see a missing
+    // file while another file keeps its directory non-empty. Named files rather
+    // than counts: a count gets edited to match rather than thought about.
     const paths = SEARCHED.map(([where]) => where)
     for (const wanted of ['ui/src/HammerolaEntry.jsx', 'ui/src/HammerolaViewer.jsx',
                           'ui/src/hub.js', 'ui/src/viewport/index.js',
@@ -1220,43 +1030,23 @@ describe('the mark', () => {
     expect(paths).not.toContain(RESOLVER)
   })
 
-  // THE OTHER HALF OF THAT SWEEP, and without it the exclusions above are a
-  // hole rather than a decision. `SEARCHED` skips the two sanctioned files
-  // ENTIRELY, while everything in this block compares exactly ONE drawing out of
-  // each: `svgOf` takes the first `<svg>` in the resolver, and `Mark({})` is one
-  // component. So a SECOND drawing inside a sanctioned file is invisible from
-  // both directions — the sweep does not look, and the comparison looks past it.
-  // Both were tried and both were green: a second `<svg>` with drifted geometry
-  // at the end of pointer.html, and a second component in style.jsx drawing the
-  // same knob with different numbers.
+  // The other half of that sweep. `SEARCHED` skips the two sanctioned files
+  // entirely, while this block compares exactly one drawing out of each
+  // (`svgOf` takes the first `<svg>` in the resolver, `Mark({})` is one
+  // component), so a second drawing inside a sanctioned file would be
+  // invisible from both directions. Hence: count occurrences, require exactly
+  // one. A second ink belongs in `Mark`'s two props, not in a second component.
   //
-  // The second is not an invented story. Issue #35 puts a second INK of
-  // this mark on the roadmap, and the obvious wrong turn is a second component
-  // beside `Mark` rather than the two props it already takes — a change that
-  // would meet no red test at all.
-  //
-  // So: count occurrences, require exactly one. Fixing the file exclusion by
-  // moving the hole from "files nobody named" down to "occurrences inside the
-  // named ones" is not fixing it.
-  //
-  // ON THE RAW TEXT, comments and all, and that is the correction of a real
-  // hole rather than laziness. Stripping comments first meant the regex
-  // replaced the WHOLE LINE holding a `//`, so a second drawing vanished from
-  // the count the moment it carried a trailing comment — and
+  // On the raw text, comments included: stripping a `//` comment removes the
+  // whole line, which would hide
   //
   //   export const MarkDark = ({ size = 18 }) => <svg …>…</svg>; // dark variant
   //
-  // is exactly what somebody writes for issue #35's second ink. Two tags in the
-  // file, one counted, 439 green. Erasing text can only ever hide evidence,
-  // never add it; both files hold exactly one `<svg` in their raw bytes today,
-  // so the stripping bought nothing at all. If prose here ever wants to write
-  // that tag, this fails loudly and the prose is what changes.
+  // Both files hold exactly one `<svg` in their raw bytes. If prose here ever
+  // wants to write that tag, this fails and the prose is what changes.
   //
-  // AND THE TEXT COMES FROM THE NAME. A hand-written `[[COMPONENT, STYLE_JSX],
-  // [RESOLVER, POINTER_HTML]]` stood here, and its half of the guard compared
-  // that map against itself — so pointing both names at one file passed 41/41
-  // and took this check off `style.jsx` entirely, second component and all.
-  // `fromRepoRoot` leaves nothing to point: the name IS the path.
+  // The text comes from the name through `fromRepoRoot`, so a name and its
+  // text cannot point at different files.
   const DRAWN_ONCE = [COMPONENT, RESOLVER].map((name) => [name, fromRepoRoot(name)])
 
   it.each(DRAWN_ONCE)('%s draws exactly one <svg>, and it is the compared one',
@@ -1272,17 +1062,14 @@ describe('the mark', () => {
     })
 
   it('is the only copy of it outside style.jsx', () => {
-    // The build page used to inline the same SVG a third time, byte for byte.
-    // The two pages carrying two copies link to each other, which is the exact
-    // shape of "the logo changed when I navigated".
+    // The two pages carrying copies link to each other, so a drifted copy is
+    // "the logo changed when I navigated".
     //
-    // The `d` of every path the mark draws, and today that is one — the ribbon's
-    // turn, `M20 23.5h8a8.5 8.5 0 018.5 8.5v11`, which nothing else in this
-    // repository could plausibly contain and which any inlined copy of the mark
-    // must. The assertion above it is what keeps that from silently becoming a
-    // sweep over an empty list: the mark is drawn with a rectangle and four
-    // circles besides, none of which carry a `d`, so a redraw that dropped the
-    // arc would leave this loop iterating over nothing and passing.
+    // The `d` of every path the mark draws — today one, the ribbon's turn,
+    // `M20 23.5h8a8.5 8.5 0 018.5 8.5v11`, which any inlined copy of the mark
+    // must contain. The first assertion keeps this from becoming a sweep over
+    // an empty list: the rect and four circles carry no `d`, so a redraw that
+    // dropped the arc would iterate over nothing and pass.
     expect(drawn.some((el) => el.attrs.d), 'the mark draws no path, so there is no '
       + 'distinctive literal left to sweep for — this check has stopped checking').toBe(true)
     for (const [where, source] of SEARCHED) {
@@ -1296,16 +1083,11 @@ describe('the mark', () => {
   // -- the lists themselves --------------------------------------------------
 
   it('finds every standalone SVG in the repository', () => {
-    // THE WALK ITSELF, which nothing else can see go wrong. `tree()` does not
-    // refuse an empty result — deliberately, one screen up — so a CI tar that
-    // stopped carrying `brand/` or `static/_v/favicon.svg` would simply produce
-    // a shorter list, and every `it.each` over it would run over fewer files
-    // and pass. Naming the three is what turns that into one failure that says
-    // which drawing stopped being checked.
-    //
-    // (Two of them cannot get that far: `doc()` throws at module scope for the
-    // brand pair, which takes the whole file down before this runs. The favicon
-    // is reached only through the walk, and this is its only guard.)
+    // The walk itself. `tree()` does not refuse an empty result, so a CI tar
+    // without `brand/` or `static/_v/favicon.svg` would make every `it.each`
+    // over it run over fewer files and pass; naming the three turns that into
+    // one failure. (`doc()` throws at module scope for the brand pair; the
+    // favicon is reached only through the walk, and this is its only guard.)
     const found = STANDALONE.map(([where]) => where)
     for (const wanted of [ON_LIGHT_FILE, ON_DARK_FILE, FAVICON_FILE]) {
       expect(found, `${wanted} was not found by the walk — if it left the tar in both `
@@ -1320,48 +1102,17 @@ describe('the mark', () => {
     ['INKED', INKED, [ON_LIGHT_FILE, ON_DARK_FILE], doc],
     ['DRAWN_ONCE', DRAWN_ONCE, [COMPONENT, RESOLVER], fromRepoRoot],
   ])('%s names exactly the documents its check applies to', (what, list, wanted, lookup) => {
-    // THE LISTS WERE THE LAST UNGUARDED THING IN THIS BLOCK. Every check above
-    // is an `it.each` over one of them, so deleting ONE LINE took a whole check
-    // out of the suite with both workflows green. Six such deletions were tried
-    // and all six passed — including "drop the resolver from ROOTS", which
-    // removes the root comparison this entire describe block exists for.
-    // Nothing moved but the test count, and no test asserts the test count.
+    // The lists are guarded too: every check above is an `it.each` over one of
+    // them, so deleting one line would take a whole check out of the suite with
+    // the run green. Exact set equality by name in both directions: a missing
+    // name is a check that stopped running for that file, an extra one is a
+    // document held to a rule nobody argued for (the favicon is deliberately
+    // not the mark) or a new drawing the walk found, to acknowledge here.
     //
-    // That is the failure `AGENTS.md` names as the worst one a gate can have: a
-    // probe that quietly stops probing prints nothing, fails nothing and exits
-    // 0, so the run is green BECAUSE a check disappeared. `SEARCHED` above has
-    // been guarded against exactly this for three rounds, by NAMES; the lists
-    // added since were not, and this is that same guard applied to them.
-    //
-    // BY NAME AND NOT BY COUNT, for the reason the guard above gives: a count
-    // moves whenever anybody adds anything, so it gets edited to whatever the
-    // run produced rather than thought about. Exact set equality in both
-    // directions — a missing name is a check that silently stopped running for
-    // that file, and an extra one is either a document held to a rule nobody
-    // argued for it (the favicon in a geometry comparison, say, which would be
-    // wrong: it is deliberately NOT the mark) or a NEW drawing the walk found,
-    // which is a thing to acknowledge here rather than to inherit in silence.
-    //
-    // AND THE PAIRS RE-DERIVED FROM THE NAME, which is the half the first
-    // version of this guard left out and the reason it could be walked past. It
-    // read the name and never looked at what the row carried beside it, so
-    // `[ON_DARK_FILE, ON_LIGHT, …]` satisfied it completely: every name present,
-    // every count unchanged, and the dark file checked by nothing at all.
-    //
-    // `lookup` is a FUNCTION OF THE NAME, not the same container the list was
-    // built from, and that distinction is the whole value of this line. The
-    // version before it compared `DRAWN_ONCE` against the hand-written map
-    // `DRAWN_ONCE` was built from — a registry against itself — which is not a
-    // check at all: pointing both of its names at one file passed. `doc()` and
-    // `fromRepoRoot()` both go back to the name (a lookup that throws, a read
-    // that throws), so a row carrying somebody else's document fails here even
-    // though every name still reads correctly.
-    //
-    // This test is where the regress stops, and it stops here for the same
-    // reason `searches every file that could hold a second copy` stops where it
-    // does: the names are written out in the assertion, so removing one is
-    // removing a name from a test that says what the name is for, not deleting
-    // a line whose absence looks like nothing.
+    // Each row's document is re-derived from its name through `lookup` —
+    // `doc()` or `fromRepoRoot()`, both of which throw on an unknown name —
+    // never from the container the list was built from, so a row carrying
+    // another name's document fails even though every name reads correctly.
     expect([...list.map(([where]) => where)].sort(),
       `${what} does not hold the documents it is supposed to. A name missing here is a `
       + 'check that has silently stopped running for that file; a name added is a file '
@@ -1396,26 +1147,12 @@ describe('the build page\'s palette link', () => {
 
 // -- the call sites those measurements are about ------------------------------
 //
-// EVERY CHECK ABOVE IS ABOUT THE PALETTE FILE, WHICH IS HALF OF THE PROPERTY.
-// `--chip-bg` can be dE 2.9 from every ground in both themes while nothing on
-// either page still asks for it — and that is not hypothetical: repointing
-// every `var(--chip-bg)` in the two components at `--sunken-bg` left the whole
-// suite green, and so did `--warn-soft` -> `--warn` and `--accent-ring` ->
-// `--accent-line`. Three roles that exist ONLY as a difference, each deletable
-// with one search and replace, with the file that measures them agreeing all
-// the while.
-//
-// SO THESE READ THE RENDER AND MEASURE THE PAIR. Not "this style says
-// --chip-bg", which is the source copied out with an `expect` around it, but:
-// the shape's fill and the surface UNDER it are two different roles, and the
-// two values those roles hold are far enough apart, in both themes, to be seen
-// as an edge. A call site moved onto the neighbouring neutral fails on the
-// number, in the theme where it matters, naming the shape that went invisible
-// and what it went invisible against.
-//
-// WHAT IS ASSERTED IS THE SAME 2.5 the palette block uses, for the same reason:
-// the just-noticeable difference is about 2.3, and a boundary at the JND is one
-// somebody has to look for.
+// The checks above measure the palette file; these check that the pages still
+// ask for those roles. They read the render and measure the pair: the shape's
+// fill and the surface under it are two different roles whose values are far
+// enough apart, in both themes, to be seen as an edge. A call site moved onto
+// the neighbouring neutral fails on the number, naming the shape and its
+// ground. The floor is the palette block's 2.5 (the JND is about 2.3).
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
 
@@ -1514,11 +1251,7 @@ describe('the shapes the palette is measured for', () => {
 
   it('keeps a thread card off the rail\'s own fill', () => {
     // A card lying directly on the rail with no shadow: its fill against the
-    // rail's fill is the whole of what says it is an object. The pill saying
-    // "N sent here" used to be this pair — the one the conversion got wrong, dE
-    // 6.5 down to 1.7 — and it went with issue #33, which put the project's
-    // whole queue in the rail and left it nothing to count off against. The
-    // cards are what lies on that ground now, and they lie on it in numbers.
+    // rail's fill is the whole of what says it is an object.
     const c = buildPage()
     const open = c.computed().threads.find((t) => !t.resolved)
     expect(open, 'the fixture has no open comment, so this measures nothing').toBeTruthy()
@@ -1529,15 +1262,10 @@ describe('the shapes the palette is measured for', () => {
   })
 
   it('keeps the resting count pill readable, and a pill', () => {
-    // THE ROUND BEFORE THIS ONE MOVED THIS PILL AND PINNED IT WITH NOTHING, so
-    // every number the move was made on lived in a comment: reverting it whole
-    // left the suite green, and so did dropping its ink a step. What the pill
-    // owes is not a token but a READABLE LABEL — the count is the only thing on
-    // it — and the two states are told apart by the fill turning blue rather
-    // than by making the resting one faint. That was the defect: faintness was
-    // measured in the light theme alone, where white on `--line-strong` is
-    // 1.68:1, and came out at 9.89:1 in dark, so the resting pill was the
-    // clearer of the two in half the interface.
+    // What the pill owes is a readable label (the count is the only thing on
+    // it), and the two states are told apart by the fill turning blue rather
+    // than by making the resting one faint: white on `--line-strong` is 1.68:1
+    // in light but 9.89:1 in dark, so faintness cannot hold in both themes.
     const live = buildPage().computed().railCountStyle
     const rest = buildPage({ feed: [] }).computed().railCountStyle
     expect(rest, 'the pill is drawn the same way whether or not anybody is '
@@ -1558,12 +1286,9 @@ describe('the shapes the palette is measured for', () => {
       + 'button under it, so there is no pill there at all')
       .not.toBe(fillOf(buildPage().computed().railBtnStyle, 'the comments button'))
 
-    // THE COUNT IS DRAWN IN ONE PLACE NOW. The rail's head used to repeat it as
-    // "N sent here", and the two copies were held to the same fill and the same
-    // ink here; issue #33 took that chip out, because the rail shows the whole
-    // project queue and there is nothing left for a count at its head to mean.
-    // So this pill is the only one, and the case above is the only measurement
-    // it has.
+    // The count is drawn in one place: the rail shows the whole project queue,
+    // so its head carries no count of its own, and the case above is this
+    // pill's only measurement.
   })
 
   it('keeps the processed badge off the card it lies on', () => {
@@ -1670,26 +1395,19 @@ describe('the shapes the palette is measured for', () => {
   })
 
   it('never lifts a filled accent above the label it carries', () => {
-    // WHAT ROUND ONE CAUGHT BY EYE AND NOTHING HELD AFTERWARDS. The dark set
-    // lifts the accent INKS, because #1f7ae0 read as a link on near-black is too
-    // dim — and `--accent-strong` was lifted with them although it is a FILL:
-    // the picked pin here, the hovered button on the front page, both under a
-    // white label. At #4e97ea that label came to 3.03:1, below AA and below the
-    // 4.27:1 of the state it is the emphasis OF, so picking a pin made its
-    // number fainter and the signal ran backwards. Every test passed.
+    // The dark set lifts the accent inks (#1f7ae0 is too dim as a link on
+    // near-black), but `--accent-strong` is a fill under a white label — the
+    // picked pin here, the hovered button on the front page — so lifting it
+    // would make the emphasis state fainter than the resting one.
     //
-    // READ OFF THE PIN RULES rather than named here, so what is asserted is "the
-    // emphasis state of a filled accent, whatever it is painted in" and not a
-    // pair of token names copied out of the palette. The pin is a PROXY for the
-    // front page's button, which spends the same pair — and that is checked
-    // below rather than asserted here, because the day the button moves off the
-    // pair is the day this case silently stops covering it.
+    // Read off the pin rules rather than named here, so what is asserted is
+    // "the emphasis state of a filled accent, whatever it is painted in". The
+    // pin is a proxy for the front page's button, which spends the same pair;
+    // that is checked below.
     //
-    // THE RESTING FLOOR IS 4.2 AND NOT 4.5, with the number said out loud: white
-    // on `--accent` is 4.27:1 in both themes, under AA for a label this size. It
-    // has been that since before this palette existed and moving `--accent` is
-    // not this change's business, so the floor sits just under where the value
-    // stands — pinning it rather than licensing a quiet slide down to 3.
+    // The resting floor is 4.2, not 4.5: white on `--accent` is 4.27:1 in both
+    // themes, under AA for a label this size. The floor sits just under the
+    // current value, pinning it rather than allowing a slide down to 3.
     const sheet = pinSheet()
     const resting = pinRule(sheet, '.hmr_pin')
     const label = inkOf(resting, 'the comment pin')

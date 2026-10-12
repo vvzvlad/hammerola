@@ -1,4 +1,4 @@
-// Comparing two revisions — issue #10, ui-brief block 9.
+// Comparing two revisions.
 //
 // The hub measures the geometry and publishes two documents under an address of
 // its own; this page shows the SCENE in the viewport it already has and the
@@ -88,13 +88,9 @@ afterEach(() => { vi.restoreAllMocks() })
 /**
  * The build the page is standing on while it compares two others.
  *
- * TWO VIEWS, AND THE SECOND ONE IS LOAD-BEARING. A build with one view can
- * never be on a tab other than the one its address opens on, so `entryView()`
- * always answers the view already showing and the branch in `switchBuild` that
- * puts a history entry's `?v=` back is unreachable — which is how a `popstate`
- * that ended in a `pushState` lived here through five rounds with two tests
- * asserting it could not happen. `printables` is the id the tests below already
- * pass to `showView`, so this is the fixture catching up with them.
+ * Two views: with one, `entryView()` always answers the view already showing,
+ * and the branch in `switchBuild` that puts a history entry's `?v=` back is
+ * unreachable. `printables` is the id the tests below pass to `showView`.
  */
 const VIEWS = [
   { id: 'assembled', name: 'assembled', file: 'a.json', parts: ['plate'], gzip: 1000 },
@@ -286,8 +282,8 @@ describe('compareRows', () => {
   })
 
   it('drops a part with no key, which nothing could be done with', () => {
-    // The key is the identity (issue #75) and the whole of what a row can do:
-    // it is what the click resolves against the scene.
+    // The key is the identity and the whole of what a row can do: it is what
+    // the click resolves against the scene.
     const rows = compareRows({ parts: [{ status: 'changed' }, { key: '', status: 'new' },
                                        { key: 'plate', status: 'new' }] })
     expect(rows.map((row) => row.key)).toEqual(['plate'])
@@ -368,7 +364,7 @@ describe('compareRows', () => {
   it('keeps the two silences apart, one at each end of the list', () => {
     // The whole of the split, in one report: the gate's refusal is a question
     // outstanding and goes first, hardware nobody compares is not news and goes
-    // last. Under one word the second used to carry the first's place.
+    // last.
     const rows = compareRows({ parts: [
       { key: 'a', status: 'not compared', reason: 'no STEP for it' },
       { key: 'b', status: 'unchanged' },
@@ -399,13 +395,11 @@ describe('compareSummary', () => {
   })
 
   it('still says it on a model with bought parts, and says what it skipped', () => {
-    // THE ANSWER USED TO BE UNREACHABLE, and this is the case that made it so.
-    // The list is the VIEW's parts, `hardware` and `mock` among them, and those
-    // read `not compared` — so on an ordinary model "every row is unchanged" is
-    // never true, and two identical revisions came out as a row of zeroes that
-    // reads like a comparison which found nothing to say. The claim is measured
-    // against the rows something was ESTABLISHED about, with the remainder in
-    // the same line so the reader can see how much of the model it covers.
+    // The list is the view's parts, `hardware` and `mock` among them, which read
+    // `not compared`, so "every row is unchanged" would never be true on an
+    // ordinary model. The claim is measured against the rows something was
+    // established about, with the remainder in the same line so the reader can
+    // see how much of the model it covers.
     expect(compareSummary(compareRows({ parts: [
       { key: 'plate', status: 'unchanged' },
       { key: 'post', status: 'unchanged' },
@@ -607,13 +601,11 @@ describe('a view tab pressed while a comparison is up', () => {
   })
 
   it('reaches the viewport as a RELOAD, and not as a live swap', async () => {
-    // The defect this pins: every comparison's scene used to arrive under the id
-    // `compare`, so the element saw `view` unchanged and `buildKey` moved — its
-    // definition of a swap — and answered with `captureLive`/`restoreLive`,
-    // carrying the previous view's camera and tree states onto a different
-    // arrangement of the parts, in a different place, with a different extent.
-    // On a build page the same gesture is a reload that re-fits (ui-brief block
-    // 2), and a comparison is not a reason for it to stop being one.
+    // Each view's comparison scene is its own file (`scene.json?v=<view>`), so a
+    // tab pressed inside a comparison reaches the element as a reload that
+    // re-fits, as on a build page (ui-brief block 2), not as a live swap that
+    // would carry the previous view's camera and tree states onto a different
+    // arrangement of the parts.
     //
     // ASSERTED THROUGH THE ELEMENT'S OWN RULE rather than against a copy of it:
     // what the two halves have to agree about is which FIELD says "a different
@@ -678,14 +670,11 @@ describe('the three tabs', () => {
   })
 
   it('are the only visibility the scene menu offers while one is up', () => {
-    // The other half of the rule above, and the half that used to leak. The
-    // context menu stayed live over the comparison's own solids: Isolate, Hide
-    // and Translucent still called `setVisibility`, which `sync` then ignored —
-    // so they did nothing visible AND wrote to the build's lists behind the
-    // reader's back. Isolate is the loud one: it replaces `s.hidden` wholesale
-    // with `/cmp/…` paths, which match nothing in the build's tree, so every
-    // part the reader had hidden before comparing came back on screen the
-    // moment they closed the panel.
+    // The other half of the rule above: the context menu over the comparison's
+    // own solids offers no visibility items. Isolate, Hide and Translucent would
+    // call `setVisibility`, which `sync` ignores, and write to the build's lists
+    // behind the reader's back: Isolate replaces `s.hidden` with `/cmp/…` paths,
+    // unhiding every part the reader had hidden once the panel closes.
     const menu = { id: `${COMPARE_GROUPS.b}/plate`, x: 10, y: 10 }
     const offered = comparing({ menu }).computed().menuItems.map((m) => m.label)
 
@@ -727,8 +716,7 @@ describe('the three tabs', () => {
 //
 // Everything the menu offers is about one part, and inside a comparison "which
 // part" and "which revision's part" stop being the same question. The three
-// visibility items are gone (above); these are the two that used to answer it
-// wrong rather than not at all.
+// visibility items are gone (above); these are the two that remain.
 
 describe('a right-click on a part while a comparison is up', () => {
   /** The menu the page would draw over one solid of the comparison's scene. */
@@ -1038,18 +1026,15 @@ describe('a pick in the scene', () => {
 //
 // The same closing as the scene menu above, on the controls beside the model.
 // All three act in the BUILD's terms and the scene under the cursor is not the
-// build, so what each one produced against a comparison was nonsense with a
-// straight face — and one of the three filed it into a real queue:
+// build:
 //
-//   * COMMENT opened the composer headed `plate #1` and posted
-//     `/cmp/added/plate #1` as the part to change, against build `<a>`. A
-//     comment is how an agent is told to change the model, so that is a task
-//     naming a part that is in no build, in no catalogue and in no `model.py`;
-//   * MEASURE hangs `add to comment` off the chip, and that door posts `sel` —
-//     which `onPick` deliberately stops writing while a comparison is up, so
-//     the measurement went to the hub attached to whatever had been selected
-//     before the panel opened;
-//   * MOVE put a `/cmp/…` path in `partId` the same way.
+//   * COMMENT would post `/cmp/added/plate #1` as the part to change, against
+//     build `<a>` — a task naming a part that is in no build, no catalogue and
+//     no `model.py`;
+//   * MEASURE hangs `add to comment` off the chip, which posts `sel`, and
+//     `onPick` stops writing `sel` while a comparison is up, so the measurement
+//     would go attached to whatever was selected before the panel opened;
+//   * MOVE would put a `/cmp/…` path in `partId` the same way.
 //
 // BOTH HALVES ARE ASSERTED, because either alone leaves the door ajar: what is
 // OFFERED is what a person is stopped by — two buttons drawn spent and, for
@@ -1503,14 +1488,12 @@ describe('leaving the build', () => {
 
 // -- the banner, when a comparison opens under it -----------------------------
 //
-// THE POLL'S OFFER AND THIS PANEL CANNOT BOTH BE STANDING. Entering a comparison
-// from a pointer page moves the address onto the commit — deliberately, since
-// that is the shareable link — and `takePending` is the one door that opens
-// another build WITHOUT moving the address, because it was written for a page
-// where `PAGE.base` already means "the newest". Pressed inside a comparison it
-// put one build's `views` and `buildKey` in state beside another build's `base`:
-// the view file fetched fine, so the OLD geometry stayed on screen under the NEW
-// build's name, with the downloads pointing into the old directory.
+// The poll's offer and this panel cannot both be standing. Entering a
+// comparison from a pointer page moves the address onto the commit (the
+// shareable link), and `takePending` opens another build WITHOUT moving the
+// address, since it assumes `PAGE.base` means "the newest". Pressed inside a
+// comparison it would put one build's `views` and `buildKey` beside another
+// build's `base`, leaving the old geometry on screen under the new build's name.
 describe('the offer of a newer build, when a comparison opens', () => {
   /** What the poll saw: a commit neither end of the pair is. */
   const NEWER = { ...META, commit: C, built: '2026-08-29T18:20:00Z' }
@@ -1637,11 +1620,9 @@ describe('the model event a comparison sends back', () => {
 
 // -- the link somebody sends somebody else ------------------------------------
 //
-// THE REASON THE ROUTE EXISTS. A comparison reached by ticking two rows never
-// moves the address, so `/project/<pid>/<a>/compare/<b>/` is only ever arrived
-// at cold — and until this it was arrived at broken: the bundle read the address
-// literally, fetched `meta.json` under it, and drew the error panel over a route
-// that serves two files and 404s on everything else.
+// The reason the route exists. Opened cold, `/project/<pid>/<a>/compare/<b>/`
+// is a route that serves two files and 404s on everything else, so the bundle
+// must not read the address literally and fetch `meta.json` under it.
 //
 // The decision is that the address means "the page of build `<a>`, comparing
 // against `<b>`": everything that is not the scene is `<a>`'s, exactly as if the
@@ -1783,12 +1764,10 @@ describe('a comparison opened by its own URL', () => {
 
 // -- and the link somebody makes by comparing ---------------------------------
 //
-// The other half of the same fix. Nothing in the interface produced that address
-// — it worked only for whoever typed it — which for an address chosen so a
-// comparison can be SENT is a defect and not a gap. So entering one moves the
-// bar, and because that is a real navigation it is a `pushState`: Back has to
-// take the reader out of it, which makes `popstate` this page's business in both
-// directions.
+// An address chosen so a comparison can be sent has to be produced by the
+// interface, so entering a comparison moves the bar, and because that is a real
+// navigation it is a `pushState`: Back has to take the reader out of it, which
+// makes `popstate` this page's business in both directions.
 
 describe('a comparison entered in the page', () => {
   it('pushes the address, so what is on the screen can be copied and sent', () => {
@@ -1881,13 +1860,11 @@ describe('a comparison entered in the page', () => {
   })
 
   it('comes back out onto that pointer when the panel is closed', async () => {
-    // WHAT THE COMMIT ADDRESS COSTS, and it is not only the bar: standing on a
-    // commit is what `isPointerPage` answers, so `schedulePoll` stops re-arming
-    // and the watch for new builds dies, and the chip stops saying `up to
-    // date`. Closing the panel used to answer with `<a>` — the commit — so a
-    // reader who merely opened a comparison and shut it again was pinned for
-    // the rest of the session, with nothing on the screen saying so and only
-    // Back or the picker's `latest` row to undo it.
+    // What the commit address costs: standing on a commit is what
+    // `isPointerPage` answers, so `schedulePoll` stops re-arming, the watch for
+    // new builds dies, and the chip stops saying `up to date`. Closing the
+    // panel therefore returns to the pointer the comparison was opened from,
+    // not to `<a>`'s commit.
     loadCompareReport.mockResolvedValue(REPORT)
     opened('/project/proj1/latest/')
     const push = vi.spyOn(history, 'pushState')
@@ -2105,17 +2082,12 @@ describe('back and forward through a comparison', () => {
   })
 
   it('restores an entry\'s view without restarting the comparison on it', async () => {
-    // THE DOOR THE ONE-VIEW FIXTURE HID. Coming back onto an entry of the build
-    // already on screen leaves one thing out of step — that entry's `?v=` — and
-    // `switchBuild`'s cancelling branch used to put it back through `showView`,
-    // which while a comparison is up is not a view switch at all: it restarts
-    // the comparison on the new view, `compareRevisions` moves the address, and
-    // `moveAddress` PUSHES. That is a `popstate` ending in a `pushState` — the
-    // entry the reader came back to overwritten, their Forward gone, and two
-    // identical entries where there was one. Both this file and `moveAddress`
-    // say in prose that it cannot happen, and two tests here assert it; none of
-    // them could see this door, because a build with one view has no entry whose
-    // `?v=` differs from the tab on screen.
+    // Coming back onto an entry of the build already on screen leaves that
+    // entry's `?v=` out of step. Restoring it through `showView` while a
+    // comparison is up would restart the comparison on the new view, and
+    // `compareRevisions` -> `moveAddress` PUSHES: a `popstate` ending in a
+    // `pushState`, overwriting the entry and losing Forward. This needs the
+    // two-view fixture: with one view no entry's `?v=` differs from the tab.
     //
     // THE SWAP IN FLIGHT IS WHAT MAKES THE BRANCH REACHABLE: the guard above it
     // answers "already going there" off `_want`, so the cancelling branch is

@@ -1,13 +1,9 @@
 """The site icon, and the two ways a client can ask for it.
 
-Every browser asks for an icon on every visit, and until there was one to give it
-the hub answered 404 twice per page load. That is cosmetic in the response and
-not in the log, which is where it showed up.
-
-The fix has two halves and this file covers both, because either one alone leaves
-the 404 in place for somebody: the `<link rel="icon">` in the templates is what
-stops a browser asking for `/favicon.ico` at all, and the `/favicon.ico` route is
-what answers the clients that never parsed a page to see that link.
+Every browser asks for an icon on every visit. The `<link rel="icon">` in the
+templates stops a browser asking for `/favicon.ico` at all, and the `/favicon.ico`
+route answers the clients that never parsed a page to see that link; either alone
+leaves a 404 in the log for somebody.
 """
 
 from src.app import FAVICON_ASSET, STATIC_DIR

@@ -1,7 +1,7 @@
-// The two notes on a part, and telling them apart — issue #11.
+// The two notes on a part, and telling them apart.
 //
-// There are now two things called a note in this interface, they land in the
-// same box, and confusing them is the whole risk this file exists for:
+// There are two things called a note in this interface, they land in the same
+// box, and confusing them is the whole risk this file exists for:
 //
 //   * the AUTHOR's is written in `model.py`, checked at build and again at
 //     publish, and arrives inside the build's own catalogue record for the part:
@@ -9,23 +9,18 @@
 //     as the part's name — so it is shown to everyone, with or without a token,
 //     and this side may not edit it;
 //   * the READER's is localStorage, per project. It never leaves the browser,
-//     there is still no route that writes it anywhere, and it is hidden from a
-//     viewer along with every other edit.
+//     there is no route that writes it anywhere, and it is hidden from a viewer
+//     along with every other edit.
 //
-// BOTH HANG ON THE CATALOGUE KEY (issue #75), and that is what changed under
-// this file. They used to hang on the part's display NAME, in two flat maps of
-// identical shape — `meta.notes` and the localStorage one — and the tests below
-// could not tell a lookup by key from a lookup by name, because the fixture's
-// keys and names were the same string. They are deliberately not the same string
-// any more: the row nested in a group is NAMED `post(2)` and KEYED `post`, which
-// is exactly what the tessellator does to a view holding two of one part, so a
-// read that fell back to the name now finds nothing instead of finding the right
-// answer by accident.
+// BOTH HANG ON THE CATALOGUE KEY. The row nested in a group is NAMED `post(2)`
+// and KEYED `post`, which is exactly what the tessellator does to a view holding
+// two of one part, so a read that fell back to the name finds nothing instead
+// of finding the right answer by accident.
 //
-// A NOTE IS ABSENT ON MOST PARTS and that is not an error. It now has two
-// spellings that mean the same thing — a record with no `note` key, and a part
-// with no record in the catalogue at all — and several tests here are about a
-// build that says nothing rendering exactly as it did.
+// A NOTE IS ABSENT ON MOST PARTS and that is not an error. It has two spellings
+// that mean the same thing — a record with no `note` key, and a part with no
+// record in the catalogue at all — and several tests here are about a build
+// that says nothing rendering exactly as it did.
 //
 // NOTHING IS MOUNTED, the arrangement every file in this directory uses: the
 // instance is the real prototype with the state spelled out and the real
@@ -67,13 +62,12 @@ const TREE = {
 const NOTES = { lid: 'M3x8 DIN912', post: 'press fit, H7' }
 
 /**
- * Those notes where they now travel: inside `meta.parts`, one record per key.
+ * Those notes where they travel: inside `meta.parts`, one record per key.
  *
  * The notes are written as a `{key: text}` map above because what these tests
- * are about is which note lands in which box — but the SHAPE is precisely what
- * moved in issue #75, so the conversion is one function, right here, rather
- * than a `note:` spelled out at forty call sites where nobody would notice it
- * drifting back to a flat map.
+ * are about is which note lands in which box; the conversion to the catalogue
+ * shape is one function, right here, rather than a `note:` spelled out at
+ * forty call sites.
  *
  * A record is a `printable` with a file, because that is what a part carrying a
  * note usually is; the note itself is written only when there is one, which is
@@ -273,11 +267,10 @@ describe('the author\'s note', () => {
 // allowed to be keyed `constructor` — `render._check_part_name` does not object
 // — and a bare lookup then answers with a function off `Object.prototype`.
 //
-// TWO READS, ONE HELPER, which is what these tests are really about. The guard
-// used to be written out at the newest read and nowhere else; the older ones had
-// it nowhere, and the next would have been added the same way. It was three
-// reads until issue #75 moved the author's note inside the catalogue record,
-// where `partRecord` makes the identical argument for the identical reason.
+// TWO READS, ONE HELPER, which is what these tests are really about: every read
+// of the reader's map goes through `noteFor`, and the author's note inside the
+// catalogue record goes through `partRecord`, which makes the identical
+// argument for the identical reason.
 
 describe('noteFor', () => {
   it('answers the entry the map itself owns', () => {
@@ -314,16 +307,14 @@ describe('noteFor', () => {
   })
 })
 
-// -- and the WRITE, which had no guard at all ---------------------------------
+// -- and the WRITE ------------------------------------------------------------
 //
-// Every read went through `noteFor` and the one write did not, which is the
-// half of the trap that loses data rather than throwing. `notes[key] = text` is
-// an ASSIGNMENT, and `__proto__` names an accessor on `Object.prototype` rather
-// than a slot on the object: handed a string that setter does nothing and
-// reports nothing. So a reader writing a note on a part keyed `__proto__`
-// watched the dialog close exactly as it does on success, `{}` went to
-// localStorage, and `noteFor` afterwards answered with an empty box — honestly,
-// because there was nothing there. Nothing anywhere said so.
+// The one write is the half of the trap that loses data rather than throwing.
+// `notes[key] = text` is an ASSIGNMENT, and `__proto__` names an accessor on
+// `Object.prototype` rather than a slot on the object: handed a string that
+// setter does nothing and reports nothing. A note written on a part keyed
+// `__proto__` would close the dialog exactly as on success, send `{}` to
+// localStorage, and leave `noteFor` answering with an empty box.
 //
 // THE KEY IS LEGAL. `render._check_part_name` does not object, so this is a
 // part a model may publish rather than an attack.

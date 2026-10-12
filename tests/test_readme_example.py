@@ -1,50 +1,29 @@
 """The model.py printed in README.md, built the way a real push is built.
 
-THIS FILE EXISTS BECAUSE THE README CARRIES A SECOND COPY OF THE CONTRACT.
-`parts()`, `views()`, `checks()` and `import checklib` are one agreement
-between a model and the hub, and it is written down in two places on purpose:
-`model_template/`, which issue #31 put on the hub and which
-`hammerola create` unpacks, and the block in README.md, which is the one a
-person deciding whether to use the tool at all can read without downloading
-anything. The comment above that block says why both are kept. WHAT MAKES TWO
-COPIES SAFE IS THAT BOTH ARE EXECUTED -- this file builds one and
-tests/test_template.py builds the other -- because a code block nobody executes
-is exactly the silent drift issue #46 warns about: the example goes on looking
-correct for as long as nobody tries it, and the first person to try it is an
-author copying it.
+`parts()`, `views()`, `checks()` and `import checklib` are one agreement between a
+model and the hub, written down in two places on purpose: `model_template/`, which
+`hammerola create` unpacks, and the block in README.md, readable by someone
+deciding whether to use the tool at all (the comment above the block says why both
+are kept). Two copies are safe only because both are executed: this file builds
+one and tests/test_template.py builds the other.
 
-So the block is lifted out of the file and run: written into a scratch project
-beside the smallest legal project.json and handed to `src.buildproc.run_build`
--- the same call `src/jobs.py` makes on the request path, in a process of its
-own, under ceilings. Nothing here re-implements a build or asserts against a
-transcript of one; what it can catch is what an author would hit -- the model
-does not import, a name or a label in a view no longer means what it meant, the
-gate refuses the layout, `checks()` is written so the build cannot call it or
-cannot count it, `import checklib` no longer resolves from inside a model or
-stops being called at all, an export stopped being produced.
+The block is lifted out of the file, written into a scratch project beside the
+smallest legal project.json and handed to `src.buildproc.run_build`, the same call
+`src/jobs.py` makes, in a process of its own, under ceilings. It catches what an
+author would hit: the model does not import, a name or a label in a view changed
+meaning, the gate refuses the layout, `checks()` cannot be called or counted,
+`import checklib` no longer resolves from inside a model or stops being called, an
+export stopped being produced.
 
-IT IS TIED TO THE BLOCK BEING THERE, NOT TO WHAT IS IN IT -- and the block
-going away is a REGRESSION, so it FAILS the run rather than skipping it. That
-is the opposite of what this file used to do, and the reversal is a decision
-rather than an oversight. While the plan was "the template lands, the example
-becomes a pointer to it, this file is deleted in the same commit", a skip was
-right: a check on a second copy has to die with the second copy and must not
-make removing the copy look like a regression. The template landed and the plan
-was cancelled -- the comment above the block asks for the example to STAY -- so
-the disappearance of the block is now the failure this file is here to catch,
-and answering it with a skip would answer it with a GREEN run. Neither
-`-W error` nor `--strict` raises a skip, so the only thing holding the example
-to the contract would go quiet without a red character anywhere. If the
-decision is ever reversed again, change that comment in README.md and delete
-this file in the same commit.
+The block going away is a REGRESSION, so it FAILS the run rather than skipping
+(neither `-W error` nor `--strict` raises a skip). If the decision to keep the
+example is ever reversed, change the comment in README.md and delete this file in
+the same commit.
 
-THE CAD KERNEL IS NOT ASSUMED, and the shape of the failure it guards against is
-why: on a checkout that installed requirements.txt without the system libraries
-the Dockerfile adds, the distribution is on disk and `import cadquery` still dies
-on `libGL.so.1` -- so the guard is an import attempt and not `find_spec`, and it
-names ImportError explicitly. CI installs those libraries (issue #27), so the
-example is executed on every push; on a machine without them it is unwatched and
-the README can go stale there unnoticed. Same guard and same reasoning as
+The CAD kernel is not assumed: on a checkout that installed requirements.txt
+without the Dockerfile's system libraries, `import cadquery` dies on `libGL.so.1`,
+so the guard is an import attempt naming ImportError, not `find_spec`. CI installs
+those libraries, so the example is executed on every push. Same guard as
 tests/test_view_fixture.py.
 """
 
@@ -74,15 +53,11 @@ README = Path(__file__).resolve().parent.parent / "README.md"
 # the refusal would then be what this test was measuring.
 PID = "abc123def456"
 
-# The production ceilings -- minus the address-space one, and only where the
-# platform cannot carry it. RLIMIT_AS is unsettable on darwin and
-# `apply_process_limits` refuses, deliberately and loudly, to start a build
-# whose ceiling will not go on; a workstation would therefore report its own
-# platform as a broken README. ASKING `memory_limit_supported()` RATHER THAN
-# DROPPING IT OUTRIGHT is the difference between a platform allowance and a
-# weaker test: production is Linux, the function is exported to answer exactly
-# this, and on Linux the example is then held to every ceiling a real push
-# gets.
+# The production ceilings, minus the address-space one where the platform cannot
+# carry it: RLIMIT_AS is unsettable on darwin and `apply_process_limits` refuses
+# to start a build whose ceiling will not go on. `memory_limit_supported()`
+# exists to answer exactly this, so on Linux (production) the example is held to
+# every ceiling a real push gets.
 LIMITS = (DEFAULT_LIMITS if memory_limit_supported()
           else DEFAULT_LIMITS.replace(memory_bytes=None))
 
@@ -105,15 +80,9 @@ RECORDER_MARK = "_readme_example_recorder"
 
 # The half of `checklib` that is not a check and is therefore NOT stood in for:
 # saying where a number came from. The example declares its constants with these
-# at module level, so the stand-in has to hand back the real ones -- see the
-# Recorder below for what happens when it does not.
-#
-# DERIVED FROM `KINDS` RATHER THAN SPELLED OUT, because `KINDS` is exactly the
-# property of the module that tells a declaration from a check -- which the
-# spelled-out version denied there was one of. Spelled out it was also inert:
-# the example only ever touches `derived` and `estimated`, so the other six
-# entries were never looked up, and renaming `KINDS` in checklib left this file
-# green. Derived, the rename is an ImportError here on the next run.
+# at module level, so the stand-in has to hand back the real ones (see the
+# Recorder below). Derived from `KINDS`, the property that tells a declaration
+# from a check, so a rename in checklib is an ImportError here.
 DECLARATIONS = ({"Number", "KINDS"} | set(checklib_declarations.KINDS)
                 | {kind.upper() for kind in checklib_declarations.KINDS})
 
@@ -137,19 +106,12 @@ def _no_addresses(value):
 def guard_the_checklib_stand_in():
     """Fail the test that leaves the stand-in in sys.modules, not the next one.
 
-    The project's rule about module-level mutable state, pointed at the only
-    piece of it this file has: `sys.modules` is process-wide, and one test
-    below puts a recording stand-in under the name `checklib` to watch the
-    example call it. Left behind, the next test to import that name gets a
-    module whose every attribute is a function returning an empty list -- which
-    is to say a `checklib` that agrees with everything.
-
-    `monkeypatch` is what actually restores it (including the case where the
-    name was never in sys.modules at all, where the undo is a delete), so today
-    nothing can leak. This guard is for the next stand-in, installed by hand.
-
-    Before AND after, because before-only puts the blame in the wrong place: the
-    test that leaks passes, and the failure lands on whatever ran next.
+    `sys.modules` is process-wide, and one test below puts a recording stand-in
+    under the name `checklib`; left behind, the next importer gets a `checklib`
+    that agrees with everything. `monkeypatch` restores it today (including the
+    delete when the name was absent); this guard is for a stand-in installed by
+    hand. Before AND after, so the blame lands on the test that leaks rather than
+    on whatever runs next.
     """
     assert not _recorder_installed(), (
         "a checklib stand-in was already in sys.modules when this test "
@@ -181,44 +143,22 @@ Built = namedtuple("Built", "source outcome out")
 def built(tmp_path_factory):
     """The example, built once, for every assertion in this file to read.
 
-    MODULE SCOPE BECAUSE THE BUILD IS THE EXPENSIVE THING and there is only
-    ever one of it to look at. This runs the real pipeline in a process of its
-    own -- a fresh interpreter importing the CAD kernel, meshing a part,
-    exporting three formats, tessellating two views and rebuilding
-    matplotlib's font cache, which the build pays for EVERY time by design
-    (`child_environment` points MPLCONFIGDIR into a scratch home made and
-    removed per build, and says so). The argument for one build rather than
-    four does not rest on a number: four tests asking four questions about one
-    build would run that pipeline four times.
-
-    The number is worth having anyway, for whoever wonders whether the ceiling
-    is close. On this workstation, quiet: 5.1 and 5.3 s; the same run with the
-    machine busy: 13.2 s. `wall_seconds` is production's 300 s (issue #81),
-    taken rather than widened, so the margin is about 57x on a quiet machine and
-    about 23x on a busy one -- an order of magnitude at both ends, and a timeout
-    here would mean something is actually wrong rather than merely slow.
-
-    THE RATIOS ARE RECOMPUTED HERE AND WERE WRONG BEFORE, which is the reason to
-    write them out at all: they read "23x and 9x" against a stated wall of 900 s,
-    and 23 x 5.3 is 120 -- the wall this paragraph was measured against, before
-    the 2026-08-29 raise. The sentence kept the old division and took the new
-    number, and nothing could say so, because a margin is not something a test
-    can assert about a build it does not time.
+    Module scope because the build is the expensive thing: a fresh interpreter
+    importing the CAD kernel, meshing a part, exporting three formats,
+    tessellating two views and rebuilding matplotlib's font cache, which every
+    build pays for by design (`child_environment` points MPLCONFIGDIR into a
+    per-build scratch home). On a workstation it takes about 5 s quiet and 13 s
+    busy, against production's `wall_seconds`, which is taken rather than widened.
 
     Nothing here is shared state a test can dirty: `BuildOutcome` is a frozen
     dataclass and the output directory is only ever read.
 
-    Both ways out of this file are decided here rather than in each test, and
-    they are deliberately not the same kind of exit: no python block in the
-    README means the example is gone, which is a regression and FAILS every
-    test here (see GONE), while no importable CAD kernel means it cannot be
-    built at all, which is a property of the interpreter and skips.
-    `exc_type=ImportError` on the second is explicit, because the failure it is
-    FOR is an ImportError that is NOT a ModuleNotFoundError: the module is
-    found and its extension refuses to load. pytest 9.1 narrows the default to
-    ModuleNotFoundError, and without the argument this guard would stop skipping
-    on a machine whose kernel is installed but cannot load, and go red there on a
-    pytest bump.
+    Both ways out are decided here: no python block in the README means the
+    example is gone, a regression that FAILS every test (see GONE); no importable
+    CAD kernel is a property of the interpreter and skips. `exc_type=ImportError`
+    is explicit because the case it is for is an ImportError that is not a
+    ModuleNotFoundError (the module is found and its extension refuses to load),
+    and pytest narrows the default to ModuleNotFoundError.
     """
     source = readme_model_source()
     pytest.importorskip(
@@ -264,21 +204,15 @@ def test_the_readme_example_builds_and_passes_the_gate(built):
 def test_the_example_declares_checks_the_build_can_call_and_count(built):
     """The build calls the example's `checks()` and counts both checks in it.
 
-    WHAT THIS DOES AND DOES NOT SAY. It says the build could call the function
-    the example declares and did not refuse the body: `checks_call_args` hands
-    over the output directory positionally and accepts none, one, or a
-    declared parameter (`src/cadbuild/modelchecks.py`), so `def checks()` and
-    `def checks(out_dir)` are both callable and this test stays green across
-    that edit. It is NOT a check on the signature -- the reason the example
-    takes no argument is that a parameter it never reads teaches a parameter
-    that does nothing, and no test can hold a README to that.
+    `checks_call_args` hands over the output directory positionally and accepts
+    none, one, or a declared parameter (`src/cadbuild/modelchecks.py`), so this
+    says nothing about the signature; the example takes no argument because a
+    parameter it never reads would teach one that does nothing.
 
-    What it does hold down is the count, which nothing else in the suite sees.
-    Zero is refused outright, and the number is read out of the source, so a
-    body the counter cannot read prints "count unknown" and publishes anyway --
-    a `checks()` that quietly stopped being counted is a `checks()` the log
-    stops speaking for. Two here: the `assert`, and the `problems +=` that
-    collects `checklib`'s verdict.
+    It holds down the count, which nothing else sees. The number is read out of
+    the source, so a body the counter cannot read prints "count unknown" and
+    publishes anyway. Two here: the `assert`, and the `problems +=` that collects
+    `checklib`'s verdict.
     """
     assert built.outcome.status == STATUS_OK, built.outcome.log
     assert "checks: 2 passed" in built.outcome.log, built.outcome.log
@@ -287,25 +221,18 @@ def test_the_example_declares_checks_the_build_can_call_and_count(built):
 def test_the_example_exercises_checklib_and_the_name_resolves(built):
     """The fourth element of the contract, held down the same way as the three.
 
-    THE PROSE HALF IS THE POINT OF ASSERTING ON THE SOURCE. The paragraph above
-    the block calls `checklib` part of the contract; if the block stops using
-    it, that sentence goes back to being a claim about something the reader
-    cannot see in the example under it -- which is the shape of the whole
-    finding this file was written for, and no build failure would report it.
+    Asserted on the source because the paragraph above the block calls `checklib`
+    part of the contract, and no build failure would report the block ceasing to
+    use it.
 
-    The build half comes free from the fixture and is worth naming, because
-    this is the only place the lookup happens at all: the image's smoke gate
-    proves the file ARRIVED (check (g)), and nothing else on the request path
-    imports it, so whether `import checklib` still resolves from inside a model
-    -- past the project's own directory, which goes on sys.path FIRST, onto the
-    hub root behind it -- is answered here or nowhere. An unresolved name fails
-    the build as `importing model.py failed`; a `checklib` that resolved and
-    then handed back something `problems +=` cannot take raises inside
-    `checks()`, which is a failed build too. Both were provoked to check it,
-    and so was the opposite -- moving the screws out over the edge (`INSET`
-    3 mm rather than 8) turns this green run red with four real verdicts out of
-    `material_under_head`, which is what says the shared check is being RUN and
-    not merely counted.
+    The build half is the only place the lookup happens: the image's smoke gate
+    proves the file arrived (check (g)) and nothing else imports it, so whether
+    `import checklib` resolves from inside a model (past the project's own
+    directory, first on sys.path, to the hub root behind it) is answered here. An
+    unresolved name fails as `importing model.py failed`; a `checklib` returning
+    something `problems +=` cannot take raises inside `checks()`. Moving the screws
+    over the edge (`INSET` 3 mm rather than 8) turns this red with four verdicts
+    from `material_under_head`, so the shared check is RUN, not merely counted.
     """
     assert "import checklib" in built.source, (
         "the README's example no longer imports checklib, but the paragraph "
@@ -321,37 +248,20 @@ def test_the_example_exercises_checklib_and_the_name_resolves(built):
 def test_the_example_calls_the_shared_check_once_per_hole(built, monkeypatch):
     """The call is WATCHED, because nothing else can see the call itself.
 
-    THE MUTATION THIS EXISTS FOR is a loop that runs its full number of times
-    and asks the same question every time -- four calls, one argument. Nothing
-    else here can see it: the geometry is untouched, so the build is green; the
-    count in the log is read out of the source by `count_checks`, so it is two
-    either way; and the source text still contains `import checklib` and a call
-    to it. The example would go on publishing while demonstrating a check of one
-    hole four times over.
+    The mutation this exists for is a loop that runs its full number of times and
+    asks the same question every time: the geometry is untouched (green build),
+    `count_checks` reads the count from the source, and the source still imports
+    and calls `checklib`.
 
-    THE DEGENERATE CASES ARE THE BUILD'S JOB, not this test's, and saying so is
-    the honest version of what this covers. A `hole_centres()` that came back
-    empty, or with one point repeated, ALSO breaks the geometry -- the same
-    helper places the holes -- so the example's own `assert len(holes) == 4`
-    fails and the build goes red without any help from here. Measured: each of
-    those turns five tests in this file red, not one. The loop that never
-    iterates at all (`for x, y in []`) is the one that leaves the geometry
-    alone, and that one does fail here and nowhere else.
+    Degenerate cases are the build's job: a `hole_centres()` that is empty or
+    repeats a point also breaks the geometry, so the example's own
+    `assert len(holes) == 4` fails. A loop that never iterates leaves the geometry
+    alone and fails here. The expected number comes from the example's own
+    `hole_centres()`, so an example redrawn with six holes stays green.
 
-    THE NUMBER COMES FROM THE EXAMPLE, not from this file. `hole_centres()` is
-    what the block itself iterates, so an example redrawn with six holes and a
-    matching assert stays green -- which it did not when this test had a 4 in
-    it, failing with "not once per hole" about a call that was exactly once per
-    hole.
-
-    THIS IS NOT THE HUB RUNNING A MODEL, and the distinction is worth keeping
-    straight: `exec()` of a model in the hub's own process is on the list of
-    things this project never does (SPEC 8A.4). This is a test reading a code
-    block out of a file in this repository, to watch which functions it calls.
-    The hub's way is the other four tests, in a process of its own under
-    ceilings.
-
-    `cadquery` is NOT stood in for -- the geometry has to be real, since the
+    This is not the hub running a model (`exec()` of a model in the hub's process
+    is something this project never does, SPEC 8A.4): it is a test reading a code
+    block out of a file in this repository. `cadquery` is NOT stood in for: the
     assert in `checks()` counts bores on the actual solid.
     """
     calls = []
@@ -399,14 +309,11 @@ def test_the_example_calls_the_shared_check_once_per_hole(built, monkeypatch):
         f"{len(holes)} holes: {calls}")
     assert len({name for name, _args, _kwargs in calls}) == 1, (
         f"the calls did not all go to one shared check: {calls}")
-    # WHAT MAKES TWO CALLS DIFFERENT HERE IS A PRINTABLE ARGUMENT. Addresses are
-    # normalised out of the repr, otherwise four identical probes on four
-    # freshly built copies of one part would read as four different asks. The
-    # price is the boundary: a geometry object's default repr is its class and
-    # its address, so after normalisation ANY TWO SHAPES LOOK ALIKE. That is
-    # right for today's check, where the varying argument is a coordinate --
-    # but a shared check whose varying argument is the SHAPE would collapse to
-    # one ask here and fail this line while doing nothing wrong.
+    # Calls differ by a printable argument. Addresses are normalised out of the
+    # repr, otherwise four identical probes on four freshly built copies of one
+    # part would read as four asks. So after normalisation ANY TWO SHAPES LOOK
+    # ALIKE: right for today's check, where the varying argument is a coordinate,
+    # but a check whose varying argument is the SHAPE would fail this line.
     assert len(set(calls)) == len(calls), (
         f"the calls were not all different asks, so the loop is not visiting "
         f"a distinct hole each time: {calls}")
@@ -415,11 +322,9 @@ def test_the_example_calls_the_shared_check_once_per_hole(built, monkeypatch):
 def test_the_views_the_example_declares_are_the_ones_it_publishes(built):
     """Both tabs reach meta.json, with the ids AND the labels the block gives.
 
-    The labels are half the point: `meta.json` is what the viewer reads to
-    build the tab strip, so `as printed` is a string a reader of this README
-    can see in the screenshot above the example. Comparing ids alone let a
-    renamed label through -- the caption in the picture drifting away from the
-    block that produced it, in one document.
+    `meta.json` is what the viewer builds the tab strip from, so `as printed` is a
+    string a reader can see in the README's screenshot; comparing ids alone would
+    let the caption drift away from the block that produced it.
     """
     assert built.outcome.status == STATUS_OK, built.outcome.log
     meta = json.loads((built.out / "meta.json").read_text(encoding="utf-8"))
@@ -438,24 +343,13 @@ NOTES_CEILING = re.compile(r"up to the first (\d+) of them")
 
 
 def test_the_readme_gives_the_ceiling_metrics_json_really_holds(capsys):
-    """A number in the prose is a claim, and this is the one that keeps it true.
+    """The README's figure for the metrics.json list ceiling is the real one.
 
-    THE SENTENCE USED TO BE UNCONDITIONAL -- "what each build declared reaches
-    `metrics.json`, notes and all" -- and `provenance.MAX_LISTED` makes it false
-    at 257 declarations: the counts stay exact, the two author-text lists are
-    cut, and the file says how many it dropped. So the sentence now gives the
-    ceiling, and a figure in a document has nothing to fail on unless something
-    reads it. This reads it.
-
-    TWO LISTS AND NOT ONE, which the sentence also used to get wrong: the same
-    ceiling cuts `notes` and `estimates`, and naming only the notes left a
-    reader to discover the other cut from a list that was shorter than the
-    count beside it. That is the whole failure the ceiling's own
-    `*_omitted` fields exist to prevent, undone in prose.
-
-    NO KERNEL AND NO BUILD, unlike everything else in this file: it is a
-    sentence checked against a constant, so it runs even on a machine where the
-    kernel does not import and the example itself is unwatched.
+    `provenance.MAX_LISTED` cuts the two author-text lists, `notes` and
+    `estimates`, while the counts stay exact and the file says how many it
+    dropped; the README gives that ceiling and names both lists. A figure in a
+    document fails on nothing unless something reads it. No kernel and no build:
+    it runs even where the example itself cannot be built.
     """
     found = NOTES_CEILING.findall(README.read_text(encoding="utf-8"))
     assert len(found) == 1, (

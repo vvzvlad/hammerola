@@ -1,24 +1,15 @@
 """The comment queue in a shell: `comments`, `resolve` and `files`.
 
-WHY A CLI VERB WHEN AN MCP SERVER FOR THE SAME QUEUE IS ALREADY DESIGNED
-(SPEC 7A.5). The objection "two interfaces to one set of data" does not apply
-here, because there is one INTERFACE — the HTTP API in `src/app.py` — and these
-are two TRANSPORTS over it. What is harmful is two implementations of the rules
-drifting apart; nothing here decides anything, it prints what the hub returned.
-And MCP only works where an MCP client is: from a shell, from a script, from
-somebody else's agent, it is not.
+A transport over the HTTP API in `src/app.py` (alongside the MCP design in
+SPEC 7A.5); nothing here decides anything, it prints what the hub returned.
 
-THE OUTPUT IS FOR AN AGENT READING A TERMINAL, which decides its shape: one
-line per comment starting with the id it will need for `resolve`, then the
-where-and-what indented under it, then the text — indented too, so that a
-comment somebody wrote as three paragraphs cannot be mistaken for three
-comments. The text comes from a STRANGER's keyboard (SPEC 7A.4), and the hub
-has already refused control characters in it, which is what makes printing it
-here safe.
+The output is for an agent reading a terminal: one line per comment starting
+with the id `resolve` needs, then where and what, then the text, all indented
+so a multi-paragraph comment is not read as several. The text is a stranger's
+(SPEC 7A.4); the hub has already refused control characters in it.
 
-DEFAULT IS THE OPEN ONES. A queue is read to find what still needs doing, and
-resolved items pile up forever — nothing deletes them (SPEC 5.3). `--all` is
-there for the times the question is "what did we already answer".
+Default is the open ones: resolved items are never deleted (SPEC 5.3). `--all`
+lists them too.
 """
 
 from pathlib import Path
@@ -33,16 +24,13 @@ STATUS_OPEN = "open"
 HINT = ("close one with: hammerola comments resolve <id> -m "
         "\"what was done about it\"")
 
-# The two attachments a comment can carry, as the record spells each one and as
-# this tool says it out loud: `shot` is the viewer's render of what the person
-# was looking at, and "frame" is what that is called to a reader.
+# (record key, label): `shot` is the viewer's render of what the person was
+# looking at, shown as "frame".
 PHOTO_KIND = "photo"
 ATTACHMENTS = ((PHOTO_KIND, "photo"), ("shot", "frame"))
 
-# The extensions the hub stores an attachment under. A fourth copy of one
-# decision, so it is pinned to the hub's own by
-# `test_the_client_takes_exactly_the_extensions_the_hub_stores` rather than by
-# this comment: drift here refuses a real photo and blames the hub for it.
+# The extensions the hub stores an attachment under; a copy pinned to the hub's
+# by `test_the_client_takes_exactly_the_extensions_the_hub_stores`.
 ATTACHMENT_EXTENSIONS = ("jpg", "png", "webp")
 
 
@@ -59,9 +47,7 @@ def run(args) -> int:
 def read(args) -> int:
     """Print this project's queue. -> exit code.
 
-    An empty queue is a SUCCESS and says so: "nothing to do" is the answer the
-    question has most of the time, and a non-zero exit for it would make every
-    caller treat the normal case as a failure.
+    An empty queue is a success: it is the usual answer.
     """
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
@@ -91,10 +77,8 @@ def read(args) -> int:
 def resolve(args) -> int:
     """Close one comment, with an optional note. -> exit code.
 
-    NO PROJECT IS NEEDED and none is looked for: a comment id is unique across
-    the whole hub, so this works from any directory — which is the point, since
-    whoever is closing an item is often not sitting in the model that produced
-    it. `read` above needs a project because a QUEUE belongs to one.
+    No project is needed: a comment id is unique across the hub, so this works
+    from any directory.
     """
     hub = hub_for(None)
     record = hub.resolve_comment(args.id, args.note)
@@ -107,29 +91,19 @@ def resolve(args) -> int:
 def files(args) -> int:
     """Save one comment's attachments to disk. -> exit code.
 
-    THE BYTES AND NOT THE URL, which is the whole reason this verb exists. The
-    route serving an attachment takes `EDIT_TOKEN` like the queue itself, so a
-    reader handed the URL could only open it by digging the secret out of the
-    configuration and calling something else with it — and the photo of the
-    printed part is the strongest evidence there is about a model, so it was
-    always going to be opened.
-
-    NO PROJECT IS LOOKED FOR, exactly as in `resolve` above and for the same
-    reason: a comment id is unique across the hub.
+    The bytes, not the URL: the attachment route needs `EDIT_TOKEN`, so a URL
+    would push the reader to dig the secret out of the configuration. No
+    project is needed, as in `resolve`.
     """
     hub = hub_for(None)
     record = hub.comment(args.id)
     cid = record.get("id", args.id)
 
-    # THE SAME TEST THE LISTING MAKES, and it has to stay the same one: read
-    # differently, the two halves of this file would disagree about which
-    # attachments a comment has — one printing a name the other refuses.
+    # The same test `_print_comment` makes, so the two agree.
     wanted = [(kind, label, _local_name(cid, kind, record[kind]))
               for kind, label in ATTACHMENTS if record.get(kind)]
     if not wanted:
-        # A SUCCESS, for the reason `read` states about an empty queue: most
-        # comments carry no photo, so a non-zero exit here would make the
-        # ordinary answer look like a failure.
+        # A success: most comments carry no photo.
         print(f"no photo or frame on {cid}")
         return 0
 
@@ -150,13 +124,10 @@ def files(args) -> int:
 def _local_name(cid: str, kind: str, declared) -> str:
     """The name to write, composed HERE out of the id and the extension.
 
-    The record names the file the hub stored — `<id>.jpg`, `<id>.shot.png`
-    (`src/comments.py:_attachment_name`) — and that string is not joined onto a
-    path: only its extension is taken, and only from the set the hub stores.
-    Anything else is refused rather than skipped, in the same tone
-    `hammerola/artifacts.py` refuses a file name it was handed: the case is an
-    answer that did not come from a hub that wrote the file, and a photo missing
-    from a directory reported as complete is the outcome worth avoiding.
+    The record names the stored file (`<id>.jpg`, `<id>.shot.png`,
+    `src/comments.py:_attachment_name`); that string is never joined onto a
+    path, only its extension is taken, and only from the set the hub stores.
+    Anything else is refused rather than skipped.
     """
     extension = (declared.rpartition(".")[2].lower()
                  if isinstance(declared, str) else None)
@@ -174,11 +145,8 @@ def _local_name(cid: str, kind: str, declared) -> str:
 def _destination(args) -> Path:
     """Where the attachments land: `-o DIR`, or `.hammerola/comments/`.
 
-    Under `.hammerola/` and not the working copy, for the reason
-    `sources.SCRATCH_DIR` gives: a photo dropped next to model.py is a file the
-    next push tries to publish. ONE FLAT DIRECTORY FOR EVERY COMMENT, unlike
-    `artifacts` — the names carry the comment id, so two comments cannot collide
-    and nothing is gained by a directory per id.
+    Under `.hammerola/` so the next push does not pick it up
+    (`sources.SCRATCH_DIR`). One flat directory: the names carry the comment id.
     """
     base = Path(args.directory).expanduser() if args.directory else Path.cwd()
     given = args.output
@@ -197,10 +165,7 @@ def _print_comment(record: dict) -> None:
              else f"open, written {record.get('created')}")
     print(f"{cid}  {stamp}")
 
-    # WHERE, on one line: which build, which part, which view, which point. All
-    # four are optional except the build — a comment left without clicking a
-    # part carries none of the rest — so the line is assembled rather than
-    # formatted, or an ordinary comment prints three empty labels.
+    # Where, on one line: build, then the optional part, view and point.
     where = [f"build {record.get('commit')}"]
     if record.get("part"):
         where.append(f"part {record['part']}")
@@ -214,12 +179,8 @@ def _print_comment(record: dict) -> None:
     for line in str(record.get("text", "")).splitlines() or [""]:
         print(f"  {line}")
 
-    # WHICH ATTACHMENTS THERE ARE AND THE COMMAND THAT FETCHES THEM, on one
-    # line, where the URL that serves them used to be. Both are behind the same
-    # token as the queue, and a reader given the URL has no way to open it but
-    # to take the secret out of the configuration and hand it to something else
-    # — which is exactly what a reader did. The bytes cannot be shown in a
-    # terminal either way, so the useful half is the next command to run.
+    # Which attachments exist and the command that fetches them (not the URL,
+    # which needs the token; see `files`).
     present = [label for kind, label in ATTACHMENTS if record.get(kind)]
     if present:
         print(f"  attachments: {', '.join(present)} -> "

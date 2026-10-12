@@ -33,14 +33,11 @@
 //                                       that UNMAKES something, and the only
 //                                       write either page makes to a project
 //
-// A comparison's SCENE is NOT fetched here, and that is deliberate: the viewport
-// fetches it to render it and hands the tree back on `hmr:model`. Fetching it on
-// this side as well would double two megabytes per view switch to re-derive
-// something the other half already holds.
+// A comparison's SCENE is not fetched here: the viewport fetches it to render
+// it and hands the tree back on `hmr:model`.
 //
-// Nothing here invents an endpoint. Where a block of the brief has no source on
-// the server the component says so on the screen rather than guessing a shape
-// the hub might answer with one day.
+// Nothing here invents an endpoint: where a block of the brief has no source on
+// the server, the component says so on screen.
 
 /** The two moving names. Same list as static/_v/pointer_pref.js. */
 export const POINTER_NAMES = ['latest', 'dev'];
@@ -48,43 +45,29 @@ export const POINTER_NAMES = ['latest', 'dev'];
 /**
  * The id of the view a model is assembled in.
  *
- * A constant shared with the build half, where it is spelled in
- * `src/cadbuild/artifacts.py` as `ASSEMBLED_VIEW_ID`. No model INHERITS it:
- * `views.prepare_views` refuses a model that declares no view under this id, so
- * every build that reaches this hub has one. It matters because a distance
- * measured BETWEEN two parts only means anything where the parts stand as
- * assembled — on a print bed they have been moved apart on purpose, and a
- * number taken there would reach the agent as a gap that is not a gap (brief,
- * block 7). A rename on the build side would leave every CROSS-PART measurement
- * here labelled as belonging to the current layout instead — the safe
- * direction, and silent; a single-part measurement carries `crossPart: false`
- * and is never labelled either way. The two spellings are checked against each
- * other by `tests/test_ui_source.py`, which is the only place that can: neither
- * runtime can import the other's constant.
+ * Spelled in `src/cadbuild/artifacts.py` as `ASSEMBLED_VIEW_ID`;
+ * `tests/test_ui_source.py` checks the two agree, since neither runtime can
+ * import the other's constant. `views.prepare_views` refuses a model without a
+ * view under this id. It matters because a distance BETWEEN two parts only
+ * means anything where they stand as assembled — on a print bed they are moved
+ * apart on purpose (brief, block 7). A single-part measurement carries
+ * `crossPart: false` and is never labelled either way.
  */
 export const ASSEMBLED_VIEW_ID = 'assembled';
 
-/** The four fields, read off one pathname. Pure, and the ONLY place that
- *  arithmetic is written — `PAGE` below and `rereadPage` after it are two
- *  moments, not two rules, and a second copy of the slicing is how they would
- *  come to disagree about what `/project/x/dev/` means.
+/** The four fields, read off one pathname. Pure, and the only place that
+ *  arithmetic is written — `PAGE` and `rereadPage` both use it.
  *
- *  EXPORTED for the one reader that has to know what an address MEANS without
- *  moving the page onto it: the `popstate` handler, which decides what to do
- *  about a history entry before anything has been fetched. It used to slice
- *  `location.pathname` itself for the slot, which is the second copy this
- *  paragraph is about — and a copy that could not see a comparison at all. */
+ *  Exported for the `popstate` handler, which has to know what an address
+ *  means before anything has been fetched. */
 export function pageFrom(pathname) {
   const parts = String(pathname).split('/');
   // `/project/<pid>/<a>/compare/<b>/` IS THE PAGE OF BUILD `<a>`, COMPARING
-  // AGAINST `<b>`. Everything that is not the scene belongs to `<a>` —
-  // meta.json, builds.json, the picker, the downloads, the comment rail — so
-  // the base is the build's own directory and not the address bar's, which is
-  // the whole of what a shared comparison link needed: read literally, every
-  // relative fetch went to a route that serves two files and 404s on the rest.
-  // The word sits in the FOURTH segment for the reason src/app.py gives —
-  // `compare` is a legal build id, so `/project/<pid>/compare/` has to stay
-  // that build's page, and it is: there `parts[4]` is the trailing '' instead.
+  // AGAINST `<b>`. Everything but the scene belongs to `<a>` (meta.json,
+  // builds.json, picker, downloads, comment rail), so the base is the build's
+  // own directory, not the address bar's. The word sits in the fourth segment
+  // because `compare` is a legal build id (src/app.py): on
+  // `/project/<pid>/compare/` `parts[4]` is the trailing ''.
   const comparing = parts[4] === 'compare';
   return {
     pid: parts[2] || '',
@@ -93,10 +76,8 @@ export function pageFrom(pathname) {
     slot: parts[3] || '',
     base: comparing ? `${parts.slice(0, 4).join('/')}/`
                     : String(pathname).replace(/[^/]*$/, ''),
-    // The other end of the pair, and '' on every ordinary page. It is what the
-    // first load reads to boot straight into the comparison (`load`); nothing
-    // else on this page can say a link was a comparison link, because the
-    // address is the only thing that carries it.
+    // The other end of the pair, '' on an ordinary page. The first load reads
+    // it to boot straight into the comparison (`load`).
     cmp: comparing ? (parts[5] || '') : '',
   };
 }
@@ -113,23 +94,17 @@ export const PAGE = pageFrom(location.pathname);
 /**
  * Read it again, IN PLACE, after the URL moved without the page reloading.
  *
- * Switching revisions is a `history.pushState` rather than a navigation
- * (issue #62): the address still has to say which geometry is on screen, but
- * throwing the document away to change it costs the reader the camera, the
- * hidden parts and the section — everything they set up in order to compare two
- * builds. What survives that is exactly what this function exists for: nothing
- * re-derives `PAGE` on its own, so after a push every reader of `PAGE.base`
- * would go on fetching the revision that was on screen a moment ago.
+ * Switching revisions is a `history.pushState` rather than a navigation, so
+ * the reader keeps the camera, hidden parts and section. Nothing re-derives
+ * `PAGE` on its own, so after a push this must run or `PAGE.base` would keep
+ * fetching the previous revision.
  *
- * `Object.assign` ONTO THE SAME OBJECT and not a reassignment, because every
- * module here imported the object itself and reads it as data — `PAGE.base` in
- * a template string, `PAGE.slot` in a comparison. Rebinding the export would
- * leave each of those pointing at the old record; a function would mean editing
- * a dozen call sites into `PAGE().base` for no gain.
+ * `Object.assign` onto the same object, not a reassignment: every module reads
+ * the imported object as data (`PAGE.base`, `PAGE.slot`), and rebinding the
+ * export would leave them on the old record.
  *
  * The argument is for tests and for a caller that knows the path before the
- * browser does; with none, the browser's own URL is the answer, which is the
- * whole definition of this record.
+ * browser does; with none, the browser's own URL is used.
  */
 export function rereadPage(pathname) {
   return Object.assign(
@@ -172,16 +147,13 @@ export class Unauthorized extends Error {}
 /**
  * Every project's card, as `Store._refresh_index` wrote them — BEHIND THE TOKEN.
  *
- * This is the one route the front page needs and the only document on the
- * service that enumerates what exists, so it is guarded while a build page is
- * not (src/app.py says why at length). Which makes this function the whole of
- * the front page's access control AND its sign-in check: there is no separate
- * "is this token good" endpoint to ask, because the answer to that question and
- * the answer to "what may I see" are the same response.
+ * The only document on the service that enumerates what exists, so it is
+ * guarded while a build page is not (src/app.py). This function is both the
+ * front page's access control and its sign-in check: there is no separate
+ * "is this token good" endpoint.
  *
- * A 401 is raised apart from everything else. "The token is wrong" and "the hub
- * is unreachable" lead to different screens and different words, and collapsing
- * them tells somebody to retype a token that was fine.
+ * A 401 is raised apart from everything else: "the token is wrong" and "the hub
+ * is unreachable" lead to different screens.
  */
 export async function loadIndex(token) {
   const response = await fetch('/index.json', {
@@ -196,24 +168,19 @@ export async function loadIndex(token) {
 /**
  * A card's link: THE PROJECT, and never one of its pointers.
  *
- * A card means "open this model", and the URL naming no pointer is the one that
- * opens whichever of `latest` and `dev` this reader was last on (SPEC 9).
- * Linking straight at `latest` here would quietly overwrite that memory on every
- * visit to the front page — which is the route somebody browsing their own
- * projects takes most.
+ * The pointer-less URL opens whichever of `latest` and `dev` this reader was
+ * last on (SPEC 9); linking at `latest` would overwrite that memory on every
+ * visit to the front page.
  */
 export const projectUrl = (pid) => `/project/${encodeURIComponent(pid)}/`;
 
 /**
  * One FILE of one build, by the name that build declared for it.
  *
- * The commit and not a pointer, because the card already names the commit it was
- * built from: a picture fetched from `latest` could be a different build's the
- * moment somebody publishes while the list is open, and it would be a picture of
- * something other than what the card says.
+ * The commit and not a pointer: a picture fetched from `latest` could be a
+ * newer build's than the one the card names.
  *
- * All three parts are escaped. A pid is a hex id and a commit is a digest today,
- * but the file name comes out of a build — the model chooses it — and a name is
+ * All three parts are escaped: the file name is chosen by the model, and it is
  * a path segment here, not a path.
  */
 export const buildFileUrl = (pid, commit, file) => (
@@ -223,55 +190,30 @@ export const buildFileUrl = (pid, commit, file) => (
 /**
  * One card of `/index.json`, as the front page renders it.
  *
- * The mapping is HERE, in one function, rather than spread through the JSX, and
- * that is what lets `tests/test_ui_source.py` compare the fields read off a card
- * against the keys `render.index_card` actually writes. A field that is not
- * there reads as `undefined`, which renders as an empty string and formats as
- * `NaN` — never as an error.
+ * The mapping is in one function so `tests/test_ui_source.py` can compare the
+ * fields read here against the keys `render.index_card` writes. A missing field
+ * reads as `undefined` and renders empty or `NaN`, never as an error.
  *
- * A PREVIEW IS ANSWERED NOW (issue #34), and by a picture that was there all
- * along: every build renders a sheet per whole-view mesh and declares it on the
- * view it is of, so `render.index_card` puts the first such name on the card and
- * this line turns it into a URL under that build. THE PLATE IS STILL THE ANSWER
- * for a card whose build has no picture — an image with no rendering stack ships
- * no PNGs — and `null` is what says so, rather than a URL that would 404.
+ * `preview` is the first whole-view sheet the build declares, as a URL under
+ * that build; `null` when the build has no picture (an image without a
+ * rendering stack ships no PNGs), and the plate is drawn instead.
  *
- * One of the designer's fields still has no line here, and the absence is a fact
- * about the hub rather than an omission: a REVISION NUMBER does not exist. A
- * revision is named by the digest of its sources (SPEC 7.7), so there is no
- * `v241` to show and there is not going to be one; the hash is shown at the
- * length the rest of this site reads it.
+ * There is no revision number: a revision is named by the digest of its
+ * sources (SPEC 7.7), shown at the length the rest of the site uses.
  *
- * `status` IS ANSWERED, AND ABOUT THE DRAFT ONLY (issue #32). It is one of
- * `idle`/`building`/`failed`, and what it describes is the last build pushed AS
- * A DRAFT — not "the last build in the `dev` slot", which a commit answers too
- * since it mirrors itself in there (issue #78). The hub records that job's id
- * when the build STARTS, and `/index.json` maps its live state onto the word per
- * request (`_serve_index_json` in src/app.py, `render.card_status`). So a draft
- * that is building says so while it builds, and one that failed keeps saying so
- * until the next draft push or until a commit replaces what is in the slot — a
- * restart included, because a job left in flight by a crash is failed at the
- * next start rather than left building for ever.
+ * `status` (`idle`/`building`/`failed`) is about the last build pushed AS A
+ * DRAFT only — not about whatever is in the `dev` slot, which a commit also
+ * mirrors into. The hub records the job id when the build starts and
+ * `/index.json` maps its live state per request (`_serve_index_json` in
+ * src/app.py, `render.card_status`); a job left in flight by a crash is failed
+ * at the next start. A commit build in flight is not reported: the card
+ * describes what has been published from a commit (SPEC 7.6).
  *
- * WHAT IT DOES NOT ANSWER is a COMMIT build in flight, and that is deliberate
- * rather than pending: the card describes what has been published from a commit
- * (SPEC 7.6), and a chip saying a commit build is running would be the front
- * page reporting on work that has published nothing. A project whose only build
- * is local has no card at all, so it shows no status either.
+ * `first` is the oldest build the hub holds, not a creation date — see
+ * `render.index_card`.
  *
- * `first` is the one field whose NAME differs from what the mock asked for, and
- * deliberately: the mock wanted a creation date, the hub has the oldest build it
- * holds, and those are different claims — see `render.index_card`.
- *
- * `printables` IS COUNTED AND NAMED, and the word on the card changed with the
- * field (issue #75). It used to read `card.parts`, which was the part count of
- * the biggest view; the catalogue's `parts` is now every part a build declares
- * — the bought screws and the scenery included — so a card built from its size
- * would tell somebody a three-part model with nine screws had twelve parts to
- * print. The hub therefore counts the printable records and calls the field
- * `printables`, and this line says the same word rather than a friendlier one:
- * "parts" over a number that counts only what gets printed is the very
- * mismatch the rename exists to end.
+ * `printables` counts only printable records (the catalogue's `parts` includes
+ * bought screws and scenery), and the card says "printables" to match.
  */
 export function projectCard(card) {
   return {
@@ -287,11 +229,9 @@ export function projectCard(card) {
     preview: card.preview
       ? buildFileUrl(card.pid, card.commit, card.preview)
       : null,
-    // The picture drawn FOR a card: the same render without the title band and
-    // the footer the sheet carries, which is what a box that fits its picture
-    // rather than cropping it wants. `null` for every build published before
-    // the build side wrote one — the card falls back to `preview`, which is
-    // what those builds have always shown.
+    // The picture drawn FOR a card: the same render without the sheet's title
+    // band and footer. `null` for older builds; the card falls back to
+    // `preview`.
     card: card.card
       ? buildFileUrl(card.pid, card.commit, card.card)
       : null,
@@ -299,46 +239,34 @@ export function projectCard(card) {
 }
 
 // -- getting started --------------------------------------------------------
-// The route whose ANSWER is meant for somebody who has no token at all, because
-// whoever needs it has not got one yet (src/onboarding.py). It carries six keys
-// — three relative paths, two version numbers and one boolean about this
-// deployment; `onboarding.manifest` is where they are written and
-// tests/test_onboarding.py is what pins the set, so this list is a summary and
-// not the source. This file reads the boolean and two of the paths and hands
-// all three on: both pages render a block out of the paths, and the boolean is
-// the DOOR's own condition for drawing its copy of it.
+// The route whose answer is meant for somebody who has no token yet
+// (src/onboarding.py). `onboarding.manifest` writes its keys and
+// tests/test_onboarding.py pins the set. This file reads the boolean and two of
+// the paths: both pages render a block from the paths, and the boolean is the
+// door's own condition for drawing it.
 
 const START_URL = '/start';
 
 /**
  * This hub's address, as the browser has it — read, never written down.
  *
- * The block these pages draw is a set of addresses somebody hands to an agent,
- * and the hub's own is one of them. It cannot come from a constant: this repository
- * carries the address of no deployment (AGENTS.md), the same rule the skill is
- * held to (`test_the_skill_names_no_deployment`), and a page served BY the hub
- * already knows where it is.
+ * The block is a set of addresses handed to an agent, the hub's own among
+ * them. It cannot be a constant: the repository carries no deployment's
+ * address (AGENTS.md, `test_the_skill_names_no_deployment`).
  *
- * Called at the moment the answer is stored rather than read at module scope,
- * because this bundle also serves the build page, which draws no block.
+ * Called when the answer is stored rather than at module scope, because this
+ * bundle also serves the build page, which draws no block.
  */
 export const hubOrigin = () => String(window.location.origin || '');
 
 /**
  * A path the block can print, or '' for anything else.
  *
- * ROBUSTNESS, NOT A GUARD, and the distinction is the whole of why this is two
- * lines. There is no boundary here to defend: `/start` is served by the SAME hub
- * that served this page and this bundle, so a hub inclined to send an agent
- * somewhere else writes the address into the HTML and never touches its own
- * manifest — and anyone who could rewrite the manifest in flight is rewriting
- * the page and the script on the same connection. Checking this field against
- * the hub that supplied it would be a door standing in an open field.
- *
- * What it IS for is a manifest that is no good for ordinary reasons: a broken
- * image, a proxy answering HTML, a route that grew a field of another type. A
- * line reading `Skill: undefined` helps nobody, so a field that is not a string
- * beginning with `/` takes the whole block down instead (`startHint`).
+ * Robustness, not a guard: `/start` is served by the same hub as this page, so
+ * there is no boundary to defend. It catches a manifest that is no good for
+ * ordinary reasons (a proxy answering HTML, a field of another type): a field
+ * that is not a string beginning with `/` drops the whole block (`startHint`)
+ * rather than printing `Skill: undefined`.
  */
 function hubPath(value) {
   if (typeof value !== 'string') return '';
@@ -349,24 +277,16 @@ function hubPath(value) {
 /**
  * What a `/start` document offers a page — two paths and a boolean — or nothing.
  *
- * THE BOOLEAN IS A FIELD AND NOT A GATE (issue #91), and it was a gate here for
- * as long as the door was the only screen that drew the block. Under that
- * arrangement "this hub has projects" and "this document is no good" really were
- * one answer, because neither put anything on that screen. The list draws the
- * block now, on every hub, so they have stopped being one answer: the paths have
- * a reader whatever `empty` says. Whether the hub is empty is a condition of the
- * DOOR — answered here, applied there (`HammerolaLogin` in HammerolaEntry.jsx),
- * where the screen it belongs to can be held to it by a test.
+ * `empty` is a field, not a gate: the list draws the block on every hub, and
+ * whether the hub is empty is the door's condition (`HammerolaLogin` in
+ * HammerolaEntry.jsx).
  *
- * `empty === true` AND NOT A TRUTHY TEST, which is the one thing the field kept
- * from the gate: what arrives here need not be the manifest at all — a string, a
- * number, a missing key and an object are all "truthy-ish" answers to a question
- * with exactly one affirmative, and the cost of reading one of them as yes is a
- * "nothing published here yet" block on a hub with forty projects on it.
+ * `empty === true`, not a truthy test: what arrives need not be the manifest,
+ * and reading a stray truthy value as yes would show "nothing published here
+ * yet" on a hub with projects.
  *
- * `null` IS NOW ONLY "THERE IS NOTHING HERE TO PRINT": a document that is not a
- * manifest, or one whose paths cannot be printed. Neither page can draw a block
- * out of that, and `loadStart` answers the same for a hub that never replied.
+ * `null` means there is nothing to print: not a manifest, or paths that cannot
+ * be printed. `loadStart` answers the same for a hub that never replied.
  */
 export function startHint(manifest) {
   if (!manifest || typeof manifest !== 'object') return null;
@@ -379,27 +299,17 @@ export function startHint(manifest) {
 /**
  * `GET /start`, as both pages read it. IT RESOLVES FOR EVERY FAILURE.
  *
- * The one function here that answers `null` instead of throwing, and the
- * asymmetry with `loadIndex` beside it is the whole point. That fetch IS the
- * page — a refusal is what the reader came to see. This one is a hint on top of
- * a screen that works without it, so a hub that did not answer, a proxy that
- * returned HTML and a document with the wrong fields must all end as "no block"
- * and nothing else. A rejected promise would put that obligation on every call
- * site instead, and the failure of forgetting it is a sign-in page taken down by
- * an unhandled rejection over a decoration.
+ * Unlike `loadIndex`, this is a hint on top of a screen that works without it,
+ * so an unreachable hub, a proxy returning HTML or a document with the wrong
+ * fields all end as "no block"; a rejection would put that burden on every
+ * call site.
  *
- * No `Authorization` header, deliberately: the route is public, and the reader
- * of it at the door has no token to send. The list asks the same way rather than
- * a second way — one route, one request, whoever is asking.
+ * No `Authorization` header: the route is public, and the reader at the door
+ * has no token.
  *
- * ONLY THE WIRE IS INSIDE THE `try`, and `startHint` is deliberately after it.
- * What the promise above is for is somebody ELSE's failure — an unreachable hub,
- * a captive portal answering HTML — and `startHint` is neither: it is pure, it
- * touches nothing outside its argument, and the only way it throws is a defect
- * in this bundle. Under the wider `try` such a defect showed as "no block" on
- * every hub forever, with nothing anywhere saying so; outside it, it is a stack
- * trace on the console of the person who wrote it. Silence is the contract for
- * the network, never for this file.
+ * Only the wire is inside the `try`. `startHint` is pure and throws only on a
+ * defect in this bundle, which should surface on the console rather than
+ * silently show as "no block".
  */
 export async function loadStart() {
   let manifest = null;
@@ -415,8 +325,8 @@ export async function loadStart() {
 
 // -- comparing two revisions -------------------------------------------------
 //
-// Issue #10, ui-brief block 9. A comparison is a pair of documents of its own,
-// computed on request and published under an address of its own:
+// ui-brief block 9. A comparison is a pair of documents of its own, computed on
+// request and published under an address of its own:
 //
 //     /project/<pid>/<a>/compare/<b>/scene.json?v=<view>   both revisions and
 //                                                  the difference between them,
@@ -425,25 +335,18 @@ export async function loadStart() {
 //     /project/<pid>/<a>/compare/<b>/report.json?v=<view>  what happened to each
 //                                                  part, as numbers    EDIT_TOKEN
 //
-// A COMPARISON IS OF ONE VIEW AND NOT OF A BUILD, which the `?v=` is: the scene
-// is built out of the two revisions' view documents (`cadbuild/comparescene.py`),
-// so a pair has as many comparisons as the views it has in common, and each is
-// cached separately. The query is not optional — the hub cannot name a cache
-// entry without it and answers 404.
+// A comparison is of one VIEW (`?v=`): the scene is built from the two
+// revisions' view documents (`cadbuild/comparescene.py`), and each is cached
+// separately. The query is required; without it the hub answers 404.
 //
-// BOTH ARE BEHIND THE TOKEN while a build's own files are not, and that one
-// difference is what shapes this side. The report is fetched here, with the same
-// header `loadIndex` sends. The SCENE is not fetched here at all: the viewport
-// fetches every view file it renders and this is one (element.js says why that
-// is the only entrance), so the token has to reach the element — it travels in
-// `hmr:state` and nowhere else.
+// Both are behind the token while a build's own files are not. The report is
+// fetched here with the same header `loadIndex` sends; the scene is fetched by
+// the viewport (element.js), so the token travels to it in `hmr:state`.
 //
-// NOTHING IS PRECOMPUTED, and that is arithmetic rather than a policy: the pair
-// space is quadratic in the number of revisions and nothing is ever deleted
-// (SPEC 5.3), so a comparison exists only where somebody asked for one. A pair
-// nobody has asked about answers 404, and the answer to that 404 is to queue the
-// job and wait for it — the same queue a build goes through, because the
-// geometry is measured by a child process with the CAD kernel in it.
+// Nothing is precomputed: the pair space is quadratic and nothing is deleted
+// (SPEC 5.3). A pair nobody asked about answers 404, and the answer is to queue
+// the job and wait — the same queue a build uses, since the geometry is
+// measured by a child process with the CAD kernel.
 
 /** Where one comparison's two documents live. */
 export const compareBase = (pid, a, b) =>
@@ -453,27 +356,15 @@ export const compareBase = (pid, a, b) =>
 /**
  * The scene of a comparison, in the shape `meta.views` carries a build's.
  *
- * ONE ENTRY AND NOT A LIST, because a comparison has exactly one thing to show:
- * the two revisions with the difference between them, for the view being
- * compared. It is handed to the viewport as a `views` array of one so that the
- * element's load path is the path a build takes — it fetches `base + file`, and
- * there is no second entrance to that pipeline.
+ * One entry, handed to the viewport as a `views` array of one so the element
+ * loads it on the same path as a build (`base + file`); the `?v=` query rides
+ * in `file` because the element concatenates.
  *
- * THE QUERY RIDES IN `file`, which is what makes that true: the hub wants `?v=`
- * on both documents, and the element concatenates.
- *
- * THE ID CARRIES THE VIEW, and that is what a view tab pressed mid-comparison
- * costs if it does not. The element tells a LIVE RELOAD (same view, new
- * geometry — keep the camera and the tree states) from a reload (different view
- * — fit it afresh) by the `view` field alone, so a scene whose id said plain
- * `compare` through every tab arrived with only `buildKey` moved: a swap, with
- * the previous view's camera and states carried onto a different arrangement in
- * a different place. A view is a different view whether or not a comparison is
- * up, and this is where the two halves say so.
- *
- * IT IS NOT ONE OF `meta.views` EITHER WAY — the prefix is what keeps it from
- * colliding with a build's own view id, and the page never writes it into
- * `state.view` (`onModel`).
+ * The id carries the view: the element tells a live reload (same view, keep
+ * camera and tree states) from a view change (fit afresh) by `view` alone, so a
+ * constant id would carry one view's camera onto another. The `compare:` prefix
+ * keeps it from colliding with a build's view id, and the page never writes it
+ * into `state.view` (`onModel`).
  */
 export const compareView = (view) => Object.freeze({
   id: `compare:${view}`,
@@ -499,19 +390,14 @@ export const COMPARE_GROUPS = Object.freeze({
 /**
  * The three colours the comparison is published in.
  *
- * WRITTEN DOWN HERE BECAUSE THE LEGEND HAS TO SPEND THEM. There is no industry
- * convention for "added" and "removed" — green is added in GitHub and NX, red is
- * added in CATIA, and in metrology red means extra material — so the brief makes
- * a legend mandatory and the legend is worthless unless its swatches are the
- * colours actually on the model. They are the payload's, not the interface's, so
- * they are NOT palette roles: they do not follow the theme, because the geometry
- * they name does not follow it either.
+ * Written here because the legend has to show them: there is no convention for
+ * "added" and "removed" (green is added in GitHub and NX, red in CATIA), so the
+ * brief makes a legend mandatory. They are the payload's colours, not palette
+ * roles, and do not follow the theme.
  *
- * WHICH IS WHY THIS FILE IS EXCUSED from
+ * This file is therefore excused from
  * `test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own`,
- * beside `proposalgeom.js` and for the same reason. A hex added ANYWHERE ELSE
- * in this module is excused by that exemption too, so it goes in a module the
- * sweep still reads.
+ * like `proposalgeom.js`; do not add other hex values to this module.
  */
 export const DIFF_COLOURS = Object.freeze({
   neutral: '#7a8fa6',
@@ -531,11 +417,8 @@ const bearer = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
 /**
  * One request to a guarded route, with a 401 told apart from everything else.
  *
- * Same division `loadIndex` makes and for the same reason: "the token is wrong"
- * and "the hub is unreachable" lead to different sentences on the screen, and
- * collapsing them tells somebody to fix a token that was fine. The response is
- * handed back rather than parsed, because two of the three callers below read
- * the STATUS first — a 404 here is an answer and not a failure.
+ * Same division as `loadIndex`. The response is returned unparsed because two
+ * of the three callers read the status first — a 404 is an answer here.
  */
 async function guarded(url, init) {
   const response = await fetch(url, { ...init, cache: 'no-store' });
@@ -545,33 +428,25 @@ async function guarded(url, init) {
 
 // -- a guarded route asked for by a page that is already up -------------------
 //
-// The three below are the same contract as `guarded` answered in SENTENCES
-// rather than in exceptions. Their caller is the build page, whose model is on
-// screen before any of them is asked: a failure there leaves the page holding
-// what it had and puts one line in front of the reader, so an exception would
-// be caught at every call site and turned back into a string. The sentences are
-// the interface's own and the ui suite pins them; nothing here draws one.
+// The same contract as `guarded`, answered in SENTENCES rather than
+// exceptions: their caller is the build page, whose model is already on
+// screen, so a failure becomes one line in front of the reader. The ui suite
+// pins the sentences.
 
 /** The hub never answered at all. */
 export const HUB_UNREACHABLE = 'Could not reach the hub';
 
-/** It answered 401, told apart for the reason `loadIndex` gives. Unexported
- *  because `hubTrouble` is the only reader it has: a page never has to decide
- *  this one for itself, the way it decides what "failed" means. */
+/** It answered 401. Unexported: `hubTrouble` is its only reader. */
 const HUB_REFUSED = 'The hub refused the token';
 
 /**
  * One request that reports a dead hub instead of throwing at its caller.
  *
- * `{response}` or `{error}`, never both, so a caller with something of its own
- * to log keeps the tag it logs under. NOT `guarded`: that one raises on a 401
- * and adds `cache: 'no-store'`, while here the 401 is a sentence and the init
- * goes out as written but for `headers`, which gets the token merged in — so a
- * caller's own `Content-Type` survives and `FormData` still goes without one.
- * NOT `bearer` either: the header is unconditional, which is what keeps these
- * six the requests the raw `fetch`es sent. Nothing on screen rests on that
- * choice — `_authorized` in `src/app.py` refuses an empty bearer and a missing
- * header alike, so either spelling ends in the same 401 and the same line.
+ * `{response}` or `{error}`, never both. Not `guarded`: here the 401 is a
+ * sentence and the init goes out as written, except that the token is merged
+ * into `headers` — so a caller's `Content-Type` survives and `FormData` goes
+ * without one. The header is unconditional; `_authorized` in `src/app.py`
+ * refuses an empty bearer and a missing header alike.
  */
 export async function askHub(url, token, init) {
   try {
@@ -603,9 +478,8 @@ export const hubTrouble = (response, ok, failed) => {
 /**
  * The reply's document, or `{error}` where the body would not parse.
  *
- * A step of its own rather than part of the two above, because it is a third
- * failure with a third sentence: a 200 carrying a proxy's HTML is a reply that
- * arrived, was not refused, and still cannot be read.
+ * A separate step because it is a third failure with a third sentence: a 200
+ * carrying a proxy's HTML arrived, was not refused, and cannot be read.
  */
 export async function hubBody(response) {
   try {
@@ -618,10 +492,8 @@ export async function hubBody(response) {
 /**
  * What a comparison found, or `null` where the hub has not computed one.
  *
- * The `null` is the whole reason this does not simply throw on a bad status: a
- * 404 here is the ordinary state of a pair nobody has asked about yet, and the
- * caller answers it by queueing the job rather than by telling the reader
- * anything.
+ * A 404 is the ordinary state of a pair nobody has asked about yet; the caller
+ * answers it by queueing the job.
  */
 export async function loadCompareReport(pid, a, b, view, token) {
   const url = `${compareBase(pid, a, b)}report.json?v=${encodeURIComponent(view)}`;
@@ -634,17 +506,13 @@ export async function loadCompareReport(pid, a, b, view, token) {
 /**
  * The hub's own words for a refusal, where it wrote any.
  *
- * EVERY REFUSAL ON THIS SERVICE IS `{"error": "..."}` (`app._error`), and most
- * of them say nothing a status code does not — `not found` under a 404. But
- * some are a SENTENCE about something the reader can act on: a view whose name
- * cannot be a directory segment has published, drawn its tab and cannot be
- * compared (`app.VIEW_NOT_NAMEABLE_ERROR`), and "HTTP 422" in the panel tells
- * nobody to rename anything. So the body is read when there is one, and the
- * status is the fallback rather than the answer.
+ * Every refusal on this service is `{"error": "..."}` (`app._error`). Some are
+ * actionable sentences (e.g. `app.VIEW_NOT_NAMEABLE_ERROR` for a view whose name
+ * cannot be a directory segment), so the body is read when there is one and the
+ * status is the fallback.
  *
- * NEVER THROWS: this is already the failure path, and a body that is not JSON —
- * a proxy's HTML, an empty 502 — must not replace the refusal with a parse
- * error.
+ * Never throws: a body that is not JSON (a proxy's HTML, an empty 502) must not
+ * replace the refusal with a parse error.
  */
 async function refusal(url, response) {
   try {
@@ -660,14 +528,12 @@ async function refusal(url, response) {
 /**
  * Queue one comparison. Answers the id of the job that will compute it.
  *
- * THE VIEW IS THE FOURTH SEGMENT AND IS WHAT ASKS FOR THE ARTEFACTS. Without it
- * the hub measures the pair and writes the numbers into the job's log and
- * nothing onto the volume — which is what the command-line half wants and is
- * exactly nothing for a browser to open.
+ * The view (fourth segment) is what asks for the artefacts; without it the hub
+ * only writes the numbers into the job's log, which is what the command-line
+ * client wants.
  *
- * A REFUSAL CARRIES THE HUB'S SENTENCE WHERE IT WROTE ONE (`refusal`), because
- * this is the request that answers "why can this view not be compared at all" —
- * and the panel prints whatever this throws.
+ * A refusal carries the hub's sentence (`refusal`): the panel prints whatever
+ * this throws.
  */
 export async function startCompare(pid, a, b, view, token) {
   const url = `/api/v1/compare/${encodeURIComponent(pid)}/${encodeURIComponent(a)}`
@@ -690,32 +556,22 @@ export async function loadJob(id, token) {
 
 // -- removing a project ------------------------------------------------------
 //
-// The one request in this bundle that takes something away, and it takes the
-// project WHOLE: every build, both pointers, the comment queue, the stored code
-// of each revision and the comparison cache under it (`_handle_delete` in
-// src/app.py). There is no route that removes a single build and there is not
-// going to be one — a build's URL is permanent, so removing one would turn a
-// promise into a 404 while leaving the project standing.
+// Removes the project WHOLE: every build, both pointers, the comment queue, the
+// stored code of each revision and the comparison cache (`_handle_delete` in
+// src/app.py). There is no single-build removal: a build's URL is permanent.
 //
-// AND NOTHING BRINGS IT BACK. The hub keeps no copy, there is no retention
-// (SPEC 5.3) and no undo anywhere on this service, which is why the page that
-// calls this makes the reader type the id rather than press Yes.
+// Nothing brings it back: no copy, no retention (SPEC 5.3), no undo — which is
+// why the page makes the reader type the id.
 
 /**
  * `DELETE /api/v1/projects/<pid>`, with the secret the rest of this file sends.
  *
- * IT RESOLVES WITH NOTHING, and that is a decision rather than laziness: the hub
- * answers what it removed, and reading that body would mean a proxy's HTML in
- * front of a successful 200 arriving at the reader as a failed deletion —
- * reported over a project that IS gone, which is the one wrong answer this call
- * can give. Nothing on the page has a number to show; the card leaving the list
- * is the whole of the report.
+ * Resolves with nothing: reading the body would turn a proxy's HTML in front of
+ * a successful 200 into a reported failure over a project that is gone. The
+ * card leaving the list is the report.
  *
- * The failures are divided the way every guarded call here divides them: an
- * `Unauthorized` for a token the hub refused, so a rotated secret is not
- * reported as a hub that broke, and the hub's OWN sentence for anything else
- * (`refusal`) — a 404 is worth reading here, since it means somebody else had
- * already removed this project.
+ * `Unauthorized` for a refused token, the hub's own sentence (`refusal`) for
+ * anything else — a 404 means somebody else already removed it.
  */
 export async function deleteProject(pid, token) {
   const url = `/api/v1/projects/${encodeURIComponent(pid)}`;
@@ -726,12 +582,10 @@ export async function deleteProject(pid, token) {
 /**
  * What identifies "a different build" under a moving name.
  *
- * The rule differs between the two names on
- * purpose: under `latest` the commit changes, while the local slot keeps the
- * name `dev` for every build it ever holds, so there the answer is the moment
- * the hub accepted the push. Never `built` — that one is written by the model's
- * own script, is optional, and has second resolution at best, so an
- * edit-build-look loop produces ties.
+ * Under `latest` the commit changes; the local slot keeps the name `dev` for
+ * every build, so there it is the moment the hub accepted the push. Never
+ * `built`: it is written by the model's script, optional, and has second
+ * resolution at best, so an edit-build-look loop produces ties.
  */
 export function buildKey(meta) {
   if (!meta) return null;
@@ -741,9 +595,8 @@ export function buildKey(meta) {
 // -- the part tree ----------------------------------------------------------
 // It arrives on `hmr:model` as `{id, name, color, children?, key?, known?}`
 // nested as deep as the model nests — the shape `treeFromShapes` builds from
-// the pushed view file; `children` is a group's own field and `key`/`known` are
-// a leaf's. There is no flat list of nodes anywhere and there is not going to
-// be one: this IS the assembly structure, and reading it is a walk.
+// the pushed view file; `children` is a group's field and `key`/`known` are a
+// leaf's. This is the assembly structure; reading it is a walk.
 
 /** Same ceiling the hub refuses a push over (render.MAX_VIEW_DEPTH). */
 const MAX_DEPTH = 64;
@@ -754,13 +607,9 @@ const MAX_DEPTH = 64;
  * A group answers `null` whatever it carries: an assembly is not a part, so two
  * adjacent groups are never "the same thing twice" however their keys read.
  *
- * THIS IS NOT "a group has no key" BEING ENFORCED A SECOND TIME, and `indexTree`
- * below explains why the two must not be collapsed into one. The key that walk
- * reports outward is whatever THE TREE IT WAS HANDED carried, untouched — which
- * is not the same as what the view file carried, since `treeFromShapes` never
- * puts one on a group on the way here. This function settles ONE local question
- * — may these two siblings draw as one row — and answers it `no` for groups on
- * its own account, rather than by disbelieving what it was given.
+ * This settles one local question — may two siblings draw as one row — and
+ * answers no for groups on its own account. It is not a second enforcement of
+ * "a group has no key": `indexTree` reports whatever key the tree carried.
  */
 const leafKey = (raw) => (
   raw && typeof raw === 'object' && !Array.isArray(raw.children)
@@ -769,17 +618,11 @@ const leafKey = (raw) => (
 /**
  * Two adjacent siblings the tree draws as ONE row: the same part, twice.
  *
- * THE KEY IS THE IDENTITY and the name is not consulted at all — the
- * tessellator names the repeats apart (`pin`, `pin(2)`) precisely so the paths
- * stay unique, so a comparison of names would find no repeats anywhere.
+ * The key is the identity; the name is not consulted (the tessellator names
+ * repeats apart, `pin`, `pin(2)`).
  *
- * `known` HAS TO AGREE, and that is the one thing here beyond "same key". A row
- * is a promise about what its eye and its ghost square act on, and `known` is
- * exactly the flag `treeFromShapes` sets false on a leaf "nothing can be done
- * to"; a row saying `pin ×5` while two of the five are unreachable would break
- * that promise silently. Kept apart, each row means what `known` has always
- * meant on this side — the `?` drawn against it in the meta column — and
- * neither row lies about its count.
+ * `known` must agree too: a row is a promise about what its eye and ghost
+ * square act on, and `pin ×5` with two unreachable copies would break it.
  */
 const repeats = (a, b) => {
   const key = leafKey(a);
@@ -790,11 +633,8 @@ const repeats = (a, b) => {
 /**
  * Raw siblings grouped into the rows they draw as: a run of repeats is one row.
  *
- * ADJACENT ONLY, and that is a decision rather than a shortcut (issue #75). A
- * view's groups are the author's own structure, so two pins in `housing` and one
- * in `fasteners` are `pin ×2` in the first and `pin` in the second — pulling
- * them into a single row would answer a question about the whole build in a
- * place that is describing one group.
+ * Adjacent only: a view's groups are the author's structure, so two pins in
+ * `housing` and one in `fasteners` are `pin ×2` and `pin`.
  */
 const runsOf = (children) => {
   const runs = [];
@@ -815,76 +655,32 @@ const runsOf = (children) => {
  * and that list is what every group-level action is expressed in — hiding a node
  * means hiding ITS LEAVES, never the node id.
  *
- * A ROW MAY STAND FOR SEVERAL SOLIDS EVEN WHEN IT IS NOT A GROUP (issue #75):
- * adjacent siblings that are the same part collapse into one row, drawn `pin
- * ×5`. Its `id` is the FIRST of their paths — so it is still a path, still
- * unique and still a usable React key — and `leaves` holds all of them, which is
- * exactly the list hiding, ghosting and isolating were already written in. THE
- * COUNT IS NEVER STORED: it is `leaves.length`, computed where it is drawn, so
- * there is no second number that can disagree with the assembly.
+ * A row may stand for several solids even when it is not a group: adjacent
+ * siblings that are the same part collapse into one row, drawn `pin ×5`. Its
+ * `id` is the FIRST of their paths (still unique, still a React key) and
+ * `leaves` holds all of them. The count is never stored: it is
+ * `leaves.length`.
  *
- * EVERY ONE OF THOSE PATHS IS A KEY OF `nodes`, all of them answering with the
- * same row. That is what lets a pick or a right-click in the SCENE — which names
- * the solid the reader hit, `/model/pin(2)` and not the row — find the row it
- * belongs to. IT IS ALSO WHAT CARRIES A HIDDEN PART ACROSS A SWITCH, and the two
- * halves of that are worth naming apart, because only one of them reads a path.
- * `namesOf` is the one that does: it walks the hidden ids through this map, so a
- * later copy answers with its row's name whether or not the run's FIRST path is
- * on the list — hiding is expressed in leaves, so `['/model/pin(2)']` on its own
- * is an ordinary state, and without every path being a key it would carry no
- * name at all. `rejoin` is handed those NAMES and never a path; what it walks is
- * `leaves`, through this same map, to turn each name back into every id the new
- * tree spells it under. `nodes.size` therefore counts paths and not rows, which
- * is what it counted before this collapsing existed.
+ * Every one of those paths is a key of `nodes`, all answering with the same
+ * row, so a pick in the scene (`/model/pin(2)`) finds its row, and `namesOf`
+ * can carry a hidden later copy across a view switch by name. `nodes.size`
+ * counts paths, not rows.
  *
- * That last part is a decision worth a sentence, because the viewport supports
- * BOTH: its `covers()` matches a hidden entry against a leaf path by prefix, so
- * a node id would hide the whole subtree in one string. Leaves are sent anyway
- * because the mixed state forces it either way — the moment one part under a
- * hidden group is shown again, the group id has to come out and its siblings go
- * in — and a rule that is sometimes leaves and sometimes nodes is two rules. The
- * cost is a longer array; the prefix machinery on the other side still handles
- * it, since a leaf path covers itself.
+ * Hiding sends leaves, not node ids, although the viewport's `covers()` would
+ * accept a node prefix: the mixed state (one part under a hidden group shown
+ * again) forces leaves anyway, and one rule beats two.
  *
- * `known: false` on a leaf means the viewport found no such path in the
- * library's own state map. Such a row is still drawn, deliberately: a tree
- * missing a row reads as a build with fewer parts, while a row marked unknown
- * reads as what it is.
+ * `known: false` means the viewport found no such path in the library's state
+ * map. The row is still drawn: a missing row reads as a build with fewer parts.
  *
- * `key` IS THE OTHER NAME A ROW HAS, and it is carried through untouched from
- * the view file (`treeFromShapes` says why the two exist). `id` is the path the
- * viewport operates on; `key` is the entry in `meta.parts` — the files, the
- * note, the kind. It is `null` on a leaf that names none, and it is NEVER
- * filled in from `name`: guessing the identity out of a string is exactly what
- * the catalogue replaced (issue #75).
- *
- * A GROUP HAS NONE EITHER, and that is `treeFromShapes`'s doing rather than
- * this walk's: it assigns `key` on the leaf branch alone — a group row is
- * returned on the branch above that line — so a group reaches here carrying no
- * such field at all, whatever the view file wrote on it. Over there that is
- * stated as a RULE, and it is the rule that actually holds, because the hub
- * does not enforce it (`check_view_file` declares a key wherever it sits, in
- * its own words): the browser is where a keyed group stops.
- *
- * THIS FIELD ENFORCES NOTHING AND COPIES WHAT IT IS GIVEN — a second copy of
- * the rule here would be this side quietly disagreeing with the document it was
- * handed. That is not the same as saying a pushed group's key is carried out
- * untouched: no such key ever arrives, because the storey above never put one on.
- * The only way to hand this walk a keyed group is to build the tree BY HAND,
- * which is what `ui/tests/repeats.test.js` does. TWO PLACES DECIDE where a key
- * may sit, not one — `check_view_file` on the way in, which permits it
- * anywhere, and `treeFromShapes` on the way to the screen, which does not — and
- * the second of them is on this side of the wire.
- *
- * `leafKey` ABOVE READS LIKE THAT SECOND COPY AND ANSWERS A DIFFERENT QUESTION,
- * which is why both stand and neither is the other's bug to fix. It blanks a
- * group's key for the COLLAPSING DECISION ALONE — are these two siblings one
- * thing twice — and an assembly is never that, whatever key it arrives
- * carrying, so two keyed groups stay two rows (`repeats`, pinned by a test in
- * ui/tests/repeats.test.js). That says nothing about what a row REPORTS: `key`
- * here is still whatever the tree carried, group or leaf. Reporting is where
- * this walk defers to what it was handed; collapsing is a judgement it has to
- * make itself.
+ * `key` is the row's catalogue entry in `meta.parts` (files, note, kind), copied
+ * untouched; `id` is the path the viewport operates on. `key` is `null` on a
+ * leaf that names none and is never filled in from `name`. Groups arrive
+ * without one because `treeFromShapes` assigns it on the leaf branch only (the
+ * hub's `check_view_file` allows a key anywhere); this walk enforces nothing
+ * and copies what it is given — only a hand-built tree, as in
+ * `ui/tests/repeats.test.js`, carries a keyed group. `leafKey` above blanks a
+ * group's key for the collapsing decision alone.
  */
 export function indexTree(root) {
   const nodes = new Map();
@@ -939,8 +735,7 @@ export function indexTree(root) {
 
     if (children) {
       runsOf(children).forEach((kid) => walk(kid, id, depth + 1));
-      // One reading for both kinds of child, now that a leaf row carries every
-      // path it stands for: a group's leaves are its rows' leaves, end to end.
+      // A group's leaves are its rows' leaves, end to end.
       node.leaves = node.children.flatMap((cid) => nodes.get(cid).leaves);
     } else {
       node.leaves = run.map(({ raw: r, at }, n) => (
@@ -958,23 +753,18 @@ export function indexTree(root) {
 }
 
 // -- where a comment hangs ---------------------------------------------------
-// A comment is bound to the PRINTED ENTITY, and the entity's identity is its
-// catalogue key (issue #75). Not the tree path — the tessellator numbers repeats
-// apart, so `/model/pin(2)` is a coordinate in one revision's tree and means
-// something else in the next. Not the point either: a coordinate is a place in
-// one tessellation, and the geometry moves under it on the next build. The key
-// travels between revisions while the part is alive, and when it stops being in
-// the catalogue the comment is ORPHANED — which the feed has to say out loud
-// rather than quietly drop the pin.
+// A comment is bound to the printed entity, whose identity is its catalogue
+// key. Not the tree path (the tessellator numbers repeats apart, so a path
+// means something else in the next revision), and not the point (the geometry
+// moves under it on the next build). When the key leaves the catalogue the
+// comment is ORPHANED, and the feed says so rather than dropping the pin.
 
 /**
  * Every catalogue key in a tree, mapped to the row that draws it.
  *
- * FIRST ROW IN TREE ORDER WINS, and there can be a second: `runsOf` collapses
- * ADJACENT siblings only, so a view that places the same part in two groups
- * draws it as two rows. A comment gets ONE pin — the rail labels its rows 1, 2,
- * 3 against the pins on the canvas, and a comment that drew two of them would
- * make that numbering a lie.
+ * First row in tree order wins: `runsOf` collapses adjacent siblings only, so a
+ * part placed in two groups draws as two rows. A comment gets one pin, because
+ * the rail numbers its rows against the pins on the canvas.
  */
 export function rowsByKey(tree) {
   const rows = new Map();
@@ -999,17 +789,10 @@ export function rowsByKey(tree) {
  *                 Only then: on any other build the same numbers point at
  *                 whatever the rebuild moved there.
  *
- *                 WHICH BUILD THIS IS takes `published` and not `commit` alone:
- *                 the local slot's commit is the constant `dev` for every build
- *                 it will ever hold (SPEC 7.6), so on the name that rebuilds
- *                 most often `commit` matches every previous incarnation of the
- *                 slot too. `published` is the field `buildKey` falls back to
- *                 for exactly that reason — but this is NOT the same predicate:
- *                 `buildKey` reads one field or the other, and this requires
- *                 BOTH to match, so a change to `buildKey` is not automatically
- *                 safe here. A record with no stamp, or a build whose meta.json
- *                 carried none, never reaches this state — an absent stamp on
- *                 both sides must not compare equal.
+ *                 Which build this is takes `published` as well as `commit`:
+ *                 the local slot's commit is the constant `dev` (SPEC 7.6).
+ *                 Unlike `buildKey`, which reads one field or the other, this
+ *                 requires BOTH to match. An absent stamp never matches.
  *
  *   `part`      — the key names a row in the tree on screen. The pin goes on the
  *                 first instance, `leaves[0]` (see `rowsByKey`).
@@ -1017,8 +800,8 @@ export function rowsByKey(tree) {
  *                 the comment was left in another view of the same project.
  *   `orphan`    — the key is in no catalogue entry. The entity the comment was
  *                 left on is gone from the model.
- *   `none`      — no key at all: a record written before the field existed, or
- *                 one left on nothing in particular. Unanchored.
+ *   `none`      — no key at all (an older record, or one left on nothing in
+ *                 particular). Unanchored.
  *
  * `parts` is read through `hasOwnProperty` and never by `parts[key]`: a key is a
  * string the author chose, and `__proto__` is one they may choose.
@@ -1061,11 +844,8 @@ export function anchorFor(record, { commit, published, view, keyRows, parts }) {
  * number on every row in the tree to say nothing. The sign is U+00D7 MULTIPLI-
  * CATION SIGN and not the letter `x`.
  *
- * THE COUNT IS ALWAYS PASSED IN, never stored beside a name: on a tree row and
- * on that row's context menu it is `leaves.length` off the row, and on a move
- * recorded in the proposal it is what the viewport reported it actually moved.
- * A `qty` written down anywhere is a number that can disagree with the
- * assembly, which is the whole reason this is derived (issue #75).
+ * The count is always passed in, never stored: `leaves.length` on a tree row
+ * and its menu, and what the viewport reported it moved for a proposal move.
  */
 export const countedName = (name, count) =>
   (count > 1 ? `${name} ×${count}` : String(name));
@@ -1081,12 +861,5 @@ export const stamp = (value) => {
     ? `${text.slice(0, 10)} ${text.slice(11, 16)}`
     : text.slice(0, 20);
 };
-
-// There used to be a `day()` beside `stamp` — the date alone, "for a list where
-// the time is noise". Its one caller was the revision picker, and the premise
-// stopped holding when publishing moved from CI to `hammerola build`: an author
-// runs that as often as they save, so a build list without a clock is a column
-// of identical dates. It is taken out rather than left unused, because an
-// exported helper reads as one somebody should be reaching for.
 
 export const mb = (bytes) => `${(Number(bytes || 0) / 1e6).toFixed(1)} MB`;

@@ -574,10 +574,9 @@ describe('buildProposal', () => {
 
   it('gives every solid a part of its own, each one already cut by the holes', () => {
     // WHAT THE HAND NEEDS. A part is what the Move tool grabs, so two solids
-    // fused into one part could only ever move together — which is the thing
-    // this payload used to do and the reason it no longer does. Each body is
-    // cut by every hole all the same: a hole belongs to the proposal, not to
-    // whichever body it happens to sit inside.
+    // fused into one part could only ever move together; each body is its own
+    // part. Each body is cut by every hole all the same: a hole belongs to the
+    // proposal, not to whichever body it happens to sit inside.
     const plate = (id, name, x) => ({
       id, name, op: 'box', role: 'solid',
       at: [x, 0, 0], rot: [0, 0, 0], size: [10, 10, 10],

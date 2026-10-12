@@ -1,85 +1,54 @@
 """Smoke gate for this project's image, run on the CI runner against an already-built image.
 
-It sits BETWEEN `docker build` and `docker push` and is the last point at which a broken
-image can still be stopped: nobody presses a button between the push and the rollout, so
-whatever reaches `:latest` is what production ends up running.
+It sits between `docker build` and `docker push`: nothing is pressed between the push and the
+rollout, so whatever reaches `:latest` is what production runs.
 
-It is a plain `python3 ci/smoke.py` on the runner that drives `docker` against the tag it is
-given in $SMOKE_IMAGE. Nothing here is imported from the application, and nothing here needs
-the application's dependencies — the whole gate is `docker inspect`, `docker run`,
-`docker exec` and `docker logs`.
+A plain `python3 ci/smoke.py` on the runner that drives `docker` against the tag in
+$SMOKE_IMAGE. Nothing is imported from the application; the whole gate is `docker inspect`,
+`docker run`, `docker exec` and `docker logs`.
 
-What this gate is for, and what it is NOT for
-----------------------------------------------
-The pytest suite runs in its own job before the image is built. It answers "does the code
-work" against a checkout, with collaborators mocked. What it cannot answer is whether the
-ARTEFACT that gets deployed carries that code, comes up on its own, and is packaged the way
-this repo says it is. Every check below is one of those, and every one of them is a way this
-image has a realistic chance of shipping broken while the suite stays green:
+What this gate checks
+---------------------
+The pytest suite checks the code against a checkout. This gate checks the ARTEFACT: that it
+carries the code, starts on its own and is packaged as this repo says.
 
 * (a) the image's declared contract: ENTRYPOINT, CMD, WORKDIR and PYTHONUNBUFFERED.
 * (b) the required-variable guard still fires AND still names EVERY variable that is missing.
 * (c) privileges are really dropped — the process is `app`, not root.
 * (d) `.dockerignore` did its job: no tests, no `.env`, no `.venv` inside the image.
 * (e) the image's own command starts and gets through its own startup.
-* (f) the CAD kernel imports inside the image, and carries the versions requirements.txt
-      declares — including the transitive `cadquery-ocp`, which cadquery constrains only by
-      RANGE. This one is not about packaging at all: `cadquery-ocp` is a native OpenCASCADE
-      binding, and a base image missing one system library fails at `import cadquery` with
-      `ImportError: libGL.so.1` — at import time, before any geometry, and therefore in
-      production rather than in any test, because the suite runs on a checkout where the
-      developer's own machine supplies those libraries. The preview renderer is in this check
-      for a second reason: the build imports it lazily and DEGRADES to a warning when it will
-      not import, so an image whose matplotlib is broken publishes builds with no pictures,
-      for ever, with nothing anywhere going red.
-* (g) the templates and the viewer assets are actually IN the image — the mirror image of (d),
-      and the one this gate was missing. Losing a `COPY templates/`/`COPY static/` line from
-      the Dockerfile breaks nothing any other check can see: the image builds, the container
-      starts, `/health` answers with a literal string that reads no file, and every check above
-      stays green while every page the hub serves is a 404 or a viewer with no viewer in it.
-* (h) the three `/start` files a stranger is handed really are served BY THIS IMAGE. Two of
-      them do not exist as files at all — the client is zipped out of `hammerola/` and the
-      template is tarred out of `model_template/` when the request arrives — so they are the
-      one part of this artefact that (g) structurally cannot cover by naming a path, and the
-      route answers 404 rather than 500 when the assembly fails.
-* (i) the build wrapper runs INSIDE this image, as the `app` account, and the ceilings it puts
-      on really go on. The hub BUILDS models on the request path, and it does that by spawning
-      `python -s -m src.buildproc.wrapper` from /app — so an image in which that module does
-      not resolve, or in which the kernel refuses one of the RLIMIT_* the wrapper sets for
-      `app`, passes every check above and then fails EVERY push. The suite cannot see either
-      half: it runs on a checkout where `src/` is importable by construction, and it runs the
-      wrapper against a spec it has already STRIPPED of the ceiling the workstation refuses
-      (`tests/buildproc/probes.py` — on darwin RLIMIT_AS cannot be set at all), so the one
-      question this check exists for is the one the suite has taken out of its own way.
+* (f) the CAD kernel and the preview renderer import inside the image, and carry the versions
+      requirements.txt declares (including the transitive `cadquery-ocp`, which cadquery
+      constrains only by range). A missing system library fails only at `import cadquery`, and
+      a broken preview stack only degrades builds to a warning, so neither shows anywhere else.
+* (g) the templates, viewer assets and other required files are IN the image; without them
+      the image still starts and `/health` still answers.
+* (h) the three `/start` files are served by this image. Two of them are assembled per
+      request (the client zipapp from `hammerola/`, the template tarball from
+      `model_template/`), so (g) cannot cover them by path.
+* (i) the build wrapper (`python -s -m src.buildproc.wrapper`, spawned by the hub for every
+      push) resolves from /app as the `app` account and its rlimits really go on. The suite
+      runs it on a checkout and strips ceilings the workstation refuses
+      (`tests/buildproc/probes.py`), so it cannot answer this.
 
-Constraints of this runner, which shaped every choice below
-------------------------------------------------------------
-**This job and the docker daemon are not in the same network namespace.** Gitea's act_runner
-executes the job inside its own job container while the `docker` CLI it provides drives a
-daemon that lives outside it. Two consequences, both load-bearing:
+Constraints of this runner
+--------------------------
+This job and the docker daemon are not in the same network namespace: act_runner runs the job
+inside its own container while `docker` drives the host's daemon. So NO PORT IS PUBLISHED and
+nothing here talks to the runner's 127.0.0.1; anything inside a container is observed with
+`docker exec`.
 
-* NO PORT IS PUBLISHED by anything in this file and nothing here talks to 127.0.0.1. A
-  published port would land in the HOST daemon's namespace, not in this job's, so `curl
-  127.0.0.1:<port>` from here reaches the runner's own loopback and finds nothing. Everything
-  that has to be observed from inside a container is observed with `docker exec`.
-* the same reasoning is why the test job in both workflows streams the workspace into its
-  container as a tar over stdin instead of bind-mounting it: `-v "$PWD:/src"` would ask the
-  HOST to mount a path that means something entirely different there.
+Two properties to keep:
 
-Two properties matter and are easy to lose, so they are stated where they can be checked:
-
-* Failures leave through SystemExit, never `assert`. Asserts vanish under PYTHONOPTIMIZE=1,
-  which would silently turn this gate permanently green.
-* Every check runs before anything is reported, so one run shows the full extent of the
-  breakage instead of only the first broken thing. A check that CANNOT run reports itself as
-  FAILED; it is never quietly skipped, which is the classic way a gate keeps reporting success
-  while proving less and less.
+* Failures leave through SystemExit, never `assert`, which vanishes under PYTHONOPTIMIZE=1.
+* Every check runs before anything is reported, and a check that cannot run reports itself as
+  FAILED; it is never skipped.
 
 Renaming this template
 -----------------------
-When this skeleton is copied into a real project, STARTUP_MARKER below has to keep matching
-the string `main.py` actually logs, and the container name prefixes in both workflows have to
-keep matching each other. Nothing else here carries the project's name.
+STARTUP_MARKER has to keep matching the string `main.py` logs, and the container name prefixes
+in both workflows have to keep matching each other. Nothing else here carries the project's
+name.
 """
 
 import json
@@ -89,61 +58,34 @@ import sys
 import time
 import traceback
 
-# The tag to test. Required rather than defaulted: a default would let a mistyped `env:` block
-# in a workflow silently gate some other image that happens to be on the daemon — and a gate
-# that grades the wrong artefact is worse than no gate, because it is green.
+# The tag to test. Required rather than defaulted, so a mistyped `env:` block cannot gate some
+# other image that happens to be on the daemon.
 IMAGE_ENV = "SMOKE_IMAGE"
-# Base name for every container this gate starts. Required for the same reason plus one more:
-# the runner has a single docker daemon shared by every repository, so two concurrent runs
-# must not collide on a container name. The workflows put the run id in it; a default here
-# would reintroduce exactly that collision, and it would show up as a random red run rather
-# than as an error anybody could read.
+# Base name for every container this gate starts. Required because the runner's single daemon
+# is shared by every repository: the workflows put the run id in it so concurrent runs never
+# collide.
 NAME_ENV = "SMOKE_NAME"
 
 # The three containers this gate starts, by suffix on $SMOKE_NAME:
-#   ""      the long-lived one checks (c), (d), (f), (g) and (i) `docker exec` into. Started
-#           with a sleeping command rather than the image's own so that it is a stable place to
-#           exec into. Its `sleep` has to outlast the LAST of those five execs — see
-#           IDLE_COMMAND.
+#   ""      the long-lived one checks (c), (d), (f), (g) and (i) `docker exec` into, started with
+#           a sleeping command; its `sleep` has to outlast the last exec (see IDLE_COMMAND).
 #   -guard  the short-lived one started with NO environment for check (b).
-#   -cmd    the one started with the image's REAL command for check (e), and the one check (h)
-#           execs into afterwards — the hub it asks has to be the program production runs, which
-#           is this container and not the sleeping one above. Deliberately NOT started with
-#           `--rm`: check (e) reads `docker logs` and `docker inspect` AFTER it has exited, and
-#           `--rm` would have taken it away first.
-# All three are NAMED rather than left to docker's random name generator, and the reason is
-# the one case that matters: `subprocess` hitting its timeout kills the docker CLIENT on the
-# runner, not the container on the daemon. With no name nobody could ever remove the survivor
-# — not the `finally` here, not the workflow's `if: always()` step — and it would go on
-# pinning the image, so the `docker rmi` at the end of the job would fail too and leave both a
-# container and a few hundred MB of image on the daemon the whole fleet shares.
-# Kept in step with the suffix list in both workflows' cleanup steps: if you move one, move
-# the others.
+#   -cmd    the one started with the image's REAL command for check (e), which check (h) execs
+#           into afterwards. No `--rm`: check (e) reads its logs and state after it exits.
+# All three are named because a subprocess timeout kills the docker client, not the container;
+# an unnamed survivor could never be removed and would pin the image on the shared daemon.
+# Kept in step with the suffix list in both workflows' cleanup steps.
 GUARD_SUFFIX = "-guard"
 CMD_SUFFIX = "-cmd"
 
-# A MEMORY CEILING PER CONTAINER, one number each because they run different programs, and
-# every number is a pass/fail pair on the self-hosted runner rather than a reading of
-# `memory.peak` — that counter rises with the limit it is meant to justify, which is written
-# out at length beside the test container in both workflows (issue #28). The reason for having
-# ceilings at all is the runner: 19 GB shared with every other repository's jobs, so a runaway
-# here stops being this job's failure.
-#   PROBE  the sleeping one the execs go into, where the CAD checks import OCP and map a couple
-#          of hundred MB of OpenCASCADE: gate red at 192m, green at 256m -> 768m.
+# A memory ceiling per container, because the runner's 19 GB are shared with every other
+# repository's jobs. Each number is a pass/fail pair swept alone on the self-hosted runner
+# (never a `memory.peak` reading, which rises with the limit), with ~4x margin:
+#   PROBE  the sleeping one the CAD checks exec into: red at 192m, green at 256m -> 768m.
 #   CMD    the hub under the image's own command: red at 32m, green at 48m -> 192m.
-#   GUARD  the one that is MEANT to die at once, started with no environment: red at 24m,
-#          green at 32m -> 128m.
-# Each limit was swept ALONE with the other two unlimited, because a floor measured under two
-# other ceilings is not that container's floor. Every ceiling above is ~4× its floor, the same
-# shape of margin as the workflows'.
-# ONE OF THESE CHECKS DEGENERATES RATHER THAN FAILING when the number is too low, which is why
-# the numbers are pass/fail pairs and not comfortable-looking round figures:
-#   - `-guard` is graded partly on "it exited non-zero", and 137 IS non-zero. Under an OOM kill
-#     that half stays GREEN and only the two lines about the wording of the message go red — so
-#     a ceiling that kills it hollows the check instead of failing it legibly.
-#   - the probe's PID 1 is `sleep`, which allocates nothing, so the kernel takes the exec'd
-#     python and leaves the container `Status=running` with `OOMKilled=true`. That one is loud
-#     anyway: checks (f) and (g) go red, not the container.
+#   GUARD  the one meant to die at once with no environment: red at 24m, green at 32m -> 128m.
+# Too low a number can hollow a check instead of failing it: an OOM-killed `-guard` still
+# "exits non-zero", so only its wording rows go red.
 # `--memory` and `--memory-swap` are always set TOGETHER and always EQUAL — see `memory_flags`.
 PROBE_MEMORY = "768m"
 CMD_MEMORY = "192m"
@@ -169,185 +111,65 @@ APP_UID = 1000
 # safe, unlike matching on a message pydantic is free to reword.
 GUARD_FRAGMENT = "Missing required variable(s)"
 # EVERY field src/settings.py declares with no default, spelled the way config_errors.py prints
-# it: SCREAMING_CASE, i.e. the name of the ENVIRONMENT VARIABLE an operator has to set, not the
-# lowercase field name pydantic reports internally.
-#
-# ONE ENTRY SINCE STEP 0, AND THAT COST THE GATE SOMETHING — said here rather than left to be
-# rediscovered, because the count below moved with it and a shrinking gate is exactly what the
-# verdict counter exists to make deliberate. This list used to hold PUBLISH_TOKEN and
-# COMMENT_READ_TOKEN, and check (b) casting one verdict PER ENTRY proved something a single
-# name cannot: that the guard names EVERY key an operator dropped, not just the first. A
-# regression to `[0]` or `next(...)` in config_errors.py would have failed the second row.
-# With one credential in the whole system (issue #26) there is no second row to fail,
-# so that property is no longer covered HERE. It is covered by tests/test_config_errors.py,
-# which can hand the guard a settings class with several missing fields; this gate cannot,
-# because it only ever runs the real image with the real Settings.
-#
-# A LIST STILL, for the day a second no-default field appears: adding it here restores the
-# property in the same edit, and the declared count below follows automatically because it is
-# written as an expression over this list rather than as a number.
-#
-# Keep this in step with the no-default fields in src/settings.py: a credential added there
-# without a line here is a key the gate never proves the guard names.
+# it: the environment variable name in SCREAMING_CASE. Keep in step with src/settings.py.
+# With a single entry, check (b) cannot prove the guard names every missing key, not just the
+# first; tests/test_config_errors.py covers that. A second entry here restores it, and the
+# declared count follows automatically.
 REQUIRED_VARIABLES = ["EDIT_TOKEN"]
 
-# Paths that must NOT be inside the image. Every one of them is excluded by .dockerignore, and
-# today the Dockerfile also copies its files one by one rather than with a blanket `COPY . .`
-# — so this check is defence in depth for the day somebody widens that copy list, which is a
-# one-line change that looks harmless in review.
-#
-# The two `__pycache__` entries are the ones here that are NOT covered by the "widened COPY
-# list" sentence above: `COPY src/ src/` and `COPY hammerola/ hammerola/` already carry them
-# today, and they stay out only because .dockerignore says `**/__pycache__/`. There is an
-# entry per COPIED PYTHON TREE and that is the rule to follow — the second one arrived with
-# the client package, and a third tree needs a third line here. The `**/` is load-bearing and
-# does not look it — a pattern there is matched with Go's filepath.Match rules, where `*` does
-# not cross a `/`, so
-# the bare `__pycache__/` this file used to carry matched the context root and nothing below
-# it. Anyone "simplifying" that pattern back reintroduces the leak, and nothing else in the
-# pipeline can see it: the image builds, starts and serves with the laptop's bytecode inside,
-# including .pyc files whose .py no longer exists.
+# Paths that must NOT be inside the image. .dockerignore excludes them; the Dockerfile also
+# copies files one by one, so this is defence in depth against a widened COPY.
+# One `__pycache__` entry per copied Python tree: those are inside copied trees and stay out
+# only because .dockerignore says `**/__pycache__/` (docker's `*` does not cross `/`, so a bare
+# `__pycache__/` would match only the context root).
 EXCLUDED_PATHS = ["/app/tests", "/app/.env", "/app/.venv", "/app/src/__pycache__",
                   "/app/hammerola/__pycache__"]
 
-# Paths that MUST be inside the image — the mirror of the list above, and it exists because the
-# two failures are not symmetrical in how loudly they announce themselves. A file that should
-# not be there is a leak nobody notices; a file that should be there and is not takes the whole
-# site down, and yet it is the one this gate could not see.
-#
-# Nothing else in the pipeline covers it. The suite runs against a CHECKOUT, where `templates/`
-# and `static/` are simply present, so it cannot be missing there; the Dockerfile copies those
-# two trees on lines of their own (`COPY templates/ templates/`, `COPY static/ static/`), and
-# dropping either one — or renaming a directory on one side of a COPY — still produces an image
-# that builds, starts, drops privileges, prints its startup marker and answers `/health` with a
-# literal string that touches no file on disk. Every check above therefore stays green, and the
-# breakage surfaces on the first real request.
-#
-# The entries here are the ones whose absence has no other symptom: one template per page the
-# hub serves — the index at `/`, one build's page, and the pointer page at `/project/<pid>/`,
-# which `render.pointer_page_html()` serves as a PAGE rather than as a redirect — plus the
-# viewer library, which is THREE files and not one. `three-cad-viewer.esm.js` is
-# fetched at RUNTIME by a URL in the bundle (`VIEWER_MODULE_URL` in ui/src/viewport/library.js)
-# rather than imported at build time, and it in turn imports three by URL — three is external to
-# that build (issue #14), so it ships as `three.module.js`, which imports `three.core.js`. Every
-# one of the three is resolved by the BROWSER, so nothing in the image build can notice any of
-# them is gone: the page renders an empty canvas and says so only in the browser console, i.e.
-# nowhere CI can look.
-# Deliberately not the whole tree: this is a tripwire on the COPY lines, not an inventory, and a
-# list that had to be updated for every new asset would be edited to match the image rather than
-# the other way round. Templates ARE listed one per page, though, because each of the three is
-# reached by a different URL and a missing one breaks only that URL.
-#
-# The hub's own driver for that library used to be listed here beside it, back when the build
-# page was a script the repository shipped. It is not an asset any more and is not in the image
-# at all: the build page is the React bundle, which is the `hammerola.js` row further down.
+# Paths that MUST be inside the image. Their absence has no other symptom: the suite runs on a
+# checkout, and an image missing them still builds, starts and answers `/health`.
+# One template per page the hub serves (index, build page, pointer page), plus the viewer
+# library, which the browser fetches at runtime by URL (`VIEWER_MODULE_URL` in
+# ui/src/viewport/library.js) together with three's two files, so nothing in the build notices
+# them missing. A tripwire on the COPY lines, not an inventory of every asset.
 REQUIRED_PATHS = [
     "/app/templates/index.html",
     "/app/templates/build.html",
     "/app/templates/pointer.html",
     "/app/static/_v/three-cad-viewer.esm.js",
-    # three itself, which the row above imports by URL instead of carrying. Named here for
-    # the same reason as the bundle and with one extra: a browser that cannot fetch either of
-    # them fails the whole module graph, so the viewer is as dead without these two as it is
-    # without its own code, and neither absence reaches any log CI reads.
+    # three itself, imported by URL from the row above; without either file the viewer's
+    # module graph fails in the browser.
     "/app/static/_v/three.module.js",
     "/app/static/_v/three.core.js",
-    # The palette — every colour the site paints with, and the one stylesheet all
-    # three pages link (issue #35). It is a committed file under `static/`, so it
-    # travels with the tree the row above proves is copied; it is named anyway
-    # because of what its ABSENCE looks like, which is nothing at all: every page
-    # still answers 200, the bundle still renders, and every `var(--…)` in it
-    # resolves to nothing — white text on white, no borders, no header. A 404 on
-    # one stylesheet is not something any other check here can see.
+    # The palette, linked by every page. Missing, every page still answers 200 but every
+    # `var(--…)` resolves to nothing.
     "/app/static/_v/tokens.css",
-    # `checklib.py` is a single file rather than a tree, and it is here for the same reason as
-    # the templates and the viewer payload: nothing else can see it go missing. It is copied on
-    # a line of its own (`COPY checklib.py .`) and is the top-level name every model.py imports;
-    # the suite runs against a checkout where it is simply present, and the image starts, serves
-    # and passes every check above without it. What breaks is the first model that imports it,
-    # inside a build, long after the image was published.
+    # The top-level name every model.py imports, copied on a line of its own; missing, only
+    # the first model build fails.
     "/app/checklib.py",
-    # The browser bundle, and the only entry here that no COPY of a checked-in file puts in the
-    # image: it is COMPILED by the `ui` stage and copied out of it by name
-    # (`COPY --from=ui /ui/dist/hammerola.js static/_v/hammerola.js`).
-    #
-    # That per-file form is what this row is paired with, and the pairing is the point. A
-    # `COPY --from=ui /ui/dist static/_v` would MERGE the build output into a directory that
-    # already holds committed assets, so a chunk that vite happened to name `pointer.js` would
-    # silently replace the hub's own `pointer.js` — and this check would stay green, because the
-    # path it names would still exist. Copying by name makes that impossible: nothing the build
-    # emits reaches the image unless a COPY line asks for it. The two failure modes left are both
-    # loud or covered — a file listed here but no longer produced fails the BUILD, at the COPY
-    # line, in front of whoever is editing it; a second output the COPY lines do not know about
-    # is simply absent from the image, which is what this list is for.
-    #
-    # ONE path because vite emits ONE file today — no page, no chunk, no stylesheet; the
-    # reasoning and the exact output list are in ui/vite.config.mjs. The commit that adds a
-    # dynamic import or a stylesheet adds the file it produces here and a COPY line for it, in
-    # the same commit.
+    # The browser bundle, compiled by the `ui` stage and copied out of it by name. One path
+    # because vite emits one file (see ui/vite.config.mjs); a new output adds a row here and a
+    # COPY line in the Dockerfile.
     "/app/static/_v/hammerola.js",
-    # What the hub hands somebody who has just found it (src/onboarding.py): the
-    # agent instructions, and the starter model directory. Both are copied as
-    # whole trees, so one file of each is named here — the one whose absence the
-    # route cannot survive.
-    #
-    # They are here for the reason every other row is: nothing else can see them
-    # go missing. The image starts, drops privileges, serves every page and
-    # passes checks (a) to (f) with neither of them, and what breaks is a 404 on
-    # `/start/skill.md` for somebody who came to the hub precisely because they
-    # did not know what to do next.
-    #
-    # Check (h) asks that same route and would go red too, and the two rows are
-    # kept BOTH because they fail differently: this one names the FILE that went
-    # missing, (h) names the ANSWER a visitor gets. Neither subsumes the other —
-    # a path present but unreadable passes here and fails there, and (h) covers
-    # only what a route touches, while this list is a tripwire on COPY lines.
-    #
-    # SKILL.md has a second, sharper way of disappearing, which is why it is not
-    # enough to trust the COPY line: `.dockerignore` carries a `*.md` rule. It is
-    # root-only as docker matches patterns, so this file survives it today —
-    # widen that line to `**/*.md` and the image builds green with the skill
-    # route dead. This row is what fails instead.
+    # The onboarding files (src/onboarding.py), one per copied tree. Check (h) asks the same
+    # route; this row names the missing file, (h) names the answer a visitor gets.
+    # SKILL.md also survives `.dockerignore`'s root-only `*.md` rule; widening it to
+    # `**/*.md` would fail this row.
     "/app/skill/SKILL.md",
     "/app/model_template/model.py",
-    # The ONE file the template rules were relaxed for, and the only reason
-    # `unpack` has an exception at all. It is hidden, so it is exactly the
-    # kind of file a COPY, an ignore rule or an editor drops silently — and
-    # `/start/template.tar.gz` would go on serving a template without it,
-    # leaving every project created from it with no .gitignore and nothing
-    # anywhere saying so.
+    # Hidden, so easy for a COPY or an ignore rule to drop silently, and the template would
+    # then be served without it.
     "/app/model_template/.gitignore",
 ]
 
 # --- check (f): the CAD kernel -------------------------------------------------------------
-# The imports the hub's own code is entitled to make, as (module, symbol) — an empty symbol
-# means a plain `import module`. Written as data rather than as three lines of probe source so
-# that the verdict count below can be DERIVED from it and cannot go stale when one is added.
-#
-# `ocp_tessellate.convert` is named down to the symbol on purpose: `import ocp_tessellate` on
-# its own succeeds without pulling in the half that matters, so it would keep passing on a
-# release that moved or renamed the exporter, which is the whole viewer payload.
-#
-# The last two are not third-party at all — they are the build half that moved in from
-# cad_publish (SPEC 8A.2 step 3), and they are checked here because they are the only part of
-# this repository whose import path depends on the IMAGE rather than on the checkout.
-# `src.cadbuild.build` pulls the whole moved graph in behind it (views, gate, printables,
-# metrics, assembly …) and every one of those imports is package-relative, so it fails as a
-# unit if a COPY line or a package name drifts. `checklib` is the top-level name every model.py
-# in the fleet opens with: it lives at /app so that a model imported with its own directory
-# first on sys.path still finds it behind that, and nothing but this can tell whether that
-# arrangement survived the build. Both are pure python and cost the probe nothing — the CAD
-# imports above are what make it slow.
-#
-# `src.cadbuild.preview_png` is NOT reached by `src.cadbuild.build` and is here for that exact
-# reason. It is the only module in this repository that imports matplotlib, numpy and Pillow —
-# the three pins added below — and `assembly.render_previews` imports it LAZILY, inside the
-# function, wrapped in a bare `except` that degrades to `warning: no previews` and returns
-# nothing written and no cards. That is the right behaviour at build time (a python without a
-# rendering stack must still be able to publish geometry) and it is precisely why the failure
-# has to be caught here: in an image whose matplotlib does not load, every build would go green
-# for ever while quietly shipping no pictures at all, and nothing downstream would say so. The
-# pin rows below do not cover this — see there.
+# The imports the hub's own code makes, as (module, symbol); an empty symbol means a plain
+# `import module`. Data, so the verdict count is derived from it.
+# `ocp_tessellate.convert` is named down to the symbol because `import ocp_tessellate` alone
+# would not notice a moved exporter.
+# `src.cadbuild.build` pulls in the whole build half (package-relative imports, so it fails as
+# a unit if a COPY line drifts); `checklib` must resolve from /app (see checklib.py).
+# `src.cadbuild.preview_png` is not reached by `build`: it is imported lazily and a failure
+# degrades to `warning: no previews`, so only this row would catch a broken matplotlib.
 CAD_IMPORTS = (
     ("cadquery", ""),
     ("ocp_tessellate.convert", "export_three_cad_viewer_js"),
@@ -357,38 +179,14 @@ CAD_IMPORTS = (
     ("checklib", "pairwise_interference"),
 )
 
-# The versions the image is required to carry, keyed by DISTRIBUTION name (what
-# importlib.metadata knows them as) rather than by import name — `cadquery-ocp` has no import
-# name at all, and `ocp-tessellate` imports as `ocp_tessellate`.
-#
-# Copied from requirements.txt on purpose rather than parsed out of it: this is the gate's OWN
-# independent statement of the contract, so a requirements.txt edited without thought has to
-# come here and disagree out loud. Keep the two in step — one edit in the same commit, and that
-# is the price of the check.
-#
-# `cadquery-ocp` is the row that earns this check the most. cadquery 2.8.0 declares it as
-# `cadquery-ocp<8.0,>=7.9.3.1` — a RANGE — so it is requirements.txt's explicit pin, and nothing
-# in cadquery itself, that keeps the geometry kernel from moving under every model this hub
-# serves between two builds of an unchanged Dockerfile. This row is what proves that pin
-# actually took effect in the built image, which is a different question from whether it is
-# written down.
-#
-# The last three are the preview renderer's, and they earn a row for the opposite reason to
-# `cadquery-ocp`: nothing in this repository asked for them until now, because they arrive on
-# their own through cadquery-ocp -> vtk -> matplotlib -> numpy/pillow. requirements.txt names
-# them because `src/cadbuild/preview_png.py` imports them directly, and this row is what proves
-# the pin took — the day vtk stops requiring matplotlib, or the image is built against
-# `cadquery-ocp-novtk`, the version the gate reads back is not the one declared here (or is not
-# there at all) and the image does not reach the registry.
-#
-# WHAT A PIN ROW DOES NOT PROVE, for those three and for every other row here: it is metadata
-# and nothing else. `importlib.metadata.version` reads the `.dist-info` directory beside the
-# package and never loads a single line of it, so an interrupted install, a wheel built for a
-# different manylinux/glibc than the base image, or a system library missing from the apt list
-# all leave the recorded version perfectly intact and this row perfectly green — while the
-# first `import matplotlib` in the running image raises. The import rows in CAD_IMPORTS above
-# are the half that actually loads the compiled extensions; the two halves answer different
-# questions and neither one substitutes for the other.
+# The versions the image must carry, keyed by DISTRIBUTION name (`cadquery-ocp` has no import
+# name). Copied from requirements.txt on purpose, as the gate's own statement of the contract:
+# keep the two in step in the same commit.
+# `cadquery-ocp` matters most: cadquery constrains it only by range, so only the explicit pin
+# keeps the geometry kernel fixed. matplotlib, numpy and pillow are the preview renderer's,
+# which arrive transitively through vtk.
+# A pin row reads metadata only and loads nothing; the import rows in CAD_IMPORTS are what
+# load the compiled extensions.
 PINS = {
     "cadquery": "2.8.0",
     "cadquery-ocp": "7.9.3.1.1",
@@ -399,33 +197,17 @@ PINS = {
     "pillow": "12.3.0",
 }
 
-# Marks the start of the CAD probe's machine-readable verdicts on the container's stdout. A
-# sentinel rather than "parse the whole output as JSON" because the output is NOT clean:
-# OpenCASCADE and VTK write warnings of their own accord, and neither this file nor the probe
-# controls them. Everything before the LAST occurrence of this line is discarded, and of what
-# follows it only the first non-empty line is parsed — noise arrives on BOTH sides, since OCCT's
-# and VTK's static destructors print during interpreter finalisation, after the payload. A run
-# that lacks the sentinel entirely is treated as a probe that never reported, not as an empty
-# pass. parse_cad_verdicts() below spells out why each half of that matters.
+# Marks the start of the CAD probe's verdicts on stdout. OpenCASCADE and VTK print warnings
+# before the payload and from static destructors after it, so everything before the LAST
+# sentinel is discarded and only the first non-empty line after it is parsed (see
+# parse_cad_verdicts). Output without the sentinel is a probe that never reported.
 CAD_SENTINEL = "---HAMMEROLA-CAD-PROBE-JSON---"
 
-# The probe, run by the image's OWN interpreter inside the already-running probe container. It
-# takes one JSON argument — the imports, the pins and the sentinel — so that the constants above
-# stay the single place any of that is written on this side of the boundary, and it answers with
-# one JSON object mapping the key it was given to a reason string or null.
-#
-# It reports FACTS and leaves the prose to check_cad_kernel() below: the runner knows which key
-# is which and can say what a failure means, while everything in here has to survive being
-# squeezed through `python -c`.
-#
-# Delivered as `-c` rather than on stdin because that keeps `docker()` a one-argument-list
-# function; the script is a couple of kilobytes, far under any ARG_MAX. Note that with `-c` the
-# script itself is NOT argv[0] — `python -c SRC arg` gives `sys.argv == ["-c", arg]` — so the
-# request is argv[1].
-#
-# Every check is individually wrapped, and the sentinel is printed only at the very END: a probe
-# that died unexpectedly therefore produces NO verdicts at all rather than a truncated set that
-# would look like a smaller gate passing.
+# The probe, run by the image's own interpreter inside the probe container. It takes one JSON
+# argument (imports, pins, sentinel) and prints one JSON object mapping each key to a reason
+# string or null; the prose stays in check_cad_kernel(). With `-c` the request is argv[1].
+# The sentinel is printed only at the end, so a probe that died produces no verdicts rather
+# than a truncated set.
 CAD_PROBE_SOURCE = r"""
 import json
 import sys
@@ -478,85 +260,38 @@ print(json.dumps(verdicts))
 """
 
 # --- check (h): the onboarding routes ------------------------------------------------------
-# The three files `/start` hands somebody who has just found the hub, asked for from INSIDE the
-# container that is running the image's own command. They are here because they are the one part
-# of this artefact that check (g) structurally cannot reach.
-#
-# (g) names paths, and two of these three are not paths: `/start/hammerola` is a zipapp built out
-# of every module under `hammerola/` when the request arrives, and `/start/template.tar.gz` is a
-# tar built out of `model_template/` the same way (`src/onboarding.py`). A client module that
-# .dockerignore kept out of the image, or a template file whose name no client would unpack,
-# breaks the ROUTE and not any single named file — and `src/app.py` answers that with a logged
-# 404, deliberately, because "this hub does not serve that" is the true answer to the request.
-# So the image builds, starts, drops privileges, passes (a) through (g), and hands a 404 to
-# exactly the person who came here because they did not know what to do next.
-#
-# THAT SENTENCE IS TRUE BECAUSE THE HUB WAS MADE TO MAKE IT TRUE, and it is worth knowing which
-# half is which. A missing client module used to produce a 200: `hammerola/*.py` is GLOBBED, so
-# a file that is not there is not an error — it is simply not in the glob, and the archive was
-# built, served with a plausible size, and died with an ImportError on the laptop that
-# downloaded it. `onboarding._refuse_unimportable` is what closed that: the archive now has to
-# carry everything reachable by imports from `hammerola/cli.py`, and refuses with the ValueError
-# `_serve_start` turns into the logged 404 this check reads. So the route is now a real witness
-# for the whole client — every module of it, since a glob over `hammerola/*.py` is the whole
-# list and nothing else would notice a file missing from it.
-#
-# The suite cannot see it either, and this is the sharp half: `tests/test_onboarding.py` builds
-# those archives out of the CHECKOUT, where every file is present by construction, so it goes
-# green on a repository whose image serves nothing.
-#
-# `/start` ITSELF IS DELIBERATELY NOT IN THIS LIST, and the reason had to be rewritten when the
-# manifest grew the skill's version (issue #51): it is no longer true that it opens no
-# file. What is still true is that the file it opens is `/app/skill/SKILL.md`, which check (g)
-# above already requires BY NAME, and that a COPY cannot alter its contents — so the image's
-# copy is the checkout's, whose frontmatter the suite parses on every run
-# (`tests/test_onboarding.py`). The two together already cover the only way this route can now
-# fail, and a fourth path here would not fit the probe's time budget as it stands: the ceiling
-# is the retry wait spent once plus one read per route, 10 + 3 x 5 = 25 s against an
-# EXEC_TIMEOUT of 30.
+# The three files `/start` hands a newcomer, requested from inside the container running the
+# image's own command. Two are assembled per request (`src/onboarding.py`): the client zipapp
+# must carry every module reachable from `hammerola/cli.py` (`onboarding._refuse_unimportable`),
+# and src/app.py answers a refused assembly with a logged 404. The suite builds these archives
+# from the checkout, where every file is present, so only this check sees a missing one.
+# `/start` itself is not listed: the only file it opens is `/app/skill/SKILL.md`, which check
+# (g) requires by name, and a fourth route would not fit the probe's time budget
+# (10 + 3 x 5 = 25 s against an EXEC_TIMEOUT of 30).
 START_ROUTES = ["/start/skill.md", "/start/hammerola", "/start/template.tar.gz"]
 
-# Where the hub listens inside its own container: `src/settings.py` defaults `host` to 0.0.0.0
-# and `port` to 8000, and SMOKE_ENV sets neither. 127.0.0.1 here is the CONTAINER's loopback,
-# reached by `docker exec` — not the runner's, which the module docstring forbids this file to
-# talk to and which is a different network namespace entirely.
+# Where the hub listens inside its own container (`src/settings.py` defaults: 0.0.0.0:8000).
+# 127.0.0.1 is the CONTAINER's loopback, reached by `docker exec`.
 START_ORIGIN = "http://127.0.0.1:8000"
 
-# The word every verdict line of the probe below starts with. Line-marked output rather than the
-# CAD probe's JSON, and for the same reason PRESENCE_SCRIPT uses it: the answer is one short
-# verdict per path, and marking the lines is what lets them be picked out of a stream that may
-# also carry warnings, since `docker()` folds stderr into stdout. A path the probe did not report
-# on is a THIRD answer, exactly as in sweep_paths(), and is never read as a pass.
+# The prefix of every verdict line the probe prints. Line-marked output, because `docker()`
+# folds stderr into stdout and warnings may surround the verdicts. A path with no verdict is a
+# third answer and never a pass.
 START_MARK = "start-route"
-# Seconds the probe will keep retrying a refused connection before giving up. main.py logs the
-# marker check (e) waits for BEFORE it binds the socket, so "connection refused" here can mean
-# "not bound yet" rather than "broken" — and by the time this runs the container has been up
-# through checks (f) and (g), so the wait is insurance rather than the normal path.
+# Seconds the probe keeps retrying a refused connection: main.py logs the startup marker before
+# it binds the socket, so "refused" may mean "not bound yet".
 START_WAIT = 10
-# Per-request timeout inside the container, and how much of each body is read. The bodies are
-# small and local; only "not empty" is being asked, so there is no reason to pull a whole
-# archive through the pipe.
-#
-# THESE THREE HAVE TO FIT INSIDE EXEC_TIMEOUT, which is what bounds the `docker exec` carrying
-# them. The CEILING is the wait spent once plus one read per route — 10 + 3 x 5 = 25 s against
-# 30 — and it is a ceiling rather than the worst case, because the deadline is taken once before
-# the loop and is therefore shared by all three routes: the first route spends the retry budget
-# and every route after it gets one attempt. MEASURED against a socket that accepts and never
-# answers, which is the slow shape: 20.6 s. Against a refused connection: 10.2 s. A probe killed
-# by the outer bound reports NOTHING, so every row would fail over a hub that was merely slow —
-# raise EXEC_TIMEOUT with these, not after them.
+# Per-request timeout inside the container, and how much of each body is read (only "not
+# empty" is asked). These must fit inside EXEC_TIMEOUT: the deadline is shared by all routes,
+# so the ceiling is the wait once plus one read per route, 10 + 3 x 5 = 25 s against 30
+# (measured: 20.6 s against a socket that never answers). A probe killed by the outer bound
+# reports nothing, so raise EXEC_TIMEOUT together with these.
 START_READ = 5
 START_READ_BYTES = 4096
 
-# Run by the image's own interpreter inside the container started with the image's REAL command,
-# so the hub it asks is the one production runs. Stdlib only, like everything the client is made
-# of — this is the same interpreter, and asking for anything else would be a fifth dependency
-# nobody declared. One argument of JSON, for the same reason the CAD probe takes one: the
-# constants above stay the single place any of this is written on this side of the boundary.
-#
-# Every reason is collapsed to ONE LINE before it is printed: the parser reads a verdict per
-# line, and a traceback pasted into the middle of it would be read as several verdicts about
-# nothing.
+# Run by the image's own interpreter inside the `-cmd` container, so the hub it asks is the one
+# production runs. Stdlib only; one JSON argument like the CAD probe. Every reason is collapsed
+# to one line, since the parser reads one verdict per line.
 START_PROBE_SOURCE = r"""
 import json
 import sys
@@ -606,46 +341,21 @@ for path in request["routes"]:
 """
 
 # --- check (i): the build wrapper, and the ceilings it puts on ------------------------------
-# The hub does not import a build, it SPAWNS one:
-# `python -s -m src.buildproc.wrapper '<rlimit-spec-json>' -- <target argv>`, with the working
-# directory at the repository root (`runner.run_isolated`, `runner.HUB_ROOT` — which is /app in
-# this image). That wrapper puts the rlimits on ITSELF and then `execv`s the interpreter that
-# will import the model, so by the time any model code exists the ceilings are the kernel's
-# business. Two things about the IMAGE have to hold for a single build to happen, and neither
-# is visible anywhere else in this pipeline:
-#
-#   * `-m src.buildproc.wrapper` has to RESOLVE from /app. That is `COPY src/ src/` plus a
-#     working directory, and the suite cannot observe either: it runs against a checkout where
-#     `src/` is importable by construction and where the working directory is the developer's.
-#   * the ceilings have to GO ON for the `app` account inside this container. `setrlimit` can be
-#     refused — a seccomp profile, a platform that does not implement RLIMIT_AS at any value
-#     (`limits.memory_limit_supported()` measures darwin as exactly that) — and
-#     `apply_process_limits` fails CLOSED when it is: the wrapper prints its refusal and exits
-#     without starting the build. An image like that serves every page, answers every route,
-#     passes every check above, and turns every push into a build that never runs.
-#
-# THE PROBE ASKS THE IMAGE FOR ITS OWN SPEC instead of carrying a copy of it, which is the one
-# place this check departs from the PINS rows above, and the reason is that a copy here could
-# not be right: `Limits.cpu_seconds` is COMPUTED at import time from the cores the container can
-# see (`limits._default_occt_threads`), so a number written in this file would be a statement
-# about the runner rather than about the image. What is asked instead has an answer that does
-# not depend on the machine — whatever the image's own `DEFAULT_LIMITS.rlimit_spec()` asks for,
-# the fenced process really runs under. tests/process_limits.py makes the same choice one level
-# up, and says at length why a hand-copied list of ceilings is the worse of the two.
-#
-# It also runs THE REAL WRAPPER rather than a re-implementation of what it does. Everything this
-# check is about lives in the few lines between `apply_process_limits` and `os.execv`, and a
-# probe that called `setrlimit` itself would prove those lines are reachable in this image
-# without ever executing them.
+# The hub spawns every build as
+# `python -s -m src.buildproc.wrapper '<rlimit-spec-json>' -- <target argv>` from /app
+# (`runner.run_isolated`, `runner.HUB_ROOT`); the wrapper sets the rlimits on itself and then
+# `execv`s the interpreter that imports the model. Two image properties must hold, and the
+# suite cannot observe either:
+#   * `-m src.buildproc.wrapper` resolves from /app;
+#   * `setrlimit` succeeds for the `app` account here. `apply_process_limits` fails closed, so
+#     a refused ceiling turns every push into a build that never runs.
+# The probe asks the image for its own spec (`DEFAULT_LIMITS.rlimit_spec()`) rather than
+# carrying a copy, because `Limits.cpu_seconds` is computed from the visible cores. It runs the
+# real wrapper, since what matters is the code between `apply_process_limits` and `os.execv`.
 BUILD_MARK = "build-ceiling"
-# The three questions, in the order the probe answers them, as (key, target prose). Written as
-# data for the same reason CAD_IMPORTS is: the declared count below is DERIVED from it and
-# cannot go stale when a question is added or removed.
-#
-# They are three rather than one because they fail at three different places and send whoever
-# reads the run to three different files: a packaging fault (`src/` did not arrive, or the
-# working directory is not where the hub thinks), a refusal by the kernel for this account, and
-# a ceiling that was reported applied and is not actually on the process.
+# The three questions, in the order the probe answers them, as (key, target prose). Data, so
+# the declared count is derived from it. Three because they point at three different faults:
+# packaging, a refusal by the kernel, and a ceiling reported as applied that is not on.
 BUILD_TARGETS = (
     ("resolve",
      "`python -s -m src.buildproc.wrapper` runs from {} as the `{}` account".format(
@@ -655,28 +365,15 @@ BUILD_TARGETS = (
     ("force",
      "...and the process it execs into really runs under them"),
 )
-# What the probe gives the wrapper before it gives up on it. It has to fit INSIDE EXEC_TIMEOUT
-# with room to spare for the probe's own interpreter start and for printing its verdicts: a
-# probe killed by the outer bound reports NOTHING, and all three rows would then go red over an
-# image that was merely slow — the expensive direction, since it blocks publication. The work
-# itself is three stdlib interpreter starts (importing `src.buildproc` must not import cadquery,
-# and that package's own docstring says so), so 20 s is orders of magnitude over the cost.
+# What the probe gives the wrapper before giving up. Must fit inside EXEC_TIMEOUT with room for
+# the probe's own start and output, or all three rows go red over a merely slow image. The
+# work is three stdlib interpreter starts (importing `src.buildproc` must not import cadquery).
 BUILD_RUN_SECONDS = 20
 
-# Run by the image's own interpreter, as `app`, with the working directory at /app — i.e. as
-# close to the process the hub spawns as a gate can get without pushing a model. Stdlib only,
-# like every probe here.
-#
-# It reads its verdicts off marked lines, the same wire format check (h) uses (see START_MARK):
-# `docker()` folds stderr into stdout, so the answer has to be pickable out of a stream that may
-# also carry warnings. Every reason is collapsed to ONE LINE before printing, because the parser
-# reads a verdict per line and a traceback pasted into the middle of one would be read as
-# several verdicts about nothing.
-#
-# Note what it does NOT do: it never lets the wrapper's own output share a stream with the
-# fenced process's answer. The wrapper writes to stderr and the process it execs into writes its
-# JSON to stdout, and this probe keeps the two pipes apart — which is what removes any need for
-# a sentinel here.
+# Run by the image's own interpreter, as `app`, from /app: as close to the process the hub
+# spawns as a gate can get without pushing a model. Stdlib only, with the same marked-line
+# output as check (h). The wrapper writes to stderr and the fenced process writes its JSON to
+# stdout, and the probe keeps the two pipes apart, so no sentinel is needed.
 BUILD_PROBE_SOURCE = r"""
 import json
 import os
@@ -832,53 +529,15 @@ if not verified:
 report("force", "; ".join(problems) if problems else None)
 """
 
-# How many verdicts each probe below is REQUIRED to return, compared against what it actually
-# returned before anything is reported. Every probe builds a local `targets` tuple first and
-# returns exactly one row per target on every path it can take — including the paths where the
-# container could not be started at all, which report every target as failed rather than
-# returning nothing. So these numbers are a property of the SOURCE, not of a particular run,
-# and any run that disagrees with them is a run in which a check went missing.
-#
-# What this defends against is this gate's own worst failure mode, and it is the one thing no
-# other check in the pipeline can catch: a probe that quietly stops probing. A check dropped
-# in a refactor, a new early-return path that forgets to emit its rows, an `if ...: return []`
-# left behind after debugging — none of those print a thing, none of them contribute a
-# failure, and the run still ends on `smoke ok: N/N targets`, because N is counted from the
-# rows that happened to arrive and therefore agrees with itself no matter how few there are.
-# The image then goes to the registry and to production with the gate reporting green about
-# checks it is no longer performing.
-#
-# THE ONE WAY TO MISUSE THIS: when a mismatch fires, do NOT edit the number to match what the
-# run produced. The number is the claim; the run is the evidence that the claim has become
-# false. "Fixing" it that way converts the tripwire into a rubber stamp forever — it will
-# agree with every future run, however many checks disappear afterwards, and it will do so
-# silently. The fix is to work out WHICH probe stopped returning a verdict and why.
-#
-# MAINTENANCE CONTRACT: adding or removing a check means editing this constant IN THE SAME
-# COMMIT as the probe. A commit that changes what a probe returns and leaves this line alone
-# is precisely the commit this constant exists to catch, so the cost of keeping it honest is
-# paid where the change is being made and reviewed, not months later.
-#
-# main() enforces that from three directions, not one, and the comments there say why each is
-# needed: the NUMBER of probe groups, the count each individual group returns, and the sum of
-# them all. Only the middle one is the obvious check, and on its own it has a hole exactly where
-# it matters — a probe DELETED from the `produced` tuple, rather than left in place returning
-# nothing, is compared against no declaration at all and so cannot disagree with one.
-#
-# The counts are derived from the source wherever a derivation exists — the excluded-path and
-# required-path sweeps emit one row per path, so they are written as `len(EXCLUDED_PATHS)` and
-# `len(REQUIRED_PATHS)` and cannot go stale when either list grows; (b) is its two fixed rows
-# plus one per required variable, (f) is one row per declared import plus one per pin, (h) one
-# row per onboarding route, and (i) one per question in BUILD_TARGETS, for the same reason. The
-# rest are literals because the `targets` tuples they count are literal, and a literal that has
-# to be kept in step is the entire point here.
-#
-# Each label carries the probe's LETTER — the same (a)…(i) the list at the top of the module
-# docstring uses and each probe's own docstring opens with. That prefix is not decoration: this
-# label is the only thing a self-check failure gives whoever reads the run, and a label phrased
-# in words of its own would make them grep for prose that appears nowhere else in this file.
-# With the letter, the message points straight at the paragraph that says what the missing check
-# was for.
+# How many verdicts each probe MUST return, checked before anything is reported. Every probe
+# returns exactly one row per target on every path, including when its container could not
+# start, so these numbers are a property of the source. A probe that quietly stops probing
+# would otherwise still end on `smoke ok: N/N`.
+# When a mismatch fires, do NOT edit the number to match the run: find which probe stopped
+# returning a verdict. Adding or removing a check means editing this in the same commit.
+# main() checks the number of groups, each group's count, and the total (see there).
+# Counts are derived from the source wherever possible; the literals count literal `targets`
+# tuples. Each label carries the probe's letter from the module docstring.
 EXPECTED_TARGETS = (
     ("(a) image contract", 4),
     # The exit code and the guard's own wording, plus one row per variable it has to name.
@@ -892,58 +551,33 @@ EXPECTED_TARGETS = (
     ("(i) build ceilings", len(BUILD_TARGETS)),
 )
 
-# The environment the probe and real-command containers run with. The value is invented here
-# and reaches nothing: this gate has to be runnable on a pull request, where the deployment's
-# real token does not exist and should not. EDIT_TOKEN is a shared secret compared for
-# equality against the `Authorization: Bearer` header, so it has no format to satisfy and any
-# non-empty string starts the image. If a future variable here DOES get format-validated at
-# construction time, give it a value of the right shape — otherwise startup fails for a reason
-# that has nothing to do with the image this gate is meant to be judging.
+# The environment the probe and real-command containers run with. The value is invented and
+# reaches nothing, so the gate runs on pull requests too; EDIT_TOKEN is only compared for
+# equality, so any non-empty string starts the image.
 SMOKE_ENV = [
     "EDIT_TOKEN=fake-smoke-token-not-real-0123456789abc",
 ]
 
-# The command the probe container runs INSTEAD of the image's own. It still goes through
-# ENTRYPOINT (docker only replaces CMD), which is the entire point: the entrypoint runs as
-# root, heals /app/data and execs `gosu app sleep 900`, so PID 1 in that container is exactly
-# what check (c) wants to look at. Check (e) covers the real command separately, in its own
-# container, which is where that question belongs.
-# 900 s is measured from the moment THIS container starts, so it is not a bound on the gate as
-# a whole and the two must not be confused. What it has to outlast is the last `docker exec`
-# into it — check (i), the build-wrapper probe — and the arithmetic below puts the start of this
-# container at 240 s and the end of that exec at 735 s in the worst case, i.e. 495 s of its own
-# life used out of 900. Adding another exec into this container eats into that margin; adding a
-# call BEFORE it starts does not. Check (h) is neither: it runs between (g) and (i) but execs
-# into the `-cmd` container, which is running the image's own server and has no `sleep` to
-# outlast, so it costs this margin nothing. The container is removed in a `finally` regardless,
-# and the workflow removes it again under `if: always()`.
+# The command the probe container runs instead of the image's own. It still goes through
+# ENTRYPOINT (docker only replaces CMD), so PID 1 is `gosu app sleep 900`, which is what check
+# (c) inspects. The 900 s count from this container's start and must outlast the last exec into
+# it, check (i): in the worst case it starts at 240 s and that exec ends at 735 s, using 495 s.
+# Check (h) execs into the `-cmd` container and costs this nothing.
 IDLE_COMMAND = ["sleep", "900"]
 
-# The first line `main.py` logs. Its presence proves the settings parsed — i.e. every required
-# variable arrived (EDIT_TOKEN, the one SMOKE_ENV supplies) and validation was satisfied — and
-# that logging was configured at the declared LOG_LEVEL. RENAME THIS TOGETHER WITH main.py
-# when the template is copied.
+# The first line `main.py` logs. Its presence proves the settings parsed (every required
+# variable arrived) and logging was configured. RENAME THIS TOGETHER WITH main.py when the
+# template is copied.
 STARTUP_MARKER = "Starting hammerola"
-# The markers check (e) waits for, in the order main.py emits them. There is only one today,
-# and the poll below still waits for the WHOLE list rather than for the first entry. That is
-# not tidiness, it is the fix for a real bug the moment a second marker is added: separate log
-# lines are written by separate statements, so a poll that stopped at the FIRST marker would
-# then judge the rest against a snapshot of the log taken microseconds after that first line
-# was flushed. Locally the gap is milliseconds, which is why it looks fine; on the runner the
-# container starts on a freshly written overlay and anything that fsyncs between the lines
-# grows the gap by orders of magnitude. What that buys is a FALSE RED on the gate that blocks
-# publication — intermittently refusing to ship a perfectly good image, which is the most
-# expensive kind of flake there is, because the second run passes and everybody learns that a
-# red gate means nothing.
+# The markers check (e) waits for, in the order main.py emits them. The poll waits for the
+# whole list, so a second marker is not judged against a log snapshot taken right after the
+# first line.
 STARTUP_MARKERS = (STARTUP_MARKER,)
 
-# Bounds. Every docker call gets one, because a gate that hangs is worse than a gate that
-# fails: it holds a slot on a runner the whole fleet queues for until the step timeout kills
-# it, and a killed step never runs its own cleanup.
-# The numbers are generous against the real cost — this image starts in about a second — and
-# are sized for a shared runner under load right after a build. Their worst-case SUM is what
-# the smoke step's `timeout-minutes` in both workflows has to exceed, so it is spelled out
-# here, in the order the calls actually happen:
+# Bounds. Every docker call gets one: a hung gate holds a shared runner until the step timeout
+# kills it, and a killed step never runs its own cleanup. The numbers are generous against the
+# real cost. Their worst-case SUM, in call order, is what the smoke step's `timeout-minutes` in
+# both workflows has to exceed:
 #    30 (inspect image config)
 #  + 30 (rm guard)          + 90 (guard run, no environment)
 #  + 30 (rm probe)          + 60 (probe run -d)
@@ -958,32 +592,23 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 30 (exec: /start routes, into the -cmd container)
 #  + 30 (exec: build wrapper and its ceilings)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 795 s, a little over 13 minutes. Both workflows allow 14 (840 s), and that headroom was
-# raised together with the CAD probe below — a step timeout that does not exceed this sum turns
-# a slow-but-healthy run into a killed step whose own container cleanup never executes. The
-# remaining 45 s of margin is what a further exec would spend, so adding one means revisiting
-# `timeout-minutes` in both workflows rather than only this sum.
-# Three of these `rm`s are PRE-run cleanups: every container is removed by name before it is
-# started, so a re-run from the Gitea UI — which keeps the same run id, hence the same
-# $SMOKE_NAME — cannot die on "name already in use".
+#  = 795 s, a little over 13 minutes. Both workflows allow 14 (840 s); the remaining 45 s is
+# what a further exec would spend, so adding one means raising `timeout-minutes` in both
+# workflows. tests/test_workflow_steps.py reads this line.
+# Three of the `rm`s are pre-run cleanups: a re-run from the Gitea UI keeps the same run id,
+# hence the same $SMOKE_NAME.
 INSPECT_TIMEOUT = 30
 REMOVE_TIMEOUT = 30
 GUARD_TIMEOUT = 90
 START_TIMEOUT = 60
 EXEC_TIMEOUT = 30
 LOGS_TIMEOUT = 15
-# The CAD probe gets a bound of its own, three times the others, and the reason is the size of
-# what it touches rather than the work it does. `import cadquery` maps ~222 MB of OpenCASCADE
-# shared objects plus VTK, and the FIRST time that happens in a freshly built image every one
-# of those pages is read off a cold overlay on a runner the whole fleet shares. Warm, the probe
-# takes a couple of seconds; the margin is for the cold case, and it is the one call in this
-# file where a 30 s bound could produce a red gate on a perfectly good image.
+# The CAD probe gets three times the bound: the first `import cadquery` in a fresh image reads
+# ~222 MB of OpenCASCADE and VTK off a cold overlay.
 CAD_TIMEOUT = 90
 
-# The startup-marker poll, bounded in WALL CLOCK rather than in attempts: each attempt shells
-# out to `docker logs`, whose own timeout is 15 s, so an attempt-counted bound would multiply
-# into minutes the moment the daemon got slow. The marker is the first thing main.py logs, so
-# it arrives within a second of the container starting; 30 s is roughly thirty times that.
+# The startup-marker poll, bounded in wall clock rather than attempts, since each attempt is a
+# `docker logs` with its own 15 s timeout. The marker normally arrives within a second.
 STARTUP_BUDGET = 30
 STARTUP_PAUSE = 0.5
 
@@ -995,32 +620,14 @@ EXCERPT_CHARS = 4000
 # whoever reads the run list, so they are different codes.
 EXIT_CHECKS_FAILED = 1
 EXIT_MISCONFIGURED = 2
-# A third code, for the EXPECTED_TARGETS self-check finding that a probe returned fewer (or
-# more) verdicts than it declares. Deliberately NOT folded into EXIT_CHECKS_FAILED, because
-# the two demand opposite reactions from whoever reads the run. A 1 means "this image is
-# broken, do not ship it", and the next commit fixes the image; a 3 means "this gate has been
-# lying, find out since when", and the question it opens is about every image that already
-# went out while a check was silently not running. Sharing one code would file the second
-# question under the first and it would never get asked.
-#
-# The `__main__` block at the bottom of this file exits 3 for an UNHANDLED EXCEPTION too, and
-# that is the same statement rather than a second meaning bolted onto the code: a gate that
-# crashed did not grade the image either. Without that block CPython would exit 1 on a
-# traceback, i.e. report a broken GATE as a broken IMAGE and send whoever reads the run to
-# inspect an artefact that may be perfectly fine — the exact confusion this third code exists
-# to prevent.
+# The gate itself is broken: a probe returned a different number of verdicts than declared, or
+# the script crashed (the `__main__` block). Separate from 1, because 1 means "the image is
+# broken" and 3 means "the gate has not graded the image".
 EXIT_SELF_CHECK = 3
 
-# Fed to `sh -c` inside the container to answer "which of these paths exist". Written as a
-# script plus positional arguments rather than as an interpolated string: subprocess passes
-# argv straight to exec with no shell on the runner side, so `sh -c SCRIPT sh path1 path2`
-# puts the paths in "$@" untouched — nothing here can be broken by a path that contains a
-# space, a quote or a `$`.
-# Shared by checks (d) and (g), which ask opposite questions of the same script: it reports
-# `present`/`absent` per path and says nothing about which of the two is wanted, so each caller
-# supplies its own verdict. That is also why neither of them treats a MISSING line as a pass —
-# "the sweep said nothing about this path" is a third answer, and reading it as either of the
-# other two is how a sweep that silently stopped covering a path would go green.
+# Fed to `sh -c` inside the container to answer "which of these paths exist", with the paths as
+# positional arguments so no quoting can break them. Shared by checks (d) and (g), which want
+# opposite answers; neither treats a missing line as a pass.
 PRESENCE_SCRIPT = (
     'for p in "$@"; do '
     'if [ -e "$p" ]; then echo "present $p"; else echo "absent $p"; fi; '
@@ -1038,9 +645,8 @@ def excerpt(text):
     if text is None:
         return ""
     if isinstance(text, bytes):
-        # subprocess.TimeoutExpired.output is str under text=True on every version this runs
-        # on, but this is the one path whose whole value is showing the output of a call that
-        # went wrong — a TypeError here would destroy exactly the evidence it was fetched for.
+        # Defensive: this path exists to show the output of a failed call, so a TypeError here
+        # would destroy the evidence.
         text = text.decode("utf-8", "replace")
     if len(text) <= EXCERPT_CHARS:
         return text
@@ -1058,12 +664,9 @@ def docker(args, timeout):
     Returns (status, output) with stderr folded into stdout, because everything here is read
     by a human out of a CI log where the interleaving is the useful part.
 
-    A status of None means the command produced NO EXIT CODE AT ALL — it ran out its timeout,
-    or docker is not on PATH — and `output` then explains which. That is deliberately not the
-    same thing as a non-zero exit and is never reported with the same wording: "the container
-    exited 1" is a finding about the image, while "the docker client never came back" is a
-    finding about the runner, and folding them together is how a broken runner starts looking
-    like a broken application.
+    A status of None means there was NO EXIT CODE (timeout, or docker not on PATH) and `output`
+    says which. That is a finding about the runner and is never worded like a non-zero exit,
+    which is a finding about the image.
     """
     argv = ["docker"] + args
     try:
@@ -1086,26 +689,12 @@ def docker(args, timeout):
 def remove_container(name):
     """Remove one of this gate's containers by name, together with its anonymous volumes.
 
-    Best effort: the result is deliberately not inspected and this is never the reason a check
-    fails. A container that is already gone, or a docker that is momentarily unhappy, must not
-    turn into a red verdict about the image.
+    Best effort: the result is not inspected and is never the reason a check fails.
 
-    `-v` is here even though this template's Dockerfile declares no `VOLUME` yet, and this is
-    the removal path where it matters MOST rather than a copy of the flag the workflows carry.
-    Two different things remove these containers: this function — before each container is
-    started, and again in main()'s `finally` — and the `if: always()` cleanup step in both
-    workflows. On every normal run it is THIS one that removes the two containers started
-    without `--rm` (the probe and the `-cmd` one; the `-guard` one runs with `--rm`, so the
-    daemon removes it and takes its anonymous volumes along), so the workflow step finds
-    nothing left and its own `-v` applies to nothing; that step exists for the run where this
-    process was killed by the smoke step's `timeout-minutes` and never reached its `finally`.
-    So on the day a project adds a `VOLUME` to its Dockerfile, a `-v` present only in the
-    workflows would cover exactly the runs that do not normally happen, while every ordinary
-    run leaked one anonymous volume for each of those two containers onto a daemon the whole
-    fleet shares — nothing names it, nothing ever collects it, and the disk grows forever.
-    Both paths carry the flag; if you change one, change the other. It cannot take anything
-    else with it: `docker rm -v` removes only the anonymous volumes belonging to that one
-    container, never a named volume such as the ones docker-compose creates.
+    `-v` removes only that container's anonymous volumes (none today), never a named one. This
+    function is what removes the two non-`--rm` containers on every normal run; the workflows'
+    `if: always()` cleanup covers a run killed by its timeout. Both paths carry `-v`; if you
+    change one, change the other.
     """
     docker(["rm", "-f", "-v", name], REMOVE_TIMEOUT)
 
@@ -1121,14 +710,9 @@ def environment_flags():
 def memory_flags(limit):
     """One container's ceiling, as `--memory` AND `--memory-swap`, always equal.
 
-    A function rather than a pair of literals at each `docker run` because the two flags only
-    mean a ceiling TOGETHER. `--memory-swap` is the memory+swap TOTAL, so leaving it out gives
-    the container swap equal to the limit: a process that ran away would thrash to twice the
-    number instead of being killed at it, and the floors measured beside the constants above
-    would describe something that no longer happens. Written out three times, that is three
-    places for one of the two to be dropped or edited on its own;
-    `tests/test_ci_memory_ceilings.py` holds the same rule over the workflows, where the flags
-    have to be literal text.
+    `--memory-swap` is the memory+swap TOTAL, so leaving it out gives the container swap equal
+    to the limit and the ceiling stops being one. `tests/test_ci_memory_ceilings.py` holds the
+    same rule over the workflows, where the flags are literal text.
     """
     return ["--memory", limit, "--memory-swap", limit]
 
@@ -1180,33 +764,17 @@ def check_image_contract(image):
         "it is {!r}. Check (e) below starts the container with the image's own command "
         "precisely so that the gate cannot drift from what production runs".format(cmd))))
 
-    # Not cosmetic: `src/settings.py` defaults `data_dir` to the RELATIVE path `data`, and
-    # `Store` resolves it with `Path(data_dir).resolve()` — i.e. against the process's working
-    # directory. Moving the WORKDIR therefore puts every build, every pointer and every comment
-    # somewhere that is not the mounted volume, which looks like it works right up until the
-    # container is recreated and all of it is gone.
-    #
-    # The other two trees this image is made of do NOT depend on this row, and the difference is
-    # worth stating because the reflex is to assume they do: `render.TEMPLATES_DIR` and
-    # `app.STATIC_DIR` are both `Path(__file__).resolve().parent.parent / ...`, so `templates/`
-    # and `static/` are anchored to where the CODE lives (/app) and survive a changed WORKDIR
-    # untouched. That is exactly why they need a check of their own rather than this one, and
-    # check (g) below is it — it asks for those files at their absolute paths.
+    # `src/settings.py` defaults `data_dir` to the relative path `data`, resolved against the
+    # working directory, so a moved WORKDIR puts all state outside the mounted volume.
+    # templates/ and static/ are anchored to the code's location instead; check (g) covers them.
     working_dir = config.get("WorkingDir")
     rows.append((workdir_target, None if working_dir == APP_DIR else (
         "it is {!r}. Relative paths — the data directory above all — resolve against the "
         "working directory, so state ends up outside the mounted volume and is lost on the "
         "next redeploy".format(working_dir))))
 
-    # This one exists to protect check (b) rather than to protect production directly, which
-    # is why it lives up here in the contract check.
-    # Docker gives a container a pipe, not a terminal, and CPython block-buffers a pipe. The
-    # only thing check (b) can observe is the text that actually made it OUT of the container,
-    # and a process that is killed by a signal or leaves through `os._exit()` skips the flush
-    # entirely — so the guard would exit non-zero with no explanation at all, and check (b)
-    # would have nothing to match on and no way to tell "the guard fired" from "something else
-    # broke". Dropping this ENV line from the Dockerfile is a one-line edit that costs no test
-    # anywhere else in this repo; this row is what makes it cost a red gate.
+    # Protects check (b): container stdout is a pipe, which CPython block-buffers, so without
+    # this the guard's message could be lost and check (b) would have nothing to match.
     env = config.get("Env") or []
     rows.append((unbuffered_target, None if "PYTHONUNBUFFERED=1" in env else (
         "it does not. Container stdout is a pipe and CPython block-buffers a pipe, so "
@@ -1220,33 +788,14 @@ def check_image_contract(image):
 def check_required_variable_guard(image, name):
     """(b) The image refuses to start without its required variables, AND NAMES EVERY ONE.
 
-    Started with NO environment at all — no `-e` of any kind — which is the shape of the real
-    accident: a stack redeployed after somebody dropped a variable out of the compose file or
-    the `.env`.
+    Started with NO environment at all — the shape of the real accident: a stack redeployed
+    after a variable was dropped from the compose file or `.env`.
 
-    Separate rows, because the exit code ALONE is worth very little here. A typo in an
-    import, a wheel that failed to install, a syntax error in a module — every one of those
-    also exits non-zero with no environment set, and every one of them would let this check
-    report success while the guard it claims to be testing had quietly stopped existing. So
-    the exit code is one row and the things the message has to contain are the rest:
-
-      * the class of the problem (`Missing required variable(s)`), which is what tells an
-        operator this is a configuration fault and not a crash;
-      * the NAME of the variable, which is the difference between a five-second fix and
-        reading the source of a container that will not start.
-
-    That second bullet is ONE ROW PER VARIABLE rather than one row for the set, and with one
-    credential in the system that is a formality TODAY — honestly so, and REQUIRED_VARIABLES
-    says what was lost when the second one went away. The shape is kept because it is what
-    restores the property in a single edit: config_errors.py collects every missing key and
-    prints them together, and a regression to naming only the first — a `[0]`, a `next(...)`,
-    a loop rewritten as a lookup — is invisible to a check that searches the output for one
-    name. The row-per-variable form is also what makes a failure readable: the row names the
-    key the guard stopped mentioning.
-
-    With `restart: always` in production the container gets restarted either way, so that
-    message is the ONLY signal that separates "somebody dropped a variable" from an image that
-    is simply broken.
+    The exit code alone proves little (an import error also exits non-zero), so the message
+    is checked too: one row for the class of the problem (`Missing required variable(s)`) and
+    one row per variable name, so a regression to naming only the first missing key fails a
+    row that names the key. With `restart: always` in production, that message is the only
+    thing that separates a dropped variable from a broken image.
     """
     exit_target = "the image exits non-zero when started with no environment at all"
     class_target = "...and its output says {!r}".format(GUARD_FRAGMENT)
@@ -1324,26 +873,15 @@ def parse_pid1_uid(status_text):
 def check_privileges_dropped(name, blocked=None):
     """(c) The container's own process is `app`, not root, and owns its state directory.
 
-    This is the ONLY reason entrypoint.sh exists. There is no `USER` line in the Dockerfile —
-    on purpose, because the entrypoint has to start as root to fix the ownership of a volume
-    that older images left owned by root — so nothing in the image DECLARES a non-root user
-    and no `docker inspect` can answer this question. If the entrypoint stops dropping
-    privileges, absolutely nothing else changes: the image builds, the container starts, the
-    service works, the logs look the same. It just runs as root, and it goes on running as
-    root for as long as nobody happens to look.
+    There is no `USER` line in the Dockerfile (the entrypoint starts as root to fix volume
+    ownership and drops to `app` via gosu), so no `docker inspect` can answer this, and a broken
+    drop changes nothing else visible.
 
-    Note what is being asked and of which process. `docker exec` does NOT go through the
-    ENTRYPOINT and does NOT inherit the gosu drop — it runs as the image's configured user,
-    which here is root, because the Dockerfile deliberately declares none. So an `id -u` in
-    the exec'd shell would print 0 in a perfectly healthy container and 0 in a broken one, and
-    would be worth nothing. The question is about PID 1 — the process the entrypoint exec'd
-    into — and it is answered by reading /proc/1/status, which the kernel writes.
+    `docker exec` does not go through the ENTRYPOINT and runs as root here, so the question is
+    asked of PID 1 by reading /proc/1/status.
 
-    One branch of the entrypoint is NOT exercised here and it is worth knowing which: the
-    `chown -R app:app /app/data` that heals a volume left owned by root. Reaching it needs a
-    root-owned mount, and a bind mount named from this job container does not resolve on the
-    host daemon (see the module docstring). What is checked is the state that matters at
-    runtime — the process is `app` and it can write its own data directory.
+    Not exercised: the entrypoint's `chown -R app:app /app/data` on a root-owned volume, which
+    would need a bind mount the host daemon cannot resolve from this job.
     """
     uid_target = "the container's main process runs as uid {}".format(APP_UID)
     account_target = "uid {} is the `{}` account inside the image".format(APP_UID, APP_USER)
@@ -1445,16 +983,9 @@ def check_privileges_dropped(name, blocked=None):
 def sweep_paths(name, paths):
     """Ask the container which of `paths` exist. Shared by checks (d) and (g).
 
-    Returns (seen, None, output) where `seen` maps each path the sweep reported to "present" or
-    "absent", or (None, reason, output) when the sweep could not be run at all. Both callers
-    fail EVERY one of their rows on that second shape: a sweep that did not run has not proved
-    anything about any path, and reporting fewer rows than declared is what the self-check in
-    main() exists to catch.
-
-    The parsing lives here rather than in each caller because the two ask OPPOSITE questions of
-    the same output — (d) wants "absent", (g) wants "present" — and a copy of this loop that
-    drifted would let one of them start reading a missing line as its own good answer. The
-    verdict stays with the caller; only the facts are shared.
+    Returns (seen, None, output) where `seen` maps each reported path to "present" or "absent",
+    or (None, reason, output) when the sweep could not run; callers then fail every row. The
+    verdict stays with each caller, since (d) and (g) want opposite answers.
     """
     status, output = docker(
         ["exec", name, "sh", "-c", PRESENCE_SCRIPT, "sh"] + list(paths), EXEC_TIMEOUT)
@@ -1475,36 +1006,12 @@ def sweep_paths(name, paths):
 def check_excluded_paths(name, blocked=None):
     """(d) `.dockerignore` did its job: the build context left the wrong things behind.
 
-    `.env` is the one that matters most here, and it is not really about image size. A `.env`
-    baked into an image that gets PUSHED to the registry is a credential leak that leaves no
-    trace whatsoever: the container behaves identically, the logs are identical, the compose
-    file is identical, and the only way anybody ever finds out is by unpacking the published
-    layers by hand.
+    `.env` matters most: baked into a pushed image it is a credential leak with no visible trace.
+    `.venv` does not shadow the image's packages (it never enters sys.path); its presence would
+    mean the build context is not what the Dockerfile assumes, the same fault that leaks `.env`.
+    `tests/` is dead weight.
 
-    `.venv` is worth stating precisely, because the reason that suggests itself is the wrong
-    one: a `.venv` inside the image does NOT shadow what the image installed. The container runs
-    the image's own /usr/local/bin/python with VIRTUAL_ENV unset and WORKDIR /app, so
-    /app/.venv/lib/*/site-packages never enters sys.path at all and cannot displace a single
-    package — the same statement both workflows make about the `--exclude=./.venv` on their tar,
-    and it holds in both directions. What it costs directly is size: tens of megabytes of wheels
-    built for a developer's own platform and interpreter version, none of which that container
-    could load. What makes the row worth having is what its PRESENCE would mean rather than what
-    the directory does. A `.venv` cannot reach the image unless the build context was not what
-    whoever wrote the Dockerfile believed it was — a COPY widened to `COPY . .`, a .dockerignore
-    that stopped applying — and that is the SAME fault that puts `.env` in there, which is the
-    one that leaks credentials. So this row going red is a packaging fault to investigate, not a
-    dependency problem to debug.
-
-    `tests/` is the mild one: dead weight, plus fixtures that were never written with
-    publication in mind.
-
-    Today the Dockerfile copies its files one by one, so these paths could not appear even
-    without .dockerignore. That is exactly why the check is worth keeping: widening that to a
-    blanket `COPY . .` is a one-line change that looks tidier in review, and .dockerignore is
-    then the only thing standing between the working tree and the registry.
-
-    One `docker exec` answers every path here, so they stay in one list and a failure to run it
-    fails every row rather than silently covering fewer of them than it claims.
+    The Dockerfile copies files one by one today, so this guards against a future `COPY . .`.
     """
     targets = ["{} is not in the image".format(path) for path in EXCLUDED_PATHS]
 
@@ -1536,31 +1043,12 @@ def check_excluded_paths(name, blocked=None):
 
 
 def check_required_paths(name, blocked=None):
-    """(g) The templates and the viewer assets really are in the image.
+    """(g) The templates, viewer assets and other required files really are in the image.
 
-    The mirror of (d), and the asymmetry between the two is the reason this exists. A file that
-    should not be in the image is invisible from outside and needs a check to be found at all;
-    a file that should be there and is not takes down every page the hub serves — and was, until
-    this check, equally invisible to the pipeline.
-
-    Nothing else covers it, in either direction:
-
-      * the pytest suite runs against a CHECKOUT, where `templates/` and `static/` are simply
-        present. It cannot observe a Dockerfile that stopped copying them.
-      * check (a) does not reach it either: `render.TEMPLATES_DIR` and `app.STATIC_DIR` are
-        anchored to `Path(__file__).parent.parent`, not to the working directory, so a correct
-        WORKDIR says nothing about whether those two trees were copied.
-      * checks (b), (c) and (e) all pass on an image with no templates at all. That is the sharp
-        part: `/health` answers with a literal string that opens no file, so the container comes
-        up, drops privileges, logs its startup marker and looks completely healthy while `GET /`
-        is a traceback and the viewer is an empty canvas.
-
-    So `COPY static/ static/` deleted from the Dockerfile — or a directory renamed on one side
-    of a COPY — reaches `:latest` green. This is the row that stops it.
-
-    One `docker exec` answers all of them, so a failure to run it fails every row rather than
-    silently covering fewer paths than it claims. `sh -c` with the paths as positional arguments
-    is the same mechanism check (d) uses; only the verdict is inverted.
+    The mirror of (d). The suite runs against a checkout, check (a) says nothing about trees
+    anchored to the code's location, and (b), (c) and (e) all pass without templates because
+    `/health` answers with a literal string. So a deleted `COPY static/ static/` would reach
+    `:latest` green without this check.
     """
     targets = ["{} is in the image".format(path) for path in REQUIRED_PATHS]
 
@@ -1585,9 +1073,7 @@ def check_required_paths(name, blocked=None):
                 "file is broken for every visitor. Nothing else in this pipeline can see that: "
                 "the suite runs against a CHECKOUT and never looks inside the artefact")))
         else:
-            # Same reasoning as in check (d), and it matters more here: "the sweep said nothing
-            # about this path" read as a pass would silently un-check the very file this row
-            # exists for.
+            # As in check (d): no verdict for a path is not a pass.
             rows.append((target, (
                 "the sweep returned no verdict for this path. Full output:\n{}".format(
                     excerpt(output)))))
@@ -1597,20 +1083,9 @@ def check_required_paths(name, blocked=None):
 def check_startup(image, name):
     """(e) The image's OWN command starts and gets through its own startup.
 
-    Two rows, and the second one is the one to read carefully before changing it.
-
-    The healthy set is deliberately BOTH of these:
-      * reached the marker and is still running — which is what THIS service does: `main.py`
-        binds the port and hands control to serve_forever();
-      * reached the marker and exited 0 — a one-shot command that did its job and returned.
-    The unhealthy set is: a non-zero exit, or no marker at all.
-
-    Both are kept even though only the first shape occurs today. Narrowing this to "must still
-    be running" would buy nothing — the marker plus a zero exit already means startup
-    succeeded — and it would turn any future one-shot entrypoint (a migration, a `--check`
-    mode) into a red smoke gate for a container that did exactly what it was asked. What is
-    actually being asserted is "it got through its own startup and did not fall over", and
-    that statement is true of both shapes.
+    Healthy is either: reached the marker and still running (this service, which serves
+    forever), or reached the marker and exited 0 (a one-shot command that did its job). A
+    non-zero exit or no marker at all is unhealthy.
     """
     marker_target = "the image's own command logs {!r}".format(STARTUP_MARKER)
     state_target = "...and the container then either keeps running or exits 0"
@@ -1650,10 +1125,7 @@ def check_startup(image, name):
         else:
             logs_problem = None
             logs = log_output
-            # Exit on the LAST expected marker, not the first: see the note on
-            # STARTUP_MARKERS. With a single marker the two are the same thing; the loop is
-            # written this way so that adding a second marker does not silently reintroduce
-            # the race.
+            # Exit on the LAST expected marker, not the first: see STARTUP_MARKERS.
             if all(marker in logs for marker in STARTUP_MARKERS):
                 break
         if time.time() >= deadline:
@@ -1716,19 +1188,10 @@ def cad_import_statement(module, symbol):
 def parse_cad_verdicts(output):
     """Pull check (f)'s verdict map out of the container's stdout.
 
-    Returns (verdicts, None) or (None, reason). Noise on BOTH sides of the payload is discarded,
-    and both sides really do occur: OpenCASCADE and VTK print warnings of their own accord, the
-    probe cannot silence them, and `docker()` folds stderr into stdout — so the output around the
-    payload is not under this gate's control. Everything before the LAST sentinel goes, and of
-    what follows only the FIRST NON-EMPTY LINE is parsed.
-
-    That last part is the difference between a working gate and seven false failures. The payload
-    comes from `json.dumps`, which never emits a newline, so it is always exactly one line; but
-    OCCT's and VTK's static destructors run during interpreter finalisation, i.e. AFTER that line
-    has been printed. Feeding the whole remainder to json.loads would meet those bytes as
-    `JSONDecodeError: Extra data` and report every CAD target as failed over an image that
-    is perfectly fine — the most expensive kind of red there is, because it blocks publication
-    and the next run behaves differently.
+    Returns (verdicts, None) or (None, reason). OpenCASCADE and VTK print noise before the
+    payload and, from static destructors at interpreter exit, after it, so everything before
+    the LAST sentinel is dropped and only the first non-empty line after it is parsed (the
+    payload is one `json.dumps` line).
     """
     if CAD_SENTINEL not in output:
         return None, (
@@ -1761,39 +1224,20 @@ def parse_cad_verdicts(output):
 def check_cad_kernel(name, blocked=None):
     """(f) The geometry kernel is in the image, imports, and is the version that was pinned.
 
-    This is the check the whole of step 1 exists for, and it answers something no test in this
-    repository can. The suite runs against a CHECKOUT on a machine that already has X and GL
-    libraries lying around; `cadquery-ocp` is a native OpenCASCADE binding, so the one thing
-    that can be wrong here — a system library missing from the Dockerfile's apt list — is
-    invisible to every one of those tests and surfaces as `ImportError: libGL.so.1` at import
-    time, in production, on the first request that tries to build anything.
+    The suite runs on a checkout with the host's X and GL libraries, so a system library missing
+    from the Dockerfile's apt list shows up only here, as `ImportError: libGL.so.1`. The
+    installed versions are read back too: cadquery constrains OCP only by range, and kernel
+    drift would silently change published geometry hashes.
 
-    It also reads the installed versions back. requirements.txt pinning `cadquery-ocp` is a
-    STATEMENT; whether the resolver honoured it is a fact about the artefact, and only the
-    artefact can be asked. That matters more than the usual "did pip do what it was told",
-    because cadquery constrains OCP by range: an unnoticed drift there moves the geometry
-    kernel under every model the hub serves, and the symptom is not an error at all — it is a
-    rebuilt model whose STL and whose per-part buffer hashes quietly stop matching the ones
-    already published.
-
-    Runs by `docker exec` into the long-lived probe container that checks (c) and (d) already
-    started, rather than starting a fourth container: this image is around two gigabytes, so
-    starting one more would add the slowest thing this gate does for no extra coverage.
-
-    Deliberately NOT run with `-u app`, unlike the write probe in check (c). What is being
-    asked here is whether the dynamic linker can satisfy OCP and what the installed metadata
-    says — both identical for either account, since pip installed into a world-readable
-    site-packages — while `docker exec -u app` does not go through the entrypoint and so
-    supplies none of the environment gosu would have set. Running as the unprivileged account
-    would therefore buy nothing and risk a red gate over a missing HOME.
+    Execs into the probe container rather than starting another (the image is ~2 GB). Not run
+    with `-u app`: linking and metadata are the same for both accounts, and `docker exec -u app`
+    lacks the environment gosu would set (HOME).
     """
     imports = [
         ("import:{}:{}".format(module, symbol), module, symbol)
         for module, symbol in CAD_IMPORTS
     ]
-    # sorted() so the pin rows come out in the same order on every run and across python
-    # versions: these rows get read side by side with a previous run's log when a bump goes
-    # wrong.
+    # sorted() so the pin rows come out in the same order on every run, for comparing logs.
     pins = [("pin:{}".format(dist), dist, PINS[dist]) for dist in sorted(PINS)]
 
     import_targets = [
@@ -1823,10 +1267,8 @@ def check_cad_kernel(name, blocked=None):
     verdicts, problem = parse_cad_verdicts(output)
     if verdicts is None:
         if status != 0:
-            # A non-zero exit is NOT by itself a verdict — the probe reports its own failures
-            # through the map and exits 0 having done so. It means the interpreter could not
-            # finish at all, and for a native binding the likeliest cause is a signal rather
-            # than an exception, which is why the two facts are reported together.
+            # The probe reports failures through the map and exits 0, so a non-zero exit means
+            # the interpreter could not finish, likely killed by a signal in a native import.
             problem = "the container exited {} and {}".format(status, problem)
         return [(target, problem) for _, target in targets]
 
@@ -1871,22 +1313,10 @@ def check_cad_kernel(name, blocked=None):
 def parse_marked_verdicts(output, mark):
     """Pull a probe's line-marked verdicts out of a container's stdout.
 
-    The wire format is `<mark> ok <key>` and `<mark> bad <key> <one-line reason>`, and it is
-    shared by checks (h) and (i). Returns {key: None or reason} for every key the probe reported
-    on, and reports on nothing else. A key MISSING from that mapping is a third answer — "the
-    probe said nothing about this one" — and every caller treats it as its own failure rather
-    than as either verdict, for the same reason sweep_paths()'s callers do: read as a pass, it
-    would silently un-check the thing it is about.
-
-    Unmarked lines are dropped rather than refused. `docker()` folds stderr into stdout, so a
-    python warning or a line from the container's own machinery can land on either side of the
-    verdicts, and a parser that treated any of it as a malformed verdict would fail an image
-    with nothing wrong with it.
-
-    ONE FUNCTION FOR BOTH PROBES, for the reason sweep_paths() is one function for checks (d)
-    and (g): a second copy of this loop would drift, and the way it drifts is silent — the
-    "third answer" above is one `dict.get` default away from being read as a pass by whichever
-    copy was edited.
+    The wire format is `<mark> ok <key>` and `<mark> bad <key> <one-line reason>`, shared by
+    checks (h) and (i). Returns {key: None or reason} for every key reported; a missing key is
+    a third answer that every caller treats as a failure. Unmarked lines (warnings folded in
+    from stderr) are ignored.
     """
     seen = {}
     for line in output.splitlines():
@@ -1908,29 +1338,15 @@ def parse_start_routes(output):
 def check_start_routes(name):
     """(h) The `/start` routes answer, asked of the container running the image's own command.
 
-    THE ONLY CHECK HERE THAT MAKES A REQUEST. Everything above asks what the image declares,
-    what is inside it and whether it starts; this one asks the running hub for the three things
-    it hands somebody who has just found it, and it is the only way two of them can be checked
-    at all — the client and the template do not exist as files in the image, they are assembled
-    from `hammerola/` and `model_template/` when the request arrives.
+    The only check that makes a request; two of the three files are assembled from
+    `hammerola/` and `model_template/` per request, so this is the only way to check them.
 
-    NO `blocked` PARAMETER, unlike (c), (d), (f), (g) and (i). Those exec into a container this file
-    started for them, so "it could not be started" is known before they run and is passed in.
-    This one execs into the container check (e) started, and the honest report for a container
-    that is not there is the one `docker exec` gives on its own: every row fails with the
-    daemon's own words about it. What matters — that all three rows are still returned — holds
-    either way, and the self-check in main() is what that matters to.
+    No `blocked` parameter: it execs into check (e)'s container, and if that container is gone
+    `docker exec` fails every row on its own.
 
-    THIS CHECK IS NARROWER THAN (e) BY ONE CASE, and whoever changes the image's command has to
-    know which. (e) calls two shapes healthy: reached the marker and still running, or reached
-    the marker and exited 0. Only the first can be asked a question — a one-shot command that
-    did its job and returned leaves no container to exec into, so all three rows here would go
-    red on an image (e) has just declared sound. Nothing today takes that shape (`main.py` binds
-    the port and serves), which is why this is written down rather than coded around: the day a
-    one-shot entrypoint appears, this check needs a container of its OWN started with a command
-    that stays up, and not a relaxed verdict.
-
-    Reads its verdicts off marked lines rather than out of JSON: see START_MARK.
+    Narrower than (e) by one case: a one-shot command that exits 0 leaves no container to ask.
+    If the image's command ever takes that shape, this check needs its own long-running
+    container rather than a relaxed verdict.
     """
     targets = ["{} answers 200 with a body".format(path) for path in START_ROUTES]
 
@@ -1966,10 +1382,7 @@ def check_start_routes(name):
         elif seen[path] is None:
             rows.append((target, None))
         else:
-            # ONE OF TWO THINGS, and the reason line above says which — so both are named here
-            # rather than only the interesting one. A verdict that says the hub never answered
-            # is about the hub being down, and sending its reader to .dockerignore would be
-            # sending them to the wrong file entirely.
+            # The reason says whether the hub answered at all, so both cases are named.
             rows.append((target, (
                 "{}.\n"
                 "  If the hub did not answer at all, this says nothing about the route: the "
@@ -1989,35 +1402,15 @@ def check_start_routes(name):
 def check_build_ceilings(name, blocked=None):
     """(i) The build wrapper runs inside the image, as `app`, and its ceilings really go on.
 
-    THE HUB BUILDS ON THE REQUEST PATH, so `src/buildproc/` is production code: every push ends
-    in `runner.run_isolated` spawning `python -s -m src.buildproc.wrapper` from the repository
-    root, which sets the rlimits on itself and `execv`s the interpreter that imports the model.
-    This check runs that exact command inside the built image, under the account the hub runs
-    as, and then asks the process on the far side of that `execv` what ceilings it is actually
-    under. The constants above say why each half is asked and why the spec is taken from the
-    image rather than written down here.
+    Runs the exact command the hub spawns for every push, then asks the process on the far side
+    of the wrapper's `execv` which ceilings it is under (see the constants above).
 
-    `-u app` IS THE CHECK, not a detail of it. `docker exec` does not go through the entrypoint,
-    so without it this would run as root — and root is exactly the account for which the
-    interesting failures do not happen: it may raise a hard limit, and several ways of refusing
-    a `setrlimit` do not apply to it. Check (f) deliberately runs as root for the opposite
-    reason and says so; the two are not inconsistent, they are asking different questions.
+    `-u app` is the point: `docker exec` skips the entrypoint, and root may raise hard limits
+    and avoid the refusals that matter. `-w /app` because `-m` resolves against the working
+    directory, as at `runner.HUB_ROOT`.
 
-    `-w /app` for the same kind of reason: `runner.HUB_ROOT` is where the hub starts the
-    wrapper, and `-m` resolves against the working directory. Check (a) asks separately whether
-    the image DECLARES that directory; this one asks whether the module resolves when standing
-    in it, which is the question a build actually depends on.
-
-    WHAT THIS CANNOT SEE, so that nobody reads it as covering the build: it never runs a model.
-    `src.buildproc.child`, cadquery and the whole geometry half are not exercised here — the
-    child module is merely imported, as a side effect of importing the package (`src/buildproc/
-    __init__.py` pulls in runner, which imports it), and check (f) is what proves the CAD
-    imports work. A build that is refused by a gate, crashes in OCCT or runs out of its wall
-    clock is invisible to this row and belongs to the suite.
-
-    Runs by `docker exec` into the long-lived probe container the earlier checks already
-    started, rather than starting a fourth container: the image is around two gigabytes, and one
-    more `docker run` would be the slowest thing this gate does for no extra coverage.
+    It never runs a model: the build itself (child, cadquery, gates) belongs to the suite and
+    check (f). Execs into the probe container rather than starting another.
     """
     targets = [target for _key, target in BUILD_TARGETS]
 
@@ -2037,9 +1430,7 @@ def check_build_ceilings(name, blocked=None):
     if status is None:
         return [(target, "not attempted: " + output) for target in targets]
     if status != 0:
-        # A non-zero exit is not itself a verdict: the probe reports its own failures through
-        # the marked lines and exits 0 having done so, exactly like the CAD probe. So this
-        # means the probe's interpreter could not finish at all.
+        # The probe reports through marked lines and exits 0, so this means it could not finish.
         reason = (
             "the build probe could not be run (docker exec exited {}). It answers its own "
             "questions and exits 0 whatever they answer, so this is the probe dying rather "
@@ -2051,9 +1442,7 @@ def check_build_ceilings(name, blocked=None):
     rows = []
     for key, target in BUILD_TARGETS:
         if key not in seen:
-            # Same reasoning as everywhere else here: "the probe said nothing about this" is a
-            # third answer, and reading it as a pass would un-check the very thing the row is
-            # for.
+            # No verdict is a third answer, never a pass.
             rows.append((target, (
                 "the probe returned no verdict for this one. Full container output:\n"
                 "{}".format(excerpt(output)))))
@@ -2077,10 +1466,8 @@ def main():
     missing = [variable for variable, value in ((IMAGE_ENV, image), (NAME_ENV, name))
                if not value]
     if missing:
-        # Refused rather than defaulted, and refused BEFORE anything is started. A default tag
-        # would gate whatever image happened to be on this shared daemon and report green; a
-        # default container name would collide with a concurrent run on the same daemon and
-        # report red at random. Both are worse than a step that will not start.
+        # Refused before anything starts: a default tag could grade the wrong image, and a
+        # default name could collide with a concurrent run on the shared daemon.
         print("smoke cannot run: {} not set. The workflow has to provide {} (the exact tag "
               "that was just built) and {} (a base container name unique to this run).".format(
                   ", ".join(missing), IMAGE_ENV, NAME_ENV))
@@ -2090,16 +1477,13 @@ def main():
     guard_name = name + GUARD_SUFFIX
     cmd_name = name + CMD_SUFFIX
 
-    # Each probe's rows are kept in a local of their own rather than poured straight into one
-    # shared list, purely so that the self-check below can still tell them apart: once they are
-    # concatenated there is no way to know which probe contributed how many, which is exactly
-    # the information needed to name the probe that went quiet.
+    # Each probe's rows stay in their own local so the self-check can name a probe that went
+    # quiet.
     contract_rows = check_image_contract(image)
     guard_rows = check_required_variable_guard(image, guard_name)
 
     try:
-        # One long-lived container serves both (c) and (d): they ask about the same running
-        # instance, and starting two would double the slowest part of this gate for nothing.
+        # One long-lived container serves (c), (d), (f), (g) and (i).
         remove_container(probe_name)
         start_status, start_output = docker(
             ["run", "-d", "--name", probe_name] + memory_flags(PROBE_MEMORY)
@@ -2113,89 +1497,44 @@ def main():
                 "{}):\n{}".format(start_status, excerpt(start_output)))
         else:
             blocked = None
-        # `blocked` is passed rather than skipping these two: a probe container that never
-        # started still has to produce its full set of rows, all of them failed. That is what
-        # keeps the counts below meaningful in exactly the case where a gate is most tempted
-        # to fall silent.
+        # `blocked` makes a probe whose container never started still return its full set of
+        # rows, all failed, so the counts stay meaningful.
         privileges_rows = check_privileges_dropped(probe_name, blocked=blocked)
         excluded_rows = check_excluded_paths(probe_name, blocked=blocked)
 
         startup_rows = check_startup(image, cmd_name)
 
-        # Inside the `try` because it execs into the probe container started above — so it has
-        # to be covered by the same `finally`. Running it here rather than beside the other
-        # execs keeps this list in the same order as EXPECTED_TARGETS, which is what the
-        # positional pairing below depends on. It is NOT the last call into that container any
-        # more — (g), (h) and (i) follow it, and (i) is now the one furthest from the probe's
-        # own `sleep`; the arithmetic at IDLE_COMMAND is where that margin is checked.
+        # The calls below run in EXPECTED_TARGETS order, which the positional pairing depends
+        # on. They exec into the probe container, so they sit inside this `finally`.
         cad_rows = check_cad_kernel(probe_name, blocked=blocked)
 
-        # Also an exec into the probe container, and therefore also inside this `try`. Placed
-        # after the CAD probe so that this list keeps the same order as EXPECTED_TARGETS, which
-        # the positional pairing below depends on.
         required_rows = check_required_paths(probe_name, blocked=blocked)
 
-        # Into the `-cmd` container, not the probe one: the hub this asks has to be the program
-        # production runs. It is therefore inside this `finally` for the OTHER container's sake
-        # — `cmd_name` is removed there too — and it runs this late because it is the only check
-        # that makes a request, so everything cheaper has already reported by the time it does.
-        # The probe container's `sleep` budget is untouched by it; see IDLE_COMMAND.
+        # Into the `-cmd` container, so the hub asked is the program production runs.
         start_rows = check_start_routes(cmd_name)
 
-        # Back into the probe container, and LAST — which is what makes this the exec that
-        # container's `sleep` has to outlast, so the arithmetic at IDLE_COMMAND is about this
-        # call and moving another one after it means redoing that arithmetic. It is here rather
-        # than beside the other execs because this list has to keep the same order as
-        # EXPECTED_TARGETS, and (i) is the last letter.
+        # The last exec into the probe container, so its `sleep` must outlast this call (see
+        # IDLE_COMMAND).
         build_rows = check_build_ceilings(probe_name, blocked=blocked)
     finally:
-        # Both long-lived containers, removed whatever happened above. The workflow removes
-        # them again under `if: always()` for the case where this process itself was killed by
-        # the step timeout and never reached this line.
+        # The workflow removes these again under `if: always()` in case this process is killed.
         remove_container(probe_name)
         remove_container(cmd_name)
 
-    # SAME ORDER AS EXPECTED_TARGETS, and that is a requirement rather than a convention: the
-    # pairing below is positional, so a group moved here without moving its declaration is
-    # compared against somebody else's count. SEVERAL of these groups have equal arity today
-    # — (a) and (c) return 4 verdicts each, (b), (h) and (i) return 3 each — so swapping any two
-    # of a set would still satisfy every check below and go green while each probe's failures
-    # were being reported under another one's name. WHICH groups match up is not stable and this
-    # sentence is not the authority on it: (d) was in the first set until the client package
-    # brought it a fifth excluded path, so count the arities off the declarations above rather
-    # than off here. Nothing in this file can detect a swap; keeping the two tuples in step by
-    # eye is what prevents it, which is why the letters are on the labels.
+    # SAME ORDER AS EXPECTED_TARGETS: the pairing is positional, and groups with equal arity
+    # could be swapped without any check below noticing.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
                 cad_rows, required_rows, start_rows, build_rows)
 
-    # Three self-checks, and they are three because each one catches a break the others cannot
-    # see. They are collected in two lists rather than one because they are REPORTED
-    # differently: `wiring` holds free-text findings about this file's own consistency — the
-    # arity in (1) and the total in (3) — while `miscounted` holds one entry per disagreeing
-    # probe, printed as a label with its declared and actual counts. Both are printed, and the
-    # run fails if either is non-empty.
+    # Three self-checks, each catching a break the others cannot. `wiring` holds free-text
+    # findings about this file's own consistency; `miscounted` holds one entry per probe
+    # whose count disagrees.
     wiring = []
 
-    # (1) SAME NUMBER OF PROBE GROUPS. It comes first and it is its own check, because the
-    # per-probe comparison below is structurally incapable of making it: `zip` stops at the
-    # shorter of its arguments and says nothing about the surplus. So a refactor that drops a
-    # probe from the `produced` tuple — rather than leaving it in place returning [], which the
-    # per-probe check would catch — pairs the 6 survivors against the first 6 declarations, finds
-    # every one of them consistent, and reports `miscounted == []`.
-    #
-    # What this check buys there is the DIAGNOSIS, not the verdict. That run is refused either
-    # way: dropping the required-path group that way leaves 6 groups contributing 24 rows against
-    # a declared total of 28, so (3) below fires and the gate exits 3 with or without this check.
-    # But (3) can only report that the arithmetic between the probes and `rows` came out wrong,
-    # and its own wording points at the other way that happens — a group extended into `rows`
-    # twice, or one left out of the loop — which is the wrong place to start looking. This
-    # check names the fault in one line: the two
-    # lists no longer have the same number of entries, so a probe was added or removed without
-    # its declaration moving in the same commit. Both lines are printed together; this is the one
-    # that points at the commit. (`zip(..., strict=True)` would express this in one word and is
-    # deliberately not used: the runner's `python3` is whatever the image ships and is not pinned
-    # anywhere, and `strict` needs 3.10 — on an older interpreter this file would die with a
-    # TypeError before it graded anything.)
+    # (1) Same number of probe groups. `zip` silently stops at the shorter list, so a probe
+    # removed from `produced` would otherwise pass the per-probe check. (3) would catch it too,
+    # but this line names the cause. `zip(..., strict=True)` needs Python 3.10, and the
+    # runner's python3 is not pinned.
     arity_agrees = len(produced) == len(EXPECTED_TARGETS)
     if not arity_agrees:
         wiring.append(
@@ -2207,11 +1546,8 @@ def main():
             "until the two lists line up again".format(
                 len(EXPECTED_TARGETS), len(produced)))
 
-    # (2) PER PROBE: which specific probe returned the wrong number of verdicts. Only
-    # attempted when the arity agrees — pairing two lists of different lengths positionally
-    # would attribute counts to the wrong labels and send the reader after the wrong probe.
-    # Gated on `arity_agrees` rather than on `wiring` being empty, so that a wiring check added
-    # here later cannot suppress this one as a side effect of existing.
+    # (2) Per probe, only when the arity agrees: pairing lists of different lengths would blame
+    # the wrong labels.
     if arity_agrees:
         miscounted = [
             (label, expected, len(actual))
@@ -2225,14 +1561,8 @@ def main():
     for group in produced:
         rows.extend(group)
 
-    # (3) THE TOTAL, against the sum of the declarations. Belt and braces over (1) and (2), and
-    # it earns its place on a case neither of them can see: a probe group poured into `rows` a
-    # SECOND time — a duplicated `rows.extend(...)`, a copy-paste while adding a probe — leaves
-    # the arity right and leaves every per-probe count right, because both of those inspect
-    # `produced` and this mistake happens after it. Duplicating the 4-verdict guard group that
-    # way collects 32 rows where 28 are declared, and without this check the run would end on
-    # `smoke ok: 32/32`, which reads as a gate doing MORE work when it is in fact grading one
-    # probe twice and counting that probe's verdicts twice over.
+    # (3) The total, against the sum of the declarations: catches a group extended into `rows`
+    # twice, which leaves (1) and (2) correct.
     declared_total = sum(count for _, count in EXPECTED_TARGETS)
     if len(rows) != declared_total:
         wiring.append(
@@ -2250,20 +1580,15 @@ def main():
             print("FAIL {} -> {}".format(target, reason))
             failures.append(target)
 
-    # Reported first, and reported in full even when the self-check below is also going to
-    # fire: "the image is broken" and "the gate lost a check" are two independent facts, and a
-    # run that shows only one of them sends whoever reads it after half of the problem.
+    # Reported in full even when the self-check also fires: they are independent facts.
     if failures:
         print("")
         print("smoke FAILED: {}/{} targets broken".format(len(failures), len(rows)))
         for target in failures:
             print("  - {}".format(target))
 
-    # The self-check comes BEFORE the success line, so `smoke ok` can never be printed by a run
-    # that returned fewer verdicts than it promised — which is the whole scenario this exists
-    # for, since a shrinking gate reports success by construction (see EXPECTED_TARGETS).
-    # It fails the run on its own, independently of `failures`: every remaining verdict passing
-    # is not evidence of a healthy image when some of the verdicts were never cast.
+    # The self-check comes before the success line, so `smoke ok` is never printed by a run
+    # that returned fewer verdicts than it declares.
     if wiring or miscounted:
         print("")
         print("smoke SELF-CHECK FAILED: this gate did not return the verdicts it declares.")
@@ -2289,26 +1614,10 @@ def main():
 
 
 if __name__ == "__main__":
-    # Every verdict this gate reaches leaves through SystemExit, and every one of those exit
-    # codes still means exactly what it says above: `except Exception` does not catch SystemExit
-    # (nor KeyboardInterrupt), so 0, 1, 2 and the self-check's own 3 all pass through here
-    # untouched. What is caught is the OTHER way this script can end — an exception nobody
-    # planned for. `docker inspect` answering with the JSON literal `null` so that
-    # `config.get(...)` blows up on None, a docker CLI whose output format changed, an
-    # AttributeError introduced by a refactor: any of those unwinds out of main() as a
-    # traceback, and CPython's default for an unhandled exception is exit status 1 — the code
-    # this gate reserves for "the image is broken, do not ship it".
-    #
-    # That is a lie about which artefact is at fault, and an expensive one: whoever reads the
-    # run goes off inspecting an image that may be perfectly fine, and the actual defect — in
-    # THIS FILE, on the runner — is the last place they look. A crash of the gate is a fact
-    # about the gate, so it exits with the gate's own code.
-    #
-    # The traceback is NOT swallowed: it is the only diagnostic there is for a failure nobody
-    # anticipated, and a bare "the gate crashed" would leave the next person with no line
-    # number. stdout is block-buffered when it is a pipe — which it is on the runner — so it is
-    # flushed first, otherwise every row printed by main() would land in the log AFTER the
-    # traceback of the call that produced them and read as if it came from somewhere else.
+    # SystemExit passes through `except Exception` untouched, so exit codes 0-3 keep their
+    # meaning. An unplanned exception would otherwise exit 1, which means "the image is broken";
+    # a crash of the gate exits 3 instead. stdout is flushed first so the printed rows precede
+    # the traceback in the log.
     try:
         main()
     except Exception:

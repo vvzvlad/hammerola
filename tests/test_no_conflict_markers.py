@@ -1,16 +1,9 @@
 """No git conflict marker may reach a commit.
 
-This exists because one did. A `<<<<<<< HEAD` survived a merge resolution in
-`templates/build.html`, and the suite — 191 tests at the time — stayed green:
-every test asked whether the ids it needed were present, and they were. The
-marker sat in the served page as visible text, and only a grep caught it.
-
-That is the shape of the hole. Tests here assert that things ARE there; a
-marker adds text without removing anything, so nothing that checks for presence
-can see it. The check has to be about the file as a whole.
-
-Deliberately a test and not a CI step: it then runs on a workstation before the
-push, which is where the mistake is actually made and where fixing it is free.
+Tests here assert that things ARE there; a marker adds text without removing
+anything, so nothing that checks for presence can see it, and a page with a stray
+`<<<<<<< HEAD` still passes. The check is about the file as a whole. It is a test
+rather than a CI step so that it runs on a workstation before the push.
 """
 
 import re

@@ -1,18 +1,15 @@
-// `/start`, the one route this bundle asks for without a token — and the only
+// `/start`, the one route this bundle asks for without a token, and the only
 // one whose every failure has to be silence.
 //
-// A FILE OF ITS OWN, for the reason `arrangement.test.js` is one: `entry.test.js`
-// mocks hub.js so the page can be driven a state at a time, and the question
-// here is what the REAL function does with what a hub (or a proxy, or a captive
-// portal) actually answers. Vitest resets the module registry between files, so
-// this is the cheap way to have both.
+// A file of its own because `entry.test.js` mocks hub.js, and this tests what
+// the real function does with what a hub, proxy or captive portal answers.
+// Vitest resets the module registry between files.
 //
-// WHAT IS BEING PINNED is a promise that resolves for everything. `loadIndex`
-// beside it throws, and rightly: that fetch is the page. This one is a hint on
-// top of a sign-in form that works without it, so an unreachable hub, an HTML
-// error page and a manifest with the wrong fields must all end as "no block" —
-// and every test below is written as a plain `await` precisely so that a
-// rejection fails it.
+// The promise resolves for everything. `loadIndex` throws, because that fetch
+// is the page; this one is a hint on top of a sign-in form that works without
+// it, so an unreachable hub, an HTML error page and a manifest with the wrong
+// fields all end as "no block". Each test is a plain `await`, so a rejection
+// fails it.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -28,14 +25,11 @@ const MANIFEST = {
 
 const served = (payload) => ({ ok: true, status: 200, json: async () => payload })
 /**
- * A refusal WITH A READABLE BODY, and the body is the point.
+ * A refusal with a readable body, and the body is the point.
  *
- * An error page that answers `{}` proves nothing: the shape check would refuse
- * it anyway, and a `loadStart` that ignored the status entirely passed — checked
- * by removing the status test, which left every test in this file green. So the
- * body here is a perfectly good manifest, and the only thing that can refuse it
- * is the status. Not a contrivance either: a proxy or a gateway in front of the
- * hub answers 401 and 502 with JSON of its own.
+ * The body is a valid manifest, so only the status can refuse it; an error
+ * page answering `{}` would be refused by the shape check anyway and prove
+ * nothing. Proxies and gateways do answer 401 and 502 with JSON of their own.
  */
 const refused = (status) => ({ ok: false, status, json: async () => MANIFEST })
 /** A proxy, a captive portal, a 200 with an HTML body — `json()` rejects. */
@@ -90,9 +84,9 @@ describe('reading the manifest', () => {
 
 // -- the boolean -------------------------------------------------------------
 //
-// IT IS A FIELD HERE AND A CONDITION ON THE DOOR (issue #91). What this file
-// pins is that the field says exactly what the hub said; that the door and only
-// the door acts on it is entry.test.js's, in `the block for an agent`.
+// It is a field here and a condition on the door. This file pins that the
+// field says exactly what the hub said; that only the door acts on it is in
+// entry.test.js, `the block for an agent`.
 
 describe('how empty is read', () => {
   it('is true only when the hub said exactly true', () => {
@@ -132,15 +126,12 @@ describe('which paths are usable', () => {
     ['a bare word', 'start/skill.md'],
     ['an absolute address', 'https://elsewhere.example/start/skill.md'],
   ])('refuses the whole block for %s', (_name, skill) => {
-    // HALF A BLOCK IS THE FAILURE WORTH NAMING: the lines are one message, and
+    // Half a block is the failure worth naming: the lines are one message, and
     // one of them reading `Skill: undefined` is worse than no block.
     //
-    // WHAT IS NOT BEING TESTED IS A BOUNDARY. Every case above is a manifest
-    // that is no good for an ordinary reason — a broken image, a proxy, a field
-    // of the wrong type. `/start` comes from the SAME hub as this page and this
-    // bundle, so there is nothing here to defend against: a hub that wanted to
-    // point an agent elsewhere would write the address into the HTML rather
-    // than smuggle it through a field of its own manifest.
+    // This is not a trust boundary: `/start` comes from the same hub as this
+    // page and bundle, so the cases above are ordinary breakage (a broken image,
+    // a proxy, a field of the wrong type), not an attack.
     expect(startHint({ ...MANIFEST, skill })).toBeNull()
     expect(startHint({ ...MANIFEST, client: skill })).toBeNull()
   })

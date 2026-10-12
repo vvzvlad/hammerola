@@ -1,12 +1,6 @@
 """The title check that goes on the build log — what it says and when it shuts up.
 
-IT HAD NO CALLER AND NO TEST until the slug incident, and the two facts belong
-together: `title_problem` was written for a tool that ran on the author's machine
-and compared the title against the project DIRECTORY. That tool is gone, the
-directory inside the hub is a `.src-<uuid>` of the hub's own making, and the
-function sat unreachable while a project published under that name.
-
-So what is pinned here is mostly the SILENCE. A warning on a build log is read
+What is pinned here is mostly the SILENCE. A warning on a build log is read
 once, by somebody who is looking at something else; one that fires on correct
 work is a warning that stops being read, and it takes the two real complaints
 with it. Every title already on this hub carries its slug in brackets, and none
@@ -46,14 +40,8 @@ def test_a_title_in_the_form_says_nothing():
 
 
 def test_the_descriptive_half_is_not_required_to_be_russian():
-    """THE CLAUSE THAT WAS REMOVED, pinned so it is not reinstated.
-
-    The rule used to demand Cyrillic in front of the brackets, from a fleet
-    whose titles happened to all be Russian. One of the projects on this hub is
-    titled "Foam cover reverse-engineered from a 3D scan", and this repository's
-    own convention is that what a user reads is English unless somebody asked
-    otherwise — so that clause fired on correct work, which is the one thing a
-    warning may not do.
+    """No script is demanded in front of the brackets: an English title is
+    correct work, and a warning may not fire on correct work.
     """
     assert title_problem("Foam cover for a 3D scan (foam-cover)",
                          "foam-cover", PID) is None
@@ -66,10 +54,10 @@ def test_a_slug_the_project_key_carried_across_is_matched_the_same_way():
                          "t13-ceiling-mount", PID) is None
 
 
-# -- the incident ------------------------------------------------------------
+# -- publishing under the id -------------------------------------------------
 def test_a_project_publishing_under_its_id_is_told_that_and_not_told_to_type_it():
-    """The failure that produced this warning, from the title that produced it,
-    and the ONE repair the message must not teach.
+    """A project publishing under its id, and the ONE repair the message must
+    not teach.
 
     Naming the consequence is half the message: "your title has no slug" leaves
     somebody looking for what it costs, and what it costs is a card on the front
@@ -88,7 +76,7 @@ def test_a_project_publishing_under_its_id_is_told_that_and_not_told_to_type_it(
 
 
 def test_putting_the_id_in_the_brackets_does_not_silence_it():
-    """WHAT THE WARNING WOULD HAVE CEMENTED, had it kept naming the brackets.
+    """What the warning would cement if it named the brackets.
 
     Twelve hex characters match SLUG_RE, so a title ending `(2486c8fd2b05)`
     satisfies every clause about the FORM: the brackets hold a slug, and the
@@ -103,14 +91,11 @@ def test_putting_the_id_in_the_brackets_does_not_silence_it():
 
 def test_each_remedy_the_id_message_names_ends_with_the_warning_gone(
         isolated_project):
-    """THE FINDING THAT BLOCKED THIS CHANGE, pinned by walking it to the end.
+    """Following the advice ends in silence, walked to the end.
 
-    The message used to say "put the latin name ... in the `project` key --
-    not in the title's brackets, where it would only silence this line". Both
-    halves were wrong, and a substring assertion could not see either: the
-    brackets are the SECOND source `load_project` reads, so a name there clears
-    the warning outright, while the key alone clears this clause and lands on
-    the general no-brackets sentence, which asks for those brackets.
+    The brackets are the SECOND source `load_project` reads, so a name there
+    clears the warning outright, while the key alone clears this clause and
+    lands on the general no-brackets sentence, which asks for those brackets.
 
     So this asserts the only thing that matters about advice — that following
     it ends in silence — for both remedies, FROM THE START STATE `hammerola
@@ -232,18 +217,13 @@ def test_a_hand_written_project_key_that_is_not_a_slug_is_blamed_first():
 def test_an_id_that_is_a_legal_path_component_but_not_a_slug_lands_here_too():
     """TWO OF THE THREE SOURCES CAN REACH THAT CLAUSE, not one.
 
-    An earlier version of this file said the branch above was reachable only
-    through a hand-written `project` key, "because the two values the build
-    falls back to are slugs by construction". Only ONE of them is:
-    `slug_from_title` returns what SLUG_RE matched or nothing, while `pid` is
+    Of the two values the build falls back to, only ONE is a slug by
+    construction: `slug_from_title` returns what SLUG_RE matched or nothing, while `pid` is
     held to MEMBER_RE, which is weaker on the ALPHABET — `trailing-`, `foo--bar`,
     `a_-b` and `wb.mge..v2` are all legal ids and none of them is a slug. So a
     project.json with such an id and no `project` key reaches the clause with no
     key to blame, which is why the message names both places the name can come
-    from.
-
-    "Weaker on the alphabet" and not "weaker", which is a correction rather than
-    a nicety: the test below is what stops the shorter word coming back.
+    from. "Weaker on the alphabet" and not "weaker": see the test below.
     """
     problem = title_problem("Ceiling mount (trailing-)", "trailing-", "trailing-")
     assert problem is not None
@@ -252,14 +232,12 @@ def test_an_id_that_is_a_legal_path_component_but_not_a_slug_lands_here_too():
 
 
 def test_neither_id_alphabet_implies_the_other():
-    """WHAT "STRICTLY WEAKER" GOT WRONG, three times in one change.
+    """MEMBER_RE is not strictly weaker than SLUG_RE.
 
-    The comment beside the clause above claimed MEMBER_RE was strictly weaker
-    than SLUG_RE, which reads as "every slug is a legal id". It is not: SLUG_RE
-    carries no length at all, MEMBER_RE caps at 128 characters, so a 200
-    character slug is refused as a path component. The alphabet half is the
-    true half and it is the half the clause uses; this pins both directions so
-    the claim cannot be shortened back.
+    Not every slug is a legal id: SLUG_RE carries no length at all, MEMBER_RE
+    caps at 128 characters, so a 200 character slug is refused as a path
+    component. The alphabet half is the half the clause uses; this pins both
+    directions.
     """
     only_a_slug = "a" * 200
     assert SLUG_RE.match(only_a_slug) and not MEMBER_RE.match(only_a_slug)

@@ -1,25 +1,15 @@
-// The proposal on the build page: a rough body, in numbers, over a model.
+// The proposal on the build page: a rough body, built from primitives, that the
+// model has to fit or follow (a motor to clear, a wall to bolt to). It is stored
+// on the hub for the agent to read with `hammerola proposal`; it is not an edit
+// of the model.
 //
-// WHAT IT IS FOR is ui-brief block 6 one step further on. Block 6 lets somebody
-// MOVE a part to show the agent what they want instead of describing it, and
-// says out loud that this is not an edit of the model. This is the same
-// statement about a body the model has to FIT or to follow — the motor it must
-// clear, the wall it bolts to, the bought part it holds, the layout the author
-// wants — assembled out of primitives and stored on the hub for the agent to
-// read with `hammerola proposal`.
+// The document and kernel are tested in proposal.test.js, the scene composition
+// in element.test.js. This file covers the interface: the `Add primitive` menu,
+// the tree branch with a row per node, every edit reaching the viewport, and a
+// document that will not build reporting so without removing the last good body.
 //
-// The document and the kernel are tested next door in ui/tests/proposal.test.js,
-// where the volumes are measured; the composition into the scene is in
-// ui/tests/element.test.js. What is HERE is the interface: the `Add primitive`
-// menu, the branch of the tree every node is a row in, that every edit reaches
-// the viewport, and that a document which will not build says so without taking
-// the last good body off the screen.
-//
-// NOTHING IS MOUNTED, which is this directory's arrangement (feed.test.js,
-// narrow.test.js, notes.test.js): the real prototype over a state object spelled
-// out by hand, with the real `computed()` and the real handlers run against it.
-// The VIEWPORT is a pair of spies, because what this file asks about it is
-// exactly what element.test.js answers for: was it handed the parts.
+// Nothing is mounted: the real prototype runs over a hand-built state object with
+// the real `computed()` and handlers. The viewport is a pair of spies.
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -58,17 +48,12 @@ const ANOTHER_VIEW = 'exploded'
 const click = { stopPropagation() {}, preventDefault() {} }
 
 /**
- * A part of the BUILD dragged in the scene, exactly as the viewport reports one:
- * every path that moved, the solid's own name, the offset from where the build
- * puts it, and the build it was measured on.
+ * A part of the build dragged in the scene, as the viewport reports it: every
+ * path that moved, the solid's name, the offset from the build pose, and the
+ * build it was measured on. `build` is always set: the handler drops a report
+ * whose stamp is not the build on screen.
  *
- * `build` IS THE FIXTURE'S OWN KEY and is on every one of these because it is on
- * every real report: the viewport stamps the press with the key the interface
- * handed it, and the handler drops a report whose stamp is not the build now on
- * screen. A helper that left it off would be testing the drop and nothing else.
- *
- * Reaches the page's real listener, so `mounted()` is what a caller needs — the
- * handler this lands in is the one `componentDidMount` built.
+ * Dispatched to the page's real listener, so the panel must come from `mounted()`.
  */
 const drag = (path, delta, over = {}) => window.dispatchEvent(
   new CustomEvent(MOVED, {
@@ -79,14 +64,9 @@ const drag = (path, delta, over = {}) => window.dispatchEvent(
   }))
 
 /**
- * The same part TURNED with the rings, exactly as the viewport reports one: the
- * same fields as a drag with three DEGREES where the offset was.
- *
- * TWO EVENTS AND ONE SENTENCE, which is what the pair of helpers is here to
- * make visible. The two gestures say opposite halves of one node — a drag says
- * where the part should be and nothing about which way it should face, a ring
- * the other way round — so the interface reads them through one method and the
- * difference between these two lines is the whole of the difference.
+ * The same part turned with the rings: the same fields as a drag, with three
+ * degrees in place of the offset. Both events go through one method, so a drag
+ * sets the position and a turn sets the orientation of the same node.
  */
 const spin = (path, turn, over = {}) => window.dispatchEvent(
   new CustomEvent(TURNED, {
@@ -107,12 +87,10 @@ const withBlock = () => addNode(emptyProposal(), BLOCK);
 /**
  * The component as `computed()` and the proposal's handlers see it.
  *
- * `setState` is the real one's CONTRACT — merge, then run the callback — because
- * `set()` reaches `sync()` through that callback, and a row's own `onSelect`
- * goes through `set()`. The element is three spies: `setOverlay`, `clearOverlay` and the one
- * question this page asks it back — whether a path is a body of the overlay —
- * and what the viewport DOES with the parts, `isOverlay`'s own answer included,
- * is element.test.js's subject.
+ * `setState` follows the real contract (merge, then run the callback) because
+ * `set()` reaches `sync()` through that callback. The element is three spies:
+ * `setOverlay`, `clearOverlay` and `isOverlay`; what the viewport does with the
+ * parts is element.test.js's subject.
  */
 function panel({ token = 'sekrit', proposal, opsOpen = false, narrow = false,
                  stored = null, stands = false } = {}) {
@@ -166,17 +144,11 @@ function panel({ token = 'sekrit', proposal, opsOpen = false, narrow = false,
       // ones that are about it: it is a menu of the chrome's and nothing else on
       // this page reads it.
       opsOpen,
-      // WHAT THE HUB SAID WHEN THE PAGE ASKED FOR THE STORED DOCUMENT, and `null`
-      // is "it has not answered yet" — which is the state a page mounts in and
-      // the one in which nothing may be written back. So a fixture that says
-      // nothing else is a panel whose edits stay on this side, which is what
-      // every test written before the document was stored anywhere assumes; the
-      // ones that are ABOUT the save say `stored` for themselves.
-      //
-      // `proposalStands` IS THE OTHER HALF and is a different question — does what
-      // the hub holds say anything, which is what a comment points the agent at.
-      // It is false on a page that has not learned otherwise, and only the tests
-      // about the announcement set it.
+      // `proposalHeld` is the hub's answer for the stored document; `null` means
+      // it has not answered yet, and nothing may be written back. Tests about the
+      // save pass `stored` themselves. `proposalStands` says whether the stored
+      // document says anything (what a comment points the agent at); only the
+      // announcement tests set it.
       proposalHeld: stored, proposalStands: stands,
       token,
       narrow,
@@ -186,12 +158,9 @@ function panel({ token = 'sekrit', proposal, opsOpen = false, narrow = false,
 }
 
 /**
- * The same panel with the page's OWN listeners on the window, so a viewport
- * event reaches the handler `componentDidMount` built rather than one a test
- * called by hand. The helper, and the name, are repeats.test.js's.
- *
- * The three fetches the mount starts are stubbed: there is no hub here, and what
- * these tests are about begins after the page is listening.
+ * The same panel with the page's own listeners on the window, so a viewport
+ * event reaches the handler `componentDidMount` built. The three fetches the
+ * mount starts are stubbed: there is no hub here.
  */
 function mounted(over = {}) {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -217,14 +186,8 @@ const pushed = (el) => el.setMoves.mock.calls.at(-1)[0]
 const ops = (c) => c.computed().proposalOps.map((op) => op.key)
 
 /**
- * The proposal's own branch of the tree: EVERY node of the document as a row,
- * bodies and moves together and in the order the document holds them.
- *
- * WHERE THE PANEL'S TWO LISTS WENT. They were `proposalBodies` and
- * `proposalMoveRows` in the panel on the right, and the whole document is now
- * one branch below the parts tree — so the two helpers below are a FILTER over
- * the one list rather than two members of `computed()`. What each row is when it
- * is a body and when it is a move is what the describes below still ask.
+ * The proposal's branch of the tree: every node of the document as a row, bodies
+ * and moves together in document order. The two helpers below filter that list.
  */
 const rows = (c) => c.computed().proposalRows
 const bodyRows = (c) => rows(c).filter((row) => !row.move)
@@ -234,13 +197,8 @@ const moveRows = (c) => rows(c).filter((row) => row.move)
 const sizeFields = (c, index = 0) => bodyRows(c)[index].groups[0].fields
 
 /**
- * A field typed in and FINISHED WITH — the `change` the panel commits on.
- *
- * Two events, because the panel answers to two: `onChange` is the keystroke and
- * touches the draft alone, and the blur is what turns the text into the next
- * document. Every test that is about a VALUE goes through this; the ones about
- * typing itself call the two halves apart, which is the whole of what they are
- * asking.
+ * A field typed in and committed. `onChange` is the keystroke and touches only
+ * the draft; the blur turns the text into the next document.
  */
 const type = (f, text) => {
   f.onChange({ target: { value: text } })
@@ -250,18 +208,11 @@ const type = (f, text) => {
 /**
  * The DOM node a number field is drawn as, the way react-dom draws it.
  *
- * THE `value` ATTRIBUTE AS WELL AS THE PROPERTY, because the attribute is the
- * STEP BASE: with it, a size of 42.3 and a step of 1 nudge to 43.3, and without
- * it the base is 0 and the same nudge snaps to 43. A fixture that set only the
- * property would be asserting about a field this panel does not have.
- *
- * WHICH IS A FIELD WHOSE VALUE IS ALREADY COMMITTED, and the fixture should be
- * read as standing for that one only. react-dom syncs the attribute on BLUR
- * rather than on every render — `setDefaultValue` skips a `type=number` that
- * currently has the focus — so in a browser the step base is the value as of the
- * last time the focus left. That is the state every test below is in, since
- * `type()` commits through a blur before anything is nudged; a decimal typed and
- * NOT committed would step from the older number instead.
+ * The `value` attribute is set as well as the property because the attribute is
+ * the step base: with it, 42.3 stepped by 1 goes to 43.3; without it, to 43.
+ * react-dom syncs the attribute on blur (`setDefaultValue` skips a focused
+ * `type=number`), so this stands for a field whose value is already committed,
+ * which `type()` guarantees.
  */
 const numberNode = (f) => {
   const node = document.createElement('input')
@@ -280,19 +231,12 @@ const numberNode = (f) => {
 }
 
 /**
- * One field's own arrows, nudged — the whole gesture as the platform delivers
- * it, and the value it leaves in the field.
- *
- * A REAL `<input type="number">` DOES THE STEPPING, built out of the field's own
- * `type` and `step`, so what is asserted below is the number the browser would
- * have arrived at rather than one this file worked out. Then the two events a
- * step fires, in the order they fire: `input`, which React hands to `onChange`
- * and which touches the draft alone, and `change`, which is a real DOM event and
- * reaches the handler the field's `ref` put on the node.
- *
- * AND THEN THE TIMERS, because the document is written on the trailing edge of a
- * run of nudges rather than on each one — `nudgeProposal` says why — and a
- * single click of an arrow is a run of one.
+ * One field's arrows, nudged as the platform delivers it, returning the value
+ * left in the field. A real `<input type="number">` does the stepping from the
+ * field's `type` and `step`. Then `input` (React's `onChange`, draft only) and
+ * `change` (the DOM handler the field's `ref` installed) fire in order, and the
+ * timers run because the document is written on the trailing edge of a run of
+ * nudges (see `nudgeProposal`).
  */
 const nudge = (f, way = 'up') => {
   const node = numberNode(f)
@@ -319,21 +263,13 @@ describe('the Add primitive button', () => {
   })
 
   it('raises the whole toolbar over the composer while its menu is down', () => {
-    // THE LAYER MOVES ON THE CONTAINER AND NOT ON THE CARD: the toolbar carries
-    // `contain:layout`, which makes it a stacking context, so a `z-index`
-    // inside it would only sort the toolbar's own children. Unraised, the
-    // overlays that share the model's area take the click meant for a row of
-    // this menu — and the composer is the one that reaches it, anchored to the
-    // same bottom-right corner this button stands near on a window under a
-    // thousand pixels.
-    //
-    // THE COMPOSER'S OWN LAYER IS READ RATHER THAN COPIED, which is what makes
-    // this fail the day either number moves. The view switcher next door
-    // carries the same pair (`viewmenu.test.js`), and the two share one
-    // condition on `toolbarStyle`: half of it — `viewsOpen` alone, with
-    // `opsOpen` dropped — passes that file and every other case in this one
-    // while this menu silently opens underneath the composer and stops
-    // answering.
+    // The menu raises its layer on the toolbar container, not the card: the
+    // toolbar has `contain:layout`, so it is a stacking context and a `z-index`
+    // inside it only sorts its own children. Unraised, the composer (anchored to
+    // the same corner on windows under 1000px) takes clicks meant for this menu.
+    // The composer's layer is read rather than copied so this fails if either
+    // moves; viewmenu.test.js checks the same pair for `viewsOpen`, and both
+    // share one condition in `toolbarStyle`.
     const { c } = panel()
     expect(css(c.computed().toolbarStyle).zIndex).toBe('12')
 
@@ -439,11 +375,9 @@ describe('the Add primitive button', () => {
   })
 
   it('goes when the token does, and takes its body off the model with it', () => {
-    // The button is HIDDEN WITHOUT A TOKEN, like Move, because everything the
-    // proposal produces is stored on the hub behind that same token. `tokenClear`
-    // cleared the other two surfaces the token gates and left this one standing:
-    // the button was gone, so nothing could shut the menu it had opened, and a
-    // body stood over the model as a statement the reader could no longer store.
+    // The button is hidden without a token, like Move, because everything the
+    // proposal produces is stored behind that token. `tokenClear` must shut the
+    // menu too, or nothing could close it and a body would stay over the model.
     const { c, el } = panel({ proposal: withBlock(), opsOpen: true })
 
     c.computed().tokenClear(click)
@@ -460,18 +394,11 @@ describe('the Add primitive button', () => {
 
 describe('the proposal as a branch of the tree', () => {
   it('stands every column of a row under the same column of the head', () => {
-    // A ROW SPENDS THE HEAD'S CARET COLUMN ON NOTHING — no row of this branch
-    // folds anything — and that is what lines the two up: the eye, the square,
-    // the tick and the name of a row each land under the control they answer
-    // to one level up. It used to be a bare `margin-left:16px`, an indent that
-    // belonged to nothing above it and put every column 6px to the left; the
-    // reader asked what the blank in front of the eye was for.
-    //
-    // ADDED UP FROM THE HEAD'S OWN THREE NUMBERS rather than compared against
-    // the 25 they make, so the day the caret grows this fails instead of
-    // drifting. And the MARGINS are asserted equal because that is the other
-    // half: a margin here would push the whole row in, columns and pill
-    // together, which is exactly what was wrong before.
+    // A row reserves the head's caret column (no row folds anything), so the
+    // eye, square, tick and name land under the matching controls of the head.
+    // The indent is summed from the head's own three widths rather than compared
+    // to 25, so growing the caret fails here; margins must be equal, since a
+    // margin would shift the whole row.
     const { c } = panel({ proposal: withBlock() })
     const v = c.computed()
     const head = css(v.proposalHeadStyle)
@@ -511,29 +438,19 @@ describe('the proposal as a branch of the tree', () => {
   })
 
 
-  // WHERE THE DOCUMENT IS NOW. It used to be two lists inside the panel on the
-  // right; it is a small tree of its own below the parts tree, and what was
-  // asked for was "a separate proposal part of the tree with ALL the proposals
-  // in it", which "is not part of a group — it is a root of the tree". So every
-  // node is a row — bodies and moves alike, in document order — the fields open
-  // under the row that is selected, and the panel keeps only what is ABOUT a
-  // proposal rather than in one.
+  // The document is its own small tree below the parts tree, a root and not part
+  // of a group: every node is a row (bodies and moves, in document order), the
+  // fields open under the selected row, and the panel keeps only what is about a
+  // proposal as a whole.
 
   /**
-   * The tree as the viewport reports it WITH THE OVERLAY STAGED: the model's own
-   * parts, and the proposal's group beside them holding one part per body.
+   * The tree as the viewport reports it with the overlay staged: the model's
+   * parts, and the proposal's group beside them with one part per body.
    *
-   * THE GROUP'S NAME IS THE VIEWPORT'S TO MINT, which is why `isOverlay` is
-   * taught the same path rather than the page being left to match `proposal`
-   * against a name: the page asks the element which of the root's children the
-   * overlay is (`overlayAt` in viewport/element.js says why only it can answer),
-   * and every fixture that wants a staged body has to answer as the real element
-   * does.
-   *
-   * THE COLOURS ARE THE SCENE'S and are spelled out here for that reason: a row
-   * shows whatever colour the part it resolves to was given, so the fixture has
-   * to give the two kinds of part different ones for the assertion to mean
-   * anything. The body's is the neutral grey proposalgeom.js paints a solid.
+   * The group's name is the viewport's to mint, so `isOverlay` is taught the same
+   * path (`overlayAt` in viewport/element.js says why only it can answer). The
+   * colours differ between the two kinds of part so a row's colour assertion
+   * means something; the body's is the neutral grey proposalgeom.js paints.
    */
   const sceneTree = (bodies, parts = ['plate'], root = '/model') => ({
     id: root,
@@ -577,19 +494,10 @@ describe('the proposal as a branch of the tree', () => {
   }
 
   /**
-   * The same scene ARRIVING, through the page's own `onModel`.
-   *
-   * `stage` puts a tree into state; this one delivers it the way the viewport
-   * does, which is the only way to reach what the page does AT the moment a
-   * stage lands. The element is taught first, because `onModel` asks it which
-   * of the root's children the overlay is.
-   *
-   * THE ROOT IS A PARAMETER, exactly as `stage`'s is, because a comparison's
-   * scene lands through this same door: `staged()` lays the overlay into
-   * whatever payload is current, so a re-stage with a comparison up brings a
-   * tree whose overlay is the comparison's. Hardwiring `/model` here made a test
-   * that could only ever watch a build arrive, and a build arriving is the one
-   * case where the carry is right.
+   * The same scene arriving through the page's own `onModel`, the only way to
+   * reach what the page does when a stage lands. The element is taught first,
+   * because `onModel` asks it which root child is the overlay. The root is a
+   * parameter because a comparison's scene lands through the same door.
    */
   const land = (c, el, bodies, parts = ['plate'], root = '/model') => {
     const at = `${root}/proposal`
@@ -735,11 +643,9 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('keeps the fields open on a body whose name was just typed', () => {
-    // THE NAME IS IN THE PATH THE ROW IS SELECTED BY, so committing a new one
-    // used to leave `sel` on a spelling nothing answers to: the row deselected
-    // and the block the reader was typing in shut under them. Every other field
-    // on that row commits and stays, and this one has to as well —
-    // `selectionAfter` is what carries it.
+    // The name is part of the path the row is selected by, so a rename must
+    // carry `sel` to the new spelling (`selectionAfter`) or the row deselects
+    // and the open block shuts.
     const { c, el } = mounted({ proposal: withBlock() })
     const at = stage(c, el, ['korpus'])
     rows(c)[0].onSelect(click)
@@ -853,14 +759,11 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('offers no eye, no ghost and no colour while a comparison is up', () => {
-    // THE ONE CONTROL THIS BRANCH INHERITED THAT THE PARTS TREE NEVER HAD THERE,
-    // because that tree is not drawn during a comparison at all and this one is.
-    // `sync` sends `hidden: diffHidden(s.diffShow), ghost: []` while the scene
-    // is a comparison's and never looks at `s.hidden`/`s.ghost` — which is why
-    // `menuItems` throws Isolate, Hide and Translucent away under the same
-    // question. Left standing, the eye went pale over a body still on screen,
-    // and wrote a `/cmp/…` path — one that exists in no build — into `s.hidden`,
-    // whence `setVisibility` carries it into the history and the swap's carry.
+    // The parts tree is not drawn during a comparison, but this branch is.
+    // `sync` sends `hidden: diffHidden(s.diffShow), ghost: []` for a comparison
+    // and ignores `s.hidden`/`s.ghost` (which is why `menuItems` drops Isolate,
+    // Hide and Translucent there), so the eye must not write a `/cmp/…` path into
+    // `s.hidden`, where `setVisibility` would carry it into the history.
     const { c, el } = mounted({ proposal: withBlock() })
     stage(c, el, ['korpus'], ['plate'], '/cmp')
     c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
@@ -877,18 +780,11 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('still names, selects and edits its rows inside that comparison', () => {
-    // WHAT THE SILENCE ABOVE MUST NOT TAKE WITH IT. A proposal is the reader's
-    // own claim about a motor or a wall, which is as true over a comparison as
-    // over a build — the panel was never taken out of service by one, and the
-    // rows are the panel now.
-    //
-    // BUT IT SELECTS BY THE DOCUMENT'S OWN ID, NOT BY THE COMPARISON'S PATH.
-    // `/cmp/<a>:<b>/…` names a part no revision has, and `sel` OUTLIVES the
-    // comparison — `leaveCompare` does not clear it the way `leaveBuild` does —
-    // so such a path left standing is what `measAdd` would post as the `partId`
-    // of a comment measured after the panel closed. This branch is the only door
-    // of its kind: `onPick` writes `cmpSel` under a comparison, the parts tree
-    // is not drawn, and Move is not offered.
+    // Rows stay usable over a comparison, since a proposal is as true there as
+    // over a build. But they select by the document's own id, not the
+    // comparison's path: `/cmp/<a>:<b>/…` names a part no revision has, and `sel`
+    // outlives the comparison (`leaveCompare` does not clear it), so `measAdd`
+    // would post it as the `partId` of a later comment.
     const { c, el } = mounted({ proposal: withBlock() })
     stage(c, el, ['korpus'], ['plate'], '/cmp')
     c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
@@ -913,18 +809,12 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('never lets a comparison\'s path out as the part a comment is about', () => {
-    // THE WHOLE ROAD, END TO END, because every step of it is ordinary: add a
-    // body, compare two revisions, click its row to read the numbers, change
-    // one, close the comparison, measure two faces, `add to comment`. Nothing in
-    // between clears `sel`.
-    //
-    // AND A SCENE LANDS TWICE ALONG IT, which is what a live page does and what
-    // this test used to leave out entirely. `staged()` lays the overlay into
-    // whatever payload is current, so while a comparison is up the group is
-    // really there at a path of the COMPARISON's — and every commit re-stages,
-    // so the model event that comes back carries that tree. The row asking
-    // `compared` shuts one door onto this hole; the carry in `onModel` is the
-    // other, and with no model event in between a test can only see the first.
+    // The whole road: add a body, compare two revisions, select its row, change
+    // a value, close the comparison, measure two faces, `add to comment`. Nothing
+    // in between clears `sel`. A scene lands twice along it, as on a live page:
+    // `staged()` lays the overlay into the current payload, so each commit
+    // re-stages under the comparison's path. The row asking `compared` closes one
+    // door; the carry in `onModel` closes the other.
     const { c, el } = mounted({ proposal: withBlock() })
     stage(c, el, ['korpus'], ['plate'], '/cmp')
     c.setState({ compare: true, cmpPair: ['a', 'b'], cmpView: 'assembled',
@@ -958,14 +848,10 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('keeps a row selected and open when its body is staged afterwards', () => {
-    // THE ROW'S IDENTITY CHANGES UNDER THE READER otherwise, which is the rename
-    // defect from the other side: `path` is the document's node id while the
-    // scene has nothing and the scene's path once it does, so `s.sel` matched
-    // neither and the block being typed in shut. The ordinary way in is the
-    // staging window — the branch draws from `state.proposal` at once while
-    // `show()` waits on the library, so every body row is sceneless for a moment
-    // after a `box` picked out of `Add primitive` and after a document adopted
-    // from the hub.
+    // A body row's `path` is the document's node id while the scene has not
+    // staged it and the scene path once it has, so `s.sel` must follow it or the
+    // open block shuts. Every body row is sceneless for a moment after `Add
+    // primitive` or an adopted document, since `show()` waits on the library.
     const { c, el } = mounted({ proposal: withBlock() })
     rows(c)[0].onSelect(click)
     expect(c.state.sel).toBe('n1')
@@ -1149,13 +1035,10 @@ describe('the proposal as a branch of the tree', () => {
   // -- the branch's own eye: the whole proposal, on the model or off it -------
 
   it('takes every body and every displaced part off the model when its eye shuts', () => {
-    // ONE CONTROL FOR BOTH HALVES, which is what "take the proposal off the
-    // model" has to mean: the bodies stop being staged AND every part of the
-    // build the document displaces goes back where the build puts it. Half of
-    // it would be the defect the panel used to have, with the halves swapped.
-    // The body is put on the model by a write of the document — the door every
-    // edit comes through — and the drag records the move, so both halves are
-    // genuinely on the model before the eye is pressed.
+    // One control for both halves: "take the proposal off the model" unstages the
+    // bodies and returns every displaced part of the build to its build pose. The
+    // body is staged by a document write and the drag records the move, so both
+    // halves are on the model before the eye is pressed.
     const { c, el } = mounted({ proposal: withBlock() })
     c.setProposal(c.state.proposal)
     drag('/model/plate', [3, 0, 0])
@@ -1271,17 +1154,10 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('goes off the model through that same eye when the token is given up', () => {
-    // THE ONE ANSWER TO "IS IT ON THE MODEL", and this door has to use it like
-    // any other. Clearing the overlay by hand here — which is what this did
-    // while the branch went off screen with the panel — leaves `proposalOff`
-    // still saying the proposal is on: the branch survives now, so the first
-    // edit through any of its rows calls `setProposal` and stages the bodies
-    // straight back onto the model this had just cleared.
-    //
-    // A DEFAULT AND NOT A LOCK. The reader giving up the right to edit should
-    // not be left with a body standing over the model as a statement they can
-    // no longer send — but the branch stays drawn and the eye still opens, and
-    // nothing here pretends to be a permission gate.
+    // `proposalOff` is the one answer to "is it on the model", so this door sets
+    // it rather than clearing the overlay by hand; otherwise the first edit
+    // through a row calls `setProposal` and stages the bodies straight back. It
+    // is a default, not a lock: the branch stays drawn and the eye still opens.
     const { c, el } = mounted({ proposal: withBlock() })
     c.setProposal(c.state.proposal)
     drag('/model/plate', [3, 0, 0])
@@ -1303,15 +1179,9 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('keeps the branch on screen and writes no visibility of its own', () => {
-    // THE BRANCH CANNOT GO WITH IT — the eye is what reopens it, so a branch
-    // taken off screen would be a proposal nothing could bring back.
-    //
-    // AND IT IS NOT `s.hidden` UNDER ANOTHER NAME, which is the half that would
-    // be invisible until somebody reopened it: a body the reader hid stays
-    // hidden and a body they did not stays shown, either side of the press. Had
-    // this been spelled as "hide every staged path", opening the eye again
-    // would have handed back a scene this control decided on rather than the
-    // one they had.
+    // The branch stays, because the eye is what reopens it. And this is not
+    // `s.hidden` under another name: a body the reader hid stays hidden and one
+    // they did not stays shown, either side of the press.
     const { c, el } = mounted({ proposal: withBlock() })
     const at = stage(c, el, ['korpus'])
     drag('/model/plate', [3, 0, 0])
@@ -1458,18 +1328,11 @@ describe('the proposal as a branch of the tree', () => {
   })
 
   it('stands over both columns it has no control of its own for', () => {
-    // KEEP X AND Y IN STEP, WHICH IS A TEST AND NOT A COMMENT. A row spends its
-    // width on an eye, a GHOST SQUARE, a COLOUR and a tick; the head has an eye
-    // and a tick, nothing that would make the whole proposal translucent and no
-    // colour of its own — so it carries BOTH of those columns empty to keep its
-    // tick under the ticks it sets and clears. Left as prose, the next change to
-    // either width moves the master tick off them silently.
-    //
-    // EACH SPACER AGAINST THE THING IT STANDS IN FOR, and at the render rather
-    // than in `computed()`: that the widths add up is asserted where the branch
-    // is measured, and what is asked here is that the page draws both boxes in
-    // the tick's run-up at all. Reserving only the ghost column was the whole of
-    // this test once, and it left the master tick 13px left of the rows'.
+    // A row spends its width on an eye, a ghost square, a colour and a tick; the
+    // head has only an eye and a tick, so it draws empty spacers for both missing
+    // columns to keep its tick under the rows'. Each spacer is checked at render
+    // against the box it stands in for; the widths themselves are checked where
+    // the branch is measured.
     const { c } = mounted({ proposal: withBlock() })
     const drawn = c.render()
 
@@ -1553,14 +1416,10 @@ describe('the proposal as a branch of the tree', () => {
 
   // -- how coarsely the manipulator rounds, per row ---------------------------
   //
-  // WHAT IT ANSWERS, in the reader's words: dragging by the arrows moves the
-  // part in steps that are too big. The step was the grid's alone (`niceStep`
-  // in viewport/tools.js) and it still is wherever nothing here says otherwise
-  // — what this adds is one field per row to say otherwise with.
-  //
-  // IT IS NOT IN THE DOCUMENT, which is the whole of where it lives: the agent
-  // reads the document and a rounding is nothing it can act on, so this is page
-  // state beside the eyes and reaches the scene through a door of its own.
+  // The drag step defaults to the grid's (`niceStep` in viewport/tools.js); each
+  // row gets a field to override it. The step is page state, not part of the
+  // document (the agent cannot act on a rounding), and reaches the scene through
+  // its own door.
 
   describe('the step a drag of a row rounds to', () => {
     /** The steps the viewport was last handed, in the shape the door takes. */
@@ -1723,14 +1582,10 @@ describe('the proposal as a branch of the tree', () => {
     })
 
     it('drops it when a GESTURE takes the node away, and not only an edit', () => {
-      // THE DOOR THE REST OF THIS FEATURE DOES NOT PASS THROUGH, and the one
-      // the reader is actually standing at: the manipulator is what they
-      // complained about. A gesture commits inside its own functional updater
-      // and never reaches `setProposal`, so both the pruning and the push have
-      // to be there as well. Without them a retraction takes the node out — the
-      // row goes, and with it the only field that could clear the step — while
-      // the viewport goes on rounding the next drag of that same part to a
-      // number nothing on the page shows.
+      // A gesture commits inside its own functional updater and never reaches
+      // `setProposal`, so pruning and pushing the steps must happen there too.
+      // Otherwise a retraction removes the row (and the only field that clears
+      // the step) while the viewport keeps rounding that part to a hidden step.
       const { c, el } = mounted({})
       drag('/model/plate', [3, 0, 0])
       type(stepOf(moveRows(c)[0]), '0.2')
@@ -1747,14 +1602,11 @@ describe('the proposal as a branch of the tree', () => {
     })
 
     it('leaves a body out until there is a scene to name a path in', () => {
-      // A BODY'S PATH IS SPELLED AGAINST THE OVERLAY'S GROUP, and the group is
-      // the VIEWPORT's to mint — so between a body being drawn and the scene
-      // coming back there is no path to push. The row exists and takes a step
-      // the whole time, because the row is drawn off the document alone.
-      //
-      // WHICH PUSH LANDS IT is the half worth pinning: a stage composes the
-      // bodies and the scene returns as a model event, so it arrives on
-      // `onModel`'s push and not on the stage's own.
+      // A body's path is spelled against the overlay group, which the viewport
+      // mints, so there is no path to push until the scene comes back. The row
+      // takes a step throughout, since it is drawn from the document. The scene
+      // returns as a model event, so the step lands via `onModel`'s push, not the
+      // stage's.
       const { c, el } = mounted({ proposal: withBlock() })
 
       type(stepOf(bodyRows(c)[0]), '0.25')
@@ -1775,14 +1627,11 @@ describe('the proposal as a branch of the tree', () => {
     })
 
     it('is handed over again when a build lands, the viewport having dropped it', () => {
-      // THE MIRROR OF THE TWO DOORS ABOVE, and the case neither covers. A MOVE
-      // goes out with `dropMoves` when a rebuild lands, so its step goes with
-      // it; a BODY is the reader's own and crosses the rebuild with the rest of
-      // the document, so the page KEEPS its step — while the viewport clears
-      // its whole map on a load, a path being only as stable as the build that
-      // minted it. Nothing on that road stages, so without a push of its own
-      // the row would go on showing 0.25 while the hand rounded by the grid:
-      // a number on screen that nothing uses, and no way to tell from the row.
+      // A move is dropped with `dropMoves` when a rebuild lands, and its step
+      // with it; a body survives the rebuild, so the page keeps its step while
+      // the viewport clears its map on load. Nothing on that road stages, so
+      // `onModel` must push the step itself or the row shows 0.25 while the drag
+      // rounds by the grid.
       const { c, el } = mounted({ proposal: withBlock() })
       const at = stage(c, el, ['korpus'])
       type(stepOf(bodyRows(c)[0]), '0.25')
@@ -1808,18 +1657,12 @@ describe('the proposal as a branch of the tree', () => {
 // -- the invariant the branch's two bare-word keys stand on --------------------
 
 describe('every id the tree hands the interface', () => {
-  // TWO THINGS IN THE PROPOSAL'S BRANCH ARE BARE WORDS COMPARED AGAINST TREE
-  // IDS, and both are safe only because a tree id is always a PATH.
-  // `PROPOSAL_BRANCH` is a key in the very `expanded` map the parts tree keys by
-  // node id; and a body row whose scene has not staged it is selected by the
-  // DOCUMENT's own node id — `n1`, `m2` — which `proposalRows` compares against
-  // `s.sel`, a field that otherwise holds tree ids.
-  //
-  // THE INVARIANT IS NOT `indexTree`'S, which is why this is a test and not a
-  // sentence: `pathOf` in hub.js passes any non-empty `id` a node carries
-  // straight through. It is `treeFromShapes`', which spells every id as
-  // `${parent}/${name}` and never reads the incoming one — so this drives the
-  // real pair, in the order the page gets them.
+  // Two things in the proposal branch are bare words compared against tree ids,
+  // safe only because a tree id is always a path: `PROPOSAL_BRANCH` is a key in
+  // the `expanded` map keyed by node id, and an unstaged body row is selected by
+  // its document id (`n1`, `m2`), which `proposalRows` compares to `s.sel`.
+  // `indexTree` (`pathOf` in hub.js) passes any id through; `treeFromShapes`
+  // spells every id as `${parent}/${name}`, so this drives the real pair.
 
   it('is a path, so a bare word can never collide with one', () => {
     const tree = indexTree(treeFromShapes({
@@ -2031,20 +1874,11 @@ describe('a field being typed in', () => {
   const at = (c, axis = 0) => bodyRows(c)[0].groups[1].fields[axis]
 
   it('costs nothing at all until the value is settled', () => {
-    // THE ASSERTION THE COMMIT MODEL EXISTS FOR. A keystroke that reached the
-    // document rebuilt the bodies and handed them to the viewport, and the
-    // viewport answers an overlay with a whole scene: `clear()` disposes every
-    // geometry and every material, `render()` builds them again, the tree goes
-    // back up to React. Measured on this repository's own kernel, the CSG alone
-    // is 81 ms at twelve bodies and 23 ms at four — before any of the rest of it
-    // — so `-12.5` was five of those on the way to one number.
-    //
-    // THE VALUES ARE THE PLATFORM'S, keystroke by keystroke — measured in Chrome
-    // 153 by typing `-12.5` into a real `<input type="number">` and reading
-    // `value` on every `input` event, rather than worked out here. The lone `-`
-    // arrives as `''`; the trailing dot of `-12.` is DROPPED rather than
-    // emptying the field, so that keystroke reports the same `-12` as the one
-    // before it.
+    // A keystroke that reached the document would rebuild the bodies and the
+    // viewport would redraw the whole scene; the CSG alone is 81 ms at twelve
+    // bodies and 23 ms at four. The values below are what Chrome 153 reports on
+    // each `input` event while typing `-12.5`: the lone `-` arrives as `''`, and
+    // the trailing dot of `-12.` reports `-12` again.
     const { c, el } = panel({ proposal: withBlock() })
     for (const text of ['', '-1', '-12', '-12', '-12.5']) {
       at(c).onChange({ target: { value: text } })
@@ -2286,15 +2120,10 @@ describe('a number field', () => {
   })
 
   it('writes once when the focus leaves before the nudge has landed', () => {
-    // THE ORDINARY END OF EVERY NUDGE and not a rare path: a click of an arrow
-    // leaves the focus in the field, so what follows is a click on the next
-    // body, a Tab, or an Enter — and the commit those cause is synchronous while
-    // the nudge is still waiting out its quiet window. The blur drops the draft
-    // on its way through, and the timer that wakes up behind it finds none and
-    // does nothing. That check on the draft is the whole of what keeps it quiet:
-    // take it out and this gesture stages the scene twice — 23 ms of CSG at four
-    // bodies, 81 ms at twelve — and the trailing edge has bought nothing. Which
-    // is what this test fails on, and the only thing it is claiming.
+    // A click of an arrow leaves focus in the field, so a blur usually follows
+    // while the nudge is still in its quiet window. The blur commits and drops
+    // the draft; the timer that wakes behind it finds no draft and does nothing.
+    // Without that check the scene is staged twice.
     const { c, el } = panel({ proposal: withBlock() })
     const f = sizeFields(c)[0]
     const node = numberNode(f)
@@ -2381,14 +2210,11 @@ describe('a number field', () => {
   })
 
   it('keeps the number that was there when the text is not one the browser can read', () => {
-    // A LONE `-` OR A LONE `.`: a number input reports an EMPTY value for those
-    // two and, measured in Chrome 153 one keystroke at a time, for nothing else
-    // — `.5` reads back as `.5` and `12.` as `12`. An empty field is a zero in
-    // this panel, so a negative number begun and then abandoned, the focus
-    // leaving on a click elsewhere, used to zero the dimension and flatten the
-    // body. `badInput` is the platform's own answer to "there is text in here
-    // and I could not read it", and jsdom cannot have one: it never saw anybody
-    // type, so the fixture supplies the answer the browser gives.
+    // A number input reports an empty value for a lone `-` or `.` (and, measured
+    // in Chrome 153, for nothing else: `.5` reads `.5`, `12.` reads `12`). An
+    // empty field is zero in this panel, so abandoning a half-typed negative must
+    // not flatten the body. `badInput` is the platform's signal for unreadable
+    // text; jsdom has none, so the fixture supplies it.
     const { c, el } = panel({ proposal: withBlock() })
     type(at(c), '7')
     expect(c.state.proposal.nodes[0].at[0]).toBe(7)
@@ -2459,21 +2285,11 @@ describe('a number field', () => {
 // -- a body moved with the hand instead of with the fields --------------------
 
 describe('a body dragged in the scene', () => {
-  // THE COMPLAINT THIS ANSWERS, in the reader's words: "and how am I supposed to
-  // move a proposal body — by typing a number?" The `at` fields stay what they
-  // are; the Move tool over the body itself is the second way of saying the same
-  // thing, and it ends HERE — `hmr:proposalmove`, naming the body and how far it
-  // went. Everything from this point on is an ordinary edit of the document,
-  // indistinguishable from the same numbers typed in.
-  //
-  // WHERE THE OTHER HALF IS TESTED: the gesture, what it refuses and what it
-  // must not record, is ui/tests/tools.test.js — the viewport tells such a body
-  // from a part of the build at the press, because only it knows the group's
-  // name.
-  //
-  // WHAT IS GRABBABLE comes from the payload the panel builds (proposalgeom.js):
-  // one part per body, solids and holes alike, so a grab is about the one node
-  // that part was built from and the bodies beside it do not move.
+  // Moving a proposal body with the Move tool, in addition to the `at` fields:
+  // the gesture ends in `hmr:proposalmove`, naming the body and the distance,
+  // and from there it is an ordinary edit of the document. The gesture itself is
+  // tested in tools.test.js (only the viewport knows the group's name). One part
+  // per body (proposalgeom.js), solids and holes alike, so a grab moves one node.
 
   /** A hole with a place of its own, so a shift reads as an addition. */
   const BORE = {
@@ -2616,17 +2432,11 @@ describe('a body dragged in the scene', () => {
 // -- a part of the BUILD moved with the same hand ------------------------------
 
 describe('a part of the build dragged in the scene', () => {
-  // THE SAME GESTURE ON THE OTHER SOURCE OF PARTS, and the opposite meaning: a
-  // body of the proposal is the reader's own drawing and its `at` is edited,
-  // while a part of the build belongs to the model and is not touched at all —
-  // what is recorded is that it should BE somewhere else. Both end in this one
-  // document, so both travel to the agent in one projection, and putting the
-  // part back is deleting the entry rather than pressing anything.
-  //
-  // WHERE THE OTHER HALF IS TESTED: that the offsets actually land on the
-  // scene's groups is ui/tests/parts.test.js, and that the door reaches them is
-  // ui/tests/element.test.js. What is HERE is what the document records and what
-  // it hands over.
+  // The same gesture on a part of the build means the opposite: the build is
+  // not edited, the document records that the part should be elsewhere. Both
+  // end in this document and travel to the agent in one projection; putting the
+  // part back deletes the entry. The offsets landing on the scene are tested in
+  // parts.test.js and the door in element.test.js; here, what is recorded.
 
   it('records the drag beside the bodies, and prints it in the projection', () => {
     const { c } = mounted({ proposal: withBlock() })
@@ -2659,17 +2469,9 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('writes the number the viewport sent, and does not round it again', () => {
-    // WHERE THE ROUNDING IS, said here because it used to be here. A drag is
-    // snapped to a 1-2-5 step and `Math.round(v / step) * step` lands on numbers
-    // like `0.6000000000000001`, which nobody dragged anything to — so `snap` in
-    // viewport/tools.js rounds its own arithmetic by the document's rule
-    // (`tidy`) and the delta arrives already at a place somebody could have
-    // typed. That is pinned where it happens, in ui/tests/tools.test.js.
-    //
-    // WHAT IS PINNED HERE is that this side adds nothing: the number in the node
-    // is the number on the wire, and the row and the projection print that one.
-    // A second rounding would be two places having to agree about a value
-    // neither of them computed.
+    // A drag delta arrives already rounded: `snap` in viewport/tools.js tidies
+    // its 1-2-5 arithmetic (`tidy`), tested in tools.test.js. This side adds no
+    // rounding: the number in the node is the number on the wire.
     const { c } = mounted({})
 
     drag('/model/plate', [0.6, 0, 0])
@@ -2695,15 +2497,11 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('replaces the move that shares a path, whatever the gesture came in as', () => {
-    // THE SEQUENCE THAT MADE THIS NECESSARY, and every step of it is ordinary:
-    // Move is armed from a collapsed row's menu, so the selection is all three
-    // copies; a press on empty space degrades to a pick and CLEARS the
-    // selection while the tool stays armed; the next drag therefore takes the
-    // one copy it hit — arriving under that copy's own path — and the pick it
-    // emits puts the whole row back under the hand, so the drag after it arrives
-    // under the row's first path. Matched on the first path, those two gestures
-    // wrote two nodes both claiming `pin(3)`: two contradictory `move` lines in
-    // the projection, and two rows of which one `×` looked broken.
+    // Move armed from a collapsed row selects all three copies; a press on empty
+    // space clears the selection while the tool stays armed, so the next drag
+    // arrives under one copy's path and the one after under the row's first
+    // path. Matching on the first path only would write two nodes claiming
+    // `pin(3)`.
     const { c, el } = mounted({})
     const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
 
@@ -2799,18 +2597,11 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('turns a copy nobody turned, when one gesture merges it with one that is', () => {
-    // THE OTHER FACE OF "A DRAG CANNOT STRAIGHTEN ANYTHING", and it is held
-    // here rather than in prose because prose does not fail. One node carries
-    // one turn for ALL its paths, so a gesture that merges a turned copy with
-    // an untouched one has nowhere to keep the difference and something has to
-    // give. It gives this way round: the untouched copy comes out turned.
-    //
-    // THE BRANCH THIS GOES THROUGH IS THE EXPANDING ONE, not the minting one —
-    // the turned node is covered whole, so its sentence is corrected rather
-    // than replaced, and it gains the second path while keeping the turn the
-    // patch never names. So this does not pin `shared`, which the two tests
-    // above do; what it catches is someone deciding that widening a node's
-    // paths should straighten what it already said.
+    // One node carries one turn for all its paths, so a gesture that merges a
+    // turned copy with an untouched one must give: the untouched copy comes out
+    // turned. This goes through the expanding branch (the turned node is covered
+    // whole and gains the second path), not the minting one, so it pins that
+    // widening a node's paths keeps its turn.
     const { c } = mounted({})
     drag('/model/pin', [3, 0, 0])
     type(moveRows(c)[0].groups[1].fields[2], '90')
@@ -2823,15 +2614,11 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('leaves no empty sentence when a row of disagreeing turns is dragged home', () => {
-    // A row whose copies were turned to DIFFERENT angles cannot be carried by
-    // one node, so dragging it home straightens them — that is the price of the
-    // disagreement and it is decided. What must not survive is a node saying
-    // nothing: `move "pin ×2" by (0, 0, 0)` with no turn on it is a line for the
-    // agent to puzzle over and a row to close by hand, and the panel does not
-    // even open on a flat drag to show it.
-    //
-    // The retraction therefore asks what the node would COME OUT carrying,
-    // which is `shared`, and not whether any turn exists anywhere.
+    // A row whose copies were turned to different angles cannot be carried by
+    // one node, so dragging it home straightens them. What must not survive is a
+    // node saying nothing (`move "pin ×2" by (0, 0, 0)` with no turn), so the
+    // retraction asks what the node would come out carrying (`shared`), not
+    // whether any turn exists anywhere.
     const { c } = mounted({})
     drag('/model/pin', [3, 0, 0])
     type(moveRows(c)[0].groups[1].fields[2], '90')
@@ -2844,17 +2631,11 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('sends a copy out of a turned row still facing the way the row faced', () => {
-    // A DRAG SAYS WHERE AND NEVER WHICH WAY, and this is the case that says it
-    // about a node nothing supersedes. The old node is still standing and still
-    // claims the two copies left behind, so reading the turn off the COVERED
-    // nodes alone would find none to carry and straighten the one copy the
-    // reader has hold of — a rotation undone by a gesture that was about
-    // position. `touching` is what closes it.
-    //
-    // THE TRIMMING TOUCHES THE PATHS AND THE NAME AND NOTHING ELSE, so the two
-    // left behind keep the offset they were already at and their turn. Both
-    // halves of the row therefore come out of this facing the same way, which
-    // is what the reader did to them and all they did to them.
+    // A drag says where, never which way. The old node still claims the two
+    // copies left behind, so reading the turn off the covered nodes alone would
+    // straighten the grabbed copy; `touching` prevents that. Trimming changes
+    // only the paths and the name, so the copies left behind keep their offset
+    // and turn.
     const { c } = mounted({})
     const row = ['/model/pin', '/model/pin(2)', '/model/pin(3)']
     drag('/model/pin', [3, 0, 0], { paths: row, count: 3 })
@@ -2869,20 +2650,13 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('pushes the document that was COMMITTED, not the one it computed', () => {
-    // WHAT A COMPLETION CALLBACK IS FOR. The handler writes its document in a
-    // functional updater, and the updater's own result is what this edit WOULD
-    // have committed — not necessarily what did. React batches, so another
-    // functional patch can be applied behind it before the callback runs, and
-    // the one that matters is `onModel`'s `dropMoves`: a build landing while the
-    // report is in flight. Pushing the updater's result at `setMoves` after that
-    // displaces a part of the NEW build by a node the committed document no
-    // longer holds — no row, no `×`, and nothing staging after it to correct the
-    // scene.
-    //
-    // THE BATCH IS STAGED BY HAND because this harness commits synchronously and
-    // React does not: the second updater below is what the real one interleaves
-    // on its own, and without it there is no arrangement in which the two
-    // documents differ.
+    // The handler writes the document in a functional updater, whose result is
+    // what this edit would commit, not necessarily what did: React can apply
+    // another functional patch (`onModel`'s `dropMoves` on a landing build)
+    // before the callback runs. Pushing the updater's result at `setMoves` then
+    // would displace a part of the new build by a node no longer in the document.
+    // The second updater is staged by hand because this harness commits
+    // synchronously.
     const { c, el } = mounted({ proposal: withBlock() })
     const commit = c.setState
     c.setState = vi.fn((patch, done) => {
@@ -2947,15 +2721,9 @@ describe('a part of the build dragged in the scene', () => {
   })
 
   it('keeps a TURNED node when the part is dragged back, and zeroes the delta', () => {
-    // A TRANSLATION GESTURE EDITS THE TRANSLATION. The hand was on the part's
-    // position, so "put it back where it was" is an answer about WHERE — and a
-    // node that also says which way the part faces has not been retracted by
-    // it. Dropped anyway, the drag would take a rotation the reader set in the
-    // panel and never mentioned, with nothing on screen saying why.
-    //
-    // WHAT IS LEFT IS THE SENTENCE WITH ITS DELTA AT NOTHING: the part is back
-    // where the build puts it and still turned, the row still says so, and the
-    // `×` is still how the whole statement is undone.
+    // A translation gesture edits only the translation: dragging home a node
+    // that also carries a turn keeps the node with its delta at zero, so the
+    // part stays turned, the row says so, and `×` still removes the whole node.
     const { c, el } = mounted({ proposal: withBlock() })
     drag('/model/plate', [3, 0, 0])
     type(moveRows(c)[0].groups[1].fields[2], '90')
@@ -3075,22 +2843,12 @@ describe('a part of the build dragged in the scene', () => {
 // -- and the row it gets in the tree -------------------------------------------
 
 describe('a part of the build turned in the scene', () => {
-  // THE OTHER HALF OF THE SAME NODE. A move node has carried three degrees
-  // beside its offset since it was first written, and the only way to say them
-  // was to type them into the row; there are rings round the part now
-  // (ui/src/viewport/rings.js) and they end HERE — `hmr:turned`, naming the
-  // paths and the whole turn from the pose the build gives them.
-  //
-  // WHAT THE TWO GESTURES SHARE is everything except which field they are
-  // about: one method reads both (`recordGesture`), so the rules this describe
-  // is spot-checking — one node per part, matched by intersection, the field
-  // the gesture did not touch carried across, a gesture home dropping the node
-  // — are the ones the drag's own describe above pins at length. WHAT IS HERE
-  // is that they read the same both ways round, which is the whole claim of
-  // there being one method.
-  //
-  // WHERE THE OTHER HALF IS TESTED: the gesture itself, the sign it turns in
-  // and what it refuses, is ui/tests/rings.test.js.
+  // The other half of the same node: the rings (ui/src/viewport/rings.js) end in
+  // `hmr:turned`, naming the paths and the whole turn from the build pose. Both
+  // gestures go through `recordGesture`, so the rules (one node per part,
+  // matched by intersection, the untouched field carried over, a gesture home
+  // dropping the node) are pinned in the drag describe above; here they are
+  // spot-checked the other way round. The gesture itself is in rings.test.js.
 
   it('records the turn beside the bodies, and prints it in the projection', () => {
     const { c } = mounted({ proposal: withBlock() })
@@ -3206,19 +2964,11 @@ describe('a part of the build turned in the scene', () => {
 })
 
 describe('a body turned in the scene', () => {
-  // THE SECOND MEANING OF THE RINGS, exactly as `hmr:proposalmove` is the
-  // second meaning of a drag: a body is the reader's own drawing, so turning
-  // one is an ordinary edit of the `rot` fields rather than a statement about
-  // the model.
-  //
-  // COMPOSED AND NOT SET, which is the one place the two events genuinely
-  // differ in shape. The viewport knows the pose the BUILD gives a part and
-  // reports the whole turn from it; a body's pose lives in this document, which
-  // the viewport has never read, so what it can say is how far this one gesture
-  // took the body — and `turnNodes` composes that onto the pose it took it
-  // from. The composition itself is pinned in proposal.test.js, where the cases
-  // an addition gets wrong are; what these ask is that the panel goes through
-  // that door at all.
+  // Turning a body is an ordinary edit of its `rot` fields, as
+  // `hmr:proposalmove` is for a drag. The event carries only this gesture's
+  // turn, since the viewport never reads the document, so `turnNodes` composes
+  // it onto the body's pose. The composition is tested in proposal.test.js;
+  // these check the panel goes through it.
 
   const fire = (name, turn) => window.dispatchEvent(
     new CustomEvent(PROPOSALTURN, { detail: { name, turn } }))
@@ -3424,17 +3174,11 @@ describe('the row a move is drawn as', () => {
   }
 
   it('forgets the shut eyes when the nodes they name are dropped', () => {
-    // A SWITCH ON NOTHING IS WORSE THAN NO SWITCH. Each entry is a move node's
-    // id and says nothing on its own, so an id that outlives its node is a
-    // switch on nothing — and the moment that id comes round again it is a
-    // switch on the WRONG node, arriving already shut with nothing on screen
-    // saying why the part went home. Ids really do come round: the counter
-    // `recordGesture` mints them from starts at zero in every session and is
-    // not seeded past a document adopted from the hub.
-    //
-    // BOTH DOORS, because the nodes are dropped at both and neither is the
-    // other's caller: `leaveBuild` when a revision is left, and `onModel` when
-    // a rebuild that is not a re-stage lands.
+    // Each entry is a move node's id, so an id that outlives its node is a switch
+    // on nothing and, once the id is reused, a switch on the wrong node: the
+    // counter `recordGesture` mints from starts at zero each session and is not
+    // seeded past an adopted document. Nodes are dropped at two doors, neither
+    // calling the other: `leaveBuild`, and `onModel` on a non-restage rebuild.
     const leaving = mounted({})
     drag('/model/plate', [3, 0, 0])
     rows(leaving.c)[0].onVis(click)
@@ -3450,15 +3194,10 @@ describe('the row a move is drawn as', () => {
   })
 
   it('forgets the snap steps at those same two doors', () => {
-    // THE TWIN OF THE CASE ABOVE FOR THE OTHER PER-NODE SWITCH, and it needs
-    // saying twice because the two are pruned by different rules: an eye may
-    // name a move node, a step may be on a body too. Both are keyed by a node
-    // id, so both come round the same way.
-    //
-    // THE VIEWPORT'S OWN HALF IS KEYED BY PATH, and that is cleared where the
-    // offsets are (`show()` in viewport/element.js): a path is only as stable
-    // as the build that minted it, so a step carried into the next build would
-    // round the hand on whatever part inherited the name.
+    // The same for the other per-node switch, pruned by a different rule: an eye
+    // names only a move node, a step may be on a body too. The viewport's own
+    // half is keyed by path and cleared with the offsets (`show()` in
+    // viewport/element.js), since a path is only as stable as its build.
     const step = (c) => moveRows(c)[0].groups.at(-1).fields[0]
 
     const leaving = mounted({})
@@ -3659,38 +3398,20 @@ describe('a document holding moves and no bodies', () => {
 // -- the doors the bodies are not for -----------------------------------------
 
 describe('a proposal body as the part a task is filed against', () => {
-  // The bodies are staged INTO the scene (`staged()` in viewport/element.js), so
-  // each is an ordinary row in the tree and an ordinary pick target — which puts
-  // them in front of every door that files a task about a PART. Each would write
-  // it in the BUILD's terms against a body that is in no build, no catalogue and
-  // no revision: `partId: "/model/proposal/korpus"` names nothing the agent can
-  // look up. This is the class `toolsOff` exists for, read off the other source
-  // of parts.
+  // The bodies are staged into the scene (`staged()` in viewport/element.js), so
+  // each is a tree row and a pick target, in front of every door that files a
+  // task about a part. A `partId` like `/model/proposal/korpus` names nothing the
+  // agent can look up, so `toolsOff` refuses these.
   //
-  // THE MEASUREMENT IS NOT ONE OF THEM: a distance between two faces of a
-  // proposal body is what the panel is for, and the number goes to the agent
-  // unchanged. Only the part it would be filed against is refused.
+  // Not refused: a measurement between two faces of a body (the number goes to
+  // the agent; only the part is withheld), and Move. A drag of a body is a
+  // different gesture ending in `hmr:proposalmove` (tools.test.js decides at the
+  // press). Its row is offered because a body needs the armed tool and the row
+  // is the only door onto it; only the sentence the row raises differs.
   //
-  // THE MOVE GESTURE IS NOT ONE OF THEM AT ALL, and it is the one that reads as
-  // though it should be. A drag of one is not a task filed badly: it is a
-  // DIFFERENT GESTURE, told apart at the press by the viewport and ending in
-  // `hmr:proposalmove`, which edits the panel's own document — the describe above
-  // is where that lands, and ui/tests/tools.test.js is where the press decides.
-  // Its ROW IS OFFERED for that very reason: a body needs the same armed tool a
-  // part does, the row is the only door onto it now, and the row sets a
-  // selection — so withholding it would arm the tool holding something else and
-  // freeze the bodies. Only the SENTENCE the row raises differs, because the two
-  // moves mean different things. Both are asserted at the end of this describe.
-  //
-  // WHICH PATHS ARE THE OVERLAY'S IS THE VIEWPORT'S ANSWER, because that is
-  // where the group's name is minted — `proposal`, or `proposal2` beside a model
-  // that publishes a group of that name. The spy says so for the paths spelled
-  // here; the real answer is element.test.js's subject, like everything else
-  // this file asks of the viewport.
-  //
-  // THE GROUP NODE ANSWERS YES TOO, exactly as the real one does: it is a row of
-  // the tree, a row is selected with the mouse, and `selectedPaths()` sends a
-  // node's own id.
+  // Which paths are the overlay's is the viewport's answer (`proposal`, or
+  // `proposal2` beside a model group of that name); the spy answers for the
+  // paths here, including the group node itself, which is a selectable row.
   const staging = (el) => el.isOverlay.mockImplementation(
     (id) => typeof id === 'string'
       && (id === '/model/proposal' || id.startsWith('/model/proposal/')))
@@ -3779,16 +3500,10 @@ describe('a proposal body as the part a task is filed against', () => {
   })
 
   it('is offered a Move row of its own, since without it a body costs a click first', () => {
-    // THIS ROW IS THE ONLY DOOR ONTO THE TOOL, now that the toolbar has no
-    // button, and a body needs the tool exactly as a part does — `onDown`
-    // returns on no tool at all. The selection the row sets is what makes its
-    // absence cost something: an armed tool drags what is SELECTED, and a press
-    // outside a standing selection is refused whole (tools.test.js, 'moves
-    // nothing when the grab lands on a part outside the selection'). So a menu
-    // offering Move on the build's parts and withholding it from the bodies
-    // would arm the tool holding a PART every time, and the first grab on a body
-    // would be refused — recoverable with a separate click, which selects it,
-    // but not by trying to drag again, which only orbits.
+    // This row is the only door onto the tool (the toolbar has no button), and
+    // `onDown` returns without a tool. An armed tool drags the selection and a
+    // press outside it is refused (tools.test.js), so withholding Move from
+    // bodies would arm the tool on a part and refuse the first grab on a body.
     const labelsOn = (id) => {
       const { c, el } = panel({ proposal: withBlock() })
       staging(el)
@@ -3836,15 +3551,10 @@ describe('a proposal body as the part a task is filed against', () => {
 
 describe('the op tables', () => {
   it('are keyed alike in all three places, or the projection throws', () => {
-    // `DIMS` in proposal.js says how an op spells its size to the agent, `SHAPES`
-    // in proposalgeom.js builds its geometry, and `SIZES` in the panel draws its
-    // fields. THREE COMMENTS SAID SO AND NOTHING CHECKED IT: an op added to two
-    // of them builds, draws, and passes every other test in this directory —
-    // and then throws at `add to comment`, which is the one door nothing else
-    // covers, in a React handler, where the reader sees nothing happen.
-    //
-    // `proposalOps` IS `SIZES`'s KEY LIST, read off the table rather than written
-    // beside it (see `computed`), so this really is the third of the three.
+    // `DIMS` in proposal.js spells an op's size to the agent, `SHAPES` in
+    // proposalgeom.js builds its geometry, and `SIZES` in the panel draws its
+    // fields. An op added to only two of them passes everything else and throws
+    // at `add to comment`. `proposalOps` is `SIZES`'s key list (see `computed`).
     expect([...ops(panel().c)].sort()).toEqual([...DIM_OPS].sort())
     expect([...ops(panel().c)].sort()).toEqual([...SHAPE_OPS].sort())
   })
@@ -3924,15 +3634,11 @@ describe('the model event a re-stage sends back', () => {
   })
 
   it('refuses a report measured on the build that has just left', async () => {
-    // THE ORDER THIS HAPPENS IN, which is the whole bug. The viewport defers its
-    // report by a microtask so it cannot be raised from inside a render, and
-    // `show()` runs `endGesture` — which queues it — and then dispatches
-    // `hmr:model` with no `await` between the two. So an ordinary live rebuild
-    // landing mid-drag delivers the model event FIRST, `dropMoves` clears the
-    // moves, and the report arrives afterwards holding paths and an offset
-    // measured against an assembly that is no longer on screen. Taken, it would
-    // displace a part of the NEW build by a number nobody measured against it —
-    // and `proposalMoves` would push that straight at the scene.
+    // The viewport defers its report by a microtask, and `show()` runs
+    // `endGesture` (which queues it) then dispatches `hmr:model` without an
+    // `await`. So a rebuild landing mid-drag delivers the model event first,
+    // `dropMoves` clears the moves, and the report arrives measured against an
+    // assembly no longer on screen; it must be dropped.
     const { c } = mounted({ proposal: withBlock() })
     drag('/model/plate', [3, 0, 0])
     expect(moves(c.state.proposal)).toHaveLength(1)
@@ -3985,9 +3691,8 @@ describe('another revision opening', () => {
   })
 
   it('puts nothing of the proposal into the draft it carries across', () => {
-    // NO DRAFT ON THIS PAGE EVER CARRIES A PROJECTION, and this is the swap that
-    // used to re-render one: the door that attached it is gone, so the document
-    // travels to the agent through the hub alone (`hammerola proposal`).
+    // No draft on this page carries a projection: the document reaches the
+    // agent through the hub alone (`hammerola proposal`).
     const { c } = mounted({ proposal: withBlock() })
     drag('/model/plate', [3, 0, 0])
     c.setState({ composer: { part: 'plate', text: 'too thin' } })
@@ -4002,12 +3707,10 @@ describe('another revision opening', () => {
 
 // -- and what survives closing the tab ----------------------------------------
 //
-// The document used to be held in page state and written nowhere, so a reload
-// lost all of it. The hub keeps ONE per project now, read and written under the
-// same EDIT_TOKEN the rest of this page is behind, and deleted only when
-// somebody says so. Three claims, and each of them has a way of failing
-// silently: a load that adopts over live edits, a save that fires before the
-// load has answered and destroys what it was about to read, and a delete that
+// The hub keeps one document per project, read and written under the same
+// EDIT_TOKEN as the rest of the page and deleted only on request. Each claim can
+// fail silently: a load that adopts over live edits, a save that fires before
+// the load answers and destroys what it was about to read, and a delete that
 // clears one side of the pair.
 
 describe('the stored proposal', () => {
@@ -4142,15 +3845,11 @@ describe('the stored proposal', () => {
 
     it('and not where they were taken in another view of the same build',
        async () => {
-      // THE BUILD ALONE DOES NOT SETTLE IT. `published` is one number for the
-      // whole build and is identical across its views, while a view is a
-      // separate tree of references with its own grouping — so `/model/plate`
-      // over there is a different part, or the same part in a different layout.
-      // Within a session `onModel` already drops every move on a view switch
-      // (`dropMoves`: "a rebuild, or another revision, or another view"); a tab
-      // pressed later does not move the address, so without this a reader who
-      // switched view, dragged parts and reloaded came back on the default view
-      // with those moves re-applied to the wrong tree.
+      // The build alone does not settle it: `published` is the same across a
+      // build's views, while each view is a separate tree, so `/model/plate`
+      // there is a different part. `onModel` drops moves on a view switch
+      // (`dropMoves`), but a tab does not move the address, so a reload must not
+      // re-apply moves stored for another view.
       answering(ok(stored({ doc: withMove(), published: STAMP,
                             view: ANOTHER_VIEW })))
       const { c, el } = panel({ stored: null })
@@ -4217,16 +3916,11 @@ describe('the stored proposal', () => {
 
   // -- read into a page that is still coming up ------------------------------
   //
-  // THE COLD RELOAD IS THE CASE THE WHOLE `published` RULE WAS WRITTEN FOR, and
-  // it is the one where the answer lands in the middle of the page opening: one
-  // fetch, against the four a build takes to reach the screen. Two things the
-  // adoption needs are still in flight when it does. `meta` carries the stamp
-  // that says whether the stored moves describe THIS model, and a `meta` that
-  // has not landed reads as "some other build" — so every reload came back
-  // without them. And the first model event DROPS the moves of the build that
-  // lands, so a document adopted ahead of it is stripped a moment later by a
-  // line that cannot tell it apart from a rebuild. Either one alone is the whole
-  // feature quietly doing nothing.
+  // On a cold reload the stored document lands while the build is still
+  // loading. `meta` carries the stamp that says whether the stored moves
+  // describe this model, and a missing `meta` reads as "some other build"; and
+  // the first model event drops the moves of the build that lands, which cannot
+  // be told apart from a rebuild. Either alone would silently lose the moves.
 
   describe('read while the build is still on its way', () => {
     /** The build landing: the event `onModel` is the page's handler for. */
@@ -4416,16 +4110,12 @@ describe('the stored proposal', () => {
 
     it('and writes nothing back for having read it, on another build least of all',
        async () => {
-      // WHAT A PAGE THAT ONLY OPENED THE SHEET MUST NOT COST. `setProposal` is
-      // the save's door, and opening the sheet calls it with the document the
-      // page already had — so an adoption that left the memo empty would be
-      // followed by a post. On this build that is a request saying nothing; on
-      // ANOTHER it is the record rewritten with this page's stamp and without
-      // the moves `dropMoves` took out for display, and the reader's moves are
-      // then gone from the hub with no way back.
-      //
-      // The harder half is the one measured here: a different build, where the
-      // document on the page is honestly not the document on the hub.
+      // `setProposal` is the save's door and opening the sheet calls it with the
+      // document the page already has, so an adoption must fill the memo or a
+      // post follows. On another build that post would rewrite the record with
+      // this page's stamp and without the moves `dropMoves` hid, losing them.
+      // Measured here: a different build, where the page's document honestly
+      // differs from the hub's.
       vi.useFakeTimers()
       try {
         const fetching = answering(ok(stored({ doc: withMove(),
@@ -4635,14 +4325,10 @@ describe('the stored proposal', () => {
 
     it('stores a part of the build dragged, which does not come through the door',
        async () => {
-      // THE ONE EDIT THAT IS NOT MADE IN THE PANEL. `hmr:moved` writes the
-      // document with a functional updater — a patch landing after a swap would
-      // put back every node the swap took out — so it never reaches
-      // `setProposal`, which is where the save hangs. Left at that, the reader
-      // drags a part, sees the row, reloads and the row is gone; and the one kind
-      // of node the `published`/`view` stamps exist to bring back would be the
-      // only kind that never got stored. The asymmetry was the tell: deleting a
-      // move through its `×` saved, making one did not.
+      // `hmr:moved` writes the document with a functional updater (a patch
+      // landing after a swap would restore nodes it removed), so it never
+      // reaches `setProposal`, where the save hangs. It must save on its own, or
+      // a dragged part's row is gone after a reload.
       const fetching = answering({ status: 200, json: async () => ({}) })
       const { c } = mounted({ stored: false })
 
@@ -4691,8 +4377,7 @@ describe('the stored proposal', () => {
       expect(c.state.proposalHeld).toBe(false)
       expect(c.state.proposalStands).toBe(false)
 
-      // THE SAME DOCUMENT, which is the case that used to be skipped: a size
-      // nudged and put back, or the panel reopened.
+      // The same document: a size nudged and put back, or the panel reopened.
       c.setProposal(withBlock())
       await vi.advanceTimersByTimeAsync(5000)
 

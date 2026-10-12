@@ -231,40 +231,20 @@ def test_a_ceiling_that_will_not_go_on_raises_rather_than_warns(monkeypatch):
 def _applied_in_a_process_of_its_own(spec):
     """`apply_process_limits(spec)` somewhere it is safe to succeed, its report back.
 
-    IN A CHILD, and this is the one call in this file that has to be. Every other
-    `apply_process_limits` here is safe in-process, but for two DIFFERENT reasons
-    and it matters which:
+    In a child: this spec goes on without complaint, so in-process the ceilings
+    would land on pytest, and they are one-way -- `apply_process_limits` sets
+    soft == hard and an unprivileged process cannot raise its hard limit back
+    (`ValueError: not allowed to raise maximum limit`). In-process,
+    `TEST_LIMITS.cpu_seconds` becomes the CPU budget of the rest of the suite,
+    which then dies mid-test with `Killed`, exit 137 and no traceback.
 
-      * the four in `test_a_spec_that_does_not_name_every_ceiling_is_refused`
-        BELOW never reach `setrlimit` at all -- each is refused on the SHAPE of
-        the spec, which is what that test is about;
-      * the one in `test_a_ceiling_that_will_not_go_on_raises_rather_than_warns`
-        ABOVE does reach it, with a spec that would go on perfectly well. It is
-        safe only because `resource.setrlimit` is monkeypatched to raise. Read
-        as "nothing here gets that far anyway", that monkeypatch looks removable
-        and is not.
-
-    This one is the negative control -- the spec that goes on without complaint
-    -- so the ceilings really land on whichever process makes the call, and
-    in-process that process is pytest.
-
-    What that cost when it was in-process, because the failure gives no hint of
-    its cause: `TEST_LIMITS.cpu_seconds` became the CPU budget of the ENTIRE
-    remaining suite, which then died mid-test with `Killed`, exit 137 and no
-    traceback -- indistinguishable from an OOM, and reproducible only on a
-    machine slow enough to reach the budget (CI, three pushes running).
-
-    A fixture with a teardown cannot undo it, which is why the answer is a
-    process boundary rather than cleanup: `apply_process_limits` deliberately
-    sets soft == hard (limits.py, so a SIGXCPU handler cannot buy time), and an
-    unprivileged process may not raise its own hard limit back --
-    `setrlimit(RLIMIT_CPU, (RLIM_INFINITY, RLIM_INFINITY))` answers `ValueError:
-    not allowed to raise maximum limit`. The ceiling is one-way for the life of
-    the process.
-
-    `tests/conftest.py::guard_process_limits` is what now fails the NEXT test
-    that makes the same call in-process, instead of letting the suite be killed
-    somewhere else entirely.
+    The other `apply_process_limits` calls in this file are safe in-process:
+    those in `test_a_spec_that_does_not_name_every_ceiling_is_refused` are
+    refused on the shape of the spec before `setrlimit`, and the one in
+    `test_a_ceiling_that_will_not_go_on_raises_rather_than_warns` is safe only
+    because `resource.setrlimit` is monkeypatched to raise.
+    `tests/conftest.py::guard_process_limits` fails the next test that makes
+    such a call in-process.
     """
     program = textwrap.dedent("""
         import json, sys
@@ -330,11 +310,11 @@ def test_a_spec_that_does_not_name_every_ceiling_is_refused():
 
 
 def test_the_wrapper_runs_nothing_under_an_empty_spec(tmp_path):
-    """`wrapper.py '{}' -- <anything>` used to be "run it under no ceilings".
+    """`wrapper.py '{}' -- <anything>` refuses rather than running unfenced.
 
-    End to end because that is where it was harmless-looking: the wrapper
-    printed "ceilings in force:" with nothing after it and exec'd the target,
-    so the one line anybody would look at said the fence was up.
+    End to end because that is where an empty spec looks harmless: a wrapper
+    printing "ceilings in force:" with nothing after it and exec'ing the target
+    would show the fence as up.
     """
     marker = tmp_path / "the-target-ran"
     target = tmp_path / "target.py"

@@ -46,55 +46,28 @@ def load_project():
     if not MEMBER_RE.match(pid):
         raise BuildError(f"project id {pid!r} is not a safe path component")
 
-    # NEITHER OF THESE MAY FALL BACK TO `root.name`, and the line that did is
-    # named here so it is not put back. This package runs in exactly one place
-    # -- the hub's build process, chdir'd into the directory a push was unpacked
-    # into (`buildproc/child.py`, `store.SOURCE_PREFIX`) -- so `root.name` is
-    # `.src-<uuid4 hex>`: the hub's own bookkeeping, different on every push,
-    # never evidence about the author's project. It published a card reading
-    # `.src-89fb7abdeb1d48b5985bcb519850b284` on the front page.
+    # Neither may fall back to `root.name`: the build runs in the hub's unpack
+    # directory (`buildproc/child.py`, `store.SOURCE_PREFIX`), so that name is
+    # `.src-<uuid4 hex>`, not the author's project.
     #
-    # WHAT REPLACES IT IS THE HUB'S OWN CHAIN, transcribed. `render.build_meta`
-    # resolves the same two fields out of a meta.json that leaves them empty:
+    # This mirrors the hub's own chain in `render.build_meta`:
     #
     #     project = raw["project"] or pid
     #     title   = raw["title"]   or project
     #
-    # so the title falls back to the PROJECT and not to the id. Reaching for
-    # `pid` here instead was one side silently correcting the other -- exactly
-    # the drift this comment claims to prevent: `{"id": "2486c8fd2b05",
-    # "project": "slip-pump"}` with no title published `2486c8fd2b05` where the
-    # hub's rule gives `slip-pump`.
-    #
-    # THE ORDER OF THE TWO STATEMENTS IS THE PART THAT NEEDS CARE, because the
-    # chain is circular if either is read off the other's resolved value: the
-    # title falls back to the project, and the project falls back to the slug in
-    # the title's brackets. It is broken on the RAW title -- a title that is
-    # absent has no brackets to read, and `slug_from_title("")` is `""`, so
-    # nothing is lost by asking before the fallback rather than after it.
-    #
-    # WHAT SHOULD NAME THE PROJECT is the `project` key, which is why it is
-    # first: the slug is a fact about the AUTHOR's directory, so it is worked out
-    # where that directory exists and travels in project.json (`hammerola
-    # create`, `hammerola/projectslug.py`). The title's own brackets are the second
-    # chance -- the same string, in a field written by hand -- and `pid` is what
-    # is left when a project.json names it nowhere. It is the honest last
-    # resort: already validated (MEMBER_RE, above) and always non-empty. `build`
-    # warns on the log when it comes to that (`project_title`).
+    # The project falls back to the slug in the RAW title's brackets (breaking
+    # the circularity; `slug_from_title("")` is `""`), then to `pid`, which is
+    # validated and non-empty. The `project` key comes first because the slug is
+    # worked out in the author's directory (`hammerola/projectslug.py`). `build`
+    # warns when it falls back to `pid` (`project_title`).
     raw_title = str(data.get("title") or "").strip()
     project = (str(data.get("project") or "").strip()
                or project_title.slug_from_title(raw_title)
                or pid)
     title = raw_title or project
-    # Both go through the hub's own text rule, transcribed once in views.py.
-    # This used to be a check of its own -- a ceiling plus `ord(ch) < 32 or
-    # ord(ch) == 127` -- and that spelling covered only PART of Unicode category
-    # Cc (the C0 controls and DEL, not the C1 block U+0080-U+009F), so U+202E
-    # RIGHT-TO-LEFT OVERRIDE (Cf) went through here and
-    # was refused by the hub after the geometry had been computed. Not a
-    # cosmetic difference either: that character reverses the text AROUND the
-    # field it sits in, i.e. the rest of the card. Angle brackets are allowed
-    # through, exactly as the hub allows them here -- see hub_text_problem.
+    # Both go through the hub's own text rule (hub_text_problem), so e.g.
+    # U+202E is refused here rather than by the hub after the build. Angle
+    # brackets are allowed, as the hub allows them for these fields.
     for field, value in (("title", title), ("project", project)):
         problem = hub_text_problem(value, MAX_TITLE_CHARS,
                                    angle_brackets_ok=True)
@@ -110,17 +83,9 @@ def load_project():
 def refuse_test_id():
     """Stop before a run that would publish under the test id.
 
-    That id was written by `cad-publish init --test`, a flag whose entire
-    purpose was to let somebody run the pipeline without a project -- on the
-    template itself, on a throwaway checkout, on a worktree opened to change
-    `checklib.py`. NOTHING WRITES IT ANY MORE: the flag went away with the
-    local build path (issue #20), so what reaches this function is a
-    project.json somebody wrote by hand or carried over from before.
-
-    The refusal stays because the hazard never depended on the flag. The id is
-    a legal path component, so a push under it puts a project literally called
-    "local-test-do-not-publish" on the hub, or lands a throwaway build on
-    whatever else already answers to that name.
+    Nothing writes this id; it reaches here from a hand-written or old
+    project.json. It is a legal path component, so a push under it would put a
+    project literally called "local-test-do-not-publish" on the hub.
 
     The message may name no local build, because there is none: checking a
     model IS publishing it, into a slot the next push overwrites.

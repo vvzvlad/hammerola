@@ -3,25 +3,20 @@
  * switcher and the floating toolbar — everything round the model that is not a
  * panel about the model.
  *
- * ONE SECTION OF `computed()` IN THE BUILD PAGE, LIFTED WHOLE (issue #103). It
- * takes the page's state, its props and a bag of the page's own doors, and
- * answers with the keys `render()` draws all of that from — the same keys, with
- * the same values, they had while this was a block inside that method.
+ * One section of the build page's `computed()`: it takes the page's state, its
+ * props and a bag of the page's actions, and returns the keys `render()` draws
+ * all of that from.
  *
- * `props` IS ITS OWN ARGUMENT AND NOT PART OF `deps`, because it is not a door:
- * `commentsOpen` is what the rail falls back to before the reader has said
- * anything about it, which is a fact about how this page was mounted rather
- * than a call back into it.
+ * `props` is a separate argument, not part of `deps`, because it is not an
+ * action: `commentsOpen` is what the rail falls back to before the reader has
+ * chosen, a fact about how the page was mounted.
  *
- * WHAT ARRIVES THROUGH `deps`. The writers and the two toggles are methods of
- * the component, because what they write is its state and what they push is its
- * viewport. `threads`, `openCount`, `revRows` and `downloadGroups` are the four
- * panels' own answers, built by the modules beside this one and drawn by
- * controls that live up here — the rail's count on the comments button, the
- * picker's rows inside the header's menu. And `narrow` is the answer every
- * panel on the page shares: which layout this is. What a popover becomes at
- * phone width and how a chosen pill is drawn are `popover` and `tab` in
- * ui/src/panelstyle.js, imported rather than handed over.
+ * `deps` carries the writers and the two toggles (component methods, since
+ * they write its state and push its viewport); `threads`, `openCount`,
+ * `revRows` and `downloadGroups`, the other panels' answers drawn by controls
+ * up here (the comments button's count, the picker's rows in the header
+ * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
+ * come from ui/src/panelstyle.js.
  */
 import {
   PAGE, isPointerPage, mb, projectUrl, shortId, stamp,
@@ -50,13 +45,12 @@ export function chromeView(s, props, deps) {
 
   const cmpReady = s.cmp.length === 2;
 
-  // WHICH TOOL IS REALLY IN FORCE DOWN HERE, which is not always `s.tool`:
-  // opening a comparison does not disarm one (the three handlers guard
-  // themselves instead — `toolsOff`), so the field can name a tool that cannot
-  // fire. Only the hint below reads this; the BUTTONS are drawn from
-  // `s.tool === t` on purpose, so the one that is armed still shows as armed
-  // while it is out of service and comes back armed when the panel closes.
-  // `cut` is not one of the three and is left alone: the hold key sections a
+  // The tool really in force, which is not always `s.tool`: opening a
+  // comparison does not disarm one (the three handlers guard themselves via
+  // `toolsOff`), so the field can name a tool that cannot fire. Only the hint
+  // below reads this; the buttons are drawn from `s.tool === t` so the armed
+  // one still shows as armed while out of service and comes back when the
+  // panel closes. `cut` is not one of the three: the hold key sections a
   // comparison's scene like any other.
   const armed = toolsOff() && s.tool !== 'cut' ? null : s.tool;
 
@@ -66,12 +60,10 @@ export function chromeView(s, props, deps) {
     if (t === 'measure' && s.tool !== 'measure') toast('Click a part for its size, or two for the gap between them');
   };
 
-  // Two of these are reachable today. `building` and `failed` need a job id
-  // this page does not have: `GET /api/v1/jobs/<id>` exists and is behind
-  // EDIT_TOKEN, but nothing tells a build page which job produced it. The
-  // brief (block 11) asks for all of them; what is missing is that link, not
-  // the endpoint. (The front page does show the two words — issue #32 — off
-  // the draft pointer, which a build page has no equivalent of.)
+  // Two of these are reachable. `building` and `failed` need a job id this
+  // page does not have: `GET /api/v1/jobs/<id>` exists behind EDIT_TOKEN, but
+  // nothing tells a build page which job produced it. (The front page shows
+  // both words off the draft pointer, which a build page has no equivalent of.)
   const status = s.pending
     ? { text: 'new build ready', style: 'color:var(--accent-text);background:var(--accent-bg);border:1px solid var(--accent-line)', dot: 'var(--accent)' }
     : { text: isPointerPage() ? 'up to date' : 'pinned build', style: 'color:var(--text-soft);background:transparent;border:1px solid transparent', dot: 'var(--ok)' };
@@ -96,16 +88,11 @@ export function chromeView(s, props, deps) {
   return {
     // -- the header row ------------------------------------------------------
     //
-    // `min-height` RATHER THAN `height`, AND IT WRAPS. Nothing that could be
-    // dropped from this row makes it fit below the breakpoint: what is left —
-    // the mark, the title, the revision picker and four controls — is still
-    // wider than a phone, and the theme button #35 moved in here is a fifth.
-    // A row that cannot break its line can only overflow,
-    // and the root this sits in is `overflow:hidden`, so overflowing means
-    // silently CUT OFF rather than scrolled: the comment button would simply
-    // not be there. It grows a second line instead. Same fix, same reason, as
-    // `static/_v/site.css` already makes on the resolver's copy of this header
-    // — read the rule there, the argument is written out in full.
+    // `min-height` rather than `height`, and it wraps: below the breakpoint the
+    // mark, title, revision picker and five controls are still wider than a
+    // phone, and the root is `overflow:hidden`, so a row that cannot wrap is
+    // silently cut off (the comments button would vanish). Same rule as
+    // `static/_v/site.css` on the resolver's copy of this header.
     headerStyle: 'min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;'
       + 'gap:6px 12px;padding:0 16px;'
       + `${HEADER_BAR};position:relative;z-index:30`,
@@ -122,24 +109,17 @@ export function chromeView(s, props, deps) {
     showStatus: !narrow,
 
     title: (meta && (meta.title || meta.project)) || '',
-    // THE COLUMN HOLDING THE TITLE HAS TO BE ABLE TO SHRINK, and it could
-    // not: `flex:none` stood here, so the item kept its content width whatever
-    // the window did, and the `text-overflow:ellipsis` on the title inside it
-    // could never fire. A model named after its whole assembly pushed the row
-    // past the edge of the window rather than being cut — the failure the
-    // ellipsis was written to prevent, with the ellipsis in place.
-    // `0 1 auto`: shrink allowed, grow still refused, because a title that
-    // claimed the leftover room would push the picker beside it away from it.
+    // The title column must be able to shrink, or the title's
+    // `text-overflow:ellipsis` never fires and a long model name pushes the row
+    // past the window edge. `0 1 auto`: shrink allowed, grow refused, because a
+    // title that claimed the leftover room would push the picker away from it.
     titleColStyle: 'display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0',
     subtitle: meta ? subtitle() : '',
-    // SHORTENED HERE TOO, and this was the one place it was not. `PAGE.slot`
-    // is a path segment straight out of the URL, so on a pinned revision it is
-    // the full digest of the sources — 64 characters, in a fixed-width header
-    // row, next to a title and a status chip that then have nowhere to go. The
-    // picker below this button has always drawn the same value at seven
-    // (`shortId`), so the header was contradicting the menu it opens. A
-    // pointer name passes through unchanged: `dev` is special-cased and
-    // `latest` is shorter than the cut.
+    // Shortened: `PAGE.slot` comes straight from the URL, so on a pinned
+    // revision it is the full 64-character source digest, too wide for the
+    // header row. The picker draws the same value via `shortId`, so the two
+    // agree. Pointer names pass through: `dev` is special-cased and `latest` is
+    // shorter than the cut.
     slot: shortId(PAGE.slot),
     // The whole of it, for the reader who needs to copy one. A revision is
     // addressed by its full digest everywhere off this page — `hammerola
@@ -196,12 +176,10 @@ export function chromeView(s, props, deps) {
     downloadGroups,
     dlToggle: stop(() => setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false })),
     dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
-    // CLAMPED LIKE THE OTHER TWO. This one is a HEADER button and survives
-    // everything the narrow branch drops, so its menu is reachable on a phone
-    // — and `right:0` is measured from a button that, once the row has
-    // wrapped, is no longer at the window's right edge: a 250px menu then
-    // starts off the left of a 390px screen and is cut off by the root's
-    // `overflow:hidden` with nothing to scroll.
+    // Clamped like the other two: this header button survives the narrow
+    // branch, and once the row wraps `right:0` is no longer the window's right
+    // edge, so a 250px menu would start off the left of a 390px screen and be
+    // cut off by the root's `overflow:hidden`.
     dlMenuStyle: popover({
       narrow, anchor: 'right:0;top:40px', width: '250px', radius: '9px',
       tail: 'padding:6px 0;', z: 40, open: s.dlOpen }),
@@ -225,18 +203,14 @@ export function chromeView(s, props, deps) {
       // can be asked for — from the callback, because `stateNow().token` is
       // still the old one until the update lands.
       //
-      // AND THE PROPOSAL COMES BACK ON THE MODEL, which is the other half of
-      // what `tokenClear` did and has to be undone in the same breath. That
-      // door shuts the eye as a DEFAULT for a reader who has stopped being an
-      // editor; left standing across a round trip it stops being a default and
-      // becomes a trap, because nothing connects it to the gesture that caused
-      // it. The reader hands the token back, presses `add a box`, and the model
-      // does not change — `stageProposal` would reach `proposalOverlay` and be
-      // turned away by a flag set before they left.
+      // `proposalOff` is cleared too, undoing the other half of `tokenClear`.
+      // That action hides the proposal as a default for a reader who stopped
+      // being an editor; kept across a round trip it would make `stageProposal`
+      // silently refuse the next `add a box`.
       //
-      // STAGED FROM THE CALLBACK for the same reason the feed is: the flag is
-      // read inside those doors, so a push made before this update landed would
-      // be refused by exactly the value being cleared.
+      // Staged from the callback for the same reason as the feed: the flag is
+      // read inside those actions, so a push before this update landed would be
+      // refused by the very value being cleared.
       setState({ token: value, tokenPop: false, tokenDraft: '',
                       proposalOff: false },
                     () => {
@@ -258,37 +232,25 @@ export function chromeView(s, props, deps) {
       // The feed goes with it: it was fetched under a token this browser no
       // longer has, and a reader without one may not read the queue at all.
       //
-      // AND THE `Add primitive` MENU, whose button is HIDDEN WITHOUT A TOKEN
-      // like Move. Left open it is a card standing over the model with the
-      // button that takes it back no longer drawn.
+      // The `Add primitive` menu closes too: its button is hidden without a
+      // token, like Move, so an open menu would have no way back.
       //
-      // AND THE PROPOSAL COMES OFF THE MODEL, THROUGH THE EYE — which is a
-      // different thing from the bare `proposalOverlay(null)` that stood here,
-      // and the difference is a state machine that cannot disagree with
-      // itself. `proposalOff` is now the one answer to "is the proposal on the
-      // model", and both doors to the viewport read it. Cleared by hand
-      // instead, the overlay went off while that flag still said it was on —
-      // and since the branch now survives this (it is drawn on the document
-      // alone), the first edit through any of its rows called `setProposal`
-      // and staged the bodies straight back onto a model this had just
-      // cleared.
+      // The proposal comes off the model through the eye, not a bare
+      // `proposalOverlay(null)`: `proposalOff` is the single answer to "is the
+      // proposal on the model", and both viewport actions read it. Clearing the
+      // overlay alone would leave the flag on, and the first edit through a
+      // branch row would call `setProposal` and stage the bodies back.
       //
-      // WHY OFF AT ALL, given the panel is what carries the token: the reader
-      // is giving up the right to edit, and a body standing over the model is
-      // a statement they can no longer send. THE BRANCH STAYS, so the document
-      // is still there to be read and the eye is still there to put it back —
-      // this is a default and not a lock, which is the honest shape for it:
-      // nothing here is a permission gate, and pretending otherwise would be
-      // the invented adversary AGENTS.md warns about.
+      // Off because a reader giving up the token can no longer send what the
+      // bodies say. The branch stays, so the document can still be read and the
+      // eye can put it back: a default, not a permission gate.
       //
-      // BOTH PUSHES CARRY THEIR OWN ANSWER rather than leaning on the flag
-      // they just set: `setState` has not landed when these run, so the doors
-      // would still read the old `proposalOff` and push the proposal back
-      // down. `null` and a document with no moves in it mean the same thing on
-      // either side of that update, which is what makes the order not matter.
-      // The moves need the second call at all because nothing else pushes
-      // here, and without it the displaced parts would stand where they are
-      // until some later edit happened to send a document.
+      // Both pushes carry their own answer instead of relying on the flag:
+      // `setState` has not landed when they run, so the actions would still read
+      // the old `proposalOff`. `null` and a document with no moves mean the same
+      // on either side of the update, so order does not matter. The moves need
+      // the second call because nothing else pushes here; without it displaced
+      // parts would stay displaced until a later edit sent a document.
       setState({ token: null, tokenPop: false, tokenDraft: '',
                       composer: null, notePop: null, feed: [],
                       opsOpen: false, settingsOpen: false, proposalOff: true,
@@ -306,10 +268,8 @@ export function chromeView(s, props, deps) {
     // Narrow, it covers the thing it describes — so it starts closed and this
     // button in the header is what opens it. Its openness is state and only
     // state; the constructor says why it is not remembered.
-    // AND NOT WHILE TWO REVISIONS ARE BEING COMPARED, which is the other way
-    // the tree can be absent: the compare panel stands in its place, so the
-    // button would be offering to open something the page is not drawing
-    // either way.
+    // Not while two revisions are compared either: the compare panel stands in
+    // the tree's place, so the button would open nothing.
     treeShown: !narrow || s.treeOpen,
     treeToggle: stop(() => setState({ treeOpen: !s.treeOpen })),
     treeBtnStyle: btn(false, !narrow || s.compare) + ';border:1px solid '
@@ -317,25 +277,15 @@ export function chromeView(s, props, deps) {
 
     railToggle: stop(() => setState({ rail: !railOpen })),
     railBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)' + (viewer ? ';display:none' : ''),
-    // WHAT SEPARATES THE TWO STATES IS TONE, NOT INK CONTRAST, and saying so
-    // plainly is the only honest version. White on `--accent` is 4.27:1 in
-    // both themes and cannot be raised without moving the accent itself, so
-    // the live pill is not the high-contrast one; and the resting pill
-    // cannot be "the faint version" of it either, because a grey that looks
-    // faint on a light page is a grey that stands out on a dark one. What
-    // does carry across both themes and reads at 17px is the disc turning
-    // BLUE — so that is the signal, and each state simply gets an ink its
-    // own fill can be read with.
+    // The two states differ by tone, not ink contrast. White on `--accent` is
+    // 4.27:1 in both themes and cannot rise without moving the accent, and a
+    // grey that looks faint on a light page stands out on a dark one. The
+    // signal that carries across both themes at 17px is the disc turning blue;
+    // each state gets an ink its own fill can be read with.
     //
-    // WHICH MEANS THE RESTING PILL IS AN ORDINARY CHIP: the neutral chip
-    // fill with the secondary ink on it, `--text-soft` on `--chip-bg` —
-    // 6.51:1 in light, 8.36:1 in dark. It reads as a count at rest in both.
-    //
-    // IT WAS `--line-strong` UNDER WHITE, a line role spent as a fill on the
-    // strength of a number measured in the light theme alone: white on light
-    // `--line-strong` is 1.68:1, which is not "faint" but illegible, and on
-    // the dark value it is 9.89:1 — so the resting pill came out CLEARER
-    // than the live one, exactly backwards, in half the interface.
+    // So the resting pill is an ordinary chip: `--text-soft` on `--chip-bg`,
+    // 6.51:1 in light, 8.36:1 in dark. (`--line-strong` under white is
+    // 1.68:1 in light and 9.89:1 in dark, backwards in one theme.)
     railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;'
       + (openCount ? ON_ACCENT
                    : 'background:var(--chip-bg);color:var(--text-soft)')
@@ -354,32 +304,21 @@ export function chromeView(s, props, deps) {
 
     // -- the theme, standing next to the comments ----------------------------
     //
-    // WHERE THE ISSUE PUTS IT, in as many words: «кнопка — жить у
-    // комментариев» (#35). It used to sit in the floating strip under the
-    // model, with Measure and Fit, and that was right while it changed the
-    // CANVAS and nothing else. It changes the whole page now, so the strip
-    // that belongs to the viewport is the wrong drawer for it — and it is the
-    // one part of this page a phone does not draw at all (`showTools`), which
-    // is how a page-wide preference came to be unreachable at the width where
-    // a reader is most likely to want the dark one.
+    // In the header, not the floating strip: it changes the whole page, and the
+    // strip is not drawn on a phone (`showTools`), where a reader most likely
+    // wants the dark theme.
     //
-    // BESIDE THE COMMENTS BUTTON AND NOT INSIDE THE RAIL, which is the half
-    // of that instruction worth writing down rather than deciding twice. The
-    // rail is `display:none` two ways over — while it is closed, and for a
-    // reader with no token at all — so a control living IN it would be a
-    // preference you reach by opening a panel you may not even have. The
-    // header row holds the comments control itself, wraps instead of being
-    // clipped, and is drawn at every width and for every reader: the button
-    // stands next to the comments and stays reachable.
+    // Beside the comments button, not inside the rail: the rail is
+    // `display:none` while closed and for a reader with no token, while the
+    // header row is drawn at every width for every reader and wraps instead of
+    // clipping.
     //
-    // NO `stop()`, unlike the two buttons before it — this one is last in the
-    // row and nothing follows it. Parts and Comments each open
-    // something and must not have the same click close it again; this one
-    // opens nothing, so letting the click reach `rootClick` is what makes a
-    // press over here dismiss a menu left open over there.
+    // No `stop()`, unlike the two buttons before it: Parts and Comments open
+    // something the same click must not close, this one opens nothing, so the
+    // click reaching `rootClick` dismisses a menu left open elsewhere.
     //
-    // THE LABEL NAMES THE MODE THE READER IS IN, the way the access button
-    // beside the token does; what it switches to is in the tooltip.
+    // The label names the current mode, like the access button beside the
+    // token; the tooltip names the mode it switches to.
     themeDark: s.theme === 'dark',
     themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
     themeTitle: s.theme === 'dark'
@@ -390,26 +329,17 @@ export function chromeView(s, props, deps) {
 
     // -- the strip under the header: the projects this browser has been in
     //
-    // A ROW OF ITS OWN and not part of the 50px header above, which is already
-    // carrying a title, a picker, a status chip and four controls.
+    // A row of its own, not part of the 50px header, which already carries a
+    // title, a picker, a status chip and four controls.
     //
-    // BELOW TWO IT IS NOT DRAWN AT ALL — not drawn `display:none`, but absent:
-    // a strip whose only link is the project already on screen is noise with a
-    // border round it, and the row it would occupy is 30px off the model.
+    // Below two tabs it is not rendered at all: a strip whose only link is the
+    // project on screen is noise, and it costs 30px of model.
     //
-    // WHICH ONE IS ACTIVE IS ASKED OF THE ADDRESS, `PAGE.pid`, and of nothing
-    // else. Nothing stores it and no state here holds it, so the highlighted
-    // pill cannot disagree with the page it is drawn on (store.js says why).
-    // IT WRAPS, and that is not a detail. Ten pills at the 190px cap below,
-    // with their gaps and this padding, is close to 2000px — wider than the
-    // window this interface is drawn for, and the root above is
-    // `overflow:hidden`. A row that cannot break its line can only overflow,
-    // and overflowing under `overflow:hidden` means silently CUT OFF rather
-    // than scrolled: the eleventh project this browser opened would evict the
-    // coldest tab, and the reader would watch a strip that never changed. It
-    // is the same failure `static/_v/site.css` fixed on the resolver's own
-    // header, and it is fixed here the same way — wrap, so a full strip grows
-    // a second row instead of losing its tail.
+    // The active tab is derived from the address (`PAGE.pid`) and nothing else,
+    // so the highlight cannot disagree with the page (store.js says why).
+    // It wraps: ten pills at the 190px cap are close to 2000px and the root is
+    // `overflow:hidden`, so a non-wrapping strip would silently lose its tail.
+    // Same rule as `static/_v/site.css` on the resolver's header.
     tabsShown: openTabs.length > 1,
     tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
       + HEADER_BAR,
@@ -443,12 +373,10 @@ export function chromeView(s, props, deps) {
 
     // Views come from the model's code: as many tabs as it declares.
     //
-    // ONE LIST, DRAWN TWO WAYS. Each entry carries both dresses — `style` is
-    // the pill the strip draws it as, `rowStyle` the line the menu draws it
-    // as — because which of the two is on screen is a question about how MANY
-    // views there are and about nothing else. Building the rows only in the
-    // branch that shows them would put the view switcher's identity in two
-    // places, free to disagree about which view is the one you are on.
+    // One list, drawn two ways: each entry carries `style` (the pill in the
+    // strip) and `rowStyle` (the line in the menu), because which one shows
+    // depends only on how many views there are. Building rows only in the
+    // branch that shows them would put the switcher's identity in two places.
     viewTabs: views.map((v) => ({
       key: v.id,
       label: v.name,
@@ -483,139 +411,99 @@ export function chromeView(s, props, deps) {
       opsOpen: false, settingsOpen: false })),
     viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
       + (s.viewsOpen ? TAB_ON : TAB_OFF),
-    // OPENS UPWARDS, unlike every other popover on this page: the toolbar it
-    // hangs off floats at the BOTTOM of the model, so a menu measured from
-    // the top of its button would be drawn off the bottom edge of the window.
+    // Opens upwards, unlike every other popover on this page: the toolbar
+    // floats at the bottom of the model, so a menu measured from the top of its
+    // button would be drawn off the bottom of the window.
     //
-    // WHICH MAKES `bottom:38px` A MEASUREMENT AND NOT A TASTE, since the
-    // offset is counted up from the button rather than down from anything:
-    // the button is about 25px tall (a 12px line box and 5px of padding
-    // either side), the toolbar adds its 4px of padding and 1px border, and
-    // the rest is the air between the two cards. It moves with
-    // `viewBtnStyle` — grow the button and this has to grow with it, or the
-    // menu comes down on top of the control that opened it.
+    // `bottom:38px` is a measurement: the button is about 25px tall (a 12px
+    // line box and 5px padding either side), the toolbar adds 4px padding and a
+    // 1px border, the rest is the gap between the cards. It moves with
+    // `viewBtnStyle`, or the menu covers the control that opened it.
     //
-    // AND IT IS THE ONE POPOVER THAT TAKES NO SHEET ON A NARROW WINDOW. The
-    // toolbar carries `contain:layout`, and layout containment
-    // makes the element a containing block for descendants positioned `fixed`
-    // AS WELL AS `absolute` (CSS Containment 1, §3.2) — so `popSheet` would
-    // resolve its `left`/`right`/`bottom` against the TOOLBAR's box rather
-    // than the window, and the "sheet" would come up over the button that
-    // opened it. Nor does it need the clamp the header's panels need: this
-    // toolbar is always centred on the bottom edge, and on a narrow window it
-    // is this button and Fit and nothing else, so 260px measured from the
-    // button's left edge is inside a 320px window.
+    // No sheet on a narrow window: the toolbar has `contain:layout`, which makes
+    // it the containing block for `fixed` as well as `absolute` descendants
+    // (CSS Containment 1, §3.2), so `popSheet` would resolve against the
+    // toolbar. No clamp either: the toolbar is centred on the bottom edge and
+    // narrow it holds only this button and Fit, so 260px from the button's left
+    // edge fits a 320px window.
     //
-    // NO `z-index`, deliberately: the toolbar is its own stacking context for
-    // the same reason, so any value here only sorts this menu against the
-    // toolbar's other children. What has to move is the CONTAINER —
-    // `toolbarStyle` below.
+    // No `z-index`: the toolbar is its own stacking context, so a value here
+    // only sorts this menu against its siblings; `toolbarStyle` raises the
+    // container instead.
     //
-    // HEIGHT CAPPED like the revision menu's list, because the count here is
-    // the model's to choose: a model may declare twenty views, and the root
-    // this page lives in is `overflow:hidden` — a menu taller than the window
-    // is not scrolled, it is cut off, with the rows past the cut unreachable.
+    // Height capped like the revision menu's list: a model may declare twenty
+    // views, and under the root's `overflow:hidden` a taller menu is cut off.
     viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;overflow:auto;'
       + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
       + (s.viewsOpen ? 'block' : 'none'),
-    // THE LAYER THE WHOLE TOOLBAR SITS ON, raised for as long as ANY of its
-    // menus is open. While one is, the toolbar has to cover the overlays that
-    // share the model's area with it — the "This view did not render" card (14),
-    // the section panel (15) and the composer (16) — or a click on a row one of
-    // them covers lands in the overlay instead. It stays UNDER the tree rail
-    // on a narrow window (20) and under the header (30), which are the two
-    // things that are allowed to cover the toolbar. Closed, it is 12 again,
-    // so nothing else on the page ever sees a different order.
+    // The toolbar's layer, raised while any of its menus is open so it covers
+    // the overlays sharing the model's area — the "This view did not render"
+    // card (14), the section panel (15) and the composer (16) — otherwise a
+    // click on a covered row lands in the overlay. It stays under the narrow
+    // tree rail (20) and the header (30). Closed, it is 12.
     toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
-    // WHAT THE TOOLBAR KEEPS WHEN IT IS THE WIDTH OF A PHONE: the view tabs
-    // and Fit, which are the two controls about LOOKING at the model. The
-    // rest goes — Measure and Comment are gestures that want a pointer and a
-    // canvas with room to aim in, Frame saves a PNG a phone has nowhere to
-    // put, and the theme toggle is a preference rather than a step. The
-    // dividers go with them: three rules with nothing left between them.
+    // At phone width the toolbar keeps the view tabs and Fit, the controls for
+    // looking at the model. Measure and Comment want a pointer and room to aim,
+    // Frame saves a PNG a phone has nowhere to put, the theme toggle is a
+    // preference; the dividers go with them.
     //
-    // MOVE IS NOT ON THIS STRIP and goes narrow all the same, out of its own
-    // row in `menuItems`: it is the same gesture wanting the same room, and
-    // the flag it reads is this one.
+    // Move is not on this strip but reads the same flag from its row in
+    // `menuItems`: the same gesture wanting the same room.
     //
-    // IT TAKES AWAY NO POPOVER, and this once said the opposite — it read as
-    // the reason some of this page's popovers needed clamping and others did
-    // not. None of the buttons above opens one, so dropping them narrows
-    // nothing but the toolbar itself.
-    //
-    // WHICH POPOVERS ARE CLAMPED IS NOT WRITTEN DOWN HERE, and that is on
-    // purpose: this comment has carried a count of them twice and been wrong
-    // both times, because a sentence cannot be re-checked when a panel is
-    // added. `narrow.test.js` names the clamped ones and asserts it — the
-    // list lives there, where it can fail.
+    // None of these buttons opens a popover, so this narrows only the toolbar.
+    // Which popovers are clamped is asserted in `narrow.test.js`, not listed
+    // here.
     showTools: !narrow,
-    // AND BOTH ARE OUT OF SERVICE WHILE THE SCENE IS A COMPARISON'S, which is
-    // a different question from the `viewer` beside it: that one is about who
-    // the reader IS, this one about what is under the cursor. What each tool
-    // filed against a comparison, and why the answer is `toolsOff()` rather
-    // than `s.compare`, is written out on the method. The buttons are the half
-    // a person sees; the handlers are the half that stops a tool armed before
-    // the panel opened.
+    // Both are out of service while the scene is a comparison's. That differs
+    // from `viewer`: that one is about who the reader is, this about what is
+    // under the cursor. `toolsOff()` documents why it is not `s.compare`. The
+    // buttons are the visible half; the handlers stop a tool armed before the
+    // panel opened.
     //
-    // MOVE IS NOT A BUTTON HERE ANY MORE: it is armed from the object's own
-    // row menu (`menuItems`), which is where the reader has already said WHICH
-    // object the drag is about. Its share of `toolsOff` is the `compared`
+    // Move is armed from the object's row menu (`menuItems`), where the reader
+    // has already picked the object; its share of `toolsOff` is the `compared`
     // exclusion that row sits inside.
     tMeasure: setTool('measure'),
     measureBtnStyle: btn(s.tool === 'measure', false, toolsOff()),
     tComment: setTool('comment'),
     commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff()),
-    // NOT ONE OF `s.tool`, and that is the whole difference between this
-    // button and the two above it. Those two ARM A GESTURE on the canvas
-    // and the viewport is told which one; this one drops a menu of the
-    // primitives a body can be and arms nothing of its own. The bodies it adds
-    // CAN be dragged — under the MOVE tool, armed from any part's row menu,
-    // because a staged body is a body in the scene like any other and one tool
-    // for moving things is better than two. What that drag means is the
-    // document's business: it ends in `hmr:proposalmove` and writes the body's
-    // `at`, raising no chip. So this button is drawn like its neighbours and lit
-    // from its own flag.
+    // Not one of `s.tool`: the two buttons above arm a canvas gesture, this
+    // one drops a menu of primitives and arms nothing. The bodies it adds can be
+    // dragged with the Move tool (armed from any row menu), since a staged body
+    // is a body in the scene like any other; that drag ends in
+    // `hmr:proposalmove` and writes the body's `at`, raising no chip. So it is
+    // drawn like its neighbours and lit from its own flag.
     //
-    // THE VIEW SWITCHER'S MENU AND NOT A THIRD PATTERN. It hangs off a button
-    // in this same toolbar, so it is built the way that one is: a flag of the
-    // page's own, a `stop()`ed toggle that shuts the other menus, a card
-    // measured UPWARDS from the button (`viewMenuStyle` says why a menu in this
-    // toolbar cannot be measured from the top), and `rootClick`/Escape to
-    // dismiss it. What is in the rows is `proposalOps` in ui/src/proposalview.js
-    // — read off the same table that gives each op its size fields.
+    // Built like the view switcher's menu: a page flag, a `stop()`ed toggle
+    // that shuts the other menus, a card measured upwards (`viewMenuStyle`
+    // says why), and `rootClick`/Escape to dismiss. The rows are `proposalOps`
+    // in ui/src/proposalview.js, read off the table that gives each op its size
+    // fields.
     //
-    // HIDDEN WITHOUT A TOKEN, like Move and unlike Measure: everything the
-    // proposal produces is stored on the hub under the same token, so a reader
-    // who cannot edit has nowhere to put it.
+    // Hidden without a token, like Move and unlike Measure: everything the
+    // proposal produces is stored on the hub under that token.
     //
-    // AND NOT TAKEN OUT OF SERVICE BY A COMPARISON, unlike all three. What
-    // `toolsOff` guards is a task filed in the BUILD's terms against a scene
-    // that is not the build — a `/cmp/…` path in `partId`. A body added here
-    // names no part of anything, and what it describes is the reader's own claim
-    // about a motor or a wall, which is as true over a comparison as over a
-    // build.
+    // Not disabled by a comparison, unlike the other three: `toolsOff` guards
+    // tasks filed in the build's terms against a `/cmp/…` scene, and a body
+    // added here names no part — it is the reader's claim about a motor or a
+    // wall, true over either scene.
     //
-    // THE ROWS OF THE BRANCH DO WRITE `sel`, THOUGH, and that is where the same
-    // hazard would have got in by another road: a row of the proposal's branch
-    // selects the path its body is staged under, and under a comparison that
-    // path is the comparison's. So those rows select by the DOCUMENT's own
-    // node id while one is up — the reasoning is on `path` in `proposalRows`,
-    // and `measAdd` refuses such a value by its shape.
+    // The branch's rows do write `sel`, though: under a comparison the path a
+    // body is staged under is the comparison's, so those rows select by the
+    // document's own node id (see `path` in `proposalRows`), and `measAdd`
+    // refuses such a value by its shape.
     tProposal: stop(() => setState({
       opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
       settingsOpen: false, tokenPop: false, menu: null })),
     proposalBtnStyle: btn(s.opsOpen, viewer, false),
-    // THE CARD, drawn exactly as the view switcher's is and for exactly the same
-    // reasons — upwards from the button, no `z-index` of its own (the toolbar is
-    // its own stacking context, so a value here would only sort this menu
-    // against the toolbar's other children), and no sheet on a narrow window
-    // (the button is one of the ones `showTools` takes away, and a `fixed` child
-    // of a `contain:layout` element clamps itself to that element anyway).
+    // The card, drawn like the view switcher's: upwards from the button, no
+    // `z-index` (the toolbar is its own stacking context), and no sheet on a
+    // narrow window (`showTools` hides the button there, and a `fixed` child of
+    // a `contain:layout` element is bound to that element anyway).
     //
-    // NARROWER THAN THAT ONE because a row here is one word rather than a
-    // model's own sentence, and with no height cap for the same reason: the ops
-    // are this page's own table of three and not something a model declares.
+    // Narrower because a row is one word, and no height cap because the ops are
+    // this page's own table of three, not something a model declares.
     proposalMenuStyle: 'position:absolute;left:0;bottom:38px;width:170px;'
       + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
       + (s.opsOpen ? 'block' : 'none'),
@@ -658,30 +546,19 @@ export function chromeView(s, props, deps) {
     // only place on the page that would still have described it as live.
     hintText: armed === 'comment' ? 'click the model to pin a task'
       : armed === 'measure' ? 'click a part, or two, to measure'
-      // `it` and not `a part`: this tool is armed on a body of the proposal
-      // just as readily as on a part of the build, and the row that arms it
-      // already says which of the two the reader is in.
+      // `it`, not `a part`: the tool arms on a proposal body as readily as on
+      // a build part, and the row that armed it already says which.
       //
-      // AND BOTH HALVES OF THE WIDGET IN ONE LINE, because there is one tool
-      // now and this is the only place on the page that describes it while it
-      // is in force. `drag it` alone was true and incomplete — it slides and
-      // says nothing about turning — and the `turn` line that used to stand
-      // under this one described the other half of the same widget as though
-      // it were a second tool. A reader told half of it never goes looking
-      // for the rest.
+      // Both halves of the widget in one line, since this is the only place
+      // describing the tool while it is in force: it slides and turns.
       //
-      // THE DISC AND NOT THE RING, which is the one piece of aim this has
-      // room for: the press is taken by the coloured handle, and the arc
-      // drawn through it is a picture the trackball still owns (`rings.js`),
-      // so naming the ring would send the reader to grab the one part of the
-      // widget that does nothing.
+      // The disc, not the ring: the press is taken by the coloured handle, and
+      // the arc through it is drawn by the trackball (`rings.js`) and takes no
+      // press.
       //
-      // AND THE ARROW AND THE QUAD FOR THE SAME REASON. `drag it` described a
-      // press on the part itself, which no longer moves anything
-      // (`viewport/tools.js`): a drag that starts anywhere but on a piece of
-      // the widget orbits, so the strip has to send the hand to the pieces.
-      // The origin dot is left unnamed — it is drawn, it takes no press, and
-      // naming it would be the very mistake the paragraph above avoids.
+      // The arrow and the quad likewise: a press on the part itself moves
+      // nothing (`viewport/tools.js`) — a drag that starts off the widget
+      // orbits. The origin dot takes no press and is left unnamed.
       : armed === 'move' ? 'drag an arrow or a quad to slide, a coloured disc to turn · esc to stop'
       : armed === 'cut' ? 'click a face to place the section plane'
       : `drag — orbit · wheel — zoom · hold ${HOLD_KEY_LABEL} — section`,

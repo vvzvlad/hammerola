@@ -10,7 +10,7 @@
 // did not move), and the library facts the harvest leans on, read straight
 // from the vendored files at the bottom of this file — the bundle for the
 // library's own code and for the fat-line addons, three's own two files for
-// three, which `external: three` has kept out of the bundle since the fork.
+// three, which `external: three` keeps out of the bundle.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -72,10 +72,8 @@ const CUBE_POSITIONS = new Float32Array(boxCorners([0, 0, 0], [2, 2, 2]))
 //
 // It matters because the chords `planeThroughTriangles` emits are directed by
 // the winding, and the measure that catches a solid wound half one way and half
-// the other is the SIGNED area those chords enclose: three of this fixture's six
-// faces used to face inwards, and the square below came out with an area of
-// exactly zero. The diagonals are unchanged, so every segment count and endpoint
-// in this file is what it always was.
+// the other is the SIGNED area those chords enclose: a cube with three faces
+// wound inwards gives the square below an area of exactly zero.
 const CUBE_INDEX = new Uint32Array([
   0, 3, 2, 0, 2, 1, // z = 0, outward -z, diagonal corner 0 - corner 2
   4, 5, 6, 4, 6, 7, // z = 2, outward +z
@@ -184,10 +182,9 @@ const allFinite = (segments) => segments.every(([p, q]) =>
  *  closed loop answers wherever it starts and whatever the origin is, and which
  *  subtracts a hole's loop by itself.
  *
- *  Nothing in the module computes this any more — it lives here because it is
- *  the measure that COLLAPSES when the chords are not consistently directed,
- *  which is what makes it the way to read that property off the buffer. `n`
- *  must be unit. */
+ *  The module does not compute this; it lives here because it is the measure
+ *  that COLLAPSES when the chords are not consistently directed, which is what
+ *  makes it the way to read that property off the buffer. `n` must be unit. */
 const signedArea = (segments, n) => Math.abs(segments.reduce(
   (total, [a, b]) => total
     + (a[1] * b[2] - a[2] * b[1]) * n[0]
@@ -291,8 +288,8 @@ describe('sectionOutline', () => {
     const outline = outlineOf(solid)
     const first = outline.geometry
     sectionOutline(vp, g, [1, 0, 0], -5)
-    // The outline object stays — an update, not a rebuild — but it now writes
-    // nothing: nothing of the contour cut where the plane USED to be may
+    // The outline object stays — an update, not a rebuild — but it writes
+    // nothing: nothing of the contour cut where the plane was before may
     // linger.
     expect(outlineOf(solid)).toBe(outline)
     expect(outline.geometry.instanceCount).toBe(0)
@@ -303,8 +300,7 @@ describe('sectionOutline', () => {
     // the count it had at birth.
     expect(outline.geometry).not.toBe(first)
     expect(first.disposed).toBe(1)
-    // ONE fill and not two: the fresh geometry carries its own counter, so this
-    // is the same assertion the count on a reused geometry used to make.
+    // ONE fill and not two: the fresh geometry carries its own counter.
     expect(outline.geometry.setPositionsCalls).toBe(1)
   })
 
@@ -616,9 +612,9 @@ describe('sectionOutline', () => {
     // sorts by `renderOrder` before anything else, and the library hands out
     // 999 to its edges always and to a part's faces whenever that part is
     // translucent. A contour left at the default 0 draws first and the
-    // translucent faces — which write no depth — blend over it, which is how a
-    // contour came to be missing on some solids and crisp on others in the same
-    // frame. The number therefore has to sit ABOVE the library's, not level
+    // translucent faces — which write no depth — blend over it, so a contour
+    // goes missing on some solids and stays crisp on others in the same frame.
+    // The number therefore has to sit ABOVE the library's, not level
     // with it: inside one bucket the order is decided per object by depth and
     // turns over as the model turns.
     const wall = fakeShapeSolid('S|wall', {
@@ -711,9 +707,8 @@ describe('the chords, directed by the sign the edge crosses on', () => {
   it('cuts a solid wound outward, the way a real tessellation is', () => {
     // The direction rests on it: the chords of a solid wound half one way and
     // half the other come out reversed against each other, and the signed area
-    // below is then not the face's area and not anything else either. Pinned
-    // here because the fixture used to fail it, and the failure was invisible —
-    // every segment count and endpoint in this file held throughout.
+    // below is then not the face's area and not anything else either — while
+    // every segment count and endpoint in this file would still hold.
     expect(woundOutward(CUBE_POSITIONS, CUBE_INDEX, [1, 1, 1])).toBe(true)
   })
 
@@ -1380,8 +1375,8 @@ describe('the vendored files still say what the outline rests on', () => {
     //
     // three.module.js and not the bundle: both lines are the WebGL renderer's
     // (`WebGLBindingStates.setupVertexAttributes` writes the field,
-    // `renderBufferDirect` reads it), and `external: three` moved the renderer
-    // out of the bundle entirely.
+    // `renderBufferDirect` reads it), and `external: three` keeps the renderer
+    // out of the bundle.
     //
     // Two lines, and the pair is the mechanism: the count is written ONLY while
     // it is undefined, so it never follows a buffer that grew; and the draw

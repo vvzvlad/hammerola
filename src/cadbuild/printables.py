@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Export every printable catalogue entry to STEP/STL/3MF, gating its geometry.
 
-WHAT A PART IS is not decided here any more and never was decided well: this
-file used to open with `printables()`, a second dict of geometry beside the one
-the views drew, and everything downstream spent its time working out which
-entry of one was which entry of the other. There is one catalogue now
-(parts.py) and this reads the entries of it whose kind says they go on a bed.
+What a part is is decided by the catalogue (parts.py); this reads the entries
+whose kind says they go on a bed.
 """
 
 import math
@@ -27,34 +24,17 @@ EXPORT_FORMATS = ("step", "stl", "3mf")
 def overview_meshes(plate):
     """`{stem: filename}` for the MESHES that are about the WHOLE build.
 
-    Two at most -- the glued assembly and the print plate -- and NEITHER IS A
-    BUTTON. The only argument that ever put them on one was that `downloads` was
-    the single channel through which a client could be told a file exists; this
-    map is that channel now, so the argument is gone with it. What is left is the
-    case against: `assembled.stl` has been written and served for this hub's
-    whole life with nobody asking for a button, and the assembly is already on
-    the page in 3D. `print.stl` is worse than unnecessary -- it is a plate, and a
-    button on a public build page invites somebody to slice it. The plate's job
-    is the PICTURE, the one thing that catches a part lying face down.
+    Two at most, the glued assembly and the print plate, and neither is a
+    download button: the assembly is already on the page in 3D, and a plate
+    button would invite slicing the plate. Not in the parts map, because these
+    stems are not catalogue keys (parts.RESERVED_STEMS). Separate from
+    `previews` because both are keyed by stem and `assembled` names a file in
+    each.
 
-    KEPT OUT OF THE PARTS MAP FOR A SECOND REASON that holds whatever the
-    buttons do: a file filed under a part is filed under a CATALOGUE KEY, and
-    `assembled` is not one -- it cannot be, because parts.RESERVED_STEMS
-    refuses it. So there is no part for either of these files to belong to, and
-    the map they belong to is this one.
-
-    SEPARATE FROM `previews` FOR ONE REASON, and it is the whole reason: both are
-    keyed by the stem, and `assembled` names two files -- `assembled.stl` here,
-    `assembled_preview.png` there. One map keyed that way loses one of them.
-
-    ONLY WHAT WAS ACTUALLY WRITTEN GETS DECLARED, which is why the evidence is
-    passed in rather than assumed: `plate` says whether `export_print_plate`
-    wrote one, and a project need not have a `print` view at all.
-    `assembled.stl` is unconditional because `export_assembled` either writes it
-    or raises. An entry pointing at a file that is not there is not a cosmetic
-    problem: the hub only accepts names that are keys of the output hash
-    (`render.build_meta`), so declaring an INTENTION instead of a FACT turns a
-    soft degradation into a refused publication.
+    Only files actually written are declared (`plate` says whether
+    `export_print_plate` wrote one; `export_assembled` writes or raises): the
+    hub accepts only names that are keys of the output hash
+    (`render.build_meta`), so a missing file would refuse the publication.
     """
     meshes = {}
     for stem, exported in ((ASSEMBLED_STEM, True), (PRINT_VIEW_ID, plate)):
@@ -68,23 +48,14 @@ def overview_meshes(plate):
 def preview_files(written):
     """`{stem: filename}` for the pictures -- every one that was rendered.
 
-    ALL OF THEM, the per-part ones included, and none of them a button either. A
-    preview is looked at rather than downloaded, and ten parts would be ten
-    buttons under a menu whose other rows are things you print. DECLARED all the
-    same, and that is the half this map exists for: an undeclared file can only
-    be reached by assembling its URL by hand, and an instruction that rests on a
-    hand-assembled URL breaks silently the day a name moves.
+    None of them is a download button, but all are declared so clients need
+    not assemble URLs by hand. Keyed by the stem the picture is of (a catalogue
+    key, or `assembled`/`print`, which parts.RESERVED_STEMS keeps unambiguous),
+    so a reader can pick one out: the assembled frame for a project card, a
+    part's own picture for its tree row.
 
-    KEYED BY THE STEM THE PICTURE IS OF, because the reader that follows wants to
-    pick ONE out: the assembled frame for a project card (issue #34), a part's
-    own picture for its tree row. Those readers hold a catalogue key, and the
-    stem is that key. Nothing in the keyspace is ambiguous, because
-    `parts.RESERVED_STEMS` refuses a part called `assembled` or `print`.
-
-    `written` is what `render_previews` returned -- the PNGs it truly wrote,
-    which is `[]` on a python with no rendering stack, a degradation this build
-    supports on purpose -- for the reason overview_meshes takes its evidence
-    rather than assuming it.
+    `written` is what `render_previews` returned: the PNGs it actually wrote,
+    `[]` without a rendering stack (see overview_meshes for why).
     """
     previews = {}
     for name in written:
@@ -101,32 +72,20 @@ def first_layer_area(mesh):
     """Contact area with the bed, in square millimetres.
 
     The bed is wherever the part's own lowest point is: `mesh.bounds[0][2]`.
-    THAT IS THE WHOLE INTERPRETATION, and it is deliberate -- "no first layer"
-    means a part with no flat bottom OF ITS OWN (a part standing on an edge, a
-    pyramid on its apex), NOT a part whose zmin is something other than zero.
-    Reading it the second way would refuse every centred box in the README and
-    in the fixtures, which is the false red this repository already decided
-    costs more than a miss.
+    "No first layer" means no flat bottom of its own (a pyramid on its apex),
+    not a zmin other than zero; a centred box must pass.
 
     A triangle is on the bed when all three of its vertices sit within
     STL_TOLERANCE of that lowest point AND its normal points down. The normal
     is what keeps a thin wall's TOP face out of the sum when it happens to land
     in the same band.
 
-    WHAT THE TOLERANCE BAND ACTUALLY ADMITS is worth stating, because the
-    obvious reading of it is wrong: a genuinely flat face has no drift at all
-    (OCC meshes a plane exactly), so the band is not there for it. What lands
-    inside the band is the bottom ROW OF FACETS of a CURVED surface, and how
-    much of one depends on the radius and on the tessellation. Measured, with
-    this mesh's own STL_TOLERANCE: a cylinder 40 mm LONG lying on its side comes
-    to 11.97 mm2 at r=2, 9.97 at r=5, 19.94 at r=10 and 35.65 at r=20 -- the
-    strip is a strip, so those scale with the length -- and a sphere to
-    0.1371 mm2 at r=3 and to exactly 0 at r=10. So this does NOT catch a part
-    resting on a line, and mostly does not catch one resting on a point. THE
-    GAP IS DELIBERATE and is not to be closed with a tighter band: that strip
-    is roughly what a slicer really lays down under a curved bottom, and the
-    part does print. What the check is for is the part that touches at nothing
-    whatsoever.
+    A flat face meshes exactly; what the band admits is the bottom row of
+    facets of a curved surface. Measured with STL_TOLERANCE: a 40 mm cylinder
+    on its side gives 9.97-35.65 mm2 for r=5..20, a sphere 0.1371 mm2 at r=3
+    and 0 at r=10. So a part resting on a line passes, deliberately: a slicer
+    lays down roughly that strip and the part prints. The check is for a part
+    that touches at nothing.
     """
     lowest = float(mesh.bounds[0][2])
     on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= STL_TOLERANCE
@@ -136,31 +95,18 @@ def first_layer_area(mesh):
 def overhang_area(mesh):
     """Steeply downward surface off the bed, in square millimetres.
 
-    A METRIC AND NOT A CHECK, which is the whole difference between this and
-    `checklib.unsupported_area`: that one asks whether anything is under each
-    triangle, against a budget the author chose; this one asks nothing and
-    refuses nothing. It is the number that says "the last edit turned 12 mm2 of
-    overhang into 90", measured off the mesh the gate already loaded.
+    A metric, not a check (unlike `checklib.unsupported_area`): it refuses
+    nothing and is there to be compared between revisions.
 
     A triangle counts when it points more than 45 degrees below horizontal --
     the angle a slicer stops bridging at -- and is not in the first-layer band,
     which is the same `on_bed` reading `first_layer_area` makes: the plate holds
     those triangles up, so they are contact rather than overhang.
 
-    ZERO-AREA TRIANGLES ARE DROPPED FIRST, and being exact about what that buys
-    matters, because the obvious reading is wrong in both directions. The
-    tessellator does emit degenerate triangles at the poles of a spherical face,
-    and they DO arrive here looking like overhang: normals come out of the STL
-    FILE rather than off the geometry -- trimesh's binary loader passes the
-    written array straight through, spot-checking only the first twenty facets --
-    so a collapsed facet keeps whatever normal OCC wrote beside it, which is
-    routinely a steep one. Measured on the pinned version; a mesh assembled in
-    memory answers with a ZERO normal instead, which is why the test that plants
-    this pair has to build it by hand. What they do NOT do is move the number: a
-    triangle with no area contributes none of it either way. The filter is here
-    for the value that would not be a number at all -- a `nan` area reaching
-    metrics.json as a bare `NaN`, which is not JSON and which every reader of the
-    file then fails to parse.
+    Zero-area triangles are dropped first. They contribute no area, but a
+    `nan` area would reach metrics.json as a bare `NaN`, which is not JSON.
+    (Degenerate pole triangles keep the steep normal OCC wrote in the STL,
+    since trimesh's binary loader passes normals through.)
     """
     real = mesh.area_faces > 0
     lowest = float(mesh.bounds[0][2])
@@ -177,17 +123,8 @@ def export_printables(catalogue, out_dir):
     metrics are a by-product and cost nothing: every one of them is a value this
     function already had in a local variable.
 
-    THE FILE MAP IS KEYED BY THE CATALOGUE KEY and its inner keys are the
-    formats, which is a change of shape rather than of content: it used to be
-    `{label: filename}` with the label being `<part>.<ext>` (or a bare `stl` on
-    a single-part project), and every reader then had to split the part back out
-    of the label -- the browser's downloads menu (ui/src/HammerolaViewer.jsx)
-    did exactly that, by cutting at the last dot, so a part with a dot in its
-    name landed on the wrong row. Do not grep for the function that did it: it
-    was deleted with the parse, and naming it here would send the next reader
-    looking for a symbol this repository no longer has anywhere. The
-    ownership is now stated instead of parsed, which also takes the hub's
-    32-character label ceiling out of the build: there is no label.
+    The file map is keyed by catalogue key, then format, so no reader has to
+    parse the part out of a filename (a key may contain dots).
     """
     import cadquery as cq
     from cadquery import exporters
@@ -207,15 +144,9 @@ def export_printables(catalogue, out_dir):
         if volume <= 0:
             raise BuildError(f"printable {name!r} has non-positive volume ({volume})")
 
-        # Measured HERE, before the export, and that is not tidiness: exportStl
-        # meshes the shape in place, and from then on BoundingBox() is the box
-        # of the MESH, which reads BIGGER than the shape and never smaller. The
-        # SIGN is the whole of what matters here; how much bigger depends on the
-        # shape, on both tolerances and on the axis, so the figures live in one
-        # place with the whole signature attached -- geometry.drop_mesh, which
-        # also has what the sign costs. Face, edge and solid counts are
-        # topology and do not care, but they are taken here too so the whole
-        # measurement comes off one unmeshed shape.
+        # Measured before the export: exportStl meshes the shape in place, and
+        # after that BoundingBox() is the mesh's box, which reads bigger (see
+        # geometry.drop_mesh). All counts come off the same unmeshed shape.
         box = shape.BoundingBox()
         measured = {
             "volume_mm3": volume,
@@ -225,15 +156,9 @@ def export_printables(catalogue, out_dir):
             "solids": len(shape.Solids()),
         }
 
-        # Gate part 1b -- and the whole part has to be thicker than the thread
-        # it is drawn with. THIS ONE IS IN THE GATE rather than in checklib
-        # because there is no number for the author to choose: a part whose
-        # smallest overall dimension is under one extrusion width does not come
-        # out thin, it comes out as a line or as nothing at all. What
-        # `minimum_feature()` supplies is the NOZZLE DEFAULT -- what this
-        # repository assumes when nobody said otherwise -- and not a fact about
-        # whichever machine ends up printing the file; a model that knows its
-        # own machine says so in checks(), where the number is an argument.
+        # Gate part 1b -- the whole part has to be thicker than one extrusion
+        # width, or it prints as a line or nothing. `minimum_feature()` is the
+        # nozzle default; a model that knows its machine checks in checks().
         thinnest = min(measured["bbox_mm"])
         if thinnest < minimum_feature():
             raise BuildError(
@@ -305,12 +230,8 @@ def export_printables(catalogue, out_dir):
 
         measured["watertight"] = bool(watertight)
         measured["triangles"] = int(mesh.faces.shape[0])
-        # The two numbers about how this part meets a printer, and both come off
-        # the mesh the gate loaded above -- the first one is literally the value
-        # the refusal was made from. A published part always has a positive
-        # first layer (the gate above refuses anything else), so the number is
-        # here to be COMPARED: adhesion that halves between two revisions is a
-        # part that will start coming off the bed.
+        # Both come off the mesh loaded above. The first layer is always
+        # positive here; it is kept to be compared between revisions.
         measured["first_layer_mm2"] = bed_area
         measured["overhang_mm2"] = overhang_area(mesh)
         metrics[name] = measured

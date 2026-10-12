@@ -1,11 +1,11 @@
 """The model writing the build's result for it, and the parent not believing it.
 
-Everything in this file is one attack with variations, and it is a REPRODUCED
+Everything in this file is one attack with variations, and it is a reproduced
 one rather than a hypothetical: the model runs in the same interpreter as the
 code that writes the result file, so it can read `--result` out of `sys.argv`,
-write a result of its own and end the process with a zero. Before the parent
-started checking, that returned `status: ok` with a project id and a file list
-the model had chosen, for a staging directory that had never been created.
+write a result of its own and end the process with a zero. Believed, that would
+return `status: ok` with a project id and a file list the model chose, for a
+staging directory that was never created.
 
 No secret fixes this. Anything the child knows -- a nonce in the environment, a
 token in a variable, an inherited descriptor -- is in memory the model can read,

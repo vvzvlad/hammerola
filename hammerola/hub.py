@@ -1,18 +1,8 @@
 """Talking to the hub: one POST, then a job polled to its end.
 
-WHY `urllib.request` AND NOT httpx. The client is installed on the author's
-machine, so every dependency it declares is one more thing that has to be
-present there and one more thing the self-update of issue #26 has to
-carry — and what is needed here is a POST of a byte string with two headers and
-two GETs. `urllib` does that, and the client stays importable under any
-python3.
-
-This does NOT contradict the note in `requirements.txt` that an outbound call in
-`src/` is what moves httpx up into the runtime dependencies. That note is about
-the SERVICE, whose whole point is that it makes no outbound request; the
-condition it names — needing an HTTP CLIENT LIBRARY — is not met, because
-nothing here imports one. httpx stays where it is, in requirements-dev.txt,
-driving a real socket in the tests.
+`urllib.request`, not httpx: the client is stdlib-only so it runs under any
+python3 and self-updates as one file. httpx stays a dev dependency for the
+tests; the note in `requirements.txt` is about outbound calls from `src/`.
 
 THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it:
 
@@ -21,7 +11,7 @@ THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it:
                                           the body. `X-Hammerola-Message`, when
                                           the push carries one, is what this
                                           revision says about itself —
-                                          percent-encoded UTF-8 (issue #67).
+                                          percent-encoded UTF-8.
       202 {"job", "status_url", "log_url", "revision"} + Location -> queued
       200 {"url", "revision"}                          -> this exact push is
                                                           already published, and
@@ -36,16 +26,13 @@ THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it:
     GET  /api/v1/jobs/<id>/log            Bearer -> text/plain, what the build
                                           printed
 
-TWO IDENTIFIERS COME BACK FROM A 202 AND THEY ANSWER DIFFERENT QUESTIONS. `job`
-is this attempt — its progress, its log, unpredictable, gone from the pusher's
-interest the moment the build ends. `revision` is what the build will publish —
-permanent, immutable, the string that ends up in a URL somebody pastes. Push the
-same sources twice and the job is different both times while the revision is the
-same, which is the property the whole scheme is for. Never print one where the
+A 202 carries two identifiers: `job` is this build attempt (progress, log),
+`revision` is the permanent immutable name of what it publishes. The same
+sources pushed twice get two jobs and one revision. Never print one where the
 other is meant.
 
-And the routes the READ-ONLY commands stand on, none of which is new — `status`
-and `comments` are spelled out of what the browser already fetches:
+The routes the read-only commands use (`status` and `comments` read what the
+browser fetches):
 
     GET  /project/<pid>/builds.json       Bearer. `{pid, project, title,
                                           has_dev, latest, builds[]}`, and
@@ -66,8 +53,7 @@ and `comments` are spelled out of what the browser already fetches:
                                           one proposal a project has, and 404
                                           when nobody has drawn one over it
 
-And the one route this tool asks for with NO token at all, because it is read by
-somebody who does not have one yet:
+The one route asked for with NO token, because it is read before login:
 
     GET  /start                           `{"empty", "skill", "client",
                                           "template", "skill_version"}` — three
@@ -89,19 +75,8 @@ The code of a revision, and the two routes that unmake something:
                                           gone, and the boolean is the only
                                           thing that says whether there was one
 
-WHICH SIDE OF THE TOKEN A THING IS ON IS THE WHOLE REASON `source` AND
-`artifacts` ARE TWO VERBS. The build a revision produced is public — it is what
-the site is for — and the code that produced it is not (issue #17). One
-verb with a flag would put the two behind one word and make the difference a
-matter of remembering.
-
-EVERY ROUTE HERE CHECKS THE SAME SECRET, `EDIT_TOKEN` — one for the whole
-system (issue #26), on both sides since step 0 of the plan. There used to
-be a second sentence in this file, `UNAUTHORIZED_QUEUE`, for the one 401 that
-did NOT mean "wrong token": the hub checked `COMMENT_READ_TOKEN` on the queue
-and `PUBLISH_TOKEN` on a push, so a deployment that set them differently gave a
-client that published fine and answered 401 on `hammerola comments`. There is
-one variable now, so there is one message.
+A build is public and its code is not, which is why `source` and `artifacts`
+are two verbs. Every guarded route checks the one secret, `EDIT_TOKEN`.
 
 A 4xx is returned to the caller rather than raised: 200, 202, 409 and 422 are
 all meaningful answers to a push and the caller is the one that knows what to do
@@ -117,187 +92,94 @@ import urllib.request
 
 from hammerola.config import header_value_problem
 
-# One request. Generous because the request that matters carries the whole
-# archive up a domestic uplink; the WAIT for a build is a separate budget
-# entirely (`await_job` below), because it is bounded by the queue and not by
-# the network.
+# One request: generous because a push carries the whole archive up a domestic
+# uplink. The wait for a build is a separate budget (`await_job`).
 HTTP_TIMEOUT = 300
 
-# The budget for a command that only ASKS something — status, the comment queue,
-# a login's check. Nothing is uploaded, so the generous ceiling above buys
-# nothing here and costs five minutes of a terminal looking hung when the
-# address is wrong in a way that black-holes packets instead of refusing them.
+# For requests that upload nothing (status, comments, login check, polls), so
+# a black-holed address does not hang the terminal for five minutes.
 QUERY_TIMEOUT = 30
 
-# How the status endpoint is polled. Fast at first so a push that is already
-# published, or a model that fails in two seconds, answers immediately; then
-# backing off, because past the first few seconds the build is minutes long and
-# a poll a second is pointless load on a hub with four build workers.
+# Job polling: fast at first so a quick result returns at once, then backing
+# off, since a real build takes minutes.
 POLL_FIRST_SECONDS = 0.25
 POLL_MAX_SECONDS = 2.0
 POLL_BACKOFF = 1.5
 
-# HOW LONG A STREAK OF UNANSWERED POLLS IS TOLERATED BEFORE GIVING UP, and the
-# number is sized on the one outage that actually happens here rather than on a
-# guess. The hub's container is recreated whenever `:latest` moves (Portainer's
-# ContainerAutomation), and while it is down Traefik's docker provider has no
-# router for the host and answers its OWN 404 — Go's `http.NotFound`, `404 page
-# not found`. That whole window is SECONDS: stop, start, `JobStore._load`
-# scanning the volume, and an edge that has not re-read the container list yet.
-# The image PULL is not inside it — docker pulls before it replaces the
-# container, so the download has already happened by the time anything stops
-# answering.
-#
-# WHAT A MINUTE DELIBERATELY DOES NOT BUY IS WAITING OUT A HUB THAT IS DOWN FOR
-# GOOD. That is not the trade: a wait is only worth continuing while there is a
-# build at the other end of it, and past a minute of silence the honest thing to
-# say is that the hub stopped answering — while somebody is still watching the
-# terminal.
-#
-# IT IS A CONSECUTIVE STREAK AND NOT A TOTAL BUDGET. One answered poll resets
-# it, so a slower sequence of gaps — an update and the rollback that follows it
-# — is still survivable however long the build runs. That is the shape of the
-# incident this exists for: main is merged several times an evening, so a long
-# build can easily straddle two recreations.
+# How long a CONSECUTIVE streak of unanswered polls is tolerated. Sized for a
+# container recreation when `:latest` moves: for a few seconds Traefik has no
+# router and answers its own `404 page not found`. One answered poll resets the
+# streak, so several separate recreations during a long build are survivable.
 POLL_GRACE_SECONDS = 60
 
-# The cadence WHILE a streak is open, and it is sized to fit inside that window.
-# The SLEEPS are 1.0, 1.5, 2.25, 3.38, 5.06, 7.59, 10, 10, 10, 10 —
-# `POLL_BACKOFF` applied to the one before, capped — eleven attempts in a
-# minute.
-# (Written as sleep lengths on purpose: the first draft of this line listed
-# cumulative times and read as a 2.5x backoff, which is not the factor in the
-# code.) The normal cadence above (0.25 s → 2 s) is for a hub that is answering,
-# where a fast first poll is what makes an already published push return at
-# once; a hub that is NOT answering is down for seconds, and asking it four
-# times a second buys nothing and lands as a burst of connections at the exact
-# moment the far end is coming back up.
+# The cadence while a streak is open. Sleeps are 1.0, 1.5, 2.25, 3.38, 5.06,
+# 7.59, 10, 10, 10, 10 s (`POLL_BACKOFF`, capped): eleven attempts in a minute,
+# without a burst of connections as the hub comes back.
 POLL_ERROR_FIRST_SECONDS = 1.0
 POLL_ERROR_MAX_SECONDS = 10.0
 
-# THE FLOOR UNDER THE INTERVAL BETWEEN TWO NOTICES, and it is what keeps a
-# flapping endpoint from writing the terminal full. A notice exists so that a
-# silence does not read as a hang; a line every half-second is the same silence
-# in a different font, and it buries the states the command is actually
-# reporting. "Once per streak" is not a ceiling on its own — an endpoint that
-# alternates failure and success opens and closes a streak forever, which was
-# measured at 1.7 lines a second.
-#
-# THE FIRST NOTICE OF A WAIT IS ALWAYS EMITTED, because that one is the whole
-# point: it is what turns an unexplained pause into a sentence. What the floor
-# drops afterwards is repetition and reassurance, never an outcome — the
-# command's own result still says what happened to the build.
+# Minimum interval between two connection notices, so a flapping endpoint
+# (which opens and closes streaks endlessly) cannot flood the terminal. The
+# first notice of a wait is always emitted.
 POLL_NOTICE_MIN_SECONDS = 30
 
-# How long `await_job` waits by default. The worst honest wait is the queue
-# ahead of you: MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (300
-# since 2026-09-10, issue #81) over MAX_CONCURRENT_BUILDS (4 since 2026-09-09,
-# raised from 2) workers is twenty minutes, and this is that with room to spare.
-# `--timeout` moves it; a person presses Ctrl-C long before either.
+# How long `await_job` waits by default. The worst honest wait is a full queue:
+# MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (300) over
+# MAX_CONCURRENT_BUILDS (4) workers is twenty minutes; this is that with room to
+# spare. `--timeout` moves it.
 #
-# THIS NUMBER IS A COPY AND CANNOT IMPORT ITS SOURCE -- the client is stdlib-only
-# and may not reach into `src.buildproc` -- so it goes stale the moment
-# `wall_seconds` moves and nothing anywhere says so. When it does go stale the
-# symptom is not an error: the client reports a timeout on a build that is still
-# legitimately queued, and the build then publishes with nobody watching. Move
-# `wall_seconds`, come back here.
-#
-# IT CAME DOWN WITH THE WALL AND DID NOT HAVE TO. `tests/test_build_ceilings.py`
-# only asks that it CLEAR the worst honest wait, and 8100 -- the number this was
-# while the wall was 900 -- cleared twenty minutes several times over. What it
-# stopped doing was describing itself: "that with room to spare" would have been
-# a wait of two and a quarter hours over a queue that can honestly take twenty
-# minutes, i.e. a client sitting silent for two hours on a hub that gave up long
-# ago. The ratio to the honest wait is what is kept, not the literal.
+# A COPY: the stdlib-only client cannot import `src.buildproc`. When
+# `wall_seconds` moves, update this (`tests/test_build_ceilings.py` checks that
+# it clears the worst wait); a stale value shows up as a client timeout on a
+# build that is still legitimately queued.
 JOB_TIMEOUT = 2700
 
-# WHEN A BUILD IS SLOW ENOUGH TO SAY SO. Between this and the hub's own wall
-# clock lies the whole zone where everything is green and everything is slow:
-# nothing fails, nothing is refused, and the wait is paid by whoever pushed —
-# every time, for as long as nobody looks at it.
-#
-# IT IS A JUDGEMENT AND IT IS DECLARED AS ONE. Three minutes is not a copy of
-# anything: the hub has no such number, which is why it lives here beside
-# JOB_TIMEOUT rather than in `limits.py`, where every number is a copy compared
-# against its source. Nothing goes stale when it moves — the only thing below it
-# is how often the line is printed. `tests/test_build_ceilings.py` holds the one
-# property that does have to stay true: it is strictly under the wall the hub
-# kills a build at, because a threshold at or above that would only ever be
-# reached by a build that was already dead.
-#
-# WHY THE CLIENT PRINTS IT AND NOT THE BUILD. The hub keeps a build's FIRST
-# megabyte of log and drops the rest (`buildproc.runner._Drain` — the head is
-# kept because that is where a build says what it was doing), so a warning
-# appended at the END of a run would be the part that is lost in exactly the
-# case it is written for: the slowest, chattiest build there is. And the reader
-# it is addressed to is the one who just spent the minutes waiting, which is
-# this side of the wire.
+# When a build is slow enough to warn about. A judgement, not a copy of a hub
+# number (hence not in `limits.py`); `tests/test_build_ceilings.py` keeps it
+# strictly under the hub's wall clock. Printed by the client rather than the
+# build because the hub keeps only the head of a log (`buildproc.runner._Drain`)
+# and a warning at the end of a long log would be dropped.
 SLOW_BUILD_SECONDS = 180
 
 TERMINAL_STATES = ("done", "failed")
 
-# Loopback is never reached through a proxy, and a machine whose environment or
-# system settings name one would otherwise send the whole push into it. This is
-# the shape that breaks `make test` on a laptop behind a corporate proxy — the
-# suite's own httpx client sets `trust_env=False` for exactly this — and it is
-# equally wrong for a developer running a hub of their own on 127.0.0.1. Every
-# other address keeps the machine's proxy configuration, which is what somebody
-# publishing from inside a corporate network actually needs.
+# Loopback bypasses the machine's proxy settings; every other address keeps
+# them, as publishing from inside a corporate network needs.
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 
-# The two schemes urllib can open and this tool has any business using. Checked
-# when a Hub is made rather than left to fail later: `//hub.example` parses into
-# a perfectly good host with no scheme, and `Request` then raises a bare
-# ValueError two layers away from anything that could explain it.
+# Checked when a Hub is made: `//hub.example` parses into a host with no scheme
+# and would otherwise fail later as a bare ValueError.
 ALLOWED_SCHEMES = ("http", "https")
 
-# What a 401 means, on any route. ONE sentence for all of them, because there
-# is one secret and therefore exactly one thing to do about it. Do not grow a
-# per-route variant: the only reason the old one existed was that a 401 on the
-# queue could also mean "the deployment set its SECOND variable to something
-# else", and that variable is gone.
+# What a 401 means on any route: there is one secret, so one remedy.
 UNAUTHORIZED = (
     "the hub refused the token (HTTP 401).\n"
     "  Run `hammerola login` to store the right one, or check EDIT_TOKEN in "
     "the environment.")
 
-# The manifest of what a first run needs, and the ONE route this tool asks for
-# without a token. Spelled here rather than imported from `src.onboarding`,
-# which is the hub's: the client takes nothing from the service half (see
-# `hammerola/__init__.py`), and `tests/test_onboarding.py` compares this string
-# against the route the hub serves — the same arrangement `limits.py` has with
-# the hub's ceilings. Every other path this tool fetches is READ OUT of the
-# manifest rather than spelled again.
+# The manifest of what a first run needs, fetched without a token. Copied, not
+# imported from `src.onboarding` (the client takes nothing from the service);
+# `tests/test_onboarding.py` compares the two. Other onboarding paths are read
+# out of the manifest.
 START_PATH = "/start"
 
-# An id no job can have. `JobStore.create` names a job with
-# `secrets.token_urlsafe(16)`, so this matches the alphabet and the length the
-# hub accepts — which is the point: it gets past the shape check and reaches the
-# lookup, where it is guaranteed to miss. Used by `check_token`, where 404 means
-# "the token was accepted and the id was not found" and 401 means the opposite.
+# An id no job can have but with the alphabet and length of
+# `secrets.token_urlsafe(16)`, so it passes the shape check and misses the
+# lookup. `check_token`: 404 means the token was accepted, 401 that it was not.
 IMPOSSIBLE_JOB_ID = "0" * 22
 
-# WHERE A REVISION'S MESSAGE TRAVELS (issue #67). A header and not a form field
-# or a file in the archive: the message is not part of what is being built, and
-# the digest that NAMES the revision is taken over the archive's members — so the
-# same tree pushed twice with two different messages has to go on being one
-# revision. The hub reads this name in `src/app.py`.
+# The revision message travels as a header, outside the archive whose digest
+# names the revision: the same tree with two messages is one revision. Read by
+# `src/app.py`.
 MESSAGE_HEADER = "X-Hammerola-Message"
 
 
 class HubError(Exception):
     """The hub could not be reached, or answered something unusable.
 
-    `status` IS NOT FILLED IN EVERYWHERE, and do not write a comparison against
-    it without checking that the raise you mean sets it. The two job reads below
-    set it, because one caller has to tell "this hub has no such job" apart from
-    every other way that same call can fail and says a different sentence about
-    each (`sources._dev_log`). Every other raise in this file leaves it None:
-    those messages are written to stand alone, nobody branches on them, and a
-    field carried everywhere for one reader is a field that goes stale
-    everywhere. None therefore means "not recorded here", never "the hub did not
-    answer" — an unreachable hub raises from a place that records nothing, and
-    so does a body that would not parse.
+    `status` is set only by `compare`, `job` and `job_log` (read by
+    `sources._dev_log` to tell a missing job from other failures). None means
+    "not recorded here", never "the hub did not answer".
     """
 
     def __init__(self, message, status=None):
@@ -305,11 +187,7 @@ class HubError(Exception):
         self.status = status
 
 
-# "NO POLL HAS EVER SUCCEEDED", which is not the same fact as "the hub answered
-# without a `state`" — and `record.get("state")` gives None for both.
-# `_timed_out` says "was never seen in any state — no poll of it ever succeeded"
-# about the first, and saying that about the second is a false sentence in the
-# one message a reader is using to work out what happened.
+# "No poll has ever succeeded", distinct from a reply with no `state` (None).
 _NEVER = object()
 
 
@@ -318,14 +196,9 @@ class Hub:
 
     def __init__(self, url: str, token: str, timeout: int = HTTP_TIMEOUT):
         self.url = url.rstrip("/")
-        # BOTH INPUTS ARE CHECKED HERE, before a single request is attempted,
-        # and each gets the sentence that belongs to IT: `_origin` answers for
-        # the address, `_refuse_unsendable_token` for the secret. They are
-        # checked in two places rather than one because the two failures need
-        # opposite advice — "check HUB_URL" against "run `hammerola login`" —
-        # and telling somebody to replace the one secret of the system over a
-        # typo in an address is the specific harm this arrangement exists to
-        # prevent.
+        # Both inputs are checked before any request, separately, because the
+        # advice differs: "check HUB_URL" vs "run `hammerola login`". A typo in
+        # the address must never send somebody to replace the secret.
         self._origin = _origin(self.url)
         _refuse_unsendable_token(token)
         self._token = token
@@ -337,31 +210,15 @@ class Hub:
               content_type=None, timeout=None, message=None):
         """(status, bytes). Raises HubError only when there was no answer.
 
-        `message` is the one header this client sends that is somebody's PROSE,
-        and it is percent-encoded for that reason. An HTTP header value is
-        latin-1 — `config.header_value_problem` says so of the secret, and
-        `http.client` enforces it — while a revision message here is as often as
-        not written in Russian. `quote` leaves an ASCII message legible on the
-        wire (`fix%20the%20bracket`) and turns everything else into ASCII that
-        SURVIVES instead of being refused before it is sent; the hub unquotes it.
-        Encoding rather than widening is also what keeps that predicate intact: a
-        percent-encoded value passes it by construction, so nothing here has to
-        be routed around the rule the token is held to.
+        `message` (the revision message) is percent-encoded: header values are
+        latin-1 and messages are often Russian. The hub unquotes it.
 
-        `timeout` overrides the Hub's for ONE request, and it exists for the
-        poll in `await_job`: the Hub's own is sized for the push (300 s, an
-        archive up a domestic uplink), and a poll inheriting that turns a
-        promised minute of tolerance into ten the moment a socket is accepted
-        and then goes silent — a dropped VPN, a wifi handover, a black hole on
-        the path. The streak is only measured when a poll RETURNS, so the
-        per-request budget is what makes the window wall-clock.
+        `timeout` overrides the Hub's for one request; the poll in `await_job`
+        uses it so a silent socket does not stretch the grace window to the
+        push's 300 s.
 
-        THE HEADER IS OMITTED WHEN THERE IS NO TOKEN, rather than sent empty.
-        `create` reaches the hub for the starter template and deliberately never
-        reads the secret (see `Hub.start`), so it builds a Hub with none; a
-        `Bearer ` with nothing behind it would be a credential-shaped header
-        that means nothing, and every guarded route answers exactly the same
-        401 to it as to no header at all.
+        No Authorization header without a token: `create` builds a Hub with none
+        for the public `/start` route.
         """
         headers = {}
         if self._token:
@@ -375,36 +232,15 @@ class Hub:
         try:
             request = urllib.request.Request(
                 self.url + path, data=body, method=method, headers=headers)
-            # THE ERROR BODY IS READ IN HERE TOO, INSIDE `_exchange`, and that
-            # is what the split is for. It used to be read in the `except
-            # HTTPError` clause of THIS try — and an exception raised in a
-            # handler is not offered to the handlers beside it, so a 500 whose
-            # chunked body stopped early went straight past every clause below
-            # as a traceback. One statement in the try, and both reads are
-            # behind the same diagnosis.
+            # `_exchange` reads error bodies too, so a failure while reading one
+            # reaches the handlers below.
             return self._exchange(request, timeout)
         except ValueError as error:
-            # THE LAST RESORT, AND DELIBERATELY NEUTRAL. It used to say "the
-            # token contains a character that cannot be sent in an HTTP header"
-            # and to tell the reader to run `hammerola login` — a sentence that
-            # was true of one cause and asserted of every ValueError on this
-            # path. It was wrong at least twice: an address with no scheme
-            # (`Request` raises "unknown url type") and an unparseable
-            # `Location` from the other end both arrived here, and both told
-            # somebody to replace the one secret of the system over a header
-            # they did not write.
-            #
-            # The address and the secret each have a check of their own, ahead
-            # of this line — `_origin` and `_refuse_unsendable_token` — so what
-            # reaches here is something neither anticipated. It says so, and
-            # names nothing it cannot know. An unparseable `Location` from a
-            # proxy lands here too, and that answer to it is accepted (#114).
-            #
-            # THE EXCEPTION'S OWN TEXT IS NOT REPEATED, and that is the whole
-            # care in this clause: `http.client` puts the offending header in
-            # its message, and the offending header here would be
-            # `Bearer <the token>`. Printing it would put the secret in the
-            # scrollback of every run that hit this.
+            # Last resort, deliberately neutral: the address and the secret are
+            # checked earlier (`_origin`, `_refuse_unsendable_token`), so this is
+            # something unanticipated, e.g. an unparseable `Location` from a
+            # proxy. The exception text is NOT printed: `http.client` puts the
+            # offending header in it, which could be `Bearer <the token>`.
             raise HubError(
                 f"the request to {self.url} could not be built "
                 f"({type(error).__name__}), and was not sent.\n"
@@ -413,32 +249,11 @@ class Hub:
                 f"  this point, so this is none of them — please report it.")\
                 from error
         except http.client.InvalidURL as error:
-            # NARROW ON PURPOSE, and the width is the whole correctness of the
-            # sentence below. `InvalidURL` is raised while the request line is
-            # being assembled, so "nothing was sent" is a fact about it. Its
-            # PARENT, `HTTPException`, is not: `RemoteDisconnected` inherits
-            # from it as well as from `ConnectionResetError`, and that fires
-            # AFTER the request has gone — a hub restarting mid-push, http
-            # spoken at an https port, a proxy dropping the connection. Catching
-            # the parent told the pusher their archive was never sent while the
-            # build it started was already queued, and took those cases out of
-            # the "cannot reach" branch that described them honestly. They
-            # belong there; only this one belongs here.
-            #
-            # THE CASE THAT MATTERS IS UNTRUSTED INPUT. `fetch_path` follows a
-            # path the HUB named, and a path carrying `\r\n` is an attempt to
-            # append a header of somebody else's choosing; `http.client` refuses
-            # it, and this turns that refusal into a sentence instead of a
-            # traceback out of every clause around it.
-            #
-            # THE TEXT GOES THROUGH `quoted`, and the reason this clause used
-            # to say it did not need to was WRONG. It read "safe, because what
-            # it quotes is the URL, repr-escaped by http.client" — true of the
-            # control-character message and false of the other one, which is
-            # `"nonnumeric port: '%s'"`, a plain interpolation of a string that
-            # came off a `Location` header. No text from the far end is printed
-            # raw anywhere on this path any more; the rule is cheaper to keep
-            # than the case analysis was to get right.
+            # Only `InvalidURL`, which is raised while the request line is
+            # assembled, so "nothing was sent" is true. Its parent
+            # `HTTPException` also covers `RemoteDisconnected`, which fires after
+            # the request has gone. The text may carry far-end input (a
+            # `Location` header), so it goes through `quoted`.
             raise HubError(
                 f"{self.url} would not take this request: "
                 f"{quoted(error)}\n"
@@ -448,19 +263,9 @@ class Hub:
         except OSError as error:
             raise HubError(f"cannot reach {self.url}: {error}") from error
         except http.client.IncompleteRead as error:
-            # A BODY THAT STOPPED, AND IT IS NOT THE SAME STORY AS THE ONE
-            # BELOW. `_exchange` reads the body with no argument, and that read
-            # raises this for either framing — a `Content-Length` body that came
-            # up short and a chunked one whose stream ended — rather than
-            # handing back something short. The far end spoke HTTP perfectly
-            # well and then stopped, which is a proxy, a restart or a timeout,
-            # and telling that reader to check their SCHEME is a correct
-            # refusal with somebody else's cause on it.
-            #
-            # Its text is counts (`IncompleteRead(10 bytes read, 30 more
-            # expected)`), not far-end bytes, but it goes through `quoted`
-            # anyway: no exception text is printed raw on this path, so nobody
-            # has to re-derive which ones are safe.
+            # The far end spoke HTTP and stopped mid-body (short
+            # `Content-Length` or truncated chunked stream): a proxy, a restart
+            # or a timeout, not a wrong scheme.
             raise HubError(
                 f"{self.url} stopped sending part-way through its reply "
                 f"({quoted(error)}).\n"
@@ -468,41 +273,12 @@ class Hub:
                 f"a restart or a timeout\n"
                 f"  at the other end. Try again.") from error
         except http.client.HTTPException as error:
-            # THE REST OF THAT FAMILY, AND ITS POSITION IS THE WHOLE DESIGN.
-            # What actually lands here, each checked against the sentence below:
-            #   BadStatusLine    the far end's first line is not a status line
-            #   LineTooLong      a header or chunk-size line over 65536 bytes
-            #   UnknownProtocol  a version that is not HTTP/0.9, 1.0 or 1.1
-            #   UnknownTransferEncoding, CannotSendHeader and the
-            #                    connection-state ones — unreachable here, one
-            #                    connection per request and no reuse, and all of
-            #                    them still mean "this is not a working HTTP
-            #                    conversation", which is what is printed
-            # and what does NOT, each caught above on purpose:
-            #   InvalidURL       its own clause — nothing was sent, and that is
-            #                    a fact about it and not about these
-            #   RemoteDisconnected  `OSError` — a dropped connection is a
-            #                    network failure and reads as one
-            #   IncompleteRead   the clause above — the reply STARTED
-            #
-            # LAST, BELOW `OSError`, because `RemoteDisconnected` is both an
-            # HTTPException and a `ConnectionResetError`: catching this family
-            # earlier would take an ordinary dropped connection out of the
-            # honest "cannot reach" branch, which is exactly the regression
-            # that narrowing `InvalidURL` was fixing. Order is what keeps both
-            # true at once.
-            #
-            # WHAT IT USUALLY IS: `http://` where the hub speaks `https://`.
-            # The far end answers with a TLS alert, or a captive portal or a
-            # proxy answers with something that is not a status line at all, and
-            # `http.client` refuses to parse it. That is the same class of typo
-            # `_origin` exists for, so the message points at the same variable.
-            # Nothing is claimed about whether the request was sent — it was.
-            #
-            # `quoted` IS LOAD-BEARING HERE ABOVE EVERYWHERE ELSE.
-            # `BadStatusLine` carries the line the far end sent, decoded and
-            # unescaped, up to `http.client._MAXLINE` — 65536 bytes. Printed
-            # raw that is a 65 kB message on stderr.
+            # BadStatusLine, LineTooLong, UnknownProtocol: not a working HTTP
+            # conversation, usually `http://` where the hub speaks `https://`, or
+            # a captive portal. Must stay BELOW `OSError`: `RemoteDisconnected`
+            # is both an HTTPException and a `ConnectionResetError` and belongs
+            # in "cannot reach". `quoted` matters here: `BadStatusLine` can carry
+            # up to 64 KiB of far-end text.
             raise HubError(
                 f"{self.url} answered something that is not HTTP "
                 f"({type(error).__name__}: {quoted(error)}).\n"
@@ -514,21 +290,15 @@ class Hub:
     def _exchange(self, request, timeout=None):
         """Send it, and read the body — of a 2xx and of an error alike.
 
-        ONE PLACE, so that both reads sit inside `_call`'s single `try` and get
-        the same diagnosis. The error read used to live in `_call`'s own
-        `except HTTPError` clause, and Python does not offer an exception raised
-        inside a handler to the handlers beside it — so a 500 whose chunked body
-        stopped early escaped every clause as a traceback, while the identical
-        200 was named properly. Anything raised here reaches all of them.
+        Both reads sit inside `_call`'s single `try`, so a failure while
+        reading an error body gets the same diagnosis as any other (an exception
+        raised inside an `except` clause would skip its sibling handlers).
 
-        An HTTP status IS an answer, and every 4xx this hub gives carries the
-        sentence explaining it, so the code and the body are returned rather
-        than raised — raising would throw that sentence away and report
-        "HTTP Error 422" instead.
+        An HTTP status is an answer: the code and the body are returned so the
+        hub's explanation of a 4xx is not lost.
 
-        `read()` WITH NO ARGUMENT, and the absence is the integrity check: it
-        raises `IncompleteRead` on a body shorter than its `Content-Length`,
-        while `read(n)` hands back whatever arrived. `_call` names that.
+        `read()` with no argument raises `IncompleteRead` on a short body;
+        `read(n)` would not.
         """
         budget = self.timeout if timeout is None else timeout
         try:
@@ -558,24 +328,15 @@ class Hub:
                 force: bool = False, message: str = None):
         """POST one archive. -> (status, payload dict).
 
-        `slot` is the last path segment, and the only thing that differs between
-        the two commands: `dev` for the local slot, and NOTHING for a revision.
-        The absence is what asks the hub to name it — there is no id to send,
-        because the client has none and never invents one.
+        `slot` is the last path segment: `dev` for the local slot, nothing for
+        a revision, which asks the hub to name it.
 
-        `force` asks the build to skip the model's own checks(), and it travels
-        as a QUERY PARAMETER. Not a header, and not a path segment: the segment
-        after the slot is the commit id, and taking one for a flag would make
-        the URL say two things. The rule this endpoint has always had holds
-        either way — where a build lands is decided by the URL and never by the
-        body — because a query parameter IS the URL, and this one changes how
-        the build runs rather than where it lands.
+        `force` skips the model's own checks() and travels as a query parameter:
+        it changes how the build runs, not where it lands.
 
-        `message` is what the revision says about itself, and it travels as a
-        HEADER — the one part of this push that is neither the URL nor the
-        sources. It deliberately does NOT reach the digest the revision is named
-        by: the same tree with a different message is the SAME revision, and
-        pushing it again updates the message the hub stored (issue #67).
+        `message` travels as a header and is not part of the revision's digest:
+        the same tree with a different message is the same revision, and
+        pushing it again updates the stored message.
         """
         path = f"/api/v1/publish/{urllib.parse.quote(pid)}"
         if slot is not None:
@@ -590,15 +351,9 @@ class Hub:
     def compare(self, pid: str, old: str, new: str) -> dict:
         """Ask the hub to measure two revisions against each other. -> payload.
 
-        THE ANSWER IS A JOB AND NOT A REPORT, for the same reason a push is one:
-        the geometry runs in a process with the CAD kernel in it, which is
-        minutes rather than milliseconds, so what comes back is an id to wait on
-        and the report is that job's LOG.
-
-        BOTH IDS ARE ALREADY RESOLVED by the caller (`revdiff.run` resolves
-        `latest` before anything is sent), so what goes on the wire is two
-        permanent revision ids — never a slot that could be rewritten while the
-        comparison is running.
+        The answer is a job (the CAD kernel takes minutes); the report is that
+        job's log. Both ids are already resolved by `revdiff.run`, so only
+        permanent revision ids go on the wire, never a slot.
         """
         path = (f"/api/v1/compare/{urllib.parse.quote(pid)}"
                 f"/{urllib.parse.quote(old)}/{urllib.parse.quote(new)}")
@@ -611,18 +366,9 @@ class Hub:
                 f"with {new}: {quoted(raw)}", status)
         return self._payload(status, raw)
 
-    # BOTH OF THESE NAME A 401 THE WAY EVERY OTHER PRIVATE READ IN THIS FILE
-    # DOES. They were the exception while their only caller was `build`, which
-    # reaches them a moment after a push the same token was accepted for — a 401
-    # there was not a case anyone would meet. `hammerola log dev` (issue #79)
-    # calls them cold, after a PUBLIC read of the slot's meta.json that answers
-    # 200 with any token at all, so a stale token first shows up right here; and
-    # its caller wraps whatever comes out in "the hub does not have that job",
-    # which would be a wrong diagnosis and a suggestion that cannot work.
-    # BOTH SET `status` ON EVERY RAISE THAT HAD AN ANSWER, the 401 included, so
-    # the field means the same thing at each of them. Only one reader looks at
-    # it today and only for 404, but a rule with an exception in it is what the
-    # next reader gets wrong.
+    # Both name a 401 explicitly: `hammerola log dev` calls them after a public
+    # read, so a stale token first shows up here. Both set `status` on every
+    # raise that had an answer.
     def job(self, job_id: str) -> dict:
         status, raw = self._call(f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
         if status == 401:
@@ -646,76 +392,28 @@ class Hub:
     def _poll_job(self, job_id: str):
         """One poll, for `await_job` only. -> (record, trouble).
 
-        THE ONE-SHOT `job()` ABOVE IS UNCHANGED AND STAYS THE HONEST ONE: it
-        raises on anything that is not a usable 200, which is right for a caller
-        asking once. This is the other reading of the same request — "is there
-        an answer yet" — where an unusable reply may simply mean the far end is
-        not there this second, and the caller decides whether that has gone on
-        long enough to matter. Be exact about what `job()` is kept FOR, because
-        the first version of this comment was not: nothing in `src/` calls it
-        any more (`check_token` uses this same ROUTE, but goes to `_call`
-        directly), so its only callers today are tests. It is kept because it is
-        the honest reading of one request and because the tolerance below is a
-        property of waiting rather than of asking — not because some caller
-        needs it.
+        Unlike the one-shot `job()`, an unusable reply here is "trouble" that
+        the caller may tolerate: the far end may be briefly gone (e.g. Traefik's
+        own `404 page not found` while the container is recreated).
 
-        AN ANSWER IS READ AS THE HUB'S ONLY WHEN THE HUB'S OWN CONTRACT IS
-        VISIBLE IN IT. On 2026-08-30 a `hammerola build` died mid-wait on `404
-        page not found` — text/plain, Go's `http.NotFound`. That was TRAEFIK,
-        not the hub: the docker provider drops the router while the container is
-        not running, and the container is recreated every time `:latest` moves.
-        The hub's own 404 is its documented error shape, `{"error": "not
-        found"}` (`_error` in `src/app.py`), and that shape is what
-        `_carries_the_hubs_error_shape` looks for.
+        Only a 401 or 404 in the hub's own error shape (`{"error": ...}`, from
+        `_error` in `src/app.py`) is final: the record is gone, or the token is
+        refused. A 401 not identifiably the hub's is transient (the push was
+        accepted with this token seconds earlier); if it persists, the grace
+        window ends the wait. Headers (`Server:`, content type) are not evidence
+        of who wrote a body.
 
-        SO THE TWO FINAL ANSWERS ARE BOTH GUARDED BY IT:
-
-          * a 404 in the hub's own words — the record is gone, which is
-            permanent, so waiting a minute for it to change its mind spends a
-            person's time on a fact already known;
-          * a 401 in the hub's own words — the token is refused, which cannot
-            heal itself.
-
-        AND A 401 THAT IS NOT IDENTIFIABLY THE HUB'S IS TRANSIENT, which is the
-        half that looks surprising and is the same rule. `UNAUTHORIZED` tells
-        the reader to replace the one secret of the system; `Hub.__init__` names
-        that exact harm ("telling somebody to replace the one secret of the
-        system over a typo in an address is the specific harm this arrangement
-        exists to prevent"), and an auth gateway blinking during its own
-        redeploy is not evidence about the token. It is SAFE here specifically:
-        the push was accepted with this very token seconds earlier, so a genuine
-        credential failure arriving mid-wait is very nearly impossible. If the
-        401 persists it still ends the wait — with the give-up message, which
-        quotes it.
-
-        WHAT MUST NOT BE USED IS `Server:` OR THE CONTENT TYPE. Anything on the
-        path can strip a header or add one, so a header is not evidence about
-        who wrote the body; the body shape is what this tool parses everywhere
-        else, and it is what identifies the answer here.
-
-        `HubError` is the ONLY exception turned into trouble — `_call` raises it
-        when there was no answer at all — because everything else on this path
-        is a bug in this tool and must not be swallowed by a retry loop.
+        Only `HubError` (no answer at all) becomes trouble; anything else is a
+        bug and must not be swallowed by the retry loop.
         """
-        # `QUERY_TIMEOUT` AND NOT THE HUB'S OWN: see `_call`. A poll that
-        # inherited the push's 300 s would make the grace window a fiction,
-        # since the streak is measured only when a poll returns.
+        # `QUERY_TIMEOUT`, not the push's 300 s: see `_call`.
         try:
             status, raw = self._call(
                 f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
                 timeout=QUERY_TIMEOUT)
         except HubError as error:
-            # `str` AND NOT `quoted`, for the same reason as the `_payload`
-            # branch at the bottom of this method: every `HubError` `_call`
-            # raises has ALREADY put whatever came off the wire through
-            # `quoted`. Escaping it again turns a byte into `\\x15` and cuts
-            # the sentence at 200 characters — which threw away the half that
-            # matters ("Check HUB_URL: an `http://` address where the hub speaks
-            # `https://`..."), leaving a mangled quotation and no advice.
+            # `str`, not `quoted`: `_call` already quoted any far-end text.
             return None, f"the hub could not be reached ({error})"
-        # ASKED ONLY OF THE TWO STATUSES THAT CAN BE A VERDICT. It parses the
-        # body, so running it on every 200 as well would be work for an answer
-        # nothing reads.
         mine = status in (401, 404) and _carries_the_hubs_error_shape(raw)
         if status == 401 and mine:
             raise HubError(UNAUTHORIZED)
@@ -734,11 +432,7 @@ class Hub:
         try:
             return self._payload(status, raw), None
         except HubError as error:
-            # `str` AND NOT `quoted`: that message already quotes the far end's
-            # body inside itself, and quoting it again puts a repr in a repr —
-            # the reader gets `"the hub answered HTTP 200 with something..."`
-            # complete with backslashes, instead of a sentence reading like the
-            # branches above.
+            # `str`, not `quoted`: the message already quotes the body.
             return None, str(error)
 
     def await_job(self, job_id: str, timeout: float = JOB_TIMEOUT,
@@ -748,51 +442,27 @@ class Hub:
         `on_state` is called once per NEW state, so a run prints "building" when
         the build starts and not once a second for as long as it lasts.
 
-        `on_notice` is called for what happens to the CONNECTION rather than to
-        the build: when a streak of unanswered polls opens, and when the hub
-        starts answering again. A notice exists because a silent pause reads as
-        a hang, which is half of what made the incident behind this confusing —
-        and it is held to `POLL_NOTICE_MIN_SECONDS` between lines, because an
-        endpoint that flaps opens and closes streaks indefinitely and a line
-        every half-second is the same silence in a different font.
+        `on_notice` is called for the CONNECTION rather than the build: when a
+        streak of unanswered polls opens and when the hub answers again, at most
+        once per `POLL_NOTICE_MIN_SECONDS`.
 
         `grace` is how long a CONSECUTIVE streak of unanswered polls is
-        tolerated; a good poll resets it, so two separate outages are both
-        survivable. `grace=0` is no tolerance at all, i.e. what this did before,
-        and None asks for `POLL_GRACE_SECONDS` — RESOLVED IN THE BODY, because a
-        default binds at `def` and a test lowering the constant would otherwise
-        be lowering something nothing reads.
+        tolerated; a good poll resets it. `grace=0` is no tolerance; None means
+        `POLL_GRACE_SECONDS`, resolved in the body so tests can lower the
+        constant. The streak clock starts when the first failed poll returns, so
+        a black-holed path costs up to about `grace + 2 x QUERY_TIMEOUT`.
 
-        IT IS OF THAT ORDER RATHER THAN EXACTLY THAT LONG, and the difference is
-        worth stating because it is what a black hole on the path costs. The
-        streak clock starts when the first failed poll RETURNS, so a request
-        that is accepted and then answered by nobody spends `QUERY_TIMEOUT`
-        before the window even opens, and the last one may spend another before
-        it is declared over: the worst case is about `grace + 2 x
-        QUERY_TIMEOUT`. A refusal or a reset returns at once and costs neither.
+        `timeout` (the build's budget) and `grace` (the hub's unreachability)
+        have separate messages: only the deadline one names `--timeout` as the
+        remedy. The streak is checked first.
 
-        THE TWO BUDGETS ARE KEPT APART AND SO ARE THEIR MESSAGES. `timeout` is
-        the budget for the BUILD and `grace` is the tolerance for the HUB being
-        unreachable; one message denies `--timeout` as the knob, which is true
-        of the streak and false of the deadline, so they may never be raised
-        from one condition. The streak is checked first: it is the specific
-        diagnosis, and the deadline is the one that is always true eventually.
-
-        WHAT IS DELIBERATELY NOT RETRIED IS THE PUSH ITSELF. The POST is one
-        request whose answer may be lost after the hub has already accepted it,
-        and a blind repeat of it is a second build of the same sources —
-        possibly a second published revision. Only the READ is retried here,
-        which is safe precisely because it changes nothing.
+        Only the read is retried, never the push: a repeated POST could start a
+        second build.
         """
         if grace is None:
             grace = POLL_GRACE_SECONDS
         deadline = time.monotonic() + timeout
-        # TWO CADENCES, TWO VARIABLES, and which one grows is decided by
-        # `_next_sleep` rather than here — see its docstring for why that is
-        # lifted out. The short of it: healing must NOT drop `wait` back to
-        # `POLL_FIRST_SECONDS`, because 0.25 s polling is for the first seconds
-        # of a wait, when a push may already be published, and not for every
-        # blink an hour in.
+        # Two cadences; `_next_sleep` decides which grows.
         wait = POLL_FIRST_SECONDS
         error_wait = POLL_ERROR_FIRST_SECONDS
         seen = _NEVER
@@ -800,31 +470,17 @@ class Hub:
         # is answering.
         streak_began = None
         last_notice = None
-        # The transition not yet told to the reader. ONE SLOT, OVERWRITTEN
-        # rather than queued: what a reader needs is the state of the
-        # connection NOW, and a backlog of superseded lines is the flood the
-        # floor exists to prevent.
+        # The connection notice not yet delivered. One slot, overwritten: only
+        # the current state matters.
         pending = None
 
         def notice(text) -> bool:
             """Emit one line if the floor has passed. -> whether it went out.
 
-            THE RETURN VALUE IS WHAT MAKES THE FLOOR A RATE LIMIT INSTEAD OF A
-            DROP, and the difference was a real defect: a suppressed line used
-            to be gone for good, and an OPENING happens once and never repeats.
-            A hub that went away at 0 s, came back at 30 s and died for good at
-            45 s therefore announced the outage that did not kill the command
-            and stayed silent about the one that did — the last thing the
-            terminal said about the connection was that the hub is answering,
-            which was the opposite of the truth by the time it gave up.
-
-            The caller keeps the undelivered line in `pending` and offers it
-            again on every later iteration, so a state that stops changing is
-            always eventually announced, while a flapping one still costs at
-            most a line per `POLL_NOTICE_MIN_SECONDS`.
-
-            The first line of a wait always goes out (`last_notice` is None
-            until then): that one is the whole point of having notices at all.
+            The caller keeps an undelivered line in `pending` and offers it
+            again on every iteration, so the floor rate-limits rather than drops:
+            the current connection state is always eventually announced. The
+            first line of a wait always goes out.
             """
             nonlocal last_notice
             if on_notice is None:
@@ -848,11 +504,8 @@ class Hub:
                 state = record.get("state")
                 if state != seen:
                     seen = state
-                    # A 200 that names no state is not progress: `None` printed
-                    # as a build state is noise in the one transcript a person
-                    # reads. It is still RECORDED above, because `_timed_out`
-                    # tells "the hub answered and named no state" apart from
-                    # "no poll of it ever succeeded".
+                    # A 200 with no state is recorded (for `_timed_out`) but
+                    # not printed.
                     if on_state is not None and state is not None:
                         on_state(state)
                 if state in TERMINAL_STATES:
@@ -864,14 +517,8 @@ class Hub:
                 new_streak = streak_began is None
                 if new_streak:
                     streak_began = now
-                # THE STREAK FIRST, and only then the deadline. An opening
-                # failure has `now - streak_began == 0`, so a single condition
-                # gave every failed poll past the deadline the streak's message
-                # — including its "a longer --timeout does not help", at the one
-                # moment a longer --timeout is exactly what would have helped.
-                # When both are out at once this order is the answer: the streak
-                # is the specific diagnosis and the deadline is the one that
-                # comes true eventually anyway.
+                # The streak first, then the deadline: the streak message says
+                # `--timeout` does not help, so it must not fire for a deadline.
                 if now - streak_began >= grace:
                     raise HubError(
                         f"the hub stopped answering while job {job_id} was "
@@ -888,30 +535,20 @@ class Hub:
                         f"unreachable.")
                 if now >= deadline:
                     raise self._timed_out(job_id, seen, timeout, trouble)
-                # AFTER the two give-up checks, so `grace=0` says one thing
-                # rather than announcing that it is still waiting and then
-                # refusing to.
+                # After the give-up checks, so `grace=0` does not announce a
+                # wait it then refuses.
                 if new_streak:
                     pending = (f"{trouble}; still waiting, the build may be "
                                f"running")
-            # THE DEFERRED LINE, OFFERED AGAIN ON EVERY ITERATION — and ABOVE
-            # the terminal return, which is why the return became a variable.
-            # A recovery whose very next poll is `done` is the commonest good
-            # ending there is, and returning before this point dropped the one
-            # line saying the hub came back.
-            #
-            # The two give-up branches DO skip it, deliberately: each carries
-            # what it needs in its own message, and `grace=0` must not announce
-            # that it is still waiting and then refuse to.
+            # Before the terminal return, so "answering again" is printed even
+            # when the next poll is `done`. The give-up branches skip it: their
+            # messages carry what they need.
             if pending is not None and notice(pending):
                 pending = None
             if finished is not None:
                 return finished
-            # CLAMPED AGAINST BOTH EDGES, not just the deadline. A 10 s sleep
-            # inside a 60 s window can only end after it, and the attempt that
-            # would have landed at 59 s then never happens — so the window a
-            # reader was promised is short by up to one backoff step, at the
-            # moment it matters most.
+            # Clamped to both the deadline and the end of the grace window, so
+            # the last attempt inside the window is not skipped.
             left = deadline - time.monotonic()
             if streak_began is not None:
                 left = min(left, streak_began + grace - time.monotonic())
@@ -923,20 +560,12 @@ class Hub:
                    trouble=None) -> HubError:
         """The BUILD's budget ran out — the ordinary deadline, either branch.
 
-        Raised from two places and worded once: a job still `queued`/`building`
-        when the clock runs out, and a failed poll at the deadline whose streak
-        has NOT expired. The second is why `state` may be `_NEVER` and why
-        `trouble` exists — reporting a state without saying that the last look
-        at it failed hands the reader a fact that may be minutes old as if it
-        were current.
-
-        `_NEVER` AND NOT None, because None is a state the hub can hand back:
-        a 200 whose JSON has no `state` field gives `record.get("state") is
-        None` after every poll SUCCEEDED, and "no poll of it ever succeeded"
-        would then be a false sentence in a diagnostic message.
-
-        It names `--timeout` as the knob because here that is true. The streak
-        message says the opposite about itself, and the two must not be merged.
+        Raised for a job still `queued`/`building` at the deadline, and for a
+        failed poll at the deadline whose streak has not expired; the latter
+        passes `trouble` so the reader knows the reported state may be stale.
+        `state` is `_NEVER` when no poll ever succeeded (None is a real reply:
+        a 200 with no `state` field). Names `--timeout` as the remedy, unlike
+        the streak message.
         """
         if state is _NEVER:
             was = ("was never seen in any state — no poll of it ever "
@@ -960,13 +589,9 @@ class Hub:
     def builds(self, pid: str):
         """`builds.json`, or None when the hub has nothing under this id.
 
-        None rather than an exception, because "nobody has ever pushed this
-        project" is an ANSWER to `hammerola status` and not a failure of it — a
-        directory that was created five minutes ago is in exactly that state.
-
-        No new route was added for this: it is the file the project page itself
-        fetches, so `status` reads what the browser reads and cannot drift into
-        showing something the site does not.
+        None because "never pushed" is an answer to `hammerola status`, not a
+        failure. The same file the project page fetches, so `status` shows what
+        the site shows.
         """
         return self._json_or_none(
             f"/project/{urllib.parse.quote(pid)}/builds.json")
@@ -974,10 +599,8 @@ class Hub:
     def build_meta(self, pid: str, name: str):
         """One build's `meta.json` — `dev`, `latest` or a revision, or None.
 
-        Wanted for the local slot above all: `builds.json` says only WHETHER the
-        slot is occupied (`has_dev`), because the slot is not part of the
-        project's history, so the only place its timestamp exists is its own
-        meta.
+        Needed for the local slot: `builds.json` says only whether it is
+        occupied (`has_dev`), so its timestamp exists only in its own meta.
         """
         return self._json_or_none(
             f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
@@ -996,14 +619,9 @@ class Hub:
     def build_file(self, pid: str, name: str, filename: str):
         """One file out of a published build, or None when it is not there.
 
-        PUBLIC, and no token is presented for it — this is the same URL the
-        viewer fetches. That asymmetry is the point of `artifacts` being a verb
-        of its own next to `source`: a build's STL is served to the world, while
-        the code that produced it is not (issue #26).
-
-        None for a 404 rather than an exception, because "this revision ships no
-        such file" is an answer several callers act on: a build published before
-        the model wrote metrics.json is an ordinary thing to run into.
+        PUBLIC: the same URL the viewer fetches. None for a 404, because "this
+        revision ships no such file" (e.g. an old build without metrics.json) is
+        an answer callers act on.
         """
         code, raw = self._call(
             f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
@@ -1035,11 +653,9 @@ class Hub:
     def _sources_reply(self, code: int, raw: bytes, revision: str) -> bytes:
         """The two answers this endpoint gives, told apart for the reader.
 
-        The hub answers the SAME 404 for a revision that was never published,
-        one whose build failed, one whose code somebody removed by hand and a
-        segment that is not a revision id at all — deliberately, so the reply
-        confirms nothing about what is on the volume. The message therefore has
-        to name all of them rather than guess at one.
+        The hub deliberately answers the same 404 for a revision never
+        published, one whose build failed, removed code and a malformed id, so
+        the message names all of them.
         """
         if code == 401:
             raise HubError(UNAUTHORIZED)
@@ -1061,10 +677,8 @@ class Hub:
         """Give the project a new TITLE. Never an id — there is no route for it.
 
         `missing_ok` answers None instead of raising when the hub has no such
-        project, because for a rename that is not a failure: a project exists on
-        the hub from its first successful push, and renaming one that has not
-        been pushed yet is an ordinary thing to do — the new name is in
-        `project.json` and the first push will carry it.
+        project: a not-yet-pushed project is renamed in `project.json` and the
+        first push carries the title.
         """
         body = json.dumps({"title": title}).encode("utf-8")
         code, raw = self._call(
@@ -1100,9 +714,7 @@ class Hub:
     def comments(self, pid: str, *, status: str = None, since: str = None):
         """The queue for one project, oldest first (SPEC 7A.2).
 
-        The filters are the hub's own, applied THERE rather than here: a queue
-        filtered after the fact would still have carried every resolved comment
-        of the project's whole life over the wire to be thrown away.
+        Filtered on the hub, not after the fact.
         """
         query = {"project": pid}
         if status is not None:
@@ -1127,10 +739,8 @@ class Hub:
     def resolve_comment(self, cid: str, note: str = None) -> dict:
         """Mark one comment handled. Returns the record as it now stands.
 
-        The note is sent even when it is None — as `{"note": null}`, which is
-        what the endpoint reads for "no note". A POST with no body at all would
-        mean the same thing to this hub, and would stop meaning it the day
-        anything in front of it insisted on a Content-Length.
+        The note is always sent, `{"note": null}` meaning none, so the POST
+        always has a body.
         """
         body = json.dumps({"note": note}).encode("utf-8")
         code, raw = self._call(
@@ -1152,10 +762,8 @@ class Hub:
     def comment(self, cid: str) -> dict:
         """One comment by its id, whole. -> the record.
 
-        The listing carries every field already, so this is for the caller that
-        has an ID AND NOT A QUEUE — `comments files`, which is handed an id and
-        no project and needs to know which attachments the comment has before it
-        asks for their bytes.
+        For `comments files`, which has an id but no project and needs to know
+        which attachments exist before fetching them.
         """
         code, raw = self._call(f"/api/v1/comments/{urllib.parse.quote(cid)}")
         if code == 401:
@@ -1174,23 +782,16 @@ class Hub:
     def comment_attachment(self, cid: str, kind: str) -> bytes:
         """The bytes of one attachment — the photo, or the viewer's frame.
 
-        SPELLED HERE AND NOT ROUTED THROUGH `fetch_path`, though both fetch one
-        file: that one exists for a path the HUB named, and its checks are about
-        a string this client did not write. This path is built out of an id and
-        a constant and quoted like every other route in this file, so sending it
-        through the other would make the sentence that explains those checks
-        false.
+        Not via `fetch_path`, which is for paths the hub named; this one is
+        built locally and quoted like every other route.
         """
         code, raw = self._call(
             f"/api/v1/comments/{urllib.parse.quote(cid)}/{kind}")
         if code == 401:
             raise HubError(UNAUTHORIZED)
         if code == 404:
-            # NOT "no such attachment": the only caller asks for these bytes
-            # after the record NAMED them, so a 404 here is the record and the
-            # file disagreeing. Sending the reader back to the listing — which
-            # would repeat that the photo exists — is the answer that reads
-            # like help and is a circle.
+            # The caller asks only after the record named the attachment, so a
+            # 404 means the record and the volume disagree.
             raise HubError(
                 f"comment {cid} names a {kind} the hub does not serve.\n"
                 f"  The record is there and the file is not: the bytes are "
@@ -1205,19 +806,8 @@ class Hub:
     def proposal(self, pid: str):
         """The one proposal this project has, or None when it has none.
 
-        NONE AND NOT AN EXCEPTION for the 404, which is the reading `builds`
-        above gives its own: most projects have no proposal, because one exists
-        only after somebody drew it in the browser, so "there is none" is an
-        ANSWER to `hammerola proposal` and not a failure of it. Raising would
-        make the ordinary case an error the caller has to catch and turn back
-        into a sentence — and `cli.main` would print it on stderr with a
-        non-zero exit, which is what a script reads as "this command did not
-        work".
-
-        A 401 stays an exception, and the difference is not arbitrary: that is
-        the hub REFUSING TO ANSWER, so nothing has been learned about whether
-        there is a proposal. Reporting "there is none" for it would be a claim
-        this call cannot make.
+        None for a 404: most projects have no proposal, and "there is none" is
+        an answer, not a failure. A 401 still raises: nothing was learned.
         """
         code, raw = self._call(f"/api/v1/proposals/{urllib.parse.quote(pid)}")
         if code == 401:
@@ -1233,13 +823,9 @@ class Hub:
     def remove_proposal(self, pid: str) -> bool:
         """Put this project's proposal away. -> whether there was one.
 
-        THE HUB ANSWERS 200 EITHER WAY (`_handle_delete` in `src/app.py`): the
-        caller asked for the document to be gone and it is, whether or not
-        anything was stored, and the boolean is the only thing that tells the
-        two apart. So there is no 404 arm here to match the one above — this
-        route answers 404 only for an id that could never name a file at all,
-        which is a `project.json` nothing could publish from either, and that
-        falls through to the sentence below.
+        The hub answers 200 either way (`_handle_delete` in `src/app.py`); the
+        boolean says whether anything was stored. A 404 only means an invalid
+        id and falls through to the generic refusal.
         """
         code, raw = self._call(
             f"/api/v1/proposals/{urllib.parse.quote(pid)}", method="DELETE")
@@ -1255,23 +841,14 @@ class Hub:
     def start(self) -> dict:
         """`GET /start` — the manifest of what a first run needs. NO TOKEN.
 
-        Public on the hub, and asked for without a credential here: neither
-        `create`, `skill` nor `update` reads the secret, so a project can be
-        started — and the instructions, or the tool itself, fetched — against a
-        hub the machine is not logged in to. The reply is `{"empty", "skill",
-        "client", "template", "skill_version", "client_version"}`: three
-        relative paths and two version numbers, all five constants of the image,
-        plus one boolean about the hub (`src/onboarding.py` has the whole
-        argument for why that boolean is public and why nothing wider is).
+        `create`, `skill` and `update` work against a hub the machine is not
+        logged in to. The reply is `{"empty", "skill", "client", "template",
+        "skill_version", "client_version"}`: three relative paths, two versions
+        and one boolean about the hub (see `src/onboarding.py`).
         """
         code, raw = self._call(START_PATH)
         if code != 200:
-            # NAME THE ROUTE AND NOT ONE OF ITS READERS. This used to explain
-            # the failure as "it did not say where the starter template is",
-            # which was true while `create` was the only caller; `skill`,
-            # `skill update` and `update` all read this manifest now, and each
-            # of them was being told about a template it had not asked for and
-            # offered a `create` flag that could not help it.
+            # Names the route, not one reader: several verbs read it.
             raise HubError(
                 f"the hub answered HTTP {code} for {START_PATH}, the manifest "
                 f"naming the skill, the client and the template.\n"
@@ -1283,22 +860,10 @@ class Hub:
     def fetch_path(self, path: str) -> bytes:
         """One file the manifest NAMED, by its path on this hub.
 
-        The path comes back from the hub, so its SHAPE is checked before it is
-        used: one leading slash. This fetch concatenates the path onto the base
-        address, and without the slash `start/x` would be glued onto the end of
-        it — `http://hubstart/x` — rather than requested from it.
-
-        ITS SENDABILITY IS CHECKED IN THE SAME PLACE, and that is why the two
-        checks sit together rather than one here and one in the transport. This
-        is the ONLY path in the client that is not spelled locally and run
-        through `quote`, so it is the only one that can be unsendable at all —
-        and `_call`'s last-resort clause says "the address, the secret and any
-        path the hub named are all checked before this point", which was a claim
-        with a hole in it while this checked shape alone. Two ways through:
-        a control character, which `http.client` refuses while assembling the
-        request line, and a NON-ASCII one, which fails earlier still because the
-        request line is encoded as ASCII (`UnicodeEncodeError`, a ValueError, so
-        it landed in the "please report it" clause — for untrusted input).
+        The path is untrusted and the only one not built locally through
+        `quote`, so it is checked here: a leading slash (it is concatenated onto
+        the base address), ASCII only and no control characters (the request
+        line is ASCII; a CR/LF would inject a header).
         """
         if not path.startswith("/"):
             raise HubError(
@@ -1320,16 +885,10 @@ class Hub:
     def check_token(self) -> bool:
         """Is this token the one the hub checks on a push?
 
-        Asked of the JOBS route, because it is the only one that answers the
-        question without doing anything: it needs the token, it changes nothing,
-        and an id that cannot exist separates the two answers cleanly — 401 is
-        "wrong secret", 404 is "right secret, and no such job". Every other
-        route either takes no token (the site) or would have to publish
-        something to be asked.
-
-        Any other status is treated as accepted rather than refused: this runs
-        inside `hammerola login`, and a hub answering something unexpected is
-        not evidence that the operator typed the password wrong.
+        Asks the jobs route for an impossible id: it needs the token and
+        changes nothing. 401 is "wrong secret", 404 "right secret, no such job".
+        Any other status counts as accepted: it is not evidence of a mistyped
+        password.
         """
         status, _raw = self._call(f"/api/v1/jobs/{IMPOSSIBLE_JOB_ID}")
         return status != 401
@@ -1343,53 +902,22 @@ class Hub:
         return f"{self.url}{url}"
 
 
-# How much of anything the FAR END wrote is ever put in a message. Two hundred
-# characters is enough to recognise a TLS alert, a captive portal's HTML or a
-# proxy's complaint, and short enough that a screenful stays a screenful.
+# How much far-end text goes into a message: enough to recognise a TLS alert,
+# a captive portal or a proxy's complaint.
 QUOTE_LIMIT = 200
 
 
 def quoted(text, limit: int = QUOTE_LIMIT) -> str:
     """Something the other end wrote, made safe to print. Trimmed, then escaped.
 
-    THE RULE IS FLAT ON PURPOSE: nothing that came off the wire is printed raw,
-    with no per-case reasoning about which library messages happen to be
-    escaped already. That reasoning was tried and it was wrong twice in one
-    file — `http.client` repr-escapes the URL in one `InvalidURL` message and
-    interpolates a raw string in the other, and `BadStatusLine` carries up to
-    65536 bytes of whatever the far end sent, decoded and untouched. A 65 kB
-    error message on stderr is what that produced.
+    Nothing that came off the wire is printed raw. The exception is the build
+    log (`job_log`, `revision_log`), which the CLI prints in full and
+    unescaped: it is what the person asked to see.
 
-    ONE CALLER IS DELIBERATELY NOT HERE: `job_log` and `revision_log` return the
-    build's own output, which the CLI prints in full. That is the whole point of
-    those verbs — a log this trimmed would be useless — and it is the one text
-    from the hub that a person asked to see.
-
-    BE EXACT ABOUT WHAT THAT EXEMPTION COSTS, because it is two things and only
-    the first is obvious. The log is unbounded, AND it is unescaped: whatever
-    control characters and terminal escapes it carries go to the terminal as
-    they are. For the log of your own model that is the right trade — the log
-    is the product of the command.
-
-    THE SOURCE IS CUT BEFORE IT IS ESCAPED, and the order matters because what
-    is quoted can be a whole reply body: escaping first built a second copy of
-    the whole string — several times its size, since `repr` expands — only to
-    throw all but 200 characters away. The cut takes `limit` characters, which
-    is a generous margin because escaping only ever grows a string, and the
-    LENGTH reported is the source's, which is the number a reader wants anyway.
-
-    `bytes` are decoded HERE rather than at each call site, and the reason is
-    that there are three of them holding a response body — one decoding rule in
-    one place beats three that drift. The cut still happens before the decode,
-    which does cut a multi-byte character in half; `errors="replace"` is what
-    makes that a visible replacement character at the end of a quotation rather
-    than a failure, and a quotation is all this is. Doing it the other way round
-    would decode the whole body to throw nearly all of it away, which is the
-    thing the paragraph above is about.
-
-    The unit in the message follows the input: bytes are counted in bytes and
-    text in characters. They are not the same number for anything non-ASCII,
-    and the one place this is read is a message about a size.
+    The source is cut before it is escaped (and bytes before they are
+    decoded, with `errors="replace"`), so a whole reply body is never copied.
+    The reported length is the source's, in bytes for bytes and characters for
+    text.
     """
     if isinstance(text, (bytes, bytearray)):
         source = bytes(text[:limit]).decode("utf-8", "replace")
@@ -1408,22 +936,12 @@ def _next_sleep(wait: float, error_wait: float, streaking: bool,
                 new_streak: bool):
     """How long to sleep before the next poll. -> (sleep, wait, error_wait).
 
-    PURE, AND LIFTED OUT OF `await_job` BECAUSE ITS TWO PROPERTIES ARE ABOUT
-    WHAT SURVIVES ACROSS ITERATIONS, which is exactly what a test driving the
-    loop with a stopwatch witnesses badly and a table witnesses exactly:
+    Pure, so its two invariants can be tested from a table:
 
-      * the NORMAL cadence is never restarted by a recovery. It is the cadence
-        of a hub that is answering, and it belongs to the WAIT rather than to
-        the current stretch of it — restarting it meant an endpoint that flaps
-        polled four times a second forever, an hour into a build, which is the
-        load the backoff exists to avoid;
-      * the ERROR cadence IS restarted, on each new streak. It belongs to the
-        outage rather than to the wait: a fresh outage deserves a fast first
-        retry, because most of them are over in seconds.
-
-    Both were claimed in a comment and checked by nothing — putting
-    `wait = POLL_FIRST_SECONDS` back into the recovery branch passed every test
-    in the suite, which is the same hole this file's own history is about.
+      * the NORMAL cadence is never restarted by a recovery: it belongs to the
+        whole wait, so a flapping endpoint does not poll four times a second;
+      * the ERROR cadence restarts on each new streak: a fresh outage gets a
+        fast first retry, since most are over in seconds.
     """
     if new_streak:
         error_wait = POLL_ERROR_FIRST_SECONDS
@@ -1436,25 +954,11 @@ def _next_sleep(wait: float, error_wait: float, streaking: bool,
 def _carries_the_hubs_error_shape(raw: bytes) -> bool:
     """Did the HUB write this error, or did something in front of it?
 
-    POSITIVE EVIDENCE ONLY, and the width of it is the whole care here: a dict
-    with an `error` key is what `_error` in `src/app.py` emits for every refusal
-    this service makes, so a body producing it is the hub speaking. Anything
-    that does not — Traefik's `404 page not found`, a proxy's HTML, an empty
-    body — is not identified as the hub's, and the caller treats it as the
-    outage it usually is.
-
-    NOTHING IS READ OUT OF A HEADER. `Server:` and the content type can both be
-    set, stripped or rewritten by anything on the path, so neither is evidence
-    about who wrote the body. The body is what this tool parses everywhere else.
-
-    False for anything unparseable rather than raising: this is a question, and
-    "cannot tell" and "no" mean the same thing to the one caller.
-
-    AND THE `error` KEY IS PART OF THE TEST, not decoration on an isinstance.
-    `{"detail": "Not Found"}` is what Starlette and FastAPI answer by default,
-    i.e. what a large share of the API gateways in the world put in front of a
-    service — accepting any dict would read that as the hub's own verdict and
-    kill a live build on it.
+    Positive evidence only: a JSON dict with an `error` key is what `_error` in
+    `src/app.py` emits for every refusal. Anything else (Traefik's `404 page not
+    found`, a proxy's HTML, an empty or unparseable body, Starlette's default
+    `{"detail": ...}`) is not the hub's. Headers are not consulted: anything on
+    the path can rewrite them.
     """
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -1466,49 +970,22 @@ def _carries_the_hubs_error_shape(raw: bytes) -> bool:
 def _origin(url: str):
     """`urlsplit` of the hub's address, or a sentence about HUB_URL.
 
-    EVERY WAY AN ADDRESS CAN BE UNUSABLE IS ANSWERED HERE, at the one moment a
-    person can still act on it, and each of the three below was found by
-    handing the real thing to the real client rather than by reading urllib:
+    Every way an address can be unusable is caught here, before any request:
 
-      * `http://[hub.example` — `urlsplit` itself raises `ValueError: Invalid
-        IPv6 URL`, and it did so from inside `Hub.__init__`, as a traceback;
-      * `http://hub:8O80` — `urlsplit` is perfectly happy, and so is
-        `urllib.request.Request`. `.port` is the accessor that raises, and
-        without this it was raised much later by `http.client`, as
-        `InvalidURL: nonnumeric port` — a different exception class from a
-        different module, from a line about sending;
-      * an address with no host at all, which cannot be requested and would
-        otherwise fail somewhere inside the opener;
-      * `//hub.example` — a host and no SCHEME. `urlsplit` is content, `.port`
-        is content, the host is there, and `urllib.request.Request` is what
-        raises: `ValueError: unknown url type`. Checking the host without
-        checking the scheme let this one through into the clause about the
-        token;
-      * `http://хаб.example` — a non-ASCII HOST. It reaches the wire and dies
-        there: `http.client` writes the `Host` header as latin-1. An earlier
-        version of this file asserted the opposite in a comment — "urllib
-        resolves it through IDNA" — and that was simply wrong;
-      * `http://127.0.0.1/старт` — a non-ASCII PATH, which fails a step earlier,
-        because the request line is encoded as ASCII;
-      * `http://<70 a's>.example` — a DNS label over 63 characters. PURE ASCII,
-        so no encodability check on the string finds it; the `idna` codec is
-        what refuses it, at send time.
+      * `http://[hub.example` — `urlsplit` raises `Invalid IPv6 URL`;
+      * `http://hub:8O80` — only the `.port` accessor raises;
+      * no host, or no scheme (`//hub.example`);
+      * `http://хаб.example` — non-ASCII host; the `Host` header is latin-1;
+      * `http://127.0.0.1/старт` — non-ASCII path; the request line is ASCII;
+      * `http://<70 a's>.example` — a DNS label over 63 characters, refused
+        by the `idna` codec.
 
-    THE LAST THREE ARE WHY THIS ENDS BY ASKING THE STANDARD LIBRARY instead of
-    listing more rules. They all raise `UnicodeEncodeError` — a ValueError —
-    from three different codecs at three different moments, and all three landed
-    in `_call`'s last-resort clause, which says "the address is checked before
-    this point, so this is not it — please report it". A typo in an address,
-    presented as a bug in the tool.
-
-    Note what is NOT among them, because the comment that used to stand at the
-    call site claimed it: `Request` does not refuse `http://host:notaport/x` or
-    an address with a space in it. Both are accepted, host and all.
+    The last three are checked by performing the encodings
+    (`_refuse_unrequestable`) rather than by listing rules.
     """
     try:
         split = urllib.parse.urlsplit(url)
-        # Touched, not stored: the accessor is the check. Reading `.port` is
-        # what turns "8O80" into a refusal, and nothing above it does.
+        # Touched, not stored: reading `.port` is what refuses "8O80".
         split.port
     except ValueError as error:
         raise HubError(
@@ -1530,35 +1007,17 @@ def _origin(url: str):
 def _refuse_unrequestable(url: str, split) -> None:
     """Prove the address can be turned into a request, by doing what that does.
 
-    THE THREE ENCODINGS ARE THE STANDARD LIBRARY'S OWN, in the order it applies
-    them, and they are performed here rather than described: the request line is
-    ASCII, the `Host` header is latin-1, and the host is IDNA. A rule written
-    out by hand would have to know that a 70-character label is refused while a
-    63-character one is not, which is exactly the kind of thing a copy gets
-    wrong — and the ASCII rule alone does not find it, since that address is
-    pure ASCII.
+    The standard library's three encodings, in its order: the request line is
+    ASCII, the `Host` header latin-1, the host IDNA (labels of 1-63
+    characters).
 
-    THE HOST IS UNQUOTED FIRST, WHICH IS ALSO THE LIBRARY'S OWN STEP, and
-    getting it wrong made this check miss the very case it was written for:
-    `urllib.request.Request._parse` ends with `self.host = unquote(self.host)`,
-    so `http://%D1%85%D0%B0%D0%B1.example` is pure ASCII as it is written here
-    and `хаб.example` by the time the `Host` header is built. Encoding the
-    written form proved something about a string nobody sends. THE PATH IS NOT
-    unquoted, because that is the same rule read correctly: the selector goes
-    out as written, so percent-encoding in a path is legal and must not be
-    refused.
+    The host is unquoted first, as `urllib.request.Request._parse` does, so
+    `http://%D1%85%D0%B0%D0%B1.example` is checked as `хаб.example`. The path is
+    not unquoted: the selector goes out as written.
 
-    Everything here happens before a socket is opened, so "nothing was sent" is
-    a fact about all of it.
+    Nothing here opens a socket.
     """
-    # UNQUOTED FOR THE IDNA CHECK TOO, mirroring the library rather than adding
-    # a guard: no test can tell this line from `split.hostname`, and that is a
-    # provable property, not an untested one. Unquoting only ever SHORTENS a
-    # label (`%XX` becomes one character), so it can never turn a legal length
-    # into an illegal one, and any non-ASCII it uncovers is caught one line
-    # above by the latin-1 check on the same string. It stays because a mirror
-    # with a piece missing stops being a mirror the day the library's order
-    # changes.
+    # Unquoted for the IDNA check too, mirroring the library.
     host = urllib.parse.unquote(split.hostname)
     checks = (
         (f"{split.path or '/'}?{split.query}", "ascii",
@@ -1584,32 +1043,14 @@ def _refuse_unrequestable(url: str, split) -> None:
 def _refuse_unsendable_token(token) -> None:
     """Refuse a secret that cannot go in a header, saying so and not showing it.
 
-    ASKED HERE RATHER THAN LEFT TO `http.client`, because the exception it
-    raises is a bare `ValueError` that arrives on the same line as several
-    others — which is how "the token contains a character that cannot be sent"
-    came to be said about a malformed ADDRESS. Checking the token explicitly is
-    what lets that clause stop guessing: this is the only place that knows the
-    answer is the token, and it is the only place that says so.
-
-    THIS IS FOR THE TOKEN THAT DID NOT COME THROUGH `login`. A password typed at
-    the prompt is refused there, by `config.check_storable` and
-    `config.check_sendable_as_header` together, with wording that suits somebody
-    standing at the prompt; the two checks are the same shape on purpose and a
-    test compares them. What still arrives unchecked is `EDIT_TOKEN` out of the
-    environment or out of a hand-edited file, which is what this covers. The
-    advice it gives — run `login` — is right for that reader and wrong for the
-    one inside `login`, which is exactly why `login` no longer reaches it.
-
-    THE VALUE IS NEVER ECHOED. What is wrong with it is stated by kind and never
-    by showing it. Note the honest width of "control character": a TAB is legal
-    in an HTTP header value and the transport would send it — this refuses it
-    anyway, because a secret with a tab in it is a paste that went wrong, and
-    that is a decision rather than a limit of the wire.
+    Checked explicitly so a bad token is never confused with a bad address
+    (`http.client` raises a bare ValueError for both). Covers `EDIT_TOKEN` from
+    the environment or a hand-edited file; `login` checks a typed password
+    itself with the same predicate (`config.header_value_problem`). The value
+    is never echoed.
     """
     if not token:
-        # No header is sent at all in that case (`_call`), which is what
-        # `create` relies on: it reaches the hub for a public route and
-        # deliberately never reads the secret.
+        # No header is sent then (`_call`); `create` relies on it.
         return
     problem = header_value_problem(token)
     if problem is None:
@@ -1624,8 +1065,7 @@ def _refuse_unsendable_token(token) -> None:
 def _opener_for(origin):
     """The opener, with the machine's proxy bypassed for loopback only.
 
-    Takes the PARSED address rather than the string: `urlsplit` is where an
-    unreadable one raises, and it has already been called once, in `_origin`.
+    Takes the address already parsed by `_origin`.
     """
     handlers = []
     host = origin.hostname or ""

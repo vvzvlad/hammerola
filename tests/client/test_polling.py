@@ -1,23 +1,13 @@
 """Waiting for a build across a hub that stops answering for a while.
 
-THE INCIDENT, 2026-08-30. A `hammerola build` died mid-wait:
+Measured against the live deployment: the hub's own 404 is
+`application/json`, `{"error": "not found"}`; the edge's is
+`text/plain; charset=utf-8`, nineteen bytes, Go's `http.NotFound` — TRAEFIK,
+whose docker provider drops the router for a host while the container is
+recreated, which happens every time `:latest` moves. The push has already been
+accepted (202) and the build is very probably still running.
 
-    queued as job M4emizPYJlKnvtyIlLu3RQ: this build's progress and its log
-      building
-    hammerola: the hub answered HTTP 404 for job M4emizPYJlKnvtyIlLu3RQ:
-      '404 page not found\\n'
-
-That 404 was not the hub. Measured against the live deployment: the hub's own
-404 is `application/json`, `{"error": "not found"}`, under `Server: hammerola`;
-the one that arrived is `text/plain; charset=utf-8`, nineteen bytes, Go's
-`http.NotFound` — TRAEFIK, whose docker provider drops the router for a host
-while the container is not running. The container is recreated every time
-`:latest` moves, which on this fleet is several times an evening, so the window
-is ordinary rather than exotic. The push had already been accepted (202), the
-build was very probably still running, and the client threw the wait away and
-exited 1.
-
-THE TWO ARE TOLD APART BY THE BODY AND BY NOTHING ELSE. A 404 whose body parses
+The two are told apart by the body and by nothing else. A 404 whose body parses
 as the hub's own error shape (`{"error": ...}`, what `_error` emits) is the hub
 denying the job — permanent, so it fails fast; a 404 that cannot produce that
 shape is not identified as the hub's at all, and gets a BOUNDED tolerance of a
@@ -156,12 +146,10 @@ def scripted():
 
 def test_two_edge_404s_in_a_row_are_outlived_and_the_build_still_reports(
         quick, scripted):
-    """THE INCIDENT, as a test: the edge answers 404 while the container is
-    being recreated, and then the hub comes back and the wait finishes.
+    """The edge answers 404 while the container is being recreated, and then
+    the hub comes back and the wait finishes.
 
-    Three requests, because the two refusals are retried and the third answers —
-    before this, the first of them ended the command with exit 1 for a build
-    that was still running.
+    Three requests, because the two refusals are retried and the third answers.
     """
     hub, seen = scripted([EDGE_404, EDGE_404, _record("done")])
     notices = []
@@ -262,7 +250,7 @@ def test_a_hub_that_never_comes_back_gives_up_and_says_which_budget_ran_out(
     """An edge that never lets go costs `grace` seconds and then ends with an
     honest message.
 
-    The message has to say the three things the incident's did not: that the HUB
+    The message has to say three things: that the HUB
     stopped answering rather than that the build failed, where to look
     afterwards, and that `--timeout` is not the knob — it is the budget for the
     build, not for the hub being unreachable.
@@ -415,8 +403,7 @@ def test_an_answer_that_is_not_IDENTIFIABLY_A_VERDICT_is_treated_as_an_outage(
     that the hub wrote the body, and `{"detail": "Not Found"}` is what Starlette
     and FastAPI answer by default — so a check that accepted any dict, or that
     read the header, would call a gateway's page the hub's verdict and end the
-    wait on a build that is still running. That is the incident again with one
-    more layer of dressing.
+    wait on a build that is still running.
     """
     hub, seen = scripted([answer, _record("done")])
 
@@ -494,10 +481,7 @@ def test_a_streak_that_heals_does_not_count_towards_the_next_one(
     on a fleet where main is merged several times an evening that is the normal
     case rather than the unlucky one.
 
-    THE REAL PROPERTY UNDER TEST, stated plainly because the first version of
-    this docstring argued something vacuous ("a total budget of 0.3 s could not
-    survive two gaps" — it could, the whole sequence fits inside 0.3 s): the
-    streak clock is RESET, not merely paused, by a good poll. The second failure
+    The property under test: the streak clock is RESET, not merely paused, by a good poll. The second failure
     is timed from itself and not from the first, and the notices come in pairs
     because each streak is a separate one.
     """
@@ -521,9 +505,9 @@ def test_the_DEADLINE_running_out_is_not_reported_as_the_hub_going_away(
     """A failed poll past the deadline is a TIMEOUT, and must say so.
 
     An opening failure has `now - streak_began == 0`, so a single condition over
-    both budgets gave every failed poll at or after the deadline the streak's
-    message — including its "a longer --timeout does not help with this one", at
-    the exact moment a longer --timeout is precisely what would have helped.
+    both budgets would give every failed poll at or after the deadline the
+    streak's message — "a longer --timeout does not help with this one" — at the
+    exact moment a longer --timeout is what would help.
 
     The state has to be named as what was last SEEN, with the failed poll
     admitted: reporting `'building'` without saying the last look failed hands
@@ -613,23 +597,22 @@ def test_the_grace_window_is_WALL_CLOCK_and_not_a_count_of_returned_polls(
 
 
 def test_a_throttled_notice_is_DEFERRED_and_not_lost(monkeypatch, scripted):
-    """THE TRACE THAT MADE THE FLOOR A DEFECT OF ITS OWN.
+    """The throttle postpones a notice rather than dropping it.
 
     An outage, a recovery inside the floor, then an outage that never ends. An
     opening happens ONCE and never repeats, so a throttle that `return`s instead
-    of postponing loses it for good — and what the reader saw was:
+    of postponing loses it for good — and the reader would see:
 
         <the first outage>
         the hub is answering again; still waiting
         <silence>
         GAVE UP -> the hub stopped answering ...
 
-    The outage that actually killed the command was never announced, and the
-    last thing the terminal said about the connection was that the hub is
-    answering: the opposite of the truth. Before the floor existed, a real
-    outage always got its line.
+    The outage that actually killed the command is never announced, and the
+    last thing the terminal says about the connection is the opposite of the
+    truth.
 
-    The fix bounds the RATE without losing the LATEST transition — the
+    The floor bounds the RATE without losing the LATEST transition — the
     undelivered line waits in `pending`, is overwritten when a newer transition
     supersedes it, and goes out on the first iteration past the floor.
     """
@@ -657,15 +640,11 @@ def test_a_throttled_notice_is_DEFERRED_and_not_lost(monkeypatch, scripted):
 
 def test_a_deferred_line_is_the_LATEST_transition_and_not_a_healed_outage(
         monkeypatch, scripted):
-    """`pending` IS ONE SLOT, OVERWRITTEN — the mirror of the defect above.
+    """`pending` is one slot, overwritten — the mirror of the test above.
 
-    Two docstrings say so ("ONE SLOT, OVERWRITTEN rather than queued", "is
-    overwritten when a newer transition supersedes it") and nothing checked it:
-    writing the recovery line only `if pending is None` kept the whole suite
-    green. What that mutant produces is the test above run backwards — an
-    outage's line waits in the slot, the hub comes back, the recovery cannot
-    displace it, and the line that finally goes out says "the hub is not
-    answering" while the hub is answering and the build is running to
+    Writing the recovery line only `if pending is None` would leave an outage's
+    line in the slot after the hub comes back, and the line that finally goes
+    out would say "the hub is not answering" while the build runs to
     completion. A backlog of superseded lines is the same fault in the other
     direction: what a reader needs is the state of the connection NOW.
 
@@ -712,11 +691,11 @@ class _Reply:
 
 def test_the_POLL_gets_the_short_budget_and_the_PUSH_keeps_the_long_one(
         monkeypatch):
-    """THE REGRESSION WITH THE WIDEST BLAST RADIUS IN THIS BRANCH, and nothing
-    watched it: making the per-request override the DEFAULT
-    (`budget = QUERY_TIMEOUT if timeout is None else timeout`) silently cuts
-    every push from 300 s to 30 s, and the whole client suite passes — a push of
-    a real archive up a domestic uplink then dies part-way with `cannot reach`.
+    """The per-request override is not the DEFAULT.
+
+    `budget = QUERY_TIMEOUT if timeout is None else timeout` would silently cut
+    every push from 300 s to 30 s — a push of a real archive up a domestic
+    uplink would then die part-way with `cannot reach`.
 
     Asserted where the number actually lands, on the opener, which is below the
     computation and above the socket. No server: a fake opener is the only thing
@@ -750,7 +729,7 @@ def test_notices_are_floored_so_a_FLAPPING_endpoint_cannot_fill_the_terminal(
     The floor is what makes it a ceiling; the first notice still always gets
     out, because that one is the whole reason notices exist.
 
-    THE ONE TEST HERE THAT LEAVES THE FLOOR SWITCHED ON — every other one runs
+    The one test here that leaves the floor switched on — every other one runs
     under `quick`, which takes it away so that per-streak counting is what is
     being counted.
     """
@@ -837,9 +816,8 @@ def test_the_LOOP_carries_the_normal_cadence_across_a_recovery(
     """The table above proves the function; this proves the CALLER uses it that
     way — the mutant lives in `await_job`, not in `_next_sleep`.
 
-    Putting `wait = POLL_FIRST_SECONDS` back into the recovery branch passed all
-    28 tests in this file and all 355 in `tests/client/`. Rather than time it,
-    the arguments the loop hands the decision are recorded: after a recovery the
+    A `wait = POLL_FIRST_SECONDS` in the recovery branch would pass the table
+    above. Rather than time it, the arguments the loop hands the decision are recorded: after a recovery the
     `wait` it passes must be the GROWN value, and `new_streak` must be true on
     each opening and false everywhere else.
     """
@@ -927,27 +905,24 @@ ROUND_TRIPS = [
                          ids=[row[2] for row in ROUND_TRIPS])
 def test_when_BOTH_budgets_expire_at_once_the_streak_is_what_is_reported(
         quick, scripted, monkeypatch, first, later, shape):
-    """The order of the two checks is declared load-bearing and nothing tested
-    it — swapping the blocks passed everything, because no test had both expire
-    together. The streak is the specific diagnosis and must win; the deadline is
+    """The order of the two checks, with both expiring together. The streak is the specific diagnosis and must win; the deadline is
     the one that comes true eventually anyway.
 
-    HOW THE INSTANT IS CONSTRUCTED. The deadline lands `timeout` after the read
+    How the instant is constructed. The deadline lands `timeout` after the read
     that opens the wait; the streak opens when the FIRST poll fails, which is
     one round trip after that same read. So `timeout = first + grace` puts the
     two edges on the same number exactly — for any round trip, at any scale —
     and `_Clock` is what makes `first` a number this test chose rather than one
     the machine happened to produce.
 
-    WHY A REAL CLOCK CANNOT CONSTRUCT IT, and why the fake is not decoration to
-    be simplified away. The old version wrote the instant as `timeout == grace`,
-    which is a knife edge and not an equality: it puts the deadline at `timeout`
+    Why a real clock cannot construct it: writing the instant as
+    `timeout == grace` is a knife edge and not an equality: it puts the deadline at `timeout`
     and the streak's edge at `t1 + grace`, one whole round trip later, so the
     sleep is clamped to the deadline and the deciding poll lands at
     `timeout + rt2`. The streak is therefore reported only when `rt2 >= t1` —
     true merely because the first request of a run is usually the slow one
     (imports, the first socket), and false on a cold run, where the deadline
-    branch legitimately wins and the assertion fails. Bigger numbers do not
+    branch legitimately wins. Bigger numbers do not
     remove it: the margin stays `rt2 - rt1` whatever the scale.
 
     Everything else is real — `await_job`, the socket, the scripted 404 — so
@@ -969,19 +944,17 @@ def test_when_BOTH_budgets_expire_at_once_the_streak_is_what_is_reported(
 
 def test_a_200_WITHOUT_a_state_is_not_reported_as_never_having_answered(
         quick, scripted):
-    """`record.get("state")` is None for a reply with no `state` field, and None
-    used to be the same value as "no poll has ever succeeded".
+    """`record.get("state")` is None for a reply with no `state` field, and that
+    is not the same as "no poll has ever succeeded" (`_NEVER`).
 
-    So a hub answering 200 with something shaped almost right produced "was
-    never seen in any state — no poll of it ever succeeded" about a wait whose
-    every poll succeeded — a false sentence in the one message the reader is
-    using to work out what happened.
+    Otherwise a hub answering 200 with something shaped almost right would get
+    "was never seen in any state — no poll of it ever succeeded" about a wait
+    whose every poll succeeded.
 
-    AND THE STATE CALLBACK STAYS SILENT, which is the other half of the same
-    reply and a decision rather than a side effect. `seen` starts at `_NEVER`,
-    so `state != seen` is true for a 200 that names nothing, and `on_state(None)`
-    fired: the push transcript grew a line reading `  None` as though the hub
-    had reported a build state called None. The value is still RECORDED — the
+    And the state callback stays silent: `state != seen` is true for a 200 that
+    names nothing, and `on_state(None)` would print a line reading `  None` as
+    though the hub had reported a build state called None. The value is still
+    RECORDED — the
     message above is the reason — and only the callback is skipped.
     """
     hub, _seen = scripted([(200, "application/json", b'{"job": "job-1"}')])
@@ -1002,15 +975,10 @@ def test_the_one_shot_read_is_left_alone_and_still_raises(scripted):
     """`Hub.job()` is the honest reading of ONE request and must keep raising on
     the first non-200 — the tolerance is a property of waiting, not of asking.
 
-    BE ACCURATE ABOUT WHO CALLS IT, because this paragraph has been wrong twice.
-    It said `check_token` did, which is false — that uses the same ROUTE but
-    goes to `_call` directly. It then said the method had no caller outside the
-    tests, which was true only between `await_job` moving to `_poll_job` and
-    issue #79: `sources._dev_log` calls it now, once, to put "(build, state
-    done)" in the header of `hammerola log dev`. That call is why `job()` grew a
-    401 branch of its own. What this test holds is the one-shot semantics it is
-    kept FOR — the first non-200 raises, with none of the polling tolerance —
-    and not the emptiness of a caller list that has stopped being empty.
+    `sources._dev_log` calls it once, to put "(build, state done)" in the
+    header of `hammerola log dev`; `check_token` uses the same ROUTE but goes
+    to `_call` directly. What this test holds is the one-shot semantics — the
+    first non-200 raises, with none of the polling tolerance.
     """
     hub, seen = scripted([EDGE_404])
 

@@ -27,7 +27,7 @@ from modeldir import make_model
 
 from hammerola.cli import main
 
-# The address and the token, from tests/client/conftest.py (issue #99).
+# The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
 
 # The projection the panel renders, as `ui/src/proposal.js` builds it: a few

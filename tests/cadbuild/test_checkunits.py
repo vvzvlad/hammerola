@@ -510,22 +510,20 @@ def test_the_units_are_handed_out_in_random_order(model_project, monkeypatch):
 
 def test_a_project_with_a_src_of_its_own_still_reaches_the_hub_in_a_worker(
         model_project, isolated_project, capsys):
-    """THE LAYOUT THIS FEATURE IS MOST LIKELY TO MEET, and it used to lose every
-    unit on it.
+    """A model project with a `src` directory of its own still runs its units.
 
     `geometry.load_model` gives the project root the FIRST place on `sys.path`
     deliberately, so a repository that carries a directory called `src` -- about
     the most ordinary name there is -- owns that name for the rest of the
     process. `spawn` copies this process's `sys.path` into the worker, and the
     worker then has to `import src.cadbuild.checkunits` in a fresh interpreter
-    to reach `_work` at all. Reproduced: `ModuleNotFoundError: No module named
-    'src.cadbuild'` in every worker, `check units: 0 of 1 passed`, a build red
-    for nothing its author wrote -- and the identical model, with the directory
-    removed, green.
+    to reach `_work` at all; unless the hub goes first on the worker's path,
+    every worker fails with `ModuleNotFoundError: No module named
+    'src.cadbuild'`.
 
-    THE PATH IS ALSO PUT BACK, and that half is asserted here because the fix
-    is a context manager around `Process.start()` and nothing else would notice
-    it leaking. The hub going in front is for the CHILD's benefit; this process
+    THE PATH IS ALSO PUT BACK, and that half is asserted here because it is a
+    context manager around `Process.start()` that nothing else would notice
+    leaking. The hub going in front is for the CHILD's benefit; this process
     has to go on being one where the project owns `src`, or every import the
     build makes after the units resolves somewhere new.
     """
@@ -594,14 +592,12 @@ def test_a_worker_that_dies_mid_unit_does_not_take_the_other_units_with_it(
 
 def test_a_worker_killed_mid_unit_is_reported_dead_rather_than_timed_out(
         model_project, capsys, monkeypatch):
-    """A death is not a hang, and it used to be reported as one.
+    """A death is not a hang.
 
-    `is_alive()` was asked only about ALL the workers at once, so a worker that
-    died with a unit open while its neighbour was still working went unnoticed
-    until the budget ran out. What the log then said -- "still running after
-    120s, so the worker was killed" -- is false twice over: the process had been
-    gone for two minutes, and the sentence sends its reader to look for an
-    endless loop inside a check the OOM killer ended.
+    A worker that dies with a unit open while its neighbour is still working
+    has to be noticed then, not when the budget runs out with a log line
+    ("still running after 120s, so the worker was killed") that sends its
+    reader looking for an endless loop inside a check the OOM killer ended.
 
     The budget here is far longer than the test: a run that waits it out has not
     noticed the death at all, which is exactly the defect.
@@ -721,11 +717,10 @@ def test_an_empty_checks_with_units_counts_zero_rather_than_unknown():
     """0 is what was COUNTED here, and it is not the reserved 0 of the refusal.
 
     `passed=None` means "nobody could count this checks()", and a number added
-    to it stays None -- so a model that had moved every check into units, which
-    is exactly the model this refusal is waived for, reached metrics.json with
-    `checks_passed: null` for eight checks and `report_metrics` could no longer
-    say the project had lost one. The zero has to survive as a zero for
-    `run_units` to have anything to add to.
+    to it stays None -- so a model that moved every check into units, exactly
+    the model this refusal is waived for, would reach metrics.json with
+    `checks_passed: null` and `report_metrics` could no longer say the project
+    lost one. The zero has to survive as a zero for `run_units` to add to.
     """
     @checklib.check("lip joint")
     def check_lip():

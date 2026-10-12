@@ -1,24 +1,16 @@
 // What a gesture of the move tool REMEMBERS and what it SAYS: the record a
 // press builds off the scene, and the one report a release sends.
 //
-// ONE CYCLE, TWO FIELDS OF ONE NODE. A move node of the proposal document
-// carries an offset AND three angles (ui/src/proposal.js), and each is written
-// by its own piece of one manipulator — the axis arrows and the plane quads
-// (gizmo.js) write the offset, the rotation handles (rings.js) the angles. From
-// the press to the report the two are the same sentence: read what is ALREADY
-// STANDING off `vp.moved`, carry `last` and `stood` while the hand is down, and
-// announce the result once — to the interface as a STATEMENT about a build
-// nothing has changed, or to the panel as an ordinary EDIT of the document the
-// reader is drawing. Which field of the node a gesture writes and which two
-// names it goes out under is the whole of what separates them, so that is what
-// the caller passes (#101).
+// A move node of the proposal document carries an offset AND three angles
+// (ui/src/proposal.js); the axis arrows and plane quads (gizmo.js) write the
+// offset and the rotation handles (rings.js) the angles. Both follow one cycle:
+// read what is already standing off `vp.moved`, carry `last` and `stood` while
+// the hand is down, and report once — to the interface as a STATEMENT about an
+// unchanged build, or to the panel as an EDIT of the reader's document. The
+// caller passes which field it writes and which two event names it uses.
 //
-// WHAT STAYS WITH EACH GESTURE is what only one of them has, and both are
-// snapshots of the scene rather than of the record: the press's own NDC and the
-// group homes a slide nudges a body by (gizmo.js), and the seats a turn needs
-// instead, which carry a pose and the body's own centre on top of the home
-// (rings.js). Neither can be assembled without knowing which gesture is being
-// built, which is the line between what is here and what is beside it.
+// What only one gesture needs stays with it: the press NDC and group homes of a
+// slide (gizmo.js), the seats with pose and body centre of a turn (rings.js).
 
 import { emit } from "./events.js";
 
@@ -31,63 +23,36 @@ import { emit } from "./events.js";
  * of the build, and `field` which half of a move node this gesture writes —
  * `delta` for a slide, `turn` for a rotation.
  *
- * MODULE-LEVEL AND EXPORTED because the gestures that make one live in the
- * widgets and the report that reads it is `reportGesture` below. Every field is
- * a decision with a reason, which is exactly the kind of thing a second
- * hand-made copy gets subtly wrong.
+ * Module-level and exported: the widgets build it and `reportGesture` reads it.
  *
- * `base` IS WHAT IS ALREADY STANDING in that field, and `last` and `stood` start
- * there: a press can perfectly well land on a part that has been moved or turned
- * before, and a gesture that started from zero would jerk it home on its first
- * step. For a body of the proposal it is always zero — nothing writes one for it
- * — and that is the point rather than a coincidence: each drag of a body starts
- * from where the document now puts it, because the previous one is already in
- * the document.
+ * `base` is what is already standing in that field, and `last`/`stood` start
+ * there, so a part moved or turned before does not jerk home on the first step.
+ * For a proposal body it is always zero: the previous drag is already in the
+ * document.
  *
- * THE OTHER FIELD IS CARRIED AND NEVER CHANGED, under its own name, and it is
- * the anchor's for the same reason `base` is: `movePart` writes position and
- * orientation together on every call, so a gesture that left the other half out
- * would flatten a part the reader had turned the instant they slid it, and send
- * a part they had dragged home the instant they turned it.
+ * The other field is carried unchanged: `movePart` writes position and
+ * orientation together, so leaving it out would undo a turn on a slide (and
+ * vice versa).
  *
- * `bases` IS THE SAME QUESTION ASKED OF EVERY PATH, and the two are not the same
- * list because the copies of a row need not agree. `base` is the anchor's alone
- * and decides where the gesture STARTS FROM, which is the value of the copy the
- * manipulator is standing on, so the widget and the part under it do not leap
- * apart at the first snap step. Every other path is carried to that same value
- * by the first step, and where each of them WAS is the only record of what this
- * gesture actually changed — which is what `reportModel` asks at the release.
+ * `bases` asks the same of every path, since copies of a row need not agree.
+ * `base` (the anchor's) is where the gesture starts, so the widget and the part
+ * under it do not leap apart; the first step carries every path to that value,
+ * and `bases` is the only record of what changed, read by `reportModel`. So
+ * during the drag the picture is the anchor's: copies turned differently all
+ * stand at the anchor's turn, and on release the interface merges them into
+ * one node and, finding no shared turn, straightens them (`hmr:moved` in
+ * HammerolaViewer.jsx).
  *
- * WHICH MAKES THE PICTURE DURING THE DRAG THE ANCHOR'S AND THE ANSWER THE
- * DOCUMENT'S, and the two can disagree for the length of one gesture. Grab
- * copies that are turned differently and they all stand at the anchor's turn
- * while the hand is down; on release the interface merges them into one node,
- * finds no turn they agree on, and they straighten (`hmr:moved` in
- * HammerolaViewer.jsx). The end state is the document's and it is right; what is
- * in between is a preview, and this is the only place that says so.
+ * `build` is which scene these numbers are about, read at the press because a
+ * build landing mid-drag replaces the scene before the report. It is
+ * `drawnKey`, not `state.buildKey`: the state field moves when a swap is
+ * announced, while `show()` writes `drawnKey` beside the payload once the new
+ * geometry is really up, and nothing disarms the tool in between.
  *
- * `build` IS WHICH SCENE THESE NUMBERS ARE ABOUT, and it is read here because
- * here is the last moment it is unambiguous: a build landing mid-drag replaces
- * the scene while the hand is still down, and a report deferred past that would
- * otherwise arrive describing an assembly that has left. It is the interface's
- * own key for the build, so the two sides compare the same string.
+ * `body` is the name the panel drew a proposal body under (how the panel finds
+ * the node), and also the flag `reportGesture` splits on: a build part has none.
  *
- * `drawnKey` AND NOT `state.buildKey`, which is the difference between the build
- * that is DRAWN and the one that has been announced. The state field moves the
- * moment the interface says a swap is coming, and the geometry arrives later —
- * after the `await fetch` in `load()`. Nothing disarms the Move tool across that
- * window, so a press begun inside it would carry the new build's key, match on
- * arrival, and file paths read off the assembly that was still on screen.
- * `show()` writes `drawnKey` beside the payload, which is the line that means
- * the new scene is really up.
- *
- * `body` IS THE NAME THE PANEL DREW A PROPOSAL BODY UNDER, which is the only
- * thing the panel can find a node by, and it is also the FLAG the two endings
- * are told apart by (`reportGesture`): a part of the model has none.
- *
- * `already` AND NOT `stood`, which is taken: `stood` is the last value a GESTURE
- * has landed, and two different things under one name in ten lines is how the
- * wrong one gets read.
+ * The local is `already`, not `stood`, which is the last value a gesture landed.
  */
 export function gestureRecord(vp, paths, anchor, proposal, field) {
   const already = vp.moved.get(anchor);
@@ -110,41 +75,24 @@ export function gestureRecord(vp, paths, anchor, proposal, field) {
 
 /** Where a dragged PROPOSAL body ended up, announced once.
  *
- * THE RELEASE IS THE ONLY REPORT, and the part of the build this gesture is
- * shared with is reported the same way for the same reason (`reportModel`
- * below). This one ends in an EDIT of the proposal document, whose bodies are
- * STAGED out of that document, and an edit per step would rebuild them, hand
- * them to the viewport, and have the whole scene disposed and rendered again —
- * while the reader is still dragging. `typeProposal`/`commitProposal` on the
- * other side make exactly this decision about a field being typed in, for
- * exactly this reason.
+ * The release is the only report: each edit re-stages the bodies (the scene is
+ * disposed and rendered again), which must not happen while the reader is
+ * still dragging — the same reason `typeProposal`/`commitProposal` commit a
+ * typed field only once.
  *
- * A GESTURE THAT WENT NOWHERE SAYS NOTHING. `last` is the value the hand has
- * landed on and it starts at nothing for a body — the document holds the body's
- * place and its pose, and this side has never written either — so a drag that
- * never left the first step, or that came back to where it started, changed the
- * body by nothing, and reporting it would be a whole re-stage of a document
- * nothing changed in.
+ * A gesture that went nowhere says nothing: for a body `last` starts at zero,
+ * so a zero value means the body did not change.
  *
- * AND IT IS NEVER SENT FROM INSIDE A RENDER, which is what the microtask is for
- * and the one thing here that is not obvious. This report comes back as a
- * STAGE: the panel writes the body's own field and calls `setOverlay`, which
- * reaches `restage()`, which reads `this.payload` and renders it. One of the
- * endings that raise this report is a widget's `endDrag` (gizmo.js, rings.js),
- * and `endDrag` is called from inside `show()` — after its only `await` and
- * BEFORE `this.payload = shapes`, which is deliberately the last thing a
- * successful render does (element.js says why). Sent synchronously from there,
- * the re-stage would read the payload of the build being REPLACED, sleep on its
- * own `await` while the outer render finished, and then repaint the previous
- * build and write its document back over the new one — under the same load
- * token, so nothing would notice, and the reader would be left looking at the
- * old build with no reload coming. A microtask puts the report after the render
- * that raised it, whichever caller raised it: by then the payload, the tree and
- * the scene are the new build's, and the re-stage composes the moved body into
- * THAT.
+ * Never sent from inside a render, hence the microtask. The report comes back
+ * as a re-stage (`setOverlay` → `restage()`, which reads `this.payload`), and a
+ * widget's `endDrag` runs inside `show()` after its `await` but before
+ * `this.payload = shapes` (element.js). Sent synchronously, the re-stage would
+ * read the payload of the build being replaced and paint it back over the new
+ * one under the same load token. Deferred, it composes the moved body into the
+ * new build.
  *
- * `reportCut` in tools.js stays synchronous and must: it READS BACK off the
- * scene that is still on screen, so a microtask would measure the next one.
+ * `reportCut` in tools.js stays synchronous: it reads back off the scene still
+ * on screen, so a microtask would measure the next one.
  */
 function reportProposal(vp, rec, proposalEvent, key) {
   const d = rec.last;
@@ -156,60 +104,32 @@ function reportProposal(vp, rec, proposalEvent, key) {
 
 /** Where a dragged part of the BUILD ended up, announced once.
  *
- * THE RELEASE IS THE ONLY REPORT, AND IT HAS TO BE. Reported on every step it
- * reads as the cheaper thing — the part is already standing there, so a document
- * handed straight back costs the scene nothing (`reconcileMoves`). It is not
- * cheap at all once the interface answers by OPENING THE PANEL: an overlay that
- * changed reaches `restage()`, `restage()` calls `show()`, and `show()` ends the
- * gesture the reader has not let go of (`endDrag`, element.js) — so the press
- * and its window listeners would be torn down one step into the drag and the
- * part would freeze under the cursor. A report per gesture cannot do that: by
- * the time it lands, the gesture it would end is already over.
+ * The release is the only report: the interface answers by opening the panel,
+ * which reaches `restage()` → `show()`, which ends the gesture (`endDrag`,
+ * element.js). A per-step report would tear the press down one step in and
+ * freeze the part under the cursor.
  *
- * EVERY ENDING THE WIDGET HAS RAISES IT, which is `stop()` in gizmo.js and in
- * rings.js: an interrupted drag has to be reported because the part is standing
- * moved or turned in `vp.moved` with nothing in the document claiming it, and
- * the next push would send it home under the reader's hand.
+ * Every ending raises it (`stop()` in gizmo.js and rings.js): after an
+ * interrupted drag the part stands moved in `vp.moved` with no node claiming
+ * it, and the next push would send it home.
  *
- * A GESTURE THAT CHANGED NOTHING SAYS NOTHING, and for a part of the build
- * "nothing" is measured against what was STANDING rather than against zero:
- * unlike a body, a part may already have been moved when this press started. A
- * drag that never crossed a step, or that came back to the one it started on,
- * leaves `stood` equal to those — and announcing that would write a node the
- * document already has and open the panel to show it.
+ * A gesture that changed nothing says nothing, measured against what each path
+ * had standing (`bases`), not against zero or the anchor alone: a grab on a
+ * copy standing apart from its row carries every sibling to the anchor's value,
+ * and coming back to the anchor's start would otherwise read as "nothing
+ * happened" while the siblings stand unclaimed.
  *
- * AGAINST EVERY PATH'S OWN AND NOT THE ANCHOR'S, which is the whole reason
- * `bases` is a list. One gesture applies one answer to every path it holds
- * (`movePart`), so a grab on a copy that stands APART from its row carries all
- * of its siblings onto the anchor's value and can then come back to exactly
- * where the anchor started. Asked about the anchor alone that reads as "nothing
- * happened", and the siblings are left standing somewhere no node claims — until
- * the next push jerks them home.
+ * `count` is what moved, reported from here because the viewport knows what the
+ * press took hold of, which need not be the interface's current selection.
  *
- * `count` IS WHAT MOVED, reported rather than looked up on the other side
- * because the viewport is the half that knows what the gesture actually took
- * hold of — the paths the manipulator was standing on when the press was made,
- * which need not be the selection the interface holds by the time this lands.
+ * `paths` is every path moved and `id` the first: the interface names the part
+ * from one path but must record a displacement for all of them, or the other
+ * copies would stand changed with nothing claiming them.
  *
- * `paths` IS EVERY ONE OF THEM AND `id` IS STILL THE FIRST, because the two are
- * read by different halves of the other side. The interface looks the dragged
- * part up in its tree to name it, which is one lookup and wants one path; what
- * it RECORDS is a displacement, and that has to name every path this gesture
- * actually moved — recorded off `id` alone, the four other copies of a five-copy
- * row would be standing changed with nothing claiming them, and the first push
- * of the document back to this viewport would send them home under the reader's
- * hand.
- *
- * `build` IS WHICH SCENE THE NUMBERS ARE ABOUT, stamped at the press and carried
- * out on the report, because the microtask that defers this can outlive the
- * build it was measured on. `show()` runs `endGesture` and then dispatches
- * `hmr:model` with no `await` between them, so a live rebuild landing mid-drag
- * delivers the model event FIRST and this report afterwards — paths and a value
- * belonging to an assembly that has left, handed to an interface that has
- * already dropped its moves for exactly that reason. The other side compares
- * this against the build it is now showing and drops what does not match; the
- * stamp is here because this is the only half that knows which scene the hand
- * was on.
+ * `build` is stamped at the press because the microtask can outlive the build:
+ * `show()` runs `endGesture` and then dispatches `hmr:model` with no `await`
+ * between, so a rebuild mid-drag delivers the model event first. The interface
+ * drops a report whose build does not match the one it shows.
  */
 function reportModel(vp, rec, modelEvent, key) {
   const d = rec.stood;
@@ -226,18 +146,12 @@ function reportModel(vp, rec, modelEvent, key) {
 
 /** What one finished gesture SAYS, whichever of the two things it was holding.
  *
- * THE TWO MEANINGS PART HERE AND NOWHERE ELSE, on the one field that tells them
- * apart: a proposal body carries the name the panel drew it under and a part of
- * the build carries none. They are opposite claims about the model — a part of
- * the build is a STATEMENT to the agent about a model nothing has changed, a
- * body is an ordinary EDIT of the document the reader is drawing — so they part
- * here rather than behind a flag on one event.
+ * The two meanings part here, on the one field that tells them apart: a
+ * proposal body carries the name the panel drew it under, a build part none.
  *
- * THE TWO NAMES AND THE FIELD COME FROM THE CALLER, which is the whole of what a
- * slide and a turn disagree about by the time they get here. `key` is the field
- * of `vp.moved` the gesture wrote, and the value goes out on the event under
- * that same name — `recordGesture(e.detail, 'delta')` in HammerolaViewer.jsx
- * reads it back by it.
+ * The two event names and the field come from the caller. `key` is the field of
+ * `vp.moved` the gesture wrote, and the value goes out under that name —
+ * `recordGesture(e.detail, 'delta')` in HammerolaViewer.jsx reads it back.
  */
 export function reportGesture(vp, rec, { modelEvent, proposalEvent, key }) {
   if (rec.body) reportProposal(vp, rec, proposalEvent, key);

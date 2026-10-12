@@ -1,56 +1,22 @@
 #!/usr/bin/env python3
-"""`import checklib` -- the name nine model.py files are already written to.
+"""`import checklib` -- the top-level name every model.py imports.
 
-The checks themselves live in `src/cadbuild/checklib.py`; this is the top-level
-name they are reachable under. It exists for exactly one reason: every project
-in the fleet has `import checklib` at the top of its model.py, next to
-`import mocks`, and that line is a contract with nine repositories the same way
-`parts()` and `views()` are.
+The checks live in `src/cadbuild/checklib.py`; this shim re-exports them. It sits
+at the repository root (/app in the image) because a model is imported with its
+own directory first on sys.path (geometry.load_model), so `import checklib` must
+resolve on the path behind it. A project may still shadow it with its own
+checklib.py; geometry._warn_if_checklib_shadowed reports that.
 
-WHY IT SITS AT THE REPOSITORY ROOT rather than inside the package. A model is
-imported with its own directory first on sys.path (geometry.load_model), and
-`import checklib` then has to resolve to something on the path AFTER it. In
-`cad_publish` that was site-packages, because the distribution installed this
-file as a top-level module of its own. Here it is /app -- the working directory
-of the image, the directory `main.py` is started from, and the one pytest.ini
-puts on the path -- so the same file at the root reproduces the same lookup
-with nothing to install. The ordering is load-bearing in both directions: a
-project may still shadow this with a checklib.py of its own, and
-geometry._warn_if_checklib_shadowed exists to say so out loud when it does.
+The implementation is loaded by file path, not as `src.cadbuild.checklib`,
+because a model project's own `src/` directory would shadow that name.
 
-WHY THE IMPLEMENTATION IS FOUND BY PATH AND NOT BY THE NAME `src`. This file
-used to say `from src.cadbuild.checklib import ...`, and that put the whole
-shim behind the most shadowable name in the process. The project root goes on
-sys.path FIRST, deliberately, and `src/` is about the likeliest directory name
-a model project has -- at which point `import src.cadbuild.checklib` finds the
-model's own `src` and raises `ModuleNotFoundError: No module named
-'src.cadbuild'`, from a line that has nothing to do with the model. In
-`cad_publish` the name behind the shim was the distribution's own top-level
-`cad_publish`, which a project could not shadow by accident; naming `src` here
-gave that property away. `spec_from_file_location` off this file's `__file__`
-takes it back: the answer is a location on disk and the name `src` never
-participates. Nothing in the current process reaches that failure -- by the
-time a model runs, `src.cadbuild.checklib` is already in sys.modules and the
-statement short-circuits -- but step 4 of SPEC 8A.2 gives the build a spawned
-process of its own, whose entry point may reach the model before it reaches
-this package, and there the old spelling breaks.
-
-WHAT MUST NOT CHANGE, whichever way the implementation is reached: `checklib`
-and `src.cadbuild.checklib` have to be ONE module. `pairwise_interference`
-RECORDS the volumes it measured in module-level state, and
-`cadbuild.metrics.collect_metrics` reads that record back out of the package
-half. Two module objects means two records: the model fills one, metrics.json
-reads the other, and the interference numbers come out empty on a build that
-measured them, with nothing going red. Hence the sys.modules registration under
-the canonical name below, and the test that holds it down
-(tests/cadbuild/test_checklib.py).
-
-Written as explicit re-exports and not `from ... import *`: a star import would
-also drag in `_INTERFERENCE` and whatever private helper gets added next, and
-would make `checklib.recorded_interference()` and
-`src.cadbuild.checklib.recorded_interference()` two names for state that must
-be one. They are the same objects here -- the functions are rebound, not
-copied.
+`checklib` and `src.cadbuild.checklib` must be ONE module: `pairwise_interference`
+records measured volumes in module-level state that
+`cadbuild.metrics.collect_metrics` reads back, and two module objects would leave
+the interference numbers silently empty. Hence the sys.modules registration under
+the canonical name (tests/cadbuild/test_checklib.py). Explicit re-exports rather
+than a star import keep private state such as `_INTERFERENCE` out; the functions
+are rebound, not copied.
 """
 
 import importlib.util
@@ -168,14 +134,10 @@ tool_access = _impl.tool_access
 unsupported_area = _impl.unsupported_area
 volume = _impl.volume
 
-# One import form to avoid elsewhere in this repository. When this shim has run
-# first, `sys.modules` carries "src.cadbuild.checklib" without its parents, so the
-# dotted statement `import src.cadbuild.checklib` fails with "cannot import name
-# 'cadbuild' from 'src'" — that form walks attributes on the parent package, which
-# nothing has created yet. `from src.cadbuild import checklib` and
-# `importlib.import_module(...)` both work, and both are what the code here uses.
-# Worth knowing at steps 4 and 6, where a separate process starts importing the
-# package from a new entry point.
+# Avoid `import src.cadbuild.checklib` elsewhere: once this shim has run,
+# sys.modules holds that name without its parent packages, and the dotted form
+# fails with "cannot import name 'cadbuild' from 'src'". Use
+# `from src.cadbuild import checklib` or `importlib.import_module(...)`.
 __all__ = [
     "DEFAULT_VOLUME_TOL",
     "DERIVED",

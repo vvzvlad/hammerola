@@ -183,10 +183,9 @@ def test_a_password_the_file_format_cannot_carry_is_refused_without_echoing_it(
 
 
 # -- create ------------------------------------------------------------------
-# EVERY TEST BELOW THAT DOES NOT NAME A HUB PASSES `--no-template`, and that is
-# the shape of the command rather than a convenience for the suite: `create`
-# fetches the starter template, so the flag is what makes it the offline command
-# it used to be. The tests about the download itself are at the bottom.
+# Every test below that does not name a hub passes `--no-template`: `create`
+# fetches the starter template, and the flag is what makes it an offline
+# command. The tests about the download itself are at the bottom.
 def test_create_writes_a_fresh_id_and_takes_the_directory_name_as_the_title(
         tmp_path, capsys):
     root = tmp_path / "t13-ceiling-mount"
@@ -202,14 +201,12 @@ def test_create_writes_a_fresh_id_and_takes_the_directory_name_as_the_title(
 
 def test_create_names_the_project_after_the_directory_it_is_made_in(
         tmp_path, capsys):
-    """THE KEY THAT WAS NOT BEING WRITTEN, and the machine that is the only one
-    able to write it.
+    """The `project` key, written by the only machine able to write it.
 
     The slug is the name of the author's directory and of their repository. On
-    the hub a push is unpacked into `.src-<uuid4 hex>`, so a build that worked
-    the answer out for itself published a card called
-    `.src-89fb7abdeb1d48b5985bcb519850b284`. It travels in project.json because
-    this is where the question has an answer.
+    the hub a push is unpacked into `.src-<uuid4 hex>`, so the hub cannot work
+    it out; it travels in project.json because this is where the question has
+    an answer.
 
     Printed as well as written: it is the name the index card carries, so
     somebody reading the output of `create` has to be able to see it.
@@ -365,19 +362,17 @@ def test_a_directory_and_a_title_naming_two_slugs_is_said_here(tmp_path, capsys)
     assert len(note) == 1, out
     assert "mount" in note[0] and "t13-ceiling-mount" in note[0]
     # The remedy it offers has to be one that moves the key — see the test
-    # below for the one it used to offer, which does not.
+    # below.
     assert "hammerola rename" in out
 
 
 def test_renaming_the_directory_afterwards_does_not_move_the_key(tmp_path):
-    """WHAT THE NOTE ABOVE USED TO RECOMMEND, AND WHY IT NO LONGER DOES.
+    """The note does not recommend renaming the directory.
 
-    "rename the directory" was a remedy that produces no change whatsoever:
-    `create_project` writes the `project` key once, and `cadbuild.project`
-    reads that key before it looks at anything else — so once the file exists,
-    the directory can be called anything and the project goes on publishing
-    under the name it was created with. The two remedies the note names now are
-    the two that do reach the disagreement: the title's brackets, which
+    That would produce no change whatsoever: `create_project` writes the
+    `project` key once, and `cadbuild.project` reads that key before it looks
+    at anything else. The two remedies the note names are the two that do
+    reach the disagreement: the title's brackets, which
     `hammerola rename` rewrites, and the key itself.
     """
     root = tmp_path / "mount"
@@ -483,8 +478,7 @@ def test_create_unpacks_the_template_the_hub_serves(hub, tmp_path, monkeypatch):
     """The whole point of the download: a fresh directory holds a model.
 
     Against the REAL hub over a real socket, because the two halves of this are
-    a route and a client and they used to live in two repositories where nothing
-    could see both.
+    a route and a client.
     """
     monkeypatch.setenv("HUB_URL", hub.url)
     root = tmp_path / "fresh-part"
@@ -557,8 +551,7 @@ def test_a_template_written_over_a_symlink_that_appeared_late_is_refused(
     """THE OTHER HALF OF THE SYMLINK STORY, and the one no `create` can stage.
 
     The test above plants the link before the command runs, so `lexists` in
-    `_refuse_to_overwrite` sees it and nothing downstream is exercised —
-    replacing the write with a plain `write_bytes` leaves that test green. The
+    `_refuse_to_overwrite` sees it and nothing downstream is exercised. The
     window the flags exist for is the one BETWEEN the check and the write, so it
     is staged the only way it can be: by calling the writer with the link
     already there, which is the state that check cannot promise anything about
@@ -619,13 +612,12 @@ def test_a_hub_that_cannot_be_reached_creates_nothing_and_says_what_to_do(
 
 def test_a_template_the_client_cannot_read_says_what_to_do_as_well(
         hub, tmp_path, monkeypatch, capsys):
-    """The last refusal of `create` that lost the way forward.
+    """An unreadable template still offers the way forward.
 
     A corrupt archive, or one naming a member no client will unpack, raises
     `ClientError` from `read_members` — a different class from the HubError
-    every other failure here carries, and it stood outside the wrapper that
-    appends the sentence. So the ONE reader who most needs "you can start
-    without a hub" was the one who did not get it.
+    every other failure here carries — and still gets "you can start without a
+    hub".
     """
     from hammerola import setup as setup_module
 

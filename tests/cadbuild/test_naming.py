@@ -1,9 +1,8 @@
 """The catalogue, and the rules about strings that run before any geometry.
 
-Every one of these is knowable from the source alone. They used to be applied
-inside the export loop, so a name two characters over the hub's limit went red
-only after every part ahead of it had been built, exported and meshed -- a whole
-build spent arriving at an answer that was in model.py all along.
+Every one of these is knowable from the source alone, so they run before the
+export loop: a name two characters over the hub's limit must not cost a whole
+build of the parts ahead of it.
 """
 
 import pytest
@@ -65,7 +64,7 @@ def test_reserved_names_cover_everything_the_build_writes_itself():
 
 
 def test_every_name_this_accepts_the_hub_accepts_too():
-    """Why hubspec carries no part-name ceiling of its own any more.
+    """Why hubspec carries no part-name ceiling of its own.
 
     A part's name in a view file is a catalogue key (or a group name, held to
     the same rule), and MEMBER_RE is strictly narrower than the hub's
@@ -100,7 +99,7 @@ def test_every_text_ceiling_here_equals_the_hub_s():
     """
     assert MAX_NOTE_CHARS == render.MAX_TEXT
     # How big the catalogue may be: what makes meta.json enormous is the number
-    # of RECORDS, not the number of notes among them (issue #75).
+    # of RECORDS, not the number of notes among them.
     assert MAX_PARTS == render.MAX_PARTS
     # The view's caption reaches the hub through meta.json's `views`, and the
     # project's title and slug through `title` and `project`. All three are
@@ -368,7 +367,7 @@ def test_an_unknown_record_key_is_said_out_loud(capsys):
 
 
 # --------------------------------------------------------------------------
-# The author's note (issue #11)
+# The author's note
 #
 # Not the reader's note (that one lives in a browser's localStorage and never
 # leaves it) and not a comment (written by a viewer, addressed to the agent).
@@ -418,8 +417,7 @@ def test_a_note_carrying_a_non_printable_character_is_refused_here():
 def test_a_catalogue_bigger_than_the_hub_accepts_is_refused():
     """The COUNT of records, which is what really decides meta.json's size.
 
-    It used to count the parts carrying a NOTE, and the case below is the one
-    that ceiling could not see: not one of these entries has a note, and the
+    Not the parts carrying a NOTE: not one of these entries has a note, and the
     document they make is just as unloadable. The hub refuses it on arrival
     (`render.MAX_PARTS`), so a build that accepted it would be a whole model
     computed and then answered with a 422.
@@ -456,19 +454,16 @@ def test_an_explicit_colour_wins_for_every_kind_and_comes_back_as_hex():
     """A named colour is validated with the tessellator's own parser, so this
     one test needs the CAD stack. Everything else about the catalogue does not.
 
-    WHAT COMES BACK IS THE PARSER'S SPELLING, which is why neither colour is
+    What comes back is the parser's spelling, which is why neither colour is
     written here the way it comes out. The parser takes a CSS name and a
-    three-digit hex; the rasteriser that draws the previews reads exactly six
-    hex digits, so a catalogue that handed on the author's own string put
-    `"red"` in front of `preview_png._hex_rgb` and killed the build inside the
-    picture of a part that was perfectly fine.
+    three-digit hex; the rasteriser that draws the previews
+    (`preview_png._hex_rgb`) reads exactly six hex digits.
     """
     # `exc_type=ImportError` because the failure this guard is FOR is an
     # ImportError that is NOT a ModuleNotFoundError: on a machine whose kernel is
     # installed but cannot load, the distribution is on disk and its extension
     # refuses to load (`libGL.so.1`). pytest 9.1 narrows the default to
-    # ModuleNotFoundError, so without this the guard would stop skipping and that
-    # machine would go red on a pytest bump.
+    # ModuleNotFoundError.
     pytest.importorskip("ocp_tessellate", exc_type=ImportError,
                         reason="colour parsing uses the tessellator's parser")
     read = read_catalogue(Model({"body": entry(color="red"),

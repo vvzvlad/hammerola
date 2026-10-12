@@ -1,26 +1,19 @@
-"""The two checks that used to judge a part by its FIRST body only.
+"""`pairwise_interference` and `mating_face_flat` judge a part by EVERY body.
 
-`pairwise_interference` and `mating_face_flat` both went through a helper that
-returned `Workplane.val()`, excused by the line "fine where one body is all
-there can be (a printable is one part)". Neither of them takes printables: the
-first takes the parts as assembled, the second takes whatever a model hands it,
-and a part is several bodies as soon as anything is `.add()`ed or a helper
-returns an assembly. Measured on cadquery 2.8.0, before the change:
+Neither takes printables: the first takes the parts as assembled, the second
+whatever a model hands it, and a part is several bodies as soon as anything is
+`.add()`ed or a helper returns an assembly. Judged by `val()` alone (measured on
+cadquery 2.8.0):
 
   * an object whose bodies sit at X -5..5 and X 25..35 has a `val()` bounding
-    box of -5..5, so a neighbour overlapping the SECOND body by 800.00 mm3 was
-    rejected by the cheap box test and never intersected -- `[]`, no problem
-    reported;
-  * a two-body part whose joint face lies on the second body was told "there is
-    no flat mating face there at all" -- a false RED, which is the direction
-    that wastes somebody's afternoon.
+    box of -5..5, so a neighbour overlapping the SECOND body by 800.00 mm3 is
+    rejected by the cheap box test and never intersected;
+  * a two-body part whose joint face lies on the second body is told "there is
+    no flat mating face there at all" -- a false RED.
 
-Both failures are silent in the sense that matters: nothing about the result
-says a body was skipped. So the tests below are written to fail on the old
-implementation rather than to describe the new one.
+Both failures are silent: nothing about the result says a body was skipped.
 
-Needs the CAD kernel and skips without it, like test_material_at.py. CI's test
-image carries the kernel's libraries (issue #27), so this runs there.
+Needs the CAD kernel and skips without it; CI's test image carries it.
 """
 
 import re

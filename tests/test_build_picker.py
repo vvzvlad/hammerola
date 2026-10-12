@@ -5,12 +5,9 @@ rewritten under the reader; a commit is a build with a permanent URL. The picker
 has to offer all three, mark which one the page is currently on, and never offer
 a name that resolves to nothing.
 
-What is pinned here is the SERVER's half of that: what `builds.json` promises,
-and that every destination it names actually answers. The browser's half — that
-the interface reads exactly these field names and selects by the URL it is on
-rather than by the build that answered — is checked against the live sources in
-tests/test_ui_source.py (`test_the_build_picker_reads_the_fields_builds_json_carries`),
-which is where it stayed live when the old page viewer was deleted.
+This pins the SERVER's half: what `builds.json` promises, and that every
+destination it names answers. The browser's half is checked against the UI sources
+in tests/test_ui_source.py (`test_the_build_picker_reads_the_fields_builds_json_carries`).
 """
 
 from urllib.parse import quote
@@ -45,16 +42,12 @@ def test_the_picker_carries_the_slot_the_pointer_and_the_history(hub):
 
 
 def test_a_row_carries_what_its_revision_said_it_was(hub):
-    """The list is DERIVED from each revision's own meta.json, and this is the
-    field that makes it readable (issue #67).
+    """Each row carries its revision's message, from that revision's own meta.json.
 
-    A row is a twelve-character digest and a timestamp: between them they tell
-    two revisions apart without saying what either one is. The message travels
-    on the push, is stored with the record, and is projected here beside the id.
-
-    A revision pushed without one gets no key rather than an empty string.
-    "Absent" is what every revision published before this field looks like — so
-    the browser has to read it as optional either way.
+    A digest and a timestamp tell two revisions apart without saying what either
+    is. The message travels on the push, is stored with the record, and is
+    projected here beside the id. A revision pushed without one gets no key rather
+    than an empty string, so the browser reads it as optional.
     """
     hub.publish("proj1", "aaa111", _build("c1", "2026-08-01T00:00:00Z"),
                 headers={MESSAGE_HEADER: quote("first cut of the bracket",
@@ -69,10 +62,9 @@ def test_a_row_carries_what_its_revision_said_it_was(hub):
 def test_a_name_that_resolves_to_nothing_is_not_offered(hub):
     """An entry leading to a 404 is worse than a missing entry.
 
-    It is `latest` that carries this now: a commit fills the slot with itself
-    (issue #78), so a project with a commit and no local push has both names
-    resolving, while a project that only exists on somebody's laptop has a slot
-    and no commit for `latest` to point at.
+    A commit fills the slot with itself, so a project with a commit has both names
+    resolving, while a project with only local pushes has a slot and no commit for
+    `latest` to point at.
     """
     hub.publish("proj1", "aaa111", _build("c1"))
     assert _picker(hub)["has_dev"] is True
@@ -86,11 +78,8 @@ def test_a_name_that_resolves_to_nothing_is_not_offered(hub):
 
 
 def test_the_picker_exists_for_a_project_that_has_only_a_local_build(hub):
-    """It used to be written only when there was a commit build to list.
-
-    A local-only project would then have had no builds.json at all, and the
-    picker would have had nothing to read — including the fact that the slot it
-    is currently showing exists.
+    """A local-only project still gets a builds.json, so the picker can read that
+    the slot it is showing exists.
     """
     hub.publish_dev("proj1", _build("local"))
     info = _picker(hub)
@@ -100,10 +89,9 @@ def test_the_picker_exists_for_a_project_that_has_only_a_local_build(hub):
 
 
 def test_the_picker_follows_what_is_in_the_slot(hub):
-    """The first publish is what makes the slot appear, whichever verb it was:
-    a commit fills it with itself (issue #78) and the picker written by that
-    same publish already says so, and a local push after it replaces the
-    content under the same flag."""
+    """The first publish makes the slot appear, whichever verb it was: a commit
+    fills it with itself and the picker written by that publish already says so,
+    and a local push after it replaces the content under the same flag."""
     hub.publish("proj1", "aaa111", _build("c1"))
     assert _picker(hub)["has_dev"] is True
     assert hub.get("/project/proj1/dev/assembled.json").content == view_bytes("c1")

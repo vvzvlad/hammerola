@@ -501,7 +501,7 @@ def test_the_shapes_are_kept_only_when_an_artefact_is_asked_for(tmp_path,
 
 def test_only_a_part_the_walk_called_changed_reaches_the_scene(tmp_path,
                                                                capsys):
-    """THE CONTRACT BETWEEN THE TWO REPORTS, and it is three rules now: a part
+    """The contract between the two reports, in three rules: a part
     is in `diffs` exactly when the printed line said `changed`, in `refused`
     exactly when it said `not measured`, and in `covered` exactly when this walk
     COMPARED it -- which `new` and `removed` are not, because the two builds did
@@ -554,20 +554,17 @@ def test_only_a_part_the_walk_called_changed_reaches_the_scene(tmp_path,
 
 def test_a_part_the_gate_refused_is_not_measured_in_the_document_too(tmp_path,
                                                                      capsys):
-    """THE ROAD THE DEFECT TOOK, walked end to end with the real report half.
+    """A refused measurement is `not measured` in both the log and report.json.
 
-    `shapediff.check` refuses a measurement exactly where the kernel may have
-    lied — a part moved 0.1 mm came back intersecting its own copy in nothing,
-    with no errors to show for it (issue #10) — and the walk used to answer that
-    refusal by keeping nothing at all. `report` then read the absence as the
-    digest fast path and published `unchanged`: the job log said the part could
-    not be measured and `report.json` beside it said the part did not change,
-    which is a refusal to answer published as the most confident answer there
-    is.
+    `shapediff.check` refuses a measurement where the kernel may have lied -- a
+    part moved 0.1 mm came back intersecting its own copy in nothing, with no
+    errors. If the walk kept nothing for the refusal, `report` would read the
+    absence as the digest fast path and publish `unchanged` beside a log saying
+    the part could not be measured.
 
-    ONLY THE ENGINE IS STUBBED HERE, because only the engine needs a kernel.
-    The walk and the summary are the real ones, so this is the pair of accounts
-    a reader actually gets, and the assertion is that they use the same word.
+    Only the engine is stubbed, because only the engine needs a kernel. The walk
+    and the summary are the real ones, and the assertion is that they use the
+    same word.
     """
     refusal = ("the two revisions share no volume at all while their bounding "
                "boxes overlap")
@@ -598,15 +595,14 @@ def test_a_part_the_gate_refused_is_not_measured_in_the_document_too(tmp_path,
 
 def test_a_part_no_build_exports_is_not_compared_in_the_document(
         tmp_path, capsys):
-    """THE SECOND ROAD TO THE SAME DEFECT, walked end to end with both real
-    halves.
+    """A part no build exports is `not compared`, walked end to end with both
+    real halves.
 
     This walk is over `*.step` files and a build exports one per PRINTABLE, so a
     `hardware` or `mock` entry the view shows -- `reference_spacer` here, as in
-    `ui/tests/fixtures/assembled.json` -- is a part it never sees. `report` used
-    to read that absence from both maps as the digest fast path and publish
-    `unchanged`, which is a confident claim about a part nothing looked at:
-    swap an M3x8 for an M3x12 and the panel says "identical".
+    `ui/tests/fixtures/assembled.json` -- is a part it never sees. Reading that
+    absence as the digest fast path would publish `unchanged` about a part
+    nothing looked at: swap an M3x8 for an M3x12 and the panel says "identical".
 
     AND IT IS `not compared` RATHER THAN THE GATE'S WORD, which is the routing
     this pair of processes has to agree on: the walk hands over `covered` and
@@ -659,10 +655,9 @@ def test_a_part_that_changed_kind_is_not_compared_either_and_says_why(
     calls that `removed` and leaves it out of `covered` deliberately: nothing was
     fused, so nothing was established about how the part changed. The document
     therefore owes it `not compared`, like a bought screw, and for the same
-    reason as a bought screw — no PAIR of files — which is precisely what the
-    row's sentence has to say. It said hardware and mocks have no geometry of
-    ours to compare, which is a false statement about this part: the old build
-    exported one.
+    reason as a bought screw — no PAIR of files — which is what the row's
+    sentence has to say, rather than claiming the part has no geometry of ours
+    to compare: the old build exported one.
 
     The two halves that carry this word are the printed report, which calls it
     `removed` because that is what the walk of the FILES saw, and the document,

@@ -1,25 +1,15 @@
 name: Tests
 
-# Split out from image-check-publish.yml on purpose: that workflow must never run
-# on pull_request, because a PR build would push :latest and auto-update would
-# deploy it. What a PR actually needs is everything that workflow does EXCEPT the
-# publication — without this file a broken test or a broken image only surfaces
-# after the merge into main. Both base branches are listed because the image
-# workflow builds both.
-#
-# So this workflow deliberately mirrors the other one up to the gate: the same suite in the
-# same container, an image built from the same Dockerfile with the same build flags (the tags
-# differ and are the one deliberate divergence — see the build step below), the same
-# ci/smoke.py against it. It then
-# stops. There is no `docker login` here and no secret expression anywhere in this file — a
-# pull request can come from a branch nobody has reviewed, so a workflow it can trigger must
-# not be able to touch a credential at all. (That claim is grep-checkable, which is why the
-# word is never written here in its expression form: a search for it across this file should
-# return nothing at all, and a comment quoting it would make that search useless forever.)
+# The pull-request gate. image-check-publish.yml must never run on pull_request, because a PR
+# build would push :latest and auto-update would deploy it; this workflow mirrors it up to
+# the smoke gate (same suite, same Dockerfile and build flags, same ci/smoke.py; only the
+# tags differ) and then stops. There is no `docker login` and no secret expression anywhere
+# in this file: a pull request may come from an unreviewed branch, so this workflow must not
+# be able to touch a credential. Keep the expression form out of comments too, so a grep for
+# it stays empty.
 on:
-  # Manual re-run: without it a run that flaked on runner networking could only be
-  # retried by pushing an empty commit to the PR branch. Safe to expose here — this
-  # workflow touches no registry and no credential of any kind.
+  # Manual re-run for a run that flaked on runner networking. Safe: this workflow touches
+  # no registry and no credential.
   workflow_dispatch:
   pull_request:
     branches: [ "main", "develop" ]
@@ -27,19 +17,9 @@ on:
 permissions:
   contents: read   # checkout
 
-# Unlike the image workflow, cancelling is right here: this workflow publishes nothing, so a
-# superseded run is just wasted runner time on a machine the whole fleet queues for. The image
-# workflow must NOT cancel, because killing an older run there would leave a hole in the tag
-# history exactly where a rollback needs one.
-# REQUIRES GITEA >= 1.26 — the release that added `concurrency` support to Actions. An older
-# instance does not reject this block, it IGNORES it, and nothing in the run list or the logs
-# says so. Here that costs nothing at all: up to 1.25 Gitea cancelled the previous run of a
-# pull request unconditionally, in its own code, and 1.26 removed that only because this key
-# replaced it — so on an older instance this block is a NO-OP and superseded runs are cancelled
-# anyway. The wasted-capacity argument above is about an instance that HAS concurrency support
-# and a workflow file that omitted the block; it is not what an old instance does. The version
-# boundary only changes behaviour in image-check-publish.yml, where that same built-in
-# cancellation punches a hole in the tag history.
+# Cancelling is right here (unlike the image workflow): this workflow publishes nothing, so a
+# superseded run only wastes the shared runner. Requires Gitea >= 1.26; an older instance
+# ignores the block and cancels superseded PR runs on its own, which is equivalent here.
 concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
@@ -47,33 +27,14 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The runner is shared by every repository, so a hung step does not just stall this run —
-    # it holds a capacity slot everyone else is queueing for. The two step-level bounds below
-    # come to 30 minutes — 20 for the Python suite, 10 for the JS one — and 35 leaves 5 on top
-    # for checkout and the two container cleanups. The outer bound must EXCEED the sum, because
-    # act_runner kills the whole job when this fires, and a cleanup step that never gets to run
-    # is exactly how a container ends up left behind on the shared daemon.
+    # The runner is shared by every repository. The two step bounds below sum to 30 minutes
+    # (20 Python + 10 JS); the job bound must exceed the sum, because act_runner kills the
+    # whole job when it fires and the container cleanup steps would then never run.
     timeout-minutes: 35
-    # Job-level, so the step that CREATES a test container and the step that REMOVES it
-    # cannot disagree about its name — the same arrangement, for the same reason, as
-    # SMOKE_NAME in the build job below. Written as two separate literals in two steps they
-    # would go on looking correct while one of them was edited, turning the cleanup into a
-    # step that removes nothing and reports success. The run id is what keeps concurrent runs
-    # on this shared daemon from colliding on the name.
-    # Two of them now, one per suite, and they are DIFFERENT names rather than one container
-    # reused: `docker ps` on a machine shared by every repository should say which half is
-    # still running, and a single name would let the Python cleanup remove the node container
-    # out from under a suite that was still going.
-    # The `-pr-` infix mirrors SMOKE_NAME below. It is not what makes the name unique — the run
-    # id already does that, on its own: github.run_id is Gitea's ActionRun.ID, a database
-    # primary key handed out once per run across the whole instance, so a pull request and a
-    # push on the same commit already have different names. The infix is there to make the
-    # daemon readable: `docker ps` on a machine shared by every repository says which workflow
-    # started a container without anyone having to look a run id up.
-    # NODE_IMAGE deliberately stays in its own step's `env:`: exactly one step uses it and no
-    # second step has to agree with it, so hoisting it here would buy nothing. The Python
-    # suite's base is not here either and not in its step: it is the `FROM` line of
-    # ci/Dockerfile.test, and the tag of the image built from it is computed rather than written.
+    # Job-level, so the step that creates each test container and the step that removes it
+    # cannot disagree about its name. One name per suite, so `docker ps` on the shared daemon
+    # shows which one is still running. The run id makes the name unique; the `-pr-` infix
+    # only shows which workflow started the container.
     env:
       TEST_NAME: hammerola-tests-pr-${{ github.run_id }}
       JS_NAME: hammerola-js-pr-${{ github.run_id }}
@@ -81,248 +42,67 @@ jobs:
     - uses: actions/checkout@v7
 
     - name: Run the test suite in a container
-      # No `actions/setup-python` here, and that is deliberate rather than stylistic. Setup
-      # actions are not verified on this self-hosted runner, and the failure mode of a setup
-      # action that does not work is not a red job — it is a job that runs to the end having
-      # silently checked nothing, which on a pull request means a review that was told the
-      # tests passed. Running the suite inside a container started by the same docker the build
-      # uses makes "the tests ran" and "docker works on this runner" the same statement.
+      # No `actions/setup-python`: setup actions are not verified on this self-hosted runner,
+      # and one that silently does nothing would let the gate pass having checked nothing.
+      # Running the suite in a container on the same docker the build uses proves both.
       timeout-minutes: 20
-      # The `run:` body of this step is byte-identical to the one in image-check-publish.yml.
-      # The PR job and the publishing job must run the same suite the same way, and the
-      # cheapest way to guarantee that is for the executed text to be literally the same text.
+      # This `run:` body is byte-identical to the one in image-check-publish.yml (see AGENTS.md).
       run: |
         set -e
         set -o pipefail
-        # Clear the name before claiming it. A re-run from the Gitea UI reuses the same
-        # github.run_id, so $TEST_NAME can already be taken by the container a previously
-        # killed attempt left behind — and `docker run --name` fails outright on a name
-        # conflict, so the re-run would die before the suite ever started, with an error about
-        # a container instead of about the code. `|| true` because on every normal run there
-        # is nothing there and this is a no-op.
+        # A re-run from the Gitea UI reuses github.run_id, so the name may still be held by a
+        # killed attempt's container, and `docker run --name` fails on a conflict.
         docker rm -f -v "$TEST_NAME" || true
-        # THE SUITE'S ENVIRONMENT IS A PREBUILT IMAGE — ci/Dockerfile.test, where what is in it
-        # and why is written down. Assembling it inside the step instead, which is what this
-        # replaced, costs one `apt-get` and one `pip install` of some 430 MB of wheels on EVERY
-        # run — 112 s of pip and 28 s of apt out of the 299 s that step took — and none of it
-        # depends on the commit under test (issue #27 put the kernel's libraries on that line,
-        # which is what made it worth doing something about).
-        # THE TAG IS A HASH OF THE INPUTS — that file and the two requirements files, which are
-        # also the whole build context below. Reuse on a persistent daemon is only safe if a
-        # stale image cannot answer to a CURRENT name: a floating `:ci` would mean "whatever was
-        # built last", which on a daemon shared by every branch is one branch's suite running
-        # against another branch's dependencies. A new tag does not imply new layers: the build
-        # below fills it from the cache wherever nothing material moved, so a comment edited in
-        # THIS file costs 1 s — a comment edited in either requirements file costs the whole
-        # 252 s, because the `COPY` layer is keyed by those files' bytes and everything after it
-        # rebuilds.
+        # The suite's environment is a prebuilt image, ci/Dockerfile.test. Its tag is a hash of
+        # its inputs (that file and the two requirements files, which are also the whole build
+        # context), so on this daemon shared by every branch a stale image can never answer to
+        # a current name; an unchanged input set reuses the cached layers.
         TEST_IMAGE="hammerola-test:$(cat ci/Dockerfile.test requirements.txt requirements-dev.txt | sha256sum | cut -c1-12)"
-        # `--pull` is `docker run --pull always` moved to where the base image is named now: this
-        # daemon is persistent, so a once-pulled python:3.11-slim would otherwise sit in its
-        # cache for months. It does not fight the reuse — an unchanged base digest leaves every
-        # layer cached, 1 s against 252 s for a cold build.
-        # The context is a tar of the three hashed files rather than the repository: the tar is
-        # for the reason the workspace below travels as one, .dockerignore does not apply to it,
-        # and a context of exactly the hashed files is the same statement as the tag — nothing
-        # else can affect this image, so nothing else can make it stale.
-        # `--memory` / `--memory-swap` are a MEASURED ceiling, as on every container this CI
-        # starts (issue #28), applied PER `RUN` by the builder. Swept with `--no-cache`
-        # necessarily: a warm build executes no RUN and can never reach the limit, so a green
-        # run here is no evidence the number still holds. THE FLOOR IS THE `pip install`: killed
-        # at 512m (`Killed`, exit code 137 on that RUN) and it builds at 768m and at 1g, which
-        # puts 2g between 2.7× and 4× the floor — the same bracket, off the same wheels, as the
-        # image build in the other job.
-        # THE TWO FLAGS MUST STAY EQUAL, as on the `docker run` below: `--memory-swap` is the
-        # memory+swap TOTAL, and left unset it hands the build swap equal to the limit instead
-        # of killing it there.
+        # `--pull`: the daemon is persistent, so a cached python:3.11-slim would otherwise go
+        # stale for months. The context is a tar of exactly the hashed files.
+        # Memory ceiling measured pass/fail with --no-cache (a warm build runs no RUN): the
+        # `pip install` is killed at 512m and builds at 768m, so 2g is 2.7-4x the floor. The
+        # two flags must stay equal: `--memory-swap` is the memory+swap total, and unset it
+        # adds swap equal to the limit instead of killing the build there.
         tar -cf - ci/Dockerfile.test requirements.txt requirements-dev.txt \
           | docker build --pull --memory=2g --memory-swap=2g \
           -f ci/Dockerfile.test -t "$TEST_IMAGE" -
-        # The workspace is streamed into the container as a tar over stdin rather than
-        # bind-mounted, and that is not a stylistic choice either. This job runs INSIDE
-        # act_runner's own job container while `docker` talks to the HOST's daemon through the
-        # mounted socket — so a `-v "$PWD:/src"` would ask the host to mount a path that means
-        # something entirely different there, or nothing at all, depending on how the runner
-        # was configured to hold the workspace. A tar over stdin is correct in every one of
-        # those configurations, and it also keeps the container from writing __pycache__ and
-        # .pytest_cache back into the checkout as root.
-        # `.git` TRAVELS WITH THE TREE — it is the one thing here deliberately NOT excluded, and
-        # it used to be. tests/test_no_conflict_markers.py asks git, and only git, for the list
-        # of TRACKED files: what it guards is the COMMIT rather than the working tree, and the
-        # index is the only place that list exists. Without the repository beside the code that
-        # test does not quietly check less, it ERRORS with `fatal: not a git repository` — so
-        # installing git without sending `.git` swaps one red test for another. The `.git/config`
-        # exclusion below is what keeps sending it from also sending a credential.
-        # Note that .dockerignore does NOT apply here — this is a tar, not a build
-        # context — which is what makes tests/ available at all, the one thing the suite cannot
-        # run without and the shipped image deliberately excludes. That same fact is why every
-        # other exclusion has to be spelled out here by hand, one flag each:
-        # `.git/config` is the ONE part of the repository left behind, and that flag is
-        # load-bearing rather than tidiness. actions/checkout defaults `persist-credentials` to
-        # true and writes the run's token into that file as an `http.<server>.extraheader`, so
-        # sending `.git` whole would hand a live credential to the container that is about to
-        # run the whole test suite — the same exposure the late `docker login` in
-        # the publishing workflow exists to prevent, arriving through a different door. The
-        # by-hand reproduction has its own version of it: a remote URL with a token in it, or a
-        # credential helper. Nothing in the check reads the file — `git ls-files` reads
-        # `.git/index`, and git falls back to its defaults for everything the missing config
-        # would have said. Verified in the container on this repository rather than assumed:
-        # same file count with it and without it.
-        # `.venv` is a virtualenv built on the HOST — wheels compiled for another platform and
-        # another interpreter version than the python:3.11-slim about to run them. Tens of
-        # megabytes pushed through stdin on every run, landing in /src beside the code as a
-        # tree of binaries nothing in that container could load. It is dead weight and nothing
-        # more: the container runs its own /usr/local/bin/python with VIRTUAL_ENV unset, so
-        # .venv/lib/*/site-packages never enters sys.path and cannot shadow the image's own
-        # site-packages — do not re-justify this flag as a correctness fix, it is a size fix.
-        # `ui/node_modules` is the same story as `.venv` and carries the flag for the same
-        # reason rather than a different one: a dependency tree installed on the HOST, tens
-        # of megabytes of it, carrying esbuild and rollup binaries built for the host's
-        # architecture. Nothing in this container runs node at all — the browser bundle is
-        # built by the image's own `ui` stage, which installs its own copy — so every byte
-        # of it is weight on stdin and nothing more. Like `.venv` it does not exist on the
-        # runner either; both flags earn their place in the by-hand reproduction of a CI
-        # failure, which runs in a developer's checkout where both directories are sitting
-        # right there.
-        # `data/` is runtime state. On the runner it is an empty directory and excluding it
-        # changes nothing there — but this exact command is also what a developer runs BY HAND
-        # to reproduce a CI failure, and on a workstation `data/` holds the service's real
-        # state: its database, its session files, whatever credentials it has cached. This flag
-        # is the only thing standing between a debugging session and shipping all of that into
-        # a container.
-        # `.env` is the same story and the sharpest case of it. It is this template's
-        # designated secret store — it is in .gitignore, .dockerignore keeps it out of the
-        # image, and the smoke gate asserts /app/.env does not exist there — and src/settings.py
-        # declares `SettingsConfigDict(env_file=".env")`, so pydantic-settings READS whichever
-        # one it finds beside the code. The runner's checkout has none; a workstation's holds
-        # the developer's own LOG_LEVEL, real service URLs and real credentials, and without
-        # this flag the by-hand reproduction would silently run against those. The CI run and
-        # the reproduction would then no longer be the same run — and the credentials would
-        # have travelled into a container for nothing.
-        # `__pycache__` and `.pytest_cache` are bytecode and run caches written by a DIFFERENT
-        # interpreter than the one about to run the suite — the host's python, not the
-        # container's 3.11 — so nothing in them is valid inside it: weight on stdin at best,
-        # stale state that muddies a failure at worst.
-        # EDIT_TOKEN is the ONE variable src/settings.py declares with no default — one secret
-        # for the whole system (issue #26), covering publishing, a build's sources, the
-        # project routes and the whole comment queue including writing to it:
-        # `settings` is built at import time, so without it importing anything under src/
-        # raises and the whole suite errors during collection. The value is invented here and
-        # reaches nothing — it is a shared secret compared for equality against the
-        # Authorization header, so it has no format to satisfy and any non-empty string
-        # does. A variable that IS format-validated at construction time would need a value of
-        # the right shape, or startup fails for a reason that says nothing about the code.
-        # `--name` is what makes this container reachable AFTERWARDS, and it does not duplicate
-        # `--rm`: `--rm` is removal-on-exit performed by the daemon, and a step killed by its
-        # own `timeout-minutes` kills the docker CLI here on the runner, not the container over
-        # on the host's daemon — that container goes on running, never exits, so `--rm` never
-        # fires. Unnamed it would then be unreachable by anything at all, because the cleanup
-        # step below (like every cleanup in these workflows) removes containers BY NAME. One
-        # timed-out test step would leak a container onto the shared daemon permanently.
-        # `--memory` / `--memory-swap` are a MEASURED ceiling, and without them this container
-        # can take the whole runner: 19 GB shared with every other repository's jobs, so a
-        # runaway allocation here stops being this job's failure and becomes everybody's.
-        #
-        # MEASURE THIS BY PASS/FAIL AT A LIMIT, NEVER BY `memory.peak`. That reading is the
-        # trap, and it is written down here because the first version of this ceiling fell
-        # into it. `memory.peak` in a cgroup counts reclaimable PAGE CACHE, which this run
-        # generates in quantity — unpacking the workspace and reading the tree back — and the
-        # kernel keeps that cache for as long as the limit leaves room for it, so the peak RISES
-        # WITH THE LIMIT and then saturates somewhere BELOW it. Measured on the self-hosted
-        # runner (Debian 13, x86_64, 8 vcpu, 19 GB) on the form of this command that still
-        # installed everything inside the container: 2.86 GB under a 4g limit, 2.00 GB under 2g,
-        # 769 MB under 768m. It does not merely fill whatever it is given —
-        # 2.86 is well short of 4 — and that is what makes the number so plausible and so
-        # useless: it says how much the run was ALLOWED to cache, not how much it needs, so
-        # it can be made to say almost anything by changing the very flag it would justify.
-        #
-        # What the suite actually needs, by running it — RE-MEASURED 2026-09-22 on
-        # cirunner-docker with this exact command, because the dependencies moving into
-        # ci/Dockerfile.test changed what is in the container: it PASSES (pytest rc 0,
-        # `OOMKilled=false`) at 6g and at 3g, and at 2g the kernel kills a worker —
-        # `OOMKilled=true`, surfacing as `[gw2] node down: Not properly terminated` and one
-        # failed test, after which the run does not finish at all but sits there until something
-        # kills it, i.e. in CI it is the step's 20-minute bound rather than a red suite. The
-        # floor is therefore above 2 GB and no higher than 3 GB, which puts 6g between 2× and
-        # 3× it — the interval is the honest figure, and a single multiple would state the floor
-        # more precisely than the measurement does. The bracket did not move when the installs
-        # left the container, and the sweep that found it bracketed `--dist load` the same way
-        # and killed EIGHT workers at 2g AND at 4g: both halves of the flag below are measured.
-        # The margin is deliberately a MULTIPLE rather than a percentage: a
-        # suite that grows a fixture, a dependency or a parallel worker must not start
-        # failing CI for a reason that has nothing to do with the commit, while an allocation
-        # that runs away still dies inside this job instead of on the host.
-        #
-        # EVERY CONTAINER THIS CI STARTS NOW CARRIES ONE, each from a pass/fail sweep of its
-        # own (issue #28): the build of the image this step runs the suite in, a few lines above,
-        # the JS suite's node:22-bookworm-slim container, the `docker build` step in the build
-        # job, and the three ci/smoke.py starts. The argument was never
-        # specific to this step — it is a property of the RUNNER, 19 GB shared with every
-        # other repository's jobs — and what WAS specific is that only this step had been
-        # measured. Each number is written where its container is started, next to the
-        # pass/fail pair it came from. None of them is a guess and none may become one.
-        #
-        # Any re-measurement has to be on a run that COMPLETES: the numbers taken before
-        # 473ca4c describe a suite RLIMIT_CPU killed half way through, and they were wrong in
-        # both directions. Re-measure when the container's contents change or the worker count
-        # moves, which is why the paragraph above is dated: the worker count moved on
-        # 2026-09-21 and the contents on 2026-09-22, and the rule has now fired twice. The
-        # spike this suite is measured against is one test holding 800 MB in a single buffer
-        # — tests/test_archive_security.py joins four pax headers DECLARING 200 MB each, which
-        # is the attack it exists to refuse — while the other workers hold the ~222 MB of OCCT
-        # that `import cadquery` maps.
-        #
-        # The two flags MUST STAY EQUAL. `--memory-swap` is the memory+swap TOTAL, and leaving
-        # it unset gives the container swap equal to the limit, so a process that ran away
-        # would thrash to twice the number instead of being killed at it — the ceiling would
-        # still be written here while no longer being enforced, which is worse than not having
-        # one, and the measurements above would no longer describe what happens.
-        # WHAT IS IN THE CONTAINER and why each piece is there — git for
-        # tests/test_no_conflict_markers.py, the kernel's system libraries for `import cadquery`,
-        # the dependency tree, `safe.directory` for the by-hand run — is ci/Dockerfile.test,
-        # built at the top of this body. The reasoning for each piece lives there, next to the
-        # line that installs it, and is deliberately not repeated in both places.
-        # `viewer/node_modules` (108 MB) and `viewer/dist` are excluded for the same reason as
-        # `ui/node_modules`, and matter for the same by-hand run: a runner's checkout has
-        # neither -- both are gitignored and nothing in CI builds the viewer -- but a
-        # workstation that has run `make viewer` would push 110 MB of them down this pipe.
-        # A fence has to be COMPLETE to be correct, which is what makes a missing flag here
-        # worse than a missing path on the positive list below.
-        # `pytest -n 4` — pytest-xdist, four worker processes. The suite spends its time
-        # WAITING rather than computing: real sockets, real subprocesses, real builds, 165 s
-        # in test bodies against 26 s in fixtures, so the wall clock follows the worker count.
-        # MEASURED IN THIS IMAGE, 2026-09-22, at four workers: pytest 163 s, of which 46 s is
-        # tests/buildproc and 117 s the rest, against 293 s serial. The run around it is
-        # 161–165 s on an idle runner and 200 s beside another job on it — that is pytest plus
-        # the workspace on stdin and nothing else, where the same step took 299 s while it
-        # installed its own dependencies and 434 s before the workers. The libraries turned 94
-        # skips into 4: 2560 results, none failed.
-        # FOUR AND NOT `auto`, which is eight on this runner: the ceiling above is measured at
-        # a worker count, and `auto` would move the floor with the next runner's CPU count
-        # while the number here stayed put — eight workers were killed at 2g and at 4g.
-        # `--dist loadfile` KEEPS A FILE'S TESTS ON ONE WORKER, and the default `load` does
-        # not: it hands out tests one at a time, so a MODULE-scoped fixture is built again in
-        # every worker that draws a test from that module — `built` in
-        # tests/test_readme_example.py is a real CAD build whose docstring says it exists to
-        # run once instead of four times. Measured at 139 s and 164 s that way, i.e. the same
-        # wall clock as loadfile, so the duplicated builds buy nothing and this flag costs
-        # nothing.
-        # NOT in pytest.ini's addopts on purpose: `make test` and a single file run by hand
-        # keep live output and a usable debugger, so a failure that only happens in parallel
-        # is reproduced with THIS command rather than with `make test`.
-        # TWO INVOCATIONS, and this is the one place the parallel run is not the serial run
-        # divided. tests/buildproc/ carries an autouse guard — see its conftest.py — asserting
-        # the real kernel is NOT imported in the pytest process, because a test there that
-        # reached the live OCCT pool would resize it for everything after. Serially that held
-        # for free: `tests/buildproc/` is collected before `tests/cadbuild/`, whose
-        # real-geometry tests import cadquery in-process. Under xdist a worker takes whole
-        # FILES as they free up, so one worker can run a buildproc file, then a file that
-        # imports the kernel, then another buildproc file — 91 setup errors on one run here
-        # against four green ones before it, which is luck rather than a property. In a pytest
-        # of its own, buildproc's workers never see the kernel and the guard stops depending
-        # on the schedule. Two things it still rests on, neither of them enforced here:
-        # nothing under src/ imports the kernel at module level, and no test under
-        # tests/buildproc/ imports it either — probes.py asks a SUBPROCESS on purpose.
+        # The workspace is streamed in as a tar over stdin, not bind-mounted: this job runs
+        # inside act_runner's job container while `docker` talks to the host's daemon, so a
+        # `-v "$PWD:/src"` would name a different path on the host. It also keeps the
+        # container from writing caches back into the checkout as root. .dockerignore does
+        # not apply to a tar, so every exclusion is spelled out:
+        # - `.git` travels, because tests/test_no_conflict_markers.py asks git for the list
+        #   of tracked files; `.git/config` stays behind because actions/checkout writes the
+        #   run's token into it (nothing in the check reads it).
+        # - `.venv`, `ui/node_modules`, `viewer/node_modules`, `viewer/dist`, `__pycache__`
+        #   and `.pytest_cache` are host-built artefacts the container cannot use; they only
+        #   exist in a developer's checkout, where this same command reproduces a CI failure.
+        # - `data/` and `.env` hold a workstation's real state and credentials;
+        #   src/settings.py reads `.env` from beside the code, so it must not travel.
+        # EDIT_TOKEN is the one setting with no default, and `settings` is built at import
+        # time; any non-empty string works, as it is only compared for equality.
+        # `--name` is what lets the cleanup step reach the container: a step killed by its
+        # timeout kills the docker CLI on the runner, not the container on the host, so
+        # `--rm` never fires.
+        # Memory ceiling, measured pass/fail at a limit and never by `memory.peak` (which
+        # counts page cache and rises with the limit): the suite passes at 3g and 6g, and at
+        # 2g the kernel kills a worker and the run hangs until the step timeout. 6g is 2-3x
+        # the floor. The flags must stay equal, as above. Re-measure when the image contents
+        # or the worker count change; the peak is tests/test_archive_security.py holding
+        # 800 MB in one buffer while other workers hold ~222 MB of OCCT each.
+        # What is in the image and why is documented in ci/Dockerfile.test.
+        # `-n 4 --dist loadfile`: the suite mostly waits on sockets, subprocesses and builds,
+        # so workers cut the wall clock (163 s against 293 s serial). Four, not `auto`, because
+        # the memory ceiling is measured at four. `loadfile` keeps a module's tests on one
+        # worker, so module-scoped fixtures such as the real CAD build in
+        # tests/test_readme_example.py run once. Kept out of pytest.ini so `make test` stays
+        # serial and debuggable.
+        # Two invocations: tests/buildproc/conftest.py asserts the real kernel is NOT
+        # imported in the pytest process, and under xdist a worker could otherwise run a
+        # buildproc file after a file that imports cadquery. This also relies on nothing
+        # under src/ importing the kernel at module level and no test under tests/buildproc/
+        # importing it (probes.py uses a subprocess).
         tar -cf - --exclude=./.git/config --exclude=./.venv --exclude=./ui/node_modules \
           --exclude=./viewer/node_modules --exclude=./viewer/dist \
           --exclude=./data --exclude=./.env --exclude=./.pytest_cache \
@@ -335,139 +115,43 @@ jobs:
           sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src; pytest -n 4 --dist loadfile tests/buildproc --tb=short -q; pytest -n 4 --dist loadfile --ignore=tests/buildproc --tb=short -q'
 
     - name: Run the JS test suite in a container
-      # The browser half of the suite: vitest over ui/tests, in jsdom. It covers the parts of
-      # the <hmr-viewport> adapter that have no GPU in them — the camera arithmetic, the zoom
-      # law, the section plane's algebra, the part tree, the state diffing and the hold key.
-      # What only a GPU can answer for is not here and is not meant to be.
-      # On a pull request this is the only place the browser code is executed at all —
-      # the image built below carries the BUNDLE, not the suite that checks it.
-      # 10 minutes against an `npm ci` off a cold cache plus a suite measured in seconds.
+      # vitest over ui/tests in jsdom: the GPU-free parts of the <hmr-viewport> adapter.
+      # On a pull request this is the only place the browser code is executed: the image
+      # built below carries the bundle, not the suite.
       timeout-minutes: 10
       env:
-        # The SAME base the Dockerfile's `ui` stage builds the bundle with. Kept in the step's
-        # own env: because exactly one step uses it, and no second step has to agree with it.
+        # The same base the Dockerfile's `ui` stage builds the bundle with.
         NODE_IMAGE: node:22-bookworm-slim
-      # The `run:` body of this step is byte-identical to the one in image-check-publish.yml. It is on the
-      # whitelist for the same reason the four bodies before it are: the PR gate and the
-      # publishing gate must run the same suite the same way, and the cheapest way to
-      # guarantee that is for the executed text to be literally the same text.
+      # This `run:` body is byte-identical to the one in image-check-publish.yml (see AGENTS.md).
       run: |
         set -e
         set -o pipefail
-        # THE BROWSER HALF OF THE SUITE, in a container of its own — and it has to be a
-        # container: node is not installed on this runner and must not be. Same reasoning as
-        # the Python step above (setup actions are unverified here and fail by silently doing
-        # nothing), plus one more that is specific to node: it is not part of this project's
-        # toolchain at all. Nothing under src/ imports anything from ui/, `make run` works on a
-        # machine that has never seen npm, and the image builds the bundle in a stage of its own.
-        # THE SAME BASE AS THAT STAGE, node:22-bookworm-slim, for exactly the reason
-        # ci/Dockerfile.test pins python:3.11-slim: a suite green under one node and a bundle
-        # built by another is the gap this whole arrangement exists to close. Change one, change
-        # both.
-        # Clear the name before claiming it. A re-run from the Gitea UI reuses github.run_id, so
-        # $JS_NAME can already be held by the container a killed attempt left behind, and
-        # `docker run --name` fails outright on a name conflict — the re-run would then die
-        # before the suite started, with an error about a container instead of about the code.
+        # A container, because node is not installed on this runner and is not part of the
+        # project's toolchain. node:22-bookworm-slim matches the Dockerfile's `ui` stage:
+        # change one, change both.
+        # A re-run reuses github.run_id, so clear a name a killed attempt may still hold.
         docker rm -f -v "$JS_NAME" || true
-        # A POSITIVE LIST OF PATHS, where the Python step above carries a list of exclusions.
-        # Almost everything vitest reads lives under ui/ — the sources, the tests, the
-        # committed fixture, package.json and its lockfile — and whatever it needs from
-        # outside ui/ is named here, one path at a time. Seven of those are for
-        # ui/tests/chrome.test.js: static/_v/tokens.css because it is the ONE place the
-        # palette is written down, templates/ and static/_v/site.css because they link it
-        # and redraw the header WITHOUT importing any JavaScript — being unable
-        # to import is exactly why that test has to read them as files — the two
-        # static/_v scripts because the same file searches every hand-written source for a
-        # second copy of the mark, which is a search that passes in silence over a directory
-        # that did not travel, brand/ because the logo is the DESIGNER'S drawing kept as
-        # a file, which both of the inline copies are transcribed from and compared against,
-        # and static/_v/favicon.svg because the site icon is held to the two checks that ask
-        # whether a document is a VALID drawing rather than the same one — it is the only one
-        # of those four SVGs that ships in the image and is served to browsers.
-        # THAT TEST NAMES EVERY PATH ON THIS LINE, one for one, so
-        # dropping one here fails a test that says which file stopped being searched instead
-        # of quietly sweeping less — keep the two lists in step. (It does NOT guard by
-        # refusing an empty directory: a throw while the test module is being evaluated takes
-        # the whole file down and blames this tar for it, and a directory emptying out is
-        # legitimate the day pointer.js moves into the bundle. The SVGs are covered another
-        # way, because an empty walk of them would not throw: brand/ is reached at module
-        # scope and a tar without it takes the whole file down as templates/ would, while
-        # favicon.svg is reached only by walking static/_v for *.svg — so that test names it,
-        # and a tar without it fails one test saying which drawing stopped being checked.)
-        # The eighth is the viewer bundle, for ui/tests/hatch.test.js: it checks that the
-        # three.js shader chunk the section hatch splices at is still in the shader it
-        # patches. Nothing under ui/ can answer that, and nothing at runtime can either — a
-        # chunk renamed upstream costs the page its hatch and NOTHING else, no error and no
-        # warning and a section that is simply a flat fill again — so this is the only place
-        # it can be noticed.
-        # The ninth and tenth are three's own two files, and they travel because three is no
-        # longer INSIDE that bundle: `make viewer` builds the library with `external: three`
-        # (issue #14), so ui/tests/hatch.test.js, picking.test.js and outline.test.js read
-        # three's source out of static/_v/three.module.js and static/_v/three.core.js rather
-        # than out of the viewer. The three of them cost 3.6 MB on stdin, next to the base
-        # image pulled and the dependency tree installed on either side of it.
-        # THESE THREE FILES AND NOT static/_v: that directory also holds this project's OWN
-        # browser bundle (`hammerola*`), which is an output of the build rather than an input
-        # to the suite. It is gitignored, so the runner's checkout has none — but a
-        # workstation has whatever `make ui` last produced, and this command is written for
-        # both.
-        # THIS LIST IS NOT EXHAUSTIVE AND IS NOT MEANT TO BE. It gains a path whenever a test
-        # needs one, as a deliberate edit here.
-        # Naming what travels is strictly safer than any set of --exclude flags: `.env`,
-        # `data/` and `.git/config` cannot travel because nothing travels that is not named.
-        # It is no longer the SMALLER option — the vendored viewer that used to be the reason
-        # to name paths rather than exclude them is now itself on the line, 3.6 MB of it once
-        # three's two files are counted — so the argument for this shape is safety alone, and
-        # it is enough. That matters for the same reason it matters up there: this exact
-        # command is also what a developer runs BY HAND to reproduce a CI failure, in a
-        # checkout where all three are real.
-        # So add the path deliberately, and do NOT replace this with `.` and a fence of
-        # exclusions: the fence has to be complete to be correct, and this list has to be
-        # complete to be USABLE, which is the failure that announces itself. Be exact about
-        # WHERE it announces itself, though. A test reading a file that did not travel throws
-        # ENOENT while its module is still being evaluated, so vitest collects nothing from it
-        # and exits non-zero — but only here. A workstation runs the same suite against a
-        # whole checkout, where the file is simply present, so a path missing from this line
-        # is green locally and red on the first push, with the image behind `needs: test`.
-        # `ui/node_modules` is excluded even so: a dependency tree installed on the HOST,
-        # carrying binaries built for the host's architecture, which `npm ci` deletes and
-        # reinstalls from the lockfile anyway. It does not exist on the runner; in the by-hand
-        # reproduction it is sitting right there, tens of megabytes of it.
-        # `ui/dist` is the SAME CASE as `hammerola*` above, and it carries a flag because the
-        # paragraph above would otherwise be stating a principle this command does not follow:
-        # it is `vite build`'s output directory — gitignored, absent on the runner, and on a
-        # workstation holding whatever `make ui` last produced — and naming `./ui` whole sends
-        # it. An output of the build is not an input to the suite: nothing under ui/tests reads
-        # it, and vitest builds nothing.
-        # Streamed as a tar over stdin rather than bind-mounted, exactly as above: this job runs
-        # inside act_runner's own job container while `docker` talks to the HOST's daemon, so a
-        # `-v "$PWD:/src"` would ask the host to mount a path that means something entirely
-        # different there, or nothing at all.
-        # `npm ci` and not `npm install`, and in CI that is the load-bearing half: it installs
-        # the committed lockfile exactly and FAILS when package.json disagrees with it, instead
-        # of quietly resolving something else. A resolution that differs from the one the
-        # image's ui stage will get is a bundle nobody tested.
-        # CI=true is what makes npm and vitest choose their non-interactive defaults; the two
-        # NPM_CONFIG_* variables drop the update notifier and the funding banner, the same
-        # housekeeping as PIP_DISABLE_PIP_VERSION_CHECK in the step above.
-        # `--pull always` because this daemon is persistent, unlike GitHub's ephemeral runners:
-        # without it a once-pulled node:22-bookworm-slim would sit in its cache for months and
-        # the suite would run against an unpatched base.
-        # `--name` is what makes this container reachable AFTERWARDS, and it does not duplicate
-        # `--rm`: a step killed by its own `timeout-minutes` kills the docker CLI here on the
-        # runner, not the container over on the host's daemon. That one goes on running, never
-        # exits, so `--rm` never fires — and unnamed it would be unreachable by anything at all,
-        # because every cleanup in these workflows removes containers BY NAME.
-        # `--memory` / `--memory-swap` for the reason the Python step above carries them — this
-        # runner's 19 GB are shared with every other repository's jobs — and measured the same
-        # way, by a pass/fail pair at a limit and never by `memory.peak` (issue #28). The kernel
-        # kills this run (exit 137, `OOMKilled=true`) at 768m and it passes at 1g, so 3g sits
-        # between 3× and 4× the floor. WHAT SPENDS IT IS VITEST'S JSDOM WORKER POOL, whose size
-        # follows the CPU COUNT — 8 here — so the floor rises on a bigger runner with nothing in
-        # this repository changing, and absorbing that is what the margin is for. THE TWO FLAGS
-        # MUST STAY EQUAL, exactly as up there: `--memory-swap` is the memory+swap TOTAL, and
-        # leaving it unset hands the container swap equal to the limit, so a run that goes away
-        # thrashes to twice the number instead of being killed at it.
+        # A positive list of paths: almost everything vitest reads is under ui/, and every
+        # path from outside it is named here. ui/tests/chrome.test.js reads templates/,
+        # brand/ and the static/_v CSS, SVG and pointer scripts as files and names every one
+        # of them, so dropping one fails that test; keep the two lists in step.
+        # three-cad-viewer.esm.js is for ui/tests/hatch.test.js (the three.js shader chunk the
+        # section hatch splices at); three.module.js and three.core.js are three's own source,
+        # which the viewer bundle keeps external, read by the hatch, picking and outline tests.
+        # Not all of static/_v: it also holds this project's own built bundle.
+        # Add paths deliberately rather than switching to `.` plus exclusions: nothing
+        # travels that is not named, so `.env`, `data/` and `.git/config` cannot leak in a
+        # by-hand reproduction. A missing path fails only here, not on a workstation.
+        # `ui/node_modules` (host binaries, reinstalled by `npm ci`) and `ui/dist` (vite's
+        # output) are excluded.
+        # Streamed as a tar over stdin for the same reason as the Python step.
+        # `npm ci` installs the lockfile exactly and fails when package.json disagrees.
+        # CI=true selects non-interactive defaults; the NPM_CONFIG_* variables silence the
+        # update notifier and funding banner. `--pull always` because the daemon is
+        # persistent. `--name` lets the cleanup step reach a container whose step timed out.
+        # Memory ceiling measured pass/fail: killed at 768m, passes at 1g, so 3g is 3-4x the
+        # floor. Vitest's jsdom worker pool grows with the CPU count (8 here), which the
+        # margin absorbs. The two flags must stay equal.
         tar -cf - --exclude=./ui/node_modules --exclude=./ui/dist ./ui ./templates ./brand \
           ./static/_v/tokens.css ./static/_v/site.css ./static/_v/favicon.svg \
           ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
@@ -481,50 +165,17 @@ jobs:
           sh -c 'set -e; mkdir -p /src; tar -xf - -C /src; cd /src/ui; npm ci; npm test'
 
     - name: Remove the test container from the runner
-      # `always()` because the run this step exists for is precisely the one that failed or was
-      # killed. On a green run the container has exited and `--rm` has already removed it, so
-      # this does nothing; on the run where the step above hit its 20-minute bound, the docker
-      # CLI died on the runner while the container kept running on a daemon shared by every
-      # repository — and a cleanup that only fired on success would leave it there forever.
-      # Pull requests are the most frequent trigger there is, so this is also the workflow
-      # where a per-run leak accumulates fastest.
-      # Best-effort, exactly like the smoke-container cleanup in the build job below and for
-      # the same reason: `|| true` so a container that is already gone, or a docker that is
-      # momentarily unhappy, cannot turn a leftover into a red job and bury the actual verdict
-      # of the test suite — the one thing a reviewer is reading this run for — under a cleanup
-      # error.
-      # `-v` removes the anonymous volumes that container owned. Nothing declares one today —
-      # it is here for the day the project's Dockerfile does, because whoever adds a VOLUME
-      # will be editing a Dockerfile and will not think to come back and amend this step. As
-      # with the smoke containers, this is the SECOND removal path and not the only one:
-      # `--rm` on the `docker run` above is the first, and it is the one removal path that
-      # needs no flag of its own — it takes that container's anonymous volumes with it when it
-      # exits, so on a normal run `--rm` is what removes them and the flag here applies to
-      # nothing. This step is for the run where the step hit its timeout, the container never
-      # exited, `--rm` therefore never fired, and the leftover has to be removed by name. The
-      # pre-run `docker rm -f -v` at the top of the body above is the OTHER place the flag
-      # itself has to appear, for the re-run that finds the name still taken.
-      # It cannot take anything else with it: `docker rm -v` touches only the anonymous volumes
-      # of that one container, never a named volume such as the ones docker-compose creates.
+      # For the run where the suite step hit its timeout: the docker CLI died on the runner
+      # while the container kept running on the shared daemon, so `--rm` never fired. On a
+      # green run this does nothing. `|| true` so a cleanup error never hides the suite's
+      # verdict. `-v` removes only that container's anonymous volumes (none today), never a
+      # named one; the pre-run `docker rm -f -v` in the step body is the other removal path.
       if: always()
       run: |
         docker rm -f -v "$TEST_NAME" || true
 
     - name: Remove the JS test container from the runner
-      # The twin of the step above it, and it exists for the same run: the one where the JS
-      # step hit its `timeout-minutes`, the docker CLI on the runner died, and the container
-      # kept running on a daemon shared by every repository. On a green run `--rm` has already
-      # removed it and this does nothing.
-      # `|| true` so a container that is already gone cannot turn a leftover into a red job and
-      # bury the suite's actual verdict under a cleanup error.
-      # `-v` for the reason spelled out in the step above it: it takes that one container's
-      # ANONYMOUS volumes with it, can never touch a named one, and is here pre-emptively
-      # because whoever adds a VOLUME will be editing a Dockerfile and will not come back for
-      # this flag. This is the second of the two removal paths for this container; the
-      # pre-run `docker rm -f -v` at the top of the JS step's body is the other.
-      # Byte-identical to its twin in image-check-publish.yml, and on the whitelist for the same reason the
-      # test-container cleanup beside it is: a removal step free to drift is a container leak
-      # nobody notices.
+      # The twin of the step above, for the JS suite's container.
       if: always()
       run: |
         docker rm -f -v "$JS_NAME" || true
@@ -532,21 +183,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: test                          # no green tests → no image is built
-    # 20 (build) + 14 (smoke) = 34 minutes of step-level bounds; 40 leaves 6 on top for
-    # checkout and the two cleanup steps. The outer bound has to EXCEED the sum, not equal it:
-    # act_runner kills the whole job when this fires and a step marked `if: always()` is not
-    # guaranteed to run afterwards, so a job killed here leaves containers and an image on the
-    # daemon the whole fleet shares.
+    # The step bounds sum to 34 minutes (20 build + 14 smoke); the job bound must exceed the
+    # sum, because act_runner kills the whole job when it fires and the `if: always()`
+    # cleanup steps are then not guaranteed to run.
     timeout-minutes: 40
-    # Both names are set once, at job level, so no two steps below can disagree about them.
-    # SMOKE_NAME is the base name ci/smoke.py gives its three containers and the name the
-    # cleanup step removes them by; SMOKE_IMAGE is the tag the build step writes and the gate
-    # step grades. Written as separate literals in each step they would go on looking correct
-    # while one of them was edited, turning the cleanup into a step that removes nothing and
-    # reports success, or the gate into a step that grades some other image.
-    # The run id is what keeps two concurrent pull requests on this shared daemon from
-    # colliding on either one. The tag is local and is never pushed anywhere: this job has no
-    # registry credentials and does not want any.
+    # Job-level, so no two steps can disagree about them: SMOKE_NAME is the base name of the
+    # three containers ci/smoke.py starts and the cleanup removes; SMOKE_IMAGE is the tag the
+    # build writes and the gate grades. The tag is local and never pushed.
     env:
       SMOKE_NAME: hammerola-smoke-pr-${{ github.run_id }}
       SMOKE_IMAGE: hammerola-ci:${{ github.run_id }}
@@ -557,127 +200,63 @@ jobs:
       # Step-level `timeout-minutes` is the one known to be enforced by act_runner; the
       # job-level one above is only the outer bound. 20 minutes is well above a realistic cold
       # build of python:3.11-slim plus apt and the pinned wheels.
-      # Deliberately NOT byte-identical to the build step in image-check-publish.yml, and the
-      # difference is the point: that one computes a registry path and may produce two tags,
-      # this one builds exactly one local tag that never leaves the runner. Copying the tag
-      # computation in here would put a registry path in a workflow a pull request can
-      # trigger, which is the thing this file exists to avoid.
+      # Deliberately NOT byte-identical to the build step in image-check-publish.yml: this one
+      # builds one local tag, and copying the tag computation here would put a registry path
+      # in a workflow a pull request can trigger.
       timeout-minutes: 20
       run: |
         # --pull is required here: unlike GitHub's ephemeral runners, the self-hosted
         # runner has a persistent docker daemon, so a once-pulled base image
         # would sit in its cache for months and every build would inherit an
         # unpatched base layer.
-        # --memory / --memory-swap, and the first thing measured was whether they BITE at all
-        # (issue #28): the builder here is the BuildKit built into the daemon, v0.32.2, and it
-        # applies the limit per RUN. A synthetic 700 MB allocation inside a RUN dies with
-        # `Killed` / `exit code: 137` at 64m and succeeds at 1g, so this is an enforced ceiling
-        # rather than a flag the builder accepts and ignores. Measured with --no-cache
-        # necessarily — a warm cache executes no RUN and can never reach the limit, which is
-        # also why a green build here is not evidence that the number is still right.
-        # THE FLOOR IS `pip install --require-hashes -r requirements.lock`, the OCCT wheels:
-        # killed at 512m, passes at 768m, and the ui stage survives 512m on its own. That puts
-        # 2g between 2.7× and 4× the floor — the same shape of margin as the test containers,
-        # and for the same reason: a dependency that grows must not redden CI for something
-        # that has nothing to do with the commit.
-        # THE TWO FLAGS MUST STAY EQUAL, as in the test job: left unset, --memory-swap hands
-        # the build swap equal to the limit, and a runaway thrashes to twice the number instead
-        # of being killed at it.
+        # Memory ceiling: BuildKit applies it per RUN. Measured pass/fail with --no-cache:
+        # `pip install --require-hashes -r requirements.lock` (the OCCT wheels) is killed at
+        # 512m and passes at 768m, so 2g is 2.7-4x the floor. The two flags must stay equal:
+        # unset, `--memory-swap` adds swap equal to the limit instead of killing the build.
         docker build --pull --memory=2g --memory-swap=2g . --file Dockerfile --tag "$SMOKE_IMAGE"
 
     - name: Smoke-test the built image
-      # The same gate the publishing workflow runs, in the same position — after the image
-      # exists, before anything else. Here there is nothing after it, which is exactly the
-      # point: a pull request gets the identical verdict on the identical artefact without any
-      # possibility of publishing it.
-      #
-      # ci/smoke.py runs on the RUNNER and drives `docker` itself: several of its checks are
-      # about the container as an object — what `docker inspect` says its ENTRYPOINT and
-      # WORKDIR are, how the image behaves with no environment at all, what uid its main
-      # process ends up with, what its real command writes to its log — and none of those can
-      # be answered from a process already running inside it.
-      #
-      # NO PORT IS PUBLISHED and nothing talks to 127.0.0.1. This job runs inside act_runner's
-      # own job container while `docker` drives a daemon outside it, so a published port lands
-      # in that daemon's network namespace and is not reachable from here; anything that has
-      # to be seen from inside a container is read with `docker exec`. It is the same
-      # reasoning that makes the test job above stream the workspace in over stdin instead of
-      # bind-mounting it.
-      #
-      # The gate holds no credential and reaches no external service — it invents a
-      # syntactically valid but fake token and starts nothing that opens a socket. That is
-      # what makes it runnable here at all: a pull request has no access to the deployment's
-      # real credentials, and a gate that needed them would simply be switched off on PRs,
-      # which is where the artefact most needs looking at.
-      #
-      # 14 minutes is set against ci/smoke.py's OWN worst case, which the script documents and
-      # sums from its individual per-call bounds: 795 s — a little over 13 minutes — if every
-      # docker call it makes runs out its budget. In practice the whole gate is a few seconds.
-      # Being killed BY this timeout is what the margin is for: the script's own container
-      # cleanup would not run, and the `if: always()` step below is what catches that. It was
-      # 12 minutes against a 615 s sum until the CAD-kernel probe was added, which brought its
-      # own 90 s bound — `import cadquery` maps ~222 MB of OpenCASCADE off a cold overlay the
-      # first time; checks (g), (h) and (i) then added a 30 s exec each. That leaves 45 s of
-      # margin. Raise this number whenever that sum grows past it, in BOTH workflows.
-      #
-      # SMOKE_IMAGE and SMOKE_NAME both come from the job-level `env:` above, so this step
-      # needs no `env:` block of its own.
+      # The same gate the publishing workflow runs, after the image exists; here nothing
+      # follows it, so a pull request gets the same verdict on the same artefact without any
+      # way to publish it.
+      # ci/smoke.py runs on the runner and drives `docker` itself. No port is published:
+      # this job runs inside act_runner's container, so anything inside the image is read
+      # with `docker exec`.
+      # The gate holds no credential and reaches no external service, which is what makes
+      # it runnable on pull requests at all.
+      # The timeout is set against ci/smoke.py's own worst case, which the script documents and
+      # sums from its individual per-call bounds: 795 s, if every docker call runs out its
+      # budget (in practice a few seconds). If the timeout kills the script, its own cleanup
+      # does not run and the `if: always()` step below catches that. Raise this number
+      # whenever that sum grows past it, in BOTH workflows.
+      # SMOKE_IMAGE and SMOKE_NAME come from the job-level env.
       timeout-minutes: 14
-      # The `run:` body of this step is byte-identical to the one in image-check-publish.yml —
-      # the commentary above it and where its two variables come from are free to differ, and
-      # do. The PR gate and the publishing gate must run the same checks against the same kind
-      # of container, and the cheapest way to guarantee that is for the executed text to be
-      # literally the same text — anything else drifts, and it drifts silently, in the
-      # direction of the PR gate testing less.
+      # This `run:` body is byte-identical to the one in image-check-publish.yml (see AGENTS.md).
       run: |
         python3 ci/smoke.py
 
     - name: Remove the smoke containers from the runner
-      # `always()`, and BEFORE the image cleanup below: this runner has one persistent docker
-      # daemon shared by every repository, so a container left behind by a failed run would
-      # sit there forever — and would also pin the image, making the `docker rmi` in the next
-      # step fail.
-      # ci/smoke.py removes all three itself — each one before it starts it, the two
-      # long-lived ones in a `finally` — so on a normal run this is a no-op. It exists for the
-      # run where the smoke step was killed by its own timeout and never reached any of that:
-      # a subprocess timeout inside the script kills the docker CLIENT on the runner, not the
-      # container on the daemon, so even a `--rm` container can survive it and has to be
-      # removed here, by the name ci/smoke.py gave it for exactly this purpose.
-      # The body below explains why both removal paths carry `-v`; the other is
-      # `remove_container()` in ci/smoke.py — change one and change the other.
+      # `always()`, and before the image cleanup: a leftover container on the shared daemon
+      # would stay forever and pin the image, failing the `docker rmi` below. ci/smoke.py
+      # removes its containers itself, so normally this is a no-op; it is for the run where
+      # the smoke step was killed by its timeout, which kills the docker client but not the
+      # container.
       if: always()
       run: |
-        # The empty suffix is the long-lived container the privilege and packaging checks exec
-        # into; -guard is the short-lived one the missing-environment check runs; -cmd is the
-        # one started with the image's real command, which deliberately carries no `--rm` at
-        # all because its logs and exit code are read after it has exited. Kept in step with
-        # GUARD_SUFFIX and CMD_SUFFIX in ci/smoke.py.
-        # No `set -eu` here on purpose: this is best-effort cleanup, every removal already ends
-        # in `|| true`, and failing the step would turn a leftover container into a red job.
-        # `-v` changes nothing TODAY: the template's Dockerfile declares no VOLUME, so these
-        # containers own no anonymous volumes. It is here for the project that adds one — that
-        # developer will be editing a Dockerfile, not this workflow, and will not think to come
-        # back for the flag. BOTH removal paths carry it: `remove_container()` in ci/smoke.py,
-        # which gets there first on any normal run, and this step, which is what is left when
-        # smoke.py was killed before its `finally`. One alone covers half the runs — and had it
-        # been the workflow half, every ORDINARY run would leak a volume while this step looked
-        # like it was preventing exactly that. Carrying it pre-emptively is safe because of what
-        # it does NOT reach — `docker rm -v` removes only the anonymous volumes belonging to
-        # that one container, never a named volume such as the ones docker-compose creates.
+        # "" is the long-lived container the privilege and packaging checks exec into;
+        # -guard runs the missing-environment check; -cmd runs the image's real command and
+        # has no `--rm`, because its logs and exit code are read after it exits. Kept in step
+        # with GUARD_SUFFIX and CMD_SUFFIX in ci/smoke.py.
+        # No `set -eu`: this is best-effort cleanup and must not turn a leftover into a red job.
+        # `-v` removes only these containers' anonymous volumes, never a named one. Both
+        # removal paths carry it: this step and `remove_container()` in ci/smoke.py.
         for suffix in "" -guard -cmd; do docker rm -f -v "$SMOKE_NAME$suffix" || true; done
 
     - name: Remove the built image from the runner
-      # The runner's docker daemon is persistent, so every pull request build would otherwise
-      # pile up and grow the disk forever — and pull requests are the most frequent trigger
-      # there is. This removes ONLY the one tag this run created; no `docker system prune`,
-      # which would also wipe the images of every other repo sharing the same daemon,
-      # including ones other jobs are mid-run against.
-      # It does NOT reclaim everything: `docker rmi <tag>` never touches the BuildKit cache
-      # (that lives in a separate builder store and is only freed by `docker builder prune`),
-      # and `--pull` above leaves the previous base image untagged as a dangling image
-      # whenever upstream updates it. Both need a separate periodic cleanup on the runner host.
-      # `always()` so the cleanup runs even when the gate above fails — which is when an image
-      # is most likely to be left behind.
+      # The runner's daemon is persistent, so PR builds would otherwise fill the disk. This
+      # removes only the one tag this run created; no `docker system prune`, which would also
+      # wipe other repositories' images. The BuildKit cache and dangling base images left by
+      # `--pull` need a separate periodic cleanup on the runner host.
       if: always()
       run: |
         docker rmi "$SMOKE_IMAGE" || true

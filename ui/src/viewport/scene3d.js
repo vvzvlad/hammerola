@@ -1,88 +1,58 @@
-// The scaffolding every widget drawn AS AN OBJECT IN THE SCENE is built out of:
-// the group that outlives the scene it stands in, the placement that runs INSIDE
-// the library's render pass so the object is where it belongs in the very frame
-// that draws it, the scale that makes one unit of its geometry one CSS pixel,
-// the press taken off the canvas by raycast, and the teardown that stops all of
-// it.
+// Scaffolding for widgets drawn as objects in the scene: a group that outlives
+// the scene it stands in, placement inside the library's render pass (so the
+// object is right in the frame that draws it), a scale making one geometry unit
+// one CSS pixel, presses taken off the canvas by raycast, and teardown.
 //
-// THE TWIN OF layer.js, which does the same job for the widgets drawn OVER the
-// canvas out of divs — and it exists because a div is flat. A grip that lies on
-// the cut plane is a thing in the world: it foreshortens as the model turns and
-// it keeps the plane's own direction without being told what that direction
-// looks like on screen. In the DOM the same widget had to re-derive in screen
-// space what the projection already knew, and every one of those derivations —
-// the projected axis, the foreshortening, the floor under it — was a function
-// with a degenerate zone and a fallback for it.
+// The counterpart of layer.js (divs over the canvas). An object in the world
+// foreshortens with the model and keeps the plane's direction by itself; a flat
+// widget has to re-derive all of that in screen space, with degenerate zones.
 //
-// WHY THIS COULD NOT BE WRITTEN BEFORE THE FORK. three is EXTERNAL to the
-// library's build now (issue #14) and `viewer/src/index.ts` re-exports its
-// namespace, so the page and the library share ONE three and our objects are
-// built out of the very classes the scene is made of. Upstream bundles a three
-// instance nothing outside it can name, where `new Mesh(...)` would produce an
-// object that fails every `instanceof` the renderer makes.
+// This relies on the fork: three is external to the library's build and
+// `viewer/src/index.ts` re-exports its namespace, so page and library share one
+// three and our objects pass the renderer's `instanceof` checks.
 //
-// PLACED BY THE RENDER AND NOT BY A LOOP, which is the second thing the fork
-// bought and was measured in a browser before it was written. This viewer draws
-// ON DEMAND — `Viewer.update()`, called by its state setters and by the
-// controls' change listener, with the continuous `animate()` loop off — so a
-// widget moved from a `requestAnimationFrame` loop of its own is moved sixty
-// times a second beside a renderer that is not drawing: the group stands in the
-// scene, correctly positioned and correctly scaled, and NOTHING IS ON SCREEN
-// until something else happens to repaint. `onBeforeRender` is hammerola's
-// addition to the fork (viewer/src/core/viewer.ts, static/_v/PROVENANCE.md),
-// called at the top of `update()`, so a widget is placed for the frame that is
-// about to draw it and `refresh` means one thing only: ask for a frame.
+// Placed by the render, not a loop. The viewer draws on demand
+// (`Viewer.update()`, from state setters and the controls' change listener;
+// `animate()` is off), so a widget moved from its own rAF loop would not appear
+// until something else repainted. `onBeforeRender` is hammerola's addition to
+// the fork (viewer/src/core/viewer.ts, static/_v/PROVENANCE.md), called at the
+// top of `update()`, so a widget is placed for the frame about to be drawn and
+// `refresh` only asks for a frame.
 //
-// LIFECYCLE WITHOUT PATCHING `clear()`. `Viewer.clear()` runs `deepDispose` over
-// the whole scene (viewer/src/core/viewer.ts:1219), which would take our
-// geometries and materials with the model's. We own the only call site — `show()`
-// in element.js — so the group is DETACHED before that `clear()` and re-ATTACHED
-// after the `render()` that follows, and it is the same group across every scene
-// the reader loads: it is built once, on the first attach it is given a
-// namespace with.
+// Lifecycle without patching `clear()`: `Viewer.clear()` runs `deepDispose`
+// over the scene (viewer/src/core/viewer.ts:1219), which would take our
+// geometries too. `show()` in element.js, the only call site, detaches the group
+// before `clear()` and re-attaches it after `render()`; the same group, built
+// on the first attach that brings the namespace, serves every scene.
 //
-// NOT CUT AND NOT PICKABLE, both by construction rather than by opting out. The
-// library clips PER MATERIAL (`ObjectGroup.setClipPlanes`,
-// viewer/src/scene/objectgroup.ts:675) and never through
-// `renderer.clippingPlanes`, so a material carrying no planes is never cut by
-// the section. The id-picker renders BY CAMERA LAYER and marks what is pickable
-// with `layers.enable` (viewer/src/rendering/id-picking.ts:94, 1220), so an
-// object left on layer 0 never reaches the pick buffer — the model stays
-// pickable straight through a handle standing in front of it.
+// Not cut and not pickable, by construction. The library clips per material
+// (`ObjectGroup.setClipPlanes`, viewer/src/scene/objectgroup.ts:675), never via
+// `renderer.clippingPlanes`, so a material with no planes is never cut. The
+// id-picker renders by camera layer (`layers.enable`,
+// viewer/src/rendering/id-picking.ts:94, 1220), so objects on layer 0 never
+// reach the pick buffer and the model stays pickable through a handle.
 //
-// WHAT IS NOT HERE IS THE GESTURE, exactly as in layer.js: each widget keeps its
-// own presses, its own drag state and its own ending, because what a press MEANS
-// is the whole of what makes them separate modules. `drag.js` is the other half
-// they share, and they share it with the DOM layers too.
+// The gesture is not here (as in layer.js): each widget keeps its own presses,
+// drag state and ending; `drag.js` is the shared half.
 
 import { ndcAt } from "./camera.js";
 import { internals } from "./internals.js";
 
-/** Where each widget is drawn relative to the model, and to the other two:
- *  after all of it, and bottom to top rings, grip, manipulator.
+/** Where each widget is drawn relative to the model and to each other: after
+ *  all of the model, bottom to top rings, grip, manipulator.
  *
- * ABOVE THE LIBRARY'S OWN, WHICH IS WHY THE LOWEST BAND IS 1001. The library
- * puts its own edges and translucent faces at 999
- * (viewer/src/scene/nestedgroup.ts:523) and its highlight points at 1000; the
- * section contour takes that same 1000 (outline.js, which carries the argument
- * for why a bucket beats the per-object depth sort inside one). A handle is the
- * one thing that must never be hidden by any of them, so it sits above the
- * highest — and, having no depth test either, it is drawn over the part it is
- * standing on rather than inside it.
+ * Above the library's own: its edges and translucent faces are at 999
+ * (viewer/src/scene/nestedgroup.ts:523), its highlight points and the section
+ * contour (outline.js) at 1000. A handle must never be hidden by any of them,
+ * and with no depth test it is drawn over the part it stands on.
  *
- * AND THREE BANDS RATHER THAN ONE, because the band is the press order too:
- * `joinPresses` hands a contested press to the highest band that takes it, so
- * what the reader presses is what they see on top, and the widget under the
- * hand and the widget that answers cannot be two different widgets.
+ * Three bands because the band is also the press order: `joinPresses` gives a
+ * contested press to the highest band that takes it, so the widget on top is
+ * the one that answers.
  *
- * EACH WIDGET'S OWN LADDER IS UNTOUCHED INSIDE ITS BAND: three carries a
- * group's `renderOrder` down as `groupOrder` and sorts on that BEFORE each
- * mesh's own, so a rim under a casing under an ink goes on deciding the
- * overlaps a widget has with ITSELF — and, by the same fact, the bands need
- * only be DISTINCT. A mesh's own number is never added to its band and never
- * compared against one, so 1001, 1002 and 1003 would separate the three widgets
- * exactly as well. The tens are room to read the numbers apart, not a clearance
- * anything has to keep.
+ * Each widget's own ladder still works inside its band: three carries a group's
+ * `renderOrder` down as `groupOrder` and sorts on it before each mesh's own, so
+ * the bands need only be distinct; the tens are for readability.
  */
 export const RINGS_ORDER = 1001;
 export const HANDLE_ORDER = 1011;
@@ -92,36 +62,26 @@ export const GIZMO_ORDER = 1021;
  * The material every 3D handle is drawn with: flat ink, never hidden, never
  * cut, never graded and always blended.
  *
- * `transparent: true` ON EVERY PIECE, the opaque ones included, and that is
- * what makes the stacking of the three widgets a SORT rather than a list
- * boundary. three sorts an object into its opaque or its transparent list by
- * this flag alone and draws opaque, then transmissive, then transparent
- * (`static/_v/three.module.js`); `groupOrder` and `renderOrder` only order the
- * objects WITHIN one list. So one blended piece anywhere in a widget — the
- * rings' feathered arc — would carry that whole widget over every opaque one
- * whatever band it was given, and the bands above would settle nothing. Alpha
- * is 1 on everything but that arc, so nothing is faded by saying this.
+ * `transparent: true` on every piece, opaque ones included: three sorts objects
+ * into opaque or transparent lists by this flag alone and draws opaque first
+ * (`static/_v/three.module.js`); `groupOrder` and `renderOrder` order only
+ * within a list. One blended piece (the rings' feathered arc) would otherwise
+ * lift its whole widget over every opaque one regardless of band. Alpha is 1
+ * everywhere but that arc.
  *
- * `depthTest: false` is the whole of "a handle is never lost inside the part it
- * belongs to" — the grip sits ON a cut face, i.e. exactly where the depth buffer
- * says the model is, and half of it would otherwise be swallowed by whatever the
- * plane has just opened up.
+ * `depthTest: false`: the grip sits on a cut face, exactly where the depth
+ * buffer says the model is, and would otherwise be half swallowed.
  *
- * `clippingPlanes: []` is what keeps the section from cutting the widget that
- * MOVES the section. It is an empty list rather than a missing field because the
- * library hands its own materials a real array and a reader comparing the two
- * should see the answer, not its absence.
+ * `clippingPlanes: []` keeps the section from cutting the widget that moves the
+ * section; an empty array, matching the library's own materials.
  *
- * `depthWrite: false` travels with it, which is what both of the library's own
- * always-visible materials do (`viewer/src/scene/clipping.ts:96`,
- * `viewer/src/scene/nestedgroup.ts:970`). A surface that does not consult the
- * depth buffer has no business writing to it: what it would leave there is the
- * handle's own distance stamped over nearer geometry, for whatever is drawn
- * after it to be tested against.
+ * `depthWrite: false`, as in the library's always-visible materials
+ * (`viewer/src/scene/clipping.ts:96`, `viewer/src/scene/nestedgroup.ts:970`):
+ * a surface that ignores depth must not stamp its distance over nearer
+ * geometry.
  *
- * `toneMapped: false` for the reason the library's own edge material carries it:
- * this is ink at a colour that was chosen, not a surface being lit, and the
- * renderer's tone mapping would grade it towards something else.
+ * `toneMapped: false`, as on the library's edge material: this is chosen ink,
+ * not a lit surface.
  */
 export function widgetMaterial(three, color) {
   return new three.MeshBasicMaterial({
@@ -130,11 +90,8 @@ export function widgetMaterial(three, color) {
   });
 }
 
-/** The one hook of ours on a viewer, tagged so a second widget finds it.
- *
- * ON THE FUNCTION AND NOT IN A REGISTRY HERE: the list of widgets a viewer
- * places belongs to that viewer and dies with it, so there is no module-level
- * map to key, to prune, or to keep clean between two of them.
+/** The one hook of ours on a viewer, tagged so a second widget finds it. On the
+ *  function, not in a module registry, so it dies with its viewer.
  */
 const FANOUT = Symbol("hammerola.scene3d");
 
@@ -142,17 +99,13 @@ const FANOUT = Symbol("hammerola.scene3d");
  * The fan-out this viewer's widgets are placed from, installed if it is not
  * there yet.
  *
- * ONE FUNCTION IN A FIELD THAT HOLDS ONE, and several widgets are coming — the
- * move arrows and the rotation rings are objects in this scene next — so what
- * goes into `viewer.onBeforeRender` is a single function that calls each
- * registered widget's `paint`. `scene3d.js` is the only owner of that field
- * anywhere.
+ * `viewer.onBeforeRender` holds one function, so it gets a single hook that
+ * calls each registered widget's `paint`. This module is the only owner of
+ * that field.
  *
- * WHATEVER WAS THERE IS KEPT and put back when the last widget leaves — the
- * literal value rather than a hard null, which is `installPinchGuard`'s
- * arrangement around `viewer.update` and is kept for its reason: nothing in this
- * codebase assigns to this field today, and the restore should still be right on
- * the day something does.
+ * Whatever was there is kept and restored when the last widget leaves (as
+ * `installPinchGuard` does around `viewer.update`); nothing assigns to it
+ * today.
  */
 function fanoutOn(viewer) {
   const held = viewer.onBeforeRender;
@@ -173,14 +126,13 @@ const PRESSES = Symbol("hammerola.presses");
  * Put `take(event)` among the viewport's presses at paint band `order`, and
  * return the call that takes it back out.
  *
- * ONE WINDOW LISTENER FOR EVERY WIDGET, because between listeners on one node
- * only the order they were added in decides, and that is a fact about
- * `element.js` that no widget can state. Here the highest band is asked first,
- * ties in the order they joined, and the first `take` to answer true keeps the
- * press — so what answers is what is drawn on top.
+ * One window listener for every widget, because between listeners on one node
+ * only registration order decides, which no widget controls. Here the highest
+ * band is asked first, ties in join order, and the first `take` returning true
+ * keeps the press, so what answers is what is drawn on top.
  *
- * ON `vp` AND LAZY, for `fanoutOn`'s reason: the list is that viewport's and
- * dies with it, and the listener is on the window only while somebody is in it.
+ * On `vp` and lazy (like `fanoutOn`): the list dies with the viewport, and the
+ * listener is on the window only while it has members.
  */
 export function joinPresses(vp, order, take) {
   if (!vp[PRESSES]) {
@@ -190,11 +142,9 @@ export function joinPresses(vp, order, take) {
       const ranked = [...members].sort((a, b) => b.order - a.order);
       for (const member of ranked) {
         if (!member.take(event)) continue;
-        // ONE CALL AND NOT TWO: `stopImmediatePropagation` sets the propagation
-        // flag as well (DOM, "stop immediate propagation flag"), so a
-        // `stopPropagation` beside it is a line that cannot change anything. The
-        // tests therefore ask whether the neighbour RAN, not which method was
-        // called.
+        // One call: `stopImmediatePropagation` also sets the propagation flag,
+        // so `stopPropagation` would change nothing. Tests check whether the
+        // neighbour ran.
         event.stopImmediatePropagation();
         event.preventDefault();
         return;
@@ -216,61 +166,48 @@ export function joinPresses(vp, order, take) {
 /**
  * One widget living in the library's scene: `{refresh, attach, detach, destroy}`.
  *
- * The four callbacks, in the order they are first called:
+ * The callbacks, in the order they are first called:
  *
- *   `build(three, group)` fills the group, ONCE, the first time `attach` is
- *     given the namespace. Everything it puts there is measured in CSS PIXELS,
- *     because of the scale below.
- *   `wanted()` is whether there is anything to draw at all — asked again on
- *     every frame the library draws rather than remembered, so a widget that has
- *     nothing to stand on needs nobody to take it off the screen.
- *   `place(group, g)` puts the group where the widget belongs and returns false
- *     when it cannot. Position and orientation are the widget's; the SCALE is
- *     this module's and is overwritten every frame.
- *   `press(event, g, hit)` is the press the raycast landed on ours, and returns
- *     whether the widget took it. `hit` is the intersection itself, for a widget
- *     whose group holds more than one pressable piece.
+ *   `build(three, group)` fills the group once, on the first `attach` that has
+ *     the namespace. Everything in it is measured in CSS pixels (see the scale).
+ *   `wanted()` is whether there is anything to draw, asked on every frame, so
+ *     a widget with nothing to stand on disappears by itself.
+ *   `place(group, g)` positions and orients the group and returns false when it
+ *     cannot. The scale is this module's and is overwritten every frame.
+ *   `press(event, g, hit)` handles a press the raycast found on ours and
+ *     returns whether the widget took it; `hit` is the intersection.
  *
- * `rank(object)` is optional and decides WHICH intersection that `hit` is when
- * the ray crosses several of one widget's targets: the lowest rank wins, ties
- * going to the nearest, and a widget that passes none gets the nearest hit.
- * NOT THE NEAREST BY DEFAULT because nothing here has a depth test, so what is
- * drawn on top is a matter of `renderOrder` and the ray knows nothing about it
- * — where two pieces cross, the press has to go to the one the reader can see.
- * `gizmo.js` states that rule where it keeps its own `RANK`.
+ * `rank(object)` (optional) picks which intersection `hit` is when the ray
+ * crosses several targets: lowest rank wins, ties to the nearest; without it,
+ * the nearest. Nothing here has a depth test, so what is on top is decided by
+ * `renderOrder`, which the ray knows nothing about (see `RANK` in gizmo.js).
  *
- * `handOver(event)` is optional and is called on every press the higher bands
- * left, BEFORE `wanted` and the ray are asked: for a widget whose press has
- * gestures to end even when it misses. `rings.js` is the one that has them.
+ * `handOver(event)` (optional) is called on every press the higher bands left,
+ * before `wanted` and the ray, for a widget with gestures to end even on a miss
+ * (`rings.js`).
  *
- * `order` is the caller's own band out of the three above, and the caller picks
- * it because which widget is drawn over which is a fact about the set of them
- * rather than about this scaffolding. It is the widget's place in
- * `joinPresses` as well.
+ * `order` is the caller's band from those above, and its place in
+ * `joinPresses`.
  *
- * `place` ANSWERS RATHER THAN HIDING, which is the one place this departs from
- * `createLayer`'s contract: there each layer owns the `display` of its own
- * pieces, here one flag on the shared group decides whether the widget is in the
- * frame at all, and two owners of one flag is a widget that flickers on whichever
- * of them ran last.
+ * `place` answers rather than hiding (unlike `createLayer`, where each layer
+ * owns its pieces' `display`): one flag on the shared group decides whether the
+ * widget is in the frame, and two owners of it would flicker.
  */
 export function createScene3D(vp,
                               { wanted, build, place, press, handOver, rank,
                                 cursor, order }) {
-  // Null until the first `attach` brings the namespace; everything below that
-  // needs three checks for the group rather than for the module, because the two
-  // arrive together and the group is the one the work is done on.
+  // Null until the first `attach` brings the namespace; the group and the
+  // module arrive together, so code checks the group.
   let three = null;
   let group = null;
   let raycaster = null;
   let pointer = null;
-  // The canvas whose cursor we wrote, so it is handed back exactly once. The DOM
-  // layers got this from the browser for nothing: a div with `cursor: grab` on
-  // it, hit-tested by the engine. A widget in the scene is not an element, so
-  // the hover has to be raycast and the canvas written to by hand.
+  // The canvas whose cursor we wrote, so it is handed back exactly once. A
+  // widget in the scene is not an element, so hover is raycast and the cursor
+  // written by hand.
   let painted = null;
-  // Which cursor is on it, so a change of LOOK on the same node is not read as
-  // "nothing changed" -- `grab` and `grabbing` are two answers about one canvas.
+  // Which cursor is on it, so `grab` -> `grabbing` on the same canvas counts
+  // as a change.
   let worn = null;
   // Whether a gesture of this widget's is running. Set by `grabbed`, which the
   // widget calls because only the widget knows when its own drag has ended.
@@ -303,13 +240,10 @@ export function createScene3D(vp,
 
   /** World units per CSS pixel, or null for a camera this cannot answer for.
    *
-   * The camera is ORTHOGRAPHIC by construction (`displayOptions` in options.js,
-   * and `gestureInternals` refuses anything else), so one number covers the whole
-   * frame: the frustum's height in world units, divided by the zoom the reader
-   * has dialled in, over the canvas's height in pixels. A perspective camera
-   * would need the depth of the widget as well, and there is no perspective
-   * camera here to measure one against — hence null and an undrawn widget rather
-   * than a guess that would be wrong by however far the handle is from the eye.
+   * The camera is orthographic (`displayOptions` in options.js;
+   * `gestureInternals` refuses anything else), so one number covers the frame:
+   * frustum height over zoom over canvas height in pixels. A perspective camera
+   * would need the widget's depth too, so it gets null and no widget.
    */
   function pixelScale(g) {
     if (!g.cam.isOrthographicCamera) return null;
@@ -327,27 +261,20 @@ export function createScene3D(vp,
       group.visible = false;
       return;
     }
-    // UNIFORM, and written after `place` rather than instead of anything it
-    // does: position and orientation compose with a uniform scale in any order,
-    // so the widget's two fields and this one never have to know about each
-    // other.
+    // Uniform, written after `place`: position and orientation compose with a
+    // uniform scale in any order.
     group.scale.setScalar(k);
     group.visible = true;
   }
 
   /** The topmost thing of ours under the pointer, or null.
    *
-   * `group.visible` IS PART OF THE QUESTION. three's raycaster does not consult
-   * it — `intersect()` tests the object's LAYERS and nothing else — so without
-   * this line a widget the last frame took off the screen would go on answering
-   * presses at wherever it was last placed.
+   * `group.visible` is checked because three's raycaster tests layers only, so
+   * a widget the last frame removed would keep answering presses.
    *
-   * `updateMatrixWorld` because a press does not know which frame it is standing
-   * on. The renderer composes this group on its way out of every frame that
-   * placed it, so after a render the matrix is already right — but a group that
-   * has just joined a scene nothing has drawn yet has no world matrix at all,
-   * and the ray would be cast against the origin. One matrix compose per press
-   * is cheaper than having to know which of the two it is.
+   * `updateMatrixWorld` because a press does not know which frame it is on: a
+   * group just added to a scene nothing has drawn yet has no world matrix, and
+   * one compose per press is cheaper than tracking which case it is.
    */
   function hit(g, event) {
     if (!group || !group.visible || !raycaster) return null;
@@ -359,8 +286,8 @@ export function createScene3D(vp,
     const hits = raycaster.intersectObject(group, true);
     if (!hits.length) return null;
     if (!rank) return hits[0];
-    // LOWEST RANK, TIES BY DISTANCE: three answers in distance order, so
-    // keeping the FIRST minimum is the whole of the tie-break.
+    // Lowest rank, ties by distance: three returns hits in distance order, so
+    // keeping the first minimum is the tie-break.
     let best = hits[0];
     let mark = rank(best.object);
     for (const found of hits) {
@@ -375,13 +302,10 @@ export function createScene3D(vp,
 
   /** Wear a cursor on `canvas`, or take ours off wherever it was.
    *
-   * `held` is the drag's own: while one runs the canvas wears `grabbing` and
-   * stops asking the ray anything, because the hand carries the pointer OFF the
-   * widget almost immediately -- a section drag moves along the axis and the
-   * across-axis part of the hand's travel takes the cursor clean off the target
-   * cylinder. Recomputed per move, the cursor would go back to the default in
-   * the middle of a gesture that is still running, which is the one thing a
-   * cursor is there to deny.
+   * While a drag runs (`held`) the canvas shows `grabbing` and the ray is not
+   * asked, because the hand carries the pointer off the widget almost at once
+   * (a section drag moves along the axis, and the sideways part of the travel
+   * leaves the target cylinder).
    */
   function wear(canvas, look = cursor) {
     if (painted === canvas && worn === look) return;
@@ -394,27 +318,17 @@ export function createScene3D(vp,
   /**
    * A press on the canvas, taken only if the ray landed on the widget.
    *
-   * ON THE WINDOW AND IN THE CAPTURE PHASE, which is `rings.js`'s arrangement and
-   * is now forced rather than chosen: there is no element to hang a listener on
-   * at all. What it buys is that a press that MISSES is left completely alone —
-   * it goes on to the tools' own listener and to the trackball behind it, so the
-   * reader can still orbit, pick and open the part menu with a cut standing.
+   * On the window in the capture phase, since there is no element to listen on.
+   * A press that misses is left alone and goes on to the tools' listener and the
+   * trackball, so orbiting, picking and the part menu work with a cut standing.
    *
-   * THE CANVAS AND NOTHING ELSE, the same guard tools.js's `onDown` opens with:
-   * on a window listener it is what keeps a press on the tree, on a button or on
-   * one of the layers stacked over the canvas from being read as a press on the
-   * model.
+   * The canvas only (as tools.js's `onDown`): a press on the tree, a button or a
+   * layer over the canvas is not a press on the model.
    *
-   * The refusals go out only when the WIDGET has taken the press, not merely
-   * when the ray hit it: which buttons a widget answers to is its own business,
-   * and a press it does not want is a press it has no business taking away from
-   * anybody else.
-   *
-   * TRUE IS THE WHOLE ANSWER, and `joinPresses` makes the refusals on it. It is
-   * also what keeps two widgets in one scene apart: the press goes to the
-   * highest band that answers true and no further, so one press cannot be taken
-   * by the grip AND start a rotation, and where the two overlap the one drawn
-   * on top keeps it.
+   * Returning true is the whole answer; `joinPresses` makes the refusals, and
+   * only when the widget took the press (which buttons it answers is its own
+   * business). The press goes to the highest band that answers true, so it
+   * cannot both move the grip and start a rotation.
    */
   function onDown(event) {
     if (handOver) handOver(event);
@@ -434,25 +348,20 @@ export function createScene3D(vp,
   }
 
   /**
-   * Ask the library to draw, which is the only way anything of ours reaches the
-   * screen.
+   * Ask the library to draw, the only way anything of ours reaches the screen.
    *
-   * `viewer.update(true, false)` is the call the rest of this codebase makes
-   * (`parts.js`): the orientation marker keeps up, and nothing is notified,
-   * because no state the interface holds has changed.
+   * `viewer.update(true, false)`, as in `parts.js`: the orientation marker keeps
+   * up and nothing is notified, since no interface state changed.
    *
-   * ONLY FOR A CHANGE THE LIBRARY DID NOT MAKE ITSELF, which in practice is the
-   * cut appearing or going away. A camera move, the plane sliding under a drag,
-   * a part moving — each of those already ends in a render of the library's own,
-   * and the hook places the widget in that same frame.
+   * Only for a change the library did not make itself (in practice, the cut
+   * appearing or going). Camera moves, plane drags and part moves already end in
+   * a library render, and the hook places the widget in that frame.
    */
   function refresh() {
-    // THE CONTRACT ABOVE, ENFORCED HERE AND NOT IN THE CALLER. `reconcile` in
-    // element.js runs on every `hmr:state`, which arrives on every click in the
-    // tree, and it cannot know whether this widget cares. A render costs the
-    // whole scene plus the orientation marker and the grid, so the question is
-    // asked here: a frame is worth it only when there is something to draw, or
-    // something still drawn that has to come off.
+    // Enforced here, not by callers: `reconcile` in element.js runs on every
+    // `hmr:state` (every tree click) and cannot know whether this widget cares.
+    // A render costs the whole scene, so a frame is asked only when there is
+    // something to draw or something drawn to take off.
     if (!wanted() && !(group && group.visible)) return;
     const viewer = vp.viewer;
     if (viewer) viewer.update(true, false);
@@ -465,13 +374,10 @@ export function createScene3D(vp,
     refresh,
 
     /**
-     * Say a gesture of this widget's has started or ended.
-     *
-     * THE CURSOR IS THE WHOLE OF IT: `onMove` recomputes from the ray, and the
-     * hand leaves the widget almost at once, so without this the cursor reverts
-     * mid-drag. The widget owns the call because only it knows what ends its
-     * gesture -- a release, a cancel, a second press, or the scene being swapped
-     * out from under a hand that never came off.
+     * Say a gesture of this widget's has started or ended. Only the cursor
+     * depends on it (`onMove` would revert it mid-drag), and only the widget
+     * knows what ends its gesture: release, cancel, a second press, or a scene
+     * swap under a held hand.
      */
     grabbed(flag) {
       held = !!flag;
@@ -483,11 +389,8 @@ export function createScene3D(vp,
     /**
      * Put the group into the scene that is on screen now, building it first.
      *
-     * `three` is the namespace `show()` took off the library it had just loaded
-     * — and `undefined` from a loader that answered without one, which is a
-     * page with no widgets rather than an error: the reader is looking at a
-     * viewer that came from somewhere this code does not recognise, and it
-     * still renders their model.
+     * `three` is the namespace `show()` took off the loaded library; a loader
+     * that answered without one gives a page with no widgets, not an error.
      */
     attach(namespace) {
       if (!three) three = namespace;
@@ -495,9 +398,8 @@ export function createScene3D(vp,
       if (!group) {
         group = new three.Group();
         group.renderOrder = order;
-        // Until the first frame has placed it. A group built at the origin and
-        // visible would be one frame of a handle standing in the middle of the
-        // model.
+        // Hidden until the first frame places it, so it never shows at the
+        // origin.
         group.visible = false;
         raycaster = new three.Raycaster();
         pointer = new three.Vector2();
@@ -507,27 +409,21 @@ export function createScene3D(vp,
       const scene = g && g.scene;
       if (!scene || typeof scene.add !== "function") return;
       if (group.parent !== scene) scene.add(group);
-      // FROM HERE ON THE LIBRARY PLACES IT, once per frame it draws.
+      // From here on the library places it, once per frame.
       join(vp.viewer);
-      // And the frame that built this scene has already been drawn, so the one
-      // on screen has no group of ours in it. What this asks for is the frame
-      // that reconciles that — in practice, TAKING OFF a group that was left
-      // visible by the scene before, since `show()` clears the seed before the
-      // swap and whatever puts the widget back afterwards ends in a render of
-      // its own (`standSection` in section.js). The guard in `refresh` decides
-      // which of the two it is, and on a viewport that never had a cut it is
-      // neither and no frame is asked for.
+      // The frame that built this scene is already drawn without our group, so
+      // ask for one more. In practice it removes a group left visible by the
+      // previous scene (`show()` clears the seed before the swap, and whatever
+      // restores the widget renders by itself, e.g. `standSection` in
+      // section.js). The guard in `refresh` decides; with no cut, no frame.
       refresh();
     },
 
     /** Take the group out of the scene before something disposes it.
      *
-     * THE FAN-OUT IS NOT LEFT HERE, because being placed is the widget's
-     * lifetime and not the scene's: the caller is mid-swap — `clear()`,
-     * `render()` and `attach` again, in one synchronous block — and the most a
-     * `place` landing in between can do is write a transform onto a group
-     * nothing is drawing. Leaving is the teardown's job, where the widget really
-     * is going away.
+     * The fan-out is not left here: the caller is mid-swap (`clear()`,
+     * `render()`, `attach` in one synchronous block), and a `place` in between
+     * only writes a transform onto an undrawn group. Leaving is `destroy`'s job.
      */
     detach() {
       if (group && group.parent) group.parent.remove(group);
@@ -539,9 +435,8 @@ export function createScene3D(vp,
       removeEventListener("pointermove", onMove, true);
       wear(null);
       if (group && group.parent) group.parent.remove(group);
-      // OURS TO DISPOSE, and the only geometry in this tree that is. The scene's
-      // own is the library's and goes on `clear()`; this group is the one thing
-      // that survives those, so nothing else will ever free it.
+      // Ours to dispose: the scene's geometry goes with `clear()`, but this
+      // group survives those, so nothing else frees it.
       if (group) {
         group.traverse((object) => {
           if (object.geometry) object.geometry.dispose();

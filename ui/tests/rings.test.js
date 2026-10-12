@@ -1,44 +1,30 @@
 // ui/src/viewport/rings.js — the move tool's three rotation handles.
 //
-// There is no GPU here and nothing below looks at a pixel, which is the same
-// discipline the rest of this suite keeps — but a ring is a circle IN THE SCENE
-// now, so what is assertable has moved with it exactly as it did for the
-// section grip. Where the widget stands is a world point rather than a
-// projection; which plane a ring lies in is a rotation taken into the world
-// rather than a 2x2 matrix that had to be measured and inverted; how big it is
-// drawn is `scene3d.js`'s one scale, and that module's own suite asks about it.
-// Left here are the questions only this file can answer: WHAT a ring is built
-// out of, HOW MUCH of it is drawn — an arc through the knob at rest, the whole
-// circle under the cursor — WHEN one is taken off the screen, WHICH ring a
-// press lands on, and what one whole drag does to the part and says at the end
-// of it.
+// No GPU and no pixels. A ring is a circle in the scene: where the widget stands
+// is a world point, a ring's plane is a rotation in the world, and its drawn
+// size is `scene3d.js`'s scale (tested there). This file covers what a ring is
+// built from, how much of it is drawn (an arc through the knob at rest, the
+// whole circle under the cursor), when one is hidden, which ring a press lands
+// on, and what a whole drag does to the part and reports.
 //
-// A FRAME HERE IS THE LIBRARY DRAWING ONE, `rendered(viewer)` — the fork calls
-// `onBeforeRender` at the top of `Viewer.update` and the rings are placed there,
-// in the frame that then draws them. Nothing in this file runs a timer, and the
-// teardown says so for every test that does not also stand up the axis arrows,
-// which are still a DOM layer with a loop of their own.
+// A frame is the library drawing one, `rendered(viewer)`: the fork calls
+// `onBeforeRender` at the top of `Viewer.update` and the rings are placed there.
+// Nothing here runs a timer; the axis arrows are still a DOM layer with a loop
+// of their own.
 //
-// THE CAMERA IS TWO OBJECTS, exactly as in scene3d.test.js and handle.test.js:
-// this directory's own model of an ortho projection, which every point below is
-// worked out against, and a real `THREE.OrthographicCamera` at the same pose
-// installed where `getCamera()` answers, because both the press and the hover
-// are rays and a ray needs matrices.
+// The camera is two objects, as in scene3d.test.js and handle.test.js: this
+// directory's model of an ortho projection, which every point is worked out
+// against, and a real `THREE.OrthographicCamera` at the same pose where
+// `getCamera()` answers, because the press and the hover are rays.
 //
-// THE ONE CLAIM THIS FILE EXISTS FOR IS STILL THE SIGN. A ring can be drawn
-// perfectly, hit perfectly and read perfectly and still turn the part the wrong
-// way. The module answers by putting each ring's circle in the world plane its
-// own axis is normal to, in the cyclic pair `u x v = +k`, and taking the angle
-// where the pointer's RAY meets that plane — so the tests below pin the pair
-// (through the rotation the module writes on each ring's node) and then pin
-// where the part really ends up after a quarter turn.
-//
-// AND NOT ONLY ON THE Z RING UNDER THE DEFAULT CAMERA, which is the one
-// arrangement where the ring's own `(u, v)` and the screen's axes line up — and
-// therefore the one arrangement a sign taken off screen pixels would also get
-// right. The last describe is the rest of the claim: the X and the Y ring, a
-// ring watched from the far side of its own plane, and a part that was already
-// standing turned when the hand arrived.
+// The main claim is the sign. Each ring's circle lies in the world plane its
+// axis is normal to, in the cyclic pair `u x v = +k`, and the angle is taken
+// where the pointer's ray meets that plane; the tests pin the pair (through the
+// rotation written on each ring's node) and where the part ends up after a
+// quarter turn. Not only on the Z ring under the default camera, the one
+// arrangement where a sign from screen pixels would also be right: the last
+// describe covers the X and Y rings, a ring seen from the far side of its plane,
+// and a part already turned when the hand arrives.
 //
 // The arithmetic is not taken from the module. This fake camera puts 20 px on a
 // world unit along both screen axes (400 px per 20 halfW across, 300 px per 15
@@ -118,24 +104,19 @@ const CENTRE_AT = [0, 0, 45]
  * A viewport with the Move tool armed over a movable part, a scene to stand the
  * rings in, and the rings.
  *
- * `move` AND NOT A TOOL OF THEIR OWN, which is what the tool merge settled. The
- * rings are one half of a single manipulator — the arrows, the plane quads and
- * the origin dot are the other — and both halves answer to the tool that puts
- * the widget on the part.
+ * The rings answer to `move`: they are one half of a single manipulator (the
+ * arrows, plane quads and origin dot are the other).
  *
  * Built on the real prototype so `activeTool`, `isOverlay` and `overlayBody`
- * are the element's own — a fake that re-implemented them would let this file
- * agree with itself instead of with the code.
+ * are the element's own.
  *
- * THE CANVAS IS A REAL NODE, for the reason handle.test.js gives for its own:
- * both the press and the hand-over are read in capture-phase listeners on the
- * WINDOW that decline any target but the canvas, so they have to be events the
- * DOM really dispatched at one. The rect is stubbed on because jsdom computes
- * no layout.
+ * The canvas is a real node: the press and the hand-over are read in
+ * capture-phase window listeners that decline any target but the canvas. The
+ * rect is stubbed because jsdom computes no layout.
  *
- * `arrows` STANDS THE OTHER HALF UP FOR REAL, on the same viewport and so in
- * the same press listener (`joinPresses` in scene3d.js): which of the two wins
- * a contested press is their paint band, whatever order this builds them in.
+ * `arrows` stands the other half up for real, in the same press listener
+ * (`joinPresses` in scene3d.js): a contested press goes by paint band,
+ * whatever order this builds them in.
  */
 function scene({
   selected = [PART], groups = { [PART]: solid(PART) }, camera, gridSize = 100,
@@ -386,12 +367,9 @@ describe('when there is nothing to put rings round', () => {
   })
 
   it('draws nothing for the retired tool value', () => {
-    // `turn` WAS A TOOL AND IS NOT ONE ANY MORE. The rings were its whole
-    // gesture, so a reader who wanted to slide a part and then turn it had to
-    // swap tools between the two halves of one widget. Both halves answer to
-    // `move` now, and this pins that nothing is left behind answering to the
-    // old value — a widget that came up under a name the interface no longer
-    // writes would be unreachable and invisible in one move.
+    // `turn` is not a tool: both halves of the widget answer to `move`. A widget
+    // that came up under a name the interface no longer writes would be
+    // unreachable.
     const s = scene({ tool: 'turn' })
     rendered(s.viewer)
     expect(shown(s)).toBe(false)
@@ -471,14 +449,12 @@ describe('when there is nothing to put rings round', () => {
 
 describe('what a ring is built out of', () => {
   it('lies in the world plane its own axis is normal to', () => {
-    // THE SIGN OF THE WHOLE GESTURE, pinned where it is now decided — on the
-    // rotation the module writes onto each ring's node, which is the one place
-    // the pair is spelled at all. three builds a torus in local XY sweeping
-    // from +X towards +Y, so putting local +X on `u`, local +Y on `v` and local
-    // +Z on the ring's own axis is what makes the drawn curve run the
-    // right-handed way round it — and `ringAngle` reads its `atan2` in that
-    // very pair. Both orders draw the same circle and only one turns the part
-    // the way the hand went.
+    // The sign of the whole gesture is decided by the rotation written onto each
+    // ring's node. three builds a torus in local XY sweeping from +X towards +Y,
+    // so local +X on `u`, local +Y on `v` and local +Z on the ring's axis makes
+    // the curve run right-handed round it, and `ringAngle` reads its `atan2` in
+    // that pair. Both orders draw the same circle; only one turns the part the
+    // way the hand went.
     const s = scene({ camera: orthoCamera(OBLIQUE) })
     rendered(s.viewer)
 
@@ -511,18 +487,15 @@ describe('what a ring is built out of', () => {
   })
 
   it('stands the ink on a white casing inside a dark rim, drawn under it', () => {
-    // FUSION'S CONSTRUCTION AND NOT ITS PALETTE (options.js, `RING_CASE_PX`).
-    // The complaint this answers is that the rings drowned in the geometry: a
-    // red ring on a red part is invisible whatever red it is, and the canvas
-    // under it is white or near-black depending on the reader's own answer. A
-    // light casing inside a dark rim is legible against every one of those, and
-    // it is GEOMETRY — three tubes about one circle — rather than a filter.
+    // Fusion's construction, not its palette (options.js, `RING_CASE_PX`): a red
+    // ring on a red part is invisible whatever red it is, and the canvas is white
+    // or near-black. A light casing inside a dark rim is legible against all of
+    // them, and it is geometry (three tubes about one circle), not a filter.
     //
-    // UNDER IT, not merely present: with no depth test the renderer's order IS
-    // the stacking, so a casing that sorted after the ink would paint the ring
-    // out entirely. Every piece is BLENDED for that reason as well — three
-    // draws its opaque list before its transparent one, and a faded arc beside
-    // an opaque knob would be painted over the knob.
+    // Under it, not merely present: with no depth test the render order is the
+    // stacking, so a casing sorted after the ink would hide the ring. Every piece
+    // is blended too: three draws opaque before transparent, so a faded arc
+    // beside an opaque knob would be painted over the knob.
     const s = scene()
     const edge = (which) => reach(band(s, 2, 'whole', which))
     expect(edge('ink')).toBeCloseTo(RING_PX, 4)
@@ -555,17 +528,11 @@ describe('what a ring is built out of', () => {
   })
 
   it('stands in the lowest band, in the one list all three widgets share', () => {
-    // TWO HALVES OF ONE ANSWER. The band is where this widget is drawn among
-    // the three standing in this scene, and it is the LOWEST because a
-    // contested press goes to the highest band — what the reader presses has to
-    // be what they can see. A knob over a quad it does not answer for is the
-    // exact failure this widget exists to avoid.
-    //
-    // AND `transparent` IS WHY THE BAND CAN SAY THAT AT ALL: three sorts into
-    // its opaque and its transparent lists by that flag before it looks at any
-    // order, so the rings blended beside two opaque neighbours were drawn LAST
-    // whatever number anybody gave them — over the grip and over the whole
-    // manipulator.
+    // The band is where this widget is drawn among the three in this scene, and
+    // it is the lowest because a contested press goes to the highest band: what
+    // the reader presses must be what they see. `transparent` matters too: three
+    // sorts into opaque and transparent lists by that flag before any order, so
+    // blended rings beside opaque neighbours would be drawn last regardless.
     const s = scene()
     expect(s.group.renderOrder).toBe(RINGS_ORDER)
     for (const ring of s.group.children) {
@@ -598,18 +565,9 @@ describe('what a ring is built out of', () => {
   })
 
   it('draws the knob whole, standing proud of the ring`s own rim', () => {
-    // THE FIRST OF THE TWO BUGS THE FLAT WIDGET HAD. The knob's outer rim
-    // reaches `RING_PX + RING_DISC_PX / 2` — 115 px — and the outermost band of
-    // the curve stops at `RING_PX + RING_CASE_PX + RING_RIM_PX`, which is 108.
-    // The at-rest fade was a `mask-image` on the element whose box was exactly
-    // that second circle, and `mask-clip` is the BORDER BOX by default, so the
-    // mask cut the whole subtree to it: seven of the knob's twenty pixels were
-    // taken off, and the tell was that the HOVERED ring's knob came out whole
-    // because lighting it set `maskImage` to `none`.
-    //
-    // There is nothing to clip a subtree here, and the assertion is what that
-    // buys: a WHOLE disc of `RING_DISC_PX`, reaching past the ring's own rim by
-    // the seven pixels the mask used to take.
+    // The knob's outer rim reaches `RING_PX + RING_DISC_PX / 2` (115 px), past
+    // the curve's outermost band at `RING_PX + RING_CASE_PX + RING_RIM_PX` (108).
+    // Nothing clips the subtree to the curve's box, so the disc is whole.
     const s = scene()
     const rim = band(s, 2, 'knob', 'rim')
     rim.geometry.computeBoundingBox()
@@ -703,16 +661,10 @@ describe('what a ring is built out of', () => {
   })
 
   it('spells its three axes in the inks the move arrows use', () => {
-    // ONE TRIAD AND NOT TWO. Red, green and blue for X, Y and Z is the
-    // convention every CAD tool the reader has used, and the two widgets stand
-    // on the same point — so a ring that disagreed with the arrow for the same
-    // axis would be saying they were about different things. Fusion's own
-    // handles are grey and we deliberately do not copy that: half a widget in
-    // grey beside arrows in colour would be worse than either.
-    //
-    // ONE SPELLING NOW THAT BOTH ARE MESHES, which is what the arrows' own move
-    // into the scene made of it: this used to be a CSS string on one side and a
-    // hex on the other, and the comparison had to go through a regex.
+    // One triad: red, green and blue for X, Y and Z, as in every CAD tool, and
+    // the two widgets stand on the same point, so a ring must match the arrow of
+    // the same axis. (Fusion's handles are grey; half a widget in grey beside
+    // coloured arrows would be worse.) Both are meshes, so both use one hex.
     const s = scene({ arrows: true })
     // THE FIRST THREE CHILDREN ARE THE ARROWS, which is the order that widget
     // builds in — arrows, then the three plane quads, then the origin dot — and
@@ -923,17 +875,14 @@ describe('what takes the press', () => {
   })
 
   it('takes one of two knobs that overlap, and turns about that one alone', () => {
-    // TWO KNOBS CAN LAND ON ONE POINT, and what breaks the tie is now the ray
-    // itself: `intersectObject` answers with the NEAREST hit, so the knob
-    // standing in front is the one the hand gets. What it takes to arrange is a
-    // camera looking down the DIFFERENCE of two knobs' world directions —
-    // `h_X - h_Z` is `(Z - X)/sqrt2`, so down `(1, 0, -1)` — and this one looks
-    // a tenth of the way off it.
+    // Two knobs can land on one point; `intersectObject` answers with the
+    // nearest hit, so the knob in front wins. That needs a camera looking down
+    // the difference of two knobs' world directions (`h_X - h_Z` is
+    // `(Z - X)/sqrt2`, so down `(1, 0, -1)`); this one is a tenth off it.
     //
-    // THE THIRD RING IS GONE WHILE THEY OVERLAP, which is not a coincidence and
-    // is what bounds this to two: that difference is square on to the third
-    // axis, so a camera looking down it lies in the third ring's own plane and
-    // `RING_MIN_PX` has already taken that ring off the screen.
+    // The third ring is hidden meanwhile: that difference is square on to the
+    // third axis, so the camera lies in the third ring's plane and `RING_MIN_PX`
+    // has taken it off the screen.
     const s = scene({ camera: orthoCamera({
       forward: [1, 0.1, -1], right: [1, 0, 1], up: [-0.1, 2, 0.1],
     }) })
@@ -960,17 +909,10 @@ describe('what takes the press', () => {
   })
 
   it('leaves the arrows theirs and keeps its own, on the one canvas', () => {
-    // THE CLAIM THAT LETS ONE TOOL DRIVE TWO WIDGETS, checked rather than
-    // assumed — and it is a different claim now that both halves are objects in
-    // the scene. They used to be told apart by the DOM: an arrow was a BOX and
-    // took its press on its own element, and the single line that kept these
-    // window listeners from stealing it was `event.target !== g.canvas`. Both
-    // read the same canvas now, so what keeps them out of each other's way is
-    // that each answers only for a ray that landed on its OWN meshes — and,
-    // where two really do overlap, the paint band, which `joinPresses` in
-    // scene3d.js asks from the top.
-    //
-    // SO THE TWO TARGETS ARE PRESSED IN TURN, on one canvas, in one scene.
+    // One tool drives two widgets on one canvas: each answers only for a ray
+    // that landed on its own meshes, and where two overlap, the paint band
+    // decides (`joinPresses` in scene3d.js asks from the top). So the two targets
+    // are pressed in turn, on one canvas, in one scene.
     const s = scene({ arrows: true })
     rendered(s.viewer)
 
@@ -994,21 +936,12 @@ describe('what takes the press', () => {
   })
 
   it('ends the other half`s drag, and is ended by it, either way round', async () => {
-    // TWO LIVE GESTURES ON ONE PART, which is what the tool merge made possible
-    // and neither half defended against. Both ends already conclude their OWN
-    // previous gesture; what could not happen before was the CROSS case — this
-    // widget wanted `turn` and the arrows wanted `move`, so only one was ever
-    // alive to be interrupted.
-    //
-    // AND TWO ARE WORSE THAN A STALE ONE. Both `onMove`s are on the window and
-    // neither filters by pointer id, so both run on every move; each then calls
-    // `movePart`, which writes position AND orientation together from its own
-    // snapshot of the other's half — so left alone they overwrite each other
-    // frame by frame and both report at the release.
-    //
-    // CONCLUDED AND NOT ABANDONED, which is `stop`'s own argument here: the part
-    // is standing where the reader left it and only the document can be wrong
-    // about that.
+    // Two live gestures on one part. Both `onMove`s are on the window and neither
+    // filters by pointer id, so both run on every move, and each `movePart`
+    // writes position and orientation together from its own snapshot of the
+    // other's half: they would overwrite each other frame by frame and both
+    // report at the release. A new press concludes the other half's gesture (not
+    // abandons it), since the part stands where the reader left it.
     const both = () => {
       const made = scene({ arrows: true })
       rendered(made.viewer)
@@ -1079,20 +1012,15 @@ describe('what takes the press', () => {
   })
 
   it('hands the canvas gesture on only for a press it actually keeps', () => {
-    // THE THIRD THING THAT CAN BE LIVE, and the one neither half can end by
-    // itself. tools.js finishes its own previous press at the head of its
-    // `onDown` — and that listener sees every press aimed at the canvas, so a
-    // press this widget DECLINES needs nothing from us. What opens the hole is
-    // the refusal `scene3d.js` makes on our answer: a press this widget KEEPS
-    // never reaches that listener, so a cut a first finger started under the
-    // hold key stays live.
+    // tools.js finishes its own previous press at the head of its `onDown`, which
+    // sees every press aimed at the canvas, so a press this widget declines needs
+    // nothing from us. A press this widget keeps never reaches that listener, so
+    // a cut started under the hold key would stay live.
     //
-    // SO THE CALL BELONGS TO THE KEPT PRESS ALONE, and that is what this pins
-    // rather than merely that the call exists. `endGesture` CONCLUDES, and
-    // concluding a cut means `reportCut`, which the interface answers by
-    // disarming the armed tool — which is exactly why tools.js's own `onDown`
-    // calls a bare `finish()` and not `conclude`. Hoisted into `handOver`, this
-    // would do that on every ordinary canvas press with a cut still live.
+    // So the call belongs to the kept press alone. `endGesture` concludes, and
+    // concluding a cut means `reportCut`, which disarms the armed tool (which is
+    // why tools.js's `onDown` calls a bare `finish()`). In `handOver` it would do
+    // that on every ordinary canvas press with a cut still live.
     const taken = scene()
     rendered(taken.viewer)
     press(taken.canvas, AT_KNOB)
@@ -1153,19 +1081,13 @@ describe('one whole drag', () => {
   })
 
   it('carries the knob round under the hand while the drag runs', () => {
-    // THE SECOND OF THE TWO BUGS THE FLAT WIDGET HAD, and the one that had to
-    // be done deliberately rather than hoped for. The knob's angle used to be
-    // written once into a static child offset at build time, and the frame
-    // rewrote only the group's position and its 2x2 — so `swept` was never read
-    // at draw time and the knob stood still while the part turned under the
-    // hand. Here the angle is geometry: the knob sits at its resting place plus
-    // the angle swept so far, which is what a handle means.
+    // The knob sits at its resting place plus the angle swept so far, so it moves
+    // with the hand while the part turns.
     //
-    // A SWEEP THAT IS NOT A WHOLE NUMBER OF DEGREES, deliberately: the part is
-    // turned in whole degrees and the knob follows the HAND, so one radian of
-    // sweep puts the knob at one radian and the part at 57. A knob drawn off
-    // the part's own angle would land a twentieth of a degree away and pass
-    // every assertion but this one.
+    // A sweep that is not a whole number of degrees, on purpose: the part turns
+    // in whole degrees and the knob follows the hand, so one radian of sweep puts
+    // the knob at one radian and the part at 57 degrees. A knob drawn off the
+    // part's angle would be a twentieth of a degree off.
     const s = scene()
     rendered(s.viewer)
     expect(knobAt(s, 2), 'at rest it sits on the bisector').toBeCloseTo(DISC_T, 9)
@@ -1438,19 +1360,14 @@ describe('one whole drag', () => {
   })
 
   it('holds the ring it was pressed on, and reads the angle off the world', () => {
-    // THE PLANE IS MEASURED ONCE AND HELD, which is the rule both the other
-    // manipulators keep, and in this representation the plane is the whole of
-    // what there is to hold: the ring's axis and the part's centre. A turn
-    // about the part's own centre leaves that centre where it was, so nothing
-    // else about the gesture can move under it.
+    // The plane is measured once and held, as in the other manipulators: the
+    // ring's axis and the part's centre, which a turn about that centre leaves
+    // in place.
     //
-    // AND WHAT IS NOT HELD IS THE CAMERA, deliberately. The angle is where the
-    // pointer's RAY meets that plane, so a camera that rolls mid-drag changes
-    // nothing about the answer as long as the hand follows the point it was
-    // holding: the same world point on the Z ring is a quarter turn from where
-    // the press landed, however the screen has been turned under it. A gesture
-    // measured in screen pixels would have read the roll as a turn of its own,
-    // and the pointer below really has moved a hundred pixels.
+    // The camera is not held. The angle is where the pointer's ray meets that
+    // plane, so a camera rolling mid-drag changes nothing as long as the hand
+    // follows the point it held. A gesture measured in screen pixels would read
+    // the roll as a turn, and the pointer below has moved a hundred pixels.
     const roll = Math.PI / 6
     const s = scene()
     rendered(s.viewer)
@@ -1773,14 +1690,12 @@ describe('the two rings the default camera cannot show, and the far side', () =>
   })
 
   it('turns about the ring`s own axis on a part already standing turned', async () => {
-    // THE CLAIM AT THE HEAD OF rings.js: each ring turns the part about THAT
-    // AXIS ONLY. Adding the swept angle to one of the three angles keeps that
-    // promise exactly once — while the part is square. `quaternionOf` reads the
-    // triple as `Rz·Ry·Rx`, so adding to x is a turn about world x only while y
-    // and z are both zero: from `(0, 0, 90)`, thirty added on x turns the part
-    // about world Y. The rings are drawn on the WORLD axes and do not move with
-    // the part, so that is the reader holding the RED ring and watching the
-    // part spin around the green one, on their second gesture.
+    // Each ring turns the part about that axis only (the claim at the head of
+    // rings.js). Adding the swept angle to one of the three angles works only
+    // while the part is square: `quaternionOf` reads the triple as `Rz·Ry·Rx`, so
+    // from `(0, 0, 90)`, thirty added on x turns the part about world Y. The rings
+    // are on the world axes, so that would be the red ring spinning the part
+    // around the green one.
     const s = scene({ camera: orthoCamera(OBLIQUE) })
     rendered(s.viewer)
 
@@ -1820,15 +1735,10 @@ describe('the two rings the default camera cannot show, and the far side', () =>
 
 describe('what puts the widget on the part', () => {
   it('stands on the part beside the arrows, under the one tool', () => {
-    // THE MERGE ITSELF, and it is assertable only with both halves up: Fusion's
-    // triad is one widget carrying an origin, three arrows, three plane quads
-    // and three rotation handles at once, and the reader must not have to put a
-    // part down before they may turn it.
-    //
-    // DOWN THE DIAGONAL, which is the one camera where every piece of both
-    // halves is open enough to be drawn — square on, the Z arrow is end-on and
-    // two of the three quads are edge-on, so a count taken there would be about
-    // the camera rather than about the merge.
+    // The merged widget: one triad carrying an origin, three arrows, three plane
+    // quads and three rotation handles at once, so the reader need not put a
+    // part down before turning it. Down the diagonal, because square on the Z
+    // arrow is end-on and two quads are edge-on.
     const s = scene({ camera: orthoCamera(OBLIQUE), arrows: true })
     rendered(s.viewer)
 
@@ -1842,16 +1752,10 @@ describe('what puts the widget on the part', () => {
   })
 
   it('shows both halves or neither, over every refusal either one makes', () => {
-    // ONE WIDGET AND THEREFORE ONE CONDITION. `held()` in rings.js and `held()`
-    // in gizmo.js are the same body character for character, and both files say
-    // in prose that they have to be: two halves of one manipulator that came up
-    // on different conditions would be a widget with a piece missing — rotation
-    // handles round a part the arrows have refused to stand on, or the reverse.
-    //
-    // WHICH IS A SENTENCE IN A COMMENT UNTIL IT IS A TEST. Every refusal below
-    // is already covered in ONE of the two files, separately, so either half
-    // could drift — a clause dropped here, a clause added there — and the suite
-    // would stay green while the widget came up in pieces.
+    // One widget, one condition. `held()` in rings.js and in gizmo.js must be the
+    // same body; halves that came up on different conditions would leave a piece
+    // missing. Each refusal below is covered in only one of the two files, so
+    // this checks both halves agree.
     const BODY = '/Group/proposal/plate'
     const GROUP = '/Group/proposal'
 

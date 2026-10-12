@@ -1,15 +1,11 @@
 """`make cad-test` names six tests by node id, and node ids rot.
 
-The target runs those six without the other ~2500, for the edit-run-edit loop on
-the export half; CI runs them too, since the image it runs the suite in carries
-the kernel's libraries (issue #27, `ci/Dockerfile.test`). It fails loudly when a
-name it holds no longer exists -- but only for somebody who runs it, and a
-target nobody runs is where a rotted node id waits. So the list is checked here
-instead, on every run of the ordinary suite, where a rename shows up the day it
-happens rather than the day somebody remembers.
-
-This does NOT run the six; running them needs the kernel and that is the
-target's job. It checks that each name still points at a function.
+The target runs those six without the rest of the suite, for the edit-run-edit loop
+on the export half; CI runs them too, since its test image (`ci/Dockerfile.test`)
+carries the kernel's libraries. The target fails on a missing name only for
+somebody who runs it, so the list is checked here on every run of the ordinary
+suite. This does NOT run the six (that needs the kernel); it checks that each name
+still points at a function.
 """
 
 import ast
@@ -34,17 +30,13 @@ def _declared_node_ids() -> list[str]:
 
 
 def test_the_target_still_names_six_tests():
-    """Six, and the number is deliberate -- see issue #27 for which six.
+    """Six, and the number is deliberate.
 
-    A seventh that arrives without a decision, or a sixth that quietly leaves,
-    both change what "we catch it by hand" covers, and neither should happen
-    without somebody reading this line.
-
-    The sixth arrived with step 8 (issue #10): the difference between two
-    revisions is drawn from pieces the kernel fuses, and the one fact that
-    cannot be checked without a kernel is that those pieces come out in the
-    PART's coordinates and have to be placed with the view leaf's own `loc`.
-    Nothing else in the suite would notice that drifting.
+    A seventh added or a sixth removed changes what the kernel-backed loop covers,
+    and neither should happen without somebody reading this line. One of the six
+    checks that the pieces the revision diff is drawn from come out in the PART's
+    coordinates and are placed with the view leaf's own `loc`, which nothing else
+    in the suite would notice drifting.
     """
     assert len(_declared_node_ids()) == 6
 

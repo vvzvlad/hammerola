@@ -5,19 +5,14 @@
 // else on the machine is moved around — so the model is the one thing on screen
 // that will not follow the fingers.
 //
-// There is no touch event to hang this on: a trackpad in a browser is a mouse. A
-// swipe and a wheel notch arrive as THE SAME EVENT with the same fields, and the
-// W3C pointer-events issue about exactly this says so plainly. Every published
-// answer to it is a guess at the SHAPE of the deltas (pixels vs lines,
-// fractional vs whole, small vs a ~100 px notch) tuned against whichever devices
-// the author owned, and a free-spinning mouse wheel defeats all of them.
+// There is no touch event for this: a trackpad in a browser is a mouse, and a
+// swipe and a wheel notch arrive as the same event with the same fields. Every
+// published heuristic guesses from the shape of the deltas, and a free-spinning
+// mouse wheel defeats all of them.
 //
-// SO NOTHING HERE LOOKS AT HOW BIG A DELTA IS. What is asked instead is the one
-// question a guess was standing in for: WHAT IS THE READER POINTING WITH. It is
-// one question and not three, because a trackpad has a swipe and a pinch and no
-// wheel while a mouse has a wheel and neither of the other two — so the whole of
-// the wheel's behaviour follows from the answer, and none of it is separately
-// settable.
+// So nothing here looks at delta size. The question is what the reader points
+// with: a trackpad has swipe and pinch and no wheel, a mouse the reverse, so
+// the whole wheel behaviour follows from that one answer.
 //
 //   * TRACKPAD. macOS turns a two-finger PINCH into `wheel` WITH a synthetic
 //     `ctrlKey` — a convention, not a real key — and a two-finger SWIPE into
@@ -27,12 +22,10 @@
 //   * MOUSE. The wheel zooms, at the library's speed, and `ctrlKey` is left to
 //     the browser (on Windows and Linux it is the browser's own page zoom).
 //
-// Neither is detectable — a Mac with a plain mouse and a Windows laptop with a
-// trackpad are both real and neither announces itself — so the PLATFORM only
-// supplies the opening answer and the reader can say otherwise. The mouse
-// setting is not a degraded one: it is the right answer for a mouse, so it has
-// to stay reachable on a Mac, where a reader with a plain mouse would otherwise
-// have no zoom at all.
+// Neither is detectable (a Mac with a mouse, a Windows laptop with a trackpad),
+// so the platform supplies the default and the reader can change it. The mouse
+// setting must stay reachable on a Mac, where a plain mouse would otherwise
+// have no zoom.
 
 import { cameraBasis, ndcOffset, panCamera } from "./camera.js";
 import { gestureInternals } from "./internals.js";
@@ -42,13 +35,9 @@ import { zoomWheelAfter, zoomWheelBefore } from "./zoom.js";
 /**
  * Is this a Mac, i.e. is the pinch/swipe split above the right rule here?
  *
- * BOTH WAYS OF ASKING ARE ON THEIR WAY OUT, and this is the line that will break
- * on some future browser. `navigator.platform` is deprecated and browsers
- * already freeze it to a fixed string; `navigator.userAgentData` is the
- * replacement but is Chromium-only, so Safari and Firefox — a good share of the
- * Macs this matters for — do not have it, and the deprecated one cannot be
- * dropped. Should both answer nothing, this returns false, the wheel zooms as it
- * always did, and the reader who wanted the pan has a setting to change.
+ * Fragile: `navigator.platform` is deprecated and frozen by browsers, and
+ * `navigator.userAgentData` is Chromium-only, so both are read. If neither
+ * answers, this returns false, the wheel zooms, and the reader has a setting.
  */
 function isMacPlatform() {
   try {
@@ -141,29 +130,22 @@ function panWheel(vp, event) {
  * Zoom on a pinch, at the browser's own gesture scale. True when the event was
  * spent here and must not reach the controls.
  *
- * Only on the trackpad setting, and that is not a coupling to be undone: a
- * reader on a mouse HAS NO PINCH, so there is no gesture here to be fast or
- * slow, and what ctrl+wheel means to them is whatever it means to their browser.
+ * Only on the trackpad setting: a mouse has no pinch, and ctrl+wheel there
+ * means whatever the browser makes of it.
  *
- * The gesture is not measured here, only decoded — `PINCH_DELTA_PER_E_FOLD` says
- * what the delta already means. The cursor correction is the wheel's own,
- * unchanged: anchor on the camera the reader is still looking at, zoom where the
- * controls' zoom used to be, slide the point under the cursor back. Called by
- * hand rather than left to the listeners because this event never reaches the
- * bubble phase — `onCapture` below stops it, or the controls would zoom twice.
+ * `PINCH_DELTA_PER_E_FOLD` says what the delta means. The cursor correction is
+ * the wheel's: anchor on the current camera, set the zoom, slide the point
+ * under the cursor back. Called by hand because `onCapture` stops this event
+ * before the bubble phase, or the controls would zoom twice.
  *
- * NO CLAMP, deliberately. `TrackballControls` clamps to `minZoom`/`maxZoom`,
- * which the library leaves at the three.js defaults of 0 and Infinity and never
- * sets — so its clamp is not one, and inventing a range here would be a limit
- * this viewport never had.
+ * No clamp: `TrackballControls` clamps to `minZoom`/`maxZoom`, which the
+ * library leaves at three.js's 0 and Infinity.
  */
 function pinchWheel(vp, event) {
   if (!vp.trackpad) return false;
   if (!event.ctrlKey) return false;
-  // Pixels. The pinch is always deltaMode 0 (measured); a ctrl+wheel counted in
-  // LINES or PAGES is some other device, whose lines are not this constant's
-  // pixels, and it keeps the library's own zoom rather than get this one
-  // multiplied by a unit that does not match.
+  // Pixels. The pinch is always deltaMode 0 (measured); a ctrl+wheel in lines
+  // or pages is another device, which keeps the library's own zoom.
   if (event.deltaMode !== 0) return false;
   const viewer = vp.viewer;
   if (!viewer) return false;
@@ -209,15 +191,12 @@ export function installWheel(vp) {
       // cursor correction applied; a stale anchor would be spent on the next
       // gesture.
       vp.zoomAnchor = null;
-      // preventDefault because the trackball's own handler — the one that used
-      // to do it — is not going to run: without this a horizontal swipe is a
-      // back/forward navigation and the page leaves, and a pinch is a browser
-      // page zoom on top of the model one.
+      // preventDefault because the trackball's handler will not run: otherwise
+      // a horizontal swipe navigates back/forward and a pinch zooms the page.
       event.preventDefault();
-      // And this is what keeps the event off the canvas, where the controls
-      // would zoom on it. stopPropagation does NOT silence the other listeners
-      // on this same element, so the idle clock still sees the gesture; it does
-      // stop the bubble phase, which is why `onAfter` stays quiet.
+      // Keeps the event off the canvas and its controls. Other listeners on
+      // this element (the idle clock) still see it; the bubble phase, and so
+      // `onAfter`, does not.
       event.stopPropagation();
       return;
     }

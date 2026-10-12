@@ -2,30 +2,16 @@
 // two font stacks, and the mark. Nothing here renders a page; both entries
 // import it.
 //
-// A module of its own since the bundle grew a SECOND entry — the front page
-// (HammerolaEntry.jsx) beside the build page (HammerolaViewer.jsx). All three of
-// these lived in the viewer while it was the only one, and a second copy in the
-// second file is what this prevents. The three differ in how badly they take
-// one, which is the reason they moved together:
+// Both entries (HammerolaEntry.jsx, HammerolaViewer.jsx) import this so there
+// is one copy of each:
 //
-//   * a second `css()` is merely a second cache. Wasteful, nothing more.
-//   * a second FONT STACK is two typefaces on one site, drifting apart with
-//     nothing anywhere reporting it. It is also the likeliest of the three to
-//     happen, because the stacks below are a SUBSTITUTION rather than a
-//     transcription: both mock-ups ask for a webfont, and this page is served
-//     under `default-src 'self'` (src/app.py, CSP_HTML), so one from another
-//     origin is blocked outright and a self-hosted one is a binary in
-//     static/_v/ plus a line in every file that copies assets by name. A face is
-//     worth that when the typography carries meaning; here it does not. Porting
-//     a third mock-up by hand is exactly when somebody would reinstate the
-//     original — tests/test_ui_source.py is what stops that, and this is what
-//     keeps the answer in one place.
-//   * a second mark is a logo that changes when you navigate. That one had
-//     happened: the build page's header wrote the same SVG out again, byte for
-//     byte, and the two pages holding the two copies link to each other. The
-//     copy is gone and `ui/tests/chrome.test.js` now checks both halves — that
-//     no component draws the mark itself, and that the resolver page's
-//     unavoidable copy still matches this component element for element.
+//   * `css()` — a second copy would only be a second cache;
+//   * the FONT STACKS — system stacks, not the mock-ups' webfonts: the page is
+//     served under `default-src 'self'` (src/app.py, CSP_HTML), so a foreign
+//     webfont is blocked and a self-hosted one is another asset to copy by
+//     name. tests/test_ui_source.py stops a webfont from being reinstated;
+//   * the MARK — `ui/tests/chrome.test.js` checks that no component draws it
+//     itself and that the resolver page's copy matches this component.
 
 import React from 'react';
 
@@ -60,34 +46,18 @@ export const MONO = 'var(--hmr-mono)';
 /**
  * FOUR ROLES OF THE PALETTE, as the references a rule writes.
  *
- * THE COLOURS THEMSELVES ARE NOT HERE ANY MORE AND ARE NOT JAVASCRIPT AT ALL.
- * They live in `static/_v/tokens.css`, once per theme, and every one of them is
- * reached as `var(--name)` — so what these constants hold is a NAME rather than
- * a value, and the value is whatever `data-theme` on `<html>` says it is when
- * the browser resolves the rule.
+ * The colours live in `static/_v/tokens.css`, once per theme, and are reached as
+ * `var(--name)`: these constants hold a NAME, and the value is whatever
+ * `data-theme` on `<html>` resolves it to.
  *
- * That indirection is forced by `css()` above rather than chosen: it turns every
- * rule in this bundle into an INLINE style object, and an inline style beats a
- * class rule on specificity, so no `[data-theme]` stylesheet could ever repaint
- * these elements. A `var()` inside an inline style is the other way round — it
- * resolves against the ancestor, which is how one attribute repaints the whole
- * interface with no re-render and no new field in any component's state.
+ * That indirection is forced by `css()`: every rule is an INLINE style, which
+ * beats a class rule on specificity, so no `[data-theme]` stylesheet could
+ * repaint these elements. A `var()` inside an inline style resolves against the
+ * ancestor, so one attribute repaints the interface with no re-render.
+ * `ui/tests/chrome.test.js` holds tokens.css to the documents that link it.
  *
- * WHAT THIS PARAGRAPH USED TO SAY, and why it is worth writing down that it no
- * longer does: these four were the only colours held to the three documents this
- * bundle does not draw (`templates/build.html`, `templates/index.html`,
- * `static/_v/site.css`), each of which had to state the page's colours itself.
- * Two more were copied into `site.css` and checked by NOTHING — `#787f87` on the
- * meta line, and `#1f6fd0`, which was the resolver's idea of the accent while
- * the bundle used `#1f7ae0`: a drift that had already happened and that nobody
- * could see, because seeing it meant opening two files. Every one of those
- * copies is now a reference to one definition, so there is no longer a set of
- * "checked" colours and a set of uncounted ones — there is one file, and
- * `ui/tests/chrome.test.js` holds it to the documents that link it.
- *
- * THESE FOUR NAMES REMAIN BECAUSE TWO COMPONENTS IMPORT THEM. A rule written
- * from here on says `var(--card-bg)` in its own text; there is no constant to
- * add, and adding one would be a second vocabulary for the same palette.
+ * These four names exist because two components import them. A new rule says
+ * `var(--card-bg)` in its own text; do not add constants.
  */
 export const PAGE_BG = 'var(--page-bg)';
 export const PAGE_FG = 'var(--text)';
@@ -103,25 +73,17 @@ export const HEADER_LINE = 'var(--line)';
  * line, and below which a 300px comment rail is most of the screen rather than
  * a column beside the model.
  *
- * ONE READER TODAY, `HammerolaViewer`, and that is not an oversight: the front
- * page's own narrow answers — a header that wraps, a card grid whose floor can
- * fall below 320px — are plain CSS that is right at every width, and a page
- * that asked this question without branching on it would be carrying a listener
- * for nothing.
+ * One reader, `HammerolaViewer`: the front page's narrow answers are plain CSS
+ * that is right at every width.
  *
- * IT IS READ THROUGH `matchMedia` AND NEVER WRITTEN INTO A `@media` BLOCK, and
- * that is a decision rather than a shortcut. Three reasons, each of them fatal
- * on its own:
+ * Read through `matchMedia`, never written into a `@media` block:
  *
- *   * `css()` above turns every rule in this bundle into an INLINE style
- *     object, and an inline style beats a class rule on specificity — so every
- *     declaration in a `@media` block would need `!important` to reach these
- *     elements at all;
- *   * half of what the narrow branch changes is STRUCTURAL: which toolbar
- *     buttons exist, whether the tree is drawn. No stylesheet can do that;
- *   * jsdom evaluates no media query, so a `@media` layout would be the one
- *     part of this heavily-tested interface that no test in ui/tests could
- *     reach. A boolean in React state is a value a test can simply set.
+ *   * `css()` makes every rule an INLINE style, which a `@media` rule could only
+ *     beat with `!important`;
+ *   * half of what the narrow branch changes is STRUCTURAL (which toolbar
+ *     buttons exist, whether the tree is drawn);
+ *   * jsdom evaluates no media query; a boolean in React state is a value a
+ *     test can set.
  */
 export const NARROW = '(max-width: 720px)';
 
@@ -133,38 +95,22 @@ export const NARROW = '(max-width: 720px)';
  * would then have to be added to the Makefile, the Dockerfile, ci/smoke.py and
  * every page template (ui/vite.config.mjs says so at length).
  *
- * THE DRAWING IS NOT OURS AND IS NOT AUTHORED HERE. It is the designer's, and
- * it is kept as a file — `brand/mark-on-light.svg` — with this component and
- * the copy in `templates/pointer.html` both transcribed from it.
- * `ui/tests/chrome.test.js` compares all three, element for element and
- * attribute for attribute, so the file is the source and these are provably
- * derived rather than merely similar. Redraw the file first, then these.
+ * The drawing is the designer's: `brand/mark-on-light.svg` is the source, and
+ * this component and the copy in `templates/pointer.html` are transcribed from
+ * it. `ui/tests/chrome.test.js` compares all three element for element
+ * (resolving a `var(--…)` through the LIGHT token first). Redraw the file first,
+ * then these.
  *
- * THE COORDINATE SYSTEM IS THE DESIGNER'S 48-unit box, not the 18 the previous
- * mark used and not the pixel size anything renders at. Rescaling the numbers
- * by hand is exactly the transcription error the check above exists to catch,
- * and it would have to be made twice; `size` is the only thing that varies.
+ * Coordinates are the designer's 48-unit box; `size` is the only thing that
+ * varies — do not rescale the numbers by hand.
  *
- * TWO COLOURS, BECAUSE THE HOLES ARE PUNCHED rather than transparent: `ink` is
- * the ribbon, `hole` is the page showing through it. They move together — an
- * ink change with the old hole colour is an unreadable mark — and since issue
- * #35 they move together BY THEMSELVES: the defaults are the two tokens, so the
- * mark follows `data-theme` on every page that draws it, and the dark pair the
- * designer sent as `brand/mark-on-dark.svg` is what those tokens resolve to.
- * The file had been sitting unrendered since 2026-08-28 for want of exactly
- * this. The props remain because a call site may still want to ink the mark
- * against something that is not the page — a swatch, a dark banner — and that
- * has to be a call site rather than a redraw.
+ * Two colours because the holes are punched: `ink` is the ribbon, `hole` is the
+ * page showing through. The defaults are tokens, so the mark follows
+ * `data-theme` (the dark pair is `brand/mark-on-dark.svg`); the props let a call
+ * site ink it against something other than the page.
  *
- * `ui/tests/chrome.test.js` still compares this drawing against the designer's
- * file attribute for attribute; it resolves a `var(--…)` through the LIGHT
- * token before comparing, so the triangle is component -> token -> file rather
- * than one link shorter.
- *
- * THE STROKE WIDTH IS NOT A PROP ANY MORE. It used to be, and a caller thinned
- * it at large sizes, which is a sensible thing to do to an outlined hexagon and
- * a meaningless one here: 6.5 is the WIDTH OF THE RIBBON where it turns, so
- * changing it does not adjust the mark's weight, it draws a different mark.
+ * The stroke width is not a prop: 6.5 is the width of the ribbon where it
+ * turns, so changing it draws a different mark.
  */
 export const Mark = ({ size = 18, ink = 'var(--mark-ink)', hole = 'var(--mark-hole)' }) => (
   <svg width={size} height={size} viewBox="0 0 48 48">

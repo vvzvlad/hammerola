@@ -108,8 +108,7 @@ import { fakeViewer } from './fakes.js'
  * `applied` starts exactly as the element starts it, `selected` UNDEFINED rather
  * than an empty list — the sentinel that makes the first reconcile clear a
  * highlight the library may have painted on its own. `state.selected` is a LIST
- * of paths since issue #75, because a tree row may stand for several copies of
- * one part.
+ * of paths, because a tree row may stand for several copies of one part.
  */
 function element(state = {}, viewer = fakeViewer()) {
   const vp = Object.create(HmrViewport.prototype)
@@ -268,13 +267,11 @@ describe('reconcile', () => {
   })
 
   it('compares the SELECTION by value too, which React makes necessary', () => {
-    // The selection became a list in issue #75, and `selectedPaths` in
-    // HammerolaViewer mints a fresh one on EVERY push — all three of its
-    // branches build a new array, so this is not a property of the empty
-    // selection in particular. An identity check here would therefore re-paint
-    // the highlight on every `hmr:state`, and one of those goes out per step of
-    // the section-plane slider — while `hidden` and `ghost` beside it are
-    // handed straight out of state by `sync` and do keep their identity.
+    // `selectedPaths` in HammerolaViewer mints a fresh array on EVERY push (all
+    // three of its branches build a new one), so an identity check here would
+    // re-paint the highlight on every `hmr:state`, one per step of the
+    // section-plane slider — while `hidden` and `ghost` beside it are handed
+    // straight out of state by `sync` and do keep their identity.
     const vp = settled({ selected: ['/Group/a'] })
     vp.state = { ...vp.state, selected: ['/Group/a'] }   // equal, not identical
     vp.reconcile()
@@ -443,16 +440,14 @@ describe('reconcile', () => {
   })
 
   it('wakes the rotation handles on every pass', () => {
-    // THE SAME HOLE AS THE TWO ABOVE, and the widest of the three: arming the
-    // manipulator from a row's menu is one `hmr:state` carrying a tool and a
-    // selection at once, and this line is the only thing that draws the handles
-    // when it lands. Delete it and they appear after the hold key has been
-    // pressed and let go — the one other wake-up there is — with the whole
-    // suite green.
+    // Arming the manipulator from a row's menu is one `hmr:state` carrying a
+    // tool and a selection at once, and this line is the only thing that draws
+    // the handles when it lands; without it they appear only after the hold key
+    // has been pressed and let go.
     //
-    // `move` AND NOT `turn`, which is the tool both halves of the widget answer
-    // to now. Asked about the retired value this would pass with the line
-    // deleted, because nothing draws under it at all.
+    // `move` and not `turn`: both halves of the widget answer to `move`, and
+    // nothing draws under `turn`, so asking about it would pass with the line
+    // deleted.
     const vp = element({ tool: 'move', selected: ['/Group/plate'] })
     vp.reconcile()
     vp.reconcile()
@@ -560,9 +555,9 @@ describe('setState', () => {
     })
 
     it('a new BASE alone is a live swap too', () => {
-      // Choosing another revision in the picker, which no longer reloads the
-      // page (issue #62). `base` is where the view file is fetched from,
-      // so the same view id under a new base names a DIFFERENT FILE.
+      // Choosing another revision in the picker does not reload the page.
+      // `base` is where the view file is fetched from, so the same view id
+      // under a new base names a DIFFERENT FILE.
       //
       // ALONE, because that really happens: `latest` and the revision it points
       // at carry the SAME commit, so switching between the two moves nothing but
@@ -649,7 +644,7 @@ describe('load', () => {
 
   describe('the token a guarded document wants', () => {
     // One view file on this site is behind EDIT_TOKEN — the scene of a
-    // comparison (issue #10) — and this element is what fetches it, because it
+    // comparison — and this element is what fetches it, because it
     // fetches every view file it renders and there is deliberately no second
     // entrance. So the secret arrives in `hmr:state` like everything else, and
     // what these two pin is that it is spent on exactly the fetch that wants it.
@@ -734,11 +729,10 @@ describe('load', () => {
     })
 
     it('stops counting when the reader asks for it again', () => {
-      // THE DELIBERATE REPEAT, which the memory above used to take away with the
-      // accidental one. Choosing a revision is a whole navigation and
-      // `showView` returns at once for the id already on screen, so on a build
-      // with a single view a fetch that failed had no way back short of
-      // reloading the page. `__retry` is the interface's Retry button.
+      // The deliberate repeat must still fetch. Choosing a revision is a whole
+      // navigation and `showView` returns at once for the id already on screen,
+      // so on a build with a single view a failed fetch would have no way back
+      // short of reloading the page. `__retry` is the interface's Retry button.
       const vp = element({ views, view: 'a', buildKey: 'k1' }, null)
       vp.loadFailed = 'a.json'
       vp.load = vi.fn()
@@ -973,10 +967,10 @@ describe('show', () => {
   })
 
   it('says so when the payload is not a model at all', async () => {
-    // A view file that parsed into a JSON scalar. This exit used to say nothing,
-    // and silence costs both halves of block 11 at once: no `hmr:error`, so the
-    // interface's panel is never drawn, and no `loadFailed`, so the next
-    // `hmr:state` — one arrives on every click in the tree — fetches it again.
+    // A view file that parsed into a JSON scalar must not exit silently:
+    // without `hmr:error` the interface's panel is never drawn, and without
+    // `loadFailed` the next `hmr:state` — one arrives on every click in the
+    // tree — fetches it again (both halves of block 11).
     const vp = element({ views, view: 'a' }, null)
     await vp.show(42, { view: 'a', token: 0 })
     const event = emitted(vp)
@@ -1052,9 +1046,9 @@ describe('the overlay laid over the model', () => {
    *
    * `names` and `ids` are the ROOT's own children — where the model's parts sit
    * and where the overlay's group sits beside them — and `proposal` is that group,
-   * `undefined` when there is no overlay at all. Two storeys because the
-   * composition now has two: the bodies hang under a group of their own so that
-   * a proposal body named after a real part cannot take that part's path.
+   * `undefined` when there is no overlay at all. The bodies hang under a group
+   * of their own so that a proposal body named after a real part cannot take
+   * that part's path.
    */
   const rendered = (viewer, nth = -1) => {
     const calls = viewer.render.mock.calls
@@ -1236,10 +1230,9 @@ describe('the overlay laid over the model', () => {
     // payload back — under the same load token, so nothing notices, and the
     // reader is left on the old build with no reload coming.
     //
-    // ONE MICROTASK IS THE WHOLE FIX, and this line is what makes it one: by the
-    // time a microtask queued from `endGesture` runs, the payload is the new
-    // build's. An `await` added between those two points would take that away
-    // silently.
+    // So the report is deferred by one microtask: by the time a microtask
+    // queued from `endGesture` runs, the payload is the new build's. An `await`
+    // added between those two points would take that away silently.
     const { vp } = staging()
     await vp.show(model('plate'), { view: 'a', token: 0 })
     await vp.setOverlay([body('result')])
@@ -1501,14 +1494,13 @@ describe('the overlay laid over the model', () => {
   })
 
   it('leaves the measurement and the moved part where the reader put them', async () => {
-    // THE DEFECT THIS BLOCK EXISTS FOR MOST. A re-stage runs the whole of
-    // `show`, and `show` clears the tape and the offsets on the way through —
-    // right for a rebuild, where every part goes back to where the model puts it
-    // (ui-brief block 6) and a distance was measured between faces that may be
-    // gone, and wrong for a scene composed out of the document already on
-    // screen. Left in, opening the proposal panel — or closing it, or committing
-    // one digit into it — snapped a dragged part home and dropped a live
-    // measurement, with `partHome` gone so the move could not even be undone.
+    // A re-stage runs the whole of `show`, and `show` clears the tape and the
+    // offsets on the way through — right for a rebuild, where every part goes
+    // back to where the model puts it (ui-brief block 6) and a distance was
+    // measured between faces that may be gone, and wrong for a scene composed
+    // out of the document already on screen: opening, closing or editing the
+    // proposal panel would snap a dragged part home and drop a live
+    // measurement, with `partHome` gone so the move could not be undone.
     const { vp } = staging()
     await vp.show(model(), { view: 'a', token: 0 })
     vp.measurePicks = [{ path: '/Group/plate/faces/face_0' }]
@@ -1619,13 +1611,9 @@ describe('the widgets connectedCallback puts on the page', () => {
   // builds the container, the overlay and the view cube, and the viewer itself
   // is not constructed until `show()`.
   //
-  // WHAT IT IS FOR: nothing else, anywhere, notices whether the cube is mounted.
-  // Deleting the two lines in `element.js` that create and append it left every
-  // JS and Python test green with the widget simply absent from the page. The
-  // module sets NO class name on its root — a deliberate decision with reasons
-  // of its own — and that also opts it out of
-  // `test_every_class_the_viewport_sets_is_styled_here`, which was the one
-  // mechanism that would otherwise have caught it.
+  // Nothing else notices whether the cube is mounted: the module sets no class
+  // name on its root, which also opts it out of
+  // `test_every_class_the_viewport_sets_is_styled_here`.
   //
   // `ResizeObserver` is the one thing jsdom does not have and the element does
   // use; it is stubbed, exactly as live.test.js stubs it, because what it
@@ -1687,23 +1675,18 @@ describe('the widgets connectedCallback puts on the page', () => {
   })
 
   it('creates the section grip, which is no layer at all', () => {
-    // The same hole the cube's test above was written for — delete the line in
-    // `element.js` that creates the grip and nothing anywhere else goes red,
-    // the drag it advertises going back to a gesture only the initiated know
-    // about — and the same hole a WIDER way open now that the grip is a group
-    // of meshes in the library's scene: there is nothing on the page to find it
-    // by. What is left to hold is the field and the five calls the element
-    // makes on it, two of which exist only because it lives in a scene that is
-    // disposed and rebuilt under it.
+    // Nothing else notices whether the grip is created: it is a group of
+    // meshes in the library's scene, with nothing on the page to find it by.
+    // What is left to hold is the field and the five calls the element makes on
+    // it, two of which exist only because it lives in a scene that is disposed
+    // and rebuilt under it.
     const el = mount()
     expect(el.handle).toBeTruthy()
     for (const name of ['refresh', 'attach', 'detach', 'endDrag', 'destroy']) {
       expect(typeof el.handle[name], name).toBe('function')
     }
     // And no root of its own: what `connectedCallback` appends is the container
-    // the library renders into plus TWO layers — the pins and the cube — and a
-    // fourth child would be one of the three widgets in the scene built the way
-    // it used to be.
+    // the library renders into plus TWO layers — the pins and the cube.
     expect([...el.children]).toHaveLength(3)
   })
 
@@ -1719,14 +1702,11 @@ describe('the widgets connectedCallback puts on the page', () => {
   })
 
   it('creates the move manipulator, whose two halves are no layers either', () => {
-    // THE SAME HOLE, TWO WIDGETS FURTHER ON, and the same WIDTH of hole as the
-    // grip's: delete either line in `element.js` and nothing anywhere else goes
-    // red — both stand in the library's scene, so there is nothing on the page
-    // to find them by, and what the reader is left with is typing six numbers
-    // into the panel, which is the state this whole feature was written out of.
-    // The fields and the five calls the element makes on each are what is left
-    // to hold, and the CUBE being the last child is what says neither of them
-    // appends a root any more.
+    // Likewise for the gizmo and the rings: both stand in the library's scene,
+    // so nothing on the page finds them, and without them the reader is left
+    // typing six numbers into the panel. The fields and the five calls the
+    // element makes on each are what is left to hold, and the CUBE being the
+    // last child says neither of them appends a root.
     const el = mount()
     for (const widget of [el.gizmo, el.rings]) {
       expect(widget).toBeTruthy()
@@ -1796,10 +1776,9 @@ describe('the widgets connectedCallback puts on the page', () => {
   it('lets the remembered view document go with everything else', () => {
     // `show` keeps the fetched document so an overlay edit needs no second
     // fetch, which is a couple of megabytes of buffers with a field of this
-    // element pointing at them. A detached element can sit in a React tree for a
-    // while, and left standing that is a leak with no symptom short of a heap
-    // snapshot — this element's own note about the payload used to say it kept
-    // none, and that is exactly what changed.
+    // element pointing at them. A detached element can sit in a React tree for
+    // a while, and left standing that is a leak with no symptom short of a
+    // heap snapshot.
     const el = mount()
     el.payload = { name: 'Group', parts: [] }
     el.overlayParts = [{ name: 'result' }]

@@ -1,19 +1,11 @@
 // The guard on `PAGE`, held to the one thing a guard has to be able to do: go
-// red.
+// red. A snapshot taken after putting the record back would compare it against
+// itself and turn the autouse assertion into a silent autouse reset.
 //
-// IT COULD NOT, AND THAT IS WHY THIS FILE EXISTS. `pageCheck` took its snapshot
-// AFTER putting the record back — off `rereadPage(pathname)`, whose answer is the
-// very record the expectation compared it against — so the comparison held
-// whatever the test had done with `PAGE`. What looked like an autouse assertion
-// was an autouse reset with an assertion drawn over it, which is precisely the
-// shape this project's convention forbids: the state gets corrected in silence
-// and whichever test runs next pays for it.
-//
-// A FIXTURE WITH NO PROOF THAT IT CAN FAIL IS WORTH WHAT THAT ONE WAS, so the
-// body of the hook is exported and driven here directly. Vitest gives a file no
-// way to assert on its own `beforeEach`/`afterEach` — a hook that throws fails
-// the test rather than handing the failure back — so the hook is built exactly as
-// `guardPage` builds it and called as a function.
+// The body of the hook is exported and driven here directly: Vitest gives a
+// file no way to assert on its own `beforeEach`/`afterEach` — a hook that throws
+// fails the test rather than handing the failure back — so the hook is built
+// exactly as `guardPage` builds it and called as a function.
 //
 // NOTHING HERE CALLS `guardPage`: this file drives the check by hand, and hooks
 // installed on top of it would be a second guard fighting the first over the same
@@ -114,20 +106,14 @@ describe('the PAGE guard', () => {
   })
 
   it('reads the address past a stand-in for `window.location`', () => {
-    // THE READ IS HELD TO THE STANDARD THE RESET ALREADY WAS. The reset takes
-    // its path as an argument precisely so it survives a test that stood
-    // `window.location` in for something else — and the read used to go
-    // straight through `location.pathname`, i.e. through the stand-in.
-    //
-    // It is not hypothetical: `watchNavigation` in revswitch.test.js replaces
-    // the whole object, because a write to `location.href` is the one gesture
-    // jsdom refuses to perform AND refuses to report. That one delegates
-    // `pathname` to the real object and so was harmless, but the delegation is
-    // the stand-in's courtesy rather than this fixture's guarantee — the next
-    // one, written to catch something else, need not extend it. Reading
-    // `undefined` here would fail every test behind the one that installed it,
-    // with a message about `PAGE` and the address bar that points nowhere near
-    // the cause.
+    // THE READ IS HELD TO THE STANDARD THE RESET IS. The reset takes its path
+    // as an argument so it survives a test that stood `window.location` in for
+    // something else; the read goes through the accessor captured at import
+    // rather than through `location.pathname`, i.e. the stand-in.
+    // `watchNavigation` in revswitch.test.js replaces the whole object (a write
+    // to `location.href` is one jsdom refuses to perform and to report), and a
+    // stand-in that did not delegate `pathname` would fail every test behind it
+    // with a message that points nowhere near the cause.
     //
     // So: a stand-in with NO `pathname` at all, and the check still says
     // nothing, because it reads through the accessor captured at import.

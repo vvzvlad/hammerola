@@ -1,17 +1,9 @@
 """The routing table in the `src/app.py` docstring, against the dispatcher.
 
-`docs/SPEC.md` §3 carries no list of routes any more: it points at that
-docstring, because the copy that used to stand in the spec drifted by thirteen
-routes before anybody noticed — a whole family of endpoints missing, and a
-redirect promised where the hub serves a page. Moving the list next to the
-dispatcher takes away the second file to forget; nothing yet made the one that is
-left agree with the code beside it.
-
-This file is that agreement, and it is checked in BOTH directions: a route the
-table promises and no dispatcher answers, and a route a dispatcher answers that
-the table never mentions. Both failures are silent — a reader following the table
-gets a 404 nobody can account for, or goes looking for an endpoint that is not
-written down and adds a second one beside it.
+`docs/SPEC.md` §3 carries no list of routes: it points at that docstring, next to
+the dispatcher. This file checks the two agree in BOTH directions: a route the
+table promises and no dispatcher answers, and a route a dispatcher answers that the
+table never mentions.
 
 Both halves are IMPORTED: the docstring is `src.app.__doc__`, and the routes are
 the three tables the dispatchers walk plus `PUBLISH_PREFIX`, the one route
@@ -22,9 +14,8 @@ second reading of a pattern.
 A TABLE ENTRY CLAIMS A PREFIX and, for a fixed-length route, a segment count:
 `/api/v1/comments/<id>/photo` and `/api/v1/comments/<id>/shot` are ONE entry in
 the GET table, and which of them exists is decided inside `_serve_comments`. So
-the docstring is free to say more than the tables do — a row per document,
-which is what a reader needs — while every row of it has to fall under an entry
-that is really there.
+the docstring is free to say more than the tables do (a row per document) while
+every row has to fall under an entry that is really there.
 """
 
 import re
@@ -122,8 +113,7 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
     and `favicon.ico` answer through `_json`, `_serve_page` and `_serve_asset`,
     which other answers go through too, so a branch that intercepted one of
     those paths would reach the same method and pass. A branch for a NEW path,
-    one no entry claims, is not caught here — that is the price of not reading
-    the source (#116).
+    one no entry claims, is not caught here: that would need reading the source.
     """
     fired = []
 
@@ -149,7 +139,7 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
             f"something in the dispatcher answers it before the table does")
 
     # And every documented row, with `probe` in each free segment: a narrow
-    # branch for a real sub-path under a wide prefix (#105's shape) leaves the
+    # branch for a real sub-path under a wide prefix leaves the
     # bare prefix above to the entry and is only seen here. The row's own URL
     # is requested, trailing slash kept: without it a page answers 302.
     for row_verb, url in ROW.findall(app.__doc__):

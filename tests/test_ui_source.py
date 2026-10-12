@@ -1,53 +1,30 @@
 """What the browser UI cannot check about itself, checked from Python.
 
-BEFORE ADDING ANYTHING HERE, read this paragraph — it is the one that has cost
-the most. There IS a JavaScript test runner in this repository (`ui/tests`,
-vitest, run by both CI workflows), and the sentence that used to stand here said
-there was not. Everything below reads source as TEXT, which is the right tool for
-exactly one kind of question — "does this spelling appear where it must not" —
-and the wrong tool for every question about a VALUE. Twice now a check written
-here has passed on the defect it was written for: one looked for a colour and
-found it in the prose explaining the colour; one collected the keys of an object
-literal by matching braces and commas, and a trailing `//` comment containing a
-comma handed it the next word as a key. `strip_comments()` below removes
-whole-line comments only, deliberately, so neither was a bug in the helper —
-they were the method.
+Everything here reads source as TEXT, which answers one kind of question: "does
+this spelling appear where it must not". Anything about a VALUE the language can
+compute — a set of keys, a colour, a font stack, SVG path attributes — belongs in
+`ui/tests/` (vitest, run by CI; e.g. `vocabulary.test.js`, `chrome.test.js`),
+where it is imported and executed. A text check can match prose or misparse a
+`//` comment, and `strip_comments()` removes whole-line comments only.
 
-So the division is: if the thing being checked is a value the language can
-compute — a set of keys, a colour, a font stack, the attributes of an SVG path —
-it belongs in `ui/tests/`, where it can be imported and executed
-(`vocabulary.test.js`, `chrome.test.js`). What stays here is what only the text
-can answer.
-
-The question this file is for is still: WHERE TWO FILES HAVE TO AGREE AND
-NOTHING MAKES THEM. Every check below is a silent-failure class — the build is
-green, the page loads, and one feature is quietly inert:
+What stays here is where two files must agree and nothing makes them, each a
+silent failure (the build is green, one feature is inert):
 
   * the interface (`ui/src/`) and the viewport (`ui/src/viewport/`) talk over
-    window events, and a name spelled differently at the two ends is not an error
-    anywhere: `addEventListener` for a name nobody dispatches is silence, and the
-    symptom is a button that does nothing. The names therefore have exactly one
-    source — `ui/src/viewport/events.js` — which the interface imports under
-    aliases of its own; what is checked here is that no second spelling has
-    appeared, because nothing in the browser can tell "the other side is not
-    listening" from "the other side had nothing to do";
+    window events; a misspelt name is silence. The names have one source,
+    `ui/src/viewport/events.js`, which the interface imports under aliases; the
+    checks keep a second spelling from appearing;
 
-  * the comment form posts to a route and with field names the hub decides. A
-    rename on either side gets a 404 or a 422 with the text already typed;
+  * the comment form posts to a route with field names the hub decides; a rename
+    gets a 404 or a 422 with the text already typed;
 
-  * the bundle must stay ONE output file, because five files outside this build
-    copy it by name (ui/vite.config.mjs says so at length). A dynamic import or
-    an imported stylesheet adds a second one, and the only report is a 404 in
-    somebody's browser;
+  * the bundle must stay ONE output file, because five files copy it by name (see
+    ui/vite.config.mjs); a dynamic import or imported stylesheet adds a second;
 
-  * the page is served under `default-src 'self'` (src/app.py). An external font
-    or CDN reference does not fail a build — it is simply blocked in the browser,
-    on production, with the layout falling back to something that still looks
-    plausible.
+  * the page is served under `default-src 'self'` (src/app.py), so an external
+    font or CDN reference is silently blocked in production.
 
-Every check DERIVES both halves from the files. A test carrying its own copy of a
-name would be one more place to forget, and it would pass while agreeing only
-with itself.
+Every check derives both halves from the files rather than carrying a copy.
 """
 
 import re
@@ -63,15 +40,12 @@ UI = ROOT / "ui" / "src"
 VIEWPORT = UI / "viewport"
 
 # The interface's own sources: everything under ui/src that is not the viewport
-# adapter. Discovered rather than listed, so a module added tomorrow is covered
-# by every check here without anybody remembering to add it.
+# adapter. Discovered, so a new module is covered automatically.
 INTERFACE_FILES = sorted(p for p in UI.glob("*.js*") if p.is_file())
 ADAPTER_FILES = sorted(VIEWPORT.glob("*.js")) if VIEWPORT.is_dir() else []
 
-# Every source that reaches the bundle, however deep, and WITHOUT the halves the
-# two lists above keep apart. The rule about where a name may be spelled has no
-# exceptions by directory, so the check that enforces it must not have a list
-# that stops at one.
+# Every source that reaches the bundle, at any depth: the rule about where a name
+# may be spelled has no exceptions by directory.
 ALL_UI_FILES = sorted(p for p in UI.rglob("*.js*") if p.is_file())
 
 # The palette: one file, every page links it, and every `var(--…)` the interface
@@ -100,18 +74,13 @@ SIBLING_IMPORT = re.compile(r"""from\s+['"]\./([\w./]+\.jsx?)['"]""")
 def _sibling_imports(path: Path) -> set[Path]:
     """Every `./x.js` this file imports, RESOLVED against its own directory.
 
-    Resolved and not compared as text, which is the whole of the bug this
-    replaced: `"./events.js" in source` is true of five files under
-    `ui/src/viewport/`, and every one of them means its OWN `events.js`. The
-    page's `events.js` therefore read as "has other consumers" and dropped out
-    of the set below — a silent narrowing inside the function written to stop
-    silent narrowing. Comments are stripped for the same reason: `viewport/
-    index.js` names `./events.js` in its prose, and prose imports nothing.
+    Resolved, not compared as text: five files under `ui/src/viewport/` import
+    their own `./events.js`. Comments are stripped because `viewport/index.js`
+    names `./events.js` in prose.
 
-    ONLY `from` IMPORTS, and the one side-effect import in ui/src
-    (`main.jsx` → `./viewport/index.js`) is outside the set anyway. If a page
-    module ever gains a consumer that way it will be missed — which keeps that
-    module IN the page and swept, so this gap fails towards checking more.
+    Only `from` imports. The one side-effect import (`main.jsx` →
+    `./viewport/index.js`) is outside the set anyway; a missed consumer keeps a
+    module in the swept set, so this gap fails towards checking more.
     """
     return {(path.parent / name).resolve()
             for name in SIBLING_IMPORT.findall(strip_comments(read(path)))}
@@ -120,26 +89,15 @@ def _sibling_imports(path: Path) -> set[Path]:
 def page_draws_with() -> list[Path]:
     """Everything the build page draws with: the component and what it imports.
 
-    Issue #103 cut seven modules off a 9312-line component, and every check
-    scoped to the component by NAME quietly started sweeping 1800 fewer lines
-    the moment it landed. DERIVED AND NOT LISTED for that reason: a list goes
-    stale in the direction of checking LESS, silently, exactly as that did.
+    Derived, not listed: a list goes stale towards checking less. Reached rather
+    than owned, so modules the front page also imports (`style.jsx`,
+    `panelstyle.js`, `store.js`, `hub.js`) are swept too: a colour in
+    `panelstyle.js` is a colour on this page. Transitive, so a module a panel
+    imports is included.
 
-    REACHED RATHER THAN OWNED, and the difference is four files. "Which modules
-    belong to this page" excludes the ones the front page imports too —
-    `style.jsx`, `panelstyle.js`, `store.js`, `hub.js` — and those are then
-    swept by nobody, while a colour spelled in `panelstyle.js` is a colour on
-    this page whoever else spends it. The transitive closure is a strict
-    superset of ownership, so it can only fail towards sweeping more.
-
-    TRANSITIVE, though every import is one hop deep today: a module a PANEL
-    imports and the component does not is on this page just as much, and a
-    derivation that missed it would go dark in the same silent direction.
-
-    ONLY DIRECT CHILDREN OF ui/src, and only `from` imports. `ui/src/viewport/`
-    is its own layer with its own rules, so the walk neither keeps it nor
-    follows it. Panels moved down into `ui/src/panels/` would leave the sweep
-    the same way — the one direction this can still narrow without saying so.
+    Only direct children of ui/src and only `from` imports; `ui/src/viewport/` is
+    its own layer. Panels moved into a subdirectory would silently leave the
+    sweep.
     """
     seen: set[Path] = set()
     todo = [COMPONENT]
@@ -148,10 +106,8 @@ def page_draws_with() -> list[Path]:
             if path.is_file() and path.parent == UI and path not in seen:
                 seen.add(path)
                 todo.append(path)
-    # THE FLOOR LIVES HERE AND NOT IN THE CALLER, which has a backstop the
-    # component satisfies on its own: "does the page spend a palette token" is
-    # answered yes by HammerolaViewer.jsx no matter how many modules fell out
-    # of the walk. This is the assertion that would not be.
+    # The floor is asserted here: the callers' backstop ("does the page spend a
+    # palette token") is satisfied by HammerolaViewer.jsx alone.
     assert seen, (
         "page_draws_with() found nothing but the component. The derivation has "
         "gone dark, so every check that takes it is back to sweeping one file")
@@ -161,27 +117,17 @@ def page_draws_with() -> list[Path]:
 def strip_comments(source: str) -> str:
     r"""Source with `//` and `/* */` comments removed.
 
-    Comments are where this file's rules are ALLOWED to be broken: a URL named in
-    a sentence explaining why it is not fetched is not a fetch, and `innerHTML`
-    named in a note about the library's own behaviour is not an assignment. Every
-    content check below therefore runs on what actually executes.
+    Comments may break this file's rules: a URL named in prose is not a fetch.
+    Every content check runs on what executes.
 
-    LINE NUMBERS ARE PRESERVED — a block comment becomes the same lines of
-    spaces rather than collapsing — so a check may report a line number, and so a
-    check may look at the RAW line beside the stripped one. `test_nothing_splits_
-    the_bundle` needs exactly that: the thing making a dynamic import legitimate
-    is `/* @vite-ignore */`, which lives in a comment on that same line, so
-    stripping first and asking afterwards would flag the one deliberate case.
+    Line numbers are preserved (a block comment becomes blank lines), so a check
+    may report a line and read the raw line beside the stripped one —
+    `test_nothing_splits_the_bundle` needs that for `/* @vite-ignore */`.
 
-    Only WHOLE-LINE `//` comments go, never a trailing one: `https://` inside a
-    string would otherwise be read as the start of a comment and take the rest of
-    the line — including the URL this file exists to notice — with it.
-
-    `[ \t]` AND NOT `\s` IN THAT LAST PATTERN, which is the whole of whether the
-    paragraph above is true. `\s` matches a newline, so `^\s*//` starts its match
-    on the BLANK LINE before a comment and takes it away: 30 of the 47 files
-    under ui/src came out short, HammerolaViewer.jsx by 64 lines. Held by
-    `test_strip_comments_keeps_every_file_line_for_line`.
+    Only whole-line `//` comments go: a trailing pattern would eat `https://`
+    inside a string. `[ \t]`, not `\s`, in that pattern: `\s` matches the
+    newline and would delete the blank line before a comment
+    (`test_strip_comments_keeps_every_file_line_for_line`).
     """
     source = re.sub(r"/\*.*?\*/",
                     lambda m: re.sub(r"[^\n]", " ", m.group(0)), source, flags=re.S)
@@ -196,11 +142,9 @@ def declared_events(path: Path) -> dict:
 def interface_events() -> dict:
     """{the name the interface uses: the `hmr:` string behind it}.
 
-    The interface declares no names of its own — it imports the adapter's
-    constants under shorter aliases (`EVENT_PICK as PICK`) — so the value is
-    looked up where it is actually written. Derived, like everything else here:
-    an alias for a constant the adapter does not export is a failure rather than
-    a missing key.
+    The interface imports the adapter's constants under aliases
+    (`EVENT_PICK as PICK`), so the value is looked up in the adapter; an alias
+    for a constant the adapter does not export fails.
     """
     literals = declared_events(ADAPTER_EVENTS_JS)
     aliases = EVENT_ALIAS.findall(strip_comments(read(EVENTS_JS)))
@@ -215,13 +159,9 @@ def interface_events() -> dict:
 def js_array(source: str, name: str) -> list:
     """The identifiers in `export const NAME = [ ... ];`, frozen or not.
 
-    `Object.freeze(` is optional because two of the arrays read here are frozen
-    and the others are not, and freezing one more must not be a change that
-    breaks a reader of the source. It did break this one once — which is the
-    right failure mode and is why the assertion below names the array rather
-    than returning an empty list: a parser that silently found nothing would
-    have handed every caller an empty set, and a check that sweeps an empty set
-    passes.
+    `Object.freeze(` is optional so freezing an array does not break this
+    reader. A miss asserts rather than returning an empty list, which every
+    caller's sweep would pass.
     """
     match = re.search(rf"const\s+{name}\s*=\s*(?:Object\.freeze\(\s*)?\[(.*?)\]",
                       source, flags=re.S)
@@ -238,12 +178,10 @@ skip_without_adapter = pytest.mark.skipif(
 # -- the lists everything else iterates --------------------------------------
 
 def test_the_discovery_found_the_files():
-    """Every check below sweeps a DISCOVERED list, and an empty list passes them all.
+    """Every check below sweeps a discovered list, and an empty list passes them all.
 
-    That is this file's own worst failure and it is the one it is least able to
-    notice: a renamed directory, a changed extension, and the whole suite goes
-    green by looking at nothing. So the modules the checks are actually about are
-    named once, here, and their absence is a failure rather than a quiet skip.
+    So the modules the checks are about are named here, and their absence is a
+    failure rather than a quiet skip.
     """
     names = {path.name for path in INTERFACE_FILES}
     assert {"HammerolaViewer.jsx", "HammerolaEntry.jsx", "events.js", "hub.js",
@@ -255,14 +193,10 @@ def test_the_discovery_found_the_files():
 
 
 def test_strip_comments_keeps_every_file_line_for_line():
-    """`strip_comments` promises the numbering survives. Here is the promise.
+    """`strip_comments` preserves the line count of every file.
 
-    Two checks stand on it: `test_nothing_splits_the_bundle` reads the RAW line
-    beside a stripped one to find `/* @vite-ignore */`, and anything reporting
-    a line number reports the stripped file's. It was false — `^\\s*//` matched
-    from the newline of the BLANK LINE before a comment and swallowed it, so 30
-    of these files came out short and this one by 64 lines. It stayed invisible
-    because the one file the bundle check indexes happened to lose nothing.
+    `test_nothing_splits_the_bundle` reads the raw line beside a stripped one,
+    and any reported line number is the stripped file's.
     """
     short = {path.name: len(read(path).splitlines())
              - len(strip_comments(read(path)).splitlines())
@@ -281,19 +215,9 @@ def test_strip_comments_keeps_every_file_line_for_line():
 def test_one_module_spells_every_event_name():
     """No `hmr:` literal ANYWHERE under ui/src except viewport/events.js.
 
-    This replaced a check that compared two lists of literals — the interface
-    kept its own copy of the names and the test reported when the copies drifted.
-    That premise is gone: `ui/src/events.js` now imports the adapter's constants
-    under aliases, so there is nothing left to drift. A detector is worth having
-    when the error class cannot be removed; here it could be, and what is left to
-    guard is that a SECOND source does not come back — a literal typed at a call
-    site, which is invisible to the reader of the other file and to everything
-    else in this one.
-
-    COMMENTS ARE EXEMPT, deliberately and consistently with the rest of this
-    file: the modules on both sides explain their own events at length and by
-    name, and prose about `hmr:model` is not a dispatch. The failure being
-    prevented is a name that EXECUTES, and a comment executes nothing.
+    `ui/src/events.js` imports the adapter's constants under aliases; this keeps
+    a second source (a literal typed at a call site) from coming back. Comments
+    are exempt: prose about `hmr:model` dispatches nothing.
     """
     assert ALL_UI_FILES, f"{UI} has no sources in it at all"
     assert set(INTERFACE_FILES) | set(ADAPTER_FILES) <= set(ALL_UI_FILES), (
@@ -314,11 +238,9 @@ def test_one_module_spells_every_event_name():
 def test_the_up_events_lists_agree():
     """Both sides enumerate the same events as coming UP from the viewport.
 
-    Direction is the half of the contract a shared import does NOT settle: the
-    two lists are written independently — `UP_EVENTS` is what the interface
-    attaches listeners for, `EVENTS_UP` is what the viewport says it sends — and
-    an event on one and not the other is a handler that is never called, or a
-    dispatch nothing hears.
+    Direction is what a shared import does not settle: `UP_EVENTS` (what the
+    interface listens for) and `EVENTS_UP` (what the viewport sends) are written
+    independently.
     """
     ours = interface_events()
     theirs = declared_events(ADAPTER_EVENTS_JS)
@@ -334,12 +256,7 @@ def test_the_up_events_lists_agree():
 
 
 def test_every_up_event_has_a_handler():
-    """Each name in UP_EVENTS is a key of the component's handler map.
-
-    Declaring an event and never listening for it is the same failure from the
-    other end, and it looks exactly like a feature that was never wired up —
-    which, at that point, it is.
-    """
+    """Each name in UP_EVENTS is a key of the component's handler map."""
     component = strip_comments(read(COMPONENT))
     missing = [name for name in js_array(read(EVENTS_JS), "UP_EVENTS")
                if f"[{name}]:" not in component]
@@ -367,20 +284,13 @@ def test_every_handled_event_is_imported_from_events_js():
 def test_the_element_tag_is_spelled_in_one_place():
     """The tag the interface renders IS the tag the adapter defines, by import.
 
-    The component renders it by name and waits on
-    `customElements.whenDefined(...)`. A second spelling that disagreed would
-    give an unknown element — an ordinary inline box with no error of any kind —
-    and a promise that never settles, so the interface would wait forever without
-    a symptom to search for. `ui/src/events.js` takes the name from the adapter,
-    which makes that impossible; what is checked is that a second literal has not
-    come back somewhere else.
+    A second spelling that disagreed would be an unknown inline element and a
+    `customElements.whenDefined(...)` that never settles, with no symptom.
 
-    THE MODULE IT IS TAKEN FROM IS ALSO CHECKED, and that is a separate property
-    from where the string is written. `viewport/events.js` declares names and
-    runs nothing; `viewport/index.js` calls `customElements.define` at module
-    scope. Sourcing the tag from the second one works perfectly and costs the
-    guarantee below it — the registration stops depending on main.jsx's explicit
-    import alone and starts depending on a re-export chain nothing announces.
+    The source module is checked too: `viewport/events.js` declares names and
+    runs nothing, while `viewport/index.js` calls `customElements.define` at
+    module scope. Taking the tag from the latter would make registration depend
+    on a re-export chain instead of main.jsx's explicit import.
     """
     declared = re.search(r"TAG\s*=\s*['\"]([\w-]+)['\"]", read(ADAPTER_EVENTS_JS))
     assert declared, "the adapter no longer names the tag"
@@ -402,17 +312,10 @@ def test_the_element_tag_is_spelled_in_one_place():
 def test_the_adapter_is_imported_for_its_side_effect():
     """Something has to import the module that calls `customElements.define`.
 
-    Nothing REFERENCES that import — it is there for the registration alone — so
-    it looks removable to a reader and to any tool that prunes unused imports.
-    Removing it breaks no build and throws nothing: the tag stays unknown, the
-    frame stays empty, `whenDefined` never resolves.
-
-    AND IT IS THE ONLY IMPORT OF THAT MODULE, which is what makes the line above
-    worth defending. While the interface took the tag out of `viewport/index.js`
-    there was a second path to the registration, so deleting this line looked
-    harmless and WAS harmless — until the re-export it had come to depend on got
-    rearranged, at which point the element stopped being defined for a reason
-    nothing in either file mentions.
+    Nothing references that import, so it looks removable; removing it throws
+    nothing, the tag stays unknown and `whenDefined` never resolves. It must be
+    the only import of that module, so registration does not hinge on a
+    side effect of importing something else.
     """
     entry = strip_comments(read(UI / "main.jsx"))
     assert re.search(r"import\s+'\./viewport/index\.js'", entry), (
@@ -529,38 +432,22 @@ def test_the_comment_payload_only_uses_fields_the_hub_keeps():
 def test_every_meta_field_the_ui_reads_is_one_render_writes():
     """`meta.<field>` on the UI side against the keys src/render.py emits.
 
-    A field that is not there reads as `undefined`, which renders as an empty
-    string and formats as `NaN` — never as an error.
+    A missing field reads as `undefined`, renders empty and formats as `NaN`,
+    never as an error.
 
-    TWO SPELLINGS COUNT AS WRITING A FIELD, and the second one had to be added
-    the day a field became OPTIONAL. Most of meta.json is one dict literal, so
-    `"field":` finds it; `notes` is emitted only when the build has any — an
-    empty object there would be a build SAYING it has none, and no older build
-    says anything at all — so it is written by subscript afterwards. Read with
-    the literal spelling alone, this check called a field render.py demonstrably
-    writes a field it does not, i.e. it failed on exactly the shape it exists to
-    permit: a document whose keys are not all decided in one place.
-
-    The subscript pattern is deliberately narrow — a string key assigned into a
-    subscript, which in this module only ever happens to a document being
-    assembled — rather than "any name that appears near an `=`".
+    Two spellings count as writing a field: `"field":` in the main dict literal,
+    and a subscript assignment for optional fields emitted only when present
+    (`notes`). The subscript pattern is deliberately narrow.
     """
     render = read(ROOT / "src" / "render.py")
     written = (set(re.findall(r'"(\w+)":', render))
                | set(re.findall(r'\[\s*"(\w+)"\s*\]\s*=', render)))
     read_by_ui = set()
-    # EVERY FILE UNDER ui/src, and deliberately NOT `page_sources()`. This check
-    # was scoped to the component and hub.js, lost four fields to `chromeview.js`
-    # when the panels moved, and was then put on the derived page set — which is
-    # a dependency it does not need. "No `meta.x` anywhere that render.py does
-    # not write" is strictly stronger, needs no derivation to be right, and
-    # passes today with nothing excused. Only the colour rule is genuinely about
-    # this page rather than about the tree.
+    # Every file under ui/src, not `page_draws_with()`: "no `meta.x` anywhere
+    # that render.py does not write" is stronger and needs no derivation.
     for path in ALL_UI_FILES:
-        # `meta.json` is the FILE the fields come out of, not one of them, and it
-        # is spelled the same way a field access is. Dropped by name rather than
-        # by excluding the word `json`, so a field genuinely called `json` would
-        # still be checked.
+        # `meta.json` is the file, not a field; dropped by name so a field called
+        # `json` would still be checked.
         source = strip_comments(read(path)).replace("meta.json", "")
         read_by_ui |= set(re.findall(r"\bmeta\.(\w+)", source))
     assert read_by_ui, "the UI stopped reading meta.json"
@@ -572,17 +459,10 @@ def test_every_meta_field_the_ui_reads_is_one_render_writes():
 def test_every_index_card_field_the_ui_reads_is_one_render_writes():
     """`hub.projectCard` against the keys `render.index_card` actually emits.
 
-    The same silent failure as the meta check above, on the other document: a
-    field that is not there reads as `undefined`, renders as an empty string and
-    formats as `NaN`, and nothing anywhere says why a card went blank. The front
-    page is also where it would be least noticed, because a card that is merely
-    missing its size or its date still looks like a card.
-
-    Both halves are DERIVED, and the Python half is narrowed to this one function
-    rather than swept from the whole module. `render.py` writes several documents
-    and a union of all their keys would accept a field that exists on meta.json
-    but never on a card — which is precisely the mistake available here, since
-    the two are built from the same meta and share most of their names.
+    The same silent failure as the meta check, on the front page, where a card
+    missing its size or date still looks like a card. The Python half is narrowed
+    to `index_card`: a union of all render.py's keys would accept a meta.json
+    field that never appears on a card.
     """
     render = read(ROOT / "src" / "render.py")
     body = re.search(r"def index_card\(.*?\n    return \{(.*?)\n    \}",
@@ -606,24 +486,15 @@ def test_every_index_card_field_the_ui_reads_is_one_render_writes():
 
 
 def test_the_assembled_view_is_spelled_the_same_on_both_sides_of_the_wire():
-    """`assembled` is written in JavaScript and in Python, and nothing compared them.
+    """`assembled` is spelled the same in JavaScript and in Python.
 
-    The build half refuses a model that declares no view under this id
-    (`views.prepare_views`), so on that side the string is enforced. The
-    interface uses it for a different job -- deciding whether a distance
-    measured between two parts is a real gap or an artefact of the print layout
-    -- and gets its answer by comparing the CURRENT view's id against its own
-    copy. A rename on the build side therefore does not break the interface, it
-    makes it quietly wrong in the safe direction: every CROSS-PART measurement
-    comes out labelled as belonging to the current layout, which reads like a
-    cautious viewer rather than like a broken one. A single-part measurement --
-    a diameter, a length, an area, a volume -- carries `crossPart: false` and is
-    never labelled either way, so it is unaffected.
-
-    This is also the second-order defect the copy already caused. The comment
-    over the constant named `views.py` as the module the string lives in, and it
-    lives in `artifacts.py`; nothing could catch that, because nothing on this
-    side had ever been made to look the string up (issue #88).
+    The build refuses a model with no view under this id
+    (`views.prepare_views`). The interface compares the current view's id against
+    its own copy to decide whether a cross-part distance is a real gap or a
+    print-layout artefact; a rename would silently label every cross-part
+    measurement as belonging to the current layout. Single-part measurements
+    (`crossPart: false`) are unaffected. The Python constant lives in
+    `artifacts.py`.
     """
     from src.cadbuild.artifacts import ASSEMBLED_VIEW_ID
 
@@ -644,21 +515,13 @@ def test_the_compare_legend_says_what_the_hub_says_not_compared_means():
     """One explanation of one word, written on both sides of the wire.
 
     The hub writes the sentence onto every `not compared` row of report.json
-    (`comparescene._uncovered_line`) and the panel does NOT draw it there: it is
-    identical on every such row, so eight bought screws printed it eight times
-    in a panel whose job is to show what changed. It is drawn once, in the
-    legend — which means the legend IS that sentence, and the two are free to
-    drift into saying different things about one word with nothing anywhere
-    noticing. This is what notices.
-
-    It cost a round already, in the direction that matters: both halves named
-    hardware and mocks as the DEFINITION, which is false of a part that was
-    `printable` in one revision and hardware in the other — one build exported a
-    STEP there and the row still says `not compared`. Fixing one half and
-    leaving the other is the failure this pins.
+    (`comparescene._uncovered_line`); the panel draws it once, in the legend,
+    rather than on every row. So the legend is that sentence, and this keeps the
+    two from drifting. (Hardware and mocks do not define the term: a part that
+    changed kind between revisions is also not compared.)
 
     The em dash is the one difference allowed: the hub's strings are ASCII (its
-    reasons travel through job logs) and the interface's are not.
+    reasons travel through job logs).
     """
     from src.cadbuild.comparescene import _uncovered_line
 
@@ -705,9 +568,8 @@ def test_nothing_splits_the_bundle():
     offenders = []
     for path in INTERFACE_FILES + ADAPTER_FILES:
         raw = read(path).splitlines()
-        # Detect on the stripped line so prose about imports is not an import;
-        # look for the exemption on the RAW one, because the exemption IS a
-        # comment. strip_comments keeps the two in step line for line.
+        # Detect on the stripped line (prose is not an import); look for the
+        # exemption on the raw one, because it is a comment.
         for number, line in enumerate(strip_comments(read(path)).splitlines()):
             marker = raw[number] if number < len(raw) else ""
             if re.search(r"(?<![\w.])import\s*\(", line) and "@vite-ignore" not in marker:
@@ -719,25 +581,16 @@ def test_nothing_splits_the_bundle():
 
 # -- the page's own CSP ------------------------------------------------------
 
-# The one absolute URL in the UI that is not an address. `createElementNS` takes
-# an XML NAMESPACE NAME, and a namespace name is an identifier that happens to be
-# spelled as a URL — nothing dereferences it, no request is ever made for it, and
-# the CSP therefore has nothing to say about it. The viewport draws the view cube
-# as SVG built element by element, and this is the only way to build one.
-#
-# Enumerated rather than pattern-matched on purpose: `www.w3.org` as a prefix
-# would also wave through a stylesheet or an image from that host, which is
-# exactly the thing below is for.
+# The one absolute URL in the UI that is not an address: `createElementNS` takes
+# an XML namespace name, which nothing dereferences, so the CSP does not apply.
+# The viewport builds the view cube as SVG. Enumerated, not a `www.w3.org`
+# prefix, which would admit real requests to that host.
 XML_NAMESPACES = {"http://www.w3.org/2000/svg"}
 
 
 def test_no_external_urls_in_the_ui():
-    """`default-src 'self'` — an absolute URL to another host is blocked.
-
-    The mock-up this was ported from linked IBM Plex from Google Fonts. It does
-    not fail anything at build time; it simply never loads, and the page falls
-    back to a system font that looks deliberate.
-    """
+    """`default-src 'self'` — an absolute URL to another host is blocked, with no
+    build-time failure; a font would silently fall back to a system one."""
     offenders = {}
     for path in INTERFACE_FILES + ADAPTER_FILES:
         found = [url for url in re.findall(r"https?://[^\s'\"`)]+",
@@ -751,12 +604,9 @@ def test_no_external_urls_in_the_ui():
 def test_the_svg_namespace_is_named_in_exactly_one_place():
     """The exemption above is one construct in one file, so pin it as one.
 
-    `test_no_external_urls_in_the_ui` waves the namespace through wherever it
-    appears, in any of the UI's files and in any context — a filter far wider
-    than the reason for it, which is a single `const SVG_NS = ...` in the view
-    cube. This is the guard against the day it is copied: a second module
-    spelling the same string would still pass the filter, and so would a fetch,
-    an `<img src>` or a stylesheet link built out of it in viewcube.js itself.
+    The URL filter waves the namespace through anywhere; this keeps it to the
+    single `const SVG_NS = ...` in viewcube.js, so a copy elsewhere, or a fetch
+    or `<img src>` built from it, fails.
     """
     ns, = XML_NAMESPACES
     users = [p.name for p in INTERFACE_FILES + ADAPTER_FILES
@@ -775,11 +625,8 @@ def test_the_svg_namespace_is_named_in_exactly_one_place():
 
 
 def test_no_fonts_are_fetched_at_all():
-    """Not even in a comment, for this one host.
-
-    `fonts.googleapis.com` is the specific thing the mock-up carried, so the
-    check that it did not survive the port is worth being blunt about.
-    """
+    """Not even in a comment, for `fonts.googleapis.com`, which the mock-up the
+    UI was ported from linked."""
     for path in INTERFACE_FILES + ADAPTER_FILES:
         assert "fonts.googleapis" not in read(path), f"{path.name} pulls Google Fonts"
 
@@ -803,20 +650,14 @@ def test_nothing_fetches_a_data_url():
 def test_nothing_writes_markup():
     """No `innerHTML`, no `dangerouslySetInnerHTML`, anywhere in the UI.
 
-    Everything on these pages comes out of a PUSHED meta.json, view file or
-    index card — a part name, a title, a filename — and every project on this
-    host shares one origin. React escaping text is the whole defence, and it
-    holds only as long as nobody builds markup out of a string.
+    Everything on these pages comes from a pushed meta.json, view file or index
+    card, and every project shares one origin; React's text escaping is the
+    defence only while nobody builds markup from a string.
 
-    THE OTHER HALF OF THIS RULE is
+    The other half of this rule is
     tests/test_comments.py::test_the_committed_page_scripts_never_build_markup_from_a_string,
-    which reads the committed page scripts the same way. Two checks because the
-    two halves can only be made differently — this one strips comments from
-    source, that one reads files as they ship — and between them they have to
-    cover every script the site runs. The forbidden list is kept in step with
-    that one deliberately: `.outerHTML` is on it because it is there, not because
-    anything here has ever used it, and a rule that is narrower on one side than
-    the other is a gap nobody would find by reading either file alone.
+    for the committed page scripts as they ship. The forbidden list is kept in
+    step with that one (hence `.outerHTML`).
     """
     offenders = []
     for path in INTERFACE_FILES + ADAPTER_FILES:
@@ -835,13 +676,10 @@ def test_nothing_writes_markup():
 def test_localstorage_is_touched_in_one_place_only():
     """One module, so there is one place to audit for the try/catch below.
 
-    The viewport keeps its own answer — the pointing device, in
-    `viewport/wheel.js` — and is exempt: that is a separate module with its own
-    guard, and the rule is one place PER SIDE, not one place in the repository.
-    The canvas theme used to be the second of those and is not any more: issue
-    #35 made it the whole interface's palette, which the SERVER has to know
-    before the page is sent, so it is a cookie in store.js now (the two tests
-    below are its half of this rule).
+    One place per side: the viewport keeps its pointing-device answer in
+    `viewport/wheel.js` with its own guard and is exempt. The theme is a cookie
+    in store.js because the server needs it before the page is sent (see the
+    two tests below).
     """
     users = [p.name for p in INTERFACE_FILES
              if "localStorage" in strip_comments(read(p))]
@@ -850,15 +688,10 @@ def test_localstorage_is_touched_in_one_place_only():
 
 
 def test_the_cookie_is_touched_in_one_place_only():
-    """The theme is the one thing here that is kept in a cookie, and one module
-    writes it.
+    """The theme is the one thing kept in a cookie, and one module writes it.
 
-    STRICTER THAN THE RULE ABOVE, ON PURPOSE: `localStorage` is one place PER
-    SIDE because the viewport legitimately keeps an answer of its own, while a
-    cookie is sent to the hub on every request and there is exactly one thing on
-    this site the hub needs to be told. A second writer would be a second
-    per-request header nobody asked for, and — since the server reads this one by
-    name — a second spelling of a name that has to match `src/render.py`.
+    Stricter than the localStorage rule: a cookie is sent to the hub on every
+    request, and the server reads it by a name that must match `src/render.py`.
     """
     users = [p.name for p in INTERFACE_FILES + ADAPTER_FILES
              if "document.cookie" in strip_comments(read(p))]
@@ -869,37 +702,27 @@ def test_the_cookie_is_touched_in_one_place_only():
 def test_every_cookie_access_is_guarded():
     """`document.cookie` is an accessor, and a sandboxed frame throws on it.
 
-    Exactly the hazard `localStorage` has one test down, and it bites in the same
-    place: this is read while the page is being built, so an uncaught throw is a
-    blank page instead of a remembered preference.
+    It is read while the page is built, so an uncaught throw is a blank page.
     """
     for path in INTERFACE_FILES + ADAPTER_FILES:
         lines = strip_comments(read(path)).splitlines()
         for number, line in enumerate(lines):
             if "document.cookie" not in line:
                 continue
-            # The nearest `try {` above, within the block a guard can plausibly
-            # cover — the same window the localStorage check uses, and for the
-            # same reason: a `try` twenty lines up is not a guard anybody can see
-            # from the access.
+            # A `try {` within the few lines above, the same window the
+            # localStorage check uses.
             window = lines[max(0, number - 6):number]
             assert any("try {" in earlier for earlier in window), (
                 f"{path.name}:{number + 1} touches document.cookie outside a try")
 
 
 def test_the_browser_and_the_hub_spell_the_theme_the_same_way():
-    """One cookie, two languages, and nothing in a browser to notice (issue #35).
+    """The cookie name and theme values match between store.js and render.py.
 
     The hub stamps `data-theme` on `<html>` from this cookie before the page is
-    sent, and the interface writes it when the reader toggles. They cannot share
-    a module, so the name and the two values are spelled on both sides — and
-    drift is silent in the worst way: the browser goes on remembering, the server
-    goes on answering light, and the reader's chosen theme simply stops surviving
-    a navigation with nothing logged anywhere.
-
-    The Python side is IMPORTED and the JavaScript side is read as text, which is
-    the division this file's header insists on: the values that can be executed
-    are executed, and only the file that cannot be imported is parsed.
+    sent, and the interface writes it on toggle. Drift is silent: the chosen
+    theme stops surviving navigation. The Python side is imported, the
+    JavaScript side read as text.
     """
     from src.render import DEFAULT_THEME, THEME_COOKIE, THEMES
 
@@ -928,22 +751,12 @@ def test_the_browser_and_the_hub_spell_the_theme_the_same_way():
 
 
 def test_the_browser_walks_a_part_tree_as_deep_as_the_hub_publishes_one():
-    """One ceiling, two languages, and a page that loads either way (issue #98).
+    """The interface's `MAX_DEPTH` equals the hub's MAX_VIEW_DEPTH.
 
-    The hub refuses a push whose view nests parts deeper than MAX_VIEW_DEPTH, so
-    everything it serves is inside that number. The interface stops its own walk
-    at `MAX_DEPTH`, and the comment over it says in as many words that this is
-    the hub's ceiling copied — which nothing was holding it to.
-
-    DRIFT IS SILENT AND ONE-DIRECTIONAL. A browser ceiling BELOW the hub's does
-    not fail a build or log anything: `walk` answers `null` past it, so a
-    published assembly's deepest parts are simply not in the tree the panel
-    draws — no row, nothing to select, nothing to comment on — on a model the
-    hub accepted and is serving. Above it, nothing happens at all, because no
-    such view can be pushed.
-
-    The Python side is IMPORTED and the JavaScript side is read as text, which
-    is this file's division: the values that can be executed are executed.
+    The hub refuses a view nesting parts deeper than MAX_VIEW_DEPTH. A browser
+    ceiling below it is silent: `walk` answers `null` past it, so the deepest
+    parts of an accepted model are missing from the tree panel. The Python side
+    is imported, the JavaScript side read as text.
     """
     from src.render import MAX_VIEW_DEPTH
 
@@ -964,21 +777,12 @@ def test_the_browser_walks_a_part_tree_as_deep_as_the_hub_publishes_one():
 def test_every_palette_token_the_interface_spends_is_defined():
     """A `var(--…)` nothing defines is a declaration the browser drops in silence.
 
-    THE CHECK THE NEXT TWO STAGES OF ISSUE #35 NEED. The interface's colours are
-    being converted from ~300 hex literals into references to the roles in
-    `static/_v/tokens.css`, and a typo in one of those names does not fail
-    anything: the declaration is simply invalid, the element keeps its inherited
-    or initial colour, and the page still renders — one label black on a dark
-    panel, or a border that is not there.
+    A typo in a role name from `static/_v/tokens.css` leaves the element with its
+    inherited or initial colour. A name, not a value, so it is checked here;
+    `ui/tests/chrome.test.js` executes the values side.
 
-    A NAME AND NOT A VALUE, which is why it is here rather than in `ui/tests/`:
-    this is the question text can answer. Whether a token holds the right colour
-    is a value, and `ui/tests/chrome.test.js` imports and executes that side.
-
-    The `--hmr-` prefix is the one exemption, and it is derived rather than
-    written out: those are the FONT stacks, which the bundle defines itself in
-    `FONTS` and spreads onto the element it mounts into, so they are never in a
-    stylesheet at all.
+    The `--hmr-` prefix is exempt (derived): those are the font stacks, defined
+    by the bundle in `FONTS` and spread onto its mount element.
     """
     tokens = set(re.findall(r"^\s*(--[\w-]+)\s*:",
                             strip_comments(read(TOKENS_CSS)), flags=re.M))
@@ -996,22 +800,13 @@ def test_every_palette_token_the_interface_spends_is_defined():
         f"browser drops every declaration that references one, without a word")
 
 
-# The page whose colours have all been converted into references to those roles
-# (issue #35, the front page's stage of it).
+# The front page, whose colours are all references to those roles.
 FRONT_PAGE = UI / "HammerolaEntry.jsx"
 
-# HOW A COLOUR IS WRITTEN DOWN, in two forms that are complete and one that is
-# not. A hex and the `rgb()`/`hsl()` families are every value this interface has
-# ever spent and every one the mock-ups it was ported from spent; the KEYWORDS
-# are the common end of a 148-name CSS vocabulary and are deliberately not
-# claimed to be all of it, because an enumeration that cannot be finished is
-# still worth having when the cases it misses are ones nobody types. What it
-# catches is the `#fff` somebody actually writes.
-#
-# `transparent` and `currentColor` are on none of the three lists, on purpose:
-# neither of them names a colour. One says paint nothing — the spinner's missing
-# arc — and the other says "whatever this element is already written in", which
-# is how the sign-out icon follows the palette without mentioning it.
+# How a colour is written down: hex and the `rgb()`/`hsl()` families are
+# complete; the keywords are the common end of the CSS vocabulary, enough to catch
+# the `#fff` somebody actually writes. `transparent` and `currentColor` name no
+# colour and are deliberately absent.
 COLOUR_LITERAL = re.compile(
     r"#[0-9a-fA-F]{3,8}\b"
     r"|\b(?:rgba?|hsla?)\s*\("
@@ -1025,26 +820,10 @@ COLOUR_LITERAL = re.compile(
 def test_the_front_page_spends_the_palette_and_writes_no_colour_of_its_own():
     """Not one value in the whole file — every colour is a role in tokens.css.
 
-    THE ASSERTION THE CONVERSION EXISTS TO MAKE TRUE, and it has to be a test
-    because of how the failure looks: a literal that survives is not a broken
-    page. It is a page where one label, one border or one chip is painted in the
-    light value while everything around it went dark — legible, plausible, and
-    invisible to anybody who never opens the other theme. Nothing in a browser
-    reports it, nothing in a build reports it, and the file is 60 colours long,
-    so "we converted them all" is a claim only a sweep can hold.
-
-    COMMENTS ARE STRIPPED, which is this module's own oldest lesson rather than
-    a convenience: a check written here once looked for a colour and found it in
-    the prose explaining the colour. The file argues its mapping at length —
-    which literal became which role, and why a shade that was two greys is one
-    now — and prose paints nothing.
-
-    NO EXEMPTIONS. There is nothing in the file this rule has to be bent for:
-    the two words that look like colours and are not (`transparent`,
-    `currentColor`) are not colours by the definition above, and the one colour
-    that genuinely cannot be a `var()` — the backdrop's ink, which a canvas 2D
-    context would refuse to parse — is not written here either. It is read off
-    the element at draw time, which the check below is about.
+    A surviving literal is one element painted in the light value on a dark page:
+    nothing reports it, so only a sweep can hold it. Comments are stripped (prose
+    paints nothing). No exemptions: the backdrop's ink, which a canvas cannot
+    take as a `var()`, is read off the element at draw time (next test).
     """
     source = strip_comments(read(FRONT_PAGE))
     found = sorted({match.group(0) for match in COLOUR_LITERAL.finditer(source)})
@@ -1052,8 +831,8 @@ def test_the_front_page_spends_the_palette_and_writes_no_colour_of_its_own():
         f"{FRONT_PAGE.name} writes {found} rather than naming a role from "
         f"static/_v/tokens.css. A value here is right in one theme and wrong in "
         f"the other, and the page that is wrong still renders")
-    # Otherwise a file that stopped painting anything at all would pass by
-    # having nothing to find, which is this module's own oldest failure mode.
+    # Otherwise a file that stopped painting anything would pass by having
+    # nothing to find.
     assert re.search(r"var\(\s*--", source), (
         f"{FRONT_PAGE.name} spends no palette token at all — this check is "
         f"sweeping a file that has stopped drawing")
@@ -1062,31 +841,15 @@ def test_the_front_page_spends_the_palette_and_writes_no_colour_of_its_own():
 def test_the_backdrop_reads_its_ink_off_its_own_element():
     """The one colour on that page a `var()` cannot reach, and how it still does.
 
-    A canvas 2D context parses colours itself and knows nothing about the
-    cascade: `ctx.strokeStyle = 'var(--text-muted)'` is an unparseable value,
-    which the context DISCARDS — keeping whatever was set before it, i.e. the
-    initial black. So the backdrop's mesh cannot be themed by substitution the
-    way every other colour on the page was.
+    A canvas 2D context discards an unparseable `var(--text-muted)` and keeps the
+    initial black. So the token goes on the canvas element, the drawing reads the
+    resolved value with `getComputedStyle`, and the context is stroked with that.
+    Without the first, the element inherits the page's text ink; without the
+    others, strokes fall back to a literal or black. jsdom returns no 2D context,
+    so ui/tests/ cannot reach this path.
 
-    What it does instead is three parts that have to agree and that nothing in
-    either runner can execute: the token goes onto the canvas ELEMENT, where the
-    browser resolves it; the drawing reads the resolved value back with
-    `getComputedStyle`; and the context is stroked with THAT and not with a
-    colour of its own. Drop the first and the declaration is gone, so the
-    computed colour is the one the element INHERITS — the page's own text ink,
-    which draws the backdrop as a black cage across the sign-in screen. Drop the
-    second or the third and the strokes go back to a literal or to black.
-    Nothing throws, no build fails, and none of it is visible in jsdom:
-    `getContext('2d')` returns nothing there, so the whole draw path is
-    unreachable from ui/tests/.
-
-    AND A FOURTH, since the read stopped happening once per frame.
-    `getComputedStyle` flushes pending style, so sixty of them a second was most
-    of what this effect cost; the value is cached and re-read when `data-theme`
-    changes, which is the only thing that can move it. Drop THAT subscription and
-    everything above still holds — the backdrop simply keeps the theme the page
-    was opened in, for ever, which is invisible to anybody who does not toggle
-    while looking at it.
+    The read is cached and refreshed when `data-theme` changes; without that
+    subscription the backdrop keeps the theme the page opened in.
     """
     source = strip_comments(read(FRONT_PAGE))
     assert re.search(r"style=\{css\(.*?color:\$\{this\.props\.color\}", source, flags=re.S), (
@@ -1106,58 +869,30 @@ def test_the_backdrop_reads_its_ink_off_its_own_element():
         "the backdrop's default ink is no longer a palette role")
 
 
-# A NUMERIC CHARACTER REFERENCE IS NOT A COLOUR, and it is spelled like one.
-# The build page draws its close crosses, its carets and its arrows as `&#10005;`
-# `&#9662;` `&#8594;` — which `COLOUR_LITERAL` above reads as `#10005`, `#9662`,
-# `#8594`, three perfectly well-formed hexes. Removed before the sweep rather
-# than exempted after it: an exemption list would have to hold every glyph the
-# page ever grows, and the thing that makes these safe is not which ones they
-# are, it is that `&#…;` is a different notation entirely.
+# A numeric character reference is not a colour but is spelled like one: the
+# build page's `&#10005;` `&#9662;` `&#8594;` would read as hexes. Removed before
+# the sweep, since `&#…;` is a different notation, rather than listed per glyph.
 CHARACTER_REFERENCE = re.compile(r"&#\w+;")
 
 
 def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
-    """Not one value in 4000 lines — every colour is a role in tokens.css.
+    """Not one value on the build page — every colour is a role in tokens.css.
 
-    THE SAME ASSERTION THE FRONT PAGE MAKES, on the file that carried five times
-    as many: 247 hexes and 28 `rgba()`s, written inline through `css()` and in
-    the `PIN_CSS` block. It has to be a test for the reason given up there — a
-    literal that survives is not a broken page but a page where one chip keeps
-    its light value on a dark panel, which nothing in a browser, a build or a
-    unit test reports.
+    The same assertion as the front page's, over `css()` strings and the
+    `PIN_CSS` block. Many shades were collapsed onto few roles, so a near-miss
+    shade tempts a hex that would break the theme for one element; the answer is
+    a role in tokens.css. Comments are stripped.
 
-    AND IT IS WHAT MAKES THE COLLAPSE HOLD. Ten greys went onto four ink roles
-    here, three blue tints onto one `--accent-bg`, five ambers onto `--warn`. The
-    cost of that is that the next person with a shade to draw has a real reason
-    to reach for a hex — the role they want is "nearly `--text-muted`" — and one
-    such literal undoes the theme for that element with nothing to say so. The
-    answer is to argue for a role in tokens.css, and this is what forces the
-    argument to happen.
-
-    COMMENTS ARE STRIPPED. The file explains its own mapping at length — which
-    literal became which role, and why `#8a9099` and `#9aa1a9` are one level and
-    not two — and prose paints nothing.
-
-    TWO EXEMPTIONS, `proposalgeom.js` and `hub.js`, named in the body below and
-    in each module's own header. Their hexes colour MODEL PARTS rather than
-    interface chrome — the geometry of the bodies the reader is proposing, and
-    the three the comparison is published in — which is the same kind of value
-    the hub pushes in a view file. The other colour here that is not ours was
-    never a literal at all: the tree swatch is `node.color`, read out of the
-    pushed model.
+    Two exemptions, `proposalgeom.js` and `hub.js`: their hexes colour model
+    parts (proposed bodies, and the comparison's published colours), like the
+    colours a view file carries. The tree swatch is `node.color`, from the model.
     """
-    # THE WHOLE PAGE AND NOT THE ONE FILE, via `page_draws_with`: the panels
-    # were cut into modules of their own (#103) and took their `css()` strings
-    # with them, and the shared rules moved into `panelstyle.js` (#104), so a
-    # sweep of the component alone would now pass over most of the colour this
-    # page draws.
-    # TWO EXEMPTIONS, EACH STATED ON BOTH SIDES. `proposalgeom.js` builds the
-    # geometry of the bodies the reader is proposing; `DIFF_COLOURS` in `hub.js`
-    # is the three colours the comparison is PUBLISHED in, which the legend has
-    # to spend or stop matching the model. Both are the payload's colours, not
-    # the interface's: they do not follow the theme because the geometry they
-    # name does not follow it either. Each module's own header says so and names
-    # this check.
+    # The whole page via `page_draws_with`: panels and shared rules
+    # (`panelstyle.js`) live in modules of their own.
+    # The exemptions colour the payload, not the interface: `proposalgeom.js`
+    # builds proposed bodies, `DIFF_COLOURS` in `hub.js` is the comparison's
+    # published palette the legend must match. Each module's header names this
+    # check.
     excused = {"proposalgeom.js", "hub.js"}
     sources = page_draws_with()
     whole = ""
@@ -1171,42 +906,26 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
             f"static/_v/tokens.css. A value here is right in one theme and "
             f"wrong in the other, and the page that is wrong still renders")
         whole += source
-    # Otherwise a page that stopped painting anything at all would pass by
-    # having nothing to find, which is this module's own oldest failure mode.
-    # Asked of the page rather than of each file, because several of these
-    # modules legitimately draw nothing.
+    # Otherwise a page that stopped painting would pass. Asked of the page, not
+    # each file, because several modules draw nothing.
     assert re.search(r"var\(\s*--", whole), (
         "the build page spends no palette token at all — this check is "
         "sweeping files that have stopped drawing")
 
 
-# A `css()` SOURCE FILE, CUT INTO DECLARATION-SIZED PIECES.
+# A `css()` source file, cut into declaration-sized pieces.
 #
-# There is no cascade to consult here and no element to inspect: every rule in
-# this interface is a string, so which property a value belongs to is a question
-# about the text. Two things end a declaration in that text — a `;`, and the end
-# of the string literal it was written in — and both are single characters,
-# which is the whole of the parser below.
+# Every rule in this interface is a string, so a declaration ends at a `;` or at
+# the end of its string literal. Interpolations are flattened first:
+# `background:${busy ? 'var(--a)' : 'var(--b)'}` is one declaration with two
+# values, so both branches land in one piece; no newline is removed, so offsets
+# still map to lines. The whole file, not line by line, because a declaration
+# can span lines (a template literal ending in `background:` followed by a
+# concatenated ternary).
 #
-# THE INTERPOLATIONS ARE FLATTENED FIRST, and that is the part that earns its
-# keep: `background:${busy ? 'var(--a)' : 'var(--b)'}` is ONE declaration with
-# two possible values, and the quotes inside it are not string boundaries at
-# all. Stripping them out of the `${…}` puts both branches in the same piece,
-# which is how a defect hiding in EITHER branch is seen. It removes no newline,
-# so an offset into the flattened text still names the right line.
-#
-# THE WHOLE FILE AND NOT A LINE AT A TIME, because a declaration here regularly
-# is not on one line: the front page's Sign-in button ends a template literal on
-# `…;background:` and opens the value on the next line as a concatenated
-# ternary. A line-scoped version of this check was written first and passed on
-# exactly that button — which is this module's oldest lesson arriving for the
-# third time.
-#
-# The two cheaper methods are recorded because both look right. The nearest
-# property keyword BEFORE the value reads `'var(--x);background:var(--y)' :
-# 'var(--z)'` as painting z, since the ternary's other branch is nearer than z's
-# own property. And matching the text `background:var(--x)` misses the
-# interpolated form entirely, which is the form the defect was written in.
+# Cheaper methods fail: the nearest property before a value misattributes a
+# ternary's branches, and matching `background:var(--x)` misses the
+# interpolated form.
 INTERPOLATION = re.compile(r"\$\{([^{}]*)\}")
 DECLARATION_END = re.compile(r"""[;'"`]""")
 
@@ -1224,66 +943,22 @@ def declarations(source):
 
 
 def test_the_accents_line_roles_are_never_spent_as_a_fill():
-    """A role named for a line, painting a surface, is where a palette starts to rot.
+    """The accent's line roles (`--accent-line`, `--accent-ring`) never fill a surface.
 
-    IT HAD ALREADY HAPPENED TWICE, in the same week and for the same want: the
-    build page's Switch button and the front page's Sign-in button both go
-    inert while the network answers, both have to LOOK inert, and the palette
-    had no washed accent surface — so both reached for `--accent-line`, which is
-    pale enough to pass. Nothing was wrong on the screen. What was wrong is that
-    `--accent-line` then meant "a border, and also the colour of a waiting
-    button", so the next person to restyle borders would have moved a button
-    without knowing they had, and the person after that would have read the name
-    as approximate and reached for whatever else was near. `--accent-muted`
-    exists so neither has to.
-
-    NARROW TO THE ACCENT ON PURPOSE, and the reason is worth stating so the rule
-    is not "generalised" into something that has to be exempted: the accent owns
+    A role spent outside its name couples unrelated restyles. The accent owns
     five surfaces — `--accent`, `--accent-strong`, `--accent-muted`,
-    `--accent-bg`, `--accent-bg-soft` — so a fill drawn from its LINE roles is
-    always a substitution for one of those, with no case on the other side.
+    `--accent-bg`, `--accent-bg-soft` — so a fill from a line role is always a
+    substitution for one of them (a waiting button takes `--accent-muted`).
 
-    THE NEUTRAL RAMP CANNOT BE SWEPT THE SAME WAY, and it is worth writing out
-    why rather than leaving it as a feeling, because the obvious objection —
-    "it has `--chip-bg` now, so widen it" — is half right. There are four CASES
-    here painted from a line role, and every one of them is correct:
+    The neutral ramp is not swept: its line roles legitimately paint fills —
+    1px `<div>` dividers (`--line`); `.hmr_pin.is_resolved` (`--line-strong`, it
+    lies on the model, a contrast trade PIN_CSS states); the compare legend's
+    grey swatch (a sample of a model colour); and the tree's tri-state eye dot
+    (`eyeDot` in ui/src/panelstyle.js, half `--text-soft`, half `--line-strong`,
+    the outline's two states side by side). Chip-fill visibility is measured in
+    `ui/tests/chrome.test.js`.
 
-      * the 1px `<div>` dividers — two in the build page's toolbar and one in
-        each page's header — take `background: var(--line)`. That is a LINE,
-        drawn the only way a flex row can draw one;
-      * `.hmr_pin.is_resolved` takes `--line-strong` because it lies on the 3D
-        MODEL rather than on a surface of ours, and the two canvases pull
-        opposite ways: against the white one it is dE 20.01 to the chip fill's
-        9.12, against the dark one 6.06 to its 12.03. It takes the decisive
-        margin where a pale badge washes out and the smaller one where both are
-        far clear of the floor — a trade, and PIN_CSS states it as one;
-      * the compare legend's grey swatch takes `--line-strong` because it is a
-        sample of a colour the MODEL will be painted in, standing beside two
-        saturated ones;
-      * the tree's tri-state eye dot — `eyeDot` in ui/src/panelstyle.js — fills
-        HALF of a 5px circle with it, `linear-gradient(90deg, var(--text-soft)
-        50%, var(--line-strong) 50%)`, to say "some of this branch is hidden".
-        The two halves are the SAME two roles the eye's outline already uses for
-        "shown" and "hidden", so the dot is those two states drawn side by side;
-        a chip fill in the second half would say nothing, since a chip is not
-        what the outline is drawn in.
-
-    A FIFTH WAS THE RAIL'S COUNT PILL and it is gone, which is the honest end of
-    the same argument: it held `--line-strong` under white on the strength of a
-    light-theme measurement (1.68:1, illegible rather than "faint") that came
-    out at 9.89:1 in dark, making the resting pill clearer than the live one. It
-    is an ordinary chip now, `--text-soft` on `--chip-bg`, and what separates
-    its two states is the fill turning blue.
-
-    A rule with four exemptions is not a rule, it is a list — so the list is
-    here, in prose, where the next person can weigh a fifth case against it.
-    The protection that DOES generalise is in `ui/tests/chrome.test.js`, which
-    measures whether the chip fill can still be seen against every surface it
-    lies on, and whether the two pills that ARE chips can be read; that is the
-    property these four are trading against.
-
-    HOW A DECLARATION IS FOUND is `declarations` above, which says what it sees
-    and why the two obvious cheaper methods do not.
+    Declarations are found by `declarations` above.
     """
     role = re.compile(r"var\(\s*--accent-(?:line|ring)\s*\)")
     offenders = []
@@ -1294,9 +969,8 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
             if fill < 0:
                 continue
             found = [(offset + fill, piece[fill:])]
-            # A property left dangling at the end of its own piece takes its
-            # value from whatever is concatenated on, across lines and comments:
-            # `` `…;background:` `` + `(busy ? 'var(--x)' : 'var(--y)')`.
+            # A property dangling at the end of its piece takes its value from
+            # what is concatenated on: `` `…;background:` `` + `(busy ? … : …)`.
             if not re.search(r"var\(", found[0][1]):
                 found = [(at, text) for at, text in pieces[index + 1:]
                          if re.search(r"var\(", text)][:1]
@@ -1315,43 +989,27 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
 
 
 def test_every_localstorage_access_is_guarded():
-    """A private window THROWS on the property itself, not on the call.
-
-    So this cannot be checked by looking at the return value anywhere: an
-    unguarded read happens during render and takes the whole interface down over
-    a remembered preference.
-    """
+    """A private window throws on the property itself, not on the call, so an
+    unguarded read during render takes the interface down."""
     for path in INTERFACE_FILES + ADAPTER_FILES:
         lines = strip_comments(read(path)).splitlines()
         for number, line in enumerate(lines):
             if "localStorage" not in line:
                 continue
-            # The nearest `try {` above, within the block a guard can plausibly
-            # cover. Deliberately short: a `try` twenty lines up is not a guard
-            # anybody can see from the access.
+            # A `try {` within the few lines above, visible from the access.
             window = lines[max(0, number - 6):number]
             assert any("try {" in earlier for earlier in window), (
                 f"{path.name}:{number + 1} touches localStorage outside a try")
 
 
 def test_a_project_reaches_the_tab_strip_from_exactly_one_place():
-    """The arrival, and only the arrival, is what the strip records (issue #45).
+    """Exactly one `rememberTab(` call: the arrival is what the strip records.
 
-    `ui/tests/tabs.test.js` drives the real `load()` and holds the recording
-    itself — that the project lands on the strip under the name meta.json gives
-    it. What that cannot see is a SECOND caller, and there are two obvious
-    candidates a page later grows: the in-place revision switch and the poll's
-    refresh, both of which replace `meta` and would look like the same moment.
-
-    They are not the same moment. Recording there would refresh the stamp of a
-    reader who never left the page, and the stamp is the only input the eviction
-    has — so a project somebody sat on all afternoon would outlive the nine they
-    actually visited, and the tab that vanished would look like bad luck rather
-    than like a rule. Position would not move, which is what makes it quiet: the
-    strip goes on looking right while it forgets the wrong thing.
-
-    A count rather than a place, because the place is already held by the suite
-    above. What this refuses is a second one appearing without a decision.
+    `ui/tests/tabs.test.js` drives `load()` and holds the recording itself; it
+    cannot see a second caller. The revision switch and the poll refresh also
+    replace `meta`, but recording there would refresh the stamp of a reader who
+    never left, and the stamp is the eviction's only input, so the wrong tab
+    would be evicted silently.
     """
     calls = strip_comments(read(COMPONENT)).count("rememberTab(")
     assert calls == 1, (
@@ -1364,80 +1022,34 @@ def test_a_project_reaches_the_tab_strip_from_exactly_one_place():
 
 # -- the arrangement of the project list -------------------------------------
 #
-# ONE CHECK, and what is NOT here is the point. The four key sets that have to
-# agree — `PROJECT_SORTS` / `PROJECT_VIEWS` in store.js against `SORT_LABELS`,
-# `SORT_CMP`, `VIEW_ICONS` and `VIEW_BODIES` in HammerolaEntry.jsx — used to be
-# compared here, by matching braces and reading the words after commas. That
-# check passed on the very defect it was written for: `strip_comments()` above
-# removes whole-line comments only (deliberately, and its docstring says so), so
-# a TRAILING `// oldest project, parts come from metrics` put a comma at depth
-# zero and the parser took the next word for a key. It failed the other way too,
-# on a comma inside a perfectly ordinary label string.
-#
-# The tables are exported now and `ui/tests/vocabulary.test.js` compares
-# `Object.keys` against the two lists — the same invariant, at the same moment,
-# with the whole class of parsing mistakes simply absent. A set of keys is
-# something the language computes; guessing at it from the text was never the
-# cheaper answer, only the closer one.
-#
-# What stays here is the property that IS about the text: a set of names must
-# have one spelling, and a branch on a view id is a second spelling that no
-# comparison of exported values can see, because a branch is not a value.
+# The four key sets that must agree (`PROJECT_SORTS` / `PROJECT_VIEWS` in
+# store.js against `SORT_LABELS`, `SORT_CMP`, `VIEW_ICONS`, `VIEW_BODIES` in
+# HammerolaEntry.jsx) are compared by `ui/tests/vocabulary.test.js` via
+# `Object.keys`. What stays here is about the text: a branch on a view id is a
+# second spelling that no comparison of exported values can see.
 
 
 def test_the_project_list_chooses_its_body_from_that_table():
     """No view id is written down in the page except as the default it opens on.
 
-    `{grid && …}` / `{!grid && …}` is how two of the four sets used to be
-    written, and it drew the dense list for every id that was not `grid`, so an
-    unknown view LOOKED like a working answer. The same shape can come back at
-    any time, and nothing that compares exported tables would notice: the tables
-    would still be complete and still agree, while the render ignored them.
+    A branch on a view id (`{grid && …}` / `{!grid && …}`) bypasses the tables
+    while they still look complete and agree. The rule is about the literal, not
+    an operator, so it covers comparisons in either order, `switch`/`case`,
+    aliases, and anything else.
 
-    THE RULE IS ABOUT THE LITERAL, NOT ABOUT AN OPERATOR, and that is the third
-    version of it. Forbidding `this.view === 'grid'` meant enumerating ways to
-    write a comparison, and the enumeration was never finished: the first version
-    missed `'grid' === this.view`, and the second still let through both
-
-        switch (this.view) { case 'grid': … }
-        const v = this.view; const body = v === 'grid' ? … : …
-
-    each of which reproduces exactly the property this test is about. A view id
-    is a name the tables are keyed by; the page has no business writing one down
-    at all, except to say which one it opens on. That single rule covers the
-    switch, the alias, the Yoda spelling and every operator nobody has thought
-    of yet.
-
-    COMMENTS ARE NOT STRIPPED, deliberately, and this is where the operator
-    version was actively harmful: it failed on a trailing comment quoting the
-    spelling it forbade, i.e. on somebody documenting it. Under this rule a
-    literal in a comment IS the violation — say `the grid view` and not
-    `'grid'`, the same way the rest of this file's prose does.
-
-    ALL THREE QUOTE CHARACTERS, backtick included. A template literal with no
-    substitution in it is an ordinary string, and `this.view === \\`grid\\`` is the
-    same branch; leaving the backtick out would have repeated one floor down
-    exactly the mistake this rule was written to end — an incomplete enumeration,
-    of quotes instead of operators.
-
-    THE ALLOWED REGION IS THE DECLARATION, NOT THE LINE. Anchoring on "the line
-    also contains defaultProps" meant a purely cosmetic wrap of that declaration
-    — a fourth prop, a formatter — failed this test with a message about
-    branching, which is the same species of harm the operator version did when it
-    failed on a comment. The span of each `static defaultProps = { … };` is
-    computed instead, so the declaration may be written over as many lines as it
-    likes.
+    Comments are not stripped: a quoted id in a comment is a violation too; prose
+    says "the grid view". All three quote characters count, backtick included.
+    The allowed region is each `static defaultProps = { … };` declaration span,
+    so it may wrap over several lines.
     """
     page = read(UI / "HammerolaEntry.jsx")
     views = {item.strip("'\"") for item in js_array(strip_comments(read(UI / "store.js")),
                                                     "PROJECT_VIEWS")}
     assert views, "store.js no longer declares PROJECT_VIEWS"
 
-    # Every defaultProps in the file, not only this component's: a view id inside
-    # any of them is a default being declared, which is the one thing allowed.
-    # A nested object would end the span early at its inner `};` — and that fails
-    # loudly here rather than passing something through, which is the right way
-    # round for a bound this rough.
+    # Every defaultProps in the file: a view id inside one is a declared default.
+    # A nested object would end the span early at its inner `};`, which fails
+    # loudly rather than passing.
     allowed = [match.span() for match
                in re.finditer(r"static\s+defaultProps\s*=\s*\{.*?\}\s*;", page, flags=re.S)]
     assert allowed, "HammerolaEntry.jsx declares no defaultProps at all"
@@ -1457,8 +1069,7 @@ def test_the_project_list_chooses_its_body_from_that_table():
                 "defaultProps — anywhere else is a branch, an alias or a switch "
                 "that the tables cannot see, which is how an unknown view came to "
                 "look like a working answer")
-    # Otherwise a file that stopped naming any view would pass by having nothing
-    # to find, which is this file's own oldest failure mode.
+    # Otherwise a file that stopped naming any view would pass.
     assert seen, ("HammerolaEntry.jsx names no view at all — defaultProps has to say "
                   "which one the page opens on")
 
@@ -1466,30 +1077,16 @@ def test_the_project_list_chooses_its_body_from_that_table():
 def test_the_document_module_reaches_no_module_that_reaches_the_viewer():
     """`ui/src/proposal.js` stays loadable with no browser anywhere near it.
 
-    That promise is the first paragraph of the module's own header, and it is
-    what lets a proposal be built, edited, projected and compared as plain data.
-    It held for free while the module imported nothing at all; it stopped being
-    free when `turnNodes` had to COMPOSE a turn rather than add to it, which
-    needs `quaternionOf`/`anglesOf`.
-
-    THE PAIR IS TAKEN FROM `viewport/math.js` AND NOT FROM `viewport/parts.js`,
-    which re-exports it. That is the whole of the check, and it is not a
-    preference: `math.js` imports nothing, while `parts.js` imports
-    `internals.js`, which reads `location` at module scope — so the version of
-    this import that reaches `parts.js` does not merely look untidy, it makes
-    `proposal.js` throw `location is not defined` the moment anything loads it
-    outside a browser. Measured, not assumed.
-
-    WHAT IS CHECKED IS THE WHOLE OF `viewport/`, one module deep, rather than
-    the one name that broke. The next helper this module needs will be reached
-    for the same way, and a rule that named only `parts.js` would wave it
-    through.
+    Its header promises that a proposal can be built, edited, projected and
+    compared as plain data. `quaternionOf`/`anglesOf` come from
+    `viewport/math.js`, not `viewport/parts.js` which re-exports them: `parts.js`
+    imports `internals.js`, which reads `location` at module scope, so
+    `proposal.js` would throw outside a browser. The whole of `viewport/` is
+    checked, one module deep.
     """
     source = strip_comments(read(UI / "proposal.js"))
     reached = set(re.findall(r"""from\s+['"]\./viewport/([\w.-]+)['"]""", source))
-    # `math.js` is the one module of the viewport that imports nothing at all,
-    # which is exactly what makes it safe to reach from here. Anything else is
-    # a module with a module graph behind it.
+    # `math.js` imports nothing, which is what makes it safe to reach.
     stray = sorted(reached - {"math.js"})
     assert not stray, (
         f"ui/src/proposal.js imports {stray} out of the viewport. Only "
@@ -1497,9 +1094,8 @@ def test_the_document_module_reaches_no_module_that_reaches_the_viewer():
         "directory leads to `internals.js` and the viewer, and this module "
         "promises in its own header that a document can be handled with no "
         "browser near it")
-    # THROUGH `strip_comments` LIKE THE READ ABOVE IT. This file writes long
-    # comment blocks, and a line inside one that happens to begin with the word
-    # `import` would fail this on nothing at all.
+    # Through `strip_comments`: a comment line starting with "import" must not
+    # count.
     assert not re.search(r"""^\s*import\s""",
                          strip_comments(read(UI / "viewport" / "math.js")),
                          flags=re.M), (

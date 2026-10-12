@@ -1,46 +1,28 @@
 """The invariants of `ui/src/viewport/` that no browser is needed to check.
 
-The viewport is the half of the new interface that drives three-cad-viewer: a
-custom element, `<hmr-viewport>`, wrapped around the library with the library's
-own UI switched off. Almost everything it does can only be judged with a GPU and
-a pointer in a real browser, and that part is not what this file is for.
+The viewport drives three-cad-viewer: a custom element, `<hmr-viewport>`,
+wrapped around the library with the library's own UI switched off. Most of its
+behaviour needs a GPU and a pointer; what is checked here are the agreements
+that are invisible at runtime until they are expensive:
 
-What is left over is a short list of agreements that are invisible at runtime
-until they are expensive, and each check below is one of them:
-
-  * THE LIBRARY IS NOT IN THE BUNDLE. It is vendored (3.5 MB, committed, served
-    by the hub already) and reached through a runtime `import()` of a URL. A
-    static import instead would still work perfectly — the page would load, the
-    model would render — while quietly tripling the size of a bundle whose whole
-    build contract is "one output file, copied by name in three other places".
+  * THE LIBRARY IS NOT IN THE BUNDLE. It is vendored (3.5 MB, served by the hub)
+    and reached through a runtime `import()` of a URL. A static import would
+    still work while tripling a bundle whose contract is "one output file,
+    copied by name in three other places".
   * THE URL IS ONE THE HUB WILL SERVE. `_serve_asset()` answers
-    `/_v/<one path component>` and `_safe_name()` rejects a slash, so a deeper
-    path is a 404 nobody sees until the viewport is opened.
-  * THE NAMES ON THE WIRE COME FROM ONE FILE. A misspelled event name is not an
-    error, it is silence: nothing dispatches it and nothing says so.
-    `ui/src/viewport/events.js` is the one place any of them is written, and the
-    React side imports its constants under aliases — this file checks the half
-    only this side can see, that the ADAPTER never spells a name outside that
-    module either.
-  * THE MEASURED CONSTANTS STILL CARRY THE VALUES THEY WERE MEASURED AT.
-    Half a dozen of the viewport's numbers are measurements rather than
-    preferences — the pinch rate off a CDP-driven gesture, the ring radii against
-    a half-resolution pick buffer, the depth bias that stops a stencil cap
-    z-fighting. Each is checked against a LITERAL written out below, together
-    with how it was arrived at.
+    `/_v/<one path component>` and `_safe_name()` rejects a slash.
+  * THE NAMES ON THE WIRE COME FROM ONE FILE. A misspelt event name is silence.
+    `ui/src/viewport/events.js` is the one place any is written; the React side
+    imports its constants, and this file checks the adapter never spells one
+    elsewhere.
+  * THE MEASURED CONSTANTS KEEP THEIR MEASURED VALUES (the pinch rate, ring
+    radii against a half-resolution pick buffer, the stencil-cap depth bias).
+    Each is checked against a literal below, with how it was measured. A
+    measured constant has no importable source, so the literal plus its
+    derivation is the point: "do not round this; here is how to re-measure".
 
-    A test that repeats a literal is normally a test agreeing with itself, and
-    this is the case where it is not. The event names above have a live shared
-    source — a module that can be imported — so an import beats a copy there.
-    A measured physical constant has no such source: the number came out of a
-    browser, and the file it was first written in has been deleted along with the
-    viewer it drove. The job of the check is not "these two places agree", it is
-    "this number is a measurement, do not round it on the way past; here is how
-    to take it again". For that the literal is unavoidable and the derivation in
-    the docstring is the load-bearing half.
-
-Nothing here runs JavaScript: the checks read the sources as text, the same way
-tests/test_ui_bundle.py already does.
+Nothing here runs JavaScript: the checks read the sources as text, as
+tests/test_ui_bundle.py does.
 """
 
 import re
@@ -54,11 +36,9 @@ ADAPTER = ROOT / "ui" / "src" / "viewport"
 # The directory the hub serves at `/_v/`.
 ASSETS = ROOT / "static" / "_v"
 
-# A line whose content begins a comment. Used instead of a real comment stripper
-# because every check that needs one is a search for a short literal, and the
-# question "is this occurrence prose?" is answered line by line — while a stripper
-# would have to survive the regex literals in this tree (`replace(/\/(faces|...)/`)
-# to answer a question nothing here asks.
+# A line whose content begins a comment. Used instead of a comment stripper:
+# every check is a line-level search for a short literal, and a stripper would
+# have to survive the regex literals in this tree (`replace(/\/(faces|...)/`).
 PROSE = re.compile(r"^\s*(//|\*|/\*)")
 
 
@@ -101,16 +81,12 @@ def library_url(modules):
 def test_the_library_is_never_a_static_import(modules):
     """A static import would inline 3.5 MB into a bundle copied by name.
 
-    The failure is entirely silent: the page works, the model renders, and the
-    only trace is a `hammerola.js` twenty-five times its previous size — next to
-    a `three-cad-viewer.esm.js` the browser fetches anyway, from the URL the hub
-    already serves it at.
+    Silent: the page works and `hammerola.js` grows twenty-five-fold beside the
+    `three-cad-viewer.esm.js` the browser fetches anyway.
 
-    Both spellings are refused. `from "three-cad-viewer"` is the npm package,
-    which is not a dependency here and would resolve to nothing (or, worse, to a
-    version that is not the vendored one); `from "/_v/..."` is the vendored file
-    reached at build time, which vite resolves against the project root rather
-    than the hub's URL space.
+    Both spellings are refused: `from "three-cad-viewer"` (the npm package, not
+    a dependency here) and `from "/_v/..."` (resolved by vite against the
+    project root, not the hub's URL space).
     """
     static_imports = []
     for name, text in modules.items():
@@ -131,10 +107,9 @@ def test_the_library_is_never_a_static_import(modules):
 def test_the_package_json_has_not_grown_a_copy_of_three():
     """`three` as a dependency is the same 3.5 MB by another route.
 
-    It is also worse than a duplicate: three-cad-viewer bundles its own three.js,
-    and two copies of three in one page do not interoperate — an instance of one
-    `Vector3` fails every `instanceof` in the other, so the symptoms are wrong
-    answers rather than a missing module.
+    Worse than a duplicate: three-cad-viewer bundles its own three.js, and two
+    copies do not interoperate (`instanceof Vector3` fails across them), so the
+    symptoms are wrong answers.
     """
     package = (ROOT / "ui" / "package.json").read_text(encoding="utf-8")
     for name in ("\"three\"", "\"three-cad-viewer\""):
@@ -148,15 +123,10 @@ def test_the_package_json_has_not_grown_a_copy_of_three():
 def test_the_dynamic_import_is_the_only_one_in_the_tree(modules):
     """A second `import()` means a second output file, and nothing copies it.
 
-    `ui/vite.config.mjs` states the build's contract in its first paragraph: one
-    file, `hammerola.js`. A dynamic import that vite CAN analyse is split into a
-    chunk, and that chunk has to be named in the Makefile's `UI_FILES`, in a
-    `COPY --from=ui` line and in `REQUIRED_PATHS` — miss any of them and the
-    chunk never reaches the image while the gate goes on reporting green.
-
-    The library's own import escapes that because vite cannot analyse it: the
-    specifier is a constant and `@vite-ignore` says to leave it alone. Which is
-    exactly why a new one, written the ordinary way, must be noticed here.
+    `ui/vite.config.mjs` promises one file, `hammerola.js`. An analysable dynamic
+    import becomes a chunk that the Makefile's `UI_FILES`, a `COPY --from=ui`
+    line and `REQUIRED_PATHS` would all have to name. The library's import
+    escapes that because its specifier is a constant marked `@vite-ignore`.
     """
     dynamic = [(name, line.strip()) for name, text in modules.items()
                for line in code_lines(text) if re.search(r"\bimport\s*\(", line)]
@@ -211,14 +181,9 @@ def test_the_url_names_a_file_the_hub_really_serves(library_url):
 def test_every_name_on_the_wire_is_declared_in_events_js(modules):
     """No `hmr:` literal anywhere in the adapter except its contract module.
 
-    That module is now the ONE place any of these names is written: the React
-    side imports its constants under aliases rather than keeping a copy. Which
-    makes this check the one that keeps the arrangement honest -- a name
-    dispatched from a literal in tools.js would be a second source again,
-    reachable from nothing that imports it.
-
-    Comments are exempt -- the modules explain their own events at length -- so
-    the match is on lines that are not prose.
+    The React side imports that module's constants, so a literal here would be a
+    second source nothing checks. Comments are exempt; the match is on non-prose
+    lines.
     """
     stray = [(name, line.strip()) for name, text in modules.items()
              if name != "events.js"
@@ -235,19 +200,12 @@ def test_every_name_on_the_wire_is_declared_in_events_js(modules):
 def dispatched(body):
     """Every `EVENT_` constant the adapter really hands to `emit`.
 
-    THE SECOND ARGUMENT OF EVERY `emit(` IS WHAT A DISPATCH IS, and most of them
-    name their constant outright. The manipulator's four do not: a slide and a
-    turn are one gesture cycle written once (`reportGesture` in gesture.js), so
-    the constants are handed to it in an options object and what it emits is the
-    PARAMETER. So an argument that is not a constant is resolved through the key
-    it names -- `emit(vp, modelEvent, ...)` dispatches whatever any `modelEvent:`
-    in the adapter is bound to.
-
-    ONE HOP AND NO MORE, which is a floor under the indirection rather than an
-    accident of the regex: a dispatcher that took its name from anything but a
-    named key of its own argument drops out of this set, and the check above
-    fails. That is the honest failure -- the tie between a declared name and the
-    line that sends it is exactly what this file exists to keep readable.
+    The second argument of every `emit(` is the dispatch. The manipulator's four
+    names go through a shared gesture cycle (`reportGesture` in gesture.js) that
+    emits a parameter, so a non-constant argument is resolved through the key it
+    names: `emit(vp, modelEvent, ...)` dispatches whatever any `modelEvent:` is
+    bound to. One hop only: deeper indirection drops out of the set and the
+    check fails, keeping the tie between a name and its sender readable.
     """
     sent = set()
     for arg in re.findall(r"\bemit\(\s*[^,]+,\s*([\w$.]+)", body):
@@ -262,16 +220,9 @@ def dispatched(body):
 def test_every_declared_up_event_is_actually_dispatched(modules):
     """A contract that names an event nobody sends is a contract that lies.
 
-    The React side listens for all of them, so a name declared and never
-    dispatched is a handler that is simply never called -- the exact silence this
-    whole arrangement is built to avoid, and the reason the list is checked
-    against the call sites rather than against itself.
-
-    WHAT COUNTS AS A CALL SITE is `dispatched` above, and it is the whole of what
-    this check had to grow when the four names of the move tool stopped being
-    written at an `emit(` of their own. Deleting either `emit` inside the shared
-    dispatcher turns this red, exactly as deleting a literal one does: the names
-    bound to that key are then sent by nothing.
+    The React side listens for all of them, so an undispatched name is a handler
+    never called. Call sites are resolved by `dispatched` above, so deleting an
+    `emit` inside the shared dispatcher fails this too.
     """
     events = modules["events.js"]
     listed = re.search(r"(?s)export const EVENTS_UP = \[(.*?)\];", events)
@@ -296,17 +247,13 @@ def test_every_declared_up_event_is_actually_dispatched(modules):
 def test_the_element_is_defined_once_under_the_tag_the_interface_uses(modules):
     """`customElements.define` THROWS on a duplicate name.
 
-    Which is not a corner case here: vite's dev server re-executes a module on
-    every hot update, so an unguarded define takes the page down with a
-    NotSupportedError the first time somebody saves a file.
+    vite's dev server re-executes a module on every hot update, so an unguarded
+    define throws NotSupportedError on the first save.
 
-    THE TAG IS DECLARED IN `events.js` AND USED IN `index.js`, which is the split
-    this check also pins. `index.js` is the module whose evaluation registers the
-    element, so anything that reads a name out of it registers the element as a
-    side effect of asking a question -- the React side wants the tag and nothing
-    else. `events.js` runs nothing on import and is already where the other half
-    of the contract with the interface is written, so the name lives there and
-    the registering module imports it like everybody else.
+    The tag is declared in `events.js`, which runs nothing on import, and used in
+    `index.js`, whose evaluation registers the element; reading the name from
+    `index.js` would register the element as a side effect.
+    `index.js` imports it from there.
     """
     events = modules["events.js"]
     index = modules["index.js"]
@@ -335,9 +282,7 @@ def test_the_element_is_defined_once_under_the_tag_the_interface_uses(modules):
 # module has to spell it. Compared as TEXT, which is what keeps `0.15` from being
 # accepted back as `0.150000001`.
 #
-# HOW EACH ONE WAS ARRIVED AT — this block is the derivation, and it is here
-# rather than in a commit message because a number whose reason cannot be found
-# is a number the next reader rounds:
+# How each one was arrived at — kept here so the next reader does not round it:
 #
 #   PINCH_DELTA_PER_E_FOLD = 100
 #     Pixels of `deltaY` the browser emits per e-fold of PINCH SCALE. macOS hands
@@ -398,11 +343,8 @@ def test_the_element_is_defined_once_under_the_tag_the_interface_uses(modules):
 #     pointer.
 #
 #   INPUT_KEY = "hammerola.pointing_device"
-#     Where the one pointing-device answer is remembered. Same `hammerola.`
-#     namespace as the rest of the site's keys. It is NOT `swipe_pan`, the name
-#     it had first: that described one consequence of the answer rather than the
-#     answer, and a key that has to be translated in the reader's head is a key
-#     that gets misread.
+#     Where the one pointing-device answer is remembered, in the site's
+#     `hammerola.` key namespace.
 GOLDEN = {
     "CLICK_PX": "4",
     "PROBE_PX": "[7, 14, 26]",
@@ -420,20 +362,16 @@ def value_of(source, pattern):
     match = re.search(pattern, source)
     assert match, f"no declaration matching {pattern!r}"
     # Everything up to the end of the line, minus a trailing comment and the
-    # semicolon: these are numbers, short arrays and one string, and comparing
-    # them as TEXT is what keeps `0.15` from being accepted as `0.150000001`.
+    # semicolon, compared as text.
     return re.sub(r"\s*(//.*)?$", "", match.group(1)).rstrip(";").strip()
 
 
 def test_the_measured_constants_keep_the_values_they_were_measured_at():
     """Nobody may quietly retune a measurement.
 
-    Every number in GOLDEN above came out of a browser or out of the library's
-    own source, and the block above it is where each one's derivation now lives.
-    A tidier-looking value is not a refactor here: it is a different measurement,
-    and the way it fails is a viewport that behaves subtly wrong -- a plane that
-    z-fights, a pick ring that reads noise, a pinch that needs twenty gestures --
-    with nothing anywhere reporting a change.
+    Every value in GOLDEN came from a browser or the library's source (derivation
+    above). A tidier value is a different measurement, and fails silently: a
+    plane that z-fights, a pick ring that reads noise, a slow pinch.
     """
     options = (ADAPTER / "options.js").read_text(encoding="utf-8")
 
@@ -460,10 +398,9 @@ def test_the_hold_key_is_the_key_the_library_leaves_free():
     D P I h space Escape T C M Z S, plus a/v/e/f/s while the topo-filter dropdown
     is open and Backspace with the select tool.
 
-    `x`, for "cross-section", was the first choice and was silently eaten after
-    every click on the part until that table was found. `c` is free, `C` (shift)
-    is the library's own Clip tab -- which this tool drives anyway -- and it is
-    under the left hand while the right is on the mouse.
+    `x` collides with the table and would be eaten after every click on the
+    part. `c` is free (`C` is the library's own Clip tab, which this tool drives
+    anyway) and sits under the left hand while the right is on the mouse.
 
     Matched on `code` and not on `key`: `code` is the physical key, so the
     shortcut survives a Cyrillic layout, where that key produces "с". `key` is

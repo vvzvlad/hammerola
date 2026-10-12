@@ -21,9 +21,7 @@ import threading
 # workflow `env:` block: those carry the container names, NODE_IMAGE and the smoke gate's
 # SMOKE_* variables, none of which the suite reads.
 #
-# ONE line, because there is one secret for the whole system (issue #26). There were two
-# here — the comment queue used to have a credential of its own for reading, while writing to
-# it took none at all.
+# One line, because there is one secret for the whole system.
 os.environ.setdefault("EDIT_TOKEN", "test-token")
 
 import pytest  # noqa: E402  (must come after the env assignment above)
@@ -83,12 +81,12 @@ def guard_build_workers():
 #
 # Snapshotted at import — before pytest has run a single test — and compared against rather
 # than against "unlimited", because a process inherits whatever started it and what it
-# inherits is FINITE: measured on this workstation (darwin, 2026-08-26) the shell hands down
+# inherits is FINITE: measured on a darwin workstation the shell hands down
 # RLIMIT_NPROC=(5333, 8000) and RLIMIT_CORE=(0, unlimited), and the CI container starts from
 # the docker daemon's own defaults instead, which are a different set again. The question this
 # guard asks is "did a TEST change one", not "are they infinite".
 #
-# Early ON PURPOSE, and not to be moved down into the fixture: taken at the first test
+# Early on purpose: taken at the first test
 # instead, it would compare against limits that an IMPORTED test module had already changed
 # and report nothing. That case is precisely the one worth catching, so the before-branch
 # below has to blame "a test, or something imported during collection" rather than a test.
@@ -166,13 +164,10 @@ def rlimit_guard_snapshot():
 # plants one lives, precisely because the victim is somewhere else: a guard that only ran for
 # that file would watch the culprit and not the damage.
 #
-# DERIVED FROM THE MODULE, not written out here, for the reason `process_limits.WATCHED_RLIMITS`
-# is derived from the table `apply_process_limits` walks: a list kept by hand covers what
-# somebody remembered on the day, and the fifth cache added over there would be guarded by
-# nothing while this block went on looking complete. The names below are a FLOOR, not the list —
-# they are what makes the DERIVATION itself fail loudly the day it stops finding things (a
-# rename, an `@lru_cache` dropped), which is the failure a derived list has and a written one
-# does not. A cache ADDED there needs no edit here and is watched from its first commit.
+# Derived from the module, not written out here, like `process_limits.WATCHED_RLIMITS`: a
+# cache added there is watched with no edit here. The names below are a FLOOR, not the list —
+# they make the derivation itself fail loudly the day it stops finding things (a rename, an
+# `@lru_cache` dropped).
 _ONBOARDING_CACHES_AT_LEAST = frozenset(
     {"skill_bytes", "client_bytes", "template_bytes", "_import_verdict"})
 
@@ -278,14 +273,14 @@ def onboarding_cache_sandbox():
 # worker cannot finish sooner than the `Queue.get(timeout=WORKER_POLL_SECONDS)`
 # it is sitting in. At the production value that is 50 ms of pure waiting per
 # hub, measured as ~44 ms of the ~57 ms a stop takes — and `hub` alone is asked
-# for by over five hundred tests (issue #99).
+# for by over five hundred tests.
 #
 # The constant is PRODUCTION TUNING and nothing reads it as a fact: it decides
 # how often an idle worker wakes to notice it is being shut down, and no test
 # asserts anything about that number or about how long a stop takes. So the
 # suite is free to ask its workers to wake more often, which is all this does.
-# `src/jobs.py` keeps the real value — do not change it there to make the suite
-# faster; the hub's idle cost is a deployment's, not a test's.
+# `src/jobs.py` keeps the real value; the hub's idle cost is a deployment's, not
+# a test's.
 TEST_WORKER_POLL_SECONDS = 0.002
 
 
@@ -326,35 +321,21 @@ def hub_factory(tmp_path, monkeypatch):
 
 
 # --- Global-state guard: a pattern to copy, not code that runs ------------------------------
-# Commented out ON PURPOSE, and the reason is that nothing in this skeleton needs it YET — not
-# that there is nothing here it could be pointed at. There is, and the example below is written
-# against it rather than against an invented module, so it can be uncommented as it stands:
+# Commented out because nothing here needs it yet. The example below is written against a real
+# module, so it can be uncommented as it stands:
 # `src/settings.py` ends with `settings = load_settings_or_exit(Settings)`, which is a
 # module-level singleton by definition, and a pydantic v2 model is mutable unless its
 # model_config says `frozen=True` — this one does not. So `settings.log_level = "DEBUG"` inside
 # a test is a perfectly ordinary-looking line that outlives that test and is seen by every test
 # after it, in whatever order pytest happened to collect them.
 #
-# What is true today is narrower and worth stating exactly: the template's own two test files
-# never touch that object. test_settings.py imports the Settings CLASS and builds fresh
-# instances with `_env_file=None`; test_config_errors.py declares throwaway BaseSettings models
-# of its own. Importing `src.settings` constructs the singleton and nothing then reads or
-# writes it, so there is nothing to guard and an autouse fixture here would only cost every
-# test in every copied project a pointless assertion. The moment a test in YOUR project assigns
-# to a field of `settings` — or the project grows any other module-level state, a singleton
-# client, a cache or registry, a connection pool, a monkeypatched attribute — uncomment this
-# and widen it. Adapt this fixture rather than inventing a variant, so that every project in
-# the fleet fails this class of bug the same way and the message is one somebody has read
-# before.
+# No test assigns to a field of `settings` (test_settings.py builds fresh instances with
+# `_env_file=None`), so there is nothing to guard. The moment a test does — or the suite grows
+# any other module-level state — uncomment this and widen it, rather than inventing a variant.
 #
-# Why an assertion in a fixture rather than careful cleanup in the test that mutates: a test
-# that dirties shared state and does not restore it PASSES. It has done its own job; the
-# damage is invisible to it. The failure surfaces later, in some unrelated test that assumed a
-# clean start — usually in a different file, frequently only under a particular collection
-# order, and reliably never under `pytest path/to/that_one_test.py`, which is the first thing
-# anybody tries. So the investigation starts from the victim and works backwards through
-# everything that ran before it. The pre- and post-conditions below put the blame back on the
-# test that actually did it, at the moment it does it.
+# An assertion in a fixture rather than careful cleanup: a test that dirties shared state and
+# does not restore it PASSES, and the failure surfaces later in some unrelated test. The pre-
+# and post-conditions below put the blame on the test that actually did it.
 #
 # import pytest
 #

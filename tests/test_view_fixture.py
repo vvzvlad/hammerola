@@ -1,21 +1,14 @@
 """The committed JS fixture, and whether the exporter still produces it.
 
 `ui/tests/fixtures/assembled.json` is read by the vitest suite as the payload a
-real build hands the browser. It is COMMITTED, because the JS suite runs in a
-node container in CI where there is no Python and no CAD kernel — the generator's
-docstring has that argument in full.
+real build hands the browser. It is committed because the JS suite runs in a
+node container without Python or the CAD kernel (see the generator's docstring).
 
-A committed artefact drifts, and this file is the mechanism that stops it
-drifting in silence. `ui/tests/fixtures/make_fixture.py` is re-run here against
-the same pipeline a push goes through, and the STRUCTURE of what comes out is
-compared with the structure of what is committed: the tree, the field names, the
-types. Not the floats — those are the tessellator's business and a comparison of
-them would fail on an unrelated kernel bump while saying nothing about the format
-the adapter reads.
-
-So the day `ocp_tessellate` renames a field or `views.py` stops emitting one, this
-goes red — instead of the JS suite staying green against a document no build
-produces any more.
+`ui/tests/fixtures/make_fixture.py` is re-run here through the push pipeline,
+and the STRUCTURE of the output (tree, field names, types) is compared with the
+committed one. Not the floats: those are the tessellator's and would fail on an
+unrelated kernel bump. A renamed or dropped field fails here instead of the JS
+suite staying green against a document no build produces.
 """
 
 from __future__ import annotations
@@ -32,9 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "ui" / "tests" / "fixtures" / "assembled.json"
 GENERATOR = ROOT / "ui" / "tests" / "fixtures" / "make_fixture.py"
 
-# A ceiling on what the repository carries, not a measurement of today's file
-# (152 KB, 17 KB compressed). It is here so a model that grew a chamfer and
-# quadrupled the mesh has to be a deliberate commit rather than a quiet one.
+# A ceiling on what the repository carries, not a measurement of today's file:
+# a much larger mesh has to be a deliberate commit.
 MAX_FIXTURE_BYTES = 320 * 1024
 
 
@@ -49,31 +41,19 @@ def load_generator():
 def outline(node: dict) -> dict:
     """A view node with every NUMBER thrown away and every NAME kept.
 
-    What survives is exactly what the browser half reads and what a format change
-    would move: the field names at each level, the tree, the part names, the
-    catalogue keys, the colours, and — for a leaf — the names of the mesh
-    buffers and how long each one is relative to the others.
+    What survives is what the browser reads and a format change would move: the
+    field names at each level, the tree, part names, catalogue keys, colours,
+    and for a leaf the mesh buffer names and whether each is empty.
 
-    THE KEY IS A VALUE HERE AND NOT MERELY A FIELD NAME, which is what `fields`
-    alone left out. `shaped_document` stamps each leaf's key on BY POSITION
-    (`zip(flat, nodes)`) and says in its own words what a mismatch would mean:
-    "silently, and permanently, into an immutable build".
+    The key is kept as a value: `shaped_document` stamps each leaf's key by
+    position (`zip(flat, nodes)`), and a mistake there would be baked into an
+    immutable build. A reordered `parts` from `ocp_tessellate` is caught by
+    `name` and `id` (`export_views` passes `names=[node["key"] ...]`); the key
+    catches a change to where the key is stamped from. The names stay necessary:
+    a view holding one part twice has equal keys (`pin`, `pin(2)`, both keyed
+    `pin`).
 
-    BE PRECISE ABOUT WHICH FAILURE THIS ROW ADDS, because the obvious answer is
-    wrong and believing it would cost the row that does the work. An
-    `ocp_tessellate` handing `parts` back in a different order is caught by
-    `name` and `id`, and always was: `export_views` passes `names=[node["key"]
-    ...]`, so a name travels with its mesh and a reorder desynchronises the two
-    within a leaf. What the key adds is the failure the names cannot see — a
-    change to where `shaped_document` stamps the key FROM, so that keys stop
-    tracking the list the names came out of. Do not read this row as making
-    `name` and `id` redundant: on a view holding one part twice the keys are
-    equal by design (`pin`, `pin(2)`, both keyed `pin`), and there the names
-    are the only witness left.
-
-    `.get` rather than `[...]`: a group node carries no key (the build writes
-    none, `treeFromShapes` refuses one that was written by hand), and this walk
-    descends through groups too.
+    `.get` because group nodes carry no key, and the walk descends through them.
     """
     row = {
         "fields": sorted(node),
@@ -90,10 +70,8 @@ def outline(node: dict) -> dict:
         row["parts"] = [outline(part) for part in node["parts"]]
         return row
     shape = node["shape"]
-    # The LENGTHS, not the values: a buffer that changed length is a different
-    # mesh and none of this file's business, but a buffer that vanished or was
-    # renamed is exactly what it is here to catch. Kept as a set of names plus
-    # emptiness, so a finer tessellation does not fail this test.
+    # Names plus emptiness, not lengths or values: a vanished or renamed buffer
+    # fails, a finer tessellation does not.
     row["shape"] = {key: (type(value).__name__, bool(value))
                     for key, value in sorted(shape.items())}
     return row
@@ -115,23 +93,14 @@ def test_fixture_is_committed_and_stays_small(committed):
 def _keys_in(node) -> dict:
     """A catalogue declaring exactly the keys this view file names, and no more.
 
-    `check_view_file` cross-checks every leaf `key` against the catalogue of the
-    build it belongs to (issue #75), and a view file does not carry that
-    catalogue — referential integrity is a property of the PAIR, which is why the
-    argument exists at all. So the one built here says nothing about the project:
-    it is derived from the file, which leaves every other rule in the walk doing
-    its job (a key still has to be a legal part name) and takes only the one
-    check this file cannot answer on its own out of play.
+    `check_view_file` cross-checks every leaf `key` against the build's
+    catalogue, which a view file does not carry. Deriving it from the file takes
+    only that cross-check out of play; every other rule (a key must be a legal
+    part name) still applies. A walk, so it follows whatever the generator
+    writes.
 
-    Written as a walk rather than as a fixed map on purpose: it has to keep
-    answering for whatever the generator writes, and the generator's model is
-    free to change under it.
-
-    EVERY RECORD IS `printable`, which is a shortcut and worth naming as one:
-    the kinds are the generator's to declare (three printables and one piece of
-    hardware today), and nothing this map is handed to reads a kind —
-    `check_view_file` asks membership and nothing else. A caller that publishes
-    rather than validates needs more than this (see `exported_tree`).
+    Every record is `printable`: `check_view_file` reads membership only, not
+    kinds. A caller that publishes needs more (see `exported_tree`).
     """
     found = {}
     key = node.get("key")
@@ -145,15 +114,8 @@ def _keys_in(node) -> dict:
 def test_fixture_would_survive_the_hub_s_own_gate(committed, tmp_path):
     """It has to be a payload the hub would ACCEPT, not merely one it can parse.
 
-    `check_view_file` is what every pushed view goes through, and it is the only
-    thing standing between a push and the DOM. A fixture that could not get past
-    it would be testing the browser half against a document the hub would have
-    refused.
-
-    THE COMMITTED DOCUMENT GOES IN UNCHANGED, which it did not use to: the
-    generator predated the catalogue key, a leaf with no `key` is a 422, and a
-    helper here filled one in from each leaf's name so the walk was refusing
-    nothing but the fixture's age. Regenerating the fixture is what retired it.
+    `check_view_file` is what every pushed view goes through before the DOM. The
+    committed document goes in unchanged.
     """
     declared = _keys_in(committed)
     assert declared, (
@@ -166,26 +128,19 @@ def test_fixture_would_survive_the_hub_s_own_gate(committed, tmp_path):
 
     shown = check_view_file(path, "assembled", declared)
 
-    # The RETURN VALUE, which is the half `meta.json` is then held against
-    # (`_match_selection`): every leaf the walk reached, named. Read off the
-    # `key` field of each committed leaf rather than off its `name`, which is
-    # the comparison that became possible when the fixture started carrying
-    # keys — the two strings are equal on this document (the tessellator names a
-    # leaf by its key and only disambiguates repeats, and there are none here),
-    # so naming the field under test is what keeps this a witness for the walk
-    # rather than for the equality. What it witnesses: the walk has to REACH
-    # every leaf and report one key per leaf, instead of stopping at the root or
-    # folding them together.
+    # The return value, which `meta.json` is then held against
+    # (`_match_selection`): the walk must reach every leaf and report one key per
+    # leaf. Read off each leaf's `key` field, not `name` (equal on this fixture),
+    # so the field under test is the one compared.
     assert shown == {part["key"] for part in committed["parts"]}
 
 
 def test_fixture_is_a_tree_with_siblings_and_a_mesh_on_every_leaf(committed):
     """The four properties the JS suite leans on, asserted where they are cheap.
 
-    The vitest suite checks these too, from the other side; they are here as well
-    because a fixture that lost one of them would make several JS tests pass
-    vacuously — a prefix rule cannot be wrong with one leaf, and a colour cannot
-    fail to travel when every part is the same colour.
+    Without them several JS tests would pass vacuously: a prefix rule cannot be
+    wrong with one leaf, and a colour cannot fail to travel when every part has
+    the same colour.
     """
     parts = committed["parts"]
     assert len(parts) >= 3, "the part tree needs siblings to have a prefix rule"
@@ -203,30 +158,20 @@ def test_fixture_is_a_tree_with_siblings_and_a_mesh_on_every_leaf(committed):
 def exported_tree(directory: Path) -> tuple[list[dict], dict]:
     """A stand-in for `export()`: the two maps meta.json is assembled out of.
 
-    The committed payload under both view names, plus the catalogue that
-    declares what those files show. Enough to publish, because publishing never
-    looks at what is inside a view file beyond what `check_view_file` checks —
-    and the committed fixture is a file that passes it (the test above asserts
-    exactly that). What this buys is a test of the publishing half that needs no
-    CAD kernel, i.e. one that runs in the place the kernel-bound test cannot.
+    The committed payload under both view names, plus a catalogue declaring what
+    they show: enough to publish without a CAD kernel, since publishing checks a
+    view file only through `check_view_file`, which the fixture passes.
 
-    EVERYTHING IS DERIVED FROM THE FIXTURE, and none of it is typed out, because
-    the hub holds the two documents to each other: every key a view declares has
-    to be a record in `parts` (`render._view_parts`), the declared list has to be
-    EXACTLY the keys the view file carries (`render._match_selection`), and a
-    `printable` that declares no files is refused (`render._catalogue`). A list
-    written out here would therefore not go quietly stale — it would go red the
-    next time the generator's model changes, which is a test failing for a
-    reason that is nothing to do with what it tests.
+    Everything is derived from the fixture: every declared key must be a record
+    in `parts` (`render._view_parts`), the declared list must equal the file's
+    keys (`render._match_selection`), and a `printable` must declare files
+    (`render._catalogue`), so a typed-out list would break on any generator
+    change.
 
-    THE KINDS ARE NOT THE GENERATOR'S, and that is the one place this document
-    is a stand-in rather than a copy: every record is `printable` with a single
-    exported file, because that is the cheapest shape `_catalogue` accepts. What
-    the real build declares — three formats a part, one entry of `hardware` with
-    a note and no files — is the kernel-bound test's business next door. The
-    dummy files are written beside the views because a declared name has to be
-    one the build really shipped (`render._check_declared_file` looks it up in
-    the hash of what was published).
+    Every record is `printable` with one stl, the cheapest shape `_catalogue`
+    accepts; the real kinds are the kernel-bound test's business. The dummy files
+    are written beside the views because a declared name must be one the build
+    shipped (`render._check_declared_file`).
     """
     directory.mkdir(parents=True)
     payload = FIXTURE.read_bytes()
@@ -237,9 +182,8 @@ def exported_tree(directory: Path) -> tuple[list[dict], dict]:
     for key in keys:
         (directory / f"{key}.stl").write_bytes(b"solid stand-in\n")
         parts[key] = {"kind": "printable", "files": {"stl": f"{key}.stl"}}
-    # Both views are the same bytes, so both show the same parts. That is what
-    # makes the second entry legal rather than lazy: `_match_selection` compares
-    # the declaration with the FILE, and the file here is `assembled.json` twice.
+    # Both views are the same bytes, so both show the same parts, which is what
+    # `_match_selection` compares against.
     return [
         {"id": "assembled", "name": "assembled", "file": "assembled.json",
          "parts": keys},
@@ -251,20 +195,12 @@ def exported_tree(directory: Path) -> tuple[list[dict], dict]:
 def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
     """`make ui-fixture-data`, the half of the generator that talks to the Store.
 
-    That target is the supported way to look at the real interface in a browser,
-    and it was dead for as long as it took somebody to open one: `publish_dev`
-    became `publish_dev_built` and took a staging directory instead of a tar, and
-    nothing anywhere called it. The test above is next door and could not have
-    caught it — it needs a CAD kernel, so it skips wherever one does not import.
-    This one hands the export IN and therefore runs everywhere, including on a
-    machine with no kernel at all.
+    That target is how to look at the real interface in a browser. This test
+    hands the export in, so it runs without a CAD kernel.
 
-    The second publish is the other half of the check, and not a formality: the
-    slot is a page somebody has open, so re-running the target when nothing
-    changed has to answer 200 and leave the directory alone rather than swap a
-    freshly written one under the reader. That is what makes the digest choice in
-    `payload_digest()` observable — a digest covering the meta.json's wall clock
-    would rewrite the slot on every run.
+    The second publish checks that re-running with nothing changed leaves the
+    slot alone (a reader may have it open): `payload_digest()` must not cover
+    meta.json's wall clock.
     """
     module = load_generator()
     data_dir = tmp_path / "data"
@@ -276,13 +212,11 @@ def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
     assert (slot / "assembled.json").read_bytes() == FIXTURE.read_bytes()
     meta = json.loads((slot / "meta.json").read_text(encoding="utf-8"))
     assert [view["id"] for view in meta["views"]] == ["assembled", "print"]
-    # The catalogue survived the round trip, which is the half a view's `parts`
-    # list points at: `build_meta` rebuilds both field by field and refuses a
-    # view naming a key this map does not declare.
+    # The catalogue survived the round trip: `build_meta` refuses a view naming
+    # a key the map does not declare.
     assert sorted(meta["parts"]) == sorted(meta["views"][0]["parts"])
     assert meta["dev"] is True, "the local slot has to be published as a dev build"
-    # Nothing may be left behind in the project directory: the staging tree is
-    # the caller's to remove on every path that is not the rename.
+    # The staging tree is the caller's to remove on every path but the rename.
     assert sorted(p.name for p in (data_dir / "project" / module.FIXTURE_PID)
                   .iterdir()) == ["builds.json", "dev"]
 
@@ -305,35 +239,16 @@ def test_publish_to_data_lands_a_build_and_a_rerun_keeps_the_slot(tmp_path):
 def test_the_exporter_still_produces_the_committed_structure(committed, tmp_path):
     """Re-run the generator and compare the SHAPE of what it wrote.
 
-    Deliberately not a byte comparison: the mesh depends on the pinned
-    `cadquery` / `ocp-tessellate` versions and on nothing this repository owns, so
-    a byte assertion would fail on a kernel bump that changed a coordinate in the
-    last decimal place — noise, on a test whose whole job is to be believed. What
-    it does compare is every name and every nesting level, which is what the
-    adapter reads and what a format change moves.
+    Not bytes: the mesh depends on the pinned `cadquery` / `ocp-tessellate`
+    versions, and a byte assertion would fail on noise. Every name and nesting
+    level is compared, which is what the adapter reads.
 
-    THIS TEST RUNS IN CI, and it did not always: both workflows used to run the
-    suite in a bare `python:3.11-slim` carrying nothing but `git`, so there
-    `import cadquery` died with `ImportError: libGL.so.1` — the distribution on
-    disk, the shared object it loads not — and the guard below turned that into a
-    skip. The image the suite runs in carries the kernel's system libraries now
-    (issue #27, `ci/Dockerfile.test`), so the committed fixture is compared
-    against the real exporter on every push instead of only on a workstation.
-    The guard stays for the machine that has no kernel, which is what it was
-    written for.
-
-    Guarding on `cadquery` alone covers `ocp_tessellate` too, which the export
-    also needs: both are pinned in requirements.txt and both fail on the same
-    missing system library, so an interpreter that imports the first imports the
-    second.
-
-    `exc_type=ImportError` is explicit because the failure this guard is FOR is
-    an ImportError that is not a ModuleNotFoundError — the module is found and
-    its extension refuses to load. pytest 9 still defaults to catching plain
-    ImportError but warns about it, and 9.1 changes the default to
-    ModuleNotFoundError; without the argument this guard would then stop skipping
-    on a machine whose kernel is installed but cannot load, and go red there on a
-    pytest bump.
+    Runs in CI (`ci/Dockerfile.test` carries the kernel's system libraries);
+    skips on a machine without the kernel. Guarding on `cadquery` covers
+    `ocp_tessellate` too: both are pinned and fail on the same missing library.
+    `exc_type=ImportError` is explicit because the skip is for an ImportError
+    that is not a ModuleNotFoundError (installed but unloadable), and pytest 9.1
+    changes the default.
     """
     pytest.importorskip(
         "cadquery", exc_type=ImportError,

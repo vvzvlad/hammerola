@@ -16,8 +16,7 @@ Half of this file needs no CAD kernel at all: `first_layer_area` reads a
 trimesh.Trimesh, and a Trimesh can be written out by hand. The other half needs
 the kernel, because what it checks is that the two refusals fire from inside
 `export_printables` on geometry OCC really meshed -- and it skips where the
-kernel does not import. CI's image carries it (issue #27), so it runs
-there.
+kernel does not import. CI's image carries it.
 """
 
 import math
@@ -176,8 +175,7 @@ def test_a_degenerate_triangle_from_the_tessellator_changes_nothing():
     """A triangle with no area at all is what OCC emits at the poles of a
     spherical face, so a real mesh arrives carrying them.
 
-    IT WOULD PASS WITH THE AREA FILTER REMOVED, and that is worth saying rather
-    than leaving for somebody to discover: a mesh ASSEMBLED IN MEMORY gets its
+    It would pass with the area filter removed: a mesh ASSEMBLED IN MEMORY gets its
     normals computed, and a degenerate triangle's comes out zero, which fails
     the steepness test on its own. That is not the shape the gate sees -- a mesh
     LOADED FROM AN STL carries the normals OCC wrote, degenerate facets

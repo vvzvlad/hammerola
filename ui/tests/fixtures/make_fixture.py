@@ -43,14 +43,12 @@ deliberately not degenerate:
     working tessellation from a broken one;
   * THREE PRINTABLES AND ONE BOUGHT PART, so the colours in the file are three
     different palette entries plus one grey. A file where every part is the same
-    colour cannot show that the colour travels per part. The grey is no longer
-    ARRANGED — it follows from the entry's `kind`, because `catalogue_colors()`
-    gives a palette entry to a printable and paints `hardware` in
-    `HARDWARE_COLOR`.
+    colour cannot show that the colour travels per part. The grey follows from
+    the entry's `kind`: `catalogue_colors()` gives a palette entry to a
+    printable and paints `hardware` in `HARDWARE_COLOR`.
 
 ONE THING IT DELIBERATELY DOES NOT HAVE: NESTING. The tree comes out two levels
-deep — a `Group` and one leaf per reference — and that IS a choice made here,
-rather than the limit it used to be: a view may hold
+deep — a `Group` and one leaf per reference — by choice: a view may hold
 `{"group": "housing", "parts": [...]}` and `export_views()` writes those group
 nodes into the file (src/render.py validates the nesting to a depth of 64). What
 one reference can never be is several leaves — `read_catalogue()` puts every
@@ -130,25 +128,17 @@ def model():
     post = cq.Workplane("XY").circle(4).extrude(12)
     # A cap with a bore. The bore is the cap's CURVED FEATURE — the third rule
     # in this file's docstring, one curve per part — and that is the whole of
-    # its job. It used to be justified here by keeping the cap and the plate
-    # distinguishable as SOLIDS, which named a mechanism that does not exist:
-    # nothing chooses a colour from geometry (`catalogue_colors` paints by the
-    # entry's `kind`, and `palette_colors` takes the palette slot from an md5 of
-    # the KEY), and the one thing that ever did reconstruct identity from volume
-    # and face areas — the coverage gate — was itself removed when a view
-    # started referencing a catalogue key (src/cadbuild/gate.py, "what these
-    # gates no longer do"). Two identical solids would therefore cost this
-    # fixture a curve, not a colour.
+    # its job: nothing chooses a colour from geometry (`catalogue_colors` paints
+    # by the entry's `kind`, `palette_colors` takes the slot from an md5 of the
+    # KEY), so two identical solids would cost this fixture a curve, not a
+    # colour.
     cap = (cq.Workplane("XY").box(12, 12, 3)
            .faces(">Z").workplane().hole(5))
     # NOT printed: a bought part, the kind a real assembly shows for reference.
-    # Its KIND is what makes one leaf of the fixture grey while the other three
-    # carry palette colours — `catalogue_colors()` paints `hardware` in
-    # HARDWARE_COLOR — where the grey used to have to be arranged, by giving the
-    # part a shape the old fingerprint matcher would fail to pair with anything
-    # printed. A plain disc rather than a washer with its bore: the bore was the
-    # single most expensive feature in the file (a tube is two cylindrical walls
-    # and four circles, 71 KB of the first 221 KB version) and bought nothing
+    # Its KIND makes this leaf grey while the other three carry palette colours
+    # (`catalogue_colors()` paints `hardware` in HARDWARE_COLOR). A plain disc
+    # rather than a washer with its bore: a tube is two cylindrical walls and
+    # four circles, the most expensive feature in the file, and buys nothing
     # the plate's hole does not already cover.
     spacer = cq.Workplane("XY").circle(5).extrude(1)
 
@@ -178,11 +168,9 @@ def model():
             # is not 1: `defaultOpacity` and the per-part transparency path in
             # parts.js are the two places a stray 1.0 would hide.
             #
-            # UNDER the plate, where it used to sit halfway up the post: that
-            # was a disc of radius 5 crossing a cylinder of radius 4, i.e. some
-            # 50 mm3 of shared material, and `check_interference` now runs over
-            # this view with `hardware` under the gate. Flush against the
-            # plate's underside, so the two boxes touch and share nothing.
+            # Flush against the plate's underside, so the two touch and share
+            # no material: `check_interference` runs over this view with
+            # `hardware` under the gate.
             {"part": "reference_spacer", "at": cq.Location((0, 0, -2.5)),
              "alpha": 0.6},
         ],
@@ -213,14 +201,12 @@ def export(out_dir):
 
     WHAT IS LEFT OUT is what a viewer payload has nothing to do with: the
     whole-build `assembled.stl` and `print.stl`, the PNG previews, the model's
-    own `checks()` and metrics.json. THE PART EXPORTS ARE NO LONGER AMONG THEM,
-    and that is the line of this docstring worth reading twice — this function
-    used to be proud of writing no STL at all. `--data` publishes through the
-    hub's own `render.build_meta`, and `render._catalogue` there refuses a
-    `printable` that declares no files (and a non-printable that declares any),
-    so a fixture generated without `export_printables` cannot be published.
-    Nothing is committed for it: the STEP/STL/3MF land in the scratch directory
-    beside the view files, and `assembled.json` is the only thing that leaves.
+    own `checks()` and metrics.json. The part exports stay in: `--data`
+    publishes through the hub's own `render.build_meta`, and `render._catalogue`
+    there refuses a `printable` that declares no files (and a non-printable that
+    declares any). Nothing is committed for them: the STEP/STL/3MF land in the
+    scratch directory beside the view files, and `assembled.json` is the only
+    thing that leaves.
 
     THE THREE GATES ARE NOT A FORMALITY. `check_interference` is what decides
     where the spacer may stand (see `model()`), and all three together are what
@@ -294,8 +280,7 @@ def meta_json(entries, parts):
     be one too (`render.check_view_file`). The view entries already carry those
     key lists — `export_views` writes them — so the two halves of this document
     are one statement made by one run rather than two lists kept in step by
-    hand. `downloads` is gone with the flat maps it belonged to: what a part
-    ships is filed under the part.
+    hand. What a part ships is filed under the part.
     """
     return {
         "project": "fixture",
@@ -326,16 +311,11 @@ def payload_digest(out_dir, names):
     either answers 200 and leaves the slot alone — which is the behaviour someone
     looking at the interface by hand actually wants.
 
-    THE PART EXPORTS ARE OUT FOR THE SAME REASON, and that is a measurement
-    rather than a caution: two runs of an unchanged model produce STEP and 3MF
-    files that differ byte for byte, because both formats carry the moment they
-    were written (measured 2026-09-01 on the pinned cadquery 2.8.0 — the binary
-    STL of the same solid hashed identically across the two runs, the other two
-    did not). Hashing them would rewrite the slot on every run, which is exactly
-    what leaving `built` out avoids.
-
-    That is the same reasoning `Store` applies to a real push, where the
-    rewritten meta.json is deliberately outside the digest as well.
+    THE PART EXPORTS ARE OUT FOR THE SAME REASON: two runs of an unchanged model
+    produce STEP and 3MF files that differ byte for byte, because both formats
+    carry the moment they were written (measured on the pinned cadquery 2.8.0;
+    the binary STL hashed identically). `Store` applies the same reasoning to a
+    real push, where the rewritten meta.json is outside the digest as well.
     """
     digest = hashlib.sha256()
     for name in sorted(names):

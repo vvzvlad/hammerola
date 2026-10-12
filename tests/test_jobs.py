@@ -1,17 +1,13 @@
 """Taking a push asynchronously: 202, a job, a status and a log (SPEC 8A.2 step 5).
 
-The rest of the suite pushes through `Hub.publish`, which waits for the job and
-reports what it decided — because the rest of the suite is about what ends up on
-disk. This file is about the HANDOVER itself, so everything here goes through
-`publish_async` and looks at the job.
-
-Two claims are worth stating before the tests, because they are what the file is
-really pinning down:
+The rest of the suite pushes through `Hub.publish`, which waits for the job, because
+it is about what ends up on disk. This file is about the HANDOVER, so everything
+here goes through `publish_async` and looks at the job. Two claims:
 
   * a push is answered from what the UPLOAD says and nothing else. The token, the
     size, the archive and "is this exact push already published" are all decided
     in the request, so a broken archive is still a 4xx on the push. Everything
-    that needs the BUILD — and only that — moves into a job.
+    that needs the BUILD, and only that, moves into a job.
   * a build that fails publishes nothing. `latest` does not move, the local slot
     is not touched, no build directory appears, and the pusher is told why with
     the log the build produced.
@@ -305,17 +301,15 @@ def test_the_local_slot_goes_through_the_same_job(hub):
     assert record["build_url"] == "/project/proj1/dev/"
     assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
 
-    # Every assertion below is the difference between the worker having taken
-    # the slot route and having taken the commit one. The URL alone cannot tell
-    # them apart — a commit build called `dev` would answer at the same address
-    # — so what is checked is the machinery only `publish` runs: `latest` moves,
-    # the project gets an index CARD and the build appears in the picker's
-    # list. None of that may happen for the local slot (SPEC 7.6).
+    # These assertions tell the slot route from the commit route. The URL cannot
+    # (a commit build called `dev` would answer at the same address), so what is
+    # checked is the machinery only `publish` runs: `latest` moves, the project
+    # gets an index CARD and the build appears in the picker's list. None of that
+    # may happen for the local slot (SPEC 7.6).
     #
-    # The index is asserted on its CONTENT and not on the file's absence: a local
-    # push rewrites index.json now, because a card has to be able to say that a
-    # project holds work no commit has published. What it may never do is put a
-    # card there, and this project has no commit build, so there is none.
+    # The index is asserted on its CONTENT, not the file's absence: a local push
+    # rewrites index.json so a card can say the project holds unpublished work,
+    # but it never adds a card, and this project has no commit build.
     assert not (hub.project_dir("proj1") / "latest").exists()
     assert json.loads((hub.data / "index.json").read_text()) == []
     picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
@@ -451,17 +445,11 @@ def test_a_job_the_handover_threw_under_is_failed_not_left_queued(
         tmp_path, monkeypatch, blows_up):
     """`jobs.create` has returned and `builds.submit` has not been reached.
 
-    Every other way out of `_queue_build` answers its JOB as well as its pusher:
-    the queue was full, the pool was stopping, a worker took it. This one used
-    to answer only the pusher — with a 500, or with nothing at all when the
-    socket had already gone — and neither is something a job can read. The
-    record stayed `queued`, and nothing here ever fails a job on its own, so the
-    status endpoint went on saying `queued` about a build nobody was running
-    until the hub restarted.
-
-    BOTH HANDLERS, because both are on that path and the disconnect one is the
-    easier to overlook: it re-raises rather than replying, so there is no answer
-    anywhere in it to notice the job is missing from.
+    Every way out of `_queue_build` must answer the JOB as well as the pusher;
+    otherwise the record stays `queued`, and since nothing fails a job on its own,
+    the status endpoint says `queued` about a build nobody runs until a restart.
+    Both handlers are covered; the disconnect one re-raises rather than replying,
+    which makes the missing job answer easy to overlook.
     """
     hub = start_hub(tmp_path / "data")
     try:
@@ -607,9 +595,8 @@ def test_a_job_is_never_left_building_when_something_throws(hub_factory):
 def test_a_build_that_produced_nothing_publishable_is_422(hub_factory):
     """The build ran and the hub refused what it produced.
 
-    A tree with no meta.json is what `_finish_staging` turns down, and it is the
-    same 422 the push used to get — it just arrives through the job now, because
-    only a finished build can be asked the question.
+    A tree with no meta.json is what `_finish_staging` turns down: a 422 that
+    arrives through the job, because only a finished build can be asked.
     """
     hub = hub_factory()
     reply = hub.publish_async("proj1", "abc123",
@@ -835,11 +822,8 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
 
     `MAX_CONCURRENT_BUILDS` is deliberately NOT `app.MAX_CONCURRENT_PUBLISHES`:
     one is sized by a body on disk and a tar reader, the other by memory and by
-    how long one hung build may hold a worker, and the day either is retuned the
-    other must not move with it. Since 2026-09-09 both read four, and nothing
-    here asserts a relation between them in either direction — the equality is a
-    coincidence of two independent decisions, only one of which is a measurement,
-    and an assertion would turn it into a rule.
+    how long one hung build may hold a worker, and retuning one must not move the
+    other. They may be equal; no relation between them is asserted.
     """
     assert jobs_module.MAX_CONCURRENT_BUILDS == 4
     assert jobs_module.MAX_QUEUED_JOBS >= jobs_module.MAX_CONCURRENT_BUILDS
@@ -856,25 +840,19 @@ def test_the_default_ceilings_are_the_documented_ones(tmp_path):
     assert not [name for name in vars(JobStore) if "prune" in name]
 
     # And the WHOLE stop fits inside docker's default stop grace period (10 s;
-    # the compose file sets no `stop_grace_period`). Pinned as the arithmetic it
-    # is, not as a bare "under ten": the stop costs one `serve_forever` poll
-    # before `shutdown` is even entered, and then the budget — which covers the
-    # queue drain AND the joins, because `shutdown` starts the clock before the
-    # drain. A budget over the grace period saves no build — SIGKILL arrives on
-    # docker's schedule, not ours — it only turns every ordinary stop into the
-    # abrupt ending the join is there to avoid.
+    # the compose file sets no `stop_grace_period`). Written as the arithmetic: one
+    # `serve_forever` poll before `shutdown` is entered, then the budget, which
+    # covers the queue drain AND the joins because `shutdown` starts the clock
+    # before the drain. A budget over the grace period saves no build (SIGKILL
+    # arrives on docker's schedule); it only makes every stop abrupt.
     #
-    # What is NOT in this sum is the pool size, and that is the point of writing
-    # it out: the joins share one deadline (`BuildQueue.shutdown`), so growing
-    # MAX_CONCURRENT_BUILDS cannot grow the stop. Multiplied per worker, today's
-    # four would spend twice the entire grace period on the joins alone.
+    # The pool size is not in this sum: the joins share one deadline
+    # (`BuildQueue.shutdown`), so growing MAX_CONCURRENT_BUILDS cannot grow the stop.
     #
-    # The one thing the sum cannot promise is a drain that OVERRUNS the budget
-    # on its own — it is up to MAX_QUEUED_JOBS `rmtree`s and record writes, and
-    # cutting it short would leave exactly the trees and unanswered jobs it
-    # exists to collect. What the floor bounds is the stop's own waiting on top
-    # of that: the total is `poll + max(JOIN, drain + FLOOR)`, which is why the
-    # floor is never allowed to exceed the budget.
+    # A drain that overruns the budget on its own (up to MAX_QUEUED_JOBS `rmtree`s
+    # and record writes) is not cut short, since it collects trees and answers jobs.
+    # The floor bounds the waiting on top of it: the total is
+    # `poll + max(JOIN, drain + FLOOR)`, so the floor may never exceed the budget.
     docker_stop_grace_seconds = 10
     serve_forever_poll_seconds = 0.5     # the default `main.py` serves with
     assert jobs_module.WORKER_JOIN_SECONDS > 0
@@ -942,16 +920,9 @@ def test_a_record_that_is_not_json_is_skipped_logged_and_left_in_place(
 def test_a_corrupted_record_does_not_take_a_real_job_down_with_it(tmp_path):
     """A build that corrupts N records costs the registry exactly those N.
 
-    This used to be false, and the way it was false is worth keeping a test for.
-    A count ceiling was applied BEFORE the records were read, by position, so it
-    could not know which of them would turn out to be unreadable: corrupting
-    five records at one end deleted five real jobs at the other, and the build
-    chose both the number and which ones. Twenty jobs, a ceiling of five and
-    five broken `job.json` emptied the registry completely.
-
-    There is no count ceiling at all now (SPEC 5.3), so the arithmetic that made
-    that possible is gone — but the property it was supposed to have is the one
-    to assert, because it is what any future ceiling would have to preserve.
+    There is no count ceiling (SPEC 5.3), but this is the property any ceiling
+    must preserve: one applied by position before the records are read would let
+    a build choose how many real jobs, and which, get deleted.
     """
     data = tmp_path / "data"
     store = JobStore(data)
@@ -1089,11 +1060,10 @@ def test_a_build_writing_its_log_does_not_hold_up_everybody_elses_status_poll(
         tmp_path, monkeypatch):
     """`_lock` is the registry's ONLY lock, so it is also the status endpoint's.
 
-    Every `get` takes it — every poll, from every pusher, of every job. Held
-    across `_write_log`, one finishing build blocked all of them for as long as
-    the volume took to fsync up to MAX_LOG_BYTES. The log still goes down before
-    the state changes, because a poller that reads `done` is about to fetch the
-    log; what it must not cost is the lock.
+    Every `get` takes it: every poll, from every pusher, of every job. Held across
+    `_write_log`, one finishing build would block all of them for as long as the
+    volume takes to fsync up to MAX_LOG_BYTES. The log still goes down before the
+    state changes, because a poller that reads `done` is about to fetch the log.
     """
     store = JobStore(tmp_path / "data")
     watched = store.create("proj1", "watched")["id"]
@@ -1205,12 +1175,9 @@ def test_the_biggest_log_a_build_can_hand_over_is_served_whole(tmp_path):
     """The ceiling has to fit what the WRITE path can produce.
 
     `runner._Drain` keeps `Limits.log_bytes` of RAW output and decodes it with
-    `errors="replace"`, and a byte that is not valid UTF-8 becomes U+FFFD, which
-    encodes back to THREE bytes. So a model printing binary — precisely the
-    build whose log somebody needs — makes the hub write three times the ceiling
-    the build ran under. With a smaller number here the hub served its OWN log
-    truncated, under a warning saying the log was larger than a build can
-    produce; it was not, the hub wrote it.
+    `errors="replace"`; a byte that is not valid UTF-8 becomes U+FFFD, which
+    encodes back to THREE bytes. So a model printing binary makes the hub write
+    three times the ceiling the build ran under, and the hub must serve that whole.
     """
     data = tmp_path / "data"
     store = JobStore(data)
@@ -1253,14 +1220,11 @@ def test_a_log_handed_to_the_registry_is_cut_before_it_reaches_the_volume(
 # -- a job that ends when the volume will not take it ------------------------
 def test_a_build_whose_log_cannot_be_written_still_finishes(hub_factory,
                                                             monkeypatch):
-    """The published build that reported itself as still building.
+    """A build whose log cannot be written still finishes its job.
 
-    ENOSPC on the log — a megabyte — is the ordinary way for this to happen, and
-    the log used to be written before the record was updated with nothing
-    between them. The result was a job stuck `building` while its build was on
-    disk and `latest` already pointed at it: the pusher polls a status that
-    never changes, and after a restart is told to push again about a build that
-    landed.
+    ENOSPC on the log (a megabyte) is the ordinary way for this to happen. If the
+    log write stopped the record update, the job would stay `building` while its
+    build is on disk and `latest` already points at it.
     """
     hub = hub_factory()
 
@@ -1330,9 +1294,9 @@ def test_a_failure_after_the_rename_still_reports_the_build_as_published(
 def test_a_commit_taken_while_the_build_ran_is_caught_under_the_lock(tmp_path):
     """`settled` answers from the request; `publish_built` answers for real.
 
-    The gap between the two used to be milliseconds and is now a whole build, so
-    the recheck immediately before the rename is the only thing standing between
-    two pushes of one commit and a silently replaced immutable build.
+    A whole build runs between the two, so the recheck immediately before the
+    rename is what stops two pushes of one commit from silently replacing an
+    immutable build.
     """
     store = _bare_store(tmp_path / "data")
     staging, names = _staged(store, "proj1", "abc123", "a")
@@ -1378,17 +1342,16 @@ def test_two_builds_of_one_commit_race_to_one_answer(tmp_path):
         stop_hub(hub)
 
 
-# -- a commit fills the slot with itself (issue #78) --------------------------
+# -- a commit fills the slot with itself --------------------------------------
 def test_a_commit_puts_itself_into_the_dev_slot(tmp_path):
     """`dev` is the freshest state of the project, not the last `build`.
 
     Through the store rather than a push, because the claim is about the two
     documents field for field: the slot's meta.json is the revision's with
-    `commit`, `dev` and `job` rewritten and NOTHING else moved, which is what
-    makes copying the published tree instead of building it a second time
-    correct. `job` is the third key since issue #79 — the slot names the build
-    that filled it, and a commit fills it as much as a `build` does — and it is
-    the slot's alone: a revision's log is in the store and needs no pointer.
+    `commit`, `dev` and `job` rewritten and NOTHING else moved, which is what makes
+    copying the published tree instead of building it again correct. `job` names
+    the build that filled the slot and is the slot's alone: a revision's log is in
+    the store and needs no pointer.
     """
     store = _bare_store(tmp_path / "data")
     staging, names = _staged(store, "proj1", "abc123", "a")
@@ -1479,10 +1442,9 @@ def test_a_slot_that_could_not_be_written_leaves_the_revision_published(
 def test_stopping_the_pool_takes_the_queued_sources_with_it(tmp_path):
     """A dropped job still owns an unpacked tree, and nothing else removes it.
 
-    `Store._sweep_leftovers` was the answer this used to give and it is not one:
-    it runs from `Store.__init__` only, and it skips everything younger than an
-    hour, while a container comes back in seconds. So a tree dropped by a stop
-    survived the very restart that was supposed to collect it.
+    `Store._sweep_leftovers` runs from `Store.__init__` only and skips everything
+    younger than an hour, while a container comes back in seconds, so the stop
+    itself has to remove the tree.
     """
     data = tmp_path / "data"
     store = _bare_store(data)
@@ -1521,14 +1483,10 @@ def test_the_stop_budget_is_spent_by_the_pool_not_by_each_worker(tmp_path,
                                                                  monkeypatch):
     """One deadline for all the workers, not a timeout each.
 
-    The join exists to keep an ordinary stop away from SIGKILL: docker sends one
-    10 s after its SIGTERM and the compose file asks for no longer. Multiplied
-    per worker, the budget reaches that grace period all by itself — at the
-    pool's own default of four it is TWICE the grace period, and it was already
-    the whole of it back when the default was two — so the number meant to
-    avoid a SIGKILL would be what guaranteed one, and worse with every worker
-    added. Four workers here, all of them stuck, so the difference between the
-    two readings is four times the budget rather than two.
+    The join keeps an ordinary stop away from SIGKILL, which docker sends 10 s
+    after SIGTERM. Multiplied per worker, the budget would reach that grace period
+    by itself (twice it at the default of four workers). Four stuck workers here,
+    so the two readings differ by four times the budget.
     """
     monkeypatch.setattr(jobs_module, "WORKER_JOIN_SECONDS", 0.5)
     builder = GatedBuilder()
@@ -1561,13 +1519,9 @@ def test_the_drain_is_paid_for_out_of_the_stop_budget(tmp_path, monkeypatch):
 
     `WORKER_JOIN_SECONDS` is sized against docker's 10 s grace period, and the
     drain runs before the joins: up to MAX_QUEUED_JOBS trees to remove and a job
-    record to write, with an fsync, for each, on the volume the joins are then
-    waiting for. Started after it, the clock said 5 s while a real stop cost the
-    drain PLUS 5 s — so SIGKILL landed inside the join the number exists to
-    protect, and both the comment and the test said otherwise.
-
-    The floor is what keeps the correction from going too far the other way: a
-    drain that ate the whole budget would join for nothing at all.
+    record to write, with an fsync, for each. A clock started after the drain
+    would let SIGKILL land inside the join. The floor keeps a drain that ate the
+    whole budget from leaving no time to join at all.
     """
     monkeypatch.setattr(jobs_module, "WORKER_JOIN_SECONDS", 2.0)
     monkeypatch.setattr(jobs_module, "WORKER_JOIN_FLOOR_SECONDS", 0.2)
@@ -1603,15 +1557,12 @@ def test_the_drain_is_paid_for_out_of_the_stop_budget(tmp_path, monkeypatch):
 
 
 def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
-    """The third holder of a task, and the one the old reasoning left out.
+    """A task a worker already took is not torn down by the stop.
 
-    `submit`'s post-check used to drain the queue, find nothing, and conclude
-    from "the queue hands one item to exactly one caller" that the task must
-    have come back to it. It need not have: a WORKER may have taken it and be
-    inside `_build_and_publish` with it. The caller then does what a refusal
-    tells it to — `app._queue_build` removes the source tree in its `finally`
-    and fails the job — under a build that is reading that tree and is minutes
-    from renaming its output into an immutable URL.
+    When `submit`'s post-check drains the queue and finds nothing, the task need
+    not have come back to the caller: a WORKER may be inside `_build_and_publish`
+    with it. Treating that as a refusal would make `app._queue_build` remove the
+    source tree and fail the job under a build that is reading that tree.
     """
     data = tmp_path / "data"
     jobs = JobStore(data)
@@ -1672,14 +1623,12 @@ def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
 
 def test_a_push_that_lands_on_a_stopping_hub_is_told_that_and_not_queue_full(
         tmp_path):
-    """One refusal code, two entirely different reasons, and they are not the same.
+    """One refusal code, two different reasons, and the reply must tell them apart.
 
-    `submit` refuses a full queue and a hub on its way out alike, and the push
-    path used to sign both "the build queue is full, retry later". That is not a
-    small inaccuracy: the queue is empty, the advice to wait 60 s and retry the
-    same hub is wrong, and when the stop's own drain had already written the job
-    the true sentence — "the hub was stopped, push again" — this replaced it
-    with the false one, on the job record as well as in the reply.
+    `submit` refuses a full queue and a stopping hub alike. For a stopping hub
+    "the build queue is full, retry later" is false (the queue is empty and
+    retrying the same hub is wrong), and the stop's drain has already written the
+    true sentence, "the hub was stopped, push again", to the job record.
     """
     hub = start_hub(tmp_path / "data")
     try:
@@ -1711,16 +1660,14 @@ def test_a_push_that_lands_on_a_stopping_hub_is_told_that_and_not_queue_full(
 def test_a_push_handed_over_after_the_stop_began_is_refused(tmp_path):
     """`daemon_threads = True`, so a request thread outlives the drain.
 
-    The thread serving a push keeps running while `shutdown` empties the queue
-    on another one. Queued after that, the task is one no worker will ever read:
-    the pusher is told 202 about a build nobody will run, and the unpacked tree
-    it owns stays on the volume — `Store._sweep_leftovers` runs at startup and
-    skips everything younger than an hour, while a container comes back in
-    seconds.
+    The thread serving a push keeps running while `shutdown` empties the queue on
+    another. A task queued after that is never read: the pusher is told 202 about a
+    build nobody runs, and its unpacked tree stays on the volume
+    (`Store._sweep_leftovers` skips everything younger than an hour).
 
-    And the refusal says WHICH refusal it is, because the caller does different
-    things with the two: a full queue leaves the job for the request thread to
-    fail, a stop has already answered it.
+    The refusal says which refusal it is, because the caller acts differently: a
+    full queue leaves the job for the request thread to fail, a stop has already
+    answered it.
     """
     data = tmp_path / "data"
     jobs = JobStore(data)
@@ -1749,10 +1696,8 @@ def test_a_push_that_races_the_drain_is_taken_back_out_of_the_queue(tmp_path):
     """The same thing one moment later: the stop lands mid-insertion.
 
     Checking before the insertion only narrows the window; the task can still be
-    put down after the drain has gone past it. The queue is substituted here
-    rather than raced against a real thread because the window is two statements
-    wide, and a test that hoped to hit it would pass whether or not the second
-    check exists.
+    put down after the drain has gone past it. The queue is substituted rather
+    than raced against a real thread because the window is two statements wide.
     """
     data = tmp_path / "data"
     jobs = JobStore(data)
@@ -1789,22 +1734,13 @@ def test_a_push_that_races_the_drain_is_taken_back_out_of_the_queue(tmp_path):
 
 def test_a_submit_whose_drain_throws_still_answers_its_job(tmp_path,
                                                            monkeypatch):
-    """`submit`'s drain gets the wrapper `shutdown`'s call to it already has.
+    """`submit`'s drain gets the same wrapper `shutdown`'s call to it has.
 
-    The reasoning transfers one for one: the drain is a loop over directories
-    and job records on a volume this module gets to assume nothing about, and it
-    runs at the moment there is nothing after it. Escaping here it does two
-    things at once, and the second is the permanent one. The pusher gets a 500
-    out of the request handler — recoverable, they retry. The task stays in a
-    queue no worker will read again, so its job stays `queued` FOR EVER: nothing
-    else answers a task the drain did not take, and nothing here ever fails a
-    job on its own, so the `queued` it is left in comes back only with a
-    restart.
-
-    So a drain that threw is not read as "a worker has it". It cannot be — the
-    drain did not finish, so the task may equally be sitting in a queue nobody
-    will read — and between a job that is answered wrongly and a job that is
-    never answered, this answers it.
+    The drain loops over directories and job records on a volume nothing can be
+    assumed about. If it escaped here, the pusher would get a 500 (recoverable),
+    and the task would stay in a queue no worker reads, leaving its job `queued`
+    until a restart. A drain that threw is not read as "a worker has it": the
+    task may equally be in a queue nobody will read, so the job is answered.
     """
     data = tmp_path / "data"
     jobs = JobStore(data)
@@ -1844,11 +1780,10 @@ def test_a_stop_whose_drain_throws_still_joins_its_workers(tmp_path,
                                                            monkeypatch):
     """`shutdown` runs when there is nothing after it.
 
-    The drain walks the volume — a directory per queued task, a record per job —
-    so it is not a step that cannot fail. Letting it out would skip every join
-    below it and come out of `server_close`, leaving a worker mid-publish to be
-    killed between the rename and the pointer writes: the exact ending the join
-    exists to prevent.
+    The drain walks the volume (a directory per queued task, a record per job), so
+    it can fail. Letting it out would skip every join below it and come out of
+    `server_close`, leaving a worker mid-publish to be killed between the rename
+    and the pointer writes.
     """
     data = tmp_path / "data"
     pool = BuildQueue(_bare_store(data), JobStore(data),
@@ -1915,18 +1850,14 @@ def test_the_hub_answers_sigterm_by_shutting_down(tmp_path):
 def test_the_sigterm_handler_never_waits_on_threadings_own_lock():
     """The handler wakes a thread; it must not START one.
 
-    `Thread.start()` takes `threading._active_limbo_lock`, and the main thread
-    holds that same lock every time `ThreadingHTTPServer` spawns a thread for an
-    incoming connection. A Python signal handler runs ON THE MAIN THREAD between
-    two bytecodes, so it can be entered while that thread is inside `start()` —
-    and a `start()` from the handler would then wait for a lock its own thread
-    holds. Nothing would release it: the handler never returns, the serve loop
-    never comes round, and the stop hangs until SIGKILL, which is the ending the
-    handler was written to prevent.
+    `Thread.start()` takes `threading._active_limbo_lock`, which the main thread
+    holds whenever `ThreadingHTTPServer` spawns a thread for a connection. A Python
+    signal handler runs ON THE MAIN THREAD between two bytecodes, so it can be
+    entered inside `start()`, and a `start()` from the handler would wait forever
+    for a lock its own thread holds; the stop would hang until SIGKILL.
 
-    The lock is held by another thread here rather than by this one, so the
-    failure shows up as a DELAY instead of a deadlock and this test can report
-    it rather than hang on it.
+    The lock is held by another thread here, so the failure shows up as a DELAY
+    instead of a deadlock and the test can report it rather than hang.
     """
     from main import install_stop_handler
 
@@ -1980,23 +1911,15 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
                                                                     monkeypatch):
     """Every other test in this suite substitutes the builder, on purpose.
 
-    Computing geometry per test is minutes and needs CadQuery, so the stand-in
-    stays — but with it in place NOTHING exercises the join between
-    `_build_and_publish` and `src.buildproc.run_build`. Renaming a parameter
-    there leaves the whole suite green and breaks production on the first push.
+    Computing geometry per test takes minutes and needs CadQuery, so with the
+    stand-in in place nothing exercises the join between `_build_and_publish` and
+    `src.buildproc.run_build`; a renamed parameter there would break the first
+    real push with the suite green.
 
-    So the call is captured as the worker really made it and then bound against
-    the real function's signature. Both halves are needed: binding an expression
-    written out here would only check a copy that stops following the worker,
-    and `build_arguments` is what makes the two the same expression rather than
-    two that happen to agree today.
-
-    WHICH IS WHY THE HELPER IS WATCHED RATHER THAN RE-EVALUATED. Comparing the
-    captured call against `build_arguments(...)` called again here proves only
-    that the two AGREE, and a worker that spelled the same expression out by
-    hand agrees perfectly — right up until `build_arguments` is changed and the
-    hand-written copy is not, which is the whole failure this is guarding. So
-    the helper itself reports whether it was the one that built the call.
+    So the call is captured as the worker made it and bound against the real
+    function's signature. `build_arguments` itself reports whether it built the
+    call: re-evaluating it here would only show that a hand-written copy in the
+    worker agrees with it today.
     """
     class CallRecorder:
         def __init__(self):
@@ -2056,20 +1979,14 @@ def test_a_project_with_no_dev_build_has_no_baseline_to_offer(hub):
 
 def test_a_build_is_compared_against_the_previous_dev_and_not_against_itself(
         hub_factory):
-    """The link issue #59 exists for, watched from the outside of the worker.
+    """A build is compared against the PREVIOUS `dev`, watched from outside the worker.
 
-    Three comments in this codebase say a build is compared against the
-    PREVIOUS `dev` rather than against itself, and until this test nothing held
-    it: `baseline=None` at the call site left the whole suite green, because the
-    stand-in builder swallows the keyword and the signature test feeds
-    `build_arguments` the captured value and compares it with the captured call.
-
-    So the builder here RECORDS the keyword and reads the file it names, at the
-    moment of the call — the first build of a project is handed None, and the
-    second is handed the metrics.json the first one published. By CONTENT and
-    not by path: in production the child is given a copy in its own scratch
-    (`buildproc.runner.run_build`), so the spelling of the path is exactly the
-    thing this must not depend on.
+    The stand-in builder swallows the keyword and the signature test compares the
+    captured call with itself, so `baseline=None` at the call site would pass both.
+    The builder here records the keyword and reads the file it names at the moment
+    of the call: the first build is handed None, the second the metrics.json the
+    first published. Compared by content, not path: in production the child gets a
+    copy in its own scratch (`buildproc.runner.run_build`).
     """
     handed = []
 

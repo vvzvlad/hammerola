@@ -1,19 +1,12 @@
 """The READ side of the comment queue (SPEC 7A.2).
 
-The queue is not public to read, and that has not changed: it is raw input — it
-can be junk, duplicated or abusive — so handing it back to every visitor would
-turn a showcase of projects into a message board. What DID change is that
-writing is not public either (step 0 of the plan, SPEC 8A.1), so the asymmetry
-these tests were once about is gone and one secret opens both sides.
+The queue is not public to read: it is raw input (junk, duplicates, abuse), and
+handing it to every visitor would turn a showcase of projects into a message board.
+Writing is not public either (SPEC 8A.1), and one secret opens both sides.
 
 These tests are mostly about the door: which endpoints demand the token, that a
-near miss is refused, and that a caller without one cannot learn anything from
-the difference between 401 and 404. The test that used to sit here proving the
-PUBLISH token is refused on this route was DELETED with the second variable —
-its premise was that the two tokens rotate separately, and they no longer exist
-to rotate. `test_the_same_secret_opens_both_sides` is what stands in its place,
-and it asserts the opposite property on purpose: the collapse is a decision
-(issue #26), so it is pinned rather than merely uncontradicted.
+near miss is refused, and that a caller without one cannot learn anything from the
+difference between 401 and 404.
 """
 
 import json
@@ -44,12 +37,10 @@ def test_every_read_endpoint_refuses_a_missing_token(hub):
 
 
 def test_the_same_secret_opens_both_sides(hub):
-    """ONE secret for the whole system (issue #26, step 0 of the plan).
+    """ONE secret for the whole system.
 
     The value that publishes a build is the value that reads the queue and the
-    value that writes to it. This replaces a test asserting the reverse — that
-    the publish token is refused here — which was true while the hub declared
-    COMMENT_READ_TOKEN and became false the moment it stopped.
+    value that writes to it.
     """
     assert hub.publish("proj1", "abc123", good_build(), token=TOKEN
                        ).status_code == 201
@@ -115,11 +106,9 @@ def test_one_comment_can_be_fetched_by_id(hub):
 def test_the_photo_comes_back_as_an_image_attachment(hub):
     """Uploaded bytes handed back, so the content type is ours and not the sender's.
 
-    `attachment` and `nosniff` together: the reader is a tool, nothing about this
-    needs to render in a browser, and an uploaded file that renders in a browser
-    is the whole class of problem this feature was designed around — the bytes
-    come back on the same origin as every project's builds, which is true
-    whatever credential put them there.
+    `attachment` and `nosniff` together: the reader is a tool, and an uploaded file
+    that renders in a browser is dangerous because it comes back on the same origin
+    as every project's builds, whatever credential put it there.
     """
     cid = _setup(hub)
     r = hub.read_comments(f"/{cid}/photo")
@@ -155,25 +144,19 @@ def test_an_attachment_named_by_a_hand_edited_record_is_not_served(hub):
     assert hub.read_comments(f"/{cid}/photo").status_code == 404
 
 
-# -- what a BUILD can leave in this directory (issue #74) --------------------
+# -- what a BUILD can leave in this directory ---------------------------------
 # `data/comments/` is on the same volume as everything else and a build can
-# write anywhere in it (src/buildproc). The queue's own module docstring already
-# said the directory is not evidence about who wrote what; this one is about
-# the other half of that — what is at the name need not be a FILE. Nothing here
-# needs a vulnerability or a token: an `os.symlink` in `model.py` puts it there,
-# by an author who never touches EDIT_TOKEN.
+# write anywhere in it (src/buildproc), so what is at a name need not be a FILE.
+# No vulnerability or token is needed: an `os.symlink` in `model.py` puts it
+# there.
 def test_an_attachment_that_is_a_symlink_is_refused_rather_than_followed(
         hub, tmp_path):
-    """A link where the photo goes used to be served AS the photo.
+    """A link where the photo goes is refused, not served AS the photo.
 
-    Not a way past anything: this route takes EDIT_TOKEN, and so does the build
-    that would plant the link. It is what one stray `os.symlink` in `model.py`
-    does — the hub answers `/comments/<cid>/photo` with somebody else's file,
-    typed as a JPEG because the NAME ends in `.jpg`. The name was already
-    checked as one ordinary component belonging to this comment, so the last
-    component being a link was the only way left for the bytes and the URL to
-    disagree, and `candidate.is_file()` did not close it: `is_file()` follows
-    the link and said True. `O_NOFOLLOW` is what refuses it.
+    Not a way past anything (this route and the build that would plant the link
+    both take EDIT_TOKEN), but one stray `os.symlink` in `model.py` would make the
+    hub answer `/comments/<cid>/photo` with somebody else's file, typed as a JPEG
+    by its name. `candidate.is_file()` follows the link; `O_NOFOLLOW` refuses it.
     """
     cid = _setup(hub)
     elsewhere = tmp_path / "not-a-photo"

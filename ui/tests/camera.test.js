@@ -182,9 +182,9 @@ describe('ndcRay', () => {
   })
 
   it('does NOT start every ortho ray at the eye', () => {
-    // The regression the ortho branch exists for: an eye-origin ray answers the
-    // middle of the screen for every pixel on it, so a cut face would resolve to
-    // whichever part happens to sit in the centre of the view.
+    // Why the ortho branch exists: an eye-origin ray answers the middle of the
+    // screen for every pixel, so a cut face would resolve to whichever part
+    // sits in the centre of the view.
     const { viewer, g } = scene()
     const b = cameraBasis(viewer, g)
     const ray = ndcRay(g, b.eye, b.view, 0.6, 0.6)

@@ -1,23 +1,14 @@
 """metrics.json has two readers and exactly ONE comparison behind them.
 
-WHY THIS FILE EXISTS AT ALL. The build prints what moved since `dev`, and
-`hammerola diff` prints what moved between two revisions. Both read the same
-document and want the same sentences out of it, and the client cannot import the
-build half — it is stdlib-only and takes nothing from `requirements.txt` or from
-`src/cadbuild/` (`hammerola/__init__.py`). That is precisely the shape that
-produced `cad_publish/hubspec.py`: a second copy of somebody else's rules, in a
-place that could not see the original, with nothing comparing the two — and
-publication broke when they drifted.
+The build prints what moved since `dev`, and `hammerola diff` prints what moved
+between two revisions. Both want the same sentences from the same document, and
+the client cannot import the build half: it is stdlib-only and takes nothing from
+`requirements.txt` or `src/cadbuild/` (`hammerola/__init__.py`). So the comparison
+lives in `hammerola/metricsdiff.py`, which both sides import. These tests pin that
+`src.cadbuild.metrics` re-exports the same objects instead of growing a copy, and
+that the shared module stays importable on a laptop's bare python3.
 
-The answer here was to MOVE the comparison rather than copy it, into
-`hammerola/metricsdiff.py`, which both sides import. So there is nothing to keep in
-step and no conformance test to write; what these tests pin is that this stays
-true — that `src.cadbuild.metrics` re-exports the very same objects instead of
-growing a copy again, and that the shared module stays importable on a laptop's
-bare python3, which is the property that made the move possible.
-
-The behaviour of the comparison itself is tested where it was written and where
-its callers are: `tests/cadbuild/test_metrics.py`.
+The comparison's behaviour is tested in `tests/cadbuild/test_metrics.py`.
 """
 
 import ast
@@ -61,15 +52,12 @@ def test_the_client_and_the_build_compare_with_the_same_function():
 
 
 def test_the_asserts_the_constants_settled_get_a_line_of_their_own():
-    """The one line here that is about the comparison, and it earns the place.
+    """The asserts the constants settled get a line of their own.
 
     The build subtracts the asserts its own constants settle from the count it
-    reports, so the first build after that change prints a SMALLER `checks
-    passed` with nothing lost. Alone, `checks passed: 5 -> 3` is a project that
-    dropped two checks; with the second line it is a project whose two checks
-    turned out to prove nothing. A baseline from before the change has no
-    `checks_static` at all, and `None -> 2` is the truthful rendering of that --
-    the number did not exist then.
+    reports. Alone, `checks passed: 5 -> 3` reads as two dropped checks; the
+    second line says two checks proved nothing. A baseline without
+    `checks_static` renders as `None -> 2`, since the number did not exist then.
     """
     lines = metricsdiff.metrics_diff({"checks_passed": 5},
                                      {"checks_passed": 3, "checks_static": 2})

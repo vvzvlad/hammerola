@@ -1,17 +1,14 @@
 // Measurements, taken from the library's own mesh backend.
 //
-// THIS IS NOT WRITTEN HERE, and the note this project carried for years — that
-// measurements "need a backend we do not run" — is out of date: the library
-// carries `MeshMeasureBackend`, which computes from the tessellation with no
-// Python `ocp_vscode` anywhere. It is built unconditionally in the `Viewer`
-// constructor and does not depend on `tools` (docs/viewer-api.md §2), so at
-// `tools: false` it is sitting there fully working with its panel hidden.
+// The library's `MeshMeasureBackend` computes from the tessellation, with no
+// Python `ocp_vscode`. It is built unconditionally in the `Viewer` constructor
+// and does not depend on `tools` (docs/viewer-api.md §2), so it works at
+// `tools: false` with its panel hidden.
 //
-// It is called DIRECTLY rather than through the library's measurement tools: no
-// state, no armed tool, no panel, and a synchronous return. Going the other way
-// — arming a tool and reading the result — does not work at all from outside,
-// because the numbers never reach `notifyCallback`; only `selectedShapeIDs`
-// does, and the answer is computed internally and left in the panel.
+// It is called directly rather than through the library's measurement tools:
+// no state, no panel, a synchronous return. Arming a tool and reading the result
+// does not work from outside, because only `selectedShapeIDs` reaches
+// `notifyCallback`; the numbers stay in the panel.
 
 import { nameOf, solidOf } from "./picking.js";
 
@@ -25,20 +22,17 @@ function backend(viewer) {
 /**
  * The shortest distance between two picked entities, or null.
  *
- * `center: false` gives the MINIMUM distance — an exact branch-and-bound over
- * the BVH — which is what "the gap is 2.4" means to a person. `true` would give
- * the distance between centroids, which is a different question nobody asked.
+ * `center: false` gives the minimum distance (exact branch-and-bound over the
+ * BVH), which is what "the gap is 2.4" means; `true` would measure between
+ * centroids.
  *
- * `crossPart` and `moved` ride along because of the limit ui-brief block 7 puts
- * on this feature and requires to be VISIBLE: the numbers are in the coordinates
- * the tessellation arrived in, so a distance BETWEEN two parts is a distance
- * between where they are standing right now — which in a print-layout view, or
- * after somebody dragged one, is not where they are in the assembly. Inside one
- * part (wall thickness, hole diameter, edge length) it is honest in every view.
- * The viewport reports the two facts; what the interface does with them — refuse
- * the measurement, or label it — is its call, and either satisfies the brief.
- * Handing over a bare number would not, because these numbers travel to an agent
- * as a task.
+ * `crossPart` and `moved` are reported because the numbers are in the
+ * coordinates the tessellation arrived in: a distance between two parts is
+ * between where they stand now, which in a print-layout view or after a drag is
+ * not where they are in the assembly. Within one part (wall thickness, hole
+ * diameter, edge length) it is correct in every view. The interface decides
+ * whether to refuse or label such a measurement; a bare number must not reach
+ * the agent as a task.
  */
 export function measureDistance(vp, a, b) {
   const mb = backend(vp.viewer);
@@ -68,12 +62,9 @@ export function measureDistance(vp, a, b) {
 }
 
 /**
- * What the library knows about ONE picked entity: a hole's diameter, an edge's
- * length, a face's area, a solid's volume.
- *
- * The single-click half of the tool, and the half that is always trustworthy —
- * every one of these is a property of one part, so no arrangement of the
- * assembly can make it wrong.
+ * What the library knows about one picked entity: a hole's diameter, an edge's
+ * length, a face's area, a solid's volume. Each is a property of one part, so
+ * no arrangement of the assembly can make it wrong.
  */
 export function measureEntity(vp, entity) {
   const mb = backend(vp.viewer);
@@ -88,12 +79,10 @@ export function measureEntity(vp, entity) {
   if (!answer || !Array.isArray(answer.result)) return null;
   const flat = Object.assign({}, ...answer.result.filter(
     (row) => row && typeof row === "object"));
-  // Diameter first, and that ordering is the whole usefulness of this branch: a
-  // reader clicking the inside of a hole wants the hole's size, which is the one
-  // number the library only reports for a circular edge. It comes back with a
-  // `≈` in the library's own panel because the radius is fitted to the polyline
-  // (mesh, not B-rep), so it is exact for a straight edge or a flat face and
-  // within the tessellation's deflection on a curve.
+  // Diameter first: a reader clicking inside a hole wants its size, which the
+  // library reports only for a circular edge. It is approximate (the radius is
+  // fitted to the polyline, mesh not B-rep), within the tessellation's
+  // deflection on a curve.
   const value = [flat.diameter, flat.length, flat.area, flat.volume]
     .find(Number.isFinite);
   if (!Number.isFinite(value)) return null;

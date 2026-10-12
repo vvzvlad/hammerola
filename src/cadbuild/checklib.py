@@ -1,15 +1,11 @@
 """Reusable geometry checks for the `checks()` in model.py.
 
-NOT PART OF THE TEMPLATE, and this line used to say it was — "the shared half
-of the template, like `scripts/` and the `Makefile`", which described a
-directory in `cad_publish` that a project copied and that no longer exists.
-This module ships INSIDE THE HUB'S IMAGE and is reached by the `checklib.py`
-shim at the repository root; what `hammerola create` unpacks is `model_template/`,
-and there is nothing of this file in it. A fix therefore rolls out with the
-image, to every model at once, rather than being copied into projects — which is
-the same rule read from the other end: the project author calls these and does
-not edit them, and a `checklib.py` of one's own SHADOWS this one (the model's
-directory goes first on `sys.path`) rather than extending it.
+Not part of the template: this module ships inside the hub's image and is
+reached through the `checklib.py` shim at the repository root; `hammerola
+create` unpacks `model_template/`, which contains none of it. A fix rolls out
+with the image to every model at once. Authors call these and do not edit
+them; a project's own `checklib.py` shadows this one (the model's directory
+goes first on `sys.path`) rather than extending it.
 
 Every function measures the solids and returns a **list of problem strings**,
 empty when nothing is wrong. That is the same shape `checks()` may return, so
@@ -32,35 +28,27 @@ probes along Z, `mating_face_flat` takes the height of the joint as `plane_z`.
 A part modelled lying on its side has to be rotated before these two mean
 anything.
 
-NOR IS `deviation` A CHECK. It hands back a PICTURE and a table of numbers --
-catalogue entries for `parts()`, one per colour band, and the figures behind
-them -- because what an author does with the distance between the model and a
-scan of the real thing is look at it. Whether any of those numbers is a problem
-is a judgement, and the model writes it as its own `assert`.
+`deviation` is not a check either: it returns a picture (catalogue entries for
+`parts()`, one per colour band) and the figures behind it, because the
+distance between a model and a scan of the real thing is something to look at.
+Whether a number is a problem is the model's own `assert`.
 
-ONE THING HERE IS NOT A CHECK: `Number` and the three constructors below it.
-They are the other half of the same argument -- a check measures the solid that
-came out, and a `Number` says where the figure that went in came from -- and
-they live here because `checklib` is the name a model already imports. The
-CHECKING of them is not here: it reads the project's files and has to know where
-its root is, which is a different job from measuring a solid
-(`cadbuild.provenance`). ONE function here does open a file -- `unsupported_area`,
-which measures the mesh the gate already exported, because the orientation a part
-is printed in is a property of that file and not of the solid -- and that is the
-whole of this module's contact with a filesystem: it is handed the path and never
-goes looking for one.
+`Number` and its three constructors are not checks: a check measures the solid
+that came out, a `Number` says where the figure that went in came from. They
+live here because `checklib` is what a model already imports; checking them
+needs the project root and lives in `cadbuild.provenance`. The only function
+here that opens a file is `unsupported_area`, which measures the mesh the gate
+exported (print orientation is a property of that file); it is handed the path.
 """
 
 import collections
 import contextlib
-# `@check` reads the decorated function's parameter names, so that a `needs`
-# naming something the check does not take is refused where it is written
-# rather than as a TypeError in a worker process twenty minutes later.
+# `@check` reads the decorated function's parameter names, so a `needs` naming
+# something the check does not take is refused where it is written.
 import inspect
 import math
-# For one existence check. `unsupported_area` measures the MESH the gate
-# already wrote, so it is handed a path and has to be able to say that nothing
-# is at it -- see the message there.
+# `unsupported_area` measures the mesh the gate already wrote, so it must be
+# able to say that nothing is at the path it was handed.
 import os
 import time
 # `import types`, not `from types import SimpleNamespace`: a bare name
@@ -69,21 +57,12 @@ import time
 import types
 import unicodedata
 
-# CUBIC millimetres -- it is compared against volumes, and this line said
-# "Millimetres" while `is_empty` said "cubic millimetres" a screenful below.
-# Volumes below this are boolean noise, not overlap.
+# Cubic millimetres. Volumes below this are boolean noise, not overlap.
 #
-# IT WAS CALIBRATED FOR ONE QUESTION AND IS NOW USED FOR TWO. The question it
-# was chosen for is "did this boolean BETWEEN TWO PARTS return real overlap or
-# arithmetic dust"; `is_empty` asks it of a WHOLE PART, which is a different
-# question with the same units and no measurement behind this value. It is
-# reused rather than given a second constant because on this scale the two
-# cannot disagree in practice: the smallest thing a printer can put down is a
-# 0.4 mm extrusion at a 0.2 mm layer over 0.4 mm, i.e. 0.032 mm3, more than
-# four orders of magnitude above this. A body that is real but under this
-# threshold would have to be a sliver no process could make. Give `is_empty` a threshold
-# of its own the day a caller has a reason to want a different one -- the
-# parameter is already there.
+# Calibrated for "did a boolean between two parts return real overlap"; also
+# used by `is_empty` for a whole part. The two cannot disagree in practice: the
+# smallest printable deposit (0.4 x 0.2 x 0.4 mm) is 0.032 mm3, four orders of
+# magnitude above this. `is_empty` takes its own threshold if ever needed.
 DEFAULT_VOLUME_TOL = 1e-6
 # A face normal is "in the plane" when its Z component is under this. Pure
 # geometry, not a fudge: a wall meeting the joint at a right angle gives 0.0,
@@ -91,35 +70,24 @@ DEFAULT_VOLUME_TOL = 1e-6
 # DIMENSIONLESS -- it is a component of a unit vector, never a length.
 NORMAL_TOL = 1e-3
 # Millimetres. How close to `plane_z` a face or an edge has to be to count as
-# reaching the joint. A separate constant from NORMAL_TOL on purpose: the two
-# happen to share a value and measure different things, and one parameter
-# carrying both means a caller who widens the distance also, silently, widens
-# what counts as a flat face.
+# reaching the joint. Separate from NORMAL_TOL: same value, different
+# quantities, so widening one must not widen the other.
 PLANE_TOL = 1e-3
 
-# There is no wall-thickness check that SWEEPS THE WHOLE PART here, and that is
-# still on purpose. Measuring a wall by firing rays along surface normals gave a
-# false red on ordinary spline geometry -- lofts, sweeps, imported STEP -- and no
-# amount of filtering the artefacts made the number trustworthy. `thin_walls` is
-# not that check and does not lift the ban: it measures only where the AUTHOR
-# named a plane, and its error runs one way -- a wall oblique to a scan axis
-# measures THICKER than it is, so it is missed rather than falsely accused.
-# That last half is behaviour and therefore a test rather than this sentence
-# (the 45-degree rib in tests/cadbuild/test_checklib_printability.py). What no
-# plane names is still looked at by eye, on the preview and in the slicer.
+# No wall-thickness check sweeps the whole part: ray-casting along surface
+# normals gave false reds on spline geometry (lofts, sweeps, imported STEP).
+# `thin_walls` measures only where the author named a plane, and errs one way:
+# a wall oblique to a scan axis measures thicker, so it is missed rather than
+# falsely accused (the 45-degree rib in
+# tests/cadbuild/test_checklib_printability.py). What no plane names is checked
+# by eye, on the preview and in the slicer.
 
-# The nozzle a part is assumed to be printed through, in millimetres. A DEFAULT
-# AND NOT A FACT, and the distinction is the whole reason it is written down
-# once: it is one machine's number, and every caller that needed it would
-# otherwise invent its own. A project printing through a different nozzle passes
-# its own value and declares it with `measured()` (issue #56 "Provenance of
-# numbers"); this constant is what stands in for a project that has not said,
-# never a statement about the machine that will actually print the part.
+# The nozzle a part is assumed to be printed through, in millimetres. A
+# default, not a fact about the machine: a project with a different nozzle
+# passes its own value and declares it with `measured()`.
 NOZZLE_MM = 0.4
-# Two extrusion widths. A wall thinner than that is printed as a single line,
-# and a single line comes out at whatever width the slicer felt like: the
-# nominal thickness stops being a dimension. This is the number a 0.5 mm thread
-# crest on a 0.4 mm nozzle was under, and the 100 g of scrap that followed.
+# Two extrusion widths. A thinner wall is printed as a single line at whatever
+# width the slicer chooses, so its nominal thickness stops being a dimension.
 EXTRUSION_LINES = 2
 
 
@@ -138,99 +106,49 @@ def minimum_feature(nozzle_mm=NOZZLE_MM, lines=EXTRUSION_LINES):
 # 0. Where a number came from
 # --------------------------------------------------------------------------
 
-# The three kinds of provenance, spelled once. `cadbuild.provenance` reads them
-# off a Number rather than writing the words a second time, and the constructor
-# below validates against KINDS rather than against a list of its own.
+# The three kinds of provenance, spelled once; `cadbuild.provenance` and the
+# constructor below read them from here.
 MEASURED = "measured"
 DERIVED = "derived"
 ESTIMATED = "estimated"
 KINDS = (MEASURED, DERIVED, ESTIMATED)
 
-# How long a `source` or a `note` may be. THE SAME 200 the hub holds every other
-# displayed field to, and it is written out here rather than imported because of
-# how this module is loaded: the root `checklib.py` shim loads this file BY PATH,
-# under a name that never goes through `src`, so a `from .hubspec import
-# MAX_NOTE_CHARS` here would fail on the one import path every model.py takes.
-# `tests/cadbuild/test_checklib.py` is what ties the value to the others, the way
-# `tests/client/test_limits.py` ties the client's copies -- the number is written
-# twice and checked once, rather than written twice and hoped about.
+# How long a `source` or a `note` may be. Written out rather than imported: the
+# root `checklib.py` shim loads this file by path under a name outside `src`,
+# so `from .hubspec import MAX_NOTE_CHARS` would fail for every model.py.
 #
-# IT IS A CEILING RATHER THAN A STYLE RULE. The note travels into metrics.json,
-# which is served at /project/<pid>/<commit>/metrics.json, is public, and is
-# never deleted -- there is no retention. Nothing else bounded it: a 200 000
-# character note made a 200 kB metrics.json, and the only ceiling underneath was
-# the build process's RLIMIT_FSIZE of 256 MiB.
+# A ceiling, not a style rule: the note goes into metrics.json, which is served
+# publicly at /project/<pid>/<commit>/metrics.json and never deleted.
 #
-# THE FOUR COPIES OF 200 ARE ONE RULE ON PURPOSE, and that is a DECISION rather
-# than a coincidence four files happen to agree on. They are this one,
-# `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and `hammerola.limits.MAX_TEXT_CHARS`,
-# and nothing MECHANICALLY holds a note under the third: metrics.json is served
-# as a file and never passes through `render._plain_text`, so a note is bounded
-# here and nowhere else. The number is kept equal anyway, because one ceiling on
-# author-visible text is something a person can hold in their head and four that
-# drift is not -- and because narrowing this one later would retroactively
-# refuse builds that used to pass, into immutable revisions nobody can rewrite.
-# What that costs is a note ceiling that moves when somebody re-reasons about a
-# heading: acceptable, and written down here so it is a choice the next reader
-# can overturn deliberately.
-#
-# THERE IS ROOM OVER THE TEMPLATE, AND HOW MUCH IS NOT WRITTEN HERE. It was --
-# "the longest note in `model_template/` is 130 characters of the 200" -- and
-# the round that wrote the sentence added a 182-character note in the same
-# breath, which left 130 the FOURTH longest note in that directory and the real
-# room 18 characters rather than 70. A figure about another file, kept in a
-# comment, has nothing to fail on. So the claim is a test instead:
+# The same 200 as `hubspec.MAX_NOTE_CHARS`, `render.MAX_TEXT` and
+# `hammerola.limits.MAX_TEXT_CHARS`, kept equal so there is one ceiling on
+# author-visible text (`render.MAX_TEXT` never applies to metrics.json, so the
+# note is bounded only here). Narrowing it would refuse builds that pass
+# today. `tests/cadbuild/test_checklib.py` ties the four copies together;
 # `tests/test_template.py::test_every_note_in_the_template_fits_under_the_ceiling`
-# measures every string the template hands a constructor against this number,
-# and the next note that outgrows it reddens there rather than rotting here.
-# `tests/cadbuild/test_checklib.py` is what ties the four copies together.
+# checks the template's notes against it.
 MAX_NOTE_CHARS = 200
 
-# The two characters Unicode calls line separators, which category C does NOT
-# hold: U+2028 is Zl and U+2029 is Zp. `str.splitlines()` splits on both, so
-# they do the one thing the category scan below exists to prevent: an
-# `estimate: WALL = 2.4 -- ...` line comes back from splitlines() as TWO, and
-# whatever follows the separator reads as a finding of its own. Every OTHER
-# character splitlines() breaks on -- \v, \f, \x1c to \x1e and U+0085 -- is in
-# category C and is caught by the scan itself, so these two are the whole of
-# the gap.
+# The two Unicode line separators outside category C (U+2028 is Zl, U+2029 is
+# Zp). `str.splitlines()` splits on both, so one note would read as two lines.
+# Every other character splitlines() breaks on is in category C and caught by
+# the scan itself.
 #
-# WRITTEN AS ESCAPES AND NOT AS THE CHARACTERS THEMSELVES. They are invisible,
-# so a literal pair here is a line of source nobody can proofread -- and an
-# editor that normalises them leaves this constant holding two spaces, which
-# reads exactly the same and refuses nothing.
+# Written as escapes: the characters are invisible, and an editor normalising
+# them to spaces would silently disable the check.
 #
-# Checked separately from the category scan rather than folded into it,
-# deliberately: that scan has to keep answering exactly what
-# `buildnames.first_nonprintable` answers (tests/cadbuild/test_checklib.py runs
-# both over one corpus) and this is a second rule laid on top of it. Private,
-# so the root shim owes it no re-export -- a model has no use for it.
+# A separate rule on top of the category scan, which must keep matching
+# `buildnames.first_nonprintable` (tests/cadbuild/test_checklib.py runs both
+# over one corpus). Private, so the root shim owes it no re-export.
 _LINE_SEPARATORS = "\u2028\u2029"
 
-# What to say about a string that is over the ceiling, and it differs by FIELD.
-# One sentence written about a note used to be printed for both, and both halves
-# of it are false of a `source`: `provenance.report()` publishes `notes` and
-# nothing else, so a source never reaches metrics.json at all, and "put the
-# working in the measurement journal" is not something anybody can do to a file
-# path. Only the first sentence -- the count and the ceiling -- is in common.
+# What to say about a string over the ceiling, by field. A `source` never
+# reaches metrics.json (`provenance.report()` publishes only `notes`) and is a
+# path, not a sentence, so the advice differs; only the count is shared.
 #
-# BY FIELD AND NOT BY KIND, which is why the note's advice names no single place
-# to put the working. It used to end "put the working in the measurement
-# journal", which is advice for `measured()` alone: `derived()` is explicitly for
-# a figure that follows from other numbers -- a published standard among them --
-# and has no journal behind it, so a note over the ceiling on a derivation was
-# sent to a file that does not exist and need not.
-#
-# THE SENTENCE NAMES TWO OF THE THREE KINDS, and the third's absence is the
-# point rather than an omission to be tidied up. A measurement's working goes in
-# the journal it cites and a derivation's in the numbers it names, so each of
-# those has somewhere to be sent; an ESTIMATE has nowhere -- the note is the
-# whole of what is recorded about it -- so the advice tells its author to keep
-# the one thing that settles the number and says nothing further, which is the
-# only true thing there is to say. A sentence per kind is the obvious
-# alternative and is not worth what it costs: `_text_problem` guards both fields
-# and is given the field, so the kind would have to be threaded through it to
-# add a clause for the kind that needs none.
+# The note's advice names where a measurement's and a derivation's working go;
+# an estimate has nowhere else to record it, so the advice is just to keep the
+# one thing that settles the number.
 _TOO_LONG_ADVICE = {
     "note": ("It is published in metrics.json and read by a person -- say the "
              "one thing that settles the number and leave the working out of "
@@ -245,44 +163,27 @@ _TOO_LONG_ADVICE = {
 def _text_problem(text, field):
     """What is wrong with a `source` or a `note`, as a sentence, or None.
 
-    FOUR THINGS, and every one of them is about where the string ENDS UP rather
-    than about taste. It is written into metrics.json, printed into the build
-    log, and served publicly at /project/<pid>/<commit>/metrics.json for as long
-    as the revision exists:
+    The string goes into metrics.json, the build log, and is served publicly
+    for as long as the revision exists, so four rules:
 
-      * a CEILING, because there was none. metrics.json is public, permanent and
-        on a volume with no retention, and a note is author text of any length.
-        `field` picks what to say about it -- the ADVICE differs, the count and
-        the number do not;
-      * NO CATEGORY-C CHARACTER. A note is printed as ONE line of the build
-        log, so a `\\n` in it makes one estimate read as two -- and the
-        invisible half of the category (U+202E and friends) reorders a sentence
-        somebody is going to act on;
-      * NO U+2028 OR U+2029 EITHER. They are Zl and Zp, so the category scan
-        walks past both, and `str.splitlines()` splits on them -- one note, two
-        lines, exactly as a `\\n` does. See LINE_SEPARATORS above;
-      * IT HAS TO ENCODE. A surrogate arrives from
-        `bytes.decode(errors="surrogateescape")`, and it does not reach a
-        refusal: it reaches `print()` and `json.dumps(ensure_ascii=False)`,
-        each raising UnicodeEncodeError -- not a BuildError, so the build ended
-        in EXIT_CRASHED (4) rather than EXIT_BUILD_FAILED (3), i.e. reported as
-        the hub's fault rather than the model's.
+      * a length ceiling, since metrics.json is public and permanent. `field`
+        picks the advice;
+      * no category-C character: a note is printed as one log line, so `\\n`
+        makes it read as two, and invisible ones (U+202E etc.) reorder a
+        sentence somebody acts on;
+      * no U+2028 or U+2029, which the category scan misses but
+        `str.splitlines()` splits on (see _LINE_SEPARATORS);
+      * it must encode: a surrogate (from `errors="surrogateescape"`) would
+        reach `print()`/`json.dumps` as UnicodeEncodeError, crashing the build
+        as EXIT_CRASHED instead of failing it as the model's fault.
 
-    WHY THE SCAN IS WRITTEN OUT HERE and not imported from `hammerola/buildnames.py`,
-    which holds `first_nonprintable`: the root `checklib.py` shim loads this file
-    by path, under a name that goes through no package at all, so this module
-    makes no relative import and no first-party import either. Third copy of
-    the scan is the cost, and `tests/cadbuild/test_checklib.py` is what makes it
-    a shared rule rather than a second one -- it runs both over the same corpus.
+    The scan is copied rather than imported from `hammerola/buildnames.py`:
+    the root shim loads this file by path, so it makes no first-party import.
+    `tests/cadbuild/test_checklib.py` runs both over one corpus.
 
-    THE ENCODING BRANCH IS UNREACHABLE TODAY, and it is kept anyway. Every one of
-    the 1114112 code points was enumerated: there is not one that fails to encode
-    as UTF-8 and is not in category C, so the scan above always answers first --
-    a lone surrogate comes back as a non-printable character and never as an
-    encoding failure. It stands as the guard for the day that stops being true,
-    which is the day somebody narrows the category scan to keep it equal to
-    something else; it is not a second rule catching a case the first misses,
-    and this paragraph used to claim it was.
+    The encoding branch is currently unreachable (every code point that fails
+    to encode is in category C); it guards against the scan ever being
+    narrowed.
     """
     if len(text) > MAX_NOTE_CHARS:
         return (f"is {len(text)} characters, and the ceiling is "
@@ -313,25 +214,19 @@ def _text_problem(text, field):
 class Number(float):
     """A float that remembers where its value came from.
 
-    A subclass of float, so it goes into cadquery arithmetic, into f-strings and
-    into json exactly like the number it is -- a model that wraps a constant
-    changes nothing about how the geometry is built.
+    A subclass of float, so it behaves exactly like the number in cadquery
+    arithmetic, f-strings and json.
 
-    PROVENANCE DOES NOT PROPAGATE THROUGH ARITHMETIC, on purpose: `a * 2` is a
-    plain float. A number worked out from other numbers has to say so with
-    `derived()`, which is a sentence about WHICH numbers, and a rule that
-    inferred it would be inventing that sentence.
+    Provenance does not propagate through arithmetic: `a * 2` is a plain float.
+    A worked-out number must say from which numbers with `derived()`.
 
-    Built through `measured()`, `derived()` or `estimated()` -- those are what a
-    model.py writes, and they are what says which of the three fields mean
-    anything. This class is public because the check has to be able to
-    recognise one, not because a model has a reason to call it.
+    Built through `measured()`, `derived()` or `estimated()`; the class is
+    public so the check can recognise one.
 
-    `__slots__` and no `__dict__`: this is a number, and a per-instance dict on
-    something a model may hold thousands of is weight for nothing. That is also
-    why `__reduce__` is spelled out below -- a float subclass with slots and no
-    reducer pickles as a bare float, losing all three fields in silence, and
-    the build runs the model in a process of its own.
+    `__slots__` and no `__dict__`: a model may hold thousands. Hence the
+    explicit `__reduce__`: a float subclass with slots and no reducer pickles as
+    a bare float, losing all three fields, and the build runs the model in its
+    own process.
     """
 
     __slots__ = ("kind", "source", "note")
@@ -339,9 +234,8 @@ class Number(float):
     def __new__(cls, value, kind, source="", note=""):
         number = super().__new__(cls, value)
         if not math.isfinite(number):
-            # A number that cannot be compared is not a measurement: every use
-            # of one of these ends in an inequality, and nan loses every one of
-            # them without failing any.
+            # Every use of one of these ends in an inequality, and nan loses
+            # all of them without failing any.
             raise ValueError(
                 f"{kind}({value!r}) is not a finite number. A dimension that "
                 "cannot be compared is not a measurement -- find the "
@@ -354,9 +248,8 @@ class Number(float):
                 raise TypeError(
                     f"{kind}(): {field} is {type(text).__name__}, and it is a "
                     "sentence for a person to read")
-            # The field goes IN, not just into the prefix below: what to do
-            # about a string over the ceiling is different advice for a path
-            # than for a sentence (see _TOO_LONG_ADVICE).
+            # The field goes in, because the advice for an over-long string
+            # differs for a path and a sentence (see _TOO_LONG_ADVICE).
             problem = _text_problem(text, field)
             if problem is not None:
                 raise ValueError(f"{kind}(): {field} {problem}")
@@ -370,14 +263,10 @@ class Number(float):
     def __setattr__(self, name, value):
         """A declared number does not change after it is declared.
 
-        WHAT THIS CLOSES IS A CRASH, not a way of lying: the fields were plain
-        slots, so `n.kind = "guessed"` took, and `provenance.report` then died
-        on `counts[entry.number.kind]` with a bare `KeyError` -- which is not a
-        `BuildError`, so the build ended in a traceback rather than in a
-        message. The value itself is already immutable (this is a float), and
-        making the three fields match it is what turns "a number's provenance
-        is fixed at the point it is written" from a comment into something that
-        holds.
+        Mutable fields let `n.kind = "guessed"` through, and `provenance.report`
+        then died on `counts[entry.number.kind]` with a bare `KeyError` (not a
+        `BuildError`). The value is already immutable; this makes the fields
+        match it.
         """
         raise AttributeError(
             f"a checklib.Number is fixed at the point it is declared, so "
@@ -386,9 +275,8 @@ class Number(float):
             f"where an existing one came from")
 
     def __delattr__(self, name):
-        # Deleting a field is the same change as setting one, and it lands in
-        # the same place: `report()` would raise AttributeError inside the
-        # build instead of a BuildError.
+        # Deleting a field would likewise make `report()` raise AttributeError
+        # instead of a BuildError.
         raise AttributeError(
             f"a checklib.Number is fixed at the point it is declared, so "
             f"{name!r} cannot be removed from one")
@@ -396,10 +284,9 @@ class Number(float):
     def __reduce__(self):
         """Rebuild the whole thing, fields and all, on the far side of a pickle.
 
-        Without this a float subclass carrying `__slots__` comes back as its
-        VALUE and nothing else -- no kind, no source, no note, no error. The
-        build already runs a model in a spawned process, and issue #76 pickles
-        model-side objects across it, so the loss would be silent and remote.
+        Without this a float subclass with `__slots__` unpickles as its value
+        alone, silently. Model-side objects are pickled across to spawned
+        processes (check units).
         """
         return (self.__class__,
                 (float(self), self.kind, self.source, self.note))
@@ -433,17 +320,13 @@ def derived(value, note):
     formula would demand a second copy of the expression on the line above it.
     The note travels into metrics.json, where the next reader finds it.
 
-    A FIGURE OFF A PUBLISHED STANDARD OR DATASHEET IS `derived`, AND THE NOTE
-    NAMES THE STANDARD -- unless this project keeps a journal entry for it, in
-    which case it is `measured` and points there. The rule is written down
-    because the two worked examples of the contract classify the same kind of
-    fact differently and both are right under it: README.md marks its ISO 4762
-    head diameter `derived("... ISO 4762")`, having no journal, while
+    A figure off a published standard or datasheet is `derived`, with the note
+    naming the standard -- unless this project keeps a journal entry for it,
+    in which case it is `measured` and points there. README.md marks its ISO
+    4762 head diameter `derived("... ISO 4762")` (no journal), while
     `model_template/` marks its DIN 912 figures `measured` against
-    `ref/measurements.md#screw`, where three samples out of the bag are written
-    down. What decides is whether somebody here can go and READ the number's
-    provenance -- which is the same question `measured()` is refused for
-    failing.
+    `ref/measurements.md#screw` (three samples recorded). What decides is
+    whether somebody here can go and read the number's provenance.
     """
     if not note:
         raise ValueError(
@@ -459,10 +342,9 @@ def estimated(value, note):
         WALL = checklib.estimated(2.4, "four perimeters at a 0.6 mm nozzle; "
                                        "settled by printing one")
 
-    IT BUILDS. This is the way out that always works, and it is not a defeat:
-    most numbers in a first model are choices, and the point is that the build
-    says so -- one `estimate:` line per number in the log, and a count in
-    metrics.json -- rather than letting a guess pass for a figure somebody took.
+    It always builds. Most numbers in a first model are choices; the build says
+    so -- one `estimate:` line per number in the log, and a count in
+    metrics.json -- rather than letting a guess pass for a measurement.
     """
     if not note:
         raise ValueError(
@@ -472,16 +354,13 @@ def estimated(value, note):
 
 
 # Every pair pairwise_interference actually intersected, and the volume it
-# measured -- including the zeroes, which are the ones worth keeping: a pair
-# that reads 0.00 mm3 today and 4.10 mm3 tomorrow is a part that grew into its
-# neighbour, and the build that reports it is the one where it happened.
+# measured, zeroes included: a pair going from 0.00 to 4.10 mm3 is a part that
+# grew into its neighbour.
 #
-# It is a RECORD OF WORK ALREADY DONE, not a second computation: the numbers are
-# taken as the check goes, so cadbuild.metrics can put them in metrics.json
-# single extra boolean. Pairs the cheap bounding-box reject skipped are not in
-# here, because nothing measured them -- absence means "not computed", never
-# "zero". Accumulates over the run: a model may call the check once per
-# subassembly, and each call adds its own pairs.
+# A record taken as the check goes, so cadbuild.metrics can put it in
+# metrics.json at no extra boolean. Pairs skipped by the bounding-box reject
+# are absent: absence means "not computed", never "zero". Accumulates over the
+# run, since a model may call the check once per subassembly.
 _INTERFERENCE = {}
 
 
@@ -491,20 +370,13 @@ def recorded_interference():
 
 
 # What each `with section(...)` block of checks() cost, in seconds, summed by
-# label. Written by `section` below; PRINTED BY THE CORE and not by the model
-# (cadbuild.modelchecks.run_checks), so the table comes out on a failed build
-# too -- which is the log somebody actually opens.
+# label. Printed by the core (cadbuild.modelchecks.run_checks), not the model,
+# so it appears on a failed build too.
 #
-# The same shape as _INTERFERENCE above and for the same reason: a record of
-# work already done, taken as the work goes, so reading it costs nothing and
-# accumulates over the whole run. A label reused -- inside a loop, or in two
-# places -- is ONE line whose seconds are the sum, which is the point: what a
-# repeated stretch costs altogether is the number that decides anything.
-#
-# NESTED SECTIONS EACH MEASURE THEIR OWN WALL TIME, so an inner one is also
-# inside its outer one's total and the column does not add up to the run.
-# Left that way deliberately: subtracting inner time would make a label's number
-# depend on where else it was used.
+# A reused label is one line with the summed seconds. Nested sections each
+# measure their own wall time, so the column does not add up to the run;
+# subtracting inner time would make a label's number depend on where else it
+# was used.
 _SECTIONS = {}
 
 
@@ -524,19 +396,15 @@ def section(label):
     Seconds per label, longest first, printed by the build after checks() ends
     -- including when it ends by failing.
 
-    WHY THIS AND NOT A DECORATOR ON A HELPER. The hub counts the checks in a
-    model by reading the SOURCE of `checks()` (modelchecks.count_checks), and a
-    `checks()` with no check in its own body fails the build outright -- "an
-    empty checks() is worse than none". Splitting the body into decorated
-    helpers would leave exactly that: a `checks()` that only calls things. A
-    `with` block leaves every assert where the counter can see it, which is
-    measured rather than assumed -- `tests/cadbuild/test_modelchecks.py` counts
-    asserts and `problems +=` lines sitting inside one.
+    A `with` block rather than decorated helpers: the hub counts checks by
+    reading the source of `checks()` (modelchecks.count_checks), and a
+    `checks()` with no check in its own body fails the build. A `with` block
+    keeps every assert visible to the counter
+    (`tests/cadbuild/test_modelchecks.py` counts asserts and `problems +=`
+    lines inside one).
 
-    WHY IT IS WORTH MARKING ANYTHING AT ALL. Phases of a build are timed by
-    build.py, and on a real model measured 2026-08-29 that was not enough: the
-    checks phase was 495 seconds and 52% of it sat in a single loop inside it,
-    which no per-phase number can point at.
+    Build phases are timed by build.py; this points at the loop inside the
+    checks phase that a per-phase number cannot.
 
     The label is a string and is refused if it is not one -- it is a table
     heading, and a stray tuple or Path would come out as one.
@@ -549,8 +417,7 @@ def section(label):
     try:
         yield
     finally:
-        # In `finally`, so a check that fails inside a section still leaves its
-        # cost behind: the failed build is the one whose timing is read.
+        # In `finally`, so a failing check still records its cost.
         _SECTIONS[label] = _SECTIONS.get(label, 0.0) + (time.monotonic() - started)
 
 
@@ -563,50 +430,32 @@ def recorded_sections():
 # Shared helpers
 # --------------------------------------------------------------------------
 
-# There is no `_shape` helper here any more, and its absence is deliberate.
-# It returned `Workplane.val()` -- the FIRST body -- under the justification
-# "fine where one body is all there can be (a printable is one part)". Both of
-# its callers took arbitrary assembly objects rather than printables, so the
-# sentence excused nothing while reading like it had been checked: measured on
-# cadquery 2.8.0, `pairwise_interference` missed 800.00 mm3 of interference
-# because the overlap was with the SECOND body of a part, and
-# `mating_face_flat` reported "there is no flat mating face there at all" for a
-# joint that lay on the second body. Everything here goes through `_shapes`.
-# Bring a first-body helper back only for a caller that can say why one body is
-# all there can be -- and none of the callers here can.
+# Everything here goes through `_shapes`, never `Workplane.val()` (the first
+# body): the checks take arbitrary assembly objects, and a first-body helper
+# missed interference and mating faces on a part's second body.
 def _shapes(obj, where):
     """Every body a Workplane holds, not just the first. A bare Shape is one.
 
-    `val()` is the first object on the stack, so a Workplane put together with
-    `.add()` gets judged on its first body alone. Measured on cadquery 2.8.0:
-    two 10 mm boxes 50 mm apart, added into one Workplane, give `vals()` of
-    length 2 -- and a classifier built on `val()` answers OUT at the centre of
-    the second box.
+    `val()` is the first object on the stack, so a Workplane built with
+    `.add()` would be judged on its first body alone (cadquery 2.8.0: two
+    boxes added into one Workplane give `vals()` of length 2).
 
-    A LOCAL ANALOGUE OF `geometry.as_shapes` RATHER THAN AN IMPORT OF IT, and
-    the reason is the same one that made `checklib.py` at the repository root
-    resolve this file by PATH. That shim loads this module with
-    `spec_from_file_location` under the name `src.cadbuild.checklib` without
-    importing `src.cadbuild` at all, precisely because a model project owns the
-    name `src` (its root goes on sys.path first, see geometry.load_model). A
-    `from .geometry import as_shapes` here would ask for that parent package
-    anyway and put the whole shim back behind the name it was taken out from
-    behind. That is not a prediction: the import was tried, and it turns
-    `test_the_shim_survives_a_model_project_that_has_a_src_of_its_own` red --
-    the test asserts the name `src` is never touched at all -- along with
-    `test_everything_a_model_calls_is_re_exported`, since an imported function
-    is a public name of this module and the root shim would then owe it a
-    re-export.
+    A local analogue of `geometry.as_shapes` rather than an import: the root
+    shim loads this module by path as `src.cadbuild.checklib` without
+    importing `src.cadbuild`, because a model project may own the name `src`
+    (its root goes first on sys.path, see geometry.load_model). Importing
+    `.geometry` would require the parent package
+    (`test_the_shim_survives_a_model_project_that_has_a_src_of_its_own`), and
+    an imported function would also become a public name the shim must
+    re-export (`test_everything_a_model_calls_is_re_exported`).
 
-    The error discipline differs too, and it is not cosmetic: as_shapes raises
-    BuildError, which belongs to the hub, while everything in this file raises
-    what a model author's own code raises -- run_checks turns a ValueError or a
-    TypeError out of checks() into a failed build with the message and the line,
-    which is the same treatment an assert gets.
+    Errors differ too: as_shapes raises the hub's BuildError, while this file
+    raises what an author's own code raises (ValueError/TypeError), which
+    run_checks reports with the message and line like an assert.
 
-    An empty stack comes back as an empty list rather than as a refusal here:
-    the caller that cares (material_at) has one message for "no geometry" and
-    "geometry with no solid in it", because they are the same mistake.
+    An empty stack returns an empty list; material_at gives one message for
+    "no geometry" and "geometry with no solid", since they are the same
+    mistake.
     """
     shapes = list(obj.vals()) if hasattr(obj, "vals") else [obj]
     for shape in shapes:
@@ -626,73 +475,42 @@ def material_at(part, name="part"):
         if not solid(0, 0, 12.5):
             problems.append("the boss is hollow where the screw seats")
 
-    USE THIS INSTEAD OF INTERSECTING WITH A SMALL CUBE. Asking the question
-    with a boolean -- `body.intersect(cq.Workplane().box(0.6, 0.6, 0.6)
-    .translate(p))` and looking at the volume -- is the obvious way and it is
-    the reason builds take minutes: a boolean on a complex solid costs
-    milliseconds to tens of milliseconds and this costs microseconds. A model
-    doing a few hundred of them (a scan along a channel, a probe grid over a
-    seat) pays seconds against nothing. Measured on a real model, 2026-08-29:
-    point probes done with booleans were the single largest line of a
+    Use this instead of intersecting with a small cube: a boolean on a complex
+    solid costs milliseconds to tens of milliseconds, this costs microseconds.
+    A few hundred boolean probes (a scan along a channel, a grid over a seat)
+    cost seconds; on one real model they were the largest line of a
     495-second check run.
 
-    BUT THEY ARE NOT THE SAME QUESTION, and anybody replacing one with the
-    other has to know where they part. A cube asks "is there material within
-    half a cube of here"; this asks about the POINT. Away from surfaces they
-    agree exactly. Within half the cube's diagonal of a face they need not: a
-    point sitting 0.2 mm OUTSIDE the part is empty here and material to a
-    0.6 mm cube, which reaches 0.3 mm in every direction. So a probe grid
-    ported across without moving its points can flip exactly the answers that
-    sit near a boundary -- which, in a check written to ask "is there material
-    right up against this face", is most of them.
+    They are not the same question. A cube asks "is there material within half
+    a cube of here"; this asks about the point. They agree away from surfaces,
+    but a point 0.2 mm outside the part is empty here and material to a 0.6 mm
+    cube. So put the point where material is required -- half a millimetre
+    inside the wall, not on its surface -- and they agree again.
+    `tests/cadbuild/test_material_at.py` pins both the agreement and the
+    disagreement.
 
-    The fix is to say what you mean rather than to tune a cube: put the point
-    where material is REQUIRED -- half a millimetre inside the wall, not on its
-    surface -- and the two agree again. `tests/cadbuild/test_material_at.py`
-    pins both halves of this, the agreement and the disagreement.
+    On counts as material: a point exactly on a face answers about the surface,
+    another reason to keep probe points off faces.
 
-    ON COUNTS AS MATERIAL. A probe landing exactly on a face is touching the
-    part rather than hanging off it, which means a point that sits on a surface
-    answers about the surface and not about what is behind it -- another reason
-    to keep probe points off the faces.
+    The probe is bound to the part as it was when created; take a fresh one
+    after a transform or rebuild.
 
-    THE PROBE IS BOUND TO THE PART AS IT WAS WHEN YOU ASKED FOR IT. It holds a
-    classifier over that shape; moving or rebuilding the part afterwards does
-    not update it. Take a fresh probe after a transform, and do not cache one
-    across a rebuild.
+    Every body is probed: one classifier per solid, answering yes as soon as
+    one does. Not one classifier over a compound: that is documented for a
+    solid only, and over a compound the nearest face wins regardless of solid
+    (it read "no material" inside the second of two touching boxes, and over
+    most of a 20 mm box holding a 2 mm cube). The comment at the code has the
+    points and the cost.
 
-    EVERY BODY IS PROBED, not the first one. A Workplane put together with
-    `.add()` holds several, and the probe covers all of them: it holds ONE
-    CLASSIFIER PER SOLID and answers yes as soon as one of them says yes.
-    Measured on cadquery 2.8.0 -- on two 10 mm boxes 50 mm apart added into one
-    Workplane, a classifier built the old way (on `val()`) answered OUT at the
-    centre of the second box.
+    A part with no solid is refused rather than probed (see the message).
 
-    Per solid, and not over a compound of them, because a classifier built over
-    a compound answers WRONGLY on bodies that touch or nest -- it is documented
-    for a solid, and over a compound the nearest face wins whichever solid it
-    belongs to. On two touching 10 mm boxes it read "no material" inside the
-    second one; on a 20 mm box holding a 2 mm cube it read "no material" over
-    most of the box. The comment at the code has the points and the cost.
-
-    A PART WITH NO SOLID IN IT IS REFUSED rather than probed. That is what a
-    boolean which removed everything leaves behind, and the reason for the
-    refusal is that the alternatives lie -- see the message itself.
-
-    Anything with a solid in it works -- a Workplane, a Shape, a Compound --
-    exactly like the other checks here. `name` only improves the error message
-    when it is handed something that is not geometry, or geometry with nothing
-    in it.
+    Anything with a solid in it works -- a Workplane, a Shape, a Compound.
+    `name` only improves the error message.
     """
-    # THE TYPE CHECK COMES FIRST, BEFORE THE KERNEL IS IMPORTED, and the order
-    # is the whole point rather than style. `_shapes` is plain Python; the OCP
-    # import below needs the native OpenCASCADE libraries, which exist in the
-    # hub's image and in very few other places. With the import first, handing
-    # this a string answered `ImportError: libGL.so.1` on any machine without
-    # them -- an error about the environment, for a mistake in the argument,
-    # and one that made a test of the refusal impossible to run anywhere the
-    # kernel is absent. That is exactly how it was caught: CI went red on the
-    # test that asserts the refusal, in a container that has no OpenCASCADE.
+    # The type check comes before the kernel import: `_shapes` is plain Python,
+    # and with the OCP import first a wrong argument would surface as
+    # `ImportError: libGL.so.1` on a machine without OpenCASCADE, and the
+    # refusal test could not run there.
     shapes = _shapes(part, name)
 
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
@@ -701,11 +519,9 @@ def material_at(part, name="part"):
 
     solids = [solid for shape in shapes for solid in shape.Solids()]
     if not solids:
-        # TWO DIFFERENT EMPTIES, and one message describing both would be false
-        # about one of them: a Workplane with an empty stack has no body at all,
-        # while a boolean that removed everything leaves a body that still looks
-        # like geometry. The second is the one worth explaining at length --
-        # nothing about it says "empty" until the volume is asked for.
+        # Two different empties: an empty stack has no body at all, while a
+        # boolean that removed everything leaves a body that still looks like
+        # geometry until its volume is asked for.
         if not shapes:
             what = (
                 "there is nothing here at all -- `.vals()` is empty, so not "
@@ -735,33 +551,21 @@ def material_at(part, name="part"):
             "Find the operation that came back empty; the geometry is what is "
             "wrong, not the check.")
 
-    # ONE CLASSIFIER PER SOLID, and the answers OR'd together. The obvious
-    # alternative -- `Compound.makeCompound(solids)` and one classifier over it
-    # -- is WRONG, and wrong quietly: BRepClass3d_SolidClassifier is documented
-    # for a SOLID, and over a compound it resolves a point against the nearest
-    # face among all of them, so a face belonging to a different solid decides
-    # the verdict. Measured on cadquery 2.8.0, against per-solid classifiers and
-    # against an independent check (a 0.2 mm cube intersected solid by solid),
-    # which agreed with each other everywhere:
+    # One classifier per solid, answers OR'd. A single classifier over
+    # `Compound.makeCompound(solids)` is wrong: BRepClass3d_SolidClassifier is
+    # documented for a solid, and over a compound the nearest face of any
+    # solid decides. Measured on cadquery 2.8.0 against an independent check:
     #
     #   two 10 mm boxes 50 mm apart   compound right   val() wrong
     #   the same two boxes TOUCHING   compound WRONG   val() wrong
     #   20 mm box, 2 mm cube INSIDE   compound WRONG   val() right
     #
-    # On the touching pair the compound answered "no material" at (7, 0, 0),
-    # (10, 0, 0) and (12, 0, 0), all of which are inside the second box; on the
-    # nested pair it answered "no material" at (4, 0, 0) and (8, 0, 0), which
-    # are inside the 20 mm box -- so a model that added an insert with `.add()`
-    # would have read as hollow over most of its own body. Note the third row:
-    # there the compound is worse than the single-body classifier this replaced.
+    # (touching: "no material" at (7,0,0), (10,0,0), (12,0,0) inside the second
+    # box; nested: at (4,0,0) and (8,0,0) inside the 20 mm box.)
     #
-    # THE COST IS O(number of solids) PER POINT rather than O(1), and the short
-    # circuit only helps when the answer is yes. Measured on this machine,
-    # 20000 probes: ~11 us per classifier consulted, so a miss over 3 solids is
-    # 33 us against 11 us for one, while a hit on the first solid stays at ~11 us
-    # whatever the count. An ordinary part is 1-3 solids. There is deliberately
-    # no bounding-box prefilter in front of this: it has not been measured to be
-    # needed, and it would be a second, subtler thing to get wrong.
+    # Cost is O(solids) per point; a hit short-circuits. ~11 us per classifier
+    # consulted (20000 probes). An ordinary part is 1-3 solids. No bounding-box
+    # prefilter: not shown to be needed, and another thing to get wrong.
     classifiers = [BRepClass3d_SolidClassifier(solid.wrapped) for solid in solids]
 
     def probe(x, y, z):
@@ -779,26 +583,19 @@ def material_at(part, name="part"):
 def volume(obj):
     """Cubic millimetres of material, over every body and every solid in it.
 
-    The one honest answer to "did anything survive that boolean". `assert
-    wp.vals()` is the answer people write instead, and IT CANNOT FAIL: measured
-    on cadquery 2.8.0, a 10 mm box intersected with a 1 mm box 100 mm away
-    hands back a Workplane whose `.vals()` is a list of ONE Compound -- truthy,
-    length 1, no solids inside it, total volume 0.0. In the model that produced
-    this function an `assert wp.vals()` had stood for months over the line
-    beneath it, which read a bounding box off exactly that empty compound.
+    The honest answer to "did anything survive that boolean". `assert
+    wp.vals()` cannot fail: on cadquery 2.8.0 a 10 mm box intersected with a
+    1 mm box 100 mm away gives `.vals()` of one Compound -- truthy, no solids,
+    volume 0.0.
 
-    THE BOUNDING BOX IS NOT AN ALTERNATIVE either: `BoundingBox()` on that body
-    raises `Standard_Failure: Bnd_Box is void`, so a check reaching for extents
-    to see whether anything is left dies with a message about a box.
+    The bounding box is no alternative: `BoundingBox()` on that body raises
+    `Standard_Failure: Bnd_Box is void`.
 
-    Solids only, like everywhere else here -- a sketch, a wire or a loose face
-    is not material and contributes nothing. A Workplane, a Shape and a Compound
-    are all accepted, and every body of a Workplane is counted (`.add()` puts
-    several on the stack).
+    Solids only: a sketch, wire or loose face contributes nothing. Accepts a
+    Workplane, a Shape or a Compound, counting every body of a Workplane.
     """
     shapes = _shapes(obj, "volume")
-    # The 0.0 start is not decoration: `sum([])` is the int 0, and this function
-    # promises cubic millimetres for every input including the empty one.
+    # 0.0 start: `sum([])` is the int 0, and this promises cubic millimetres.
     return sum((solid.Volume() for shape in shapes for solid in shape.Solids()),
                0.0)
 
@@ -811,11 +608,9 @@ def is_empty(obj, tol=DEFAULT_VOLUME_TOL):
     Write this where `assert body.vals()` suggests itself: that one is true for
     an emptied body (see volume), so it is an assert that cannot fail.
 
-    `tol` is in cubic millimetres. Its default is DEFAULT_VOLUME_TOL, which was
-    chosen for a different question -- boolean noise between two parts, not
-    emptiness of one -- and is reused because nothing printable comes anywhere
-    near it; the reasoning is written out at the constant. Pass your own where
-    that matters.
+    `tol` is in cubic millimetres; the default DEFAULT_VOLUME_TOL was chosen
+    for boolean noise between two parts and is far below anything printable
+    (see the constant). Pass your own where that matters.
     """
     return volume(obj) <= tol
 
@@ -830,13 +625,11 @@ def _boxes_apart(a, b, tol):
 def _hull(boxes):
     """One box enclosing them all -- for rejecting a PART against a part.
 
-    A multi-body part has no single bounding box of its own, and the one thing
-    a prefilter may never do is reject a pair that does overlap. Measured on
-    cadquery 2.8.0: a part whose bodies sit at X -5..5 and X 25..35 has a
-    `val().BoundingBox()` of -5..5, so a neighbour at X 27..37 was rejected as
-    "nowhere near" while sharing 800.00 mm3 with the second body. The hull is
-    a superset of every body, so it can only ever be too generous -- and the
-    per-body pair below is what makes it tight again.
+    A prefilter must never reject a pair that does overlap, and a multi-body
+    part has no single bounding box: with bodies at X -5..5 and X 25..35,
+    `val().BoundingBox()` is -5..5 and misses a neighbour at X 27..37. The hull
+    covers every body, so it can only be too generous; the per-body pass makes
+    it tight again.
     """
     return types.SimpleNamespace(
         xmin=min(b.xmin for b in boxes), xmax=max(b.xmax for b in boxes),
@@ -847,20 +640,13 @@ def _hull(boxes):
 def name_pairs(pairs, argument, where=""):
     """Validate a list of name pairs and return it as a set of frozensets.
 
-    `allowed_touching=("body", "lid")` is the mistake this exists for. It is a
-    tuple of two strings, so it looks exactly like one pair -- and iterating it
-    yields two *strings*, each of which frozenset() happily turns into a set of
-    letters. Nothing raises, nothing matches, and the exemption the author
-    wrote is silently not there. So: every element has to be a pair of strings,
-    and anything else stops the check with a message that says which.
+    `allowed_touching=("body", "lid")` is the mistake this exists for: a flat
+    tuple of two strings looks like one pair, iterates as two strings, and
+    frozenset() turns each into a set of letters, so the exemption silently
+    matches nothing. Every element must be a pair of strings.
 
-    Public, and shared: `cadbuild.views` validates a view's `nested_ok`
-    with this same function. The two lists mean the same thing to two different
-    checks, and when each file had its own copy of this the copies drifted --
-    one of them ended up iterating the pair twice, which for a generator is
-    once too many: the second pass sees nothing, `all()` over nothing is True,
-    and a pair of non-strings walked straight through. One implementation, one
-    behaviour, one message.
+    Shared with `cadbuild.views`, which validates a view's `nested_ok` with
+    it, so both lists get one behaviour and one message.
 
     `argument` names the option in the message ("allowed_touching",
     "nested_ok"); `where` is an optional prefix for the caller's context, e.g.
@@ -875,11 +661,8 @@ def name_pairs(pairs, argument, where=""):
             f"{pairs!r}. Write it as [('a', 'b')]."
         )
     if not hasattr(pairs, "__iter__"):
-        # The string above is the mistake somebody actually makes; this is
-        # every OTHER thing that cannot be walked. Without it a number or a
-        # None comes out of `for ... in pairs` as a bare TypeError from inside
-        # a library, with nothing naming the option it came from -- and every
-        # other refusal in this file names one.
+        # Anything else that cannot be iterated (a number, None) would
+        # otherwise raise a bare TypeError naming no option.
         raise ValueError(
             f"{where}{argument} must be a list of name pairs, got "
             f"{pairs!r}, which cannot be iterated at all. Write it as "
@@ -912,41 +695,34 @@ def name_pairs(pairs, argument, where=""):
 def pairwise_interference(objects, names, allowed_touching=(), tol=DEFAULT_VOLUME_TOL):
     """Every pair of parts, checked for shared volume. No hand-written list.
 
-    Catches: a rim modelled a touch too generously passing straight through
-    two neighbours, because the hand-written list of pairs to check happened
-    to name neither of them. Enumerating pairs by hand is the bug -- the pair
-    nobody thought of is exactly the pair that breaks -- so this takes every
-    part in the assembly and checks all of them against each other.
+    A hand-written list of pairs misses exactly the pair nobody thought of
+    (a rim passing through two neighbours), so every part is checked against
+    every other.
 
     `objects` are the parts positioned as assembled (the same objects the
-    `assembled` view shows), `names` their labels, one per object. Parts that
-    are *meant* to share space -- a press fit, an insert modelled sunk into
-    its boss -- go into `allowed_touching` as name pairs and are skipped:
+    `assembled` view shows), `names` their labels, one per object. Parts meant
+    to share space -- a press fit, an insert sunk into its boss -- go into
+    `allowed_touching` as name pairs and are skipped:
 
         allowed_touching=[("body", "brass_insert")]
 
-    A list of PAIRS, note: a flat `("body", "brass_insert")` is two names and
-    exempts nothing, so it is rejected rather than ignored.
+    A list of pairs: a flat `("body", "brass_insert")` is two names and is
+    rejected rather than ignored.
 
     Solids that only touch face to face intersect in zero volume, so seated
-    parts pass without being listed. `tol` is in cubic millimetres and exists
-    to swallow boolean noise, nothing more.
+    parts pass without being listed. `tol` is in cubic millimetres and only
+    swallows boolean noise.
 
-    A PART MAY BE SEVERAL BODIES and all of them are checked, against all of
-    the other part's. What is reported is one line per PART pair: the volumes
-    of every overlapping body pair added up, and the region enclosing them.
-    That is the pair a person can act on -- "which two parts collide" -- and it
-    keeps `allowed_touching`, which names parts, meaning what it says. When the
-    kernel refuses one body pair the whole part pair is reported as untestable
-    rather than answered from the rest: a partial sum understates the overlap
-    while reading exactly like a verdict.
+    A part may be several bodies; all are checked against all of the other
+    part's. One line per part pair: the summed volume of every overlapping body
+    pair and the region enclosing them. If the kernel refuses one body pair,
+    the part pair is reported as untestable rather than as a partial sum that
+    understates the overlap.
 
     Returns a list of problem strings.
     """
-    # EVERY BODY OF EVERY OBJECT. An object here is a part as assembled, which
-    # is routinely several bodies -- `.add()`, a helper returning a lid and its
-    # lip -- and judging one of them was not a simplification but a hole: see
-    # the note where `_shape` used to be for the 800.00 mm3 it measured through.
+    # Every body of every object: a part as assembled is routinely several
+    # bodies (`.add()`, a lid and its lip).
     bodies = [_shapes(obj, f"object #{i}") for i, obj in enumerate(objects)]
     names = list(names)
     if len(names) != len(bodies):
@@ -966,11 +742,9 @@ def pairwise_interference(objects, names, allowed_touching=(), tol=DEFAULT_VOLUM
                 "An exemption for a part that is not there exempts nothing."
             )
 
-    # Two levels of box, and they do different jobs. `hulls` rejects a PART
-    # against a part in one comparison; `boxes` is per body, and rejects the
-    # body pairs inside a part pair that survived. Neither may reject a pair
-    # that overlaps, which is why the outer one is a hull rather than the first
-    # body's box (see _hull).
+    # Two levels of box: `hulls` rejects a part against a part in one
+    # comparison, `boxes` rejects body pairs inside a surviving part pair.
+    # Neither may reject an overlapping pair (see _hull).
     boxes = [[body.BoundingBox() for body in group] for group in bodies]
     hulls = [_hull(group) if group else None for group in boxes]
     problems = []
@@ -1040,58 +814,38 @@ def mating_face_flat(part, plane_z, tol=PLANE_TOL, name="part",
                      normal_tol=NORMAL_TOL):
     """The face a split part mates on must be flat all the way to its edge.
 
-    Catches: a chamfer or fillet applied to "all edges" biting into the
-    parting line. The two halves then rest on their remaining flat rings and
-    stand apart by the size of the bevel -- a 0.6 mm chamfer on each half is a
-    1.2 mm gap in the assembled box. It reads as a modelling detail and costs
-    a run of one-line fixes, each of which moves the problem to another edge.
+    Catches a chamfer or fillet on "all edges" biting into the parting line:
+    the halves then rest on their remaining flat rings and stand apart by the
+    bevel (a 0.6 mm chamfer on each half is a 1.2 mm gap).
 
-    Purely geometric, no constants involved: every face that reaches the plane
-    z == `plane_z` must either lie *in* it (the mating face itself) or leave
-    it at a right angle (a wall). A face that departs at any other angle is a
-    bevel eating the joint. The reported angle is measured from the plane: an
-    honest vertical wall leaves at 90 deg (and is not reported), a 45 deg
-    chamfer at 45, a fillet running tangent to the joint at 0. Vertical corner
-    fillets and the walls of holes are all fine and are not reported.
+    Purely geometric: every face that reaches the plane z == `plane_z` must
+    lie in it (the mating face) or leave it at a right angle (a wall). Any
+    other angle is a bevel eating the joint. The reported angle is from the
+    plane: a vertical wall 90 deg (not reported), a 45 deg chamfer 45, a
+    tangent fillet 0. Vertical corner fillets and hole walls are fine.
 
     `plane_z` is the height of the joint in the part's own coordinates, so Z
     is the axis of the split.
 
-    TWO TOLERANCES, because two different things are being measured and one
-    parameter used to carry both. `tol` is MILLIMETRES: how close to `plane_z`
-    a face or an edge has to be to count as reaching the joint, and how thin a
-    face has to be in Z to count as lying in it. `normal_tol` is
-    DIMENSIONLESS: the Z component of a unit normal below which the face is
-    called upright. Passing a millimetre figure as `tol` used to also move the
-    verdict, because the decisive comparison read the module constant instead
-    of the argument -- so a caller who widened the search by a tenth of a
-    millimetre got a mixture: a wider search and, still, the default verdict.
+    Two tolerances for two quantities: `tol` is millimetres (how close to
+    `plane_z` a face or edge must be to reach the joint, and how thin in Z a
+    face must be to lie in it); `normal_tol` is dimensionless (the Z component
+    of a unit normal below which the face is upright).
 
-    Every edge of a face that lies in the plane is sampled, not just the first
-    one: a single face can reach the joint along several edges -- a shelf that
-    runs round three sides of a pocket, a chamfer broken by a hole -- and the
-    bevel is as likely to be on the third edge as on the first. The worst edge
-    of each face is the one reported.
+    Every edge of a face in the plane is sampled, since a face can reach the
+    joint along several (a shelf round three sides of a pocket); the worst
+    edge is reported.
 
-    KNOWN GAP: a face that crosses the plane *transversally without having an
-    edge in it* -- a sloped wall passing straight through the joint height, a
-    cone whose surface simply continues past it -- is not covered. There is no
-    edge to sample the normal at, and finding where such a face meets the
-    plane means sectioning it, which costs more than this check is worth.
-    Where that matters, split the part at the joint so the plane becomes a real
-    edge, or check the section by eye.
+    Known gap: a face crossing the plane without an edge in it (a sloped wall
+    or cone continuing through the joint height) is not covered; finding that
+    crossing needs sectioning. Split the part at the joint, or check the
+    section by eye.
 
-    A part may be several bodies; the faces of all of them are examined
-    together, so a joint carried by the second body counts exactly like one on
-    the first.
+    The faces of all bodies of a part are examined together.
 
     Returns a list of problem strings.
     """
-    # EVERY BODY, and the faces of all of them pooled: a part is often several
-    # bodies and the joint does not have to be on the first. Judging one body
-    # gave a false RED, which is the worse direction -- measured on cadquery
-    # 2.8.0, a two-body part whose second body carries the face at z=2 was told
-    # "there is no flat mating face there at all".
+    # Every body's faces, pooled: the joint need not be on the first body.
     problems = []
     flat_area = 0.0
     seen_faces = 0
@@ -1161,43 +915,35 @@ def mating_face_flat(part, plane_z, tol=PLANE_TOL, name="part",
 def material_under_head(part, centre, head_diameter, depth, name="part", angles=24):
     """A screw head (or counterbore) needs material under all of it.
 
-    Catches: a screw boss placed close to a rounded corner, where part of the
-    head footprint hangs over the edge. The hole is there, the screw goes in,
-    and the head bears on half a ring -- visible only once the part is in your
-    hand, or in a section view nobody took.
+    Catches a screw boss near a rounded corner where part of the head
+    footprint hangs over the edge, so the head bears on half a ring.
 
-    Probes the outer rim of the footprint, which is where a head running off
-    an edge loses its seat first, at several depths from the seating plane
-    down. The clearance hole in the middle is deliberately not probed: it is
-    supposed to be empty.
+    Probes the outer rim of the footprint, where a head loses its seat first,
+    at several depths from the seating plane down. The clearance hole in the
+    middle is not probed.
 
     **The probe runs along Z, and only along Z.** `centre` is (x, y, z) of the
     middle of the seating face in the part's own coordinates, and `depth` is
-    measured down the Z axis from it: positive probes downwards (a head
-    pressing on an upward-facing seat), negative probes upwards (a head
-    seating from below). A screw going in sideways has to be checked on a
-    rotated copy of the part -- there is no axis argument, because a check
-    that quietly measured the wrong direction would be worse than none.
+    measured down the Z axis from it: positive probes downwards (a head on an
+    upward-facing seat), negative upwards (a head seating from below). A
+    sideways screw must be checked on a rotated copy of the part; there is no
+    axis argument, because silently measuring the wrong direction would be
+    worse than no check.
 
     `head_diameter` is the diameter of what bears on the seat: screw head,
     washer, or counterbore.
 
-    `depth` may not be zero. With no depth every probe lands on the seating
-    plane itself, where the classifier counts ON as material and the check
-    passes for every part ever handed to it, hole or no hole.
+    `depth` may not be zero: every probe would then sit on the seating plane,
+    which counts as material, and the check would always pass.
 
-    The probe comes from `material_at`, so this inherits both of its rules:
-    every body of a Workplane is probed rather than the first, and a part with
-    no solid left in it is refused instead of answering "material" everywhere.
+    The probe comes from `material_at`, so every body is probed and a part with
+    no solid is refused.
 
     Returns a list of problem strings.
     """
-    # Validated here as well as inside material_at below, and the point is the
-    # ORDER: this is plain Python, the classifier needs the native kernel, and a
-    # bad argument has to answer about the argument on a machine that has no
-    # OpenCASCADE (the same reason material_at checks its type before importing
-    # OCP). Nothing is kept -- the probe is built from `part` itself further
-    # down, because collapsing it to one body here is the defect this call fixed.
+    # Validated before material_at so a bad argument is reported as such on a
+    # machine without OpenCASCADE (as in material_at). Nothing is kept; the
+    # probe is built from `part` itself below.
     _shapes(part, name)
 
     try:
@@ -1227,9 +973,8 @@ def material_under_head(part, centre, head_diameter, depth, name="part", angles=
         px = cx + radius * math.cos(theta)
         py = cy + radius * math.sin(theta)
         for k in range(levels):
-            # Mid-cell sampling: the seating plane itself and the far face are
-            # boundaries, and a probe sitting exactly on one says ON for a
-            # reason that has nothing to do with the material in between.
+            # Mid-cell sampling: a probe exactly on the seating plane or the
+            # far face would say ON regardless of the material in between.
             pz = cz - depth * (k + 0.5) / levels
             if not inside(px, py, pz):
                 misses.append((px, py, pz, math.degrees(theta)))
@@ -1256,65 +1001,41 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
                 name="fastener", rings=4, around=16, ignore=()):
     """A straight cylinder from a fastener head must be empty.
 
-    Catches: a screw that is modelled, seated and unreachable -- a boss in the
-    driver's way, a wall 3 mm from the head, a lid that has to go on before the
-    screw can. Every view of the assembly looks right and the thing cannot be
-    put together.
+    Catches a screw that is modelled and seated but unreachable: a boss in the
+    driver's way, a wall 3 mm from the head, a lid that must go on first.
 
     `origin` is (x, y, z) of the head's seat and `direction` a vector pointing
-    the way the tool comes FROM. It is normalised here and is NOT required to
-    be Z, which is what separates this from `material_under_head`: a screw
-    going in sideways is checked where it is, not on a rotated copy of the
-    part. `diameter` is what has to be clear -- the driver, the socket, the
-    ratchet head, whichever of them is fattest -- and `length` how far it has
-    to stay clear for.
+    the way the tool comes from; it is normalised and need not be Z (unlike
+    `material_under_head`). `diameter` is what must be clear (the fattest of
+    driver, socket, ratchet head) and `length` how far.
 
     `obstacles` are the parts that might be in the way, positioned as
-    assembled, and `names` their labels, one per object. Parts that are allowed
-    to sit in the path -- the one the screw goes through, a part fitted after
-    the fastener is already in -- go into `ignore` by name. A name there that
-    is not among `names` is refused rather than passed over, on the same
-    reasoning as `pairwise_interference`'s `allowed_touching`: an exemption for
-    a part that is not there exempts nothing.
+    assembled, and `names` their labels, one per object. Parts allowed in the
+    path (the one the screw goes through, a part fitted afterwards) go into
+    `ignore` by name; an unknown name there is refused, as with
+    `allowed_touching`.
 
-    THE CYLINDER IS PROBED, NOT INTERSECTED: `around` points on each of `rings`
-    radii, at a level every 0.5 mm along the axis, each point asked of every
-    obstacle's classifier (`material_at`). The cost is `rings x around x levels`
-    classifier calls per obstacle -- 2624 of them over a 20 mm reach at the
-    default `rings` and `around`, measured at about 25 ms per obstacle on one
-    workstation. The count follows from the REACH alone now and no longer from
-    the diameter, so a thinner tool is not a cheaper one. That is NOT the
-    cheaper of the two ways of asking, and the
-    reason for it is therefore not the one at `material_at`: intersecting one
-    cylinder with the same obstacle measured about 7 ms. What the sampling buys
-    is the ANSWER -- how much of the path is blocked and how far along it the
-    first blocked point sits, which is what the problem string below is written
-    out of and what one intersection volume does not say.
+    The cylinder is probed, not intersected: `around` points on each of
+    `rings` radii, at a level every 0.5 mm along the axis, each asked of every
+    obstacle's classifier (`material_at`). That is `rings x around x levels`
+    calls per obstacle -- 2624 over a 20 mm reach at the defaults, about 25 ms
+    per obstacle -- set by the reach, not the diameter. One cylinder
+    intersection is cheaper (~7 ms), but sampling gives how much of the path is
+    blocked and where the first blocked point is, which the message reports.
 
-    KNOWN GAP, and it follows from the sampling rather than from an oversight:
-    something thinner than the spacing between two probe points slips between
-    them unseen. THE THREE AXES ARE SPACED DIFFERENTLY, so which dial helps
-    depends on how the thin thing lies. ACROSS the path -- the lid again -- the
-    spacing is the 0.5 mm axial step above, which `rings` and `around` do not
-    touch at all and which nothing here exposes. Anything one step thick or
-    more meets a level wherever it sits; anything THINNER fits between two of
-    them, and then whether it is seen depends on WHERE along the reach it
-    happens to sit -- a 0.4 mm blade is found at some heights and missed at
-    others, so there is no miss rate to quote, only that boundary. ALONG the
-    path -- a fin standing edge-on inside the cylinder -- the spacing is
-    `radius / rings` outwards (1 mm at the defaults for an 8 mm tool) and
-    `2 pi radius / around` around (about 1.6 mm on the outermost ring), and
-    THOSE are the two to raise. The axis itself carries no ring, so a rod
-    thinner than `2 x radius / rings` standing on it is the same gap.
+    Known gap: anything thinner than the probe spacing can slip through. Across
+    the path (a lid) the spacing is the fixed 0.5 mm axial step; something
+    thinner may be found or missed depending on where it sits. Along the path
+    (a fin edge-on inside the cylinder) the spacing is `radius / rings`
+    outwards (1 mm at the defaults for an 8 mm tool) and `2 pi radius / around`
+    around (~1.6 mm on the outer ring); raise those two. The axis has no ring,
+    so a rod thinner than `2 x radius / rings` on it is the same gap.
 
     Returns a list of problem strings, one per part found in the path.
     """
-    # Plain Python first, over EVERY obstacle, before `material_at` below
-    # reaches for the kernel. Same order and same reason as material_at's own
-    # type check: leaving each object to be checked by its own material_at call
-    # would answer about the argument for the first obstacle and about
-    # libGL.so.1 for the second, on a machine with no OpenCASCADE. Nothing is
-    # kept -- the probes are built from the objects themselves further down.
+    # Plain Python over every obstacle before `material_at` imports the kernel,
+    # so a bad argument is reported as such on a machine without OpenCASCADE.
+    # Nothing is kept; the probes are built from the objects below.
     obstacles = list(obstacles)
     for index, obstacle in enumerate(obstacles):
         _shapes(obstacle, f"obstacle #{index}")
@@ -1369,18 +1090,12 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
     bx, by, bz = uy * az - uz * ay, uz * ax - ux * az, ux * ay - uy * ax
 
     radius = diameter / 2.0
-    # THE AXIAL STEP IS A LENGTH, not a share of the tool's radius, and that is
-    # a correction rather than a preference. A step of one radius is 2.86 mm for
-    # an 8 mm tool over a 20 mm reach, and an obstruction ACROSS the path -- the
-    # lid at the top of the Catches list -- is thin along the axis and wide
-    # across it: a 2 mm lid was walked straight over at 8 of the 30 heights it
-    # was tried at, and raising `rings` and `around` did nothing about it,
-    # because neither touches this axis. WHY HALF A MILLIMETRE: it is under
-    # `minimum_feature()`, so a wall thick enough for this nozzle to print is
-    # thicker than one step and cannot fall between two levels. Both halves of
-    # that are behaviour rather than taste, so both are tests instead of this
-    # sentence -- see the two named `..._axial_step_...` in
-    # tests/cadbuild/test_checklib_printability.py.
+    # The axial step is a fixed length, not a share of the radius: an
+    # obstruction across the path (a lid) is thin along the axis, and `rings`
+    # and `around` do not touch this axis. Half a millimetre is under
+    # `minimum_feature()`, so any printable wall is thicker than one step (the
+    # two `..._axial_step_...` tests in
+    # tests/cadbuild/test_checklib_printability.py).
     levels = max(3, int(length / 0.5) + 1)
     total = levels * rings * around
     problems = []
@@ -1392,9 +1107,8 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
         hits = 0
         first = None
         for k in range(levels):
-            # Mid-cell sampling, for the reason material_under_head gives: the
-            # seat is a boundary and a point sitting on it answers about the
-            # part the screw goes into, not about the way to it.
+            # Mid-cell sampling, as in material_under_head: a point on the seat
+            # answers about the part the screw goes into.
             travel = length * (k + 0.5) / levels
             cx, cy, cz = ox + ux * travel, oy + uy * travel, oz + uz * travel
             for ring in range(rings):
@@ -1427,31 +1141,23 @@ def tool_access(obstacles, names, *, origin, direction, diameter, length,
 # 5. A mating pair along its degree of freedom
 # --------------------------------------------------------------------------
 
-# Every pair swept_clearance has run and what the run measured: how many stops,
-# the tightest gap seen and the stop it was at.
+# Every pair swept_clearance has run: how many stops, the tightest gap and the
+# stop it was at.
 #
-# The same kind of record as _INTERFERENCE above, and kept for the same reason
-# -- the numbers are taken as the check goes, so cadbuild.metrics can put them
-# in metrics.json without a single extra boolean, and a gap that reads 0.40 mm
-# today and 0.05 mm tomorrow is a pair that grew together. Accumulates over the
-# run: a model may sweep several pairs, and each call adds its own. Keyed by
-# `label`, and a SECOND sweep under the same label writes over the first rather
-# than keeping the tighter of the two -- a pair run along two degrees of freedom
-# (a lid that drops and then slides) wants a `label=` of its own for each.
-# Nothing is lost by that but the number: the problem strings come back per
-# call either way. WHICH sweep is "second" stops being a fact about the file the
-# moment the two sweeps sit in different check units: they run in parallel
-# workers and the winner is whichever reported last, which is nothing anybody
-# chose (`_merge_records`). A pair whose every stop the kernel refused is absent
-# rather than zero -- absence means "not measured", never "touching".
+# Like _INTERFERENCE: taken as the check goes so cadbuild.metrics can put it in
+# metrics.json, and a gap going from 0.40 to 0.05 mm is a pair that grew
+# together. Accumulates over the run, keyed by `label`; a second sweep under
+# the same label overwrites the first, so a pair swept along two degrees of
+# freedom needs a `label=` for each. Across check units the survivor is
+# whichever reported last (`_merge_records`). A pair whose every stop the
+# kernel refused is absent: "not measured", never "touching".
 _CLEARANCE = {}
 
 
 def recorded_clearance():
     """`{label: {...}}` for every pair swept_clearance has measured so far."""
-    # Copied one level deeper than recorded_interference, which hands back
-    # floats: the values here are dicts, and a shallow copy would hand the
-    # caller the very record the build reports.
+    # One level deeper than recorded_interference: the values are dicts, and a
+    # shallow copy would hand out the build's own records.
     return {label: dict(record) for label, record in _CLEARANCE.items()}
 
 
@@ -1459,47 +1165,35 @@ def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
                     min_gap=None, tol=DEFAULT_VOLUME_TOL, label=None):
     """One mating pair, run along its degree of freedom, measured at every stop.
 
-    Catches: a lid that fits where it ends up and fouls the rim halfway down; a
-    hinge that clears at both ends of its travel and not in the middle.
-    `pairwise_interference` looks at the assembly AS ASSEMBLED, which is
-    exactly the one position such a pair is clean in.
+    Catches a lid that fits where it ends up but fouls the rim halfway down,
+    or a hinge clear at both ends and not in the middle --
+    `pairwise_interference` only sees the assembled position.
 
-    `moving_positions` is the moving part ALREADY PLACED at each stop -- a list
-    the model builds, because only the model knows the kinematics. Ten to
-    twenty stops is the useful range; fewer than two is not a sweep at all and
-    is refused.
+    `moving_positions` is the moving part already placed at each stop, a list
+    the model builds because only it knows the kinematics. Ten to twenty stops
+    is the useful range; fewer than two is refused.
 
-    Both numbers are taken at every stop: the volume the two share -- an
-    interference is a hard problem string, the same rule pairwise_interference
-    applies, and `tol` is the same boolean-noise tolerance -- and the minimum
-    distance between the two solids. `min_gap` is optional: given, a stop
-    closer than that is a problem; omitted, the gap is only measured and
-    recorded, and nothing is judged by it.
+    At every stop: the shared volume (an interference is a problem, as in
+    pairwise_interference, with the same `tol`) and the minimum distance
+    between the solids. With `min_gap`, a closer stop is a problem; without
+    it, the gap is only recorded.
 
-    WHAT IS RECORDED, under `label`: `{"positions": n, "min_gap_mm": x,
-    "at": i}` -- how many stops were run, the tightest gap seen and the stop it
-    was at. `recorded_clearance()` reads it back and `cadbuild.metrics` puts it
-    into metrics.json as `assembly.clearance`, beside the volumes
-    pairwise_interference records -- so the gap is COMPARED between two builds,
-    and a pair that reads 0.40 mm today and 0.05 mm tomorrow says so on the
-    build where it happened.
-    `label` defaults to `"moving|fixed"` from `names`, in the order
-    they were given: unlike a pair of neighbours those two names are not
-    interchangeable -- one of them is the part that moves -- so they are not
-    sorted into the key the way pairwise_interference sorts its pair.
+    Recorded under `label`: `{"positions": n, "min_gap_mm": x, "at": i}`.
+    `recorded_clearance()` reads it back and `cadbuild.metrics` publishes it
+    as `assembly.clearance`, so the gap is compared between builds. `label`
+    defaults to `"moving|fixed"` from `names` in the given order (unsorted,
+    since one of them is the part that moves).
 
     Cost: a bounding-box reject, then one boolean and one distance per body
-    pair per stop. A boolean on a real part is tens of milliseconds and a
-    distance about the same, so eighteen stops is well under a second against a
-    build ceiling of 300 seconds (buildproc.limits.DEFAULT_WALL_SECONDS).
+    pair per stop, tens of milliseconds each, so eighteen stops is under a
+    second against the 300 s build ceiling
+    (buildproc.limits.DEFAULT_WALL_SECONDS).
 
     Returns a list of problem strings.
     """
     moving_name, fixed_name = names
-    # The count is answered before any geometry is touched. It is a statement
-    # about the LIST that was handed in rather than about a solid, and it has
-    # to answer on a machine with no kernel for the same reason the type check
-    # below runs before the OCP import.
+    # The count is checked before any geometry, so it answers on a machine
+    # without the kernel.
     positions = list(moving_positions)
     if len(positions) < 2:
         raise ValueError(
@@ -1528,9 +1222,8 @@ def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
         for left in bodies:
             left_box = left.BoundingBox()
             for right, right_box in zip(still, fixed_boxes):
-                # The reject skips the BOOLEAN and nothing else: boxes that
-                # cannot touch cannot share volume, but the distance between
-                # them is the very number this check exists to take.
+                # The reject skips only the boolean: the distance between them
+                # is still needed.
                 if not _boxes_apart(left_box, right_box, 0.0):
                     try:
                         common = left.intersect(right)
@@ -1554,9 +1247,8 @@ def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
                 break
 
         if failure is not None:
-            # One stop the kernel could not do is reported and the sweep goes
-            # on: the stops around it are still worth measuring, and raising
-            # here would take a whole build down over one degenerate pair.
+            # Report the stop and continue: the neighbouring stops are still
+            # worth measuring, and one degenerate pair must not end the build.
             problems.append(
                 f"cannot measure {moving_name!r} against {fixed_name!r} at "
                 f"position {index} of {len(moving)}: the measurement failed "
@@ -1592,51 +1284,36 @@ def unsupported_area(stl_path, max_area_mm2, *, name="part",
                      max_angle_deg=45.0, bed_tol=0.2, max_rays=512):
     """Downward-facing surface with nothing under it, in square millimetres.
 
-    Catches the overhang the author would otherwise have to find by eye on a
-    preview. A triangle counts when its normal points below -cos(max_angle_deg)
-    AND a ray dropped from its centroid hits nothing else in the mesh AND it is
-    not sitting on the bed (within `bed_tol` of the mesh's lowest point, which
-    is the first layer and is supported by the plate).
+    A triangle counts when its normal points below -cos(max_angle_deg), a ray
+    dropped from its centroid hits nothing else in the mesh, and it is not on
+    the bed (within `bed_tol` of the mesh's lowest point, which the plate
+    supports).
 
-    THE MESH, NOT THE SOLID, and that is what makes this a check of the part AS
-    IT WILL BE PRINTED: `stl_path` is the file the gate exported, so the
-    orientation measured here is the orientation the slicer gets. The same
-    shape lying the other way up is a different answer, which is the point.
-    `checks(out_dir)` is handed the directory those files were written into and
-    each of them is named after its part in `parts()`.
+    It measures the mesh, not the solid: `stl_path` is the file the gate
+    exported, so the orientation is the one the slicer gets. `checks(out_dir)`
+    is handed the directory those files are in, each named after its part in
+    `parts()`.
 
-    `max_area_mm2` HAS NO DEFAULT on purpose. Some unsupported area is normal --
-    a chamfer under a rim, a short bridge -- and a number picked here would be a
-    number picked for somebody else's part. Saying how much this design tolerates
-    is the author's decision, and writing it down is the point.
+    `max_area_mm2` has no default: some unsupported area is normal (a chamfer
+    under a rim, a short bridge), and how much this design tolerates is the
+    author's decision.
 
-    THE NUMBER IS A FLOOR. Only the `max_rays` largest downward triangles are
-    cast from, so a mesh with more overhang than that reports the part of it
-    that was measured and never more. Raise `max_rays` and pay for it.
+    The number is a floor: only the `max_rays` largest downward triangles are
+    cast from. Raise `max_rays` and pay for it.
 
-    THE RAY DROP IS WRITTEN HERE, IN NUMPY, and does not come from trimesh --
-    which is a fact about this image rather than a preference. Every entry
-    point of `trimesh.ray` walks a bounding-volume tree built by
-    `trimesh.util.bounds_tree`, which imports `rtree`; `rtree` is not in
-    requirements.txt and neither is `pyembree`, so `mesh.ray.intersects_any`
-    raises ModuleNotFoundError in this interpreter. Measured 2026-09-08 on
-    trimesh 4.12.2. What is here instead is the same test done directly: a
-    point-in-triangle test in XY, plus the plane's height at that point, over
-    every triangle whose XY box contains the centroid.
+    The ray drop is plain numpy, not trimesh: every `trimesh.ray` entry point
+    needs `rtree` (or `pyembree`), which is not in requirements.txt, so
+    `mesh.ray.intersects_any` raises ModuleNotFoundError here (trimesh 4.12.2).
+    Instead: a point-in-triangle test in XY plus the plane's height there,
+    over every triangle whose XY box contains the centroid.
 
-    Cost: the mesh is already on disk (the gate wrote it); loading is
-    milliseconds. The drop is vectorised over triangles per ray, so it is
-    `rays x triangles`, with an XY bounding-box reject in front of the
-    arithmetic. Only downward triangles are cast from and only the `max_rays`
-    largest of them, so the worst case is bounded: measured 2026-09-08, 512 rays
-    against a 586k-triangle mesh took 1.1 s.
+    Cost: `rays x triangles`, vectorised per ray with an XY box reject, bounded
+    by `max_rays`; 512 rays against a 586k-triangle mesh took 1.1 s.
 
     Returns a list of problem strings.
     """
-    # The path is answered BEFORE anything is imported, for the reason
-    # `material_at` gives at its own type check: this is plain Python, and a
-    # path with no mesh at it has to say so on a machine that has neither the
-    # kernel nor trimesh -- which is where the test of this refusal runs.
+    # The path is checked before any import, so the refusal works on a machine
+    # with neither the kernel nor trimesh (where its test runs).
     path = str(stl_path)
     if not os.path.exists(path):
         raise ValueError(
@@ -1646,12 +1323,9 @@ def unsupported_area(stl_path, max_area_mm2, *, name="part",
             "in `parts()`: out_dir / (part + '.stl'). A name that is not a "
             "printable, or a path assembled from somewhere else, lands here.")
 
-    # A NEGATIVE BUDGET IS REFUSED HERE rather than survived further down: it is
-    # a number no part can meet, and the arithmetic below quietly stops making
-    # sense at it -- a part with no overhang at all measures 0.0, which is not
-    # `<= -1`, so the check would report a problem it has no patch to name.
-    # Zero is a different matter and is allowed: "this part tolerates none" is
-    # a decision an author can mean.
+    # A negative budget can never be met (a part with no overhang measures 0.0,
+    # which is not <= -1, and there would be no patch to name). Zero is allowed:
+    # "this part tolerates none" is a real decision.
     if max_area_mm2 < 0:
         raise ValueError(
             f"unsupported_area({name}): max_area_mm2 is {max_area_mm2!r}. Area "
@@ -1662,30 +1336,28 @@ def unsupported_area(stl_path, max_area_mm2, *, name="part",
     import trimesh
 
     mesh = trimesh.load(path)
-    # The same reading printables.first_layer_area makes, with `bed_tol` where
-    # it has STL_TOLERANCE: the bed is the part's OWN lowest point, and a
-    # triangle is on it when its HIGHEST vertex is still in the band. The plate
-    # holds that triangle up, so it is not an overhang however it points.
+    # As in printables.first_layer_area, with `bed_tol` for STL_TOLERANCE: a
+    # triangle whose highest vertex is within the band above the part's lowest
+    # point is held up by the plate.
     lowest = float(mesh.bounds[0][2])
     on_bed = mesh.triangles[:, :, 2].max(axis=1) - lowest <= bed_tol
     down = mesh.face_normals[:, 2] < -math.cos(math.radians(max_angle_deg))
     candidates = numpy.flatnonzero(down & ~on_bed)
     if candidates.size == 0:
-        # A measured zero, not a refusal: a part with no steep downward face
-        # off the bed is a part with nothing to support.
+        # A measured zero: nothing steep and downward off the bed.
         return []
 
     areas = mesh.area_faces
-    # Largest first, and only so many of them -- see THE NUMBER IS A FLOOR.
+    # Largest first, and only `max_rays` of them (the number is a floor).
     cast = candidates[numpy.argsort(-areas[candidates])][:max_rays]
 
     triangles = mesh.triangles
     corner = triangles[:, 0]
     edge1 = triangles[:, 1] - corner
     edge2 = triangles[:, 2] - corner
-    # The XY determinant of the two edges. A triangle standing on edge projects
-    # to a line, has a determinant of zero and can never be under a point; it
-    # is dropped here so the division below never sees one.
+    # XY determinant of the two edges. A triangle standing on edge projects to
+    # a line (zero determinant) and can never be under a point; dropping it
+    # keeps the division below safe.
     det = edge1[:, 0] * edge2[:, 1] - edge2[:, 0] * edge1[:, 1]
     projects = numpy.abs(det) > 1e-12
     xmin = triangles[:, :, 0].min(axis=1)
@@ -1711,8 +1383,7 @@ def unsupported_area(stl_path, max_area_mm2, *, name="part",
             v = (edge1[under, 0] * dy - edge1[under, 1] * dx) / det[under]
             hit = (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1.0 + 1e-9)
             # The height of each triangle's plane at that XY point. Strictly
-            # below, so a triangle sharing the plane the ray starts in is not a
-            # thing standing under it.
+            # below, so a coplanar triangle does not count as under it.
             height = corner[under, 2] + u * edge1[under, 2] + v * edge2[under, 2]
             if numpy.any(hit & (height < pz - 1e-6)):
                 continue
@@ -1748,73 +1419,50 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
                step=None, axes=("x", "y", "xy", "yx")):
     """Walls thinner than `min_thickness`, measured on named sections.
 
-    `planes` are heights in the part's own coordinates -- Z is the section
-    normal, so a part modelled on its side is sectioned on its side. NAMED, not
-    swept: the author says where the load-bearing and mating walls are, which is
-    the difference between a check that can be trusted and the one this file
-    refuses to have (see the note at the top of this module).
+    `planes` are heights in the part's own coordinates; Z is the section
+    normal. Named, not swept: the author says where the load-bearing and mating
+    walls are (see the note at the top of this module on why there is no
+    whole-part sweep).
 
     On each plane the part is scanned with lines `pitch` apart, sampled `step`
-    apart along each line, along four directions -- X, Y and the two diagonals.
-    A continuous run of points inside the material is a crossing of a wall, and
-    its length is how thick the wall is where that line crossed it. `pitch`
-    defaults to `min_thickness` (a wall cannot hide between two scan lines that
-    close), `step` to `min_thickness / 4`. A `step` PASSED BY HAND HAS TO DIVIDE
-    `min_thickness` a whole number of times, AT LEAST TWICE, and is refused
-    otherwise: a run is counted in whole steps, so an indivisible step moves the
-    threshold off the number named -- a wall of exactly the minimum reported as
-    thin where the ratio rounds up, a threshold quietly under the minimum where
-    it rounds down -- while a single division leaves no run that can be short at
-    all and passes every part there will ever be.
+    apart, along four directions (X, Y, the two diagonals). A continuous run of
+    points inside material is a wall crossing, and its length is the wall's
+    thickness there. `pitch` defaults to `min_thickness`, `step` to
+    `min_thickness / 4`. A hand-passed `step` must divide `min_thickness` a
+    whole number of times, at least twice: runs are counted in whole steps, so
+    an indivisible step shifts the threshold (a wall of exactly the minimum
+    reported thin, or a threshold silently under the minimum), and a single
+    division can never report anything.
 
-    ONE-SIDED ERROR BY CONSTRUCTION: a wall oblique to a scan axis measures
-    thicker than it is, so this misses and never falsely accuses. Four axes cut
-    the worst case to about 1.08x. `axes` names them, and NARROWING IT IS WHAT
-    VOIDS THAT FIGURE: on `("x", "y")` alone a wall at 45 degrees measures
-    sqrt(2) times its thickness, so the number to compare against is 1.41x and
-    a wall a third over the minimum passes. Widening it costs a full scan per
-    axis. The four keys above are the ones there are; anything else raises
-    KeyError on the name that was passed.
+    One-sided error: a wall oblique to a scan axis measures thicker than it
+    is, so this misses and never falsely accuses. Four axes bound the worst
+    case at ~1.08x. Narrowing `axes` voids that: on `("x", "y")` a 45-degree
+    wall measures sqrt(2) times its thickness. Each axis costs a full scan;
+    an unknown key raises KeyError.
 
-    A SHORT RUN IS ONLY A WALL IF IT IS A WALL SIDEWAYS TOO, and that second
-    probe is what keeps the sentence above true. Every convex corner tapers to
-    nothing, so a scan line clipping one measures a fraction of a millimetre on
-    a part with no thin wall anywhere -- measured on a 20 x 1.6 mm rib, where
-    the diagonal axes cut the far corner into runs of 0.2 mm. So the midpoint of
-    a short run is probed `min_thickness / 2` to either side ALONG the wall, and
-    the run counts only if there is material at both: a wall is thin in one
-    direction and long in the other, while an ordinary corner is short in both
-    and is dropped. A FEATURE THAT TAPERS TO A SHARP POINT IS NOT DROPPED, and
-    the sentence used to claim every corner was: measured 2026-09-08 on a 20 mm
-    gusset at a 0.8 mm minimum, a 45-degree point still comes back clean, a
-    31-degree one is named at 0.60 mm and an 8.5-degree one at 0.20 mm, because
-    the material really is thinner than the minimum there and the probe to
-    either side still lands in it. That is the truthful direction and it is
-    left alone -- the check names
-    what it measured, and whether the spike of a gusset is a wall is the
-    author's call. A feature thinner than the minimum in EVERY direction is
-    still missed rather than named, which is the direction this file errs in
-    everywhere else.
+    A short run counts only if there is material `min_thickness / 2` to
+    either side along the wall at its midpoint: every convex corner tapers to
+    nothing (the diagonals cut a 20 x 1.6 mm rib's corner into 0.2 mm runs),
+    and a corner is short in both directions while a wall is long in one. A
+    feature tapering to a sharp point is still reported where it really is
+    thinner than the minimum (on a 20 mm gusset at a 0.8 mm minimum: a
+    45-degree point is clean, 31 degrees reports 0.60 mm, 8.5 degrees 0.20 mm);
+    whether that spike matters is the author's call. A feature thin in every
+    direction is missed rather than named.
 
-    ONE PROBLEM STRING PER PLANE, naming the thinnest run found there, where it
-    is, and how many runs came out under the threshold. A wall crossed by forty
-    scan lines is one wall, and forty lines about it would bury the next one.
+    One problem string per plane: the thinnest run, where it is, and how many
+    runs came out under the threshold.
 
-    `min_thickness` may not be zero or less: every run is longer than that, so
-    the check would pass for every part ever handed to it.
+    `min_thickness` must be positive, or every run passes.
 
-    Cost: `(span / pitch) x (span / step)` classifier calls per axis per plane.
-    For a 60 mm part at a 0.8 mm minimum that is ~76 lines x ~301 samples on the
-    two straight axes and ~107 x ~425 on the two diagonals, which scan the
-    bounding box corner to corner -- 137k probes, measured at 1.1 s on this
-    machine (2026-09-08). It is linear in the number of planes, so a model
-    naming twenty heights pays twenty times -- name the heights that matter.
+    Cost: `(span / pitch) x (span / step)` classifier calls per axis per
+    plane. A 60 mm part at a 0.8 mm minimum is ~137k probes, about 1.1 s;
+    linear in the number of planes, so name the heights that matter.
 
     Returns a list of problem strings.
     """
-    # Before the geometry and before the kernel: this is a statement about the
-    # ARGUMENT, and it has to answer on a machine with no OpenCASCADE for the
-    # same reason `material_at` checks its type before importing OCP.
+    # Before the geometry and the kernel, so it answers on a machine without
+    # OpenCASCADE (as in `material_at`).
     if min_thickness <= 0:
         raise ValueError(
             f"thin_walls({name}): min_thickness is {min_thickness!r}. Every "
@@ -1825,29 +1473,18 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
             "checklib.minimum_feature() is the floor the nozzle sets, and a "
             "wall that carries anything is well above it.")
 
-    # WHOLE STEPS ARE WHAT A RUN IS COUNTED IN, so `step` has to divide
-    # `min_thickness` -- this is the condition the one-sided error above rests
-    # on, and it is an argument check rather than a taste. A wall of exactly the
-    # minimum is crossed by floor(min / step) samples or one more, and the scan
-    # compares that count against `divisions`, the same ratio ROUNDED. An
-    # indivisible step therefore moves the threshold off the number the author
-    # named, and WHICH WAY IT MOVES depends on which way the ratio rounds.
-    # Rounded up, a wall of exactly the minimum comes out one step short and is
-    # named thin: measured, min 0.8 with step 0.3 reports a wall of exactly
-    # 0.8 mm as 0.60 mm, which is the false red this check promises never to
-    # give. Rounded down, nothing is falsely accused and the threshold quietly
-    # becomes divisions * step instead -- 0.15 at the same minimum measures
-    # against 0.75 mm. Neither is the number the author asked for.
+    # Runs are counted in whole steps, so `step` must divide `min_thickness`.
+    # A wall of exactly the minimum is crossed by floor(min / step) samples or
+    # one more, compared against `divisions` (the ratio rounded). If it rounds
+    # up, a wall of exactly the minimum is named thin (min 0.8, step 0.3
+    # reports 0.60 mm); if down, the threshold drops (0.15 measures against
+    # 0.75 mm).
     #
-    # `divisions` IS ALSO WHAT THE SCAN COMPARES AGAINST, and that is the second
-    # half of the same argument: `run * step < min_thickness` is arithmetic in
-    # double, so 3 * 0.3 is 0.8999999999999999 and a wall of 1.1 mm at a 0.9 mm
-    # minimum was named thin -- by a step this very check accepts, since the
-    # division IS whole to 1e-9. Counting samples instead compares two integers
-    # and loses nothing.
+    # Comparing integer sample counts against `divisions` also avoids float
+    # error: `3 * 0.3 < 0.9` is true in double.
     if step is None:
-        # ONE NUMBER, and the step derived from it: written twice, an edit to
-        # either alone moves the detection threshold and nothing says so.
+        # One number, with the step derived from it, so the threshold has a
+        # single definition.
         divisions = 4
         step = min_thickness / divisions
     else:
@@ -1864,12 +1501,8 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
                 f"and misses everything between. Pass a divisor of "
                 f"{min_thickness!r} (the default, min_thickness / 4, is one), "
                 "or leave it out.")
-        # A SINGLE DIVISION DIVIDES CLEANLY AND MEASURES NOTHING, so it needs
-        # its own refusal: the message above would be a lie about it. With one
-        # division no run can be shorter than one step, `run < divisions` is
-        # never true, and the check returns nothing for every part there will
-        # ever be -- including a rib eight times under the minimum, measured.
-        # That is the failure the min_thickness refusal above is named after.
+        # A single division divides cleanly but measures nothing: no run can be
+        # shorter than one step, so every part would pass.
         if divisions == 1:
             raise ValueError(
                 f"thin_walls({name}): step is {step!r}, the whole of "
@@ -1880,13 +1513,10 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
                 "that divides the minimum at least twice: min_thickness / 4 is "
                 "the default, or leave step out.")
 
-    # A STRING ITERATES BY CHARACTER, and both characters of "xy" are keys of
-    # `directions` -- so the one axis the author named silently becomes the two
-    # straight ones, no KeyError anywhere, and the worst case the docstring
-    # promises goes from 1.08x to 1.41x. An unknown key does raise and names
-    # itself, which is why there is no check for one; this input raises nothing
-    # at all. Same shape as the `allowed_touching=("body", "lid")` mistake
-    # `name_pairs` refuses.
+    # A string iterates by character, and both characters of "xy" are keys, so
+    # `axes="xy"` would silently scan X and Y and the worst case would go from
+    # 1.08x to 1.41x. Same shape as the `allowed_touching=("body", "lid")`
+    # mistake `name_pairs` refuses.
     if isinstance(axes, str):
         raise ValueError(
             f"thin_walls({name}): axes is the string {axes!r}, which iterates "
@@ -1897,13 +1527,9 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
     if pitch is None:
         pitch = min_thickness
 
-    # ONE classifier for the whole call, however many planes and axes are
-    # scanned: it is bound to the part as it was when it was asked for, and
-    # building a second one per plane would pay for the same solids again.
+    # One classifier for the whole call, however many planes and axes.
     inside = material_at(part, name)
-    # The extent to scan. Every body of the part, for the reason `_hull` gives:
-    # a part is often several bodies and the wall does not have to be on the
-    # first one.
+    # The extent to scan, over every body (see `_hull`).
     box = _hull([shape.BoundingBox() for shape in shapes])
     diagonal = math.sqrt(0.5)
     directions = {"x": (1.0, 0.0), "y": (0.0, 1.0),
@@ -1919,9 +1545,8 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
 
         for axis in axes:
             dx, dy = directions[axis]
-            # The line runs along (dx, dy) and the lines are laid out along the
-            # perpendicular, which is also the direction "sideways along the
-            # wall" is measured in below.
+            # Lines run along (dx, dy) and are laid out along the
+            # perpendicular, which is also "sideways along the wall" below.
             sx, sy = -dy, dx
             along = [x * dx + y * dy for x, y in corners]
             across = [x * sx + y * sy for x, y in corners]
@@ -1933,8 +1558,7 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
                 s = smin + line * pitch
                 run = 0
                 # One pass past the end: the sentinel closes a run that reaches
-                # the far side of the extent, which is the same code path as a
-                # run that ends on material.
+                # the far side of the extent.
                 for sample in range(samples + 1):
                     if sample < samples:
                         t = tmin + sample * step
@@ -1979,81 +1603,62 @@ def thin_walls(part, planes, min_thickness, *, name="part", pitch=None,
 # 8. How far the model is from a scan of the real thing
 # --------------------------------------------------------------------------
 
-# The three bands a deviation map is cut into: the suffix each one's catalogue
-# key carries, the colour it is drawn in, and what it MEANS. The colours are the
-# metrology convention rather than a preference -- blue where the real thing has
-# less material than the model asked for, red where it has more than the model
-# accounts for, green for the band the author allowed -- and a map painted any
-# other way needs a legend beside it to be read at all.
+# The three bands of a deviation map: catalogue-key suffix, colour, meaning.
+# The colours are the metrology convention: blue where the real thing has less
+# material than the model, red where it has more, green within tolerance.
 #
-# One band is one catalogue entry, because a catalogue entry is one colour
-# (views.py writes `node["color"]` onto the whole leaf). That is the whole reason
-# this returns three meshes rather than one: a per-vertex colour has nowhere to
-# live between here and the viewer.
+# One band per catalogue entry, because an entry is one colour (views.py writes
+# `node["color"]` onto the whole leaf); a per-vertex colour has nowhere to live
+# between here and the viewer.
 _DEVIATION_BANDS = (
     ("inside", "#2f6fd0", "scan inside the model: the model is thicker here"),
     ("within", "#3aa65b", "scan within tolerance of the model"),
     ("outside", "#d1432f", "scan outside the model: the model is missing material"),
 )
 
-# The angular tolerance the model is tessellated at, in radians. The MILLIMETRE
-# argument of `Shape.tessellate` is a real second regulator and it is the one
-# this file cannot steer by, because cadquery asks OCCT for a RELATIVE deflection
-# (`BRepMesh_IncrementalMesh(..., isRelative=True)`): what it means is a fraction
-# of the face's own size, so the millimetre figure binds only once it drops below
-# a threshold that MOVES WITH THE PART. Measured 2026-09-26 on cadquery 2.8.0, a
-# sphere of radius 50 at this angle: 0.2 mm, 0.02 mm and 0.002 mm all gave 8 002
-# facets and 0.108 mm of sag, and 0.0002 mm gave 50 424 facets and 0.017 mm. One
-# millimetre figure is therefore a different fidelity on a different part, while
-# the angle means the same thing on every one of them.
+# The angular tolerance the model is tessellated at, in radians. The millimetre
+# argument of `Shape.tessellate` cannot be relied on: cadquery asks OCCT for a
+# relative deflection (`BRepMesh_IncrementalMesh(..., isRelative=True)`), so the
+# figure only binds below a threshold that moves with the part (radius-50
+# sphere at this angle: 0.2, 0.02 and 0.002 mm all gave 8 002 facets and
+# 0.108 mm sag; 0.0002 mm gave 50 424 facets and 0.017 mm). The angle means
+# the same on every part.
 #
-# The sag is the part of it that reaches the ANSWER (0.22 * R * angle^2, and
-# `deviation` says what that costs), the facet count the part that reaches the
-# clock, and it goes as the inverse square. This value is the one this repository
-# already exports STL at, artifacts.STL_ANGULAR_TOLERANCE.
+# Sag (0.22 * R * angle^2; see `deviation`) affects the answer; facet count,
+# going as the inverse square, affects the time. Same value as
+# artifacts.STL_ANGULAR_TOLERANCE.
 _TESSELLATION_ANGLE = 0.1
 
 # How far a facet may reach from its own centre, as a fraction of the model's
-# bounding-box diagonal -- relative to the diagonal so the facet count, and with
-# it the tree, lands in the same place whatever size the part is.
+# bounding-box diagonal, so the facet count is size-independent.
 #
-# IT DECIDES THE CLOCK AGAINST THE MEMORY AND NOTHING ELSE, which is checked
-# rather than asserted: the three measurements below returned the same figures to
-# six decimals. Since `_signed_distance` excludes on each facet's OWN radius it
-# does not even decide how many facets are measured exactly -- what it moves is
-# how many the ball hands over before the exclusion throws them out, as its
-# square -- so the finer it goes the faster this runs and the more it holds,
-# until the memory a build has is what stops it. Measured 2026-09-26 on a
-# filleted bracket against a 197 600-vertex scan: 22.9 s and 1.32 GiB at a
-# hundredth, 14.2 s and 2.07 GiB here, 12.3 s and 2.95 GiB at a three-hundredth.
-# This is the clock inside its target with the most room left under the ceiling.
+# It trades time against memory only; results were identical to six decimals
+# across the values tried. `_signed_distance` excludes on each facet's own
+# radius, so this only changes how many candidates the ball query returns
+# before exclusion. Filleted bracket vs a 197 600-vertex scan: 22.9 s /
+# 1.32 GiB at 1/100, 14.2 s / 2.07 GiB here, 12.3 s / 2.95 GiB at 1/300.
 _FACET_PER_DIAGONAL = 200
 
-# How many candidate ROWS -- (point, facet) pairs -- are held at once. The rows
-# are the memory in this measurement and the meshes are not, and a budget in
-# POINTS bounds them nowhere: a chunk of 20 000 points against a model whose
-# widest facet reached 70 mm was an OOM kill rather than a slow run (measured
-# 2026-09-26). A row costs about 70 bytes through the filtering below, so this is
-# under a hundred megabytes, chosen to leave the 6 GiB of address space a build
-# process has (buildproc.limits) to the kernel's own mappings. Raising it buys
-# nothing: three million rows measured the same 8.7 s and 0.35 GiB more.
+# How many candidate rows -- (point, facet) pairs -- are held at once. The rows
+# are the memory, not the meshes, and a budget in points bounds nothing (20 000
+# points against a model with 70 mm facets was an OOM kill). ~70 bytes per row,
+# so under 100 MB, leaving the build's 6 GiB address space (buildproc.limits)
+# to the kernel's mappings. Three million rows measured no faster.
 _DEVIATION_ROWS = 1_000_000
 
-# A ceiling on the bisection below, not a target. Longest-edge bisection
-# terminates on its own -- the worst case measured here, a bracket cut to a
-# four-hundredth of its diagonal, needed 17 rounds -- and this is what keeps a
-# pathological facet from looping inside a build instead.
-# Hitting it costs SPEED AND NOT CORRECTNESS: the search radius is read off the
-# facets that actually came out, never off the limit that was asked for.
+# A ceiling on the bisection below, not a target: longest-edge bisection
+# terminates on its own (17 rounds at worst, measured); this stops a
+# pathological facet looping. Hitting it costs speed, not correctness: the
+# search radius is read off the facets that came out.
 _BISECTION_ROUNDS = 64
 
 
 def _reach(soup):
     """How far each facet's rim lies from its own centre.
 
-    The radius in the exclusion argument of `_signed_distance`. Taken to the
-    VERTICES because the farthest point of a triangle from any fixed point is one
-    of its corners -- so this is the whole facet's radius and not a sample of it.
+    The radius in `_signed_distance`'s exclusion argument. Taken at the
+    vertices, since a triangle's farthest point from any fixed point is a
+    corner.
     """
     import numpy
     return numpy.linalg.norm(soup - soup.mean(axis=1)[:, None, :], axis=2).max(axis=1)
@@ -2062,27 +1667,20 @@ def _reach(soup):
 def _bisected(soup, limit):
     """The same surface again, with no facet reaching further than `limit`.
 
-    Split at the midpoint of the LONGEST edge, two ways, rather than at all three
-    midpoints into four (`trimesh.remesh.subdivide_to_size`). A tessellated
-    fillet arrives as slivers -- 34 mm long and 0.4 mm wide, measured on cadquery
-    2.8.0 -- and the four-way split narrows those as well as shortening them, at a
-    thousand facets apiece where two dozen would do: on one bracket it made 3.8 M
-    facets against 346 k here, and the search over all of them ran five times
-    slower rather than faster (31.3 s against 6.4 s for 200 000 points).
+    Split at the midpoint of the longest edge, two ways, rather than four ways
+    (`trimesh.remesh.subdivide_to_size`): a tessellated fillet arrives as
+    slivers (34 x 0.4 mm), and the four-way split narrows them too, producing
+    3.8 M facets against 346 k here on one bracket and a five times slower
+    search.
 
-    The result is a triangle SOUP with T-junctions in it, and nothing here minds:
-    it covers exactly the surface it came from, and the only two questions asked
-    of it are how far a point is from a facet and which way that facet faces.
+    The result is a triangle soup with T-junctions, which is fine: it covers
+    the same surface, and is only asked point-to-facet distances and facet
+    orientation.
 
-    A FACET THAT IS DONE IS SET ASIDE rather than carried round the loop again,
-    which is the difference between this fitting in a build and not. Carrying the
-    whole soup meant every round measured facets already known to be small enough
-    and then allocated a second copy of all of them to append to, and since the
-    flat faces of a part are most of the final count and settle last, that copy
-    was of the largest array there is, fourteen times over. Measured 2026-09-26
-    on the bracket `deviation` quotes, at a two-hundredth of its diagonal: the
-    2 078 122 facets come out in 0.7 s and 0.74 GiB here, where carrying them ran
-    past a 4 GiB ceiling and was killed.
+    Finished facets are set aside rather than carried round the loop, which is
+    what makes this fit in a build: carrying them re-measured and re-copied the
+    largest array every round. On the bracket `deviation` quotes, 2 078 122
+    facets come out in 0.7 s and 0.74 GiB; carrying them exceeded 4 GiB.
     """
     import numpy
     settled = []
@@ -2108,34 +1706,27 @@ def _bisected(soup, limit):
 
 
 def _tessellated(shape, tolerance):
-    """One shape's facets, meshed HERE rather than taken off whatever it carries.
+    """One shape's facets, meshed here rather than taken off whatever it carries.
 
     `Shape.mesh` remeshes only when `BRepTools.Triangulation_s(shape, tol)` says
-    the shape has no triangulation at that LINEAR tolerance, so a shape something
-    else already meshed answers with THAT mesh and the angle asked for here is
-    ignored outright. Measured 2026-09-26 on cadquery 2.8.0: a sphere of radius
-    50 meshed at the STL export's settings and then asked for `(0.02, 0.02)`
-    gives 8 002 facets where a fresh shape gives 201 558. An STL export earlier
-    in the build reaches this, and so does a `@cache`-decorated builder handing
-    the same object to a second call.
+    there is no triangulation at that linear tolerance, so an already-meshed
+    shape (by an earlier STL export, or a `@cache` builder's shared object)
+    returns its old mesh and ignores the angle asked for (radius-50 sphere:
+    8 002 facets instead of 201 558).
 
-    So the triangulation goes BOTH SIDES: before, so the answer is this call's
-    own, and after, so the next BoundingBox() is not the box of our mesh --
-    `geometry.drop_mesh` is the same call made for that second reason alone.
+    So the triangulation is cleaned before (so the answer is this call's own)
+    and after (so the next BoundingBox() is not our mesh's box, as
+    `geometry.drop_mesh` does).
     """
     from OCP.BRepTools import BRepTools
 
     BRepTools.Clean_s(shape.wrapped)
     try:
-        # The linear argument is a FRACTION of the face's own size and not a
-        # length (see _TESSELLATION_ANGLE), so a fifth of the band is a fifth of
-        # the band only in the sense that a tighter band asks for a finer mesh.
-        # At the bands a printed part is judged by it is looser than the angle
-        # and the angle is what decides; it starts to bind somewhere under
-        # 0.01 mm, which is the right direction for it to bind in.
-        # The angle is read here rather than passed in, so a caller cannot ask
-        # for a mesh the build itself never sees: every reading in a build has
-        # to come off the same triangulation to be comparable with the next.
+        # The linear argument is a fraction of the face's size, not a length
+        # (see _TESSELLATION_ANGLE); at the bands a printed part is judged by
+        # the angle decides, and the linear one starts to bind under ~0.01 mm.
+        # The angle is fixed here so every reading in a build comes off the
+        # same triangulation.
         return shape.tessellate(tolerance / 5.0, _TESSELLATION_ANGLE)
     finally:
         BRepTools.Clean_s(shape.wrapped)
@@ -2145,18 +1736,15 @@ def _facets(model, tolerance, facet, where):
     """The model's surface as a triangle soup, ready to be searched.
 
     `(soup, normals, tree, reach)`: the facets as an (n, 3, 3) array, their unit
-    normals, a KD-tree over their centres and EACH facet's own radius.
+    normals, a KD-tree over their centres and each facet's own radius.
 
-    EVERY BODY, like everything else in this file -- a part is routinely several
-    and the scan sees all of them. The normals come out pointing away from the
-    material: `Shape.tessellate` reverses the winding of a reversed face, which
-    was verified rather than assumed (the mesh's signed volume matches
-    `Shape.Volume()` to three decimals on a shell, a fillet and a part with a
-    hole through it, cadquery 2.8.0).
+    Every body is included. Normals point away from the material:
+    `Shape.tessellate` reverses the winding of a reversed face (the mesh's
+    signed volume matches `Shape.Volume()` to three decimals on a shell, a
+    fillet and a holed part, cadquery 2.8.0).
 
-    A facet of no area is dropped: it has no normal to take a sign from and no
-    surface to be nearest to. OCCT leaves a couple at the poles of a revolved
-    face.
+    Zero-area facets (OCCT leaves some at the poles of a revolved face) are
+    dropped: no normal for a sign, no surface to be nearest to.
     """
     import numpy
     from scipy.spatial import cKDTree
@@ -2200,49 +1788,34 @@ def _passes(counts, budget):
 def _signed_distance(points, soup, normals, tree, reach):
     """Each point's distance to the nearest facet, signed by that facet's normal.
 
-    EXACT, and the proof is one inequality PER FACET. Every point of facet `j`
-    lies within `reach[j]` of the centre `c` the tree holds it under, so for any
-    point `q` on it `|p - q| >= |p - c| - reach[j]`: a facet whose centre is
-    further than `bound + reach[j]` from `p` has nothing closer to `p` than
-    `bound`. `bound` is the distance from `p` to the facet its centre is nearest,
-    measured exactly, so nothing the test throws out could have won -- and every
-    facet it keeps is measured with `trimesh.triangles.closest_point` rather than
-    approximated.
+    Exact, by one inequality per facet: every point of facet `j` lies within
+    `reach[j]` of its centre `c`, so for any `q` on it `|p - q| >= |p - c| -
+    reach[j]`. A facet whose centre is further than `bound + reach[j]` from
+    `p` has nothing closer than `bound`, where `bound` is the exact distance to
+    the facet with the nearest centre. Every kept facet is measured with
+    `trimesh.triangles.closest_point`.
 
-    EACH FACET'S OWN RADIUS AND NOT THE WIDEST IN THE MODEL, which is where this
-    measurement's cost lives. A tessellated part is wildly uneven -- on the
-    bracket `deviation` quotes, the median facet reaches 0.11 mm and the widest
-    69.6 mm, and the bisection only caps the top of that at 0.73 mm -- so one
-    radius standing for all of them draws a ball seven times wider than the
-    fillet facets a point actually sits among, and the ratio enters squared. The
-    ball itself still has ONE radius, because that is the query scipy offers;
-    what the per-facet test does is cut its answer down to the facets that could
-    win, before any of them is measured exactly. Measured 2026-09-26 over that
-    bracket, 197 600 points: 475 facets a point come back from the ball and 39 of
-    them survive the test.
+    Each facet's own radius, not the widest: facets are very uneven (median
+    0.11 mm, widest 69.6 mm, capped at 0.73 mm by the bisection on the
+    `deviation` bracket), and the cost goes with the square. The ball query
+    still uses one radius (all scipy offers); the per-facet test then cuts its
+    answer down (475 candidates per point, 39 survive).
 
-    WHY IT IS WRITTEN OUT HERE. `rtree`, `pyembree` and `embreex` are all absent
-    from this image, so `trimesh.proximity.signed_distance` and
-    `ProximityQuery.on_surface` raise ModuleNotFoundError, and what trimesh has
-    left is `closest_point_naive` -- brute force, 36.9 s for 41 k points against
-    5 120 facets, measured 2026-09-26, i.e. hours at the size a scan is. The
-    KD-tree over surface SAMPLES that suggests itself instead is not an
-    alternative: on a 2 mm wall it was out by 40-450 um even at k=16, which is
-    the size of the tolerance band being measured.
+    Written out because `rtree`, `pyembree` and `embreex` are absent from the
+    image, so `trimesh.proximity.signed_distance` and
+    `ProximityQuery.on_surface` raise ModuleNotFoundError, and
+    `closest_point_naive` is brute force (36.9 s for 41 k points against
+    5 120 facets). A KD-tree over surface samples was off by 40-450 um on a
+    2 mm wall even at k=16, the size of the band being measured.
 
-    A PASS IS SIZED BY CANDIDATE ROWS AND NOT BY POINTS, which is the same fact
-    seen from the memory side: what is held at once is one row per (point, facet)
-    pair, and how many rows a point brings depends on where it sits rather than
-    on how many points there are. A budget in POINTS therefore bounds nothing,
-    which is how a chunk of 20 000 came to be an OOM kill rather than a slow run.
-    `query_ball_point(..., return_length=True)` counts the rows without building
-    them, so the runs can be cut where the budget falls.
+    Passes are sized by candidate rows, not points: one row per (point, facet)
+    pair is held, and the rows per point depend on where it sits.
+    `query_ball_point(..., return_length=True)` counts rows without building
+    them.
 
-    THE SIGN IS THE NEAREST FACET'S, which is what leaves one case undecided: a
-    point whose nearest point on the surface is an edge or a corner can sit
-    exactly in the plane of the facet that won, and the dot product is then zero.
-    It comes out positive, and the magnitude -- which is what the report quotes
-    -- is unaffected.
+    The sign is the nearest facet's. A point nearest an edge or corner can lie
+    exactly in that facet's plane; the dot product is then zero and the sign
+    positive, and the magnitude (what the report quotes) is unaffected.
     """
     import numpy
     import trimesh
@@ -2268,9 +1841,9 @@ def _signed_distance(points, soup, normals, tree, reach):
         away = here[owner] - trimesh.triangles.closest_point(soup[candidates],
                                                              here[owner])
         span = numpy.linalg.norm(away, axis=1)
-        # Ordered by point and then by distance, so the first row of each point's
-        # run is its own nearest facet. Every point still has a run: the facet
-        # `bound` was measured against passes the test by construction.
+        # Ordered by point then distance, so the first row of each point's run
+        # is its nearest facet. Every point has a run: the facet `bound` was
+        # measured against passes the test by construction.
         order = numpy.lexsort((span, owner))
         kept = numpy.bincount(owner, minlength=len(here))
         best = order[numpy.concatenate(([0], numpy.cumsum(kept)[:-1]))]
@@ -2309,25 +1882,22 @@ def deviation(scan, model, tolerance, *, name="deviation", thresholds=None):
             return [{"id": "assembled", "parts": ["bracket"]},
                     {"id": "deviation", "parts": list(measured()[0])}]
 
-    BEHIND A BUILDER AND NOT AT MODULE LEVEL, for the reason every other builder
-    in a model is: each check worker imports the model afresh
-    (`checkunits._work`), so a measurement standing at module level runs again in
-    every one of them.
+    Behind a builder, not at module level: each check worker imports the model
+    afresh (`checkunits._work`), so a module-level measurement would run in
+    every one.
 
     One entry per colour band, keyed `<name>_inside`, `<name>_within`,
-    `<name>_outside`; a band with nothing in it is absent rather than empty, so
-    iterate `bands` instead of spelling the three keys out. Each is a `mock`
-    carrying a piece of the SCAN's own mesh and an explicit colour, which wins
-    over the grey a mock is otherwise painted (`parts.catalogue_colors`).
+    `<name>_outside`; an empty band is absent, so iterate `bands` rather than
+    spelling the keys out. Each is a `mock` carrying a piece of the scan's own
+    mesh and an explicit colour, which overrides a mock's grey
+    (`parts.catalogue_colors`).
 
-    WHAT IS MEASURED, and the sign is the whole of it: for every vertex of the
-    scan, the distance to the nearest point of the model's surface, PLUS when the
-    scan lies outside the model -- the real thing has material the model does not
-    account for -- and MINUS when it lies inside, where the model is thicker than
-    the thing it describes. Which side is decided by the normal of the nearest
-    facet. `tolerance` is the half-width of the green band, in millimetres, and
-    it has no default for the reason `unsupported_area`'s budget has none: how
-    close is close enough is a fact about this part and nobody else's.
+    For every scan vertex: the distance to the nearest point of the model's
+    surface, positive when the scan lies outside the model (material the model
+    does not account for) and negative inside (the model is thicker). The side
+    is decided by the nearest facet's normal. `tolerance` is the half-width of
+    the green band in millimetres, with no default: how close is close enough
+    is a fact about this part.
 
     `report` carries the numbers, because colour answers "where" and half of the
     question is "by how much":
@@ -2339,48 +1909,36 @@ def deviation(scan, model, tolerance, *, name="deviation", thresholds=None):
         report.within            {threshold: fraction of the surface inside it}
         report.points            how many scan vertices were measured
 
-    Both medians are weighted by surface rather than by vertex, and THE TWO ARE
-    NOT INTERCHANGEABLE, which is why neither of them is called `median`: on a
-    part a third of which is 0.6 mm thin, a third 0.05 mm proud and a third
-    0.5 mm proud, the SIGNED median is 0.05 mm -- the zone the crossing lands in
-    is the one that is nearly right -- while the ABSOLUTE median is 0.5 mm and
-    two thirds of the surface is half a millimetre out. The signed one answers
-    "is the print big or small", the absolute one "is the print right", and it is
-    the second that belongs beside `within`, which is likewise on the magnitude.
+    Both medians are weighted by surface, not vertex, and they are not
+    interchangeable: on a part a third 0.6 mm thin, a third 0.05 mm proud and a
+    third 0.5 mm proud, the signed median is 0.05 mm while the absolute median
+    is 0.5 mm. The signed one answers "is the print big or small", the absolute
+    one "is the print right"; the latter goes with `within`.
 
     `thresholds` is what `within` is keyed by and defaults to `(tolerance,)`;
     pass several -- `(0.05, 0.1, 0.2)` -- to see the shape of the distribution
     rather than one number off it.
 
-    A FACE IS DRAWN IN THE BAND OF ITS WORST CORNER, so a band errs towards
-    showing a deviation rather than averaging it away, while the figures are
-    measured at the points themselves. The two are close and not equal, and the
-    report is the half to quote.
+    A face is drawn in the band of its worst corner, so the picture errs
+    towards showing a deviation; the figures are measured at the points and
+    are the ones to quote.
 
-    NOTHING HERE MOVES THE SCAN. Lining a scan up with the model is the author's
-    decision and often the whole job; a function that quietly did it would be
-    answering about a position nobody chose. Load the scan where it belongs
-    (`mesh.apply_transform`) and hand it over standing there.
+    Nothing here moves the scan: aligning it is the author's decision. Load it
+    where it belongs (`mesh.apply_transform`) and pass it in place.
 
-    A SCAN OF 200 000 VERTICES FITS, AND THAT IS THE SIZE THIS IS SIZED FOR.
-    Measured 2026-09-26 on a 120x80x20 bracket with 8 mm corner fillets, twelve
-    holes and every edge rounded at 0.8 mm -- so a tessellation of 217 k facets
-    ranging from 0.11 mm to 70 mm across, which is the shape of the cost -- and a
-    197 600-vertex scan taken off its fillets, where the facets are smallest and
-    the search is dearest: 14.2 s and 2.1 GiB on a laptop. The hub is some four
-    times slower and a build has 300 seconds and 6 GiB of address space for
-    everything (`buildproc.limits`), so past roughly half a million vertices thin
-    the scan out rather than wait -- `scan.simplify_quadric_decimation(...)`, or
-    a submesh of the zone in question -- because both figures grow with it, the
-    clock linearly and the memory only in the pass being held.
+    Sized for ~200 000 scan vertices: a 120x80x20 bracket with 8 mm fillets,
+    twelve holes and 0.8 mm edge rounds (217 k facets, 0.11-70 mm) against a
+    197 600-vertex scan of its fillets took 14.2 s and 2.1 GiB on a laptop. The
+    hub is ~4x slower and a build has 300 s and 6 GiB for everything
+    (`buildproc.limits`), so past roughly half a million vertices thin the scan
+    (`scan.simplify_quadric_decimation(...)`, or a submesh of the zone); time
+    grows linearly, memory only with the pass held.
 
-    THE TESSELLATION IS THE FLOOR UNDER EVERY READING, and it is not a knob. The
-    model is triangulated at a fixed angular tolerance (`_TESSELLATION_ANGLE`),
-    and a triangulation stands INSIDE a convex surface by about
-    0.22 * R * angle^2 -- 22 um at a 10 mm radius, 110 um at 50 mm, 1.1 mm at
-    half a metre -- which is added to every reading over that surface in one
-    direction. On a part whose radii are large that floor is what a band tighter
-    than it would be measuring, so read the figures against it.
+    The tessellation is a floor under every reading: at the fixed angular
+    tolerance (`_TESSELLATION_ANGLE`) a triangulation sits inside a convex
+    surface by ~0.22 * R * angle^2 -- 22 um at R 10 mm, 110 um at 50 mm, 1.1 mm
+    at half a metre -- added in one direction to every reading there. Read
+    tight bands on large radii against it.
     """
     if tolerance <= 0:
         raise ValueError(
@@ -2410,13 +1968,12 @@ def deviation(scan, model, tolerance, *, name="deviation", thresholds=None):
         picked = numpy.flatnonzero(belongs)
         if picked.size == 0:
             continue
-        # Renumbered onto the vertices this band actually uses: a leaf carrying
-        # the whole scan's vertex buffer would widen the scene's bounding box to
-        # the whole scan in every band (views._widen_bb).
+        # Renumbered onto the vertices this band uses, or every band's leaf
+        # would widen the scene's bounding box to the whole scan
+        # (views._widen_bb).
         used, renumbered = numpy.unique(faces[picked], return_inverse=True)
-        # `"mock"` spelled out rather than imported: this module reaches no
-        # first-party name, for the reason `_shapes` gives at length. A test ties
-        # the literal to `parts.KIND_MOCK`.
+        # `"mock"` spelled out: this module imports no first-party name (see
+        # `_shapes`). A test ties the literal to `parts.KIND_MOCK`.
         bands[f"{name}_{suffix}"] = {
             "mesh": trimesh.Trimesh(vertices=vertices[used],
                                     faces=renumbered.reshape(-1, 3),
@@ -2443,36 +2000,27 @@ def deviation(scan, model, tolerance, *, name="deviation", thresholds=None):
 # Check units: one check, named, with the builders it needs
 # --------------------------------------------------------------------------
 #
-# `checks()` is ONE function, so it is one process's worth of work however many
-# cores are idle beside it -- and on the hub that is most of the build:
-# measured on prod, checks() is 47-95% of a build's wall clock (ford-cup-4: 160
-# of 169 seconds). A UNIT is one check pulled out of that function under a name
-# of its own, together with the builders it needs, so the build can run several
-# at once in processes of their own and put a budget on each. What runs them is
-# `cadbuild.checkunits`; what is here is the registration and the record
-# keeping, because both are state of THIS module and a second copy of either
-# would be the bug the shim at the repository root exists to prevent.
+# `checks()` is one function, so one process's work, and on the hub it is
+# 47-95% of a build's wall clock. A unit is one check pulled out under its own
+# name with the builders it needs, so the build can run several in parallel
+# processes, each with a budget. `cadbuild.checkunits` runs them; registration
+# and record keeping live here because they are this module's state.
 #
-# `needs` MAPS THE CHECK'S OWN PARAMETER NAMES TO TOP-LEVEL BUILDERS, never to
-# keys of parts(). The catalogue is computed whole, so "take one part out of
-# parts()" means "build all of them" -- which is exactly the cost a unit is
-# meant to avoid paying more than once. The builders are the `@cache`-decorated
-# functions a model already writes (`model_template/model.py`: `build_base`,
-# `build_lid`), and a worker's own cache is what makes them cheap across every
-# unit it draws.
+# `needs` maps the check's own parameter names to top-level builders, never to
+# keys of parts(): the catalogue is computed whole, so taking one part out of
+# it builds all of them. The builders are the `@cache` functions a model
+# already writes (`model_template/model.py`: `build_base`, `build_lid`), and a
+# worker's cache makes them cheap across its units.
 
 
-# One registered unit. A namedtuple and not a dict so a typo in a field name is
-# an AttributeError rather than a silent None; PRIVATE, because it is the shape
-# `registered_units()` hands back and not something a model constructs.
+# One registered unit. A namedtuple so a field typo is an AttributeError, not
+# a silent None; private, since a model never constructs one.
 _Unit = collections.namedtuple("_Unit", "name func needs")
 
-# Every unit `check` has registered, keyed by the name it was registered under,
-# in registration order. Module-level mutable state, like the three records
-# below it, and cleaned by the same autouse fixture
-# (tests/cadbuild/conftest.py): a unit left behind by one test is a unit the
-# next test's build tries to run, in a worker process, against a model that
-# never defined it.
+# Every unit `check` has registered, by name, in registration order. Cleaned,
+# like the three records above, by an autouse fixture
+# (tests/cadbuild/conftest.py): a unit left by one test would run in the next
+# test's build against a model that never defined it.
 _UNITS = {}
 
 
@@ -2502,10 +2050,9 @@ def check(name, needs=None):
     (`cadbuild.checkunits`), so a check that never returns costs minutes and one
     worker instead of the build's whole wall clock.
 
-    EVERYTHING IS CHECKED HERE, at the `@` and not at the call, because the call
-    happens in another process: a `needs` key that names no parameter of this
-    function would otherwise surface as a bare TypeError out of a worker, on a
-    build that has already spent its geometry phase.
+    Everything is validated at the `@`, not at the call, because the call
+    happens in another process: a mismatched `needs` key would otherwise be a
+    bare TypeError from a worker after the geometry phase.
     """
     if not isinstance(name, str) or not name.strip():
         got = "a blank string" if isinstance(name, str) else type(name).__name__
@@ -2574,16 +2121,13 @@ def registered_units():
 def _take_records():
     """The three records as they stand, EMPTIED -- the worker's half of a merge.
 
-    PRIVATE, and that is a decision rather than a naming habit: the root shim
-    re-exports every public name here, so a public spelling of this would hand
-    a model a one-line way to wipe the interference and clearance numbers out
-    of its own metrics.json. Reading them (`recorded_*`) is a model's business;
-    emptying them is the build's.
+    Private: the root shim re-exports every public name, and a public one
+    would let a model wipe the interference and clearance numbers from its own
+    metrics.json.
 
-    Called once per unit in a worker, so what comes back is that unit's OWN
-    contribution rather than everything the worker has done since it started.
-    Sending the whole accumulated record after each unit would make the parent
-    add every section's seconds again for every later unit on the same worker.
+    Called once per unit in a worker, so it returns that unit's own
+    contribution; resending the accumulated record would make the parent add
+    sections' seconds again for every later unit.
     """
     taken = (dict(_INTERFERENCE), dict(_SECTIONS),
              {label: dict(record) for label, record in _CLEARANCE.items()})
@@ -2596,26 +2140,17 @@ def _take_records():
 def _merge_records(interference, sections, clearance):
     """Fold one worker's records into this process's, each by its OWN rule.
 
-    THE THREE RULES ARE NOT THE SAME and are each written where the record is
-    declared: interference is keyed by pair and a pair measured twice measures
-    the same, clearance is keyed by label and the record that arrives LAST
-    replaces the ones before it, and sections SUM -- a label used in two units is
-    one row whose seconds are the total, which is the same answer a
-    single-process run gives for a label used twice in `checks()`.
+    Interference is keyed by pair (a pair measured twice measures the same),
+    clearance by label (the last to arrive replaces earlier ones), and sections
+    sum (a label in two units is one row with the total, as in a single-process
+    run).
 
-    "LAST" IS NOT AN ORDER THE MODEL CHOOSES ANY MORE, and this sentence used to
-    say it was: inside one `checks()` a second sweep under one label replaced the
-    first, which is a rule an author can read off their own file top to bottom.
-    Under K workers it is whichever worker REPORTED second, and nothing decides
-    that -- the same two units can leave either number behind on two runs of the
-    same build. Two sweeps under one label are therefore a coin toss rather than
-    a replacement: give each sweep a label of its own and there is nothing for
-    the race to pick between.
+    "Last" is whichever worker reported last, which is nondeterministic: two
+    sweeps under one label may leave either number. Give each sweep its own
+    label.
 
-    Without this the records stay in the worker that filled them: metrics.json
-    comes out with empty `interference_mm3` and `clearance` on a build that
-    measured both, with nothing going red -- the exact failure the shim's
-    docstring is about, one process further out.
+    Without this the records stay in the worker, and metrics.json has empty
+    `interference_mm3` and `clearance` with nothing going red.
     """
     _INTERFERENCE.update(interference)
     for label, seconds in sections.items():

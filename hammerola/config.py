@@ -9,39 +9,19 @@ Three places, first hit wins:
                                    format, written once and read by every model
                                    directory on it.
 
-The third one is what `hammerola login` WRITES (`write_settings` below), and it
-is deliberately the last place looked at rather than the first: a login is the
-machine's standing answer, and both an explicit env var and a project's own
-`.env` are more specific than that.
+The third one is what `hammerola login` writes (`write_settings` below); it is
+looked at last because an env var or a project's `.env` is more specific.
 
-NEITHER SETTING HAS A DEFAULT, and HUB_URL is the one where that is a project
-rule rather than a preference (AGENTS.md): the address of our own service is
-never guessed. When nothing carries it the answer is an error naming the file to
-write, and it is raised BEFORE the tree is walked or packed, so `hammerola` on
-an unconfigured machine fails in a second instead of after a minute of work.
+NEITHER SETTING HAS A DEFAULT: the address of our own service is never guessed
+(AGENTS.md). A missing one is an error naming the file to write, raised before
+the tree is walked or packed.
 
-THE TOKEN IS NEVER PRINTED. Not in an error, not in a banner, not in a
-traceback. Its length and where it was found are printable; its value is not —
-an edit token that reaches a terminal scrollback or a CI log is an edit token
-that has to be rotated, and there is no smaller one to rotate: this is the whole
-system's secret. The same rule is why `pack.py` drops `.env` from
-the archive, why `login` reads it with `getpass` instead of taking it as an
-argument (a command line is in the shell's history and in every `ps` on the
-machine), and why the file it lands in is created 0600.
-
-ONE SECRET FOR THE WHOLE SYSTEM, decided 2026-08-27 (issue #26) and true
-on BOTH SIDES since step 0 of the plan: `EDIT_TOKEN` is the only credential this
-tool knows and the only one the hub declares. There is no second key for the
-comment queue, and there was one — the hub used to check `PUBLISH_TOKEN` on a
-push and `COMMENT_READ_TOKEN` on the queue, which meant a deployment could set
-them differently and get a client that published perfectly while `hammerola
-comments` answered 401. That failure mode is gone, along with the sentence
-`hub.py` used to print about it.
-
-Vaultwarden is deliberately NOT a fourth source. `cad_publish` shelled out to
-`rbw` here; `login` writes the file instead, and the note that used to stand
-here about per-person tokens still holds — the hub compares one shared secret
-for equality, so "logging in" means storing that secret and nothing more.
+THE TOKEN IS NEVER PRINTED — not in an error, a banner or a traceback; only its
+length and where it was found. It is the whole system's one secret
+(`EDIT_TOKEN`, used for pushes, the comment queue and every write), which is
+also why `pack.py` drops `.env`, `login` reads it with `getpass` rather than an
+argument, and the file is created 0600. The hub compares it for equality, so
+"logging in" means storing it and nothing more.
 """
 
 import os
@@ -50,9 +30,8 @@ from pathlib import Path
 HUB_URL_VAR = "HUB_URL"
 EDIT_TOKEN_VAR = "EDIT_TOKEN"
 
-# Which machine-wide file to read. An override rather than a constant so a test
-# run cannot be steered — or rescued — by the developer's real settings; the
-# default is what an actual run uses.
+# Which machine-wide file to read: an override so tests do not see the
+# developer's real settings.
 ENV_FILE_VAR = "HAMMEROLA_ENV_FILE"
 
 PROJECT_ENV_NAME = ".env"
@@ -194,10 +173,8 @@ def edit_token(project_dir=None) -> str:
 
 
 # -- the write half: what `hammerola login` puts in the machine file ---------
-# The mode the file is created with and forced back to on every write. It holds
-# the one secret of the whole system, so `0600` is the point of the exercise
-# rather than tidiness — and it is applied AFTER the rename as well, because a
-# file that already existed keeps whatever mode it had.
+# The file holds the system's secret: created with this mode and forced back to
+# it after every rename.
 FILE_MODE = 0o600
 DIRECTORY_MODE = 0o700
 
@@ -205,34 +182,22 @@ DIRECTORY_MODE = 0o700
 def write_settings(values: dict, path: Path = None) -> Path:
     """Store `KEY -> value` in the machine's env file. Returns where it landed.
 
-    EVERY OTHER LINE OF THE FILE SURVIVES. A key that is already there is
-    rewritten in place, one that is not is appended, and everything else —
-    comments, blank lines, settings this tool does not know about — is copied
-    through untouched. Writing the file from a parsed dict instead would be the
-    same operation with one silent side effect: `login` would delete whatever
-    somebody else's tool, or a future setting, had put in there.
+    Every other line of the file survives: an existing key is rewritten in
+    place, a new one is appended, comments and unknown settings are copied
+    through. Written through a temporary file and renamed, so an interrupted
+    login leaves the previous settings intact.
 
-    Written through a temporary file and renamed, so an interrupted login leaves
-    the previous settings intact rather than a truncated file: this is the file
-    that holds the credential, and the run that discovers it is empty is the
-    next push.
-
-    THE NEW TEXT IS READ BACK BEFORE IT IS WRITTEN, with the same parser every
-    run uses, and the write only happens if every value survives that. It closes
-    the way this could fail quietly — a value the `KEY=value` format cannot
-    carry would otherwise be stored as something else and noticed as a 401 days
-    later — and the ORDER is what makes the failure harmless: checking after the
-    write would leave the wrong token in the file it just reported an error
-    about.
+    The new text is parsed back with the same parser BEFORE it is written, and
+    nothing is written unless every value survives, so a value the format
+    cannot carry is never stored as something else.
     """
     path = machine_env_file() if path is None else Path(path)
     for name, value in values.items():
         check_storable(name, value)
 
     parent = path.parent
-    # Only a directory this call CREATES is narrowed. `HAMMEROLA_ENV_FILE` can
-    # name any path, and chmod-ing a directory that was already there would mean
-    # a login could tighten a directory holding somebody else's files.
+    # Only a directory this call creates is narrowed: `HAMMEROLA_ENV_FILE` can
+    # point into a directory holding somebody else's files.
     fresh = not parent.exists()
     try:
         parent.mkdir(parents=True, exist_ok=True)
@@ -267,14 +232,10 @@ def write_settings(values: dict, path: Path = None) -> Path:
 def check_storable(name: str, value) -> None:
     """Refuse a value the file cannot carry, WITHOUT printing the value.
 
-    A token is one of these, so nothing in this message may echo it — the
-    refusal names the variable and the shape, and the caller decides what to say
-    about it.
-
-    Public because `login` asks it of the password the MOMENT it is typed,
-    before the value is used for anything. A credential that cannot be stored
-    must not be tried against the hub first: a line break in it is also a line
-    break in an `Authorization` header, which is a request nobody meant to send.
+    The refusal names the variable and the shape, never the value. Public
+    because `login` asks it of the password as soon as it is typed, before it is
+    tried against the hub (a line break would also break the `Authorization`
+    header).
     """
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{name} cannot be stored: it is empty")
@@ -288,19 +249,14 @@ def check_storable(name: str, value) -> None:
             f"holds one `KEY=value` per line")
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         # The parser strips one layer of surrounding quotes, so this value would
-        # come back as the thing INSIDE them. Refused here rather than left to
-        # the read-back check in `write_settings`, so the answer arrives at the
-        # prompt that produced it instead of after a round trip to the hub.
+        # come back as what is inside them. Refused here so it fails at the prompt.
         raise ConfigError(
             f"{name} cannot be stored: it begins and ends with a quote "
             f"character, and this file format takes one layer of those off "
             f"again when it reads a value back")
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
-        # Wider than the line-break rule above and kept separate from it because
-        # the reason differs: a NUL or a form feed is not a line the parser
-        # would mis-split, it is a byte nothing downstream handles predictably.
-        # This file holds one secret; a value with a C0 control in it is a paste
-        # that went wrong, whatever the parser would do with it.
+        # Any other C0 control: a byte nothing downstream handles predictably,
+        # and in a secret a sign of a broken paste.
         raise ConfigError(
             f"{name} cannot be stored: it contains a control character")
 
@@ -308,24 +264,13 @@ def check_storable(name: str, value) -> None:
 def header_value_problem(value):
     """Why `value` cannot travel as an HTTP header value, or None. No echo.
 
-    THE PREDICATE, SHARED BY THE TWO PLACES THAT ASK IT, and shared rather than
-    written twice because they answer for the same wire: `check_sendable_as_header`
-    below is what `login` asks at the prompt, and `hub._refuse_unsendable_token`
-    is what catches a token that never went through `login` — out of the
-    environment, or out of a hand-edited file. Two copies of this would have
-    drifted into the state that made the split necessary in the first place,
-    where a password the prompt accepted was refused by the constructor a few
-    lines later.
+    Shared by `check_sendable_as_header` (asked by `login` at the prompt) and
+    `hub._refuse_unsendable_token` (a token from the environment or a
+    hand-edited file), so the two cannot disagree. The reason is returned rather
+    than raised because each caller gives different advice.
 
-    The reason is returned rather than raised so each caller can put it in its
-    own sentence: the advice differs completely, and "run `hammerola login`" is
-    wrong when said to somebody who is running `hammerola login`.
-
-    THE WIDTH IS A DECISION, not a limit of the wire. A TAB is legal in a header
-    value and http.client would send one; it is refused here anyway, because a
-    secret with a tab in it is a paste that went wrong. Latin-1 is the limit of
-    the wire: `http.client` encodes header values with it, so anything outside
-    it cannot be sent at all.
+    A tab is legal in a header value but refused anyway, as a broken paste.
+    Latin-1 is the wire's limit: `http.client` encodes header values with it.
     """
     if not isinstance(value, str):
         return f"it is a {type(value).__name__} rather than a string"
@@ -345,28 +290,13 @@ def header_value_problem(value):
 def check_sendable_as_header(name: str, value) -> None:
     """Refuse a secret that could never be presented to the hub. No echo.
 
-    THE COMPANION TO `check_storable`, AND SEPARATE FROM IT ON PURPOSE. That one
-    is about this FILE and is asked of everything written to it, `HUB_URL`
-    included; this one is about the `Authorization` header and is asked only of
-    the secret. They stay apart because the two values are answerable to
-    different things, and the answers are not the same shape: a token has to
-    survive one header, while an ADDRESS has to survive three encodings in a row
-    — the request line's ASCII, the `Host` header's latin-1 and the host's IDNA,
-    which also bounds every dotted label at 63 characters. `hub._origin` is
-    where that is asked, by performing the encodings rather than describing
-    them, and it is strictly stricter than a latin-1 rule would be.
+    Separate from `check_storable`, which is about the FILE and applies to
+    every value including `HUB_URL`; this is about the `Authorization` header
+    and applies only to the secret. The address has its own, stricter check in
+    `hub._origin` (ASCII request line, latin-1 `Host`, IDNA labels).
 
-    THE JUSTIFICATION THAT USED TO STAND HERE WAS FALSE and is named so it is
-    not restored: it said `https://хаб.example` is a legal address urllib
-    resolves through IDNA, so a latin-1 rule in `check_storable` would reject a
-    working hub. It is not legal for this client — it reaches the wire and dies
-    on the `Host` header — and `_origin` now refuses it outright. The split is
-    right for the reason above; that example was not a reason for anything.
-
-    `login` asks both, at the prompt, which is what makes the constructor's
-    check in `hub.py` unreachable from inside `login` — it advises running
-    `hammerola login`, and saying that to somebody already running it was a loop
-    with no way out of it.
+    `login` asks both at the prompt, so the constructor's check in `hub.py`
+    (which advises running `hammerola login`) is never reached from `login`.
     """
     problem = header_value_problem(value)
     if problem is not None:
@@ -384,9 +314,7 @@ def _merge_env_text(text: str, values: dict) -> str:
         if key is None or key not in remaining:
             lines.append(line)
             continue
-        # `export ` is kept when it was there: the file is also something a
-        # person can `source`, and dropping the keyword would change what that
-        # does for a line this call did not come to change the meaning of.
+        # `export ` is kept when it was there: the file can also be `source`d.
         prefix = "export " if line.lstrip().startswith("export ") else ""
         lines.append(f"{prefix}{key}={remaining.pop(key)}")
     for key, value in remaining.items():
@@ -411,24 +339,18 @@ def _write_private(path: Path, text: str) -> None:
     """Write `text` where nothing but this account can read it."""
     tmp = path.parent / f".{path.name}.wip-{os.getpid()}"
     try:
-        # `os.open` with the mode rather than `write_text` and a chmod after:
-        # the window between the two is a window in which the secret is on disk
-        # world-readable, and it is the file's whole reason for existing.
+        # Created with the mode, so the secret is never on disk world-readable.
         handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, FILE_MODE)
         try:
             stream = os.fdopen(handle, "w", encoding="utf-8")
         except BaseException:
-            # Only until `fdopen` has taken the descriptor over. Closing it
-            # after that point would close a descriptor the stream still owns —
-            # and one another thread may by then have been given.
+            # Only until `fdopen` owns the descriptor.
             os.close(handle)
             raise
         with stream:
             stream.write(text)
         os.replace(tmp, path)
-        # The mode again, because the file may have existed with another one:
-        # os.replace keeps the SOURCE's mode, but a file created 0644 by an
-        # older version and then rewritten would otherwise keep 0644 forever.
+        # The mode again, in case the file existed with another one.
         os.chmod(path, FILE_MODE)
     except OSError as error:
         try:

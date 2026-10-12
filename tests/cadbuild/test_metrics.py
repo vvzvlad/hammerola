@@ -1,22 +1,11 @@
 """What this build measured, and what moved since the last one.
 
-TWO BLOCKS, AND THIS FILE HOLDS THEM TO DIFFERENT PROMISES. The summary is what
-this build measured and is printed on EVERY run, baseline or no baseline: the
-log is the only channel that arrives at whoever pushed without a second action
-from them, so it may not depend on there having been a previous build. The diff
-is what moved since `dev` and is printed whenever there is a baseline -- INCLUDING
-when nothing moved, with how many numbers were compared, because silence there
-reads exactly like a comparison that never happened.
-
-THIS ONCE SAID THE OPPOSITE -- that what matters is printing ONLY differences,
-a block saying the same numbers after every build being one that stops being
-read. That argument is still right about the DIFF and was wrong about the
-summary, which is why there are now two blocks instead of one.
-
-The five tests of `check_project_match` that used to sit here went back to
-cad_publish with the function itself: it refuses to publish over a snapshot
-belonging to somebody else, which is a question a laptop asks a hub over HTTP.
-See the note at the top of src/cadbuild/metrics.py.
+Two blocks with different promises. The summary is what this build measured
+and is printed on EVERY run, baseline or no baseline: the log is the only
+channel that reaches whoever pushed without a second action from them. The diff
+is what moved since `dev` and is printed whenever there is a baseline --
+INCLUDING when nothing moved, with how many numbers were compared, because
+silence there reads exactly like a comparison that never happened.
 """
 
 import json
@@ -191,11 +180,9 @@ def test_a_changed_check_count_is_reported():
 def test_a_baseline_from_before_the_measurement_reports_no_static_asserts():
     """A missing `checks_static` and a zero are the same answer: none.
 
-    Every project's baseline predates this number, so a comparison that tells
-    the two apart prints `checks decided by constants: None -> 0` on the first
-    build after the rollout -- a line saying nothing moved, in a document whose
-    whole rule is to print only what did. Between two immutable revisions
-    astride the rollout it would print for ever.
+    Older baselines lack this number, so a comparison that tells the two apart
+    would print `checks decided by constants: None -> 0` -- a line saying
+    nothing moved, in a document whose rule is to print only what did.
     """
     assert metrics_diff(build(), {**build(), "checks_static": 0}) == []
 
@@ -301,13 +288,11 @@ def test_a_sweep_run_at_more_stops_is_not_the_parts_having_moved():
 
 
 def test_a_baseline_from_before_these_numbers_existed_still_compares():
-    """THE ROLLOUT, and the one test here that is about it.
+    """A baseline without the newer fields still compares.
 
-    Every revision already published carries none of the fields this issue
-    added -- no first layer, no overhang, no assembly box -- and those
-    revisions are immutable, so they will never carry them. Comparison with
-    them has to go on working: the fields the two documents share are compared,
-    the rest are passed over, and nothing raises on the way past.
+    Older immutable revisions carry no first layer, no overhang and no assembly
+    box. The fields the two documents share are compared, the rest are passed
+    over, and nothing raises on the way past.
     """
     old = {"version": METRICS_VERSION, "project": "scratch-project",
            "parts": {"body": {"volume_mm3": 1000.0, "bbox_mm": [10.0, 10.0, 10.0],
@@ -491,9 +476,7 @@ def test_a_build_that_measured_no_product_declares_no_size_at_all(out_dir):
 
 
 def test_a_swept_pair_reaches_metrics_json(out_dir):
-    """`checklib.swept_clearance` recorded this and nothing published it until
-    now -- which is the half of issue #58 that is a wire and not a
-    measurement."""
+    """What `checklib.swept_clearance` records is published in metrics."""
     from src.cadbuild import checklib
 
     checklib._CLEARANCE["lid|body"] = {"positions": 12, "min_gap_mm": 0.4,
@@ -509,7 +492,7 @@ def test_a_swept_pair_reaches_metrics_json(out_dir):
 
 
 def test_a_declared_number_is_written_out_as_an_ordinary_number(out_dir):
-    """`checklib.Number` is a float SUBCLASS, and provenance now reaches here.
+    """`checklib.Number` is a float SUBCLASS, and provenance reaches here.
 
     Two claims, and the order of the two branches in `trim` is what makes both
     true at once. A subclass has to come out as JSON's own number, with nothing
@@ -535,19 +518,13 @@ def test_a_declared_number_is_written_out_as_an_ordinary_number(out_dir):
 
 
 def test_the_recorded_arguments_have_no_default():
-    """"A REQUIRED argument rather than one with a default" was a comment.
+    """These arguments are REQUIRED, not defaulted.
 
-    `collect_metrics`'s docstring argues the point -- a default would let a
-    caller drop the whole record by forgetting it, and metrics.json would still
-    look complete -- and giving the parameter `provenance={}` left every test in
-    this repository green, which is exactly the silence the argument describes.
-    One line of `inspect.signature` is what makes the claim fail on the edit
-    that falsifies it. `checks_static` is held to it for the same reason: a
-    default of 0 is the file saying the constants settled none of the checks,
-    which is a claim, not an absence. `bbox` and `print_bbox` join them for a
-    third turn of the same argument -- a default of None on the first would
-    publish an assembly block with no size in it, and one on the second would
-    say every build has no plate.
+    A default `provenance={}` would let a caller drop the whole record by
+    forgetting it while metrics.json still looks complete. A default of 0 for
+    `checks_static` claims the constants settled none of the checks; None for
+    `bbox` publishes an assembly block with no size, and for `print_bbox` says
+    every build has no plate.
     """
     import inspect
 
@@ -579,11 +556,9 @@ def test_being_handed_no_baseline_is_a_clause_and_not_silence():
     """None is what the parent passes when it had no file to copy, and it is a
     reason rather than a failure: the build says it in one line and publishes.
 
-    THE NAME NO LONGER SAYS "a project with no dev build", and that is the
-    assertion here rather than a tidier wording. None also covers a slot that
-    IS there and could not be copied out of, so the clause deliberately reports
-    what this side can see -- that nothing arrived -- and not a conclusion about
-    the project that only the parent could draw.
+    The clause does not say "a project with no dev build": None also covers a
+    slot that IS there and could not be copied out of, so it reports what this
+    side can see -- that nothing arrived.
     """
     baseline, why = read_baseline(None)
 
@@ -676,13 +651,8 @@ def test_a_baseline_that_moved_nothing_says_how_many_numbers_were_compared(
     existed against a build that writes it — compare nothing and move nothing,
     and without the count that reads exactly like a build where nothing changed.
 
-    `revdiff._print_geometry` says the same thing for the same reason, and the
-    wording was taken from there — but it is a SECOND COPY of the sentence and
-    not one string used twice (that one ends in a full stop, this one does not),
-    so nothing holds the two together and this test speaks only for this side.
-    Said out loud because the drift has already started at the punctuation, and
-    a docstring claiming the halves cannot answer differently would be claiming
-    a guarantee no test here provides.
+    `revdiff._print_geometry` holds a separate copy of the sentence (with a
+    full stop); this test speaks only for this side.
     """
     write_metrics(out_dir, build({"body": measured()}))
 
@@ -703,11 +673,9 @@ def test_rubbish_inside_a_well_shaped_baseline_costs_the_diff_and_not_the_summar
     whole walk is what turns that into a sentence, and the lines being built
     before anything is printed is what keeps a half-written block off the log.
 
-    AND IT COSTS THE DIFF ONLY. The summary walks the document THIS build just
+    It costs the diff only. The summary walks the document THIS build just
     wrote and has a guard of its own, so a baseline nobody can read cannot take
-    the sizes with it — a build that printed no numbers at all is the defect
-    issue #59 exists to fix, and the previous build's file must not be able to
-    bring it back by another road.
+    the sizes with it.
     """
     write_metrics(out_dir, build({"body": measured()}))
 

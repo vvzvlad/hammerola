@@ -1,27 +1,19 @@
-// What a press on the canvas MEANS — the one branch that decides it, and the
+// What a press on the canvas means: the one branch that decides it, and the
 // one moment it is decided at.
 //
-// The branch is the reason `activeTool` exists. The hold key (holdkey.js) puts
-// the cut up for as long as it is down WITHOUT writing to `state.tool`, because
-// the interface owns that field and a momentary mode that edited it would leave
-// the two disagreeing the moment a release went missing. So a press that read
-// `state.tool` would take the plain-pick branch while the interface's own
-// indicator — fed by `hmr:tool` — said a cut was armed. Nothing throws in that
-// state and nothing is logged: the reader asks for a section and gets a
-// selection.
+// The branch is why `activeTool` exists. The hold key (holdkey.js) puts the cut
+// up while it is down without writing `state.tool`, because the interface owns
+// that field and a momentary mode editing it would leave the two disagreeing
+// when a release went missing. A press that read `state.tool` would pick while
+// the interface's indicator (fed by `hmr:tool`) showed a cut armed, silently.
 //
-// The moment matters as much as the branch. The tool is read ONCE, at
-// pointerdown, and lives on `press` until the gesture ends, so letting the key
-// go half-way through a drag cannot turn a cut that is already under way into
-// something else.
+// The tool is read once, at pointerdown, and lives on `press` until the gesture
+// ends, so releasing the key mid-drag cannot change a cut under way.
 //
-// NO GPU HERE, and nothing that needs one is faked into existence:
-// `internals()` is satisfied by the fake viewer, and the two calls a click ends
-// in — `faceNormalAt` for the cut, `pickEntity` for the pick — are mocked,
-// because WHICH of the two is reached is the whole question. The element's real
-// `activeTool` getter is used rather than a stand-in: a fake that
-// re-implemented it would let this file agree with itself instead of with the
-// code.
+// No GPU here: `internals()` is satisfied by the fake viewer, and the two calls
+// a click ends in (`faceNormalAt` for the cut, `pickEntity` for the pick) are
+// mocked, because which one is reached is the question. The element's real
+// `activeTool` getter is used.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -187,17 +179,12 @@ describe('which branch a click takes', () => {
   })
 
   it('leaves the press alone under the move tool', () => {
-    // THE WIDGET OWNS ITS OWN PRESSES AND NOTHING ELSE, and this is the line
-    // that keeps the model turnable while it is armed. Every piece of the
-    // manipulator takes its press off the canvas in a capture listener on the
-    // WINDOW and stops it there, so a press that reaches HERE is one that
-    // missed all of them — and it belongs to the trackball exactly as it would
-    // with no tool armed.
-    //
-    // WHAT THE MISSING LINE WOULD COST is silent and total: every other armed
-    // tool falls through to the two lines at the foot of `onDown`, which take
-    // the press away from the controls. A reader who armed the tool that moves
-    // a PART would find they could no longer turn the VIEW.
+    // The widget owns its own presses and nothing else, which keeps the model
+    // turnable while a tool is armed. Every piece of the manipulator takes its
+    // press in a window capture listener and stops it there, so a press that
+    // reaches here missed all of them and belongs to the trackball. Without this,
+    // it would fall through to the two lines at the foot of `onDown` that take
+    // the press from the controls, and arming Move would stop the view turning.
     const vp = toolViewport({ tool: 'move' })
     const event = pointerDown(vp)
     expect(event.preventDefault).not.toHaveBeenCalled()
@@ -352,26 +339,18 @@ describe('the right button: a menu or a pan', () => {
 })
 
 describe('with a section cut standing', () => {
-  // ISSUE #73. The stencil cap that closes a cut off carries no component id,
-  // so the picker reads straight through it to the part flush underneath —
-  // measured in a browser, the cut face of `plate` answered `reference_spacer`.
-  // BOTH BUTTONS therefore ask about the cut face FIRST, and only while a cut
-  // stands: the menu on the right and the plain selection on the left, through
-  // one resolver so that one pixel cannot name two parts. That is why this
-  // block sits at the top level rather than under either button's own.
+  // The stencil cap that closes a cut carries no component id, so the picker
+  // reads through it to the part flush underneath (in a browser, the cut face of
+  // `plate` answered `reference_spacer`). Both buttons therefore ask about the
+  // cut face first while a cut stands, through one resolver so one pixel cannot
+  // name two parts; that is why this block is at the top level.
   //
-  // `pickEntity` is the mock this file already installs, and here it is the
-  // WITNESS: whether it was consulted at all is what says which of the two
-  // paths a press took.
+  // `pickEntity` is the witness: whether it was consulted says which path a
+  // press took.
 
-  // A 2 mm cube. It used to be the same tessellation `outline.test.js` uses
-  // and is no longer: that one was rewound outward when the contour started
-  // measuring the SIGNED area of a cut face, which three inward-facing
-  // triangles made come out as zero. Nothing here notices, and the copy is
-  // deliberately left as it was — `insideSection` counts ray crossings by
-  // parity, so which way a triangle faces cannot reach its answer, and a
-  // fixture that does not care is better evidence of that than one that was
-  // fixed to match.
+  // A 2 mm cube with three inward-facing triangles (unlike the outward-wound
+  // copy in `outline.test.js`). `insideSection` counts ray crossings by parity,
+  // so winding cannot affect its answer, and this fixture shows that.
   const CUBE_POSITIONS = new Float32Array([
     0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0,
     0, 0, 2, 2, 0, 2, 2, 2, 2, 0, 2, 2,
@@ -421,8 +400,7 @@ describe('with a section cut standing', () => {
     expect(details(vp, EVENT_MENU)).toEqual([
       { id: '/model/plate', name: 'plate', x: at[0], y: at[1] },
     ])
-    // And the picker was never asked. It is what used to answer here, and its
-    // answer was the part underneath.
+    // And the picker was never asked: its answer would be the part underneath.
     expect(pickEntity).not.toHaveBeenCalled()
   })
 
@@ -564,14 +542,12 @@ describe('where the section drag says the plane ended up', () => {
 
   it('is announced by a SWAP that ends the gesture too', () => {
     // `show()` ends a gesture the reader has not let go of, because everything
-    // it holds was measured against the scene about to be torn down — and a swap
-    // can arrive mid-drag, since the interface waits for the hand to come off
-    // the model but gives up after a deadline. Ending the gesture without this
-    // readback leaves `state.cutOffset` at the depth from BEFORE the drag: the
-    // plane still lands right, because the restore subtracts that same stale
-    // number and the seed absorbs the difference, but the seed is no longer on
-    // the face that was clicked and the interface prints a depth the plane has
-    // not been at since the drag began.
+    // it holds was measured against the scene about to be torn down, and a swap
+    // can arrive mid-drag (the interface waits for the hand to come off the
+    // model, up to a deadline). Without this readback `state.cutOffset` keeps
+    // the depth from before the drag: the plane still lands right, since the
+    // restore subtracts the same stale number, but the seed is off the clicked
+    // face and the interface prints the wrong depth.
     const vp = cutting()
     dragFrom(vp)
 
@@ -583,17 +559,12 @@ describe('where the section drag says the plane ended up', () => {
   })
 
   it('is still DROPPED by the two endings that always dropped it', () => {
-    // `onCancel` — the platform claiming the pointer — and the leading
-    // `finish()` in `onDown`, a second button or finger coming down mid-drag.
-    // Both tear the listeners down and say nothing, which does leave
-    // `state.cutOffset` at the depth from before the drag while the plane stands
-    // somewhere else — the same staleness `endGesture` prevents, reached by a
-    // right-click. Making bodies of the proposal draggable put a `conclude`
-    // within reach of these two endings, and the CUT half was deliberately left
-    // out of it: answering `hmr:face` DISARMS the armed tool, so reporting here
-    // would start turning the cut tool off on an interrupted drag — a change to
-    // a tool this work was not about. If that staleness is ever taken on, it is
-    // its own change with its own reason, and this test is the one to flip.
+    // `onCancel` (the platform claiming the pointer) and the leading `finish()`
+    // in `onDown` (a second button or finger mid-drag) tear the listeners down
+    // and report nothing, leaving `state.cutOffset` at the pre-drag depth. The
+    // cut is not concluded here on purpose: answering `hmr:face` disarms the
+    // armed tool, so reporting would turn the cut tool off on an interrupted
+    // drag. Changing that would flip this test.
     const endings = {
       'the pointer taken away': () => window.dispatchEvent(
         new MouseEvent('pointercancel', {})),
@@ -626,15 +597,12 @@ describe('where the section drag says the plane ended up', () => {
 })
 
 describe('with the move tool armed', () => {
-  // THE FREE DRAG IS GONE, and what stands in its place is the absence of a
-  // branch: a press under `move` takes the plain path, so the trackball keeps
-  // the canvas and the only thing that moves a part is the manipulator standing
-  // on it (gizmo.js, rings.js), which takes its presses somewhere else.
+  // There is no free drag: a press under `move` takes the plain path, so the
+  // trackball keeps the canvas and only the manipulator on the part (gizmo.js,
+  // rings.js) moves it, taking its presses elsewhere.
   //
-  // THE SELECTION IS WHAT MAKES THESE TESTS BITE. The removed branch dragged a
-  // standing selection from a press on EMPTY SPACE — `wanted[0]`, the fallback
-  // that had no part under the cursor to grab — so a fixture with nothing
-  // selected would pass whether the branch is there or not.
+  // The fixtures keep a selection, because a press on empty space with a
+  // standing selection is the case a drag-the-selection branch would catch.
 
   const PINS = ['/Group/pin', '/Group/pin(2)']
 
@@ -651,9 +619,8 @@ describe('with the move tool armed', () => {
   const at = (group) => [group.position.x, group.position.y, group.position.z]
 
   it('leaves a drag from empty space to the trackball, moving nothing', async () => {
-    // The press that used to drag the selection: nothing under the cursor, a
-    // row selected, and 200 px of travel. What it must do now is what it does
-    // with no tool armed at all — go to the library, which orbits the model.
+    // Nothing under the cursor, a row selected, and 200 px of travel: the press
+    // goes to the library and orbits the model, as with no tool armed.
     const { groups, vp } = moving()
     pickEntity.mockReturnValue(null)
 

@@ -8,41 +8,21 @@ reads over the HTTP API under the same EDIT_TOKEN. Layout (SPEC 7A.3):
     <data>/comments/<pid>/<id>.<ext>         the photo, if one came with it
     <data>/comments/<pid>/<id>.shot.<ext>    the viewer's own render of the frame
 
-Deliberately OUTSIDE the build directory (SPEC 7A.3), and for two reasons that
-both stand on their own. ACCESS: a build directory is served to anybody who has
-the URL, with a year of `immutable`, so a comment placed in one would be public
-and irrevocably cached — and this queue is not public to read (SPEC 7A.2).
-LIFETIME: a comment is about the PROJECT more than about one revision — the
-catalogue key it carries names the same entity ten commits later — so it must not
-be a file that goes wherever the build goes. Nothing deletes a build on its own any
-more (SPEC 5.3), but somebody clearing space on the volume does, and a comment on
-a build that is gone stays readable; only the link back to the frame stops
-opening.
+Deliberately outside the build directory (SPEC 7A.3): build directories are
+public and cached `immutable`, while this queue is not public (SPEC 7A.2); and a
+comment is about the project (its catalogue key survives later revisions), so it
+outlives a build somebody deletes. Only the link back to the frame stops opening.
 
-WRITING TAKES EDIT_TOKEN SINCE STEP 0 (SPEC 8A.1). What survived that change and
-what did not is the useful summary, because the two are decided by different
-questions — "is this about the bytes?" survives, "is this about the sender?" does
-not:
+Writing takes EDIT_TOKEN (SPEC 8A.1). The remaining guards are about the bytes,
+not the sender:
 
-  * the photo's type is decided by its magic bytes, never by its filename or by
-    the Content-Type the sender chose. The bytes are handed BACK OUT on the same
-    origin as every project's builds, so this is about what the hub serves, not
-    about who sent it;
-  * SVG is refused by name in the error, because it is a script container rather
-    than an image, and this service already learned that lesson once on build
-    files (SPEC 7.4);
-  * text length and photo size still have ceilings, because an unbounded parse
-    and an unbounded store are not made safe by a credential;
-  * NOTHING COUNTS COMMENTS AND NOTHING THROTTLES THEM (decided 2026-08-27, SPEC
-    7A.4). There was a per-build ceiling, a global one and a rate limit keyed on
-    the client's address, and all three existed against a stranger with a script,
-    because the endpoint was open to one. It is not any more. The only caller
-    that can reach this module holds EDIT_TOKEN — the one secret of the system,
-    which also opens `DELETE /api/v1/projects/<pid>` — so a ceiling here would
-    rate-limit somebody who can erase the project in one request. Do not put one
-    back "for safety": a size ceiling bounds work the hub does, a count ceiling
-    only decides how much of their own queue the author may keep, and that
-    question was already answered everywhere else (SPEC 5.3 — no retention).
+  * the photo's type is decided by its magic bytes, never by its filename or
+    Content-Type, because the bytes are served back on the builds' origin;
+  * SVG is refused by name: it is a script container, not an image (SPEC 7.4);
+  * text length and photo size have ceilings, bounding the hub's own work;
+  * nothing counts or throttles comments (SPEC 7A.4): the only caller holds
+    EDIT_TOKEN, which can also delete the whole project, and there is no
+    retention (SPEC 5.3).
 
 THE ANCHOR IS THE CATALOGUE KEY. A comment stores `key` beside `part`: `part` is
 a path in ONE revision's tree (`/model/pin(2)` — a number the tessellator hands
@@ -50,12 +30,11 @@ out for uniqueness), while `key` is the entity's identity in `meta.parts`, which
 survives a rebuild that renumbers or reorders the tree. The build page follows
 the key to find the part again, and says so in the feed when the key names
 nothing in the current catalogue — the entity is gone and the comment is
-orphaned. Records written before the field existed simply have no `key`.
+orphaned. Older records may have no `key`.
 
 The text of a comment IS rendered: the build page shows the project's queue in
-its rail. It reaches the DOM as text and never as markup, which is where that
-duty lives now — this module's job is to keep the stored text plain (`_body_text`
-refuses the control characters) rather than to be its only reader.
+its rail. It reaches the DOM as text and never as markup; this module keeps the
+stored text plain (`_body_text` refuses the control characters).
 """
 
 import json
@@ -215,12 +194,7 @@ def validate_payload(raw, max_text_chars: int) -> dict:
 class CommentStore:
     """Everything under <data>/comments.
 
-    One instance per process, like Store. NOTHING IS COUNTED HERE. There used to
-    be a per-build tally and a global one, kept in memory and rebuilt by a scan
-    at startup so a POST would not have to read the volume to find out whether it
-    was allowed; both ceilings are gone (SPEC 7A.4), so the counters that served
-    them are gone with them and a comment is written without consulting the ones
-    already there.
+    One instance per process, like Store. Nothing is counted (SPEC 7A.4).
     """
 
     def __init__(self, data_dir, max_text_chars: int, max_photo_bytes: int):
@@ -275,17 +249,9 @@ class CommentStore:
     def attachment(self, cid: str, kind: str) -> Path | None:
         """The path the record NAMES for this comment's photo or render.
 
-        A NAME, NOT A VERDICT ABOUT THE FILE, and the one-liner above says so
-        because the contract changed: there used to be a `candidate.is_file()`
-        here, and dropping it removed a check that was never one. `is_file()`
-        FOLLOWS the link, so it answered True for an attachment that was a
-        symlink to something else entirely — the very case it looked like it
-        was covering — and being a separate syscall from the read, it left a
-        window for the file to change in between. The caller opens with
-        O_NOFOLLOW and fstats the handle it got (`app._serve_attachment`),
-        which answers both questions at once and answers them about the bytes
-        it is going to send. A name for a file that is not there costs that
-        caller the same 404 it always gave.
+        A name, not a verdict about the file: the caller opens it with
+        O_NOFOLLOW and fstats the handle (`app._serve_attachment`), which checks
+        the bytes it will send without a race. A missing file is a 404 there.
         """
         record = self.get(cid)
         if record is None:
@@ -311,17 +277,10 @@ class CommentStore:
         that is not there is a broken entry in the queue an agent has to handle.
 
         `published` is the stamp of the build the comment was written on, and it
-        is what says WHICH build that was: `commit` alone does not, because the
-        local slot's is the constant `dev` for every build it ever holds (SPEC
-        7.6), so without this a comment from a previous incarnation of the slot
-        would still look like it was left on the geometry now on screen. IT COMES
-        FROM THE CALLER, in the payload beside `part` and `key`, and the hub
-        deliberately does not read it off its own disk: for the local slot that
-        directory holds whatever was built LAST, which is not necessarily what
-        the caller was looking at — the slot can rebuild between the click that
-        placed the point and the Send that posts it. A caller that sends no stamp
-        gets `None`, and the comment then hangs by its catalogue key like any
-        other.
+        is what says which build that was: the local slot's `commit` is always
+        `dev` (SPEC 7.6). It comes from the caller rather than the hub's disk,
+        because the slot can rebuild between the click and the Send. Without a
+        stamp it is `None` and the comment hangs by its catalogue key.
         """
         if not SAFE_ID.match(pid or ""):
             raise CommentError(422, "invalid project id")
@@ -358,10 +317,8 @@ class CommentStore:
         }
 
         with self._lock:
-            # The lock no longer guards a counter — nothing counts comments any
-            # more (SPEC 7A.4). It guards the write itself against `resolve` and
-            # `remove_project` running on another request thread at the same
-            # moment, which is a reason of its own and outlives the ceilings.
+            # Guards the write against `resolve` and `remove_project` on other
+            # request threads.
             directory = self.root / pid
             directory.mkdir(parents=True, exist_ok=True)
             written = []
@@ -464,13 +421,8 @@ def _read_record(path: Path) -> dict | None:
     read by a listing endpoint, and one damaged entry must not take the whole
     queue offline.
 
-    NO WRITE-BACK, UNLIKE `JobStore._load`, and the difference is the reader
-    rather than the trust. That one feeds a registry built in `JobStore.__init__`
-    before the socket is bound, and writes back because a job left `queued` must
-    be recorded terminal or the same warning prints at every start. This one runs
-    per request, off `_read_all` and off the single-record reader, so there is no
-    long-lived copy to diverge from the volume and nothing a start would repeat
-    (#107).
+    No write-back, unlike `JobStore._load`: this runs per request, so there
+    is no long-lived copy to diverge from the volume.
     """
     try:
         record = json.loads(path.read_text(encoding="utf-8"))

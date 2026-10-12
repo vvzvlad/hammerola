@@ -5,31 +5,18 @@
 // document stays testable with no geometry computed. Everything here is pure: a
 // document in, one payload out, no state between calls.
 //
-// ONE PART PER BODY, and that is the whole point of the display. Every SOLID is
-// a part of its own — the body as the document places it, with every hole cut
-// out of it — because the scene is something the reader takes hold of: the Move
-// tool over a body names the part under the cursor, so a body that is its own
-// part is a body that can be dragged away from the others. Fused into one, they
-// could only ever move together. The price is that two solids which overlap are
-// now two surfaces in the same place rather than one welded body, and that is
-// accepted: moving them apart is what the hand is for.
+// ONE PART PER BODY. Every solid is its own part — placed by the document, with
+// every hole cut out of it — so the Move tool can drag one body away from the
+// others. Overlapping solids are two surfaces in one place rather than one
+// welded body; that is accepted.
 //
-// THE HOLES ARE PARTS TOO, one each, drawn at low alpha over the solids. A hole
-// that is only ever subtracted is invisible the moment it is inside the body, so
-// the person cannot see what they have asked for, cannot point at it and cannot
-// tell a hole that missed from a hole that was never added. Showing the
-// subtraction tool beside the body is OpenSCAD's `#` modifier idiom and it is
-// here for its reason.
+// THE HOLES ARE PARTS TOO, drawn at low alpha over the solids, so the person can
+// see and point at what they asked for (OpenSCAD's `#` modifier idiom).
 //
-// THE HEX VALUES LIVE HERE. They are the colours of MODEL parts — the same kind
-// of value as the part colours the hub pushes in a view file — rather than
-// interface chrome, and tests/test_ui_source.py forbids a colour literal on the
-// build page precisely so that nobody paints a panel by hand; a part colour has
-// to be somewhere, and the module that builds the parts is it. That check
-// sweeps everything the page draws with rather than the one component file, and
-// names this module in the two exemptions it allows — the other is
-// `DIFF_COLOURS` in hub.js, a payload colour for the same reason — so both
-// sides state the same thing instead of this module sitting outside in silence.
+// THE HEX VALUES LIVE HERE because they are MODEL part colours, not interface
+// chrome. tests/test_ui_source.py forbids colour literals on the build page and
+// names this module in one of its two exemptions (the other is `DIFF_COLOURS`
+// in hub.js).
 import {
   booleans, geometries, measurements, primitives, transforms,
 } from '@jscad/modeling'
@@ -40,11 +27,10 @@ const RESULT_COLOR = '#9aa3ad'
 const HOLE_COLOR = '#d64545'
 const HOLE_ALPHA = 0.25
 
-// The one group every part hangs under WHILE THIS PAYLOAD STANDS ALONE. Over a
-// model the viewport re-roots the whole list under a group of its own (`staged`
-// in viewport/element.js), because the ids the library keys `nestedGroup.groups`
-// and its picking registry by have to agree with the tree it builds out of
-// wherever a part SITS — and that is under the model's root, not this one.
+// The group every part hangs under while this payload stands alone. Over a
+// model the viewport re-roots the list under its own group (`staged` in
+// viewport/element.js), because the library's group and picking ids must match
+// where a part sits in the tree.
 const ROOT = 'proposal'
 
 const DEGREES = Math.PI / 180
@@ -52,12 +38,9 @@ const DEGREES = Math.PI / 180
 /** A fresh identity placement — position and quaternion, the shape a part's `loc` is. */
 const origin = () => [[0, 0, 0], [0, 0, 0, 1]]
 
-// ONE ENTRY PER OP, keyed the way `DIMS` in proposal.js is keyed. Each builds
-// the op at the origin in its own natural orientation; `placed` below does the
-// rotation and the move. Every op here comes back CENTRED on the origin, so
-// `at` is the body's centre in all three — which is a property of the table as
-// it stands and not a rule: an op whose own geometry says where it sits would
-// place itself, and `at` would mean something else for that one.
+// One entry per op, keyed like `DIMS` in proposal.js. Each builds the op at the
+// origin; `placed` rotates and moves it. Every op here is centred on the
+// origin, so `at` is the body's centre.
 const SHAPES = {
   box: (node) => primitives.cuboid({ size: node.size }),
   cylinder: (node) => primitives.cylinder({
@@ -66,9 +49,7 @@ const SHAPES = {
   sphere: (node) => primitives.sphere({ radius: node.d / 2 }),
 }
 
-// The ops this table answers for — the other half of the pair `DIM_OPS` in
-// proposal.js explains, and derived the same way so neither list can go stale
-// without the table it is taken from going with it.
+// The ops this table answers for — see `DIM_OPS` in proposal.js.
 export const SHAPE_OPS = Object.freeze(Object.keys(SHAPES))
 
 /** One node as geometry, rotated and moved to where the document puts it. */
@@ -78,24 +59,15 @@ function placed(node) {
   return transforms.translate(node.at, turned)
 }
 
-// Fusing a list that may be EMPTY, which every proposal is at least once: a
-// document with no holes, and a panel the moment it opens. `booleans.union`
-// refuses to be called with nothing, so the fold starts from an empty geometry
-// instead — and `subtract(x, empty)` is `x`, so the subtraction below needs no
-// case of its own either.
+// `booleans.union` refuses an empty list (a document with no holes, a panel just
+// opened), so the fold starts from an empty geometry; `subtract(x, empty)` is
+// `x`.
 const fuse = (geoms) => booleans.union(geometries.geom3.create(), ...geoms)
 
-// THE ENVELOPE ROUND THE BODIES — a field of the FORMAT, and not anything on
-// screen. `bb` belongs to the shape `show()` accepts, so a payload assembled
-// here carries one; but only `parts` ever leaves this module — `setProposal`
-// takes `buildProposal(doc).parts` — and the viewport sews those into the
-// model's own document, which is the payload the viewer actually frames by.
-// Nothing in `ui/src` reads this field.
-//
-// A DOCUMENT WITH NO SOLIDS HAS NO ENVELOPE, and that is the ordinary state of a
-// panel that has just opened rather than a corner case. It is answered here
-// instead of being handed to the kernel, which refuses an empty list in the same
-// way `booleans.union` refuses one above.
+// `bb` belongs to the shape `show()` accepts, but only `parts` leaves this
+// module (`setProposal` takes `buildProposal(doc).parts`); nothing in `ui/src`
+// reads it. A document with no solids — a panel just opened — gets an empty
+// envelope here, since the kernel refuses an empty list.
 function envelope(geoms) {
   if (!geoms.length) return [[0, 0, 0], [0, 0, 0]]
   const boxes = geoms.map((geom) => measurements.measureBoundingBox(geom))
@@ -116,26 +88,17 @@ function envelope(geoms) {
  * wants: no vertex belongs to two faces.
  *
  * `face_types`, `edge_types`, `triangles_per_face` and `segments_per_edge` are
- * NOT emitted. They are OCCT's own enumerations, which a mesh kernel has nothing
- * to say about, and the library guards every read of them —
- * `hasTrianglesPerFace` / `hasSegmentsPerEdge` in three-cad-viewer.esm.js, whose
- * absent branches treat the tessellation as one face and one edge.
+ * not emitted: they are OCCT enumerations, and the library guards every read
+ * (`hasTrianglesPerFace` / `hasSegmentsPerEdge` in three-cad-viewer.esm.js),
+ * treating the tessellation as one face and one edge.
  *
- * `edges` AND `obj_vertices` GO OUT EMPTY, and that is the decision this comment
- * exists for, because the obvious thing to do is fill them. A mesh has no edges.
- * It has facet boundaries, and which of those were a real corner and which were
- * a circle cut into segments is information the kernel threw away. Three rules
- * for guessing it back were measured here and every one of them drew something
- * false: all boundaries put 160 lines on a d12 cylinder and 992 on a d16 sphere,
- * a wire ball rather than a body; filtering by the angle between the two faces
- * fixed the primitives exactly (12 on a box, 64 on a cylinder, 0 on a sphere) and
- * then broke on anything cut, because a boolean leaves T-junctions and an edge
- * whose partner was split differently has nothing to compare against; splitting
- * those junctions first cut the debris but not the guessing. A line drawn across
- * a face that is flat is a feature the person never asked for, shown to somebody
- * whose whole job here is to judge a shape — so nothing is drawn rather than
- * something invented. Flat per-face normals are what makes the form readable,
- * and they come from the loop above.
+ * `edges` and `obj_vertices` go out EMPTY on purpose. A mesh has facet
+ * boundaries, not edges, and which were real corners is information the kernel
+ * discarded. Every rule tried for guessing them drew something false: all
+ * boundaries gave a wire ball (160 lines on a d12 cylinder); an angle filter
+ * was exact on primitives but broke on boolean results, whose T-junctions leave
+ * edges with no partner. A line across a flat face is a feature nobody asked
+ * for, so nothing is drawn; flat per-face normals keep the form readable.
  */
 function mesh(geom) {
   const vertices = []
@@ -159,23 +122,16 @@ function mesh(geom) {
   return { vertices, triangles, normals, edges: [], obj_vertices: [] }
 }
 
-// NO `key`, and that absence is the decision. `key` is the CATALOGUE key — the
-// entry in `meta.parts` a row looks its files, its note and its kind up by
-// (`treeFromShapes` in viewport/parts.js says why a row has two names) — and a
-// proposal body is in no catalogue at all. Filled in with the name, it made the
-// row offer a reader's note, stored under whatever real catalogue key the name
-// happened to collide with.
+// No `key`: it is the catalogue key into `meta.parts` (`treeFromShapes` in
+// viewport/parts.js), and a proposal body is in no catalogue. Filled with the
+// name, it would let a note be stored under a real key the name collides with.
 //
-// `origin` IS THE ONE FIELD HERE THAT THE VIEWER ITSELF NEVER READS, and it is
-// on the part because nothing else can answer for it. `placed` above rotates a
-// body in its OWN coordinates and only then carries it to `at`, so `at` is the
-// world point a change of `rot` leaves exactly where it is — and the mesh
-// handed over has all of that baked into its vertices under an identity `loc`,
-// which leaves the scene with no way to say where the body's own origin went.
-// The viewport needs it to turn a body under the reader's hand about the point
-// the DOCUMENT will turn it about (`bodyOrigin` in viewport/rings.js); read off
-// the box instead, a quarter turn of a 100 mm extrusion previewed 70 mm away
-// from where it lands.
+// `origin` is not read by the viewer. `placed` rotates a body in its own
+// coordinates and then moves it to `at`, and the mesh bakes that into its
+// vertices under an identity `loc`, so the scene cannot recover the body's
+// origin. The viewport needs it to turn a body about the point the document
+// will (`bodyOrigin` in viewport/rings.js); the bounding box centre would be
+// wrong by tens of millimetres on a long extrusion.
 function part(name, geom, color, alpha, at) {
   return {
     id: `/${ROOT}/${name}`,
@@ -194,21 +150,16 @@ function part(name, geom, color, alpha, at) {
 /**
  * The whole document as one payload the viewport's `show()` accepts.
  *
- * A MOVE IS NOT GEOMETRY AND THESE TWO FILTERS ARE THE WHOLE OF SAYING SO. The
- * document holds displaced parts of the build beside the bodies (proposal.js),
- * and such a node has no op and no size because the part it names is already in
- * the model: the viewport shifts the one that is there rather than drawing a
- * second copy of it. Naming the roles that ARE drawn — instead of excluding the
- * one that is not — is what makes that hold for whatever the document grows
- * next.
+ * A move is not geometry: the viewport shifts the part already in the model.
+ * The filters name the roles that ARE drawn rather than exclude the one that is
+ * not, so a future role is not drawn by accident.
  */
 export function buildProposal(doc) {
   const solids = doc.nodes.filter((node) => node.role === 'solid')
   const holes = doc.nodes.filter((node) => node.role === 'hole')
   const holeGeoms = holes.map(placed)
-  // EVERY HOLE IS CUT OUT OF EVERY SOLID, since a hole belongs to the proposal
-  // and not to the body it happens to sit inside: the reader drills a bore
-  // through a plate and expects it through whatever else is in its way.
+  // Every hole is cut out of every solid: a hole belongs to the proposal, not to
+  // the body it sits inside.
   const cutter = fuse(holeGeoms)
   const solidGeoms = solids.map((node) => booleans.subtract(placed(node), cutter))
   const [min, max] = envelope(solidGeoms)

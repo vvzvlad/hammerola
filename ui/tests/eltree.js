@@ -3,25 +3,13 @@
 // A function component returns its element tree, and a React element is a plain
 // object: `type`, `props`, `key`. So what was actually put on the screen can be
 // read straight off the return value of `render()` — no jsdom, no mounting, no
-// act(). That is what makes assertions here about the SCREEN rather than about
-// "something was returned", which is the distinction three separate findings in
-// this directory turned on:
+// act(). That makes assertions here about the SCREEN rather than about
+// "something was returned": every body returns an element, a grid body emits
+// its container whether or not it has cards, and a computed value proves
+// nothing until the render puts it somewhere.
 //
-//   * `expect(render()).toBeTruthy()` passed on a page that drew tiles while its
-//     tab said rows — every body returns an element;
-//   * a view body that drew NO CARDS passed everything, because the check
-//     recognised the grid CONTAINER, which a body emits whether or not it has
-//     anything to put in it;
-//   * `computed().slotTitle` was the whole of "the full digest is within
-//     reach", so deleting `title={v.slotTitle}` from the render left 378 tests
-//     green with the digest computed for nobody.
-//
-// ONE WALKER, THREE READINGS, and the sharing is the point rather than economy:
-// three files were about to carry a seven-line recursion apiece, and three
-// copies of a recursion drift — one handling arrays, one not; one descending
-// into `children`, one stopping at the first hit. The lesson is the project's
-// own (`hammerola/metricsdiff.py`): a comparison worth making twice is worth moving
-// to where both sides import it.
+// One walker, three readings: copies of a recursion drift (one handling arrays,
+// one not; one descending into `children`, one stopping at the first hit).
 
 /**
  * Every non-nullish `take(element)` in the tree, depth first, in draw order.

@@ -1,14 +1,12 @@
 // viewport/live.js — the one question about a swap that only the viewport can
 // answer: is the reader's hand on the model right now.
 //
-// THE ELEMENT IS REALLY UPGRADED HERE, and this is the only file that does it.
-// Everywhere else the prototype is used bare, because `connectedCallback` builds
-// a three-cad-viewer against a canvas and there is no GPU in a test runner — but
-// nothing on the path under test reaches the library: the idle clock is four
-// listeners and two fields, and both of those fields are SET IN
-// `connectedCallback`, which is exactly where the second half of the defect this
-// file covers used to live. A hand-built stand-in would have carried the
-// element's initial values as a copy, and a copy agrees with itself.
+// THE ELEMENT IS REALLY UPGRADED HERE. Elsewhere the prototype is mostly used
+// bare, because `connectedCallback` builds a three-cad-viewer against a canvas
+// and there is no GPU in a test runner — but nothing on the path under test
+// reaches the library: the idle clock is four listeners and two fields, both
+// SET IN `connectedCallback`. A hand-built stand-in would carry the element's
+// initial values as a copy, and a copy agrees with itself.
 //
 // `ResizeObserver` is the one thing jsdom does not have and the element does
 // use. It is stubbed rather than worked around, because what it observes here is
@@ -18,9 +16,8 @@
 // `performance.now()`, whose zero is the start of the navigation; under the real
 // clock a test asking "is a viewport nobody has touched busy?" would answer
 // differently depending on whether the run reached it inside the first IDLE_MS
-// of the worker's life. Faked, that reading starts at 0 — which is precisely the
-// value the element used to initialise `lastTouch` to, so the question has one
-// answer and it is the interesting one.
+// of the worker's life. Faked, that reading starts at 0, so the question has
+// one answer and it is the interesting one.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -158,14 +155,13 @@ describe('isBusy', () => {
   })
 
   it('is false after a release of a press that began somewhere else', () => {
-    // THE DEFECT THIS FILE EXISTS FOR. The release listener is on the window, so
-    // it hears every click on the page — and a stamp for one of those made this
-    // answer "somebody clicked something recently" rather than "the model is
-    // being held". The reader's press on the banner's own Switch button is such
-    // a click, and it reaches the window BEFORE React dispatches the click that
-    // acts on it, so the swap it asks for found the viewport busy every single
-    // time and deferred for the whole of IDLE_MS on a page where nothing had
-    // touched the model at all.
+    // THE DEFECT THIS FILE EXISTS FOR. The release listener is on the window,
+    // so it hears every click on the page — and a stamp for one of those would
+    // make this answer "somebody clicked something recently" rather than "the
+    // model is being held". The reader's press on the banner's own Switch
+    // button is such a click, and it reaches the window BEFORE React dispatches
+    // the click that acts on it, so the swap it asks for would find the
+    // viewport busy and defer for the whole of IDLE_MS.
     const el = mount()
     vi.advanceTimersByTime(10000)
     release()
@@ -185,12 +181,11 @@ describe('isBusy', () => {
     // A drag let go of over another window, or a tab that lost focus mid-press:
     // the press is left standing with nobody to clear it, and the interface's
     // deadline (BUSY_WAIT_MS) is what keeps that from stranding a swap for good.
-    // THE CHEAP RECOVERY USED TO BE ANY RELEASE, because the flag was global,
-    // and ids take that away for the case that needed it: a finger gets a fresh
-    // id per touch, so nothing on the page ever names the stranded one again.
-    // `blur` is the replacement, and it is the only candidate that fires for
-    // both cases above — another window taking the focus leaves this page
-    // perfectly visible, so `visibilitychange` would say nothing about it.
+    // Presses are tracked by pointer id, and a finger gets a fresh id per
+    // touch, so nothing on the page ever names the stranded one again. `blur`
+    // clears them, the only candidate that fires for both cases above — another
+    // window taking the focus leaves this page perfectly visible, so
+    // `visibilitychange` would say nothing about it.
     const el = mount()
     pressCanvas(el, 3)
     vi.advanceTimersByTime(IDLE_MS * 10)
@@ -207,15 +202,14 @@ describe('isBusy', () => {
   })
 
   it('gives the idle tail back to the gesture a blur cut short', () => {
-    // THE OTHER BLUR, and not the one the listener was added for. Above, the
-    // press is already over and its release went missing; here the focus leaves
-    // while the gesture is STILL RUNNING — alt-tab with a button held, an OS
-    // notification, devtools opening. The clear empties the set under a hand
-    // that has not let go, `pointermove` refreshes nothing, and the release that
-    // finally ends it matches no recorded id — so under the id guard alone it
-    // made no stamp either, and a swap arriving on its heels re-seated the
-    // camera under fingers still dragging: the very failure the set removed,
-    // reached through a focus change instead of a second finger.
+    // THE OTHER BLUR. Above, the press is already over and its release went
+    // missing; here the focus leaves while the gesture is STILL RUNNING —
+    // alt-tab with a button held, an OS notification, devtools opening. The
+    // clear empties the set under a hand that has not let go, `pointermove`
+    // refreshes nothing, and the release that finally ends it matches no
+    // recorded id — so under the id guard alone it would make no stamp, and a
+    // swap arriving on its heels would re-seat the camera under fingers still
+    // dragging.
     const el = mount()
     vi.advanceTimersByTime(10000)
     pressCanvas(el, 4)

@@ -1,17 +1,12 @@
 """The refusal a command makes about the local machine.
 
-ONE CLASS FOR THE COMMANDS THAT FETCH, and it is a deliberate departure from the
-one-exception-per-module shape of `config.py`, `project.py`, `pack.py` and
-`hub.py`. Those four each own a SUBJECT — the machine's settings, the working
-directory, the archive, the wire — and a caller can act differently on each. The
-verbs added later (`source`, `artifacts`, `diff`, `log`, `rename`, `rm`) fail
-about the same subject: the arguments they were given and the directory they were
-told to write into. Five classes for that would be five names nothing ever
-catches separately, since `cli.main` funnels every one of them into the same
-sentence on stderr and the same exit code.
+`config.py`, `project.py`, `pack.py` and `hub.py` each own an exception for
+their subject. The other verbs (`source`, `artifacts`, `diff`, `log`, `rename`,
+`rm`) all fail about their arguments and output directory, and `cli.main`
+handles them identically, so they share this one class.
 
-Every message is a finished sentence, sometimes several lines of one, because
-that is what `main` prints — it adds the program's name and nothing else.
+Every message is a finished sentence: `main` prints it with only the program's
+name added.
 """
 
 

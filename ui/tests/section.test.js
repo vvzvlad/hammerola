@@ -195,22 +195,11 @@ describe('applySection', () => {
   })
 
   it('turns the plane over on a flip and does not move it', () => {
-    // THIS TEST REPLACES ONE CALLED "keeps 'deeper' meaning deeper after a
-    // flip", and the old one is named here so nobody restores it as a
-    // regression. It asserted that a flip left the plane the same DISTANCE from
-    // the seed face with the opposite normal — i.e. that the offset walked along
-    // the flipped normal, so that pushing the slider always went on cutting
-    // deeper. The intent reads well and the geometry does not survive it: the
-    // only way to hold "deeper" fixed while the kept side turns over is to move
-    // the plane, and both changes then point the same way. The plane walks out
-    // through the face it was laid on while the kept half becomes the outside of
-    // the part, so a flip drew an empty canvas at EVERY offset — verified in a
-    // browser, and the whole of the flip button's bug.
-    //
-    // What a flip means instead is Fusion's: the plane stands exactly where it
-    // stood and the other side is kept. The reader's slider then still moves the
-    // plane in one fixed world direction, which is the half of "deeper stays
-    // deeper" that was worth keeping.
+    // A flip keeps the plane exactly where it stood and keeps the other side (as
+    // in Fusion). Walking the offset along the flipped normal so that "deeper"
+    // stays deeper would move the plane out through the face it was laid on while
+    // the kept half becomes the outside, drawing an empty canvas at every
+    // offset. The slider still moves the plane in one fixed world direction.
     const { viewer, vp, g } = ctx
     const face = [0, 0, 0]
     placeSectionPlane(vp, g, [0, 0, -1], face)
@@ -228,12 +217,9 @@ describe('applySection', () => {
   })
 
   it('leaves the plane exactly as it was when the placement cannot be worked out', () => {
-    // A HALF-APPLIED PASS IS THE FAILURE THIS SHAPE EXISTS TO PREVENT. The
-    // normal used to go in first and unconditionally — with a null value, so the
-    // library parked the slider at the far edge — and the correction below it
-    // could return false, leaving the plane turned over AND cutting nothing,
-    // which is a state nobody ever asked for and which erases the model.
-    // Nothing is written now until every number is known.
+    // A half-applied pass must not happen: nothing is written until every number
+    // is known, so a correction that fails cannot leave the plane turned over and
+    // cutting nothing.
     const { viewer, vp, g } = ctx
     placeSectionPlane(vp, g, [1, 0, 0], [0, 0, 0])
     const normal = viewer.getClipNormal(SECTION_INDEX)
@@ -267,18 +253,12 @@ describe('applySection', () => {
 })
 
 describe('the seed is where the unit normal is guaranteed', () => {
-  // EVERYTHING DOWNSTREAM ASSUMES A UNIT NORMAL — `sectionValueFor` measures a
-  // distance with a dot product, and `applySection` walks the same vector to
-  // build the point it measures to — so a normal of length 2 is wrong twice, in
-  // different proportions, and the plane lands somewhere nobody chose. It is
-  // guaranteed at the two functions that WRITE `vp.sectionSeed`, which is the
-  // only door a normal enters the module by.
-  //
-  // Written as tests rather than as a sentence in a docstring because the
-  // producer on the placing side is `faceNormalAt` in picking.js, and that file
-  // has no tests at all: "it already returns a unit vector" was a fact about
-  // code nothing checks, and the cost of it ceasing to be true is a cut standing
-  // metres from the face with nothing anywhere reporting it.
+  // Everything downstream assumes a unit normal: `sectionValueFor` measures a
+  // distance with a dot product and `applySection` walks the same vector to
+  // build the point, so a normal of length 2 is wrong twice, in different
+  // proportions. It is guaranteed at the two functions that write
+  // `vp.sectionSeed`, the only door a normal enters by. The placing side's
+  // producer, `faceNormalAt` in picking.js, has no tests of its own.
 
   it('normalises what `placeSectionPlane` is handed', () => {
     const { viewer, vp, g } = scene()
@@ -294,17 +274,12 @@ describe('the seed is where the unit normal is guaranteed', () => {
   })
 
   it('the library leaves a zero normal AT ZERO, which is why the failure is silent', () => {
-    // THE PREMISE THE NEXT TEST REASONS FROM, and the one thing `fakes.js` has
-    // to get right for it to mean anything: three.js's `normalize()` is
-    // `divideScalar( this.length() || 1 )`, so a zero-length normal is LEFT
-    // ALONE rather than turned into NaNs. The difference decides which symptom
-    // the suite is entitled to assert — NaN would be loud, while zero is a plane
-    // that separates nothing and quietly never cuts.
-    //
-    // Held here because nothing else holds it: with `unit3` correct, no zero
-    // normal reaches the library any more, so the fake's fidelity on this point
-    // has no other witness and "simplifying" the `|| 1` away would pass unnoticed
-    // a second time.
+    // The premise the next test reasons from: three.js's `normalize()` is
+    // `divideScalar( this.length() || 1 )`, so a zero-length normal stays zero
+    // rather than turning into NaNs, and `fakes.js` must match. NaN would be
+    // loud; zero is a plane that separates nothing and quietly never cuts. With
+    // `unit3` correct no zero normal reaches the library, so only this test holds
+    // the fake to it.
     const { viewer, g } = scene()
     viewer.setClipNormal(SECTION_INDEX, [0, 0, 0], 0.5, true)
     expect(viewer.getClipNormal(SECTION_INDEX)).toEqual([0, 0, 0])
@@ -315,25 +290,18 @@ describe('the seed is where the unit normal is guaranteed', () => {
   })
 
   it('normalises one too large to square, rather than refusing it', () => {
-    // `len3` squares first, so it overflows at a component around 1.34e154 and
-    // `unit3` used to divide by that Infinity — returning [0,0,0], a FINITE
-    // vector of zero length that `finite3` waves through.
+    // `len3` squares first, so it overflows at a component around 1.34e154, and
+    // dividing by that Infinity returns [0,0,0], a finite zero-length vector that
+    // `finite3` would accept.
     //
-    // WHAT THAT DOES IS SILENT, which is what makes it worth a test. The library
-    // does not blow up on a zero normal: `Vector3.normalize` is
-    // `divideScalar( length() || 1 )`, so zero stays zero, and the clip plane
-    // becomes `(0, 0, 0, w)`. Every point is then the SAME distance from it —
-    // the plane separates nothing — and the fragment test `dot(vClipPosition,
-    // plane.xyz) > plane.w` reads `0 > w`, false, so nothing is discarded: the
-    // model stands there whole and the cut just never happens.
+    // A zero normal fails silently: `Vector3.normalize` leaves it zero, the clip
+    // plane becomes `(0, 0, 0, w)`, every point is the same distance from it,
+    // and the fragment test `dot(vClipPosition, plane.xyz) > plane.w` reads
+    // `0 > w`, so nothing is discarded and the cut never happens.
     //
-    // So the assertion below is that the plane SEPARATES the two sides of the
-    // face, which is the property a cut is. Asserting the normal is finite would
-    // not do it — a zero normal is perfectly finite — and asserting it is not
-    // NaN would be asserting something the library cannot produce at all.
-    //
-    // The mirror case underflowed to zero and was refused outright; it is here
-    // for the same reason.
+    // So the assertion is that the plane separates the two sides of the face;
+    // "finite" would not catch a zero normal, and NaN cannot occur. The
+    // underflow case (to zero) is checked for the same reason.
     for (const huge of [[0, 0, -1e200], [0, 0, -1e-200]]) {
       const { viewer, vp, g } = scene()
       const face = [0, 0, 20]
@@ -359,12 +327,10 @@ describe('the seed is where the unit normal is guaranteed', () => {
   })
 
   it('refuses a POINT that is no place at all, and writes nothing either', () => {
-    // The other half of a seed, and it used to be unguarded while the normal was
-    // not: `viewDir` normalises the eye-to-point difference, and `unit3` of a
-    // difference carrying an infinity is a vector of NaNs — an array, so it
-    // sailed past `if (!view)`. The seed was then written with an infinite
-    // point, `applySection` refused to place anything and returned false, and
-    // the record stayed behind saying a cut existed.
+    // The other half of a seed: `viewDir` normalises the eye-to-point difference,
+    // and `unit3` of a difference carrying an infinity is an array of NaNs, which
+    // passes `if (!view)`. The seed would then hold an infinite point,
+    // `applySection` would place nothing, and the record would still claim a cut.
     const { viewer, vp, g } = scene()
     const before = viewer.getClipSlider(SECTION_INDEX)
     // `null` and the short array are a DIFFERENT failure from the other two and
@@ -843,12 +809,10 @@ describe('captureSection', () => {
   })
 
   it('refuses to mint a plane out of a normal that is not one', () => {
-    // THE FAR END OF THE THREAD `restoreSection` GUARDS AT THE NEAR END: what
-    // comes out of here is what a live reload hands straight back in, and the
-    // swap in between is where the evidence of where it came from is lost. A
-    // library holding an infinite clip normal gives `unit3` a vector of NaNs —
-    // an array, and truthy — so the bare check this used to make would have
-    // minted exactly the `keep` the restore side has to defend against.
+    // What comes out of here is what a live reload hands back in to
+    // `restoreSection`. A library holding an infinite clip normal gives `unit3`
+    // an array of NaNs (truthy), so a bare truthiness check would mint exactly
+    // the `keep` the restore side has to defend against.
     const { viewer, vp, g } = scene()
     placeSectionPlane(vp, g, [1, 0, 0], [2, 0, 0])
     expect(captureSection(vp)).not.toBeNull()          // premise
@@ -915,23 +879,16 @@ describe('captureSection -> restoreSection', () => {
   })
 
   it('applies neither the reader\'s offset nor the placement bias a second time', () => {
-    // THE SEQUENCE PRODUCTION RUNS, and the whole reason this test goes past the
-    // restore: what follows a swap on the real page is `reconcile()`, which
-    // every `hmr:state` THAT STARTS NO LOAD reaches — a click in the tree, a
-    // pin, a step of the offset slider — and which calls `applySection` with
-    // `state.cutOffset` still standing. (A view tab starts a load and returns
-    // before reconcile, so it is not one of them.) A seed carrying the offset
-    // already would walk the plane those five millimetres a second time on the
-    // first of them, and the placement bias rides along on the restore itself,
-    // once per live reload.
+    // The sequence production runs: after a swap, every `hmr:state` that starts
+    // no load (a tree click, a pin, a step of the offset slider) reaches
+    // `reconcile()`, which calls `applySection` with `state.cutOffset` still set.
+    // (A view tab starts a load and returns before reconcile.) A seed already
+    // carrying the offset would walk the plane those five millimetres again, and
+    // the placement bias rides along on the restore, once per live reload.
     //
-    // BOTH SCENES ARE THE SAME SIZE on purpose. The bias is a fraction of the
-    // grid, so equal grids make every bias in here equal, and then ANY movement
-    // at all is drift rather than the sliver a differently-sized scene is
-    // allowed to sink its plane by. That is what lets the tolerance be a
-    // billionth instead of the budget the two tests above spend: one bias is
-    // 0.005 world units on this grid, a million times what is allowed below, so
-    // neither defect can hide inside it.
+    // Both scenes are the same size, so every bias is equal and any movement is
+    // drift. That lets the tolerance be a billionth: one bias is 0.005 world
+    // units on this grid, a million times what is allowed below.
     const before = scene()
     placeSectionPlane(before.vp, before.g, [1, 0, 0], [0, 0, 0])
     before.vp.state.cutOffset = 5
@@ -953,18 +910,14 @@ describe('captureSection -> restoreSection', () => {
   })
 
   it('carries a FLIPPED cut across, offset and sliver and all', () => {
-    // The three sign conventions that meet on a flipped cut, and the reason this
-    // test is separate from the one above: the offset is walked along the SEED
-    // normal (`applySection`), `distanceToPoint` is signed along the normal IN
-    // FORCE (`captureSection`, `sectionOffset`), and the seed is recorded
-    // unflipped. Getting the first one wrong is worth exactly twice the offset —
-    // the seed lands that far the wrong side of the face and the plane is walked
-    // the same distance again from there — and getting the sliver's direction
-    // wrong is worth two of them on every live reload.
+    // The three sign conventions on a flipped cut: the offset is walked along the
+    // seed normal (`applySection`), `distanceToPoint` is signed along the normal
+    // in force (`captureSection`, `sectionOffset`), and the seed is recorded
+    // unflipped. Getting the first wrong costs twice the offset; getting the
+    // sliver's direction wrong costs two of them on every live reload.
     //
-    // BOTH SCENES ARE THE SAME SIZE, for the reason the test above spells out:
-    // equal grids make every placement bias equal, so the tolerance can be a
-    // billionth — a millionth of the bias itself — and nothing can hide in it.
+    // Both scenes are the same size, as above, so the tolerance can be a
+    // billionth.
     const before = scene()
     const face = [0, 0, 0]
     placeSectionPlane(before.vp, before.g, [1, 0, 0], face)

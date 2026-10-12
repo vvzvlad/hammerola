@@ -1,30 +1,21 @@
 """Fixtures for the isolation suite, and nothing else.
 
-Every test in this directory starts a REAL process and reads what came back
-from it. That is the only way this component can be tested at all: what it
-promises -- that a hang is killed, that a token is not in the environment, that
-a runaway `print` does not become the hub's memory problem -- is a property of
-an operating-system process, and a mock of `subprocess` would assert that the
-code calls what it calls rather than that the fence holds.
+Every test in this directory starts a real process and reads what came back
+from it: what this component promises -- that a hang is killed, that a token is
+not in the environment, that a runaway `print` does not become the hub's memory
+problem -- is a property of an operating-system process, which a mock of
+`subprocess` cannot show.
 
-So the tests are written against SMALL PROGRAMS, one behaviour each, written
-into tmp_path and run through exactly the machinery the hub uses. Most of them
-need no CAD stack at all: `run_isolated` does not care whether the process it
-is fencing in imports cadquery or counts to ten, which is what keeps this suite
-at seconds instead of minutes.
+So the tests run small programs, one behaviour each, written into tmp_path and
+run through exactly the machinery the hub uses. Most of them need no CAD stack:
+`run_isolated` does not care what the fenced process imports.
 
-NO GUARD ON `src.buildproc`'s OWN STATE, and that is checked rather than
-assumed: it holds none. `Limits` is a frozen dataclass, DEFAULT_LIMITS is one
-instance of it, HUB_ROOT is a Path computed at import. The state this component
-mutates -- `src.cadbuild.paths._root`, the OCCT thread pool -- is mutated in the
-CHILD process and dies with it, which is the same reason the hub is allowed to
-run untrusted code at all.
-
-THAT LAST SENTENCE HAS ONE EXCEPTION AND IT IS WHAT `the_kernel_is_left_alone`
-BELOW IS FOR: `tests/buildproc/test_build_child.py` calls `child._cap_occt_threads`
-IN PROCESS, in the pytest interpreter, which on a workstation with the CAD stack
-installed is an interpreter holding the real kernel. What that function does when
-it reaches the real pool is resize it, process-wide and permanently.
+`src.buildproc` holds no state of its own, and what it mutates
+(`src.cadbuild.paths._root`, the OCCT thread pool) is mutated in the child and
+dies with it. The one exception is `test_build_child.py` calling
+`child._cap_occt_threads` in the pytest interpreter, which on a workstation
+with the CAD stack could resize the real kernel's pool process-wide; that is
+what `the_kernel_is_left_alone` below guards.
 """
 
 import json
@@ -60,22 +51,14 @@ def kernel_at_the_start():
 def the_kernel_is_left_alone(kernel_at_the_start):
     """No test in this directory may reach the real OCCT pool, either way round.
 
-    WHAT IT CHECKS IS THE MODULES AND NOT THE POOL, and the difference is worth
-    knowing before trusting it. The pool's size is readable only through
-    `OSD_ThreadPool.DefaultPool_s()`, and that call CREATES the pool at one
-    thread per logical core when there is not one yet -- so a fixture reading it
-    would do, twice per test, the exact thing it exists to catch. What is
-    observable for free is whether a different object is under either kernel
-    name: a stub planted without `monkeypatch` (which is how a fake outlives the
-    test that made it), and the real kernel IMPORTED where there was none, which
-    is the step immediately before capping it.
+    It checks the modules, not the pool: the pool size is readable only through
+    `OSD_ThreadPool.DefaultPool_s()`, which creates the pool when there is none
+    -- the very thing this exists to catch. A different object under either
+    kernel name means a stub planted without `monkeypatch`, or the real kernel
+    imported where there was none, the step before capping it.
 
-    BOTH ENDS, per the repository's rule. The before-check fails the test that
-    INHERITED a dirty interpreter, so the report says "an earlier test did this"
-    rather than leaving the reader to work out that the test in front of them is
-    innocent; the after-check fails the test that DID it -- which is the only
-    one that can be fixed, and which otherwise passes, having done its own job
-    perfectly.
+    The before-check fails the test that inherited a dirty interpreter; the
+    after-check fails the test that dirtied it.
     """
     _same_kernel(kernel_at_the_start, "was already")
     yield
@@ -159,7 +142,7 @@ def hub_secrets(monkeypatch):
     implementation, including one that inherits `os.environ` whole.
     """
     secrets = {
-        # The one credential src/settings.py declares (issue #26).
+        # The one credential src/settings.py declares.
         "EDIT_TOKEN": "edit-token-must-not-leak-4a1f",
         # Not ours, and that is the point: a filter is a list of names somebody
         # maintains, and this is the variable nobody thought to add to it. It

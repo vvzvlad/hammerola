@@ -1,9 +1,8 @@
-"""Every verb the parser accepts is a verb something implements (issue #98).
+"""Every verb the parser accepts is a verb something implements.
 
-THE SENTENCE OVER `cli.HANDLERS`, WRITTEN AS A TEST. That table exists so a
+The sentence over `cli.HANDLERS`, written as a test: that table exists so a
 verb nothing implements "is a KeyError on the first run instead of a fall
-through into the publishing path" — which is a promise about a failure, and
-nothing was checking either half of it.
+through into the publishing path".
 
 A verb the parser defines and the table does not is that KeyError: `main` looks
 the command up with `[]`, so the run ends in a traceback out of a tool whose

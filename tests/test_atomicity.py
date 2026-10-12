@@ -1,16 +1,10 @@
 """Publication is atomic (SPEC 7.2).
 
-The claim is precise: "at no step must there be a moment when `latest` points at a
-half-unpacked directory". A test that only inspected the tree AFTER a publish
-finished could not observe that at all — every implementation looks correct once
-it has stopped moving. So these tests read WHILE writing, and assert on what the
-reader saw.
-
-The mechanism under test is `os.symlink` to a temporary name followed by
-`os.rename` over the old link. The tempting alternative — unlink the old link,
-then create the new one — is wrong in a way that is invisible in development: the
-window where nothing exists is microseconds wide on an idle laptop and opens on
-every single publish in production.
+At no step may `latest` point at a half-unpacked directory. Every implementation
+looks correct once it has stopped moving, so these tests read while writing, or
+assert on the syscalls. The mechanism is `os.symlink` to a temporary name followed
+by `os.rename` over the old link; unlink-then-create opens a window with nothing in
+it on every publish.
 """
 
 import json
@@ -43,13 +37,10 @@ def _build(marker, built, padding=0):
 class _WatchedOs:
     """A stand-in for the `os` module, installed into `src.store` alone.
 
-    Patching `os.rename` on the os module itself would reach the whole
-    interpreter: `shutil.rmtree` calls `os.unlink`, so do the server threads
-    serving unrelated requests, and the recording would then be a mixture of what
-    the store did and what everything else did. Swapping the NAME `os` inside one
-    module keeps the observation where the claim is.
-
-    Everything not overridden below falls through to the real module.
+    Patching the real `os` module would also record `shutil.rmtree` and the server
+    threads serving unrelated requests; swapping the name `os` inside one module
+    keeps the observation on the store. Everything not overridden below falls
+    through to the real module.
     """
 
     def __init__(self, unlinked, renamed_onto):
@@ -75,16 +66,10 @@ class _WatchedOs:
 def test_latest_is_replaced_by_rename_and_never_unlinked(hub, monkeypatch):
     """The atomicity of the flip, tested deterministically.
 
-    A concurrency test cannot carry this one. The gap opened by
-    "unlink the old link, then create the new one" is a few MICROSECONDS wide, so
-    the reader-thread test below samples it only by luck — it may well go red on
-    a broken implementation, but it is probabilistic, and a test that certifies a
-    fix only most of the time is not what this property deserves.
-
-    So the mechanism is asserted instead of its symptom. "There is never a moment
-    when `latest` is absent" is exactly equivalent to "the live path is never
-    unlinked — it is only ever replaced by a rename onto it", and that is a
-    property of the syscalls, which can be observed exactly.
+    The gap opened by unlink-then-create is microseconds wide, so the reader-thread
+    test below catches it only by luck. "`latest` is never absent" is equivalent to
+    "the live path is never unlinked, only replaced by a rename onto it", which is a
+    property of the syscalls and can be observed exactly.
     """
     pdir = hub.project_dir("proj1")
     pdir.mkdir(parents=True, exist_ok=True)
@@ -188,24 +173,14 @@ def test_readers_never_see_a_missing_or_partial_latest(hub):
 def _slot_build(marker, view):
     """A local build whose meta.json names a view file NOBODY else uses.
 
-    Two properties, both load-bearing for the concurrency test below. The unique
-    NAME is what makes a mixture observable at all: if a reader's meta.json says
-    `v3.json` and the directory it came from does not hold `v3.json`, the two
-    halves are from different builds — invisible when every build ships the same
-    `assembled.json`, which is why the `latest` test above cannot see it either.
+    The unique name makes a mixture observable: a meta.json naming `v3.json` read
+    from a directory without `v3.json` means the two halves are from different
+    builds. The size (two megabytes against ~900 bytes of meta.json) gives a reader
+    time to land inside a build being filled file by file.
 
-    The SIZE is what gives a reader time to land inside a build being assembled.
-    Two megabytes is far more than the ~900 bytes of meta.json, so an
-    implementation that filled the live directory file by file would be caught
-    with the view half-written rather than only in the instant between two
-    renames.
-
-    The padding rides INSIDE the leaf's shape, which is where a real one's
-    buffers are: the file has to be a document the hub accepts — one keyed leaf
-    per part its meta.json declares (`render._match_selection`) — and `shape` is
-    dropped by the parser's `object_pairs_hook`, so two megabytes on disk still
-    cost the walk nothing. Both properties above survive: the name is unique and
-    the file is big.
+    The padding rides inside the leaf's `shape`, so the file is still a document the
+    hub accepts (one keyed leaf per declared part, `render._match_selection`) and
+    `shape` is dropped by the parser's `object_pairs_hook`, costing the walk nothing.
     """
     body = json.dumps({
         "name": "root", "id": "/root",
@@ -223,15 +198,11 @@ def _slot_build(marker, view):
 def test_the_slot_is_filled_out_of_sight_and_swapped_in_by_rename(hub, monkeypatch):
     """The mechanism, asserted deterministically.
 
-    "A reader is never inside a directory being filled" is exactly equivalent to
-    "the live path is never written into — a finished tree is renamed ONTO it",
-    and that is a property of the syscalls, which can be observed exactly. The
-    concurrency test below samples the symptom, but only by luck; this one is the
-    certificate.
-
-    The old slot is renamed AWAY rather than deleted in place for the same
-    reason: `rmtree` on the live directory would take a reader through a
-    half-emptied build on the way to the new one.
+    "A reader is never inside a directory being filled" is equivalent to "the live
+    path is never written into; a finished tree is renamed ONTO it", which is
+    observable at the syscalls. The old slot is renamed AWAY rather than deleted in
+    place, because `rmtree` on the live directory would take a reader through a
+    half-emptied build.
     """
     pdir = hub.project_dir("proj1")
     pdir.mkdir(parents=True, exist_ok=True)
@@ -255,21 +226,16 @@ def test_the_slot_is_filled_out_of_sight_and_swapped_in_by_rename(hub, monkeypat
 def test_readers_of_the_slot_never_see_a_mixture(hub):
     """Hammer /dev/ while it is being overwritten.
 
-    Two failures are being watched for. A torn file — a meta.json or a view that
-    does not parse — means a reader was let into a directory that was still being
-    filled, and needs no interpretation. A view file that is MISSING while the
-    meta.json naming it is the one the slot currently holds means the directory
-    is part one build and part another.
+    Failures: a torn file (a meta.json or view that does not parse), meaning a
+    reader got into a directory still being filled; or a view MISSING while the
+    meta.json naming it is the one the slot currently holds, meaning the directory
+    mixes two builds.
 
-    Two things are deliberately not failures. A bare 404, because POSIX cannot
-    replace a non-empty directory under a fixed name in one step: the swap is two
-    renames and the name is absent between them. That is the price of the slot
-    being the build itself rather than a symlink to one — `latest`, which has to
-    survive being pasted into chat, pays the other way. And a 404 on a view whose
-    meta.json has since been replaced, because that is not a mixture at all: it
-    is a moving URL that moved between two requests, which is what it is for.
-    Hence the confirming re-read — every build here ships a view file nobody else
-    ships, so if the slot still names the missing one, it really is broken.
+    Not failures: a bare 404, because POSIX cannot replace a non-empty directory in
+    one step, so the swap is two renames with the name absent between them (the
+    price of the slot being the build itself rather than a symlink); and a 404 on a
+    view whose meta.json has since been replaced, which is a moving URL that moved.
+    Hence the confirming re-read.
     """
     hub.publish_dev("proj1", _slot_build("v0", "v0.json"))
 
@@ -345,12 +311,10 @@ def test_a_failed_publish_leaves_latest_untouched(hub):
 def test_a_damaged_meta_on_disk_does_not_break_the_next_publish(hub):
     """One unusable build must not take the project down with it.
 
-    Reachable from the very scenario the `latest` carve-out is there for: a
-    restore from backup that ran out halfway, or a meta.json truncated by a
-    crash. Everything downstream of `builds_of` subscripts these dicts, so a
-    `{}` used to reach `_switch_latest` and come back as a 500 — with the new
-    build already unpacked on disk and `latest` still on the old one, so the
-    retry answered 200 by idempotency and `latest` silently never moved.
+    A restore from backup that ran out halfway, or a meta.json truncated by a
+    crash, produces such a build. Everything downstream of `builds_of` subscripts
+    these dicts, so an unusable meta must be skipped there; otherwise the next
+    publish fails with the new build already unpacked and `latest` never moves.
     """
     hub.publish("proj1", "good1", _build("good", "2026-08-01T00:00:00Z"))
     pdir = hub.project_dir("proj1")
@@ -364,33 +328,25 @@ def test_a_damaged_meta_on_disk_does_not_break_the_next_publish(hub):
         "noviews": json.dumps({
             "pid": "proj1", "project": "p", "title": "t", "commit": "noviews",
             "parts": catalogue, "views": [], **stamps}),
-        # NEW WITH THE CATALOGUE (issue #75), and it is the half a document can
-        # lose on its own: `views` and `parts` are written by one pass, so a
-        # truncated meta.json can carry a whole `views` and no catalogue at all
-        # -- and every reader of a view's part list then resolves keys against
-        # nothing. `_usable_meta` refuses it for the same reason it refuses no
-        # views, and `render._catalogue` refuses the same shape from the other
-        # end, which is the pairing that has to stay true.
+        # A truncated meta.json can carry a whole `views` and no catalogue, since
+        # both are written by one pass, and every view's part list would then
+        # resolve against nothing. `_usable_meta` refuses it like it refuses no
+        # views, and `render._catalogue` refuses the same shape from the other end;
+        # that pairing has to stay true.
         "noparts": json.dumps({
             "pid": "proj1", "project": "p", "title": "t", "commit": "noparts",
             "views": [{"parts": ["lid"], "gzip": 10}], **stamps}),
         "emptyparts": json.dumps({
             "pid": "proj1", "project": "p", "title": "t", "commit": "emptyparts",
             "views": [{"parts": ["lid"], "gzip": 10}], "parts": {}, **stamps}),
-        # THE TWO FIELDS `index_card` ACTUALLY SUBSCRIPTS, and each of them was
-        # a clause of `_usable_meta` that nothing here exercised — delete either
-        # line and the whole suite stayed green. What they cost is concrete:
-        # `_refresh_index` does not wrap `index_card` per project, so a KeyError
-        # from one damaged build takes down the rewrite of the WHOLE index and
-        # answers the next publish of any project with a 500 — after that build
-        # is already on disk.
+        # The two fields `index_card` subscripts, each a clause of `_usable_meta`.
+        # `_refresh_index` does not wrap `index_card` per project, so a KeyError from
+        # one damaged build breaks the rewrite of the whole index and answers the
+        # next publish of any project with a 500.
         #
-        # WHAT GOES RED HERE IS THE LISTING, not that 500, and the difference is
-        # worth knowing before reading a failure. These builds are stamped older
-        # than `good2`, and `index_card` is only ever handed the NEWEST meta, so
-        # what a missing clause produces here is a build appearing in
-        # `builds.json` — the assertion below. The 500 is the same hole entered
-        # from the other end, on the day the damaged build is the newest one.
+        # What goes red here is the listing, not that 500: these builds are stamped
+        # older than `good2` and `index_card` only sees the newest meta, so a
+        # missing clause shows up as a build appearing in `builds.json`.
         "nogzip": json.dumps({
             "pid": "proj1", "project": "p", "title": "t", "commit": "nogzip",
             "views": [{"parts": ["lid"]}], "parts": catalogue, **stamps}),
@@ -477,8 +433,8 @@ def test_concurrent_publishes_to_one_project_all_land(hub):
         thread.join(timeout=30)
 
     assert set(results.values()) == {201}, results
-    # The slot is not one of the builds: every commit mirrors itself into it
-    # (issue #78), so it is there whichever of these six finished last.
+    # The slot is not one of the builds: every commit mirrors itself into it, so
+    # it is there whichever of these six finished last.
     on_disk = {p.name for p in hub.project_dir("proj1").iterdir()
                if p.is_dir() and not p.is_symlink()
                and not p.name.startswith(".") and p.name != store.DEV_LINK}
@@ -494,14 +450,10 @@ def test_concurrent_publishes_to_one_project_all_land(hub):
 def test_stale_leftovers_are_swept_at_startup(tmp_path):
     """A SIGKILL mid-push leaves dot-prefixed debris nothing else ever removes.
 
-    `builds_of` skips it and the file server refuses it, so a spooled 64 MiB
-    body sits on the volume until somebody notices by hand. The sweep runs in
-    Store.__init__, which is the one moment no publish of ours is in flight.
-
-    It lives beside the atomicity tests because it is the other half of the same
-    mechanism (SPEC 7.2): every one of these names exists because a publish is
-    made of a temporary thing plus a rename, and this is what collects the
-    temporary thing when the rename never happened.
+    `builds_of` skips it and the file server refuses it, so a spooled 64 MiB body
+    would sit on the volume indefinitely. The sweep runs in Store.__init__, the one
+    moment no publish of ours is in flight. Every one of these names is the
+    temporary half of a temporary-plus-rename publish (SPEC 7.2).
     """
     data = tmp_path / "data"
     store = Store(data_dir=data, max_build_bytes=1024 * 1024)
@@ -524,10 +476,7 @@ def test_stale_leftovers_are_swept_at_startup(tmp_path):
     os.symlink("nowhere", link)  # deliberately dangling, like a real leftover
 
     # Age them past the ceiling: anything younger might belong to a live publish.
-    # READ OFF THE CONSTANT rather than written as a number -- this was `2 * 3600`
-    # against an hour, and the 2026-08-29 raise of the ceiling to four hours (it
-    # has to clear the queue wait, which follows `Limits.wall_seconds`) turned the
-    # test red without anything about the sweep having changed.
+    # Read off the constant, which follows the queue wait and so `Limits.wall_seconds`.
     old = time.time() - 2 * LEFTOVER_MAX_AGE_SECONDS
     for path in stale:
         os.utime(path, (old, old))

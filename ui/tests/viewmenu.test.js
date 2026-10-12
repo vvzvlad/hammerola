@@ -1,29 +1,21 @@
 // The view switcher in the floating toolbar: a strip of pills while the views
 // fit on one, a menu once they do not.
 //
-// WHY THERE IS A SECOND SHAPE AT ALL. The strip is a centred flex row that does
-// not wrap, inside a root that is `overflow:hidden` — so a row wider than the
-// window is neither scrollable nor shrunk to fit: it pushes the whole toolbar
-// past both edges, where the root clips its ends away, taking Fit and the tools
-// with it, and the names inside the pills break onto three lines each. A model declaring nine views with sentences for
-// names is what that was seen on. `VIEW_TABS_MAX` is the line between the two
-// shapes and it is IMPORTED here rather than typed again: two copies of a
-// threshold are two thresholds, and the one in the test is the one that would
-// go on passing after the source moved.
+// The strip is a centred flex row that does not wrap, inside an
+// `overflow:hidden` root, so a row wider than the window pushes the toolbar past
+// both edges, clipping Fit and the tools, and long names break onto several
+// lines. `VIEW_TABS_MAX` is the line between the two shapes and is imported
+// rather than retyped.
 //
-// ONE LIST BEHIND BOTH SHAPES. `viewTabs` carries a pill style and a row style
-// per view, and every case below reads the same entries — because which shape
-// is on screen is a question about how MANY views there are and about nothing
-// else. The assertions are therefore about which of the two dresses reached the
-// screen, never about a second list built somewhere.
+// One list behind both shapes: `viewTabs` carries a pill style and a row style
+// per view, and which shape is on screen depends only on how many views there
+// are. The assertions are about which of the two reached the screen.
 //
-// NOTHING IS MOUNTED, the arrangement every file in this directory uses: the
-// instance is the real prototype with the state spelled out, `computed()` and
-// `render()` are the real ones, and what they drew is read straight off the
-// returned element objects (ui/tests/eltree.js). Elements are found by style
-// IDENTITY — `css()` caches by string, so the object the render put on an
-// element is the very one `computed()` names — which is ui/tests/narrow.test.js's
-// reading and needs no DOM.
+// Nothing is mounted: the real prototype runs with the state spelled out, and
+// what `computed()` and `render()` drew is read off the returned elements
+// (ui/tests/eltree.js). Elements are found by style identity: `css()` caches by
+// string, so the object on an element is the one `computed()` names
+// (as in ui/tests/narrow.test.js).
 
 import { describe, expect, it, vi } from 'vitest'
 

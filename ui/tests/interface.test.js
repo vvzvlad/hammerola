@@ -194,11 +194,10 @@ describe('dismissPending', () => {
   })
 
   it('cancels a swap the reader is still waiting for', () => {
-    // THE SEQUENCE THAT MADE LATER MEAN NOTHING: Switch defers while the
-    // viewport is in the reader's hands, the banner stays up because
-    // `bannerGone` is only set inside the swap itself, and a reader who sees no
-    // reaction presses Later — which used to hide the banner and leave the timer
-    // running, so the model changed a quarter of a second after being refused.
+    // Switch defers while the viewport is in the reader's hands, the banner
+    // stays up because `bannerGone` is only set inside the swap itself, and a
+    // reader who sees no reaction presses Later — which must cancel the timer
+    // too, or the model changes a quarter of a second after being refused.
     const c = offering({ busy: true })
     c.takePending()
     expect(vi.getTimerCount()).toBe(1)

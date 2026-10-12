@@ -1,26 +1,23 @@
-"""What a project card says about the project's DRAFT (issue #32).
+"""What a project card says about the project's DRAFT.
 
-The front page shows one word per card — `idle`, `building` or `failed` — and it
-is about the last build pushed into that project's `dev` slot. Three facts carry
-it and each of them is a test here:
+The front page shows one word per card (`idle`, `building` or `failed`) about the
+last build pushed into that project's `dev` slot. Three facts carry it and each is
+a test here:
 
   * the pointer is written when the build STARTS, and only for a draft. The
     slot's own meta.json also names a job, but only a build that reached the
     publish ever writes one there, so a build in flight and a build that failed
     are invisible from inside the slot;
   * the word is computed WHEN THE CARD IS ASKED FOR, not when the index file is
-    written. `_refresh_index` runs at a publish, which is the one moment nothing
-    is building, so a word baked into the file would read `idle` for a project
-    that is rebuilding as somebody looks at it. The file therefore still carries
-    `status: null` and `_serve_index_json` fills it in;
-  * the pointer stores a JOB ID rather than a state word, which is what makes
-    the restart case come out right on its own: a job left `building` by a crash
-    is failed by `JobStore._load` at the next start, so the card follows it
-    instead of sticking on `building` for the life of the volume.
+    written. `_refresh_index` runs at a publish, when nothing is building, so the
+    file carries `status: null` and `_serve_index_json` fills it in;
+  * the pointer stores a JOB ID rather than a state word, so a job left
+    `building` by a crash, which `JobStore._load` fails at the next start, is
+    followed by the card instead of sticking on `building`.
 
-A COMMIT build in flight stays invisible on the front page. That is deliberate
-(SPEC 7.6): the card describes what has been published from a commit, and there
-is no pointer for a commit build to move.
+A COMMIT build in flight stays invisible on the front page (SPEC 7.6): the card
+describes what has been published from a commit, and there is no pointer for a
+commit build to move.
 """
 
 import json
@@ -129,12 +126,10 @@ def test_the_first_draft_of_a_new_project_has_nowhere_to_write_it_yet(held_hub):
 def test_a_first_draft_that_failed_still_leaves_the_hub_empty(hub):
     """The pointer must not take the onboarding block away from a new hub.
 
-    `Store.empty` counts a project directory that has ANYTHING in it, and the
-    one case it deliberately does not count is the shell a failed build leaves
-    behind — because a hub whose very first push did not build is exactly the
-    hub whose owner still needs the block. `draft.json` is written before there
-    is a slot or a build directory, so a failed first draft leaves it alone in
-    there, and counting it would be that failure arriving by a second road.
+    `Store.empty` deliberately ignores the shell a failed build leaves behind,
+    because a hub whose first push did not build still needs the block.
+    `draft.json` is written before there is a slot or a build directory, so a
+    failed first draft leaves it alone there, and it must not be counted either.
     """
     assert hub.get("/start").json()["empty"] is True
     reply = hub.publish_dev("proj1", tar_gz({"meta.json": b"{ not json"}))
@@ -151,10 +146,9 @@ def test_a_first_draft_that_failed_still_leaves_the_hub_empty(hub):
 def test_a_commit_build_moves_no_pointer(held_hub):
     """The draft's pointer is about the draft. A commit build is not one.
 
-    A commit fills the slot with itself (issue #78), so it would be an easy
-    thing to record here as well — and it would be wrong: the front page's card
-    already describes that commit, and pointing the draft at its job would make
-    every publish light a chip that is about nothing.
+    A commit fills the slot with itself, but the front page's card already
+    describes that commit, and pointing the draft at its job would make every
+    publish light a chip that is about nothing.
     """
     held_hub.publish("proj1", "abc123", good_build())
     assert held_hub.store.draft_job("proj1") is None
@@ -208,18 +202,13 @@ def test_a_draft_that_failed_says_so_until_the_next_draft_push(held_hub):
 
 
 def test_a_commit_clears_a_failed_draft_because_it_replaces_the_slot(held_hub):
-    """The other way out of `failed`, and the one that used to be missing.
+    """A commit clears a failed draft, because it replaces the slot.
 
-    A commit MIRRORS ITSELF INTO THE SLOT (issue #78), which is why the `dev`
-    chip goes when one lands: `_uncommitted_in_slot` compares digests and the
-    slot now holds the revision. The draft the red chip was about is gone with
-    it, so the chip has to go too — otherwise a project that has just published
-    successfully, and holds no local work at all, carries "the last build of
-    this project's draft failed" until somebody pushes another DRAFT, which may
-    be weeks away or never.
-
-    `publish_built` clears the pointer one line after `clear_title`, and for the
-    same reason: the push that follows a statement supersedes it.
+    A commit mirrors itself into the slot, so the draft the red chip was about is
+    gone and the chip goes too; otherwise a project that just published, with no
+    local work, would say its draft failed until the next draft push.
+    `publish_built` clears the pointer one line after `clear_title`, for the same
+    reason: the push that follows a statement supersedes it.
     """
     held_hub.publish("proj1", "abc123", good_build())
     reply = held_hub.publish_dev("proj1", tar_gz({"meta.json": b"{ not json"}))
@@ -337,13 +326,10 @@ def test_an_unreadable_index_answers_with_an_empty_list(hub):
 def test_every_state_a_job_can_be_in_maps_onto_a_card_word():
     """`src/render.py` spells the job registry's words out; it cannot import them.
 
-    `jobs` imports `store`, and `store` imports `render`, so the mapping is a
-    plain string one — which means nothing but this test notices the day a fifth
-    state is added to `src/jobs.py` and reaches the front page as `idle`.
-
-    Both directions, and the second one is the one worth having: that every
-    state maps SOMEWHERE is free (the mapping ends in a fallback), so what is
-    actually pinned is which word each of them lands on.
+    `jobs` imports `store`, and `store` imports `render`, so the mapping is by
+    plain strings and only this test notices a new state in `src/jobs.py` reaching
+    the front page as `idle`. The mapping ends in a fallback, so what is pinned is
+    which word each state lands on.
     """
     words = {render.CARD_IDLE, render.CARD_BUILDING, render.CARD_FAILED}
     assert KNOWN_STATES == {STATE_QUEUED, STATE_BUILDING, STATE_DONE,

@@ -3,10 +3,7 @@
 
 A VIEW CARRIES NO GEOMETRY. It is a selection of references into `parts()`,
 which is the one place a part exists, so a view cannot show a part the
-catalogue does not have and cannot show a look-alike in place of one. That is
-the whole change: identity used to be RECONSTRUCTED afterwards -- by matching
-shapes and by matching name strings -- and both reconstructions were wrong in
-ways nobody could see from a green build.
+catalogue does not have and cannot show a look-alike in place of one.
 
     def views():
         return [
@@ -59,9 +56,8 @@ from .palette import DEFAULT_ALPHA, INVISIBLE_ALPHA, NEARLY_OPAQUE_MIN
 from .parts import KIND_MOCK, catalogue_colors
 
 
-# Every key a view dict is read for. Anything else is reported as unknown --
-# `nestedok` for `nested_ok` used to be accepted in silence, and a silent
-# exemption is one that is not there.
+# Every key a view dict is read for. Anything else is reported as unknown, so a
+# misspelt exemption (`nestedok`) is not silently ignored.
 VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok"})
 # ...and every key one REFERENCE is read for. Only `part` is required.
 REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed"})
@@ -92,13 +88,8 @@ def prepare_views(views, catalogue):
 
     `nodes` IS THE FLAT LIST OF LEAVES and it is what every gate reads; `tree`
     holds the author's grouping and is read only when the view file is written.
-    The two are kept apart on purpose: a gate that could see a group would have
-    to decide what a group MEANS, and a group means nothing -- it is how the
-    author chose to file the parts for a reader.
-
-    The parallel full-length lists this used to return (objects/names/colors/
-    alphas) are gone: an index in four lists is a contract nothing holds
-    together, and it is the exact place identity used to be lost.
+    The two are kept apart on purpose: a group is presentation only, and no
+    gate should have to decide what it means.
     """
     if not isinstance(views, (list, tuple)) or not views:
         raise BuildError("views() must return a non-empty list")
@@ -141,19 +132,11 @@ def prepare_views(views, catalogue):
         if filename in RESERVED_NAMES:
             raise BuildError(f"view {vid!r} would overwrite {filename}, which the hub owns")
 
-        # Both exemption lists are validated HERE, for every view that carries
-        # one, and not inside the gate that reads them. Validating at the point
-        # of use meant a list was only ever looked at in the one view its gate
-        # runs on: rubbish anywhere else went through in silence, and so did
-        # the whole exemption when the key was misspelt.
+        # Both exemption lists are validated here, for every view that carries
+        # one, not only in the view whose gate reads them.
         #
-        # ABSENT IS THE ONLY THING THAT MEANS "NOTHING DECLARED", which is why
-        # neither line below is `view.get(...) or ()`. That reads a key that is
-        # THERE and unusable -- `nested_ok: 0`, `False`, `""` -- as a view that
-        # declared nothing, so the one shape a mistake actually takes gets the
-        # silence a correct absence gets. `nested_ok: 5` is already named by the
-        # refusals these two raise; `nested_ok: ""` would slip past them without
-        # this, and the asymmetry would be a coin toss over one character.
+        # Only an absent key means "nothing declared"; not `view.get(...) or ()`,
+        # which would silently accept a present but unusable `nested_ok: ""`.
         keys = {node["key"] for node in nodes}
         declared = view.get("nested_ok")
         nested_ok = nested_pairs(() if declared is None else declared, keys, vid)
@@ -176,14 +159,8 @@ def prepare_views(views, catalogue):
                 f"the {ASSEMBLED_VIEW_ID!r} view is checked against. Nothing "
                 "here is exempting anything."
             )
-        # The third dead declaration, and the one that MISREADS rather than
-        # merely doing nothing: check_interference prints every entry of this
-        # list into the build log as an exemption it ran with ("may overlap --
-        # <reason>"), while a pair naming a mock was never asked about at all --
-        # scenery is skipped before a single box is compared. So the log would
-        # say an overlap is excused where nothing looked. Saying so beats
-        # letting the author believe an overlap somewhere is exempt, exactly as
-        # for the two above.
+        # A pair naming a mock is never checked (scenery is skipped), yet
+        # check_interference would print it as an exemption it ran with.
         mocks = sorted({key for pair in interference_ok for key in pair
                         if catalogue[key]["kind"] == KIND_MOCK})
         if mocks:
@@ -198,11 +175,8 @@ def prepare_views(views, catalogue):
 
         unknown_keys = sorted(set(view) - VIEW_KEYS)
         if unknown_keys:
-            # A warning and not an error, deliberately: this file is shared by
-            # every project in the organisation, and a key somebody added for
-            # their own tooling must not turn into a red build. But a silent
-            # `nestedok` is an exemption that is simply not there, and the
-            # author has no way to tell from a green run.
+            # A warning, not an error: a key added for other tooling must not
+            # fail a build, but a misspelt one must not pass silently either.
             print(
                 f"warning: view {vid!r} has key(s) "
                 f"{', '.join(repr(k) for k in unknown_keys)}, which the build "
@@ -271,14 +245,10 @@ def _read_entries(entries, vid, catalogue, colors, nodes, depth, where):
         )
 
     built = []
-    # Group names ARE unique among siblings, and nothing else checks it. A
-    # leaf's uniqueness is the tessellator's doing -- it disambiguates repeats
-    # of one name into `pin`, `pin(2)` -- but a group's name is written by this
-    # build, straight into `id` as `<parent>/<name>`, so two `housing` groups
-    # side by side get one and the same id. `render.check_view_file` on the hub
-    # does not look at ids, so that publishes into an immutable build in
-    # silence. Names at DIFFERENT depths are fine and are not tracked here:
-    # the parent's id is part of the child's, so they cannot collide.
+    # Group names must be unique among siblings: a group's id is
+    # `<parent>/<name>`, written by this build (the tessellator disambiguates
+    # only leaves), and the hub's `render.check_view_file` does not check ids.
+    # Names at different depths cannot collide.
     named = set()
     for index, entry in enumerate(entries):
         spot = f"{where} entry #{index}"
@@ -416,13 +386,10 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
                 'account for. {"deformed": "clamped round the pipe"}.'
             )
         reason = reason.strip()
-        # A MESH ENTRY HAS NOTHING FOR THIS HATCH TO DIFFER FROM, and letting
-        # it through is worse than meaningless. The tessellator names the solid
-        # leaf after the key, `_mesh_leaf` numbers the mesh occurrences of that
-        # key on its own, and the two then meet on one name: the tree comes out
-        # with two nodes on one id. Nothing downstream says so -- the hub's
-        # check does not read ids, and the viewer silently drops one of the two
-        # (measured in comparescene.py) -- so it reaches a published build.
+        # A mesh entry has no shape for this hatch to differ from. Allowing it
+        # would also let the tessellator's solid leaf and `_mesh_leaf` number
+        # the same key independently and collide on one id, which the viewer
+        # silently drops.
         if record["mesh"] is not None:
             raise BuildError(
                 f'{spot} carries a "shape", and the catalogue holds {key!r} as '
@@ -550,11 +517,8 @@ def _refuse_deformed_on_the_plate(vid, nodes):
     publishes a bed carrying geometry that no downloadable part file holds --
     and nothing anywhere compares the two.
 
-    IT IS ALSO THE WAY ROUND THE TILT GATE. `check_print_layout` reads
-    `node["at"]`, so it can only judge a rigid motion; a reference handing over
-    its own `shape` never goes through `at` at all, and "which way up a part
-    prints is a property of the part" -- the rule that whole gate exists to
-    hold -- comes off for the price of a reason string.
+    It would also bypass the tilt gate: `check_print_layout` judges only the
+    rigid motion in `node["at"]`, and a reference with its own `shape` skips it.
 
     And the hatch does not mean anything here in the first place. It is for a
     part that is genuinely a different shape IN PLACE -- clamped round a pipe,
@@ -672,10 +636,8 @@ def interference_pairs(declared, keys, vid):
 
         "interference_ok": [("nozzle", "seat", "threaded joint")]
 
-    Three elements, not two: this is deliberately NOT `checklib.name_pairs`,
-    which owns the two-element shape shared with `nested_ok` and
-    `allowed_touching`. A reason cannot be optional here and cannot be bolted
-    onto that shape without loosening it everywhere it is used.
+    Three elements, so not `checklib.name_pairs`, which owns the two-element
+    shape of `nested_ok` and `allowed_touching`.
 
     A DECLARATION IS TWO CATALOGUE KEYS, so one entry covers EVERY instance of
     that pair. Five references to `pin` are ten pin-against-pin pairs and
@@ -757,16 +719,10 @@ def export_views(prepared, out_dir):
     Two things are written into the document that the tessellator does not put
     there:
 
-      * `key` on every leaf -- the catalogue key the part came from. It is
-        REDUNDANT in the sense that the leaf's name is that key already, and
-        that redundancy is the point: resting on two strings being equal is the
-        reconstruction this whole change removes, so the identity is stated
-        rather than inferred;
-      * the groups, as `{"name", "id", "loc", "parts"}` nodes. The viewer
-        already understands them (`isShapeTree` is "does it have `parts`") and
-        the hub already validates the nesting (`render.check_view_file`), so
-        this is a shape both sides accept today -- what did not exist before is
-        a build that emits it.
+      * `key` on every leaf, the catalogue key the part came from, so identity
+        is stated rather than inferred from the leaf's name;
+      * the groups, as `{"name", "id", "loc", "parts"}` nodes, which the viewer
+        (`isShapeTree`) and the hub (`render.check_view_file`) both accept.
 
     Every node's `id` is rebuilt as the parent's id plus `/` plus its name,
     which is how the viewer's own paths are formed -- the leaf ids the
@@ -819,14 +775,8 @@ def export_views(prepared, out_dir):
             "id": vid,
             "name": view["label"],
             "file": filename,
-            # WHICH parts, not how many. A count is what this used to be, and a
-            # count is the one thing meta.json must not say about references:
-            # five pins are five references to one catalogue entry, and a
-            # number is then a fact about the view file that disagrees with the
-            # parts map next to it. Keys, deduplicated and in the order the
-            # author wrote them, answer the question a reader of meta.json
-            # actually has -- what is in this tab -- without fetching a
-            # multi-megabyte view file to find out.
+            # Which parts, not how many: keys, deduplicated, in the author's
+            # order, so a reader of meta.json need not fetch the view file.
             "parts": list(dict.fromkeys(node["key"] for node in nodes)),
         })
     return entries
@@ -838,13 +788,9 @@ def shaped_document(doc, view):
     Separated from the export so the whole rewrite can be tested without a CAD
     kernel: what goes in is a JSON document and what comes out is one.
 
-    THE TESSELLATOR SAW ONLY THE SOLID LEAVES, so its flat list lines up with
-    THOSE and not with `nodes`. A per-node list is built first, taking the next
-    tessellated entry for a solid leaf and writing a mesh leaf for a mesh one,
-    and the tree is then rebuilt against that -- because `tree` holds indices
-    into `nodes`, and a mesh leaf anywhere but the end would otherwise shift
-    every later solid leaf onto the wrong key, permanently, into an immutable
-    build.
+    The tessellator saw only the solid leaves, so a per-node list is built
+    first (next tessellated entry for a solid leaf, `_mesh_leaf` for a mesh
+    one) and the tree, which indexes `nodes`, is rebuilt against it.
     """
     flat = doc.get("parts")
     nodes = view["nodes"]
@@ -880,19 +826,10 @@ def shaped_document(doc, view):
             if isinstance(entry, int):
                 leaf = leaves[entry]
                 # The name is the tessellator's rather than the key: it
-                # disambiguates repeats of one name (`pin`, `pin(2)`), and the
-                # viewer builds its paths out of names, so two leaves called
-                # the same thing would share a path. A mesh leaf was named the
-                # same way by `_mesh_leaf`, which is the whole reason it counts
-                # its own repeats.
-                #
-                # DEMANDED RATHER THAN DEFAULTED, for the reason the length of
-                # `flat` is checked above: this rests on what the tessellator
-                # writes, and `leaf.get("name")` would turn a document that
-                # stopped carrying one into a tree of leaves all called
-                # `/Group/None` -- every path identical, every part
-                # indistinguishable in the viewer, published into an immutable
-                # build with nothing anywhere saying so.
+                # disambiguates repeats (`pin`, `pin(2)`), and the viewer builds
+                # paths from names. `_mesh_leaf` numbers mesh leaves the same
+                # way. Demanded rather than defaulted, so a missing name cannot
+                # produce identical `/Group/None` paths.
                 name = leaf.get("name")
                 if not isinstance(name, str) or not name:
                     raise BuildError(
@@ -917,12 +854,8 @@ def shaped_document(doc, view):
             built.append(node)
         return built
 
-    # THE ROOT ID IS DEMANDED for the same reason a leaf's name is, and it is
-    # the other end of the same string: every node's id is `<parent>/<name>`,
-    # and the first parent is this. `doc.get("id")` would build the whole tree
-    # under `None/...` -- `render.check_view_file` on the hub does not look at
-    # an id, so that publishes into an immutable build in silence, and every
-    # path the viewer makes out of it is wrong from its first character.
+    # The root id is demanded for the same reason: it prefixes every node id,
+    # and the hub does not check ids.
     root_id = doc.get("id")
     if not isinstance(root_id, str) or not root_id:
         raise BuildError(
@@ -948,16 +881,11 @@ def _mesh_leaf(node, occurrence):
     guards on `edgeList && edgeList.length > 0`), and a made-up edge would be a
     line nobody modelled.
 
-    THE NAME IS NUMBERED THE WAY THE TESSELLATOR NUMBERS ONE -- `scan`, then
-    `scan(2)` -- because every node's id is the parent's plus its name, so two
-    references to one mesh under one name would share a path and neither the
-    viewer nor a reader could tell them apart. Counting only the mesh
-    occurrences of that key is enough: a catalogue entry is a mesh or a solid
-    and never both, AND a reference to a mesh one cannot come out a solid leaf
-    -- `_read_reference` refuses the `deformed` hatch over a mesh -- so the two
-    numberings cannot meet on one name. The second half is the load-bearing
-    one: entry-level exclusivity alone let a mesh entry produce a solid leaf,
-    which is exactly how the two numberings used to meet.
+    The name is numbered the way the tessellator numbers one (`scan`,
+    `scan(2)`), since node ids are built from names. Counting only mesh
+    occurrences suffices: an entry is a mesh or a solid, and `_read_reference`
+    refuses the `deformed` hatch over a mesh, so a mesh entry never yields a
+    solid leaf.
 
     The identity `loc` is written out in full, like the one on a group above,
     because the viewer reads `loc` off every node it renders -- and it IS the

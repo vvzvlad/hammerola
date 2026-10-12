@@ -1,38 +1,15 @@
 """Reading metrics.json: what a build measured, and what moved between two.
 
-ONE IMPLEMENTATION WITH TWO READERS, which is the only reason this file is not
-part of `src/cadbuild/metrics.py` where it was written. metrics.json has a
-writer (the build, `cadbuild.metrics.write_metrics`) and now two readers: the
-build itself, printing what moved since `dev`, and `hammerola diff`, printing
-what moved between two published revisions. The client is stdlib-only and takes
-nothing from `requirements.txt` or from the build half (`hammerola/__init__.py`
-says why), so the choice was between a second copy and a move. It is a move.
+metrics.json has one writer (`cadbuild.metrics.write_metrics`) and two
+readers: the build, printing what moved since `dev`, and `hammerola diff`. Both
+import this module rather than a copy (`tests/test_metricsdiff.py` pins that).
+It lives in the client package, outside `src.cadbuild`, so `hammerola diff`
+never imports the geometry package.
 
-A COPY WAS THE WRONG ANSWER AND WE KNOW WHAT IT COSTS. `cad_publish/hubspec.py`
-held the hub's ceilings in a repository that could not see the hub's, nothing
-compared the two, and publication broke. The lesson that produced
-`tests/client/test_limits.py` was "a copy needs a test that pins it"; the
-stronger form is "do not make the copy". Here nothing had to be copied at all —
-these functions read a JSON document and format text, they touch no CAD kernel,
-no filesystem and no network — so both sides import the same objects and there
-is nothing left to drift. `tests/test_metricsdiff.py` pins that identity, so a
-future re-copy fails at the commit that makes it.
-
-WHY IT SITS AT THE TOP OF `src/` rather than inside `cadbuild`. Importing
-`src.cadbuild.<anything>` runs that package's `__init__`, and that package's
-whole job is geometry: its own docstring already has to promise that importing
-it stays light. Hanging the client's `diff` off that promise would mean the day
-somebody adds a module-level `import cadquery` up there, `hammerola diff` stops
-working on a laptop with no CAD kernel — a blast radius nobody would predict
-from the edit. A neutral module has no such edge.
-
-STDLIB ONLY, and that is a rule rather than a coincidence: the client imports
-this.
+STDLIB ONLY: the client imports this.
 """
 
-# The name the build writes and both readers fetch. Here rather than beside the
-# writer because a reader needs it to ASK for the file, and a reader that
-# spelled it itself would be the copy this module exists to avoid.
+# The name the build writes and both readers fetch.
 METRICS_NAME = "metrics.json"
 
 # Below this a volume difference is arithmetic noise, not a change. Relative,
@@ -43,21 +20,13 @@ METRICS_REL_TOL = 1e-9
 METRIC_FIELDS = ("volume_mm3", "bbox_mm", "first_layer_mm2", "overhang_mm2",
                  "faces", "edges", "solids", "triangles", "watertight")
 
-# The same question asked of the WHOLE build rather than of one part, and a
-# tuple of its own because these live under `assembly` and are not per part:
-# how big the product is, how much bed it takes to print, how much material is
-# in it. `bbox_mm` IS THE PRODUCT'S OWN ENVELOPE, with the scenery left out: a
-# mock overlaps the product by construction, so a box that took the mocks in
-# would report the size of the wall a bracket bolts to and hide the bracket
-# moving on it.
+# Whole-build fields under `assembly`. `bbox_mm` is the product's own envelope
+# without the mocks, which overlap it by construction and would hide changes.
 ASSEMBLY_FIELDS = ("bbox_mm", "print_bbox_mm", "volume_mm3")
 
-# The fields about the PHYSICAL OBJECT, as against the model source or the
-# tessellation of it. A face count moves when a fillet is drawn differently and
-# a triangle count moves when a tolerance changes; none of that is the part
-# coming out another shape. Named ONCE, here, so "did this round of edits change
-# anything physical" is a question with one answer rather than a judgement each
-# reader makes for itself -- `hammerola diff --json` is the reader today.
+# The fields about the PHYSICAL object, not the source or its tessellation
+# (face and triangle counts move without the part changing shape). Used by
+# `hammerola diff --json` and the build's summary.
 PHYSICAL_FIELDS = ("volume_mm3", "bbox_mm", "first_layer_mm2", "overhang_mm2")
 
 
@@ -79,14 +48,11 @@ def _shown(field, value):
     if field in ("bbox_mm", "print_bbox_mm"):
         return "x".join(f"{axis:.2f}" for axis in value) + " mm"
     if field.endswith("_mm2"):
-        # One decimal, and square millimetres rather than square centimetres:
-        # these are areas of tens to hundreds of mm2, and a part's whole first
-        # layer is often under one cm2.
+        # mm2, not cm2: a whole first layer is often under one cm2.
         return f"{value:.1f} mm2"
     if field == "watertight":
         return "watertight" if value else "NOT watertight"
-    # `1 solid`, not `1 solids`: these lines are read at a glance and the
-    # plural on a count of one reads as a typo in the number.
+    # `1 solid`, not `1 solids`.
     return f"{value} {field[:-1] if value == 1 else field}"
 
 
@@ -99,9 +65,7 @@ _LABELS = {"volume_mm3": "volume", "bbox_mm": "bbox", "print_bbox_mm": "plate"}
 def _area_label(field):
     """`first_layer_mm2` -> `first layer`. The unit is printed beside the value.
 
-    ONE FUNCTION FOR BOTH LINES, the summary's and the moved one's, because the
-    two are read side by side: an area named in one and bare in the other reads
-    as two different measurements of one part.
+    Shared by the summary and the moved line so both name an area the same.
     """
     return field[:-len("_mm2")].replace("_", " ")
 
@@ -112,15 +76,10 @@ def _field_moved(field, old, new):
         share = f" ({(new - old) / old * 100.0:+.1f}%)" if old else ""
         return f"volume {old / 1000.0:.2f} -> {new / 1000.0:.2f} cm3{share}"
     if field.endswith("_mm2"):
-        # A PERCENTAGE, as on the volume, and it is the whole reason these two
-        # numbers are published: `first layer 640.0 -> 210.0 mm2 (-67.2%)` is a
-        # part about to start coming off the bed, and the two absolute numbers
-        # alone leave that arithmetic to the reader.
+        # A percentage, as on the volume: `first layer 640.0 -> 210.0 mm2
+        # (-67.2%)` flags a part about to come off the bed.
         share = f" ({(new - old) / old * 100.0:+.1f}%)" if old else ""
         label = _area_label(field)
-        # The unit once at the end, as on the volume line above: two numbers
-        # and one `mm2` reads as a movement, where a unit on each reads as two
-        # separate facts.
         return f"{label} {old:.1f} -> {new:.1f} mm2{share}"
     if field in ("bbox_mm", "print_bbox_mm", "watertight"):
         label = _LABELS.get(field)
@@ -132,19 +91,12 @@ def _field_moved(field, old, new):
 def _part_summary(part, fields=METRIC_FIELDS):
     """Everything measured about one part, on one line.
 
-    THE TWO AREAS CARRY THEIR NAMES and nothing else here does, for the reason
-    the assembly line labels all of its own: `2392.3 mm2, 0.0 mm2` is two
-    numbers in one unit with no way to tell the bed contact from the overhang,
-    where `4 solids` and `watertight` say what they are. A bounding box needs no
-    label on this line either -- it is the only `NNxNNxNN mm` on it.
+    Only the two areas carry labels: they share a unit and would be
+    indistinguishable otherwise.
 
-    `fields` NARROWS WHAT THE LINE IS ABOUT, and the caller that narrows it is
-    the build's own summary: it passes PHYSICAL_FIELDS, because millimetres are
-    what a person reads a build log for and a triangle count is a fact about the
-    tessellation. THE DEFAULT DOES NOT CHANGE, which is what keeps `metrics_diff`
-    describing a part that appeared -- or one that went away -- with everything
-    measured about it: nobody has seen that part before, so there is nothing to
-    leave out.
+    `fields` narrows the line; the build's summary passes PHYSICAL_FIELDS. The
+    default (everything) is what `metrics_diff` uses for an appeared or vanished
+    part.
     """
     bits = []
     for field in fields:
@@ -169,23 +121,14 @@ def _swept_summary(record):
 def metrics_summary(metrics, fields=METRIC_FIELDS):
     """Every number this build measured, in the shape a person reads.
 
-    `fields` is handed straight to `_part_summary` and says which of them the
-    per-part line carries; everything below that line -- the assembly, the
-    interference, the swept pairs, the check count -- is one entry per record
-    and is not a per-part field, so it is unaffected by the narrowing.
+    `fields` narrows only the per-part lines (see `_part_summary`).
     """
     lines = []
     for name, part in sorted((metrics.get("parts") or {}).items()):
         lines.append(f"{name}: {_part_summary(part, fields)}")
     assembly = metrics.get("assembly") or {}
-    # The whole build on one line, in the same shape a part gets. Absent
-    # entirely on a build that measured none of it -- a revision published
-    # before these fields existed reads exactly as it did then.
-    #
-    # EVERY ENTRY CARRIES ITS LABEL, which a part's line does not need: two of
-    # these three are bounding boxes, and `100.00x50.00x20.00 mm,
-    # 180.00x180.00x8.00 mm` says nothing about which of them is the product and
-    # which is the bed.
+    # The whole build on one line, absent when none of it was measured. Every
+    # entry is labelled: two of the three are bounding boxes.
     whole = [f"{_LABELS.get(field, field)} {_shown(field, assembly[field])}"
              for field in ASSEMBLY_FIELDS if field in assembly]
     if whole:
@@ -205,30 +148,12 @@ def moved_fields(old, new, fields=METRIC_FIELDS):
     """What moved between two builds, by part and by field, for a MACHINE.
 
     `{"moved": [{"part": ..., "field": ..., "old": ..., "new": ...}],
-    "compared": n}` -- the same walk `metrics_diff` makes, with nothing
-    formatted and nothing rounded. That is the whole of the difference between
-    the two: one of them is read by a person and the other by a script deciding
-    whether a PART came out another shape, and a script that had to parse
-    `volume 33.06 -> 31.90 cm3 (-3.5%)` back into numbers would be reading
-    prose. `hammerola diff --json` passes PHYSICAL_FIELDS and asks exactly that
-    question.
+    "compared": n}` -- the walk `metrics_diff` makes, unformatted and
+    unrounded. `hammerola diff --json` passes PHYSICAL_FIELDS.
 
-    `parts` AND ONLY `parts`: the `assembly` block is outside this walk
-    entirely, so a build whose plate grew while every part stayed the same
-    answers `{"moved": [], ...}` here. That is the answer the caller's question
-    deserves and not a gap to plug in passing -- the printed diff carries the
-    assembly line, and a document that grew a second shape would change what
-    every existing reader parses.
-
-    `compared` IS PART OF THE ANSWER AND NOT A STATISTIC. An empty `moved` means
-    "nothing moved" only if something was looked at: two documents with no field
-    in common -- a revision published before a field existed against one
-    published after -- compare nothing and move nothing, and without this number
-    the two are indistinguishable.
-
-    ONLY THE PARTS PRESENT IN BOTH. A part that appeared or went away is not a
-    field that moved and has no `old` or `new` to report; `metrics_diff` says so
-    in words, and this walk stays one shape rather than growing a second.
+    Only `parts`, and only those present in both; the `assembly` block is not
+    walked. `compared` tells "nothing moved" apart from "nothing was comparable"
+    (documents with no field in common).
     """
     was = old.get("parts") or {}
     now = new.get("parts") or {}
@@ -267,11 +192,8 @@ def metrics_diff(old, new):
 
     was_assembly = old.get("assembly") or {}
     now_assembly = new.get("assembly") or {}
-    # The whole build, on one line, exactly as a part gets one: a product that
-    # grew 2 mm taller or a plate that no longer fits the bed is the same kind
-    # of news as a part that did. Fields present in ONE of the two are passed
-    # over, which is what lets a revision published before these existed be
-    # compared with one published after.
+    # The whole build on one line. Fields present in only one side are skipped,
+    # so older revisions compare cleanly.
     whole = [_field_moved(field, was_assembly[field], now_assembly[field])
              for field in ASSEMBLY_FIELDS
              if field in was_assembly and field in now_assembly
@@ -290,11 +212,8 @@ def metrics_diff(old, new):
         elif _moved(before, after):
             lines.append(f"{pair}: shared volume {before:.3f} -> {after:.3f} mm3")
 
-    # The pairs the model swept along their travel, in the same three cases the
-    # interference above is read in: one that appeared, one that is no longer
-    # measured, one whose tightest gap moved. The GAP is what is compared --
-    # `positions` and `at` are how the sweep was run, and a sweep run at more
-    # stops is not the parts having moved.
+    # Swept pairs: appeared, gone, or tightest gap moved. Only the gap is
+    # compared; `positions` and `at` describe how the sweep was run.
     was_swept = was_assembly.get("clearance") or {}
     now_swept = now_assembly.get("clearance") or {}
     for label in sorted(set(was_swept) | set(now_swept)):
@@ -311,55 +230,23 @@ def metrics_diff(old, new):
     if old.get("checks_passed") != new.get("checks_passed"):
         lines.append(f"checks passed: {old.get('checks_passed')} -> "
                      f"{new.get('checks_passed')}")
-    # WITHOUT THIS THE LINE ABOVE LIES AT THE ROLLOUT BOUNDARY. The build
-    # subtracts the asserts the constants settle on their own from the number it
-    # reports, so a project whose real check degenerated into a tautology prints
-    # a SMALLER `checks passed` with nothing lost -- read alone, that is a check
-    # gone missing. A baseline written before the build measured this has no
-    # `checks_static` at all and renders `None -> 2`, which is the truth: the
-    # number did not exist then.
-    #
-    # COMPARED NORMALIZED, PRINTED RAW. A baseline from before the rollout has
-    # no `checks_static`, so a plain `!=` makes "absent" differ from 0 and every
-    # such project prints `None -> 0` once -- a line saying that nothing moved,
-    # in a document whose whole rule is "only the difference, and only when
-    # there is one". Between two immutable revisions astride the rollout it
-    # prints for ever. `None -> 2` still prints, because that one IS a
-    # difference.
+    # `checks passed` excludes asserts decided by constants alone, so a drop
+    # there may be a check that became a tautology; this line explains it.
+    # Compared normalized (absent == 0) but printed raw, so `None -> 0` is not
+    # reported and `None -> 2` is.
     if (old.get("checks_static") or 0) != (new.get("checks_static") or 0):
         lines.append(f"checks decided by constants: {old.get('checks_static')} "
                      f"-> {new.get('checks_static')}")
     return lines
 
 
-# There used to be a SECOND alarm next to the one below, printing a `!` line
-# that guessed at what an edit had MEANT to do: "material is gone and the face
-# count did not move -- so this was a face shifting, not a feature cut".
-# Widening an existing hole or pocket, deepening a slot, thinning a wall,
-# growing a chamfer -- all of them remove volume and leave the face count
-# exactly where it was, and all of them are ordinary edits. An alarm that fires
-# on ordinary work gets skipped over, and it takes the lines around it with it.
-#
-# A diff between two builds is the wrong place for that question anyway. "The
-# boolean cut nothing away" is answerable exactly where the boolean happens,
-# against the shapes going into it, with no dependence on what was published
-# last week -- so it belongs in the model's own checks(), not here.
-
-
 def unchanged_code_moved_geometry(old, new):
     """Parts whose measurements moved while the model's code did not.
 
-    The one comparison here that says something a person cannot read off the
-    numbers, and it is not a guess about intent: it reports that the SAME
-    SOURCE produced a DIFFERENT SOLID. No ordinary edit can do that -- editing
-    is what changes the code hash -- so when it fires, the difference came from
-    outside the source, and there are only a few candidates: the geometry was
-    computed somewhere else, the CAD stack moved under it (a rebuilt image, a
-    different CadQuery/OCCT), or the model is not deterministic.
-
-    That is why it stays while the alarm above it went. It cannot fire on a
-    normal edit, and being built in two places -- which was the arrangement
-    that made a silent divergence possible -- is exactly what it catches.
+    The same source produced a different solid, so the cause is outside the
+    source: the geometry was computed elsewhere, the CAD stack changed
+    (CadQuery/OCCT), or the model is not deterministic. It cannot fire on an
+    ordinary edit.
 
     It reads `source.code`, the hash of the root *.py with comments stripped:
     the same source with a comment rewritten is still the same source, so a

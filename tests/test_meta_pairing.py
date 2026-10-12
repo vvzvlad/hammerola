@@ -1,30 +1,20 @@
 """The two halves of `meta.json`, checked against each other for real.
 
-THE DOCUMENT HAS ONE WRITER AND ONE VALIDATOR AND THEY LIVE IN DIFFERENT
-WORLDS. `src/cadbuild/build.py` writes it at the end of a build; `src/render.py`
-reads it on the way in and rebuilds it for the viewer. Every other test of
-either half hands the other half's work over BY HAND — `tests/harness.py`
-writes a meta.json and a stand-in view file that agree because one function
-wrote both, and `tests/cadbuild/` reads what the build produced without ever
-asking whether the hub would take it. Two hand-written documents agreeing with
-each other is exactly the shape of the failure that broke publication once
-already: the client packed one thing and the hub expected another, and no test
-could see both because the halves lived in two repositories.
+The document has one writer and one validator in different worlds:
+`src/cadbuild/build.py` writes it at the end of a build, and `src/render.py` reads
+it on the way in and rebuilds it for the viewer. Every other test hands one half's
+work to the other BY HAND (`tests/harness.py` writes a meta.json and a view file
+that agree because one function wrote both; `tests/cadbuild/` never asks whether
+the hub would take what the build produced).
 
-Issue #75 moved the seam. `parts()` became a CATALOGUE keyed by part name and
-`views[].parts` became the LIST OF KEYS a view shows, and the hub now holds
-that list against the view file's own leaves in both directions
-(`render._match_selection`). That is a claim about a document the hub does not
-write, checked against a document the build does not read — so nothing but a
-real build feeding a real validator can say whether the two agree. This file is
-that, and it is deliberately the ONLY test here that does no hand-writing at
-all: the model is written, and everything the assertions look at is computed
-from it by the same code a push runs.
+`parts()` is a CATALOGUE keyed by part name and `views[].parts` is the LIST OF KEYS
+a view shows, held against the view file's own leaves in both directions
+(`render._match_selection`). Only a real build feeding the real validator can say
+whether the two agree, so this file does no hand-writing: the model is written,
+and everything asserted is computed from it by the code a push runs.
 
-IT SKIPS WHERE THE CAD KERNEL DOES NOT IMPORT, which is no longer CI: the test
-image carries the kernel's libraries (issue #27), so the pairing is verified
-on every push. On a machine without the kernel it still skips, and there the two
-halves are each checked against a hand-written stand-in of the other.
+It skips where the CAD kernel does not import. CI's test image carries the
+kernel's libraries, so the pairing is verified on every push.
 """
 
 from __future__ import annotations
@@ -141,18 +131,13 @@ def test_a_real_build_s_meta_is_one_the_hub_accepts(built):
 
 
 def test_the_selection_the_build_wrote_is_the_one_its_view_files_show(built):
-    """`views[].parts` against the view files, both directions — for real.
+    """`views[].parts` against the view files, both directions, for real.
 
-    This is the assertion the file exists for. `export_views` names the field
-    off the nodes it has just tessellated
-    (`list(dict.fromkeys(node["key"] for node in nodes))`) and the hub demands
-    SET EQUALITY with the keys its own walk finds in the file. The two are
-    written and read by code that never meets, so agreeing here is evidence and
-    agreeing in `tests/harness.py` is not.
-
-    The expected selections are named rather than read back out of the meta,
-    which would be the document agreeing with itself. They are what `views()`
-    in MODEL asks for.
+    `export_views` names the field off the nodes it has just tessellated
+    (`list(dict.fromkeys(node["key"] for node in nodes))`) and the hub demands SET
+    EQUALITY with the keys its own walk finds in the file. The expected selections
+    are named rather than read back out of the meta (the document agreeing with
+    itself): they are what `views()` in MODEL asks for.
     """
     out, outcome = built
     meta = _publish(out, outcome)
@@ -174,12 +159,10 @@ def test_the_selection_the_build_wrote_is_the_one_its_view_files_show(built):
 def test_every_leaf_a_real_export_writes_carries_a_key(built):
     """The rule that refuses a push, asserted against what a build really writes.
 
-    The hub refuses a leaf with no `key` (issue #75): a node with nothing under
-    it and no key makes `views[].parts` an unsigned promise. That is a rule
-    about a document the exporter produces, so it is worth one assertion that
-    reads the file directly rather than through the validator — the validator
-    passing proves the rule was satisfied, and this says WHERE, so a future
-    exporter that starts nesting its leaves fails with something legible.
+    The hub refuses a leaf with no `key`: a node with nothing under it and no key
+    makes `views[].parts` an unsigned promise. The validator passing proves the
+    rule held; reading the file directly says WHERE, so an exporter that starts
+    nesting its leaves fails legibly.
     """
     out, outcome = built
     meta = _publish(out, outcome)

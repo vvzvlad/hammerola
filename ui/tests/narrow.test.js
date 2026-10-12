@@ -28,7 +28,7 @@
 // ui/tests/header.test.js's and ui/tests/tabs.test.js's.
 //
 // WHAT IS DELIBERATELY NOT HERE: the size of anything a finger has to hit. The
-// 24px tree row, the 24×24 eye and the 22×24 ghost are untouched by this work
+// 24px tree row, the 24×24 eye and the 22×24 ghost do not change with the width
 // and no case below asserts anything about them — this is about what fits on
 // the screen, not about what is comfortable to aim at.
 
@@ -447,20 +447,17 @@ describe('the toolbar on a narrow window', () => {
     //
     // MOVE IS NOT ON THIS LIST because it is not on this strip: it is a row of
     // each object's own menu, and the width takes it away there instead — the
-    // group below is where that half is asserted. The button it used to be was
-    // spelled `Move part`, and nothing on the page says those two words now.
+    // group below is where that half is asserted.
     for (const gone of ['Measure', 'Comment', 'Frame', 'Add primitive']) {
       expect(wide).toContain(gone)
       expect(narrow).not.toContain(gone)
     }
     expect(wide).not.toContain('Move part')
 
-    // AND THE THEME IS NO LONGER ONE OF THEM. It stood in this list while it
-    // was a canvas setting living in this strip, which left the one preference
-    // on the page unreachable at exactly the width where a reader is most
-    // likely to want the dark one. Issue #35 moved it to the header, beside the
-    // comments — so it now survives the narrow branch, and the block below
-    // says WHERE it survives.
+    // The theme is not one of them: it lives in the header, beside the
+    // comments, so it survives the narrow branch and the one preference on the
+    // page stays reachable at the width where a reader is most likely to want
+    // the dark one. The block below says WHERE it survives.
     expect(wide).toContain('Light')
     expect(narrow).toContain('Light')
   })
@@ -517,12 +514,11 @@ describe('the theme button', () => {
   }
 
   it('stands in the header beside the comments, at both widths', () => {
-    // ISSUE #35 IN ITS OWN WORDS: «кнопка — жить у комментариев». What makes
-    // that a test rather than a sentence is the PAIR of facts: the button is
-    // inside the header row, which is the one part of this page drawn at every
-    // width, and it is drawn after the comments control rather than somewhere
-    // else in the same row. Either one alone is satisfiable by an arrangement
-    // the issue was written against.
+    // The theme button lives with the comments. What makes that a test rather
+    // than a sentence is the PAIR of facts: the button is inside the header
+    // row, which is the one part of this page drawn at every width, and it is
+    // drawn after the comments control rather than somewhere else in the same
+    // row. Either one alone is satisfiable by the wrong arrangement.
     for (const over of [{}, { narrow: true }]) {
       const c = component(over)
       const said = texts(header(c))
@@ -532,8 +528,8 @@ describe('the theme button', () => {
         + 'beside the comments').toBeGreaterThan(said.indexOf('Comments'))
       // IN THE MARKUP IS NOT ON THE SCREEN. Every other control in this row is
       // taken away by `display:none` rather than by being left out, so a
-      // reading that only walks the tree would pass on the one regression this
-      // case exists for — the theme hidden at the width it was moved here for.
+      // reading that only walks the tree would pass with the theme hidden at
+      // the narrow width.
       expect(css(c.computed().themeBtnStyle).display).toBe('flex')
     }
   })
@@ -562,9 +558,8 @@ describe('the theme button', () => {
 // -- the popovers that are still reachable ------------------------------------
 
 describe('the popovers that become a sheet on a narrow page', () => {
-  // THIS LIST IS THE ASSERTION, which is why it is here and not in a sentence
-  // in the source: the comment that used to count these panels was wrong twice,
-  // because prose cannot be re-checked when a panel is added.
+  // THIS LIST IS THE ASSERTION: prose counting these panels cannot be
+  // re-checked when a panel is added.
   //
   // What earns a place: a popover placed from the CONTROL that opens it rather
   // than from the window, which at phone width therefore lands off the screen.

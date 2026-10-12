@@ -108,17 +108,11 @@ def test_the_note_ceiling_is_the_one_the_rest_of_the_system_holds_text_to():
     the situation `tests/client/test_limits.py` is in and answers the same way.
     The value is transcribed and the test is what makes it a shared rule.
 
-    THEY ARE ONE RULE BY DECISION AND NOT BY CONSEQUENCE, which is worth being
-    exact about because three of the four are enforced somewhere and this one is
-    not: nothing mechanically holds a NOTE under `render.MAX_TEXT`, since
-    metrics.json is served as a file and never passes through `_plain_text`. So
-    a note is bounded here and nowhere else, and this equality is a choice --
-    one ceiling on author-visible text rather than four that drift. The cost is
-    that re-reasoning about the heading ceiling silently moves the note's, and
-    the reason it is worth paying is that narrowing this one later would
-    retroactively refuse builds that used to pass, into revisions that are
-    immutable. Overturn it deliberately or not at all; the argument is written
-    out at MAX_NOTE_CHARS.
+    They are one rule by decision: nothing mechanically holds a NOTE under
+    `render.MAX_TEXT`, since metrics.json is served as a file and never passes
+    through `_plain_text`, so a note is bounded here and nowhere else. Narrowing
+    it later would refuse builds that pass today, into immutable revisions. The
+    argument is written out at MAX_NOTE_CHARS.
     """
     from src import render
     from src.cadbuild import hubspec
@@ -202,12 +196,12 @@ def test_a_note_cannot_split_a_line_of_the_build_log(separator):
 
 
 def test_the_ceiling_says_something_different_about_a_path_and_a_sentence():
-    """One advice sentence used to be written about a note and printed for both.
+    """The over-length advice differs for a note and for a source.
 
-    Both halves of it are false of a `source`: `provenance.report()` publishes
-    `notes` and nothing else, so a source never reaches metrics.json at all, and
-    "put the working in the measurement journal" is not something anybody can do
-    to a file path. What the two share is the count and the number.
+    A `source` never reaches metrics.json (`provenance.report()` publishes
+    `notes` and nothing else), and "put the working in the measurement journal"
+    is not something anybody can do to a file path. What the two share is the
+    count and the number.
     """
     over = "x" * (checklib.MAX_NOTE_CHARS + 1)
     note = checklib._text_problem(over, "note")
@@ -224,13 +218,11 @@ def test_the_ceiling_says_something_different_about_a_path_and_a_sentence():
 def test_the_note_ceiling_says_the_same_thing_to_every_kind():
     """The advice is chosen by FIELD, so it has to be true of all three kinds.
 
-    It ended "put the working in the measurement journal", which is advice for
-    `measured()` alone -- `derived()` is explicitly for a figure that follows
-    from other numbers, a published standard among them, and has no journal
-    behind it, so a derivation with an over-long note was sent to a file that
-    does not exist and need not. One sentence reaches all three because
-    `_text_problem` is handed the field and not the kind, which is what this
-    holds: whatever it says has to hold for whichever kind tripped it.
+    "Put the working in the measurement journal" would be advice for
+    `measured()` alone -- `derived()` is for a figure that follows from other
+    numbers, a published standard among them, and has no journal behind it.
+    `_text_problem` is handed the field and not the kind, so whatever it says
+    has to hold for whichever kind tripped it.
     """
     over = "x" * (checklib.MAX_NOTE_CHARS + 1)
     advice = checklib._TOO_LONG_ADVICE["note"]
@@ -259,12 +251,12 @@ def test_a_note_that_cannot_be_published_is_refused_where_it_is_written(
         note, expected):
     """A ValueError at the declaration, not a UnicodeEncodeError three files on.
 
-    Both of these used to be accepted by the constructor and then kill the
-    build: `print(f"estimate: ...")` and `json.dumps(..., ensure_ascii=False)`
-    each raise UnicodeEncodeError on a surrogate, and neither is a BuildError,
-    so the build ended in EXIT_CRASHED -- the hub reporting its own fault for a
-    string the model wrote. A ValueError raised while model.py is being imported
-    is wrapped by `geometry.load_model` into a BuildError, i.e. EXIT_BUILD_FAILED.
+    Accepted, a surrogate would make `print(f"estimate: ...")` and
+    `json.dumps(..., ensure_ascii=False)` raise UnicodeEncodeError, which is not
+    a BuildError, so the build would end in EXIT_CRASHED -- the hub reporting
+    its own fault for a string the model wrote. A ValueError raised while
+    model.py is being imported is wrapped by `geometry.load_model` into a
+    BuildError, i.e. EXIT_BUILD_FAILED.
     """
     with pytest.raises(ValueError) as exc:
         checklib.estimated(1.0, note)
@@ -285,12 +277,8 @@ def test_a_note_exactly_at_the_ceiling_is_accepted():
     refuses a note that is exactly at the ceiling, and the starter template
     every project copies runs close to it.
 
-    HOW CLOSE IS NOT WRITTEN HERE, and that is the correction rather than a
-    vagueness. The sentence used to give a figure -- "the template's longest
-    note is 130 characters" -- which was wrong when it was written (130 was the
-    fourth longest; the longest was 182) and had nothing to fail on either way.
     `tests/test_template.py::test_every_note_in_the_template_fits_under_the_ceiling`
-    measures it instead.
+    measures how close.
     """
     number = checklib.estimated(1.0, "x" * checklib.MAX_NOTE_CHARS)
     assert len(number.note) == checklib.MAX_NOTE_CHARS
@@ -299,12 +287,10 @@ def test_a_note_exactly_at_the_ceiling_is_accepted():
 def test_everything_a_model_calls_is_re_exported():
     """The shim carries every public name the implementation defines.
 
-    DERIVED, not listed. This used to name five functions by hand, and a
-    hand-written list of what to check is the defect it is meant to catch: add
-    a helper to the implementation, forget the shim, and `import checklib;
-    checklib.the_new_one` fails in a model repository while this test stays
-    green -- the list simply never mentioned it. `material_at` was added on
-    2026-08-30 and would have gone exactly that way.
+    Derived, not listed: a hand-written list would miss a helper added to the
+    implementation and forgotten in the shim, and `import checklib;
+    checklib.the_new_one` would fail in a model repository while this test
+    stayed green.
 
     Public means "defined here and not underscored". Imported modules are
     excluded, or the shim would be required to re-export `math`.
@@ -328,16 +314,11 @@ def test_the_shims_declared_list_matches_what_it_actually_exports():
     A name in one and not the other works through one door and not the other,
     which is worse than being absent from both.
 
-    BOTH DIRECTIONS, AND ONLY ONE OF THEM USED TO BE CHECKED. `bound` was built
-    by filtering `__all__` itself -- `{name for name in declared if
-    hasattr(...)}` -- so it could never hold a name `declared` did not, and the
-    equality was `declared >= bound` wearing a `==`. Delete `"Number",` from
-    __all__ and keep the assignment, and this passed: `checklib.Number` went on
-    working while `from checklib import *` stopped binding the class both halves
-    of the provenance rule test with `isinstance`. So `bound` is read off the
-    MODULE now, the same way `test_everything_a_model_calls_is_re_exported`
-    above reads the implementation, and the two directions have separate
-    messages because they want opposite fixes.
+    Both directions: `bound` is read off the MODULE rather than filtered from
+    `__all__`, the same way `test_everything_a_model_calls_is_re_exported`
+    above reads the implementation, so a name in either list and not the other
+    fails. The two directions have separate messages because they want
+    opposite fixes.
     """
     declared = set(top_level.__all__)
     bound = {
@@ -438,10 +419,10 @@ def test_something_that_cannot_be_iterated_at_all_is_named_not_crashed():
     """A ValueError naming the option, not a bare TypeError from the loop.
 
     The string above is the mistake somebody actually makes; a number or a None
-    is every other way of getting it wrong, and it used to come out of the walk
-    as `'int' object is not iterable` -- from a library, with nothing saying
-    which option it was about. `cadbuild.views.interference_pairs` answers the
-    same way about its own list, so the two halves of the contract read alike.
+    is every other way of getting it wrong, and unchecked it would come out of
+    the walk as `'int' object is not iterable`, naming no option.
+    `cadbuild.views.interference_pairs` answers the same way about its own list,
+    so the two halves of the contract read alike.
     """
     for bad in (5, None, object()):
         with pytest.raises(ValueError) as exc:

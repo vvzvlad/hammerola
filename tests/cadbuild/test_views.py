@@ -1,15 +1,12 @@
 """The view contract, checked before a single triangle is computed.
 
 Everything in here is a rule about the source, so it costs milliseconds and
-runs first. The alternative -- and this is what it used to be -- is finding out
-after the tessellation, which is the slow half of a build.
+runs before the tessellation, which is the slow half of a build.
 
-A VIEW CARRIES NO GEOMETRY any more: it is a list of references into the
-catalogue. So the tests that used to check a view's own `shape`, its own `name`
-and its own `color` are gone rather than ported -- those are catalogue rules now
-and live in test_naming.py. What is left here is what a view still decides: WHICH
-parts, WHERE they stand, how see-through they are, and how they are grouped for
-a reader.
+A view carries no geometry: it is a list of references into the catalogue
+(shape, name and colour rules live in test_naming.py). What a view decides is
+WHICH parts, WHERE they stand, how see-through they are, and how they are
+grouped for a reader.
 """
 
 import json
@@ -120,7 +117,7 @@ def test_a_view_name_the_hub_would_refuse_is_refused_here():
 
 
 def test_an_unknown_view_key_is_said_out_loud(capsys):
-    """A misspelt `nestedok` used to be an exemption that was not there."""
+    """A misspelt `nestedok` is an exemption that is not there, and says so."""
     prepare([one_view(nestedok=[("a", "b")])])
     printed = capsys.readouterr().out
     assert "'nestedok'" in printed
@@ -370,9 +367,8 @@ def test_a_view_with_nothing_opaque_is_warned_about(capsys):
 
 
 def test_an_unknown_reference_key_is_said_out_loud(capsys):
-    """A misspelt `alfa` leaves the part opaque and used to say nothing at all,
-    which is the same failure as a misspelt `nestedok`: the author reads a green
-    build as agreement."""
+    """A misspelt `alfa` leaves the part opaque, so it is said out loud: the
+    author would read a silent green build as agreement."""
     prepare([one_view(parts=[{"part": "body", "alfa": 0.5, "notes": "typo"}])])
     printed = capsys.readouterr().out
     assert "'alfa'" in printed and "'notes'" in printed
@@ -575,9 +571,9 @@ def test_an_interference_ok_that_cannot_be_iterated_is_named_not_crashed():
     """A BuildError, not a bare TypeError out of a loop.
 
     The string above is the mistake somebody actually makes; a number is every
-    other way of getting it wrong, and it used to come out of the walk below as
-    `'int' object is not iterable` -- from a file where every other refusal
-    names the option and the view.
+    other way of getting it wrong, and must not come out of the walk below as
+    `'int' object is not iterable` -- every other refusal names the option and
+    the view.
     """
     with pytest.raises(BuildError) as exc:
         interference_pairs(5, {"body"}, "assembled")
@@ -625,11 +621,9 @@ def test_interference_ok_naming_a_part_that_is_not_in_the_view_is_refused():
 def test_a_falsy_nested_ok_is_named_rather_than_read_as_nothing(declared):
     """"The key is not there" and "the key is there and unusable" are different.
 
-    `view.get("nested_ok") or ()` collapsed them: `nested_ok: 5` was named by
-    the refusal above while `nested_ok: ""` one character away became "declared
-    nothing" and passed in silence -- an exemption that is simply not there,
-    from a view that says it is, which is the failure the `nestedok` warning
-    beside it exists for.
+    `view.get("nested_ok") or ()` would collapse them: `nested_ok: ""` would
+    become "declared nothing" and pass in silence -- an exemption that is
+    simply not there, from a view that says it is.
     """
     message = refusal([one_view(), one_view(vid="print", parts=["body"],
                                             nested_ok=declared)])
@@ -791,8 +785,8 @@ def test_a_group_moves_nothing():
 # ...and the mesh leaves written into it
 # --------------------------------------------------------------------------
 #
-# The tessellator is handed the SOLID leaves only, so its flat list no longer
-# lines up with `nodes` -- and `tree` holds indices into `nodes`. Getting that
+# The tessellator is handed the SOLID leaves only, so its flat list does not
+# line up with `nodes` -- and `tree` holds indices into `nodes`. Getting that
 # wrong is the failure this whole section is about: it files parts under each
 # other's keys, silently, into an immutable build.
 # --------------------------------------------------------------------------
@@ -1039,8 +1033,7 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     makes this more than a shape assertion: a document it refuses is a 422 on a
     push whose geometry has already been computed.
 
-    Skips where the kernel is missing, like every other test that needs real
-    geometry; CI's image carries it (issue #27).
+    Skips where the kernel is missing; CI's image carries it.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real export needs the CAD kernel")
@@ -1073,7 +1066,7 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     # The hub reads the file off disk, so this is fed the path rather than a
     # document -- it is the real check, not a transcription of it. The
     # catalogue goes with it because the hub holds every `key` in the file
-    # against the one meta.json declares (issue #75), and THIS is the pairing
+    # against the one meta.json declares, and THIS is the pairing
     # that check exists for: what export_views stamped on the leaves has to be
     # what the same build published as its catalogue.
     render.check_view_file(out_dir / entries[0]["file"], entries[0]["id"], cat)
@@ -1114,8 +1107,7 @@ def test_a_real_export_with_a_mesh_in_it_is_a_document_the_hub_would_accept(
     proves the mesh never reaches the tessellator: handed a trimesh, that call
     would end the export rather than come back.
 
-    Skips where the kernel is missing, like every other test that needs real
-    geometry; CI's image carries it (issue #27).
+    Skips where the kernel is missing; CI's image carries it.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real export needs the CAD kernel")

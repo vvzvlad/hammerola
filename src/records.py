@@ -1,22 +1,16 @@
 """What the comment queue and the proposal store both do to a record.
 
-`src/proposals.py` arrived as a copy of `src/comments.py` and kept the copy's
-shape: one printable-line check, one printable-body check, one temp-file sweep
-and two constants, written out twice and held by nothing. The two STORES stay
-apart — a queue with attachments is not one document per project (SPEC 7A.3),
-and that split is a decision rather than an accident — but these four answers
-are about the BYTES on the way in and about the tree on the way out, not about
-either model, so nothing kept the two copies in step. Two copies of one rule are
-free to disagree in silence, which is the failure `hammerola/buildnames.py`
-exists to end; this is the same move on the same kind of rule.
+The two stores stay separate (a queue with attachments is not one document per
+project, SPEC 7A.3), but these checks are about the bytes on the way in and the
+tree on the way out, so they live in one place.
 
-THE REFUSAL CLASS IS A PARAMETER, not a shared one. `CommentError` and
+The refusal class is a parameter, not a shared one. `CommentError` and
 `ProposalError` are separate subclasses of `HttpRefusal` because the code that
 catches them cares WHICH door refused (`src/errors.py`), so each helper here
 raises the class its caller hands it and every status and message stays exactly
 where it was.
 
-THE CATEGORY SCAN IS NOT WRITTEN OUT HERE EITHER. `buildnames.first_nonprintable`
+The category scan is not written out here either: `buildnames.first_nonprintable`
 is the one copy of that rule, imported across the package boundary the way
 `src/render.py` imports it — the hub imports the client's module, never the
 other way round.
@@ -66,9 +60,8 @@ def check_body_printable(value: str, error: type[HttpRefusal]) -> None:
     Newline and tab survive, because a body is prose or a table and people press
     Enter. Everything else in Unicode category C goes — U+202E among them, which
     reverses the text around it in any terminal or editor the agent reads the
-    record in. The two survivors are taken OUT of the string rather than skipped
-    inside a loop of our own: the loop is `first_nonprintable`'s, and the whole
-    point is that there is one of it.
+    record in. The two survivors are removed from the string so the scan stays
+    `first_nonprintable`'s.
     """
     if first_nonprintable(
             value.replace("\n", "").replace("\t", "")) is not None:

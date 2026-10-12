@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """What changed between two revisions of ONE part, read off its two STEP files.
 
-Issue #10 asks the hub what is different between two revisions, and for a part
-the honest answer is a volume: what the newer revision cut away, what it added,
-and what the two have in common. That is a boolean operation on two solids, and
-this module is the whole of it -- there is no route here, no job, no
-subprocess, no tessellation and no CLI. Those are the caller's, and they are a
-later slice.
+For a part, the difference between two revisions is a volume: what the newer
+one cut away, what it added, and what they share. This module is that boolean
+operation only; routes, jobs and tessellation belong to the callers.
 
-THE SPLIT IN THIS FILE IS THE KERNEL'S. `measure` is the only half that needs
-OCCT: it reads the two files, fuses them and returns numbers. `check` decides
-whether those numbers may be believed and is arithmetic over the dict --
-nothing imported, nothing measured -- which is what lets the rule that gates
-every answer be tested in CI, where the kernel is deliberately absent (issue
-#27) and `measure` cannot run at all. `step_digest` is stdlib and answers the
+`measure` is the only half that needs OCCT. `check` decides whether the numbers
+may be believed and is plain arithmetic over the dict, so it can be tested in
+CI, where the kernel is absent. `step_digest` is stdlib and answers the
 one question that needs no kernel: whether there is anything to measure.
 
 READING IS `STEPControl_Reader` AND NOT cadquery's `importStep`. importStep
@@ -95,13 +89,10 @@ def measure(step_a, step_b, *, keep_shapes=False):
     `removed_mm3`, `added_mm3`, a `removed` and an `added` list of
     `{"volume_mm3", "area_mm2"}` per piece, and `bboxes_overlap`.
 
-    `keep_shapes` PUTS THE SOLID ITSELF ON EACH PIECE, as `shape`, and is off by
-    default so that what this returns stays two floats per piece and nothing
-    else. The default is what the text half reads (`buildproc.comparechild`
-    prints numbers into a job log), and it is a dict that survives `json.dumps`
-    and holds no kernel object alive after the call. The scene half needs the
-    geometry rather than its volume -- `cadbuild.comparescene` draws the pieces
-    -- and asks for it here rather than fusing the two solids a second time.
+    `keep_shapes` also puts the solid on each piece, as `shape`. Off by
+    default so the result is JSON-serialisable and holds no kernel object
+    (`buildproc.comparechild` prints it); `cadbuild.comparescene` asks for the
+    shapes to draw the pieces without fusing a second time.
     """
     from OCP.BOPAlgo import BOPAlgo_Builder
 
@@ -198,14 +189,10 @@ def check(measurement):
                 f"{added} mm3 added less {removed} mm3 removed is not "
                 f"{volume_b} mm3 less {volume_a} mm3")
 
-    # THE BOOLEAN'S SILENT LIE, and the reason this rule is not a precaution: a
-    # part moved 0.1 mm was measured to intersect its own copy in exactly
-    # nothing, with HasErrors() false and two valid-looking solids to show for
-    # it. The zone is not monotonic either -- 0.05 mm works, 0.1 mm does not,
-    # 0.5 mm works again -- so there is no offset at which the answer can be
-    # trusted just because the last one was. Two revisions of one part CAN
-    # genuinely share no volume, and refusing to measure that is still right:
-    # never report "no difference" where the kernel may simply have lied.
+    # The boolean can fail silently: a part moved 0.1 mm was measured to share
+    # nothing with its own copy, with HasErrors() false (0.05 and 0.5 mm worked,
+    # so no offset is safe). Two revisions that genuinely share no volume are
+    # refused too, rather than risk reporting a wrong difference.
     if common == 0 and measurement["bboxes_overlap"]:
         return ("the two revisions share no volume at all while their bounding "
                 "boxes overlap: either the part moved wholly clear of itself, "
@@ -218,19 +205,12 @@ def check(measurement):
 def drop_slivers(measurement):
     """The same measurement with the pieces too thin to be a change taken out.
 
-    AFTER `check` AND NEVER BEFORE, and the reason is the input rather than the
-    arithmetic: a measurement `measure` refused carries ONLY `reason` -- there
-    are no lists on it to filter -- so calling this first raises KeyError on
-    exactly the pairs the gate exists to catch, which is every pair whose STEP
-    would not read or did not hold one solid.
+    Call after `check`: a refused measurement carries only `reason`, and this
+    would raise KeyError on it.
 
-    The totals are left as `measure` counted them and only the reported lists
-    shrink. That is what keeps the two safe to combine in either order once the
-    gate has passed: the gate's identities are the sum of EVERY piece, so a
-    filtered `removed_mm3` would miss "the pieces of A add up to A" by exactly
-    the volume thrown away and break the identity it is checked by. What left
-    the lists is added up in `removed_slivers_mm3` and `added_slivers_mm3`, so
-    nothing disappears without saying so.
+    The totals are left as `measure` counted them and only the lists shrink,
+    so `check`'s identities still hold. What left the lists is summed in
+    `removed_slivers_mm3` and `added_slivers_mm3`.
     """
     filtered = dict(measurement)
     for side in ("removed", "added"):

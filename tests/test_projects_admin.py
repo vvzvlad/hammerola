@@ -240,7 +240,7 @@ def test_there_is_no_route_that_removes_one_build(hub):
 def test_a_path_this_hub_does_not_answer_is_a_404_even_with_a_body(hub):
     """The shared body refusal sits UNDER the route match, not above it.
 
-    Both checks are one-per-verb now (#105), and hoisting them above the loop
+    Both checks are one-per-verb, and hoisting them above the loop
     reads cleaner — which is the change this test exists to fail. Hoisted, a
     DELETE of a path with no route answers "this endpoint takes no body", which
     tells a caller the URL was understood when it was not."""
@@ -266,13 +266,12 @@ def test_a_project_with_no_builds_can_still_be_removed(hub):
 
 
 def test_removing_a_project_takes_its_comparisons_with_it(hub):
-    """The comparison cache is addressed by the project id (issue #10).
+    """The comparison cache is addressed by the project id.
 
-    It lives outside the project's own directory — `data/compare/<pid>/`, for
-    the rights and caching reasons SPEC 8A.3 gives — so `rmtree` on the project
-    does not reach it, and what would be left behind is the geometry of a
-    project that no longer exists, under a URL a re-pushed project of the same
-    id would inherit. It is a cache, so removing it costs one recomputation.
+    It lives outside the project's own directory (`data/compare/<pid>/`, for the
+    reasons SPEC 8A.3 gives), so `rmtree` on the project does not reach it, and the
+    geometry of a removed project would be inherited by a re-pushed project of the
+    same id. It is a cache, so removing it costs one recomputation.
     """
     first = _publish(hub)
     second = _publish(hub, body=good_build(marker="b"))

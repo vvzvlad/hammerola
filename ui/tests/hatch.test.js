@@ -17,8 +17,8 @@
 //     program between caps that wanted different ones;
 //   * the per-part fields collapsing — every part onto one slope, the angle
 //     drifting between revisions — none of which draws a word from any console;
-//   * the pitch starting to follow the part's SIZE again, which is a decision
-//     the owner has already reversed once and which no console would mention;
+//   * the pitch starting to follow the part's SIZE, which no console would
+//     mention;
 //   * the period drifting back into SCREEN pixels — the pattern painted on the
 //     glass rather than on the part, so it slides across the cut face as the
 //     model turns while every still frame looks perfect;
@@ -28,7 +28,7 @@
 //     rotation crosses;
 //   * the ink losing the conversion that keeps it in framebuffer pixels at
 //     whatever level, which doubles or halves the hairline at a level boundary;
-//   * the pitch losing the display's density (issue #96) — eight FRAMEBUFFER
+//   * the pitch losing the display's density — eight FRAMEBUFFER
 //     pixels is four CSS ones on a retina screen, and lines four CSS pixels
 //     apart read as scanner grain rather than as a hatch — or the LINE picking
 //     that density up along with the pitch, which widens the hairline into a
@@ -120,9 +120,9 @@ const repoFile = (path) => {
   return sources.get(path)
 }
 
-/** three.js's own source, which is NO LONGER inside the viewer bundle: the fork
- *  in `viewer/` builds with `external: three`, so the library and the page share
- *  one instance loaded from here. `three.module.js` is the half that carries the
+/** three.js's own source, outside the viewer bundle: the fork in `viewer/`
+ *  builds with `external: three`, so the library and the page share one
+ *  instance loaded from here. `three.module.js` is the half that carries the
  *  renderer and the shader chunks — `meshphysical_frag` among them — and it
  *  imports `three.core.js` for the math and the scene graph. The bundle keeps
  *  only the library's own code and the `three/examples/jsm` addons it uses. */
@@ -333,16 +333,15 @@ describe('one pitch for every cut face, anchored to the part', () => {
   })
 
   it('counts the period in the PLANE OF THE CUT, in power-of-two levels', () => {
-    // Where the pitch went instead: into the GLSL, which no runner here can
-    // execute. What IS assertable is the frame the period is counted in, and
-    // that is the whole of the defect this replaced. `hatchUv` is a distance in
-    // the cap quad's uv, which is the section plane in world proportions, so
-    // dividing it by a length in THOSE units anchors the stripes to the part.
-    // Dividing it by its own screen gradient instead — a period of so many
-    // FRAMEBUFFER pixels, which is what this used to do — paints the pattern on
-    // the glass: the foreshortening changes as the model turns, the same point
-    // of the part lands in a different stripe, and the field creeps. Every
-    // still frame of that looks perfect, which is why it is asserted here.
+    // Where the pitch lives: in the GLSL, which no runner here can execute.
+    // What IS assertable is the frame the period is counted in. `hatchUv` is a
+    // distance in the cap quad's uv, which is the section plane in world
+    // proportions, so dividing it by a length in THOSE units anchors the
+    // stripes to the part. Dividing it by its own screen gradient instead — a
+    // period of so many FRAMEBUFFER pixels — paints the pattern on the glass:
+    // the foreshortening changes as the model turns, the same point of the
+    // part lands in a different stripe, and the field creeps. Every still frame
+    // of that looks perfect, which is why it is asserted here.
     //
     // THE LENGTH AND NOT `fwidth`, which is why the last assertion is here: the
     // two read alike and only one of them is a gradient. `fwidth` is
@@ -354,9 +353,9 @@ describe('one pitch for every cut face, anchored to the part', () => {
     hatchShader(shader)
     const source = shader.fragmentShader
     // uv per framebuffer pixel across the stripes, floored against a zero
-    // gradient. The floor used to protect one direct division; it now also
-    // stands between `log2(0)`, which is minus infinity, and `hatchStep`, which
-    // would come out zero and take every distance below down with it.
+    // gradient: the floor stands between `log2(0)`, which is minus infinity,
+    // and `hatchStep`, which would come out zero and take every distance below
+    // down with it.
     expect(source)
       .toMatch(/float hatchGrad = max\(\s*length\(\s*vec2\(\s*dFdx\(\s*hatchUv\s*\)\s*,\s*dFdy\(\s*hatchUv\s*\)\s*\)\s*\)\s*,\s*1e-8\s*\)/)
     // THE LADDER: the smallest power of two at least the target spacing
@@ -386,15 +385,13 @@ describe('one pitch for every cut face, anchored to the part', () => {
     // leaves every even one of them exactly where it was: a level change halves
     // or doubles the line count and shifts nothing.
     //
-    // WHY IT IS NOT OPTIONAL, and the reason this test exists at all: the level
-    // is picked off `hatchGrad`, which is the face's own foreshortening, so
-    // tilting a face from head-on to 60 degrees doubles the gradient across the
-    // stripes and crosses one level by itself. Ordinary rotation hits boundaries
-    // constantly. Under the convention this replaced — line centres on the
-    // HALF-integers and `hatchPhase` added as a fraction of the period,
-    // `hatchUv / hatchStep + hatchPhase` — every one of those crossings slid the
-    // whole field by up to half a period, which is the jumping the levels were
-    // introduced to stop rather than a smaller helping of it.
+    // WHY IT IS NOT OPTIONAL: the level is picked off `hatchGrad`, which is the
+    // face's own foreshortening, so tilting a face from head-on to 60 degrees
+    // doubles the gradient across the stripes and crosses one level by itself.
+    // Ordinary rotation hits boundaries constantly. With line centres on the
+    // HALF-integers and `hatchPhase` added as a fraction of the period
+    // (`hatchUv / hatchStep + hatchPhase`), every crossing would slide the
+    // whole field by up to half a period.
     const shader = { fragmentShader: hatchMarker }
     hatchShader(shader)
     const source = shader.fragmentShader
@@ -479,8 +476,8 @@ describe('one pitch for every cut face, anchored to the part', () => {
   }
 
   it('targets PITCH_PX CSS pixels between lines on every display', () => {
-    // ISSUE #96, and the reason the target is a uniform at all. The canvas is
-    // drawn at the renderer's pixel ratio, so the pixels the
+    // WHY THE TARGET IS A UNIFORM AT ALL. The canvas is drawn at the renderer's
+    // pixel ratio, so the pixels the
     // shader's derivatives count are FRAMEBUFFER ones: a spacing pinned at 8 of
     // those is four CSS pixels on a retina screen, and four CSS pixels between
     // lines three quarters of one wide is scanner grain rather than hatching —
@@ -510,18 +507,14 @@ describe('one pitch for every cut face, anchored to the part', () => {
   })
 
   it('draws the line LINE_PX wide and softens it over about one pixel', () => {
-    // FRAMEBUFFER PIXELS, and pointedly not scaled with the spacing above — the
-    // half of issue #96 the fix must not overshoot, and now also what has to
-    // survive a LEVEL change: `inkOf` reads these as pixel counts precisely
+    // FRAMEBUFFER PIXELS, and pointedly not scaled with the spacing above; they
+    // also have to survive a LEVEL change: `inkOf` reads these as pixel counts
     // because the source converts them through the period's own pixel size, so
-    // the same two numbers hold at every level. These two used to be written as
-    // fractions of a period that was itself a constant; a period that grows with
-    // the density — or doubles at a zoom boundary — would have carried them
-    // along, widening the hairline from 1.5 framebuffer pixels to 3. A band
-    // instead of a grain is not a fix. The band matters as much as the width:
-    // the two-pixel `fwidth` band this replaced is wider than the line itself,
-    // and a line with no inked middle is an even grey wash, which reads as a
-    // colour decision rather than as a bug.
+    // the same two numbers hold at every level. Carried along with a period
+    // that grows with the density — or doubles at a zoom boundary — the
+    // hairline would widen from 1.5 framebuffer pixels to 3. The band matters
+    // as much as the width: a band wider than the line leaves no inked middle,
+    // an even grey wash that reads as a colour decision rather than as a bug.
     for (const ratio of [1, 2, 3]) {
       const ink = inkAt(ratio)
       expect(ink.line).toBeCloseTo(HATCH_LINE_PX, 12)
@@ -721,18 +714,16 @@ describe('hatchShader', () => {
   it('splices at a chunk the VENDORED three.js still has', () => {
     // THE UPGRADE GUARD, and the reason this test reads most of a megabyte. This
     // is string surgery on three.js's shader chunks, so it is pinned to the
-    // THREE the page actually loads — static/_v/three.module.js (r184 as this
-    // was written), which since `external: three` is a file of its own beside
-    // the viewer bundle rather than a passenger inside it — and not to a release
-    // of the viewer. A rename there costs the page its hatch and NOTHING ELSE:
-    // no error, no warning, a section that is simply a flat fill again. This is
-    // the only place that can notice.
+    // THREE the page actually loads — static/_v/three.module.js, a file of its
+    // own beside the viewer bundle — and not to a release of the viewer. A
+    // rename there costs the page its hatch and NOTHING ELSE: no error, no
+    // warning, a section that is simply a flat fill again. This is the only
+    // place that can notice.
     //
     // `meshphysical_frag` and not the file: three.module.js carries nine copies
     // of this chunk name and only ONE of them is in the shader a
     // `MeshStandardMaterial` compiles, which is what the library's cap is. See
-    // `meshphysicalFragment` for what that costs and why the file-wide search it
-    // replaced could not fail.
+    // `meshphysicalFragment` for why a file-wide search could not fail.
     const shader = meshphysicalFragment(repoFile(THREE_MODULE))
     const at = shader.indexOf(hatchMarker)
     expect(at).toBeGreaterThan(-1)

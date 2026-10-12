@@ -13,7 +13,7 @@ are needed.
 
 Everything but the one refusal needs the CAD kernel and skips without it, the
 same split `test_checklib_printability.py` makes. CI's test container has the
-kernel (issue #27), so it all runs there.
+kernel, so it all runs there.
 
 The known case throughout is a pair of spheres: a model of radius 10 and a scan
 of radius 10.5 is +0.5 mm everywhere by construction, with the tessellation's own
@@ -104,7 +104,7 @@ def test_the_distance_is_the_one_brute_force_measures():
 
     The shape is chosen to be the case an approximation fails on: a 1 mm wall
     with a hole through it, so most of the volume is within a millimetre of two
-    surfaces at once. Measured 2026-09-26 the two agree EXACTLY -- the assertion
+    surfaces at once. Measured, the two agree EXACTLY -- the assertion
     leaves a bit of room because the two compute the length of the same vector by
     different routes, not because the facet chosen can differ.
 
@@ -164,7 +164,7 @@ def test_the_answer_does_not_depend_on_what_meshed_the_shape_before():
     ordinary things reach it: a `@cache`-decorated builder handing the same
     object to a second call, and the STL export the build runs before `checks()`.
 
-    Measured 2026-09-26, the pre-meshed sphere read `maximum` 0.51998 against the
+    Measured, the pre-meshed sphere read `maximum` 0.51998 against the
     0.51166 a fresh one reads -- a tenth of the band being measured, off a model
     and a scan that had not moved.
     """
@@ -317,7 +317,7 @@ def test_the_figures_follow_the_area_and_not_how_many_points_fell_on_it():
     A fraction counted per vertex would move a
     long way -- most of the scan's points are now in the middle -- and one
     weighted by area does not move at all, which is what `_weighted_median` and
-    `within` claim about themselves. Measured 2026-09-26, a per-vertex `within`
+    `within` claim about themselves. Measured, a per-vertex `within`
     reads 0.42 on the first and 0.91 on the second, so both assertions below turn
     red if the weighting is ever dropped.
     """

@@ -1,47 +1,21 @@
 """`hammerola diff` — what changed between two revisions, in geometry and in code.
 
-TWO QUESTIONS, AND THEY ARE NOT THE SAME QUESTION. "The volume dropped 3.5% and
-the bbox is 2 mm shorter" is what a person wants to know about a part; "line 61
-changed from 30 to 28" is why. Either one alone leaves the other to be guessed
-at, and guessing wrong is how an afternoon goes, so this prints both — the
-measurements first, because it is the shorter answer and the one being asked, and
-the source diff under it as the explanation.
+Prints the measurements first (what moved) and the source diff under them
+(why).
 
-NEITHER HALF IS COMPUTED HERE. The measurements come out of `metrics.json`, which
-the build wrote and the hub serves from the build directory, and the comparison
-is `hammerola/metricsdiff.metrics_diff` — the same function the build itself
-prints against `dev` at the end of every run that has a baseline to compare
-with (`src/cadbuild/metrics.report_metrics`). It is imported rather than
-reimplemented, and that is the whole point of it having been moved out of
-`src/cadbuild/metrics.py`: two readers of one file, one implementation, nothing
-to drift. (`cad_publish/hubspec.py` is what a second copy looks like a year
-later, and it is why publication broke.)
+The measurements come from each build's public `metrics.json`, compared by
+`hammerola/metricsdiff.metrics_diff`, the same function the build uses against
+`dev` (`src/cadbuild/metrics.report_metrics`). The source diff is `difflib` over
+the two stored archives from `/api/v1/sources/<revision>` (SPEC 7.8), behind
+the token.
 
-The source diff is `difflib` over the two stored archives, which is possible at
-all only because the hub keeps a revision's code now (SPEC 7.8). Before that this
-command could have answered the first question and not the second.
+`--material` adds a section the hub computes: fusing the two solids per part in
+the CAD kernel to say how much material was added and removed. It is a job,
+costs what a build costs, and its log is printed under the heading.
 
-THE TWO HALVES COME FROM DIFFERENT SIDES OF THE TOKEN, and that shows up here as
-two kinds of request: `metrics.json` is fetched from the public build directory,
-the archives from `/api/v1/sources/<revision>` under the publishing secret. It is
-the same split `artifacts` and `source` are two verbs over.
-
-`--material` ADDS A THIRD SECTION AND IS THE ONE THING HERE THE HUB COMPUTES.
-`metrics.json` says a part's volume changed; it cannot say whether material was
-added, removed, or both at once in different places. Answering that means fusing
-the two solids, which needs the CAD kernel — so the hub is asked, the answer is a
-job, and its log is printed under the heading. It is off by default because it
-costs what a build costs, and it cannot be combined with `--json`.
-
-`--json` ANSWERS A THIRD QUESTION and prints nothing else: which of each PART's
-physical numbers moved, as one document a script can read. It is not the two
-halves above in another format — there is no source diff in it at all — and it is
-a flag rather than a verb of its own because it asks about the very pair of
-revisions this command already takes. Read the question narrowly: the walk is per
-part, so the `assembly` block the printed output carries — the product's size,
-the plate it needs, its total volume — is NOT in the document, and an empty
-`moved` says "no part came out another shape" rather than "the build is the
-same".
+`--json` prints only which PART physical numbers moved, as one document: no
+source diff, and no `assembly` block, so an empty `moved` means "no part changed
+shape", not "the build is the same".
 """
 
 import difflib
@@ -57,24 +31,21 @@ from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,
 
 def run(args) -> int:
     """Print what moved between two revisions. -> exit code."""
-    # A project is REQUIRED here, unlike in `source`: metrics.json lives in the
-    # build directory, which is addressed by `<pid>/<revision>`, so there is no
-    # way to ask for it without knowing whose build it is.
+    # A project is required, unlike in `source`: metrics.json is addressed by
+    # `<pid>/<revision>`.
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
     hub = hub_for(root)
 
     old = resolve_revision(hub, root, args.old)
     new = resolve_revision(hub, root, args.new)
-    # BEFORE the two branches below and before every other line this prints:
-    # `--json` means the whole of the output is one document, so a header, a
-    # source diff or the "same revision" sentence would each make it
-    # unparseable. Everything the two revisions resolved to is already known.
+    # Before anything is printed: with `--json` the whole output is one
+    # document.
     if args.json:
         return _print_json(hub, pid, old, new)
     if old == new:
-        # Not an error: `hammerola diff <rev> latest` is exactly how somebody
-        # asks "is latest still that one", and the answer "yes" is useful.
+        # Not an error: `hammerola diff <rev> latest` asks "is latest still
+        # that one".
         print(f"{old} and {new} are the same revision — nothing to compare.")
         return 0
 
@@ -84,9 +55,7 @@ def run(args) -> int:
     before, after = _metrics(hub, pid, old), _metrics(hub, pid, new)
     print()
     _print_geometry(before, after)
-    # AFTER THE NUMBERS THE BUILD ALREADY WROTE DOWN and before the code, which
-    # is the order of the whole command: what moved, how much material moved
-    # with it, and then why.
+    # Order: what moved, how much material moved, then why (the code).
     if args.material:
         print()
         _print_material(hub, pid, old, new)
@@ -98,9 +67,8 @@ def run(args) -> int:
 def _metrics(hub, pid: str, revision: str):
     """One revision's metrics.json, or None when that build shipped none.
 
-    None rather than a refusal: a build published before the model wrote metrics
-    — or one whose gate ran without them — is an ordinary thing to run into, and
-    it costs the geometry half of the answer rather than the whole command.
+    None rather than a refusal: older builds may have none, which costs only
+    the geometry section.
     """
     body = hub.build_file(pid, revision, METRICS_NAME)
     if body is None:
@@ -115,21 +83,8 @@ def _metrics(hub, pid: str, revision: str):
 def _print_json(hub, pid: str, old: str, new: str) -> int:
     """`{"moved": [...], "compared": n}` -- a part's physical numbers, for a script.
 
-    THE PHYSICAL FIELDS AND NOT EVERY FIELD, because the question a script asks
-    here is "did a part come out another shape": a face count that moved because
-    a fillet is drawn out of two surfaces instead of one is not that, and a
-    triangle count moves on a tolerance nobody touched.
-
-    PER PART, AND THE ASSEMBLY BLOCK IS NOT IN IT. `moved_fields` walks `parts`
-    and only `parts`, so the three numbers about the whole build -- its bounding
-    box, the plate it needs, its total volume -- never appear here however far
-    they moved. A reader of this document has been told that no PART changed
-    shape, and nothing wider than that.
-
-    A revision that published no metrics.json compares as an EMPTY document
-    rather than stopping the command -- `compared: 0` is the honest answer to
-    "how many numbers were the same", and it is the reason that number is in
-    here beside the list.
+    Only PHYSICAL_FIELDS, per part; the assembly block is not included. A
+    revision without metrics.json compares as an empty document (`compared: 0`).
     """
     before = _metrics(hub, pid, old) or {}
     after = _metrics(hub, pid, new) or {}
@@ -140,16 +95,8 @@ def _print_json(hub, pid: str, old: str, new: str) -> int:
 def _print_material(hub, pid: str, old: str, new: str) -> None:
     """How much material each part gained and lost, measured BY THE HUB.
 
-    THE ONLY HALF OF THIS COMMAND THAT IS NOT ARITHMETIC OVER FILES. Everything
-    else here reads a document the build already wrote; this fuses two solids
-    per part in the CAD kernel, which lives on the hub and nowhere near this
-    machine. So it is a job like a build is a job: submit, wait, and the report
-    is the job's LOG — there is nothing else to fetch, and printing it indented
-    under the heading is the whole of the presentation.
-
-    THE WAIT'S NOTICES GO TO STDERR, as they do in `build`: a line about the
-    connection to the hub is not part of the report and must not land in the
-    middle of it.
+    A job like a build (the CAD kernel runs on the hub): submit, wait, print
+    its log indented. Connection notices go to stderr, as in `build`.
     """
     print("material:")
     try:
@@ -164,20 +111,13 @@ def _print_material(hub, pid: str, old: str, new: str) -> None:
                                          flush=True))
         log = hub.job_log(job_id)
     except HubError as exc:
-        # THIS SECTION AND NOT THE COMMAND, on the same principle as `_metrics`
-        # one heading up. The code diff below is fetched over requests of its
-        # own and does not depend on the hub being able to run a comparison, so
-        # a connection that drops on the last poll of a long wait — or a wait
-        # that runs out — must not also swallow the answer to "why did it
-        # change", which by then is a single request away.
+        # Fails this section only: the code diff below does not depend on it.
         print(f"  the hub could not be asked for it: {exc}")
         return
     for line in log.splitlines():
         print(f"  {line}")
     if record.get("state") != "done":
-        # The log is printed above whatever happened, because a comparison that
-        # died halfway has already said something useful about the parts it did
-        # reach. This is the sentence that says the rest is missing.
+        # The log is printed regardless: a partial comparison is still useful.
         print(f"  the hub could not finish the comparison: "
               f"{record.get('error') or 'no reason given'}")
 
@@ -192,27 +132,16 @@ def _print_geometry(before, after) -> None:
         return
     lines = metrics_diff(before, after)
     if not lines:
-        # HOW MANY, because "the same" alone is the same sentence two documents
-        # with no field in common produce -- a revision published before a field
-        # existed against one published after compares nothing and reports
-        # nothing moved. The count is what tells those two apart.
-        #
-        # `part numbers`, not `numbers`: `moved_fields` walks `parts` only,
-        # while the lines above it also compare the assembly's own fields, the
-        # interference and clearance records and the check counts. Naming what
-        # the number counts is cheaper than a second walk to make it total, and
-        # the question it settles -- was there anything to compare at all -- is
-        # answered either way.
+        # The count tells "the same" apart from "nothing comparable". It counts
+        # part fields only (`moved_fields` walks `parts`), hence "part numbers".
         compared = moved_fields(before, after)["compared"]
         print(f"  every measured number is the same "
               f"({compared} part numbers compared).")
     for line in lines:
         print(f"  {line}")
 
-    # Last, and after the numbers it is a conclusion about. It reads the hash of
-    # the root *.py with comments stripped, so a rewritten comment does not
-    # raise it — when it fires, the same model source built into a different
-    # solid and the cause is outside the source.
+    # Same comment-stripped source, different solid: the cause is outside the
+    # source.
     shifted = unchanged_code_moved_geometry(before, after)
     if shifted:
         print(f"  ! the geometry moved while the model's code did not "
@@ -237,10 +166,8 @@ def _print_code(hub, old: str, new: str) -> None:
             for line in block:
                 print(f"  {line}")
     if not printed:
-        # Impossible for two DIFFERENT revisions — the id is the digest of the
-        # sources (SPEC 7.7), so distinct ids mean distinct trees — which is why
-        # it is said out loud rather than passed over: seeing it means one of
-        # those two things is not what it claims to be.
+        # Impossible for two different revisions: the id is the digest of the
+        # sources (SPEC 7.7), so this means something served the wrong code.
         print("  no difference, which two different revisions cannot have: "
               "their ids are the")
         print("  digests of these trees. Something served one revision's code "
@@ -258,9 +185,7 @@ def _one_file(name: str, old_body, new_body, old: str, new: str) -> list:
 
     before, after = _text(old_body), _text(new_body)
     if before is None or after is None:
-        # A .step or a .png in `ref/`. There is nothing useful to print about
-        # the bytes, and printing them would fill a terminal with a file nobody
-        # can read anyway.
+        # E.g. a .step or a .png in `ref/`.
         return [f"~ {name}  (changed, not text: "
                 f"{len(old_body)} -> {len(new_body)} bytes)"]
 
@@ -269,9 +194,7 @@ def _one_file(name: str, old_body, new_body, old: str, new: str) -> list:
         fromfile=f"{old[:SHORT_ID_CHARS]}/{name}",
         tofile=f"{new[:SHORT_ID_CHARS]}/{name}",
         lineterm=""))
-    # Two files can differ in bytes and not in decoded lines — a trailing
-    # newline, a CRLF rewrite. Saying so is more useful than printing nothing
-    # about a file the digest says changed.
+    # Bytes can differ without decoded lines differing (line endings).
     return lines or [f"~ {name}  (changed in bytes only: line endings or a "
                      f"trailing newline)"]
 
@@ -279,13 +202,8 @@ def _one_file(name: str, old_body, new_body, old: str, new: str) -> list:
 def _text(body: bytes):
     """The file as lines, or None when it is not text.
 
-    Two rules, and the second is the one that is easy to leave out. Strict utf-8
-    rather than `errors="replace"`, because a replaced byte is a change the diff
-    would then either show as noise or hide. And a NUL anywhere means binary
-    whatever the decoder says — this is git's own heuristic, and it is here for a
-    concrete reason: plenty of binary formats are accidentally valid UTF-8 (every
-    byte under 0x80 is), so decoding alone would happily print a mesh into
-    somebody's terminal, control characters and all.
+    Strict utf-8, so a replaced byte cannot hide a change. A NUL anywhere means
+    binary (git's heuristic): many binary files are accidentally valid UTF-8.
     """
     if b"\0" in body:
         return None

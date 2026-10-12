@@ -1,6 +1,6 @@
 """Fixtures for the client suite.
 
-THREE THINGS HAVE TO BE TAKEN AWAY FROM EVERY TEST HERE, and all of them would
+Three things are taken away from every test here, and all of them would
 otherwise make a run depend on the machine it is on.
 
 The first is `EDIT_TOKEN`. `tests/conftest.py` puts one in the environment at
@@ -16,15 +16,11 @@ configured and fail on anybody else's machine — or, far worse, push at a real
 hub. `HAMMEROLA_ENV_FILE` points every test at a path that does not exist, so
 the only settings in play are the ones a test sets for itself.
 
-The third is HOME ITSELF, and it is here because the home directory stopped
-being somewhere this tool only READS from. `skill update` writes over
+The third is HOME itself. `skill update` writes over
 `~/.claude/skills/hammerola/SKILL.md` without asking — that is the verb — and
 on the machine running this suite that path is very likely the developer's own
-working copy of the instructions. Every test today passes `--path` into
-`tmp_path`, but that is discipline and not a mechanism: one forgotten flag in
-one future test and the suite silently replaces the file its author is working
-from. So the home the client can reach is a directory under `tmp_path`, which
-turns that mistake into a test writing somewhere harmless.
+working copy. So the home the client can reach is a directory under
+`tmp_path`, and a test that forgets `--path` writes somewhere harmless.
 
 The helpers live in `modeldir.py`, not here: see its docstring.
 """
@@ -59,14 +55,11 @@ def configured(monkeypatch, hub):
     harness's own hub and `harness.TOKEN`, so a test that passes here would pass
     on any machine.
 
-    REQUESTED AND NOT AUTOUSE, which is the whole reason it can live in this
-    conftest at all. Autouse would start a hub for every test in this directory
-    — several files here need none — and, worse, it would configure the files
+    Requested and not autouse: autouse would start a hub for every test in this
+    directory — several files here need none — and would configure the files
     whose SUBJECT is a machine that is not configured yet (`test_config.py`,
-    `test_setup.py`): those would go on passing while asserting nothing they
-    were written to assert. A file asks for it with one line beside its imports,
-    `pytestmark = pytest.mark.usefixtures("configured")`, which is what replaced
-    the six byte-identical copies this used to be (issue #99).
+    `test_setup.py`). A file asks for it with one line beside its imports,
+    `pytestmark = pytest.mark.usefixtures("configured")`.
 
     `test_skill.py` keeps a `configured` of its own and means something else by
     it: a hub WITHOUT a token, because every test in that file states by passing

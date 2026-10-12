@@ -1,18 +1,6 @@
-# The browser bundle is compiled HERE, in a stage that exists only during the
-# build, so that node never reaches the runtime image — the service is Python,
-# and a node toolchain in the published image would be several hundred megabytes
-# of attack surface serving one static file.
-#
-# The stage is also the reason the bundle is not committed to the repository. A
-# committed artefact has nothing forcing it to be rebuilt when the JSX beside it
-# changes and nothing that reports it was not, so it drifts from its source in
-# silence. Built here, the bundle in an image is by construction the bundle of
-# that image's commit.
-#
-# The split COPY is the layer cache and not tidiness: package.json and the
-# lockfile change rarely, the sources change constantly, and `npm ci` costs tens
-# of seconds. Copying `ui/` wholesale before the install would invalidate that
-# layer on every edit to a component.
+# The browser bundle is built in a build-only stage, so node never reaches the runtime
+# image, and the bundle in an image is always the bundle of that image's commit (it is not
+# committed to the repository). The split COPY keeps `npm ci` cached across source edits.
 FROM node:22-bookworm-slim AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
@@ -24,69 +12,29 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Unbuffered stdout/stderr. Docker gives a container a pipe rather than a terminal, and
-# Python block-buffers a pipe — so anything written shortly before the process dies can be
-# lost instead of reaching `docker logs`. That matters most for the one message an operator
-# needs: a startup guard that reports a missing variable and exits. `os._exit()` and a
-# signal-killed process both skip the flush entirely, so the container exits non-zero with
-# no explanation at all. This has cost real debugging time twice; the cost of the setting
-# is a syscall per write.
+# Unbuffered stdout/stderr: Docker gives the container a pipe, which Python block-buffers,
+# so a startup guard's last message before exiting could otherwise never reach `docker logs`.
 ENV PYTHONUNBUFFERED=1
 
 # curl is required by the compose healthcheck; add other system packages here (e.g. cups-client, libmagic).
 # gosu is used by the entrypoint to drop privileges from root to the app user.
 #
-# The seven X/GL/expat libraries after them are for the CAD kernel. `cadquery-ocp` is a native
-# OpenCASCADE binding, and without the three it actually needs (libGL, libX11, libexpat — the
-# derivation is below) `import cadquery` fails OUTRIGHT — the classic symptom is
-# `ImportError: libGL.so.1: cannot open shared object file`, raised at import time, long before
-# any geometry is attempted. Nothing here draws anything on screen; OpenCASCADE simply links its
-# visualisation toolkits unconditionally.
-#
-# THE LIST DOES NOT COME FROM THE MANYLINUX POLICY, and the derivation that suggests itself is
-# false. OCP ships as a manylinux wheel, so it is tempting to argue that `auditwheel` vendored
-# every shared library it links against into `cadquery_ocp.libs/` EXCEPT the ones on the policy allowlist,
-# and to read the required system packages straight off that allowlist. This very wheel refutes
-# it: `libexpat.so.1` is not on the allowlist and was not vendored either — the vendored
-# `libfontconfig-ebabad56.so.1.12.0` still carries an unpatched `DT_NEEDED libexpat.so.1`, so the
-# system is expected to supply it. Everything below therefore comes from READING the wheels' ELF
-# headers, not from what the packaging policy implies.
-#
-# What that sweep over the 70 ELF objects in the OCP wheel shows is genuinely needed from outside:
+# The X/GL/expat libraries are for the CAD kernel: `cadquery-ocp` links OpenCASCADE's
+# visualisation toolkits unconditionally, so without them `import cadquery` fails with e.g.
+# `ImportError: libGL.so.1`. Read off the DT_NEEDED entries of the OCP wheel's ELF objects
+# (not the manylinux allowlist, which does not cover libexpat), the required ones are:
 #     libGL.so.1      -> libgl1        (libTKOpenGl)
 #     libX11.so.6     -> libx11-6      (libTKOpenGl, libTKService)
 #     libexpat.so.1   -> libexpat1     (the wheel's own vendored fontconfig, which libTKService
 #                                       depends on)
-#
-# `libexpat1` is the row to be careful with, and it is listed explicitly for a reason. Debian
-# trixie's python:3.11-slim carries NO libexpat at all, and today the package still arrives —
-# purely transitively — as libgl1 -> libglx-mesa0 -> libexpat1. That is somebody else's dependency
-# graph holding up our import: after `import cadquery` inside the built image,
-# `/usr/lib/x86_64-linux-gnu/libexpat.so.1` is really mapped into the process. Naming it here is
-# what keeps the next attempt to replace `libgl1` with something lighter from silently breaking
-# `import cadquery` — any such swap must keep libexpat1.
-#
-# The remaining four — libxext6, libxrender1, libsm6, libice6 — are kept WITH MARGIN, not derived:
-# `libXext.so.6`, `libXrender.so.1`, `libSM.so.6` and `libICE.so.6` appear in the DT_NEEDED of
-# nothing at all, neither in the OCP wheel (70 objects) nor in the VTK wheel (370). They cost a
-# few hundred kilobytes, they are what every OpenCASCADE recipe installs, and they insure against
-# a future release linking its X stack differently. Do not repeat that they are required: as of
-# these pinned versions they are not.
-#
-# DELIBERATELY NOT INSTALLED: `libglu1-mesa` (libGLU.so.1) — the one library commonly named in
-# this recipe that really is unnecessary here. `libGLU.so.1` occurs in no DT_NEEDED of any of the
-# 70 ELF objects in the OCP wheel; that is a result of reading them, not an inference from the
-# packaging policy the libexpat case just disproved. It is still a claim about somebody else's
-# wheel, so it is also checked empirically: ci/smoke.py imports cadquery INSIDE the built image
-# before anything is pushed, so a wrong reading turns the gate red and no broken image reaches the
-# registry. If that ever happens with a `libGLU.so.1` message, add `libglu1-mesa` back to the list
-# and delete this paragraph.
-#
-# ONE `RUN`, with `--no-install-recommends` and the apt lists removed in the SAME layer. Removing
-# them in a later RUN would shrink nothing: the lists would already be committed into the layer
-# above, and the `rm` would only add a whiteout on top of them. `--no-install-recommends` matters
-# more than usual for the X libraries — their recommends pull in a chain of desktop packages this
-# container has no use for.
+# libexpat1 is listed explicitly although libgl1 currently pulls it in transitively: python:3.11-slim
+# has none, so any replacement of libgl1 must keep it.
+# libxext6, libxrender1, libsm6 and libice6 are margin, not requirements: nothing in the
+# pinned OCP or VTK wheels needs them, but every OpenCASCADE recipe installs them.
+# libglu1-mesa is deliberately not installed (no DT_NEEDED references libGLU.so.1);
+# ci/smoke.py imports cadquery inside the built image, so a wrong reading fails the gate.
+# One RUN with `--no-install-recommends` and the apt lists removed in the same layer; the X
+# libraries' recommends would pull in desktop packages.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
@@ -103,38 +51,13 @@ RUN apt-get update \
 # Fixed uid keeps volume ownership stable across image rebuilds.
 RUN useradd -m -u 1000 app
 
-# Dependencies as a separate layer: change less often than code → cached better
-#
-# THE LOCK IS WHAT IS INSTALLED, and requirements.txt is not. The two files are different
-# kinds of statement: requirements.txt is written by hand and says which packages this
-# project chose and why, while requirements.lock is COMPILED from it by `make lock` and
-# names every distribution the resolver ended up with — the ones nobody asked for
-# included — each pinned with `==` and carrying the hashes of its files. Installing the
-# hand-written file instead is what this repository did until the lock existed, and it left
-# most of the environment floating: numpy, which builds the very buffers a revision
-# comparison hashes, arrived at whatever version PyPI had on the day the build ran.
-# requirements.txt's CAD-kernel block has the arithmetic, and tests/test_requirements_lock.py
-# is what keeps those counts true.
-#
-# `--require-hashes` is wanted for its own sake, not as a by-product of the hashes being in
-# the file. It makes pip refuse any file whose bytes are not the bytes that were resolved —
-# a release re-uploaded under the same version, a mirror serving something else, an index
-# swapped out from under the build by a mistyped PIP_INDEX_URL — and it refuses the whole
-# install rather than the one file, so the image fails to build instead of shipping a
-# package nobody can account for. It also makes the lock's completeness a build-time
-# assertion: pip errors out if any dependency of anything here is missing from the file.
-#
-# ONLY THE LOCK IS IN THIS LAYER. requirements.txt used to be copied here beside it, for the
-# sake of an image inspectable back to the intent — it is the only place the reasoning behind
-# each pin is written, and the lock's own header names it as the file it was compiled from.
-# That is still wanted, and it is still in the image; what it is not is a reason to sit in
-# THIS layer. Nothing here reads it: pip installs the lock, and the whole ~2 GB of wheels was
-# reinstalled whenever its PROSE was edited — which, in a file that is mostly prose, is most
-# of its edits. Nothing else in the image opens this path either: the word appears in `src/`
-# and `hammerola/` only inside comments, and in main.py, checklib.py and entrypoint.sh it does
-# not appear at all. Nor does the gate read it — ci/smoke.py compares its own `PINS` literal
-# against what is installed. It is copied down beside the code instead, where the same
-# inspectability costs nothing.
+# Dependencies as a separate layer: change less often than code → cached better.
+# The lock is what is installed: requirements.txt is the hand-written intent, and
+# requirements.lock is compiled from it by `make lock` with every distribution pinned and
+# hashed (tests/test_requirements_lock.py checks the two agree). `--require-hashes` makes
+# pip refuse any file whose bytes differ from the resolved ones and fail if any dependency
+# is missing from the lock. Only the lock is in this layer, so editing requirements.txt
+# does not reinstall the wheels.
 COPY requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
@@ -147,70 +70,31 @@ COPY src/ src/
 COPY hammerola/ hammerola/
 COPY templates/ templates/
 COPY static/ static/
-# What the hub hands somebody who has just found it (src/onboarding.py serves
-# both): the agent instructions at /start/skill.md, and the starter model
-# directory at /start/template.tar.gz. Two trees rather than one, because they
-# are two different things with two different readers — and `model_template/` is
-# a real project that the test suite BUILDS (tests/test_template.py), which is
-# what keeps it from going stale against the gate it has to pass.
-#
-# `skill/SKILL.md` reaches the context despite the `*.md` line in .dockerignore:
-# a pattern there is matched with `*` not crossing a `/`, so that line is
-# root-only and takes AGENTS.md, CLAUDE.md and README.md. Check (g) in
-# ci/smoke.py is what proves both of these arrived, because nothing else can:
-# the image starts, serves and passes every other check without them, and the
-# routes simply 404.
+# Served by src/onboarding.py: the agent instructions at /start/skill.md and the starter
+# model at /start/template.tar.gz. model_template/ is a real project the suite builds
+# (tests/test_template.py). `skill/SKILL.md` reaches the context despite the `*.md` line in
+# .dockerignore, which is root-only. Check (g) in ci/smoke.py proves both arrived; without
+# them the image passes everything else and the routes 404.
 COPY skill/ skill/
 COPY model_template/ model_template/
 # The browser bundle, compiled by the `ui` stage above.
-#
-# It lands FLAT beside the committed assets rather than in a subdirectory of its
-# own, and that is forced rather than chosen: the hub serves `/_v/<one path
-# component>` and nothing deeper — `_serve_asset`/`_safe_name` in src/app.py,
-# which is a path-traversal defence. A nested bundle would build, ship, satisfy
-# the gate and then 404 in the browser.
-#
-# ONE COPY PER FILE, NAMED ON BOTH SIDES, and not `COPY --from=ui /ui/dist
-# static/_v`. The directory form would MERGE the build output into a directory
-# that already holds this project's own assets — site.css, pointer.js,
-# pointer_pref.js, the vendored three-cad-viewer bundle — where a name collision
-# is a silent overwrite. `pointer.js` is an entirely ordinary name for a bundler
-# to emit as a chunk, and the gate could not see it happen: check (g) asks whether a path
-# EXISTS, and after such an overwrite it still does. Copying by name means
-# nothing the build emits can reach the image unless a line here asks for it.
-#
-# It is also the second of two defences over which copy wins. .dockerignore
-# excludes `static/_v/hammerola*`, so a workstation's `make ui` output should not
-# reach the build context at all; this line runs AFTER `COPY static/ static/`, so
-# a bundle that got in anyway is overwritten by the stage's output. KEEP THIS
-# LINE BELOW THAT ONE.
-#
-# Both are needed, because neither covers the other's case. Order can only settle
-# a file the stage ALSO emits — winning here means being copied over the same
-# name — so a chunk an older vite config produced and this build no longer does
-# arrives with nothing to overwrite it, and only the .dockerignore line keeps it
-# out. In the other direction, that line is a string somebody can delete without
-# any build failing, and this ordering is what still holds afterwards.
-#
-# When the build starts emitting a second file, it gets a line of its own here
-# and a row in ci/smoke.py's REQUIRED_PATHS. Getting that wrong is loud in both
-# directions: a file listed here and no longer produced fails the build at this
-# line, and a file produced but not listed never enters the image, which is what
-# REQUIRED_PATHS catches.
+# It lands flat in static/_v because the hub serves `/_v/<one path component>` only
+# (`_serve_asset`/`_safe_name` in src/app.py, a path-traversal defence).
+# One COPY per file, named on both sides, rather than copying /ui/dist into static/_v: a
+# directory copy would merge build output into the project's own assets, where a chunk
+# named e.g. `pointer.js` would silently overwrite one.
+# Keep this line below `COPY static/ static/`, so the stage's output wins over a
+# workstation bundle that got into the context; .dockerignore excludes
+# `static/_v/hammerola*` for files the stage no longer emits.
+# A new emitted file needs a line here and a row in ci/smoke.py's REQUIRED_PATHS.
 COPY --from=ui /ui/dist/hammerola.js static/_v/hammerola.js
 COPY main.py .
-# The one top-level module in this image, and it is not a stray file: every
-# model.py in the fleet opens with `import checklib`, exactly as it opens with
-# `def views()`. It re-exports src/cadbuild/checklib.py under that name, and it
-# has to be at /app rather than inside the package because a model is imported
-# with its own directory FIRST on sys.path — so the name has to resolve on the
-# path behind it, which /app is. See checklib.py's own docstring.
+# Every model.py opens with `import checklib`. This shim re-exports
+# src/cadbuild/checklib.py and has to sit at /app, because a model is imported with its own
+# directory first on sys.path. See checklib.py's docstring.
 COPY checklib.py .
-# PROVENANCE ONLY — nothing in the image reads this file. It is here so that an
-# image can be read back to the INTENT and not only to the result: requirements.lock
-# says which 56 distributions were installed, and this says which of them anybody
-# chose, and why. Down here rather than in the dependency layer above, so that
-# editing its prose costs a few kilobytes of copy instead of a ~2 GB reinstall.
+# Provenance only, nothing reads it: it records which of the locked distributions were
+# chosen and why. Copied here rather than in the dependency layer so prose edits are cheap.
 COPY requirements.txt .
 # --chmod pins the executable bit: exec-form ENTRYPOINT fails with "permission
 # denied" if the bit is lost in the build context (Windows checkout, tar copy).
@@ -218,8 +102,8 @@ COPY --chmod=0755 entrypoint.sh /entrypoint.sh
 
 # No EXPOSE: the service is published by Traefik via docker-compose labels.
 
-# No USER directive on purpose: the entrypoint starts as root, heals /app/data
-# ownership (migration from older root-based images) and drops to app via gosu.
+# No USER directive on purpose: the entrypoint starts as root, fixes /app/data
+# ownership and drops to app via gosu.
 # A compose `user:` override is respected (the entrypoint then just execs).
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "main.py"]

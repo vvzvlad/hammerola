@@ -1,34 +1,27 @@
 """The gate's output parsers, tested without docker.
 
-`ci/smoke.py` is the publish gate and normally runs only on the runner, against a built image —
-which is why nothing in it was covered here before. `parse_cad_verdicts()` is the exception worth
-pulling out: it is a PURE function over a string, it decides whether EVERY CAD target is
-reported green or red, and the strings it has to survive are produced by libraries nobody here
-controls. OpenCASCADE and VTK print during interpreter finalisation, `docker()` folds stderr into
-stdout, so noise lands on both sides of the payload — and a parser that mishandled the trailing
-kind failed the whole check on an image that was perfectly fine. Written without a count on
-purpose: the number of targets is derived from CAD_IMPORTS and PINS and moves whenever either
-list does, and a number spelled out here would be stale by the next import that gets added.
+`ci/smoke.py` is the publish gate and normally runs only on the runner, against a
+built image. `parse_cad_verdicts()` is a PURE function over a string that decides
+whether every CAD target is reported green or red, over output from libraries
+nobody here controls: OpenCASCADE and VTK print during interpreter finalisation and
+`docker()` folds stderr into stdout, so noise lands on both sides of the payload.
+The number of targets is not spelled out: it derives from CAD_IMPORTS and PINS.
 
-`parse_marked_verdicts()` is here for the same reasons and one of its own: it is what checks (h)
-and (i) both read their answers with, so its verdicts are the ones a person reads when the
-onboarding routes go dark or a build ceiling stops going on — and the thing it must never do is
-read a key the probe said nothing about as a key that answered. That case has no observable
-symptom on the runner: the gate would simply print `ok` about a question it never asked. It is
-exercised through `parse_start_routes()`, which is that function with check (h)'s mark bound to
-it, and separately with check (i)'s mark.
+`parse_marked_verdicts()` is what checks (h) and (i) read their answers with, and
+it must never read a key the probe said nothing about as a key that answered (the
+gate would print `ok` about a question it never asked). It is exercised through
+`parse_start_routes()`, which binds check (h)'s mark, and separately with check
+(i)'s mark.
 
-TWO OF THE GATE'S CONSTANTS ARE HELD HERE TOO, at the bottom: the routes check (h) asks for
-and the port it asks on. They are literals in `ci/smoke.py` because that file imports nothing
-from the application — a property of the gate worth keeping — and a literal copy of somebody
-else's value drifts by being left alone. What it would cost is a FALSE RED on a healthy image,
-which is the expensive direction: a renamed route or a changed default port makes every
-onboarding row fail while the artefact is exactly right.
+Two of the gate's constants are held here too, at the bottom: the routes check (h)
+asks for and the port it asks on. They are literals in `ci/smoke.py` because that
+file imports nothing from the application, and a drifted copy would be a FALSE RED
+on a healthy image.
 
-Imported as `ci.smoke` on the strength of `pythonpath = .` in pytest.ini: `ci/` has no
-`__init__.py`, and none is needed — python 3 treats it as a namespace package. Importing the
-module is safe because everything in it is a definition; `main()` runs from the `__main__` block
-only, so nothing here shells out to docker.
+Imported as `ci.smoke` on the strength of `pythonpath = .` in pytest.ini: `ci/` has
+no `__init__.py` and python 3 treats it as a namespace package. Importing the module
+is safe: `main()` runs from the `__main__` block only, so nothing here shells out
+to docker.
 """
 
 import ast
@@ -72,12 +65,12 @@ def test_noise_before_the_sentinel_is_ignored():
 
 
 def test_noise_after_the_payload_is_ignored():
-    """The regression this parser exists for.
+    """Noise after the payload is ignored.
 
-    Static destructors in OCCT and VTK run during interpreter finalisation — i.e. after the
-    payload has been printed — and `docker()` merges stderr into the same stream. Parsing the
-    whole remainder would raise `JSONDecodeError: Extra data` here and fail every CAD target
-    over an image with nothing wrong with it.
+    Static destructors in OCCT and VTK run during interpreter finalisation, after
+    the payload is printed, and `docker()` merges stderr into the same stream.
+    Parsing the whole remainder would raise `JSONDecodeError: Extra data` and fail
+    every CAD target on a healthy image.
     """
     output = "{}\n{}\nvtkDebugLeaks: leaked 3 instances of vtkPolyData\n".format(
         CAD_SENTINEL, PAYLOAD)

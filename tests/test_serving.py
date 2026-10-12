@@ -78,10 +78,8 @@ def test_latest_urls_are_not_cached(hub):
 
 
 def test_the_vendored_viewer_is_not_immutable(hub):
-    # It used to be, on the grounds that its name carried the library's identity
-    # and a new version would arrive under a new name. The fork in `viewer/` ended
-    # that: `make viewer` rewrites these exact names, so an immutable year would
-    # leave every returning reader on the viewer that shipped before the patch.
+    # The fork in `viewer/` is rebuilt by `make viewer` under these exact names, so
+    # an immutable year would leave returning readers on a stale viewer.
     for path in ("/_v/three-cad-viewer.css", "/_v/three.module.js"):
         r = hub.get(path)
         assert r.status_code == 200, path
@@ -106,8 +104,8 @@ def test_an_asset_revalidates_instead_of_being_sent_twice(hub):
         assert again.headers["ETag"] == etag, path
         # A 304 carries no body: that is the entire saving.
         assert not again.content, path
-        # A tag that no longer matches gets the file, not another 304 -- the
-        # check has to be able to say NO, or it would serve a stale copy for ever.
+        # A tag that does not match gets the file, not another 304: the check
+        # has to be able to say NO, or it would serve a stale copy for ever.
         stale = hub.get(path, headers={"If-None-Match": 'W/"0-0"'})
         assert stale.status_code == 200, path
         assert stale.content, path
@@ -248,11 +246,8 @@ def test_the_front_page_shell_needs_no_token(hub):
 def test_index_page_is_served_from_templates(hub):
     """The shell comes from templates/, and it names the PROJECT.
 
-    It used to assert on `3d.vvzvlad.xyz`, which is what the page said before
-    the move — a hostname, and by then a hostname the service had already left.
-    Asserting on one is how a template ends up carrying somebody's DNS: the
-    test makes the wrong thing load-bearing, and the next reader keeps it
-    because a test depends on it.
+    Asserted on the project's name, not a hostname: a test asserting on a hostname
+    makes a template carry somebody's DNS.
     """
     r = hub.get("/")
     assert r.status_code == 200
@@ -264,8 +259,8 @@ def test_index_page_is_served_from_templates(hub):
 
 
 def test_project_root_serves_the_pointer_resolver(hub):
-    # It used to be a 302 to `latest`. It cannot be one any more: which pointer
-    # to open is a localStorage answer (SPEC 9), and the server cannot read it.
+    # Not a redirect: which pointer to open is a localStorage answer (SPEC 9), and
+    # the server cannot read it.
     hub.publish("proj1", "abc123", good_build())
     r = hub.get("/project/proj1/")
     assert r.status_code == 200
@@ -340,14 +335,13 @@ def test_downloads_are_served_as_bytes(hub):
 
 
 def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
-    """The build's PNGs are shown, not downloaded (issue #53).
+    """The build's PNGs are shown, not downloaded.
 
-    Off the whitelist a preview came back as `application/octet-stream` with
-    `Content-Disposition: attachment`, so the one instruction that catches a
-    part lying on the bed upside down — open the picture and look at it — saved
-    a file instead of showing one. PNG is on the list because a browser handed
-    one cannot be made to execute anything with it, which is exactly what the
-    test below asserts about everything that is NOT on it.
+    Off the whitelist a preview would come back as `application/octet-stream` with
+    `Content-Disposition: attachment`, so opening the picture to check that a part
+    is not upside down on the bed would save a file instead. PNG is on the list
+    because a browser cannot be made to execute anything with it, which the test
+    below asserts about everything NOT on it.
     """
     png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
     hub.publish("proj1", "abc123", good_build(
@@ -372,18 +366,13 @@ def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
 def test_a_declared_preview_survives_publication_without_becoming_a_button(hub):
     """A part's picture reaches the reader intact and its files stay untouched.
 
-    That is exactly what a per-part picture is: it is DECLARED, so a client can
-    be told it exists without assembling its URL out of a part name and a
-    suffix, and it carries no button, because ten parts would be ten buttons and
-    the part is already on the page in 3D. The hub is what could conflate the
-    two — it rewrites this document — so the split is asserted on the far side
-    of a real publication rather than on what the build handed over.
-
-    THE SPLIT IS NOW INSIDE ONE RECORD (issue #75) rather than between two flat
-    maps, which makes conflating them cheaper rather than harder: `preview` and
-    `files` sit two lines apart in `_catalogue`, both go through the same
-    `_check_declared_file`, and only the key each is emitted under keeps a
-    picture out of the download row.
+    A per-part picture is DECLARED, so a client is told it exists without
+    assembling its URL from a part name and a suffix, and it carries no button (ten
+    parts would be ten buttons, and the part is already on the page in 3D). The hub
+    rewrites this document, so the split is asserted after a real publication.
+    `preview` and `files` sit two lines apart in `_catalogue` and both go through
+    `_check_declared_file`; only the key each is emitted under keeps a picture out
+    of the download row.
     """
     png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
     hub.publish("proj1", "abc123", good_build(
@@ -470,19 +459,16 @@ def test_the_policy_allows_data_uri_images(hub):
 
 
 def test_the_policy_allows_inline_style_attributes(hub):
-    # The other half of the same defect, and the half that hides: the page still
-    # renders, so nothing looks broken. The vendored viewer lays its tab bar out
-    # with `style="flex: 1"` ATTRIBUTES, and a policy without 'unsafe-inline' for
-    # styles makes the browser keep the attribute text and never parse it — the
-    # tabs collapse from 59px to 13px and read "T." "C" "M..." instead of
-    # "Tree" "Clip" "Material". Measured on a live page before this was fixed.
+    # The half of the CSP defect that hides: the page still renders. The vendored
+    # viewer lays its tab bar out with `style="flex: 1"` ATTRIBUTES, and a policy
+    # without 'unsafe-inline' for styles makes the browser ignore them: the tabs
+    # collapse from 59px to 13px and read "T." "C" "M..." instead of "Tree"
+    # "Clip" "Material".
     #
     # Asserted against the vendored bundle so the premise cannot rot silently: if
-    # a future version stops laying out with inline attributes, this test says so
-    # instead of pinning a concession nobody needs any more.
+    # a future version stops laying out with inline attributes, this test says so.
     # The bundle builds that markup inside a JS string, so the quotes arrive
-    # ESCAPED (`style=\"flex: 1\"`). Searching for the plain form finds nothing
-    # and the premise looks false — checked against the real file.
+    # ESCAPED (`style=\"flex: 1\"`); the plain form would find nothing.
     bundle = (STATIC_DIR / "_v" / "three-cad-viewer.esm.js").read_text(
         encoding="utf-8", errors="replace")
     lays_out_inline = any(
@@ -512,16 +498,15 @@ def test_the_index_page_has_no_inline_script(hub):
     assert "<script type=\"module\">" not in r.text
 
 
-# -- the theme, which the server decides (issue #35) --------------------------
+# -- the theme, which the server decides ---------------------------------------
 #
 # The whole interface is painted from `data-theme` on `<html>`, and that
 # attribute has to be right in the FIRST BYTE the browser parses: everything the
 # bundle draws is an inline style, so the only thing that can repaint it is a
 # `var()` resolved against an ancestor, and an ancestor stamped after the
-# document arrives is a page that flashes the other theme first. Neither of the
-# two ways a page could work this out for itself is open — an inline pre-paint
-# script is refused by our own CSP, and the resolver at /project/<pid>/ runs no
-# bundle at all — so the reader's answer travels on a cookie and the hub stamps
+# document arrives is a page that flashes the other theme first. An inline
+# pre-paint script is refused by our own CSP and the resolver at /project/<pid>/
+# runs no bundle, so the reader's answer travels on a cookie and the hub stamps
 # it. What follows is that path, end to end, on all three pages.
 
 # Every HTML document this hub serves, and the whole list: a page added without a
@@ -656,11 +641,9 @@ def test_a_page_asked_for_a_theme_that_does_not_exist_is_still_a_page():
     """The three page functions are public, annotated `str`, and take the theme
     straight through to a `maxsize=None` cache.
 
-    Today every caller gets it from `cookie_theme`, so nothing but `light` or
-    `dark` reaches them — and that is a fact about today's callers rather than
-    about these functions. What the correction buys is both halves of it at once:
-    the document cannot come out carrying `data-theme="midnight"`, and the cache
-    cannot grow a key per distinct string somebody passes.
+    Today every caller gets it from `cookie_theme` (only `light` or `dark`), but
+    the functions themselves must not emit `data-theme="midnight"` or grow a cache
+    key per distinct string somebody passes.
     """
     from src import render
 
@@ -694,31 +677,24 @@ def test_the_payload_digest_file_is_not_served(hub):
 
 
 def test_a_directory_in_a_build_is_refused_without_leaking_a_descriptor(hub):
-    """The refusal was never wrong; only the descriptor count could show this.
+    """A directory in a build is refused without leaking a descriptor.
 
-    A directory under a build answers 404 both before and after the fix, so
-    nothing about a response can tell the two apart. What the old shape did was
-    `os.fdopen(os.open(...))`: `os.open` SUCCEEDS on a directory, `os.fdopen`
-    then raises `IsADirectoryError` and does NOT close the descriptor it was
-    handed, and the `except OSError` around it turned that into the same correct
-    404 — one descriptor lost per request, forever, on a public unauthenticated
-    route, until `accept()` in socketserver quietly stopped taking connections
-    with the hub still looking alive.
+    The 404 is correct either way, so only the descriptor count can show this.
+    `os.fdopen(os.open(...))` leaks: `os.open` SUCCEEDS on a directory, `os.fdopen`
+    raises `IsADirectoryError` without closing the descriptor, and an
+    `except OSError` turns that into the same 404, one descriptor lost per request
+    on a public route, until `accept()` stops taking connections.
 
-    It is reachable because a model writes its own output directory: `os.makedirs`
-    in `model.py`, publication moves the directory whole, and nothing prunes what
-    was never declared (see `store._hash_output`), so the directory lands at a
-    permanent public URL that anyone can GET in a loop.
+    Reachable because a model writes its own output directory (`os.makedirs` in
+    `model.py`), publication moves it whole, and nothing prunes what was never
+    declared (`store._hash_output`), so the directory lands at a permanent public
+    URL.
 
-    The hub runs in this process, so its descriptors are this process's; the
-    delta is measured rather than compared to zero because httpx opens and
-    closes sockets of its own while the loop runs.
-
-    `/dev/fd` IS TAKEN DELIBERATELY and carries no `skipif`: it is not a POSIX
-    guarantee, but it is present everywhere this suite runs — on macOS, and in
-    the `python:3.11-slim` container CI runs pytest in, where it is a symlink to
-    `/proc/self/fd`. A platform without it should fail loudly here rather than
-    skip, because a skip is how a leak check stops checking.
+    The hub runs in this process; the delta is measured rather than compared to
+    zero because httpx opens and closes sockets of its own. `/dev/fd` carries no
+    `skipif`: it exists on macOS and in the `python:3.11-slim` container CI uses
+    (a symlink to `/proc/self/fd`), and a platform without it should fail loudly,
+    since a skip is how a leak check stops checking.
     """
     hub.publish("proj1", "abc123", good_build())
     os.mkdir(hub.project_dir("proj1") / "abc123" / "subdir.json")
@@ -782,18 +758,11 @@ def test_index_json_lists_projects_after_pushes(hub):
 def test_a_card_counts_the_printed_parts_and_not_the_bought_ones(hub):
     """`printables`, and the two numbers it is deliberately NOT.
 
-    It is not `len(meta["parts"])` — the literal translation of the old field
-    now that `parts` is a catalogue — because that counts the bought screws and
-    the scenery: the catalogue below holds one printed part, one piece of
-    hardware and one mock, and "3 parts" on the front page would be a promise
-    about a print job that does not exist. And it is not the old
-    `max(v["parts"] for v in variants)` either, which measured the busiest VIEW:
-    the two views below show different subsets, so a card reading the biggest
-    one would say 2.
-
-    The field was RENAMED for exactly this reason (issue #75): a number that
-    changes meaning under a name that does not is a card that goes on rendering
-    something plausible and wrong, with nobody told.
+    Not `len(meta["parts"])`, which counts bought screws and scenery: the
+    catalogue below holds one printed part, one piece of hardware and one mock,
+    and "3 parts" would promise a print job that does not exist. Not the busiest
+    VIEW's part count either: the two views below show different subsets, so that
+    would say 2.
     """
     hub.publish("proj1", "abc123", good_build(
         # The printable owns an export because every printable does — the
@@ -807,11 +776,10 @@ def test_a_card_counts_the_printed_parts_and_not_the_bought_ones(hub):
                {"id": "print", "name": "as printed",
                 "file": "print.json", "parts": ["lid"]}],
         view_keys=("lid", "screw", "hand"),
-        # TWO FILES RATHER THAN TWO POINTERS AT ONE, because the two views show
-        # different subsets and a view's `parts` now has to be exactly what its
-        # file shows — one file cannot answer for both selections at once. That
-        # is also what a build writes: `export_views` tessellates each view and
-        # names the field off the nodes it just wrote.
+        # Two files, because the two views show different subsets and a view's
+        # `parts` must be exactly what its file shows. That is also what a build
+        # writes: `export_views` tessellates each view and names the field off
+        # the nodes it wrote.
         extra_files={"print.json": view_bytes(keys=("lid",))}))
     card = {c["pid"]: c for c in hub.index().json()}["proj1"]
     assert card["printables"] == 1
@@ -819,15 +787,12 @@ def test_a_card_counts_the_printed_parts_and_not_the_bought_ones(hub):
 
 
 def test_a_card_says_whether_the_project_has_uncommitted_work(hub):
-    """`dev` on the card — that work is in the slot which no commit published.
+    """`dev` on the card: work in the slot that no commit published.
 
-    The front page shows a chip from this, and the chip is the whole of what the
-    front page is allowed to say about the local slot: the card still describes
-    the newest COMMIT (SPEC 7.6), because that is what the link promises.
-
-    Not "the slot exists", which is what `builds.json` asks and what this asked
-    until a commit began filling the slot with itself (issue #78): proj1 below
-    HAS a slot, holding its own revision, and carries no chip.
+    The front page shows a chip from this, and that chip is all it may say about
+    the local slot: the card still describes the newest COMMIT (SPEC 7.6). It is
+    not "the slot exists": a commit fills the slot with itself, so proj1 below has
+    a slot holding its own revision and carries no chip.
     """
     hub.publish("proj1", "abc123", good_build())
     hub.publish("proj2", "def456", good_build())

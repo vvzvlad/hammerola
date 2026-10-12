@@ -3,14 +3,12 @@
 // Nothing here renders through the DOM. A component is the real prototype with
 // a state object written by hand — `Object.create(Klass.prototype)` and then
 // the fields `componentDidMount` would have set — and its methods are called
-// directly. That is deliberate and stays as it was; one fixture for the whole
-// directory instead of one per file is the whole of what this module is (#102).
+// directly. One fixture serves the whole directory.
 //
 // WHAT THE DEFAULT STATE REPRESENTS: an ordinary build, opened by its owner.
 // One printable part with an STL, one view with that part in it, a tree of one
 // empty node, a token in hand, nothing selected, nothing open, no section, no
-// comparison, no menu, and the light theme. It is the page every file here used
-// to spell for itself, at the value the most of them spelled.
+// comparison, no menu, and the light theme.
 //
 // AND HOW TO DIFFER FROM IT: a fixture that needs something else PASSES IT AS
 // AN OVERRIDE. It does not get normalised onto the default, and the default

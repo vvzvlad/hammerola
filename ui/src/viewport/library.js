@@ -1,38 +1,26 @@
-// Getting hold of three-cad-viewer WITHOUT putting it in this bundle.
+// Getting hold of three-cad-viewer without putting it in this bundle.
 //
-// The library is OUR OWN build rather than an installed dependency: its source
-// is the fork in viewer/, and `make viewer` writes
-// static/_v/three-cad-viewer.esm.js and copies three's two files in beside it,
-// all committed (static/_v/PROVENANCE.md says where the source came from). three
-// is EXTERNAL to that build (issue #14), so the bundle imports it by a URL of its
-// own — `import * as THREE from '/_v/three.module.js'`, written in by rollup,
-// with three.core.js behind it — and not as a bare `three` left to an import map
-// on the page: the map is an inline script and the hub serves every page under
-// `default-src 'self'` with no `'unsafe-inline'` in script-src, so the browser
-// drops it in silence and the page dies resolving the specifier. The hub already
-// serves all of it at those URLs, and templates/build.html links the stylesheet
-// from the same place — so bundling a copy in here would fetch bytes twice.
+// The library is our own build: its source is the fork in viewer/, and
+// `make viewer` writes static/_v/three-cad-viewer.esm.js and copies three's two
+// files beside it, all committed (static/_v/PROVENANCE.md). three is external
+// to that build, so the bundle imports it by URL
+// (`import * as THREE from '/_v/three.module.js'`, with three.core.js behind it)
+// rather than as a bare `three` resolved by an import map: the map would be an
+// inline script, which the hub's CSP (`default-src 'self'`, no
+// `'unsafe-inline'`) drops silently. The hub serves all of it at those URLs, so
+// bundling a copy would fetch the bytes twice.
 //
-// Hence a RUNTIME import of a URL rather than a build-time one of a module.
-// Three things have to line up for that to survive the build, and all three are
-// on this line:
+// Hence a runtime import of a URL. Three things make it survive the build:
+//   * the specifier is a `const`, not a literal: vite resolves a literal
+//     `import("/_v/...")` against the project root at build time;
+//   * `/* @vite-ignore */` marks the unanalysable dynamic import as deliberate;
+//   * the URL is absolute with exactly one path component under `/_v/`:
+//     `_serve_asset()` in src/app.py serves `/_v/<one component>` and
+//     `_safe_name()` rejects a slash, so a deeper path 404s.
 //
-//   * the specifier is a `const`, not a literal in the `import()`. A literal
-//     `import("/_v/...")` is a URL vite resolves against the project root at
-//     BUILD time, finds nothing there, and either fails or inlines whatever it
-//     did find;
-//   * `/* @vite-ignore */` says so out loud, which is what turns a warning about
-//     an unanalysable dynamic import into a deliberate one, and what keeps a
-//     future vite from getting clever about the constant;
-//   * the URL is absolute from the site root and has exactly ONE path component
-//     under `/_v/`. That is not style: `_serve_asset()` in src/app.py serves
-//     `/_v/<one component>` and `_safe_name()` rejects anything with a slash in
-//     it, so a deeper path 404s.
-//
-// What this costs: the bundle no longer declares its dependency in a way any
-// tool can check, so `tests/test_viewport_adapter.py` checks it instead — that
-// the URL names a file which is really in static/_v/, and that nothing here
-// imports the library statically after all.
+// No tool can check this dependency, so `tests/test_viewport_adapter.py` checks
+// that the URL names a file in static/_v/ and that nothing imports the library
+// statically.
 
 /** Where the hub serves the vendored library. Also read by the Python tests. */
 export const VIEWER_MODULE_URL = "/_v/three-cad-viewer.esm.js";
@@ -41,16 +29,12 @@ let pending = null;
 
 /**
  * The library's module namespace, fetched once per page however many viewports
- * ask: `Viewer` and `Display`, and `THREE` — three's own namespace, re-exported
- * by the fork (issue #14), which is what the widgets in the scene are built out
- * of (`scene3d.js`).
+ * ask: `Viewer`, `Display`, and `THREE` (three's namespace re-exported by the
+ * fork), which the scene widgets are built from (`scene3d.js`).
  *
- * The memo is dropped on failure rather than kept. A rejected module promise is
- * permanent inside the browser's own module map — a second `import()` of the
- * same URL returns the same rejection without retrying — but the failure that
- * gets here is as likely to be the hub restarting mid-deploy as it is to be a
- * missing file, and a page that gives up for good on a three-second outage is
- * worse than one that tries again when the reader switches views.
+ * The memo is dropped on failure: a rejected module promise is permanent in the
+ * browser's module map, but the failure is as likely a hub restart mid-deploy as
+ * a missing file, so the page retries when the reader switches views.
  */
 export function loadViewerLibrary() {
   if (!pending) {

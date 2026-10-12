@@ -1,27 +1,16 @@
 """Nothing is ever thrown away, or refused, for being one too many (SPEC 5.3, 7.3, 7A.4).
 
-There used to be two retention windows here — the newest N builds per project,
-and 200 jobs for 14 days — and both were removed by the decision of 2026-08-27:
-a revision is tens of megabytes, disk is cheaper than a mechanism that has to be
-written, tested, explained and that can delete the wrong thing.
+There is no build retention window, no job retention, and no comment ceiling: a
+revision is tens of megabytes, and disk is cheaper than a mechanism that has to be
+written, tested, explained and can delete the wrong thing. A comment ceiling would
+be the harsher shape, refusing the NEXT comment on a build for good. There is no
+rate limit either: writing takes EDIT_TOKEN, and its holder can delete the project
+outright.
 
-THE COMMENT CEILINGS WENT WITH THEM, and they belong in this file even though
-they never deleted anything. A comment ceiling refused the NEXT comment instead
-of dropping an old one, which made it the harsher of the two shapes: nothing here
-deletes a comment, so a build that reached its hundredth could never be commented
-on again. Same decision, same reasoning, same units — a JSON file and a photo on
-a volume that is allowed to grow. The rate limit that used to sit in front of
-them went too, but for a different reason and it is tested elsewhere by its
-absence from the codebase: writing takes EDIT_TOKEN, and whoever holds EDIT_TOKEN
-can delete the project outright.
-
-THE ABSENCE OF A MECHANISM IS WHAT THIS FILE TESTS, which is worth saying out
-loud because absences do not fail on their own. Every other test in the suite
-publishes a handful of builds and posts two or three comments, and would pass
-unchanged with a window of twenty quietly put back; the numbers below are
-deliberately past the ceilings that used to exist (20 builds, 200 jobs, 100
-comments per build), so a reintroduced one fails here rather than in production a
-month later, on somebody's oldest revision or in the middle of a review.
+This file tests the ABSENCE of these mechanisms, which does not fail on its own.
+Other tests publish a handful of builds and comments and would pass with a window
+of twenty put back, so the numbers here are past the obvious ceilings (20 builds,
+200 jobs, 100 comments per build).
 """
 
 import json
@@ -33,19 +22,16 @@ from harness import (DEFAULT_EXPORTS, comment_payload, meta_bytes, tar_gz,
 from src.jobs import STATE_DONE, JobStore
 from src.store import DEV_LINK
 
-# One past RETENTION_BUILDS, which was 20. Small enough that the suite stays
-# fast, large enough that the ceiling that used to be here would fire.
+# Past a 20-build window. Small enough that the suite stays fast.
 BUILDS = 25
 
 # One past MAX_JOBS, which was 200. Records only — no build runs for these, and
 # none needs to: what is under test is whether the registry drops any.
 JOBS = 205
 
-# Past BOTH ceilings a comment used to meet: COMMENT_MAX_PER_BUILD was 100, and
-# COMMENT_RATE_LIMIT was 30 per ten minutes — which this test would also trip,
-# since the suite no longer raises a rate limit out of the way and a reinstated
-# one would arrive with its production default. All on ONE build, because the
-# per-build wall was the terminal one.
+# Past a per-build ceiling of 100 and a rate limit of 30 per ten minutes (the
+# suite raises no rate limit out of the way, so a reinstated one would fire). All
+# on ONE build, where a per-build wall would be terminal.
 COMMENTS = 120
 
 
@@ -58,8 +44,8 @@ def _build(marker, built):
 
 
 def _commits_on_disk(hub, pid):
-    # The slot is not a commit and never was; every commit mirrors itself into
-    # it (issue #78), so it is there whichever build was published last.
+    # The slot is not a commit; every commit mirrors itself into it, so it is
+    # there whichever build was published last.
     return sorted(p.name for p in hub.project_dir(pid).iterdir()
                   if p.is_dir() and not p.is_symlink()
                   and not p.name.startswith(".") and p.name != DEV_LINK)
@@ -94,13 +80,11 @@ def test_no_number_of_builds_makes_an_older_one_disappear(hub):
 
 
 def test_the_oldest_build_survives_a_pointer_pinned_somewhere_else(hub):
-    """The carve-out is gone because there is nothing left to carve out of.
+    """The oldest build survives while `latest` is parked somewhere else.
 
-    Retention refused to delete the target of `latest`, which meant every
-    OTHER build was fair game — a rollback that pinned the symlink at an old
-    revision protected exactly one build and no more. With no window at all the
-    question does not arise, and this is the state that used to be the dangerous
-    one: a pointer parked on the oldest build while pushes keep arriving.
+    With any window, a rollback pinning `latest` at an old revision protects that
+    one build and no other. This is the state a window makes dangerous: a pointer
+    parked on the oldest build while pushes keep arriving.
     """
     for index in range(5):
         hub.publish("proj1", f"c{index}",
@@ -119,11 +103,10 @@ def test_the_oldest_build_survives_a_pointer_pinned_somewhere_else(hub):
 
 
 def test_no_number_of_jobs_makes_an_older_one_disappear(tmp_path):
-    """Registry only: `create` and `finish`, past the count ceiling that was.
+    """Registry only: `create` and `finish`, past a 200-job ceiling.
 
-    Driven through `JobStore` rather than through pushes because a push per job
-    would be 205 builds; what is under test is the registry's own bookkeeping,
-    and `create`/`finish` are the two places a sweep used to run.
+    Driven through `JobStore` rather than pushes because a push per job would be
+    205 builds; `create`/`finish` are where a sweep would run.
     """
     store = JobStore(tmp_path / "data")
     ids = []
@@ -138,8 +121,8 @@ def test_no_number_of_jobs_makes_an_older_one_disappear(tmp_path):
         assert store.get(job_id) is not None, f"job {index} was dropped"
         assert store.log(job_id) == f"build {index}"
 
-    # And they are still all there after a restart, which is the other place a
-    # count ceiling used to be applied — before the records were even read.
+    # And they are still all there after a restart, the other place a count
+    # ceiling could be applied, before the records are even read.
     reopened = JobStore(tmp_path / "data")
     assert len(reopened._records) == JOBS
     assert all(reopened.get(job_id) is not None for job_id in ids)
@@ -180,15 +163,10 @@ def test_a_job_from_years_ago_is_still_there(tmp_path):
 def test_no_number_of_comments_on_one_build_is_refused(hub):
     """A review is as long as it is: 120 comments on one build, all accepted.
 
-    Deliberately on ONE build and in one uninterrupted run, because that is the
-    shape both removed mechanisms would have caught — the per-build wall at a
-    hundred and the rate limit at thirty per ten minutes. Every reply is checked,
-    not just the last: a ceiling that fires mid-way leaves a green-looking suffix
-    if only the final answer is read.
-
-    One build carries all of them and the hub runs on its default settings — a
-    test that raised a ceiling out of its own way would be testing the override
-    rather than the absence.
+    One build, one uninterrupted run, on default settings: the shape a per-build
+    wall at a hundred or a rate limit of thirty per ten minutes would catch.
+    Every reply is checked, since a ceiling that fires mid-way leaves a
+    green-looking last answer.
     """
     hub.publish("proj1", "c1", _build("v1", "2026-08-01T00:00:00Z"))
 

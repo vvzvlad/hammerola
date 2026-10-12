@@ -1,36 +1,17 @@
 """`hammerola update` — the tool replacing itself with the hub's copy.
 
-THE HUB IS THE ONLY CHANNEL, and that is issue #26's decision rather than a
-starting point to build on. The client is served by the very hub it publishes
-to, out of the image that hub runs (`/start/hammerola`, public, built by
-`src/onboarding.py`), so the copy on a laptop and the half of the contract it
-talks to move together and there is nothing to reconcile between an index, a
-release page and a deployment. No second source is added here and none should
-be: two channels would mean a client that can be newer than the hub it is
-talking to for a reason nobody chose.
+The hub is the only channel: it serves the client out of its own image
+(`/start/hammerola`, public, built by `src/onboarding.py`), so client and hub
+move together. Do not add a second source.
 
-THE DIFFERENCE FROM `skill update`, whose shape this copies in every other
-respect: that one writes a DOCUMENT into a directory nothing is reading at the
-time, and this one writes the RUNNING PROGRAM. A half-written file there is a
-stale skill; a half-written file here is a machine with no `hammerola` on it and
-no way to fetch one, because the tool that fetches is the file that was being
-written. So the download lands in a temporary file beside the target, wearing
-the target's own mode, and `os.replace` puts it in place in a single step: the
-program on PATH is the old one or the new one at every instant and never half of
-either.
+Unlike `skill update`, this writes the RUNNING PROGRAM, and a half-written file
+would leave no tool to fetch a fix with. The download goes to a temporary file
+beside the target with the target's mode, and `os.replace` swaps it in one step.
 
-WHAT IS CHECKED BEFORE THE REPLACEMENT, for the same reason `skill update`
-parses the document it is about to install: a hub answering with a proxy's login
-page, or an error document carrying a 200, would otherwise land on PATH as the
-tool. A zipapp is a shebang followed by a zip (`onboarding.CLIENT_SHEBANG`), and
-the archive has to state a version — that last part is what makes it THIS
-program rather than any zip somebody could serve.
-
-THE VERSION IT REPORTS COMES OUT OF THE ARCHIVE and not out of the manifest, so
-what is printed is what was actually written. The manifest's `client_version` is
-a different job one route earlier: `refuse_if_behind`, which is what stops a
-stale client from publishing at all and is the only reason this tool ever spends
-a round trip on a question about itself.
+Before that, the download must be a zipapp (shebang plus zip,
+`onboarding.CLIENT_SHEBANG`) that states a version, so a proxy's login page
+never lands on PATH. The version printed comes from the archive. The manifest's
+`client_version` is used by `refuse_if_behind`.
 """
 
 import ast
@@ -46,23 +27,16 @@ from hammerola.errors import ClientError
 from hammerola.hub import HubError
 from hammerola.sources import public_hub
 
-# The two manifest keys this follows: where the client is, and which version the
-# hub serves. Constants rather than literals at the call sites, for the reason
-# `skill.SKILL_KEY` is one — both sides of the contract live in this repository,
-# and a test compares these strings against `src/onboarding.py`'s own.
+# Manifest keys; a test compares them with `src/onboarding.py`.
 CLIENT_KEY = "client"
 VERSION_KEY = "client_version"
 
-# What a zipapp begins with, byte for byte the hub's `CLIENT_SHEBANG`. A second
-# copy for the reason `skill.py` carries a second copy of the frontmatter
-# patterns: this package may import nothing from the serving half. The
-# duplication is held by a test rather than by care.
+# A copy of the hub's `CLIENT_SHEBANG` (this package imports nothing from the
+# service); a test compares them.
 SHEBANG = b"#!/usr/bin/env python3\n"
 
 # Where inside the archive each fact is read from, and the name it is assigned
-# to. Both name members of THIS package as it will be after the update, so a
-# release that moved either is one an older client cannot read — which is
-# exactly why only the version is required and the changelog is not.
+# to. A future release may move them, which is why only the version is required.
 VERSION_MEMBER = "hammerola/__init__.py"
 VERSION_NAME = "VERSION"
 CHANGELOG_MEMBER = "hammerola/changelog.py"
@@ -74,9 +48,7 @@ UPDATE_HINT = "hammerola update"
 def run(args) -> int:
     """Fetch the hub's client and become it. -> exit code.
 
-    THE TARGET IS RESOLVED FIRST, before anything is fetched: a copy running out
-    of a checkout has nothing this can write over, and finding that out after a
-    download would be the same refusal a second later.
+    The target is resolved first: a checkout has nothing to write over.
     """
     target = _target()
 
@@ -94,9 +66,7 @@ def run(args) -> int:
 
     print(f"wrote {config.display_path(target)}")
     if served == VERSION:
-        # It writes anyway — the verb is "make this the hub's copy", not "apply
-        # a difference" — and saying the version did not move keeps a re-run
-        # from reading as though it had fixed something.
+        # Written anyway; the line says the version did not move.
         print(f"  version {VERSION}, unchanged")
         return 0
     print(f"  version {VERSION} -> version {served}")
@@ -107,35 +77,15 @@ def run(args) -> int:
 def refuse_if_behind(hub_url: str) -> None:
     """Stop a client the hub has outgrown before it publishes anything.
 
-    TWO VERBS ASK AND NOT EVERY VERB, and what decides that is the cost: this is
-    one more round trip, paid before the push itself. `status`, `log`,
-    `comments`, `source` and `artifacts` READ, and a client a version behind
-    reads them well enough or fails loudly on its own; what a stale client does
-    that nobody undoes is WRITE. So the question is asked where the writing is,
-    and `build` and `commit` are the whole of that list.
+    Asked only by `build` and `commit`: reading verbs fail loudly on their own,
+    while a stale client's writes are what nobody undoes.
 
-    A HUB THAT DOES NOT ANSWER THE QUESTION DOES NOT STOP THE PUSH. An image
-    older than this tool carries no `client_version` in its manifest at all, and
-    a hub that cannot be reached is about to be reported by the push itself with
-    the message that path already has. Neither is evidence that this client is
-    stale, and refusing on either would make a hub that is down look like a
-    laptop that is out of date.
+    A hub that cannot answer (unreachable, or no `client_version` in an older
+    image) does not stop the push. Only BEHIND is refused, never ahead: a
+    checkout newer than the hub is normal.
 
-    ONLY BEHIND IS REFUSED AND NEVER AHEAD. The author's own checkout is
-    routinely newer than the hub it pushes to — that is what publishing a new
-    image looks like from this side — and the answer to that direction is
-    updating the hub, which is not something this can do or should mention.
-
-    AN ADDRESS AND NOT THE PUSH'S HUB, which is what the argument used to be.
-    That object carries `HTTP_TIMEOUT` — five minutes, because the request it
-    exists for is uploading an archive — and asking an 80-byte question with it
-    is what `QUERY_TIMEOUT` exists to prevent (`hub.py`): an address that
-    black-holes packets instead of refusing them hangs the terminal for five
-    silent minutes BEFORE any output, since this runs ahead of the packing, and
-    then hangs it again on the push. Taking the URL leaves that budget outside
-    the function rather than inside it as a thing to reach for, and it is what
-    lets the handle come from `sources.public_hub` — which is also where the
-    empty token is accounted for.
+    Takes an address and uses `sources.public_hub` (`QUERY_TIMEOUT`), not the
+    push's Hub with its five-minute `HTTP_TIMEOUT`.
     """
     try:
         manifest = public_hub(hub_url).start()
@@ -155,11 +105,8 @@ def refuse_if_behind(hub_url: str) -> None:
 def _target() -> Path:
     """The file this program IS, and the only thing `update` writes.
 
-    A zipapp is imported out of the archive itself, so `__file__` here reads
-    `<archive>/hammerola/update.py` and two parents up is the single file on
-    PATH. Out of a checkout those same two parents land on a DIRECTORY — the
-    checkout itself — which is what tells the doors apart without asking
-    anything about how the process was started.
+    In a zipapp `__file__` is `<archive>/hammerola/update.py`, so two parents
+    up is the file on PATH; in a checkout it is a directory.
     """
     running = Path(__file__).resolve().parent.parent
     if not running.is_file():
@@ -178,13 +125,9 @@ def _read_client(hub_url: str, body: bytes):
 
     -> (str, dict)
 
-    THE VERSION IS REQUIRED AND THE CHANGELOG IS NOT, and the asymmetry is the
-    point. Reading a version is how this tells the tool from anything else that
-    could arrive with a 200, so a file it cannot read one out of is refused
-    before it can land on PATH. The changelog is what the update SAYS
-    afterwards; a future release that renames or drops that module would
-    otherwise make itself uninstallable by every client alive today, which is a
-    trap laid for the one version nobody can test against.
+    The version is required: it is how the tool is told apart from anything
+    else served with a 200. The changelog is optional, so a future release that
+    drops that module stays installable.
     """
     if not body.startswith(SHEBANG):
         raise ClientError(
@@ -209,16 +152,8 @@ def _read_client(hub_url: str, body: bytes):
 def _member_value(archive: zipfile.ZipFile, member: str, name: str):
     """The literal a module in the archive assigns to `name`, or None.
 
-    PARSED AND NEVER EXECUTED. What is wanted is two constants out of a file
-    that has just come off the network, and importing it to get them would run
-    the whole download to answer a question asked BEFORE deciding whether to
-    install it. `ast.literal_eval` reads the value of the assignment and nothing
-    else in the module.
-
-    None for every way of not having the value — no such member, not text, not
-    parseable, no such assignment, an expression that is not a literal — because
-    each caller does the same thing with all of them: the version's absence is a
-    refusal, the changelog's is silence.
+    Parsed with `ast.literal_eval`, never executed: the file just came off the
+    network. None for every way of not having the value.
     """
     try:
         source = archive.read(member).decode("utf-8")
@@ -244,19 +179,9 @@ def _member_value(archive: zipfile.ZipFile, member: str, name: str):
 def _write_over(target: Path, body: bytes) -> None:
     """Put `body` in `target`'s place, all at once or not at all.
 
-    THE PROPERTY THIS BUYS is that there is no instant at which the file on PATH
-    is half a program — and the machine it is protecting is the one that cannot
-    fetch a replacement, since the tool that fetches is the file being written.
-    The bytes go to a temporary file in the SAME directory, because a rename
-    across filesystems is a copy and copies are interruptible; the target's own
-    mode goes on it, the EXECUTE BIT above all, a client that lost that being as
-    unusable as a truncated one; and `os.replace` swaps the two names in one
-    step.
-
-    WHAT IT REFUSES RATHER THAN TRACEBACKS THROUGH is a target that cannot be
-    written. A client installed under a directory the account does not own is
-    the ordinary case of that, and what it has to produce is one sentence naming
-    the file, not an OSError out of a temporary-file helper.
+    The temporary file is in the same directory (a cross-filesystem rename is
+    an interruptible copy) and gets the target's mode, execute bit included.
+    An unwritable target is a ClientError naming the file.
     """
     try:
         mode = stat.S_IMODE(target.stat().st_mode)
@@ -269,9 +194,7 @@ def _write_over(target: Path, body: bytes) -> None:
         with os.fdopen(handle, "wb") as writing:
             writing.write(body)
             writing.flush()
-            # So that a machine losing power between the write and the rename
-            # comes back to one of the two whole programs rather than to a name
-            # pointing at nothing.
+            # Survive a power loss between the write and the rename.
             os.fsync(writing.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, target)
@@ -281,11 +204,7 @@ def _write_over(target: Path, body: bytes) -> None:
 
 
 def _discard(path: str) -> None:
-    """Take the half-written temporary away, and never raise over it.
-
-    It is already being reported that the update did not happen; a second
-    failure while tidying up would replace that sentence with a worse one.
-    """
+    """Take the half-written temporary away, and never raise over it."""
     try:
         os.unlink(path)
     except OSError:
@@ -305,11 +224,8 @@ def _unwritable(target: Path, error) -> str:
 def _print_changes(entries, old: str, new: str) -> None:
     """What the new client does differently, for the agent that has to use it.
 
-    AFTER THE WRITE AND NEVER INSTEAD OF IT: the update has happened by the time
-    this runs, so a changelog with nothing to say is a quiet success and not a
-    failure to explain one. What it prints is the entries STRICTLY between the
-    two versions — see `changelog.between` for why that is the only honest
-    range.
+    Runs after the write; an empty changelog is a quiet success. The range is
+    `changelog.between`'s.
     """
     moved = changelog.between(entries, old, new)
     if not moved:

@@ -19,7 +19,7 @@ from modeldir import make_model
 
 from hammerola.cli import main
 
-# The address and the token, from tests/client/conftest.py (issue #99).
+# The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
 
 
@@ -94,7 +94,7 @@ def test_an_empty_dev_slot_is_said_out_loud(hub, model, capsys):
     """An empty slot is a LINE reading `empty`, not a missing line — an absent
     one reads as an absent feature.
 
-    A commit fills the slot with itself (issue #78), so the state has to be made
+    A commit fills the slot with itself, so the state has to be made
     rather than published into: the slot goes off the volume, and a rename is
     what rewrites the picker without publishing anything back into it.
     """
@@ -121,12 +121,11 @@ def test_the_revision_list_is_capped_and_says_what_is_left(hub, model, capsys):
 
 @pytest.mark.parametrize("count", ["0", "-3"])
 def test_a_count_a_slice_would_misread_is_refused(model, capsys, count):
-    """Both used to be silent, and neither printed what was asked for.
+    """Zero and negative counts are refused.
 
-    `0` is falsy, so it fell through to the default and listed ten revisions to
-    somebody who asked for none; a negative one goes into `builds[:limit]`,
-    which Python reads from the other end — `-3` drops the three OLDEST and then
-    reports three more "older" ones than exist.
+    `0` is falsy, so it would fall through to the default and list ten
+    revisions to somebody who asked for none; a negative one in
+    `builds[:limit]` is read from the other end — `-3` drops the three OLDEST.
     """
     assert run(model, "status", "-n", count) == 1
     error = capsys.readouterr().err

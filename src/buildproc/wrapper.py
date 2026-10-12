@@ -3,28 +3,21 @@
 
     python -m src.buildproc.wrapper '<rlimit-spec-json>' -- <argv...>
 
-One process, three statements: set the rlimits on ITSELF, say what it set, then
-`execv` the target. The target inherits every limit, because rlimits survive
-exec and the pid does not change -- so by the time the interpreter that will
-import the model exists, the ceilings are already the kernel's business.
+Sets the rlimits on itself, prints what it set, then `execv`s the target, which
+inherits every limit (rlimits survive exec and the pid stays), so the ceilings
+are in force before the interpreter that imports the model exists.
 
-WHY THIS IS A PROCESS AND NOT A CALLBACK is argued in limits.py: `preexec_fn`
-runs between fork and exec of a MULTI-THREADED parent (the hub is
-`ThreadingHTTPServer`), where only async-signal-safe code is allowed and the
-interpreter's own locks may be held by threads that no longer exist. Nothing
-here runs in that window -- this is a plain fresh interpreter with one thread.
+A process rather than `preexec_fn` (see limits.py): the hub is multi-threaded,
+and between fork and exec only async-signal-safe code may run. This is a fresh
+single-threaded interpreter.
 
-WHY IT DOES NOT SIMPLY LET THE CHILD LIMIT ITSELF: the ceilings are then in
-force for the child's whole existence, including its imports. A bug or a hang
-in the import chain -- `src.cadbuild`, cadquery, VTK -- is inside the fence
-rather than outside it, and the fence is up before any code that could be
-influenced by the request has been read from disk.
+Not the child limiting itself: this way the fence is up during the child's
+imports too (`src.cadbuild`, cadquery, VTK), before any request-influenced code
+is read from disk.
 
-THE TARGET ARGV IS COMPOSED BY THE HUB AND NEVER BY REQUEST DATA. This module
-will `execv` whatever it is handed; that is what makes it reusable and what
-makes it dangerous if the composition ever moves. `runner.py` builds it out of
-`sys.executable` and module names that are literals in this repository -- the
-untrusted tree contributes a directory PATH and nothing else.
+The target argv is composed by the hub, never by request data: this module
+`execv`s whatever it is handed. `runner.py` builds it from `sys.executable` and
+literal module names; the untrusted tree contributes only a directory path.
 """
 
 import json

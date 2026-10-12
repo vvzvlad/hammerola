@@ -1,7 +1,7 @@
 """One path, written in five files, checked here for agreement.
 
-The browser bundle is built rather than committed, so its path is not a fact any
-one file owns — it is an agreement between five that never import each other:
+The browser bundle is built rather than committed, so its path is an agreement
+between five files that never import each other:
 
     ui/vite.config.mjs      names the FILE the build emits
     Makefile                names the files a workstation build copies, and where
@@ -9,31 +9,16 @@ one file owns — it is an agreement between five that never import each other:
     ci/smoke.py             asserts the resulting paths are inside the image
     templates/*.html        the pages fetch the entry with a <script src>
 
-Nothing makes them agree and nothing reports it when they stop. That is the
-whole reason this file exists, because every way of breaking the agreement
-breaks it QUIETLY:
+Every way of breaking it is quiet: a renamed vite output leaves the gate checking
+nothing; a changed Makefile destination breaks only workstations; a changed
+Dockerfile destination breaks only the image; a changed <script src> leaves
+everything green except a 404 in the browser console.
 
-  * rename the vite output and the gate looks for a file that is no longer
-    produced -- the image build fails at its COPY line, which is the loud half,
-    but nothing then verifies the real bundle at all;
-  * change the Makefile's destination and a workstation serves 404 while CI
-    stays perfectly green, because the image never used the Makefile;
-  * change the Dockerfile's destination and it is the exact reverse -- the
-    workstation is fine and only the published image is broken;
-  * change the <script src> and EVERYTHING is green. The bundle is built, it is
-    in the image, the gate finds it, the page loads, the old viewer works. The
-    only symptom is a 404 in a browser console.
+The checks derive the path from vite.config.mjs and the Makefile rather than
+spelling it out, so this file is not a sixth copy.
 
-The last one is why this is a test and not a code review note.
-
-The checks below DERIVE the path from vite.config.mjs and the Makefile instead
-of spelling it out: a test that carried its own copy of the string would just be
-a sixth place to forget, and it would pass while agreeing only with itself.
-
-Two of the checks are about something else: not where the bundle goes, but what
-keeps a WORKSTATION's build from becoming the image's — the `.dockerignore`
-exclusion and the Dockerfile's copy order. They belong here because they are
-derived from the same name, and their docstrings say why neither is redundant.
+Two checks keep a workstation's build from becoming the image's: the
+`.dockerignore` exclusion and the Dockerfile's copy order.
 """
 
 import fnmatch
@@ -57,54 +42,36 @@ IMAGE_ROOT = "/app"
 # dropping that first component.
 STATIC_DIR = "static"
 
-# The pages drawn by the bundle, and therefore the ones that must load it and
-# must carry a mount point. WRITTEN OUT rather than discovered, and then checked
-# against what the templates actually do (test_exactly_these_pages_load_the_bundle):
-# a list derived from the templates would agree with whatever they say, including
-# the day one silently stops loading the bundle — which is this file's whole
-# subject. pointer.html is deliberately not here: it loads a committed script of
-# its own and mounts nothing, and a bundle appearing on it would be two hundred
-# kilobytes of React fetched to read one localStorage key.
+# The pages drawn by the bundle. Written out, not discovered, and checked against
+# the templates (test_exactly_these_pages_load_the_bundle). pointer.html loads a
+# committed script of its own and mounts nothing.
 BUNDLE_PAGES = ("build.html", "index.html")
 
 TEMPLATES = "templates"
 
-# The directive the bundle must be copied in AFTER — see the ordering test below.
-# Anchored to the start of a line rather than searched for as a substring because
-# the Dockerfile's PROSE names this directive too, in the comment that explains
-# the ordering. That comment travels with the stage copy when somebody moves it,
-# so a substring search would find the moved text and pass.
+# The directive the bundle must be copied in after (see the ordering test).
+# Anchored to a line start because the Dockerfile's comments name it too.
 STATIC_TREE_COPY_RE = re.compile(r"(?m)^COPY\s+static/\s+static/\s*$")
 
 # `COPY [--flag ...] --from=<stage> [--flag ...] <src> <dest>`, one match per line.
-# The flags are tolerated rather than required: `--link` and `--chown` are ordinary
-# things to add to a `COPY --from`, and a pattern that only accepted the bare form
-# would report the line as ABSENT instead of reporting what changed — which sends
-# whoever reads the failure looking for a line that is right there.
+# Flags such as `--link` and `--chown` are tolerated, so such a line is read
+# rather than reported as absent.
 COPY_FROM = re.compile(
     r"(?m)^COPY\s+(?:--\S+\s+)*--from=(\S+)\s+(?:--\S+\s+)*(\S+)\s+(\S+)\s*$")
 
-# The same directive matched LOOSELY, without caring about the shape of its
-# operands. COPY_FROM reads exactly two, so `COPY --from=ui a.js b.js static/_v/` —
-# the obvious thing to write the day this build emits a second file — matches it
-# nowhere at all, and a line that matches nothing is a line that leaves the list
-# every check here is built from. This pattern is what makes such a line VISIBLE,
-# so a form nobody anticipated turns the suite red instead of shortening it.
+# The same directive matched loosely. COPY_FROM reads exactly two operands, so a
+# multi-source line matches nowhere; this pattern makes such a line visible so it
+# fails the suite instead of leaving the list.
 COPY_FROM_ANY = re.compile(r"(?m)^COPY\s+.*--from=.*$")
 
-# An HTML comment. Stripped before the page is searched, so that a check cannot be
-# satisfied by PROSE: build.html explains itself at length, and a `<script src>`
-# quoted in a comment — or commented out during a debugging session and left that
-# way — would answer a search that reads the file whole while the browser fetches
-# nothing. Same class of mistake as reading a setting out of vite's own comments,
-# which is why the reads below are anchored.
+# An HTML comment, stripped before a page is searched so a `<script src>` quoted
+# or commented out in prose cannot satisfy a check.
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
-# One parsed `COPY --from=` line. `dest` is the destination AS WRITTEN, `file` is
-# the path docker really writes — the two differ whenever `dest` names a directory
-# — and `file` is None when the SOURCE is a directory, because a copy of a tree has
-# no single written path to speak of. `at` is the line's offset in the Dockerfile,
-# carried along because the ordering test's whole subject is where the line sits.
+# One parsed `COPY --from=` line. `dest` is the destination as written, `file` the
+# path docker really writes (they differ when `dest` names a directory), None
+# when the source is a directory. `at` is the line's offset, for the ordering
+# test.
 StageCopy = namedtuple("StageCopy", "stage src dest file at")
 
 
@@ -120,14 +87,10 @@ def read_markup(*parts):
 def looks_like_a_file(src):
     """Whether a COPY source names a single FILE rather than a directory.
 
-    Decided from the TEXT, because that is all there is: the source is a path
-    inside a build stage that nothing in this suite can stat. The signal is the
-    extension, and it answers this particular question reliably — every name this
-    build can emit carries one by construction (vite's `entryFileNames`,
-    `chunkFileNames` and `assetFileNames` all end in `.js`, `.css` or the asset's
-    own extension), while the directories anybody would plausibly write here
-    (`/ui/dist`, `/ui/dist/assets`) carry none. A trailing slash settles it
-    outright: docker reads that as a directory whatever the name in front says.
+    Decided from the text (the path is inside a build stage). Every name this
+    build emits has an extension (vite's `entryFileNames`, `chunkFileNames`,
+    `assetFileNames`), plausible directories (`/ui/dist`) have none, and a
+    trailing slash is always a directory.
     """
     return not src.endswith("/") and Path(src).suffix != ""
 
@@ -135,14 +98,9 @@ def looks_like_a_file(src):
 def dest_file(src, dest):
     """Where `COPY <src-file> <dest>` actually writes, with the directory form spelled out.
 
-    `COPY <src-file> <dir>/<name>` and `COPY <src-file> <dir>/` are the same
-    directive to docker — a destination ending in a slash is a directory, and the
-    source keeps its own name inside it — so both have to reduce to one path before
-    anything here compares one. Normalising in a single place is what keeps the
-    trailing-slash spelling INSIDE the checks below rather than outside all of them:
-    `Path("static/_v/").parent` is `static`, so the filter this file used to run
-    dropped that line, and the file it puts in the image ended up checked by
-    nothing — not the gate, not UI_FILES, not the page.
+    `COPY <src-file> <dir>/<name>` and `COPY <src-file> <dir>/` are the same to
+    docker, so both reduce to one path here before any comparison. (`Path` would
+    drop the trailing slash and misread `static/_v/` as `static`.)
     """
     return f"{dest}{Path(src).name}" if dest.endswith("/") else dest
 
@@ -150,12 +108,9 @@ def dest_file(src, dest):
 def targets_out_dir(dest, out_dir):
     """Whether a COPY destination writes into the bundle's directory, however spelled.
 
-    Deliberately coarse, and asked BEFORE the line is understood: this is what
-    decides which lines are this file's business, so it has to say yes to every
-    spelling that reaches that directory — including the ones the checks below
-    cannot read. A line that names the directory and is not understood has to become
-    a failure; a line quietly not recognised as naming it is the exact silence this
-    file exists to remove.
+    Deliberately coarse: it decides which lines are this file's business, so it
+    must say yes to every spelling, including ones the checks below cannot read —
+    those then fail instead of being skipped.
     """
     return dest.rstrip("/") == out_dir or dest.startswith(f"{out_dir}/")
 
@@ -164,17 +119,9 @@ def targets_out_dir(dest, out_dir):
 def entry_name():
     """The file name vite is configured to emit for the entry chunk.
 
-    Read out of the config rather than assumed, because this is the end of the
-    chain everything else has to follow: rollup writes whatever this says, and
-    the other four files are only correct relative to it.
-
-    Matched as a whole LINE of the settings block, never as a substring anywhere in
-    the file. vite.config.mjs opens with twenty-seven lines of prose that name these
-    settings, and a `//` comment cannot begin a line with `entryFileNames:` — so
-    anchoring is what keeps this read on the setting rollup obeys. A substring
-    search takes the FIRST occurrence, so the day the setting is renamed and the
-    comment above it keeps the old name, all five files agree on a name vite no
-    longer emits, and the failure surfaces at a `COPY` or a `cp` instead of here.
+    The end of the chain the other four files follow. Matched as a whole line of
+    the settings block, never as a substring: vite.config.mjs opens with prose
+    naming these settings, and a `//` line cannot start with `entryFileNames:`.
     """
     config = read("ui", "vite.config.mjs")
     match = re.search(r"(?m)^\s*entryFileNames:\s*['\"]([^'\"]+)['\"],?\s*$", config)
@@ -242,13 +189,9 @@ def ui_files():
 def stage_copies():
     """Every `COPY --from=` in the Dockerfile, parsed into StageCopy.
 
-    The parse is asserted to be COMPLETE, and that assertion is the fixture's real
-    job rather than a precaution. COPY_FROM reads exactly two operands, so a
-    multi-source line does not match it at all and would simply be missing from this
-    list; every check below then reads "every stage copy is ..." over a list the
-    line in question is not in, passes, and reports nothing. Nothing else here can
-    tell "there is no such line" from "there is one and it was not understood", so
-    the difference is made once, in front of all of them.
+    The parse is asserted complete: a multi-source line does not match
+    COPY_FROM, and without this assertion it would be missing from the list and
+    every "every stage copy is ..." check would pass over it.
     """
     dockerfile = read("Dockerfile")
     unparsed = [m.group(0) for m in COPY_FROM_ANY.finditer(dockerfile)
@@ -278,29 +221,19 @@ def stage_copies():
 def bundle_copies(stage_copies, out_dir):
     """The stage copies that put ONE NAMED FILE into the bundle's directory.
 
-    Selected by DESTINATION rather than by stage name, so that a renamed stage shows
-    up as a broken destination here instead of quietly dropping every assertion
-    below -- a filter on a name nobody checks is how a test stops testing without
-    failing. The selection itself is written the same way, because it is where that
-    very failure happened: a line that names this directory in a shape which does
-    not reduce to one file is REPORTED here, never dropped. The filter this fixture
-    used to carry compared `Path(dest).parent` against the directory, and `Path`
-    normalises a trailing slash away -- so `static/_v/` came out as `static`, the
-    entirely ordinary `COPY --from=ui /ui/dist/x.js static/_v/` fell out of the
-    list, and every assertion below went on passing over the shortened one.
+    Selected by destination, not stage name, so a renamed stage shows up as a
+    failure rather than dropping every assertion. A line naming this directory in
+    a shape that does not reduce to one file is reported, never dropped.
 
-    The merging form -- a DIRECTORY as the source -- is the one shape deliberately
-    let past. test_the_bundle_is_copied_file_by_file reads the full list and says
-    what a directory copy does to this directory; raising it here as well would bury
-    that message under fixture errors on four other tests.
+    A directory as the source (the merging form) is let past here:
+    test_the_bundle_is_copied_file_by_file reports it with its own message.
     """
     copies, stray = [], []
     for copy in stage_copies:
         if not targets_out_dir(copy.dest, out_dir) or copy.file is None:
             continue
-        # What is left of the destination once the directory is taken off the front.
-        # Exactly one component with no slash in it is the shape everything below
-        # assumes; anything else is reported rather than dropped.
+        # The destination below the directory must be exactly one component;
+        # anything else is reported.
         inside = (copy.file[len(out_dir) + 1:]
                   if copy.file.startswith(f"{out_dir}/") else "")
         if inside and "/" not in inside:
@@ -346,12 +279,9 @@ def test_the_gate_looks_for_the_file_vite_actually_builds(entry_name, out_dir):
 def test_every_copied_bundle_file_is_checked_by_the_gate(bundle_copies):
     """Each `COPY --from=ui` destination has a row in REQUIRED_PATHS.
 
-    The two lists answer opposite questions and only together cover the pair of
-    mistakes available here. A file the Dockerfile copies but the gate does not
-    check can vanish from the build and reach the registry unnoticed; a file the
-    gate checks but no COPY brings in fails every build. Requiring the COPY set
-    to be a subset of the checked set closes the first; the entry-name test above
-    closes the second for the one file that must always exist.
+    The COPY set must be a subset of the checked set, or a file can vanish from
+    the build unnoticed; the entry-name test above covers the reverse for the one
+    file that must exist.
     """
     unchecked = [
         copy.file for copy in bundle_copies
@@ -370,24 +300,12 @@ def test_the_bundle_is_copied_file_by_file(stage_copies, out_dir):
     """No `COPY --from=ui /ui/dist static/_v` — the merging form.
 
     static/_v/ holds committed assets (site.css, index.js, pointer.js,
-    pointer_pref.js, the vendored viewer) and the build output lands among them,
-    so a directory copy MERGES the two. `index.js` is an entirely ordinary name for a bundler to
-    emit, and a collision there silently replaces the hub's own file. The publish
-    gate cannot see it: check (g) asks whether a path EXISTS, and after such an
-    overwrite it still does.
+    pointer_pref.js, the vendored viewer), so a directory copy can silently
+    overwrite one (`index.js` is an ordinary bundler output name), and check (g)
+    only asks whether a path exists. Per-file copies admit nothing unnamed.
 
-    A per-file copy makes that impossible -- nothing enters the image unless a
-    line asks for it by name. This test is what keeps someone from collapsing the
-    lines back into one when a second output file appears, which is exactly when
-    it will look like an obvious tidy-up.
-
-    It reads the FULL list of stage copies, not the bundle ones, and that is the
-    difference between a check and a decoration. The merging form names no file, so
-    ANY filter that selects "copies of a file into static/_v/" excludes precisely
-    the line this test is about -- run over the filtered list it inspects a set the
-    offending line is by definition not in, and passes. That is what it did until
-    now, including with the merging line written directly beside the per-file one it
-    was supposed to catch.
+    Reads the full list of stage copies: the merging form names no file, so any
+    "copies of a file" filter would exclude exactly the line this test is about.
     """
     merging = [(copy.src, copy.dest) for copy in stage_copies
                if targets_out_dir(copy.dest, out_dir) and copy.file is None]
@@ -405,24 +323,14 @@ def test_the_bundle_is_copied_file_by_file(stage_copies, out_dir):
 def test_the_stage_copy_runs_after_the_static_tree(bundle_copies):
     """Ordering is what makes the image's own build win.
 
-    Two defences keep a workstation's `make ui` output from becoming the image's
-    bundle, and each covers exactly what the other cannot. `.dockerignore`
-    excludes `static/_v/hammerola*`, and that is the only one that can keep out a
-    file THIS build no longer emits — a chunk from an older vite config would
-    otherwise ride in on `COPY static/ static/` and stay, because there is nothing
-    of that name left to overwrite it. Ordering is what still holds when somebody
-    deletes that line, which no build would fail: the stage copy sits BELOW
-    `COPY static/ static/`, so a laptop's bundle carried in by the static tree is
-    replaced by the one built from THIS commit. Swap the two and the laptop's copy
-    wins instead, and nothing reports it: both are valid JavaScript, the page
-    works, and the gate only asks whether the path exists.
+    The stage copy sits below `COPY static/ static/`, so a laptop's bundle carried
+    in by the static tree is replaced by the one built from this commit; swapped,
+    the laptop's copy wins silently. This still holds if the `.dockerignore` line
+    is deleted (no build would fail); the exclusion, checked below, covers files
+    this build no longer emits, which ordering cannot overwrite.
 
-    The directive is matched at the START OF A LINE, not as a substring: the
-    Dockerfile's own prose names `COPY static/ static/` while explaining this
-    ordering, and that comment moves together with the stage copy.
-
-    The other defence is checked by the test below, and neither of the two is
-    redundant — the reasoning is written out there.
+    The directive is matched at the start of a line: the Dockerfile's comments
+    name it too.
     """
     dockerfile = read("Dockerfile")
     matches = list(STATIC_TREE_COPY_RE.finditer(dockerfile))
@@ -448,40 +356,24 @@ def test_the_stage_copy_runs_after_the_static_tree(bundle_copies):
 def test_the_context_excludes_a_workstation_build(entry_name, out_dir):
     """`.dockerignore` keeps a local `make ui` out of the build context.
 
-    The sibling of the ordering test above, and both are checked because neither
-    covers the other's case. Ordering can only settle a file the stage ALSO emits --
-    winning there means being copied over the same name -- so a chunk an older vite
-    config produced and this build no longer does rides in on `COPY static/ static/`
-    with nothing left to overwrite it, and ships inside the image as a file no
-    commit can account for. Only the exclusion keeps that one out. In the other
-    direction the exclusion is a string SOMEBODY CAN DELETE WITHOUT ANY BUILD
-    FAILING -- the image still builds, the gate still passes, the page still works
-    -- and the ordering is what still holds afterwards. A line whose removal breaks
-    nothing at all is exactly the kind that needs a test rather than a comment.
+    Ordering only settles files the stage also emits; a chunk an older vite
+    config produced would ride in on `COPY static/ static/` and ship. Only the
+    exclusion keeps that out.
 
-    Two things are asked of the pattern, and the second is not pedantry. It has to
-    cover today's entry file, and it has to be a GLOB over the shared prefix rather
-    than that file's own name: the file this line exists to keep out is the one the
-    build NO LONGER emits, whose name is by definition not knowable from anything in
-    this repository. So the check hands it a name that exists nowhere and requires
-    that to be covered too.
-
-    The prefix is derived from the entry name rather than written out, for the
-    reason the module docstring gives -- a copy of that string here would be one
-    more place to forget -- and it is the entry's stem because that is what vite's
-    three output settings share: `hammerola.js`, `hammerola-[name].js`,
-    `hammerola.[ext]`.
+    The pattern must cover today's entry and be a glob over the shared prefix:
+    the file it must keep out is one this build no longer emits, so a made-up
+    name is required to be covered too. The prefix is the entry's stem, which
+    vite's three output settings share (`hammerola.js`, `hammerola-[name].js`,
+    `hammerola.[ext]`).
     """
     prefix = entry_name.split(".")[0]
     entry = f"{out_dir}/{entry_name}"
     stale = f"{out_dir}/{prefix}-a-chunk-an-older-config-emitted.js"
 
-    # A `!` line is an exception -- the opposite of a net -- so it can never be the
-    # pattern that covers anything, and a leading slash is one docker itself strips.
-    # The matcher is fnmatch rather than docker's own, and it is the more permissive
-    # of the two (`*` crosses a `/` here and does not there), so this can accept a
-    # pattern docker would read more narrowly. That is the safe direction for the one
-    # thing it must never do: pass with no excluding line in the file at all.
+    # A `!` line is an exception, never a covering pattern; docker strips a
+    # leading slash. fnmatch is more permissive than docker's matcher (`*`
+    # crosses `/`), which errs towards accepting, never towards passing with no
+    # excluding line at all.
     patterns = [line.strip().lstrip("/") for line in read(".dockerignore").splitlines()]
     patterns = [p for p in patterns if p and not p.startswith(("#", "!"))]
     covering = [p for p in patterns
@@ -500,11 +392,8 @@ def test_the_context_excludes_a_workstation_build(entry_name, out_dir):
 def test_the_copy_names_a_stage_the_dockerfile_defines(bundle_copies):
     """`COPY --from=x` with no `AS x` is read by docker as an IMAGE name.
 
-    Everything between `FROM` and `AS` is left unconstrained on purpose. The
-    node stage is a natural place for `--platform=$BUILDPLATFORM`, which is the
-    correct way to keep a cross-build from running node under qemu, and a pattern
-    that insisted on a bare image reference would answer that edit with "names a
-    stage the Dockerfile does not define" — a message pointing at the wrong file.
+    Everything between `FROM` and `AS` is unconstrained, so
+    `--platform=$BUILDPLATFORM` on the node stage is accepted.
     """
     dockerfile = read("Dockerfile")
     for copy in bundle_copies:
@@ -540,18 +429,10 @@ def test_the_makefile_copies_the_same_files_by_name(entry_name, out_dir, ui_file
 def test_the_makefile_copies_every_file_the_image_does(bundle_copies, ui_files):
     """UI_FILES against the Dockerfile's per-file `COPY --from=ui` rules.
 
-    The two halves of the build are written in different files and neither reads
-    the other, so a second output can be added to one and forgotten in the other.
-    A name the Dockerfile copies and UI_FILES omits is the silent direction: the
-    image is complete, the gate is green, CI never runs the Makefile at all — and
-    a workstation serves a page missing that chunk, which only a browser console
-    reports.
-
-    ONE DIRECTION ONLY, deliberately. The reverse — a name in UI_FILES the
-    Dockerfile does not copy — is already loud: `make ui` copies each name out of
-    ui/dist/ and the copy fails on the spot when the build did not emit it. This
-    test covers the half that has no such symptom, and the asymmetry is the reason
-    rather than an oversight.
+    A name the Dockerfile copies and UI_FILES omits is silent: the image is
+    complete, CI never runs the Makefile, and a workstation serves a page missing
+    that chunk. One direction only: a name in UI_FILES the build does not emit
+    already fails `make ui` on the spot.
     """
     missing = sorted({Path(copy.file).name for copy in bundle_copies}
                      - set(ui_files))
@@ -597,26 +478,13 @@ def test_the_page_loads_the_bundle_from_that_path(page, entry_name, out_dir):
 
 @pytest.mark.parametrize("page", BUNDLE_PAGES)
 def test_the_page_loads_nothing_but_the_bundle(page, entry_name, out_dir):
-    """And no second script beside it — a page script of its own above all.
+    """And no second script beside it, whatever it is called.
 
-    BOTH of these pages used to have one. The build page's built the header, the
-    panels and the comment form out of markup the template carried; the front
-    page's fetched /index.json and built the cards. Both are gone, and neither
-    script is in the repository or the image any more.
-
-    What this guards is the shape of the failure if one comes back. The two would
-    not conflict loudly — each old script mounted into an element its template no
-    longer has (`#cad_viewer`, `#grid`), so it would fail somewhere in the console
-    while the interface rendered over the top of it and the page LOOKED right.
-    Meanwhile the browser would fetch a 404 on every load, and on the build page
-    both would bind the library's keymap and the wheel and the pointer-preference
-    key would get two writers. Nothing else here would notice: the test above only
-    asserts its own `src` is PRESENT, and the publish gate asks whether paths
-    exist rather than which ones a page asks for.
-
-    So this asserts the whole list rather than the absence of one name: any
-    second `<script src>` on these pages is the thing worth stopping, whatever it
-    is called.
+    A stray page script would not fail loudly: it could 404 on every load, or
+    mount into elements the template no longer has while the interface renders
+    over it, and on the build page bind the keymap and pointer-preference key a
+    second time. The test above only asserts the bundle's `src` is present, and
+    the publish gate only asks whether paths exist.
     """
     url = bundle_url(entry_name, out_dir)
     sources = script_sources(page)
@@ -632,14 +500,9 @@ def test_exactly_these_pages_load_the_bundle(entry_name, out_dir):
     """BUNDLE_PAGES is the real list, checked rather than trusted.
 
     Every check in this section iterates that tuple, so a page dropping out of it
-    drops out of all of them — silently, and in the direction that matters: the
-    page stops loading the bundle, renders an empty document, and the two tests
-    above pass by looking at the pages that still work.
-
-    The other direction is worth stopping too. pointer.html loads one committed
-    script to read one localStorage key and leave (SPEC 9); putting a React
-    bundle on it would be a couple of hundred kilobytes fetched to do that, on
-    the one page whose entire job is to be quick.
+    would pass them all while rendering nothing. In the other direction,
+    pointer.html reads one localStorage key and leaves (SPEC 9); a React bundle
+    there would be hundreds of kilobytes on the page whose job is to be quick.
     """
     url = bundle_url(entry_name, out_dir)
     pages = sorted(path.name for path in (ROOT / TEMPLATES).glob("*.html")
@@ -657,22 +520,11 @@ def test_exactly_these_pages_load_the_bundle(entry_name, out_dir):
 def test_every_mount_point_is_on_exactly_one_page():
     """The ids ui/src/main.jsx looks up against the pages that carry them.
 
-    main.jsx mounts only where it finds an id and does nothing at all where it
-    does not -- deliberately, so that one bundle can serve two pages and leave
-    the third alone. That tolerance is exactly what makes a missing or renamed
-    mount point invisible from the JavaScript side: no error, no warning, an
-    empty page. So it is checked from the HTML side instead.
+    main.jsx mounts only where it finds an id, so a missing or renamed mount point
+    is an empty page with no error; it is checked from the HTML side. Exactly one
+    page per id, because the id is what tells the bundle which page it is on.
 
-    EXACTLY ONE PAGE PER ID, not "at least one", because which id a document
-    carries is the only thing telling the bundle which page it is on. Two pages
-    sharing an id is the front page rendering the build interface, or the
-    reverse, and both would be found by opening the site rather than by anything
-    here.
-
-    Both reads skip the files' COMMENTS, for the same reason the entry name is read
-    off an anchored line: main.jsx's own header names the ids while explaining why
-    the mounts are conditional, so a search that reads prose could agree with a
-    paragraph long after the calls below it stopped using them.
+    Both reads skip comments: main.jsx's header names the ids in prose.
     """
     main = re.sub(r"^\s*//.*$", "", read("ui", "src", "main.jsx"), flags=re.M)
     mount_ids = re.findall(

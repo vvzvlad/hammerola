@@ -45,7 +45,7 @@ from hammerola import hub as hub_module
 from hammerola.cli import main
 from hammerola.errors import ClientError
 
-# The address and the token, from tests/client/conftest.py (issue #99). The
+# The address and the token, from tests/client/conftest.py. The
 # token is for the publishing half of this file only: `update` itself presents
 # none — `/start` and the client it names are public on purpose, and a machine
 # whose tool is too old to publish may be one that was never logged in.
@@ -173,7 +173,7 @@ def test_the_shipped_changelog_is_shaped_the_way_the_reader_expects():
 
 
 def test_the_version_this_client_is_has_an_entry_of_its_own():
-    """THE RANGE OF THE CHANGELOG, from the other end (issue #98).
+    """The range of the changelog, from the other end.
 
     The test above holds the SHAPE of what is in `ENTRIES` and would pass on an
     empty dict. What an update prints, though, is the entries strictly after the
@@ -181,7 +181,7 @@ def test_the_version_this_client_is_has_an_entry_of_its_own():
     version and does not file it here is the release whose own change is the one
     nobody is told about.
 
-    THE FAILURE IS A RUN THAT LOOKS LIKE IT WORKED. `_print_changes` returns
+    The failure is a run that looks like it worked. `_print_changes` returns
     silently on an empty range, so `hammerola update` prints "version X ->
     version Y" and then nothing at all: the agent it replaced itself under reads
     that as "nothing about the interface moved" and goes on writing the flags it

@@ -1,11 +1,8 @@
 """The preview renderer, against the view document the browser really loads.
 
-WHAT THESE HOLD is the half of a build nothing else can notice. The previews
-were drawn with matplotlib's mplot3d, which has no z-buffer and painted every
-part in one blue: an assembly came out a single blue blob with its own far wall
-showing through the near one, and no build ever went red over it. Both of those
-are properties of a PICTURE, so the only thing that ever caught them was
-somebody opening the PNG — which is the state this file exists to leave.
+These hold what nothing else in a build can notice: depth order and per-part
+colour are properties of a PICTURE, which otherwise only somebody opening the
+PNG would check.
 
 KERNEL-FREE, like everything else in this directory. The renderer takes
 triangles rather than CadQuery shapes, and `ui/tests/fixtures/assembled.json` is
@@ -71,8 +68,7 @@ def _shows(image, color):
 def _landscape(width):
     """The `(width, height)` of a tile this many pixels across.
 
-    A tile is VIEW_ASPECT wide for its height and no longer square, and the
-    height is derived here rather than written down, for the same reason
+    A tile is VIEW_ASPECT wide for its height, and the height is derived here rather than written down, for the same reason
     `render` derives it in one place: a test carrying its own idea of the shape
     would go on passing while the pictures changed shape around it.
     """
@@ -192,12 +188,8 @@ def test_a_colour_the_catalogue_took_by_name_is_one_this_renderer_can_draw():
 
     The catalogue validates a colour with the tessellator's own parser, which
     takes `"red"`, `"#f00"` and `"steelblue"`; this renderer reads exactly six
-    hex digits. While `parts._check_color` handed back the author's own string,
-    a part named by a CSS colour passed every gate in the build and then died
-    inside the PNG of itself — a model that built yesterday going red today,
-    with a message about a picture. So the validator canonicalises, and this is
-    the two halves meeting: what the catalogue carries is what the renderer is
-    handed.
+    hex digits. So the validator canonicalises, and this is the two halves
+    meeting: what the catalogue carries is what the renderer is handed.
     """
     pytest.importorskip("ocp_tessellate", exc_type=ImportError,
                         reason="colour parsing uses the tessellator's parser")
@@ -207,8 +199,7 @@ def test_a_colour_the_catalogue_took_by_name_is_one_this_renderer_can_draw():
     color = catalogue_colors(catalogue)["body"]
 
     assert color == "#ff0000"
-    # Drawn, and not merely hex: `_hex_rgb` is reached through `render_view`,
-    # which is where the ValueError used to come from.
+    # Drawn, and not merely hex: `_hex_rgb` is reached through `render_view`.
     frame = preview_png.render_view([_square(0.0, 6.0, color)], 0.0, 0.0,
                                     *_landscape(41))
     assert _shows(frame, color)
@@ -297,11 +288,8 @@ def test_a_part_is_not_cropped_by_its_own_picture():
 
     A cube of half-edge h is 2h across seen down an axis and 2h*sqrt(3) across
     seen corner-on. A scale taken from h therefore fits the face-on views and
-    pushes the corners of every other one off the edge — which is exactly what
-    shipped for one build: the template's assembled preview ran off the left and
-    the right of its own picture, because mplot3d used to do this measuring and
-    nothing inherited it. Asserted on the BORDER of the frame, because that is
-    where the part went.
+    pushes the corners of every other one off the edge. Asserted on the BORDER
+    of the frame, because that is where the part would go.
     """
     width, height = _landscape(240)
     frame = np.asarray(preview_png.render_view([_cube(10.0, PLATE)],
@@ -328,14 +316,11 @@ def test_a_part_taller_than_it_is_wide_is_drawn_whole_in_a_landscape_tile():
     the landscape frame exists for, because the picture goes on a card wider
     than it is tall and a square render would be drawn at half that card's width.
 
-    NOTHING HERE IS PINNED TO A ROW NUMBER, and that is the point of measuring
-    the picture rather than indexing it. The margin is a fixed FRACTION of the
-    tile — about one per cent of its height — so what it comes to in pixels
+    Nothing here is pinned to a row number. The margin is a fixed FRACTION of
+    the tile — about one per cent of its height — so what it comes to in pixels
     follows from VIEW_ASPECT, and a row written down here would be a second copy
-    of that constant: it was `frame[0]` against a part clearing the border by
-    0.38 px, which a change of VIEW_ASPECT would have turned red over nothing
-    this test is about. The tile is rendered large for the same reason, so that
-    one per cent is pixels rather than a fraction of one.
+    of that constant. The tile is rendered large so that one per cent is pixels
+    rather than a fraction of one.
 
     The card's own size is deliberately not repeated here — it belongs to the UI,
     it is fluid (that is why the card fits the picture instead of cropping it),
@@ -372,7 +357,7 @@ def test_one_framing_serves_every_view_of_a_sheet():
     A frame measured per tile would draw the same part at six different sizes,
     and a reader comparing two of them could not tell that from a part that
     changed. So a sheet takes the LARGEST extent any of its views needs, ON EACH
-    AXIS SEPARATELY now that the frame is not square: the widest tile fits
+    AXIS SEPARATELY since the frame is not square: the widest tile fits
     exactly and the others have room to spare.
     """
     parts = [_cube(10.0, PLATE)]

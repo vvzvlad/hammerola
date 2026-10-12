@@ -1,39 +1,24 @@
 """What the hub will accept, as the client knows it.
 
-A COPY of six numbers and two patterns — and the copy is deliberate, because
-this file has to import on a laptop's bare python3 (see `hammerola/__init__.py`
-for why the client takes nothing from requirements.txt) and `src.store` pulls in
-loguru and half the service.
+A COPY: this file must import on a bare python3 (see `hammerola/__init__.py`)
+and `src.store` pulls in the service. Every constant is compared against the
+module that enforces it in `tests/client/test_limits.py`, so the two cannot
+drift silently.
 
-WHAT MAKES IT A DIFFERENT KIND OF COPY FROM THE ONE THAT BROKE PUBLICATION.
-`cad_publish/hubspec.py` held these same values with nothing checking them, in a
-repository that could not see the hub's. This one is checked: every constant
-below is compared against the module that actually enforces it in
-`tests/client/test_limits.py`, which runs in the same suite as the hub's own
-tests and in the same CI job. Edit one side without the other and the suite
-fails at that commit — which is exactly what nothing could do before.
-
-The ceilings are enforced BEFORE anything is sent, so a tree that cannot
-possibly be accepted is refused on the machine that can still do something about
-it, with the offending file named. The hub remains the authority: it re-checks
-every one of these and it is the only side that knows a deployment's real
-MAX_BUILD_BYTES.
+The ceilings are enforced before anything is sent, naming the offending file.
+The hub remains the authority: it re-checks every one and is the only side
+that knows a deployment's real MAX_BUILD_BYTES.
 """
 
 import re
 
-# `<pid>` from project.json and the revision the HUB mints out of the sources it
-# received (SPEC 7.7) — both end up as a path segment of the publish URL. git is
-# not in either of them: the client stopped reading HEAD when the hub started
-# naming revisions, so the only id this tool spells itself is the project's.
-# Authority: `src.store.SAFE_ID`.
+# `<pid>` from project.json and the revision the hub mints from the sources
+# (SPEC 7.7); both become path segments. Authority: `src.store.SAFE_ID`.
 SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
-# ONE `/`-separated component of a file's path inside the archive. Authority:
-# `src.store.SAFE_COMPONENT`. Note what it forbids that a source tree is full
-# of: a leading dot. `.git`, `.venv`, `.gitignore` and `.env` can never be
-# members, which is why `pack.py` drops hidden entries rather than refusing on
-# them.
+# One `/`-separated component of a member path. Authority:
+# `src.store.SAFE_COMPONENT`. It forbids a leading dot, which is why `pack.py`
+# drops hidden entries (`.git`, `.venv`, `.env`) rather than refusing them.
 SAFE_COMPONENT = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # Components in one member's path, the file name included. Authority:
@@ -43,14 +28,10 @@ MAX_PATH_DEPTH = 8
 # Files in one archive. Authority: `src.store.MAX_MEMBERS`.
 MAX_MEMBERS = 1024
 
-# The publish route reserves these as build names: `latest` is a symlink the
-# store moves and `dev` is the local slot itself. Authority:
-# `src.store.RESERVED_BUILD_NAMES`. Nothing this tool publishes can collide with
-# either, and that is now true by construction rather than by luck: the client
-# names no revision at all — the hub mints one out of the sources, 64 hex
-# characters wide (SPEC 7.7). What the two names are still needed FOR is
-# ADDRESSING, because a command that fetches takes a revision or one of these,
-# and `dev` is the one the client spells itself.
+# Reserved build names: `latest` is a symlink the store moves, `dev` is the
+# local slot. Authority: `src.store.RESERVED_BUILD_NAMES`. Revisions are 64 hex
+# characters minted by the hub, so they cannot collide; the names are used for
+# addressing.
 DEV_SLOT = "dev"
 RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})
 
@@ -58,25 +39,14 @@ RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})
 # `src.render.MAX_TEXT`, which `_plain_text` measures every field of a meta.json
 # against -- the title and the project name among them.
 #
-# `hammerola create` holds BOTH names it writes to it -- `project` and `title`
-# -- because both can be filled in from the DIRECTORY's name, which nobody chose
-# with a ceiling in mind and which a filesystem lets run to 255 characters. Past
-# this the build raises rather than publishes
-# (`cadbuild.project.load_project`, MAX_TITLE_CHARS), after the upload and
-# inside the job.
-#
-# THE TWO ARE HELD TO IT DIFFERENTLY, and the difference is what each has to
-# fall back on. A too-long slug is passed over: the title's brackets are asked
-# next and the project id stands behind them, so the key is simply left out. A
-# too-long title stops the command instead — the only fallback for a title is a
-# name nobody chose, and truncating somebody's project name silently is worse
-# than asking for `--title`.
+# `hammerola create` holds `project` and `title` to it, since both can come
+# from the directory name (up to 255 characters); past it the build raises
+# inside the job (`cadbuild.project.load_project`, MAX_TITLE_CHARS). A too-long
+# slug is simply left out (the project id stands behind it); a too-long title
+# stops the command and asks for `--title` rather than truncating.
 MAX_TEXT_CHARS = 200
 
-# Ceiling on the request body AND on the unpacked total. Authority: the DEFAULT
-# of `src.settings.Settings.max_build_bytes`, and "default" is the whole
-# caveat — a deployment may set MAX_BUILD_BYTES to anything, and the client
-# cannot know which. So this is a courtesy check that catches the archive nobody
-# would accept, not a promise: the hub answers 413 with its own number, and that
-# answer is the one that counts.
+# Ceiling on the request body and on the unpacked total. Authority: the
+# DEFAULT of `src.settings.Settings.max_build_bytes`; a deployment may set
+# another, so this is a courtesy check and the hub's 413 is what counts.
 MAX_BUILD_BYTES = 64 * 1024 * 1024
