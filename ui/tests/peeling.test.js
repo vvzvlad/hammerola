@@ -20,7 +20,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 
@@ -196,5 +196,157 @@ describe('the file the hub serves still peels', () => {
     expect(pick).not.toContain(lib.PEEL_LAYER)
     expect(pick).not.toContain(lib.OVERLAY_LAYER)
     expect(pick).not.toContain(0)
+  })
+})
+
+/** The whole depth-peeling module out of the bundle, run against three's own
+ *  module: from the first layer constant to the end of `class DepthPeeling`. */
+function peelingModule() {
+  const start = SOURCE.indexOf('const PEEL_LAYER = ')
+  const classStart = SOURCE.indexOf('class DepthPeeling {', start)
+  if (start < 0 || classStart < 0) {
+    throw new Error('the bundle no longer declares the depth-peeling module')
+  }
+  const end = SOURCE.indexOf('\n}\n', classStart) + 3
+  return new Function('THREE', `${SOURCE.slice(start, end)}
+return { peelRect, DepthPeeling, createPeelUniforms };`)(THREE)
+}
+
+const peeling = peelingModule()
+
+/** A translucent part: a 2 mm cube at `at`, as an ObjectGroup carries it. */
+function cube(at = [0, 0, 0]) {
+  const group = new THREE.Group()
+  group.isObjectGroup = true
+  group.front = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2),
+    new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 }))
+  group.back = null
+  group.edges = null
+  group.vertices = null
+  group.add(group.front)
+  group.position.set(...at)
+  return group
+}
+
+function topCamera() {
+  const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100)
+  camera.position.set(0, 0, 50)
+  return camera
+}
+
+describe('the rectangle the peel passes are cut to', () => {
+  const size = new THREE.Vector2(1000, 800)
+
+  it('holds the projected part and a 2 px margin, not the whole buffer', () => {
+    const rect = new THREE.Vector4()
+    expect(peeling.peelRect([cube()], topCamera(), size, rect)).toBe(true)
+    // The cube spans NDC -0.1..0.1: pixels 450..550 across, 360..440 up.
+    expect(rect.x).toBeGreaterThanOrEqual(447)
+    expect(rect.x).toBeLessThanOrEqual(448)
+    expect(rect.x + rect.z).toBeGreaterThanOrEqual(552)
+    expect(rect.x + rect.z).toBeLessThanOrEqual(553)
+    expect(rect.y).toBeLessThanOrEqual(358)
+    expect(rect.y + rect.w).toBeGreaterThanOrEqual(442)
+  })
+
+  it('follows a part the interface moved without updating its matrix', () => {
+    const rect = new THREE.Vector4()
+    expect(peeling.peelRect([cube([100, 0, 0])], topCamera(), size, rect)).toBe(false)
+  })
+
+  it('takes the whole buffer when a corner is behind a perspective camera', () => {
+    const camera = new THREE.PerspectiveCamera(50, 1.25, 0.1, 100)
+    camera.position.set(0, 0, 0.5)
+    const rect = new THREE.Vector4()
+    expect(peeling.peelRect([cube()], camera, size, rect)).toBe(true)
+    expect(rect.toArray()).toEqual([0, 0, 1000, 800])
+  })
+})
+
+describe('peeling waits for the camera to settle', () => {
+  afterEach(() => vi.useRealTimers())
+
+  /** A renderer that draws nothing and records which path a frame took. */
+  function stage() {
+    const renderer = {
+      render: vi.fn(),
+      getDrawingBufferSize: (v) => v.set(1000, 800),
+      getRenderTarget: () => null,
+      setRenderTarget: vi.fn(),
+      getClearAlpha: () => 0,
+      getClearColor: (c) => c,
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      getScissor: (v) => v,
+      getScissorTest: () => false,
+      setScissor: vi.fn(),
+      setScissorTest: vi.fn(),
+      getPixelRatio: () => 1,
+    }
+    const requestRender = vi.fn()
+    const part = cube()
+    const scene = new THREE.Scene()
+    scene.add(part)
+    const nestedGroup = { groups: { '/a': part }, peelUniforms: peeling.createPeelUniforms() }
+    const camera = topCamera()
+    const peel = new peeling.DepthPeeling(renderer, requestRender)
+    const frame = (exact = false) => {
+      renderer.render.mockClear()
+      renderer.setRenderTarget.mockClear()
+      peel.render(scene, camera, nestedGroup, exact)
+      return renderer.setRenderTarget.mock.calls.length > 0 ? 'peeled' : 'unpeeled'
+    }
+    return { renderer, requestRender, camera, peel, frame }
+  }
+
+  it('draws a moving camera unpeeled in three passes, then asks for one peeled frame', () => {
+    vi.useFakeTimers()
+    const s = stage()
+    expect(s.frame()).toBe('unpeeled')
+    expect(s.renderer.render).toHaveBeenCalledTimes(3)
+    expect(s.frame(), 'a second frame of the same step is still the move').toBe('unpeeled')
+    expect(s.requestRender).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(150)
+    expect(s.requestRender).toHaveBeenCalledTimes(1)
+    expect(s.frame()).toBe('peeled')
+    vi.advanceTimersByTime(1000)
+    expect(s.requestRender, 'a still camera asks for nothing more').toHaveBeenCalledTimes(1)
+  })
+
+  it('peels a screenshot even mid-move', () => {
+    vi.useFakeTimers()
+    const s = stage()
+    expect(s.frame(true)).toBe('peeled')
+  })
+
+  it('stops waiting once disposed', () => {
+    vi.useFakeTimers()
+    const s = stage()
+    s.frame()
+    s.peel.dispose()
+    vi.advanceTimersByTime(1000)
+    expect(s.requestRender).not.toHaveBeenCalled()
+  })
+})
+
+describe('the shader text the peel patch is spliced into', () => {
+  // The discard goes after clipping and the sRGB encoding right after the
+  // output encoding, so fog and premultiplication still follow it as they do
+  // on the canvas.
+  for (const name of ['meshphysical_frag', 'meshbasic_frag']) {
+    it(`finds each anchor once in ${name}, the encoding before fog and premultiplication`, () => {
+      const shader = THREE.ShaderChunk[name]
+      for (const anchor of ['#include <clipping_planes_fragment>', '#include <colorspace_fragment>']) {
+        expect(shader.split(anchor).length - 1).toBe(1)
+      }
+      const at = (chunk) => shader.indexOf(`#include <${chunk}>`)
+      expect(at('colorspace_fragment')).toBeLessThan(at('fog_fragment'))
+      expect(at('colorspace_fragment')).toBeLessThan(at('premultiplied_alpha_fragment'))
+    })
+  }
+
+  it('is reached by the screenshot with `exact`', () => {
+    expect(SOURCE).toMatch(/_depthPeeling\.render\([^;]*nestedGroup, true\)/)
   })
 })

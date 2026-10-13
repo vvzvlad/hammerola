@@ -522,7 +522,9 @@ class Viewer {
     this.renderer.setSize(this.state.get("cadWidth"), this.state.get("height"));
     this.renderer.setClearColor(0xffffff, 0);
     this.renderer.autoClear = false;
-    this._depthPeeling = new DepthPeeling(this.renderer);
+    this._depthPeeling = new DepthPeeling(this.renderer, () =>
+      this.update(true, false),
+    );
 
     // Create studio manager (env, floor, composer created lazily inside)
 
@@ -4406,6 +4408,7 @@ class Viewer {
             this.rendered.scene,
             this.rendered.camera.getCamera(),
             this.rendered.nestedGroup,
+            true,
           );
         }
       },

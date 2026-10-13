@@ -37,8 +37,10 @@ their own:
   a cover over a body) in the wrong order: `viewer/src/rendering/depth-peeling.ts`
   is ours, `viewer/src/scene/nestedgroup.ts` patches every face material for it
   in `renderShape`, and `viewer/src/core/viewer.ts` renders through it in
-  `update()` and the screenshot instead of calling `renderer.render` directly.
-  `ui/tests/peeling.test.js` asserts the bundle still does both;
+  `update()` and the screenshot instead of calling `renderer.render` directly,
+  hands it `update` to draw the peeled frame once the camera has settled, and
+  has the screenshot pass `exact` so it is peeled even mid-move.
+  `ui/tests/peeling.test.js` asserts the bundle still does all of it;
 * `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
   — and drops the outputs and the dev-server branch we do not use;
 * `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no
