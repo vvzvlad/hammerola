@@ -46,6 +46,7 @@ import { Tools, type ToolResponse } from "../tools/cad_tools/tools.js";
 import { MeshMeasureBackend } from "../tools/cad_tools/mesh-measure.js";
 import { version } from "../_version.js";
 import { IdPicker, clipSignature } from "../rendering/id-picking.js";
+import { DepthPeeling } from "../rendering/depth-peeling.js";
 import { type PickedComponent } from "../rendering/picked.js";
 import { PickingController } from "./picking-controller.js";
 import { StudioManager } from "./studio-manager.js";
@@ -388,6 +389,9 @@ class Viewer {
   // Studio mode orchestration (owns composer, floor, shadow lights, env manager)
   private _studioManager!: StudioManager;
 
+  // The direct (non-composer) render: translucent faces depth-peeled.
+  private _depthPeeling: DepthPeeling;
+
   /** Environment manager — proxied from StudioManager for display.ts access. */
   get envManager() {
     return this._studioManager.envManager;
@@ -518,6 +522,7 @@ class Viewer {
     this.renderer.setSize(this.state.get("cadWidth"), this.state.get("height"));
     this.renderer.setClearColor(0xffffff, 0);
     this.renderer.autoClear = false;
+    this._depthPeeling = new DepthPeeling(this.renderer);
 
     // Create studio manager (env, floor, composer created lazily inside)
 
@@ -1014,9 +1019,10 @@ class Viewer {
     if (this._studioManager.hasComposer) {
       this._studioManager.render();
     } else {
-      this.renderer.render(
+      this._depthPeeling.render(
         this.rendered.scene,
         this.rendered.camera.getCamera(),
+        this.rendered.nestedGroup,
       );
     }
     this.cadTools.update();
@@ -1134,6 +1140,7 @@ class Viewer {
 
     // dispose studio resources (composer, floor, env, shadows — must be before renderer)
     this._studioManager.dispose();
+    this._depthPeeling.dispose();
     // dispose renderer
     this.renderer.renderLists.dispose();
     this.renderer.dispose();
@@ -4395,9 +4402,10 @@ class Viewer {
         if (this._studioManager.hasComposer) {
           this._studioManager.render();
         } else {
-          this.renderer.render(
+          this._depthPeeling.render(
             this.rendered.scene,
             this.rendered.camera.getCamera(),
+            this.rendered.nestedGroup,
           );
         }
       },

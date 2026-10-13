@@ -22,7 +22,7 @@ its tsconfig. Its `docs/`, `examples/` and `tests/` are not vendored.
 
 ## What we changed, and why
 
-Four files, all of them but `package.json` carrying the reason in a comment of
+Six files, all of them but `package.json` carrying the reason in a comment of
 their own:
 
 * `viewer/src/index.ts` re-exports three's namespace, so the page can name the
@@ -32,6 +32,13 @@ their own:
   viewer renders ON DEMAND and a widget of ours standing in its scene has to be
   placed by the very frame that draws it (`ui/src/viewport/scene3d.js`). The
   field's declaration and the call site each carry the reason;
+* depth peeling of translucent faces, because three sorts transparent objects
+  per object and draws nested translucent parts (a board inside a ghosted case,
+  a cover over a body) in the wrong order: `viewer/src/rendering/depth-peeling.ts`
+  is ours, `viewer/src/scene/nestedgroup.ts` patches every face material for it
+  in `renderShape`, and `viewer/src/core/viewer.ts` renders through it in
+  `update()` and the screenshot instead of calling `renderer.render` directly.
+  `ui/tests/peeling.test.js` asserts the bundle still does both;
 * `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
   — and drops the outputs and the dev-server branch we do not use;
 * `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no

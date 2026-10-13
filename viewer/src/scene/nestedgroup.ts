@@ -20,6 +20,11 @@ import {
   HighlightController,
   VERTEX_FOCUS_SIZE,
 } from "../rendering/highlight.js";
+import {
+  createPeelUniforms,
+  patchPeelMaterial,
+  type PeelUniforms,
+} from "../rendering/depth-peeling.js";
 import { MeshGeometrySource } from "../tools/cad_tools/mesh-measure.js";
 import type {
   ZebraColorScheme,
@@ -220,6 +225,11 @@ class NestedGroup {
    */
   highlight: HighlightController | null;
   /**
+   * Depth-peeling uniforms shared by every face material {@link renderShape}
+   * builds; the viewer's `DepthPeeling` writes them during its peel passes.
+   */
+  peelUniforms: PeelUniforms;
+  /**
    * Per-node mesh geometry for the internal (TypeScript) measurement backend.
    * Populated for the compact group only (`assignIds`), keyed by node path like the
    * {@link registry}; lets measurements be computed without the Python backend.
@@ -289,6 +299,7 @@ class NestedGroup {
     this.registry = new ComponentRegistry();
     this.assignIds = false;
     this.highlight = null;
+    this.peelUniforms = createPeelUniforms();
     this.meshGeometry = new MeshGeometrySource();
 
     this.clipPlanes = null;
@@ -833,6 +844,11 @@ class NestedGroup {
       `MeshBasicMaterial (back) for ${path}`,
     );
     backMaterial.name = "backMaterial";
+
+    // Both faces take part in depth peeling when the shape is translucent.
+    // After the highlight patch, which this one chains onto.
+    patchPeelMaterial(frontMaterial, this.peelUniforms);
+    patchPeelMaterial(backMaterial, this.peelUniforms);
 
     const back = new THREE.Mesh(shapeGeometry, backMaterial);
     back.name = name;
