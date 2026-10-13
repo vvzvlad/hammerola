@@ -72,10 +72,11 @@ SHELL_ALPHA = 0.18
 REMOVED_COLOR = "#d1495b"
 ADDED_COLOR = "#2a9d5c"
 
-# Opaque is required: transparent objects are sorted per object by bounding
-# sphere centre, so the two shells swap on a slow rotation; the bright layer
-# stays stable because an opaque object writes depth, and the flicker behind
-# it is masked by both shells being one colour.
+# Opaque is required: a difference shares faces with the shells it was cut
+# from, and the viewer's depth peeling keeps only one of two translucent faces
+# at the same depth, so a translucent difference would come and go in a
+# pattern following the triangles. Opaque, it is drawn whole before the shells
+# and they are layered over it.
 DIFFERENCE_ALPHA = 1.0
 
 # What `report` may say about a part, and the whole of it.
