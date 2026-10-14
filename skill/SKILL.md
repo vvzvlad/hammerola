@@ -245,7 +245,9 @@ the first solid existed.
 
 **A word is not a specification.** "Bracket", "mount", "holder" each name five
 different objects. Say back what the object is as a shape, what it touches and
-what holds it, then commit a **block preview**: the whole layout in boxes and
+what holds it, what passes through it from end to end — water, air, silicone, a
+trigger over its full stroke and back — and how it is made past the printer,
+then commit a **block preview**: the whole layout in boxes and
 cylinders, as a catalogue and an `assembled` view. It closes this phase, is not
 optional, and is the project's first revision. The part goes in as a
 `printable` box of its overall size, its surroundings beside it as `mock` and
@@ -255,6 +257,17 @@ walks `parts()` and so lands on YOUR box:
 Rewrite `checks()` to what is known (envelope ≤ space available) or delete it;
 gutting it fails. ("Semicircular bracket" went into geometry 36 seconds after
 it was read, and 3 h 48 min of work was thrown away.)
+
+**Fastening is what he named, driven by what he drives it with.** Hardware the
+owner fits himself on site and did not ask you to model — a magnet, a latch, a
+screw through a hole he drills by hand — is not added, pocketed or studied for
+access: it is one line in `ref/`. (Eight magnet pockets and a frame went onto a
+booth door whose latches he was going to make himself: «зачем магниты на двери?
+там я защелки сделаю».) Where a fastener IS in the model, ask once which tool he
+actually turns it with before any access or clearance study — a screwdriver has
+no elbow, a hex key does — and never derive the tool from a standard table.
+(Four review rounds computed the sweep of a hex key, down to the long series of
+ISO 2936, for a screw he drives with a screwdriver: «я отверткой кручу, похуй».)
 
 **A constraint that is not a body does not exist.** Bought hardware, the wall,
 the hand, the hose, the panel behind — all are modelled, though none is
