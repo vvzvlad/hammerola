@@ -118,3 +118,10 @@ PR, `image-check-publish.yml` на push в `main`/`develop`) запускает 
   the review", "since the incident") goes into the commit message.
 - This file stays under ~150 lines: only what an agent would get wrong without it. No decision
   history, incident logs or retelling of the code.
+
+## FPF
+
+Паттерн читай через MCP `fpf` (`read_pattern <ID>`) до того, как применять.
+
+- Ревизия названа дайджестом исходников (`Store.mint_revision`, SPEC §7.7), а байты сборки зависят ещё от образа (пины `cadquery` и `cadquery-ocp`) — SYSE.30 «Make Software Builds Repeatable and Traceable»: при «тот же код — другие байты» восстановить все входы сборки, включая образ, и не считать имя ревизии полной идентичностью сборки.
+- Публикация, переключение `latest` и раздача сборок под годовым кэшем; образ хаба между `ci/smoke.py` и push — SYSE.32 «Promote Verified Artifacts without Rebuilding»: дальше идёт ровно тот объект, что прошёл проверку (`.payload.sha256`, тот же образ), без пересборки и без подмены под тем же адресом.
