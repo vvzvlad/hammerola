@@ -721,7 +721,7 @@ describe('the row menu', () => {
   })
 
   it('offers none to a reader with no key, not even the sentence', () => {
-    // A shared link without the files: every one of these would be a 401, and
+    // A shared link without the files: every one of these would be a 403, and
     // "No files in this build" would be untrue.
     const items = menuOn({ node: '/model/plate', token: null, builds: null })
     expect(fileRows(items)).toHaveLength(0)

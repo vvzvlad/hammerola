@@ -211,6 +211,23 @@ def test_the_public_route_still_works_with_no_token_at_all():
     assert Hub("http://hub.example", "", timeout=10)._token == ""
 
 
+def test_a_proxys_login_goes_in_Authorization_and_the_token_beside_it(
+        recorder):
+    """Two headers for two doors: `Authorization: Basic` for a password proxy
+    in front of the hub, `X-Hammerola-Token` for the hub. The login is sent
+    exactly as given — a colon in the password included — and without one
+    there is no `Authorization` at all."""
+    Hub(recorder, "sekrit", timeout=10, basic_auth="zlo:pa:ss").start()
+    Hub(recorder, "sekrit", timeout=10).start()
+
+    proxied, direct = ({name.lower(): value for name, value in seen.items()}
+                       for seen in _Recorder.seen)
+    assert proxied["authorization"] == "Basic emxvOnBhOnNz"
+    assert proxied["x-hammerola-token"] == "sekrit"
+    assert "authorization" not in direct
+    assert direct["x-hammerola-token"] == "sekrit"
+
+
 def test_a_connection_dropped_after_the_request_is_reported_as_unreachable():
     """AND NOT AS "nothing was sent", WHICH WOULD BE A LIE ABOUT A PUSH.
 

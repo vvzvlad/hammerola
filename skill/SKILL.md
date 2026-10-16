@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 20
+version: 22
 ---
 
 # hammerola
@@ -9,218 +9,20 @@ version: 20
 The hub builds CAD models from code: you push a source tree, it runs `model.py`
 in its own image, gates the geometry and serves a viewer with STL/STEP/3MF
 downloads on a permanent URL. You drive it with `hammerola` and need no CAD
-kernel. Commands and rules come first, the modelling discipline after.
+kernel. The modelling discipline comes first and the command reference after
+it, because a compacted conversation gets back only the start of this file.
 
-## Set up, once per machine
-
-`<hub>` is the address you were given. It has no default: never guess one, or
-write one into a repository.
-
-```sh
-mkdir -p ~/.local/bin ~/.claude/skills/hammerola
-curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # this file
-curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
-hammerola login <hub>
-```
-
-`hammerola skill` compares this file's version with the hub's;
-`hammerola skill update` replaces it. A stale skill fails silently, teaching
-commands that no longer exist — ask when you start on a project. Not at that
-default path? Pass `--path FILE`, or both verbs act on a file nobody reads.
-`hammerola update` replaces the client, which `build` and `commit` refuse when
-older than the hub.
-
-`login` asks for the password at the terminal and stores it 0600 in
-`~/.config/hammerola/env`. **Ask the instance's owner for it.** One shared
-secret publishes, reads any project's source and deletes any project: never put
-it in a repository, a CI variable or a command line.
-
-`hammerola` is one stdlib-only file: **python 3.9 or newer** (stock on macOS
-and Debian 11). Not on PATH means `~/.local/bin` is not: run it by path.
-
-## The working cycle
-
-```sh
-hammerola build            # -> the dev slot: YOUR eyes; the next push overwrites it
-hammerola commit -m "..."  # -> an immutable revision; `latest` moves to it
-```
-
-**`build` is what YOU look at, `commit` is what the PERSON looks at** — split by
-audience, not by how finished the part is. Never hand over a `dev` URL, not
-even as "have a look meanwhile": the next push replaces it. `dev` keeps no
-history, source or log, and a `dev`-only project is not on the front page.
-
-**Push after every change that moves a number.** Nothing rations `build`, and
-with no kernel here an unpushed model is one nobody has looked at. A brief that
-forbids pushing blinds you.
-
-`commit` makes a version exist: the hub names the revision by the sources'
-digest (not git), keeps code and log, moves `latest`, and the project gets its
-card. A session ending on a `build` published nothing. **Everything a person is
-shown is a commit**, the block preview (below) included. **Hand over the
-commit's URL every time**, not once at the end, or the person waits or prints
-something superseded.
-
-`-m` (`--message`) is `commit`'s alone (`build -m` is exit 2) and is what a
-person picks a revision by. A `git commit` line is suggested afterwards;
-nothing is staged.
-
-Both verbs print the build log and **exit non-zero unless a build was
-published**: that is "did not ship", not a warning.
-
-**`-C DIR` (`--directory`) goes BEFORE the verb** —
-`hammerola -C ../bracket commit -m "..."` — and is exit 2 after it; the verb
-then runs as if started in that directory.
-
-## Four rules that break a push
-
-**1. File names.** Every path component must match
-`[A-Za-z0-9][A-Za-z0-9._-]{0,127}`: ASCII, a letter or digit first, so no
-spaces, Cyrillic, `×`, `Ø` or leading underscore. One bad name refuses the
-**whole push** — `детали.py` beside `model.py` stops the project publishing.
-The alphabet is a security boundary, not relaxed. Hidden entries (`.git`,
-`.env`, `.venv`) are dropped, not refused. At most 8 components deep,
-1024 files and 64 MiB unpacked ("67 MB" to the client; a deployment's own
-limit is in its 413).
-
-**2. No `checklib.py` at a model's root.** The model's directory is first on
-`sys.path`, so your copy shadows the image's: interference volumes go into one
-copy and the build reads the other. Nothing goes red — the build warns,
-publishes, and `metrics.json` lacks them. Likewise any file shadowing a module
-the build imports.
-
-**3. Nothing is installed for a model.** The image has `cadquery`, `trimesh`,
-`numpy`, `matplotlib`, `Pillow` and the standard library; a `requirements.txt`
-is read by nothing, since installing runs code inside the build. Put what you
-need in project files the model imports.
-
-**4. `model.py` runs on the hub** under CPU, wall-clock and memory ceilings: no
-network, no environment, no subprocesses. Past a ceiling it is killed and
-reported as a timeout.
-
-## When a build fails
-
-The log `build` and `commit` print is the whole account. **Read it from the
-top**: the gate refuses in a fixed order, so the first complaint is the real
-one.
-
-```sh
-hammerola log            # the newest revision's log
-hammerola log <revision> # that one
-hammerola log dev        # the last build's, committed or not
-hammerola status         # latest, whether dev is occupied, the revisions (-n/--limit)
-```
-
-**Never rebuild to read a log you already have**: `log dev` serves it, its
-header naming the push, and jobs are kept forever. A `dev` build's SOURCE is
-not kept: `hammerola source dev` refuses.
-
-* `build failed: ...` — your model or a gate said no; what it names is in `model.py`.
-* a traceback — `model.py` raised; the bottom frame is yours.
-* `timeout` / `cpu_exhausted` — past a ceiling; usually a boolean out of hand.
-* `413` / `422` on the push — rule 1, by size or by a path; no build ran.
-
-**When what is wrong is your own `checks()`, `--force` publishes anyway.** It
-skips `checks()` and nothing else: every gate of the hub still refuses. The log
-says `checks: not run`, and the metrics record the count as unknown, not zero.
-Use it for a check that is wrong, slow or asserting a known falsehood — never
-to get past a right one.
-
-## Starting a project
-
-```sh
-mkdir t13-ceiling-mount && cd t13-ceiling-mount
-hammerola create --title "Ceiling mount for a T13 sensor (t13-ceiling-mount)"
-```
-
-In an empty directory `create` writes `project.json` (a fresh twelve-character
-`id`) and unpacks the starter template, a `model.py` that builds as it stands;
-it overwrites nothing. `--no-template` skips the template for a directory that
-has a model, and needs no hub.
-
-**The title is what it is and what for, then the directory's slug in
-brackets**: a copied project forgets its title, and a mismatched slug shows it.
-A title without one gets a `warning:`.
-
-`create` also writes the slug as `project`, the name the hub publishes under,
-taken from the directory — so **name the directory first**. One the hub cannot
-publish (spaces, Cyrillic, a leading dot, over 200 characters) falls back to
-the title's slug; with neither, the project publishes under its bare id.
-
-**Commit `project.json`, and never edit its `id`**: every permanent URL is
-built from it, so a new id is a new project orphaning the old.
-`hammerola rename "..."` changes the title only. `project` has no command —
-edit the line, and only later builds carry it.
-
-## While the work is running
-
-**Edit the geometry yourself.** A number, a clearance, a primitive's position —
-above all an edit following a review — is your own `Edit`, not a brief for a
-subagent.
-
-**A brief is a goal, absolute paths to what was found, and a criterion for
-done.** Finding the source data is the lead's job; a subagent builds from it.
-
-**A round of edits that moves no physical number is not started.** First write
-one line: which quantity changes — envelope, volume, clearance, fit — and by
-how much.
-
-**The part is done when its numbers stop moving.** The log's `metrics vs dev:`
-block saying `every measured number is the same (N part numbers compared)` is
-the signal; twice in a row, the rounds have left the part for the instrument.
-Say it can be printed, and stop.
-
-## Fetching things back
-
-```sh
-hammerola source <revision>     # the code that produced it, into .hammerola/
-hammerola artifacts <revision>  # its STL/STEP/3MF and pictures, into .hammerola/
-hammerola diff <old> <new>      # what moved: geometry numbers, and the source
-```
-
-Artefacts are public; source is behind the secret. `.hammerola/` is hidden, so
-the next push skips what you fetched. `-o DIR` (`--output`) lands it elsewhere,
-and a visible directory in the project travels with the next push.
-`source --into-working-copy` overwrites the working copy and needs a clean git
-tree. `diff --json` prints a document for code; `--material` adds material
-gained and lost per part, costing about a build; not both.
-
-## Comments
-
-```sh
-hammerola comments                       # the open queue for this project
-hammerola comments files <id>            # its photo and camera frame, into .hammerola/
-hammerola comments resolve <id> -m "..." # close it, saying what was done
-```
-
-A comment is a note a **person** left on a build in the browser: a point on the
-model, their camera angle, usually a photo of the printed part — the strongest
-evidence you get. Read the queue when you start, do the work, resolve it with
-`-m` (`--note`) saying what was done; an unresolved one gets done twice. It is
-a request, not a literal instruction. Fetch the photo with `comments files`
-(its route is behind the secret), and before the next push into that area turn
-the comment into an assertion in `checks()`. `--all` adds the resolved, to read
-before answering; `--since TIMESTAMP` (ISO-8601) cuts to what came after.
-
-## Proposals
-
-```sh
-hammerola proposal     # the standing proposal on this project, if any
-hammerola proposal rm  # remove it — asks for the project id, so ask the owner
-```
-
-A proposal is rough bodies a **person** drew over the model — the motor to
-clear, the wall it bolts to, the layout wanted — reaching you as lines of
-numbers: what, how big, where, and which of your parts they dragged how far. It
-is a STATEMENT, not an edit or code to paste. One per project, never resolved:
-read it at the start with the queue. `proposal rm` cannot be undone and prompts
-for the id, which you cannot answer — deliberately: the decision is the
-owner's. Ask; never remove one to tidy up.
+A note in brackets is a case from another project. It shows why a rule
+exists; nothing in it is a fact or a decision about the part in front of you.
 
 ## Talking to the person
 
 **A direct question gets a one-line answer in the same turn**, from what you
 know now. Searching comes after, never instead.
+
+**A question to the person ends your turn.** Whatever depends on the answer —
+geometry, a brief, a check, a default to use meanwhile — waits for it. A
+question followed by work on an assumed answer has not asked anything.
 
 **A picture is a request to measure.** Before replying, name what is in it and
 one number you took off it; never answer it with agreement.
@@ -232,12 +34,6 @@ the coordinate as a number and remove the feature; do not explain again.
 broken in the part, and how much longer. No list of attempts, no self-analysis,
 zero words of apology.
 
-## Removing things
-
-`hammerola rm` deletes a project from the hub, asks for its id to be typed, and
-cannot be undone. One build cannot be removed: that would break a permanent URL.
-Never run it to "clean up"; ask the owner.
-
 ## Before there is any geometry
 
 Nearly all the wasted time in the reviewed sessions was decided here, before
@@ -247,7 +43,8 @@ the first solid existed.
 different objects. Say back what the object is as a shape, what it touches and
 what holds it, what passes through it from end to end — water, air, silicone, a
 trigger over its full stroke and back — and how it is made past the printer,
-then commit a **block preview**: the whole layout in boxes and
+and end the turn there: the say-back is a question. Once he has answered,
+commit a **block preview**: the whole layout in boxes and
 cylinders, as a catalogue and an `assembled` view. It closes this phase, is not
 optional, and is the project's first revision. The part goes in as a
 `printable` box of its overall size, its surroundings beside it as `mock` and
@@ -261,13 +58,13 @@ it was read, and 3 h 48 min of work was thrown away.)
 **Fastening is what he named, driven by what he drives it with.** Hardware the
 owner fits himself on site and did not ask you to model — a magnet, a latch, a
 screw through a hole he drills by hand — is not added, pocketed or studied for
-access: it is one line in `ref/`. (Eight magnet pockets and a frame went onto a
-booth door whose latches he was going to make himself: «зачем магниты на двери?
-там я защелки сделаю».) Where a fastener IS in the model, ask once which tool he
-actually turns it with before any access or clearance study — a screwdriver has
-no elbow, a hex key does — and never derive the tool from a standard table.
-(Four review rounds computed the sweep of a hex key, down to the long series of
-ISO 2936, for a screw he drives with a screwdriver: «я отверткой кручу, похуй».)
+access: it is one line in `ref/`. (Six magnet pockets and a frame went onto a
+booth door whose owner was fitting latches himself.) Where a fastener IS in the
+model, ask once which tool he actually turns it with, and end the turn on that
+question: no access or clearance study and no tool assumed meanwhile — a
+screwdriver has no elbow, a hex key does — and never derive the tool from a
+standard table. (Four review rounds computed the sweep of a hex key, down to the
+long series of ISO 2936, for a screw its owner drives with a screwdriver.)
 
 **A constraint that is not a body does not exist.** Bought hardware, the wall,
 the hand, the hose, the panel behind — all are modelled, though none is
@@ -365,6 +162,197 @@ push limits each time.
 part's size comes from what must fit inside it, and the space enters one
 statement only: needed ≤ available. (A dimension went 170 → 139 → 112 → 100 →
 88 → 78 → 48.5 mm over eight rounds.)
+
+## Checks that actually check
+
+**Measure the solids, not the constants that drove them.** A check repeating
+the arithmetic passes for the wrong reason and goes on passing after the
+geometry drifts — the costliest habit in the reviewed sessions.
+(`assert DOWEL_SEAT_CLEARANCE >= 0.3` passed two reviews; both end screws fell
+out of the printed part.)
+
+**An assert you cannot make go red is decorative.** Name the geometry that
+reddens it and make it red once while writing it. Reading the code does not
+catch this; breaking the solid on purpose does. (A 20 mm drill jig, where the
+design says 48, passed the check whose whole subject was its length.)
+
+**When a check goes red, the part or the check is wrong, and which is decided
+out loud.** Nudging the model until the complaint stops greens the log, leaves
+the part wrong and the check decorative. Name the physical quantity your edit
+moved; "none, but it passes now" means you edited the instrument. (A nozzle in
+the assembly was swapped for a stand-in turned down to its thread's root, and
+the interference check went green.) A view cannot hide a second solid, so such
+a swap can only happen in the catalogue record, where it becomes the part.
+Declare the overlap with a reason, or fix the fit.
+
+**Four traps in the CadQuery API make a check silently GREEN**; none raises.
+Measured on cadquery 2.8.0:
+
+* **`.vals()` is true whether or not a boolean left anything**: after
+  `intersect` it holds one `Compound`, empty or not, so `assert wp.vals()` was
+  `True` at volume `0.0`. Ask for the volume.
+* **`BoundingBox()` on an empty solid raises** `Standard_Failure: Bnd_Box is
+  void` — the only loud one, if you get that far.
+* **A body a boolean emptied answers as its previous self.**
+  `Workplane.intersect` calls `findSolid(searchParents=True)`, so a body of 8000
+  emptied to 0.00 answered the next `intersect` with a 4×4×4 probe with
+  **64.00 mm³**. A bare `Shape` raises `ValueError: Null TopoDS_Shape object`.
+* **A point classifier on a body with no solids answers IN everywhere**, so an
+  empty part greens every `assert solid(...)`. `checklib.material_at` refuses
+  such a body; a check written before that guard may be passing on nothing.
+
+One question finds all four, in a check, a review round or your own last edit:
+what does it do on the input that should FAIL?
+
+**Measure what the part exists for, not a proxy.** If what matters is how far a
+lever protrudes, cut it against the housing and measure what is left, not the
+variable you set the drop from. (Checked through `GRIP_DROP`, it stayed green
+while the defect was plain in the picture.)
+
+**Repeated features are weighed one by one, never by an extremum.** A `min` or
+`max` stays green with one of four bosses missing. Count them and measure each.
+
+**A number is quoted against what reproduces it.** An FDM machine lays 0.1–0.3
+mm layers and a ~0.4 mm bead, and no print tells 0.003 mm from zero. A number
+that small can matter, but then say what it is a property of — the CAD kernel,
+the machine, a knob's step — and state the consequence in what the person sets.
+(A 0.0034 mm "clearance" was really the ~30 µm at which a boolean stopped
+cutting: one position of 91 on a knob stepping 0.5 mm.)
+
+**A printed pair that has to move — a thread, a sliding fit, a snap, a hinge —
+is never printed whole the first time.** First a gauge: a stub of the pair as a
+ladder over the clearance, each step's number embossed, then the full part once
+a human has printed it and said which step works.
+
+**The gauge is a commit of its own and never part of the product.** A person
+prints it, so its link must outlive the next push. It comes before the product:
+the catalogue holds the one gauge, `assembled` shows it, `print` stands it on
+the bed, and `latest` sits on it until the product is committed. The ladder is
+one fused body (steps on a common base, digits unioned to it); count the steps
+in `<gauge>_preview.png`. **Rewrite `checks()` for the gauge**, a check per step
+measured on the solids — nothing makes you, because the product's `checks()`
+calls its own builders and runs to the end about parts the build no longer has.
+(The starter model cut down to one gauge with `checks()` left verbatim: green,
+`checks: 12 passed`, every section but the last measuring a box and a lid that
+were gone.) Gutting it fails the empty-checks gate, and deleting it throws away
+every complaint ever turned into an assertion, so commit the product's
+`checks()` to git first: `hammerola source <gauge>` brings back the gauge's.
+The person names a step, the number goes into the part, the next commit is the
+product, and the gauge's revision stays as the record of what won.
+
+**Fasteners are checked for tool access, as a body** of the tool he named: a
+cylinder from the head along the axis, that tool's length, swept through the
+assembly. A fastener with no such check is a hole, not a fastener.
+
+**Every body in the assembly names what holds it along +Z, along −Z and in
+rotation.** "It rests on that" is one direction; a part held only downwards is
+held by gravity.
+
+## While the work is running
+
+**Edit the geometry yourself.** A number, a clearance, a primitive's position —
+above all an edit following a review — is your own `Edit`, not a brief for a
+subagent.
+
+**A brief is a goal, absolute paths to what was found, and a criterion for
+done.** Finding the source data is the lead's job; a subagent builds from it.
+
+**A round of edits that moves no physical number is not started.** First write
+one line: which quantity changes — envelope, volume, clearance, fit — and by
+how much.
+
+**The part is done when its numbers stop moving.** The log's `metrics vs dev:`
+block saying `every measured number is the same (N part numbers compared)` is
+the signal; twice in a row, the rounds have left the part for the instrument.
+Say it can be printed, and stop.
+
+## The working cycle
+
+```sh
+hammerola build            # -> the dev slot: YOUR eyes; the next push overwrites it
+hammerola commit -m "..."  # -> an immutable revision; `latest` moves to it
+```
+
+**`build` is what YOU look at, `commit` is what the PERSON looks at** — split by
+audience, not by how finished the part is. Never hand over a `dev` URL, not
+even as "have a look meanwhile": the next push replaces it. `dev` keeps no
+history, source or log, and a `dev`-only project is not on the front page.
+
+**Push after every change that moves a number.** Nothing rations `build`, and
+with no kernel here an unpushed model is one nobody has looked at. A brief that
+forbids pushing blinds you.
+
+`commit` makes a version exist: the hub names the revision by the sources'
+digest (not git), keeps code and log, moves `latest`, and the project gets its
+card. A session ending on a `build` published nothing. **Everything a person is
+shown is a commit**, the block preview (above) included. **Hand over the
+commit's URL every time**, not once at the end, or the person waits or prints
+something superseded.
+
+`-m` (`--message`) is `commit`'s alone (`build -m` is exit 2) and is what a
+person picks a revision by. A `git commit` line is suggested afterwards;
+nothing is staged.
+
+Both verbs print the build log and **exit non-zero unless a build was
+published**: that is "did not ship", not a warning.
+
+**`-C DIR` (`--directory`) goes BEFORE the verb** —
+`hammerola -C ../bracket commit -m "..."` — and is exit 2 after it; the verb
+then runs as if started in that directory.
+
+## Four rules that break a push
+
+**1. File names.** Every path component must match
+`[A-Za-z0-9][A-Za-z0-9._-]{0,127}`: ASCII, a letter or digit first, so no
+spaces, Cyrillic, `×`, `Ø` or leading underscore. One bad name refuses the
+**whole push** — `детали.py` beside `model.py` stops the project publishing.
+The alphabet is a security boundary, not relaxed. Hidden entries (`.git`,
+`.env`, `.venv`) are dropped, not refused. At most 8 components deep,
+1024 files and 64 MiB unpacked ("67 MB" to the client; a deployment's own
+limit is in its 413).
+
+**2. No `checklib.py` at a model's root.** The model's directory is first on
+`sys.path`, so your copy shadows the image's: interference volumes go into one
+copy and the build reads the other. Nothing goes red — the build warns,
+publishes, and `metrics.json` lacks them. Likewise any file shadowing a module
+the build imports.
+
+**3. Nothing is installed for a model.** The image has `cadquery`, `trimesh`,
+`numpy`, `matplotlib`, `Pillow` and the standard library; a `requirements.txt`
+is read by nothing, since installing runs code inside the build. Put what you
+need in project files the model imports.
+
+**4. `model.py` runs on the hub** under CPU, wall-clock and memory ceilings: no
+network, no environment, no subprocesses. Past a ceiling it is killed and
+reported as a timeout.
+
+## When a build fails
+
+The log `build` and `commit` print is the whole account. **Read it from the
+top**: the gate refuses in a fixed order, so the first complaint is the real
+one.
+
+```sh
+hammerola log            # the newest revision's log
+hammerola log <revision> # that one
+hammerola log dev        # the last build's, committed or not
+hammerola status         # latest, whether dev is occupied, the revisions (-n/--limit)
+```
+
+**Never rebuild to read a log you already have**: `log dev` serves it, its
+header naming the push, and jobs are kept forever. A `dev` build's SOURCE is
+not kept: `hammerola source dev` refuses.
+
+* `build failed: ...` — your model or a gate said no; what it names is in `model.py`.
+* a traceback — `model.py` raised; the bottom frame is yours.
+* `timeout` / `cpu_exhausted` — past a ceiling; usually a boolean out of hand.
+* `413` / `422` on the push — rule 1, by size or by a path; no build ran.
+
+**When what is wrong is your own `checks()`, `--force` publishes anyway.** It
+skips `checks()` and nothing else: every gate of the hub still refuses. The log
+says `checks: not run`, and the metrics record the count as unknown, not zero.
+Use it for a check that is wrong, slow or asserting a known falsehood — never
+to get past a right one.
 
 ## What the printer does to your numbers
 
@@ -610,98 +598,15 @@ build what it published.
 
 **A size comes back three ways**: the footer, `metrics.json` and the log.
 `curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every PRINTABLE
-right after a `build`; hardware and mocks are measured nowhere. The log prints
+right after a `build`; hardware and mocks are measured nowhere. A hub behind a
+password proxy refuses a bare `curl`; the log's per-part line gives the same
+sizes. The log prints
 `<part>: … cm3, …x…x… mm, first layer … mm2, overhang … mm2` per part, the
 assembly's line, and, after an earlier `dev` build, a `metrics vs dev:` block of
 what moved. So a `print()` is for what the build does NOT measure — a
 clearance, the one gap this round is about. The log keeps the FIRST 1 MiB of
 stdout and stderr merged: print short and early. `hammerola diff <old> <new>`
 compares two *published* revisions and refuses `dev`.
-
-## Checks that actually check
-
-**Measure the solids, not the constants that drove them.** A check repeating
-the arithmetic passes for the wrong reason and goes on passing after the
-geometry drifts — the costliest habit in the reviewed sessions.
-(`assert DOWEL_SEAT_CLEARANCE >= 0.3` passed two reviews; both end screws fell
-out of the printed part.)
-
-**An assert you cannot make go red is decorative.** Name the geometry that
-reddens it and make it red once while writing it. Reading the code does not
-catch this; breaking the solid on purpose does. (A 20 mm drill jig, where the
-design says 48, passed the check whose whole subject was its length.)
-
-**When a check goes red, the part or the check is wrong, and which is decided
-out loud.** Nudging the model until the complaint stops greens the log, leaves
-the part wrong and the check decorative. Name the physical quantity your edit
-moved; "none, but it passes now" means you edited the instrument. (A nozzle in
-the assembly was swapped for a stand-in turned down to its thread's root, and
-the interference check went green.) A view cannot hide a second solid, so such
-a swap can only happen in the catalogue record, where it becomes the part.
-Declare the overlap with a reason, or fix the fit.
-
-**Four traps in the CadQuery API make a check silently GREEN**; none raises.
-Measured on cadquery 2.8.0:
-
-* **`.vals()` is true whether or not a boolean left anything**: after
-  `intersect` it holds one `Compound`, empty or not, so `assert wp.vals()` was
-  `True` at volume `0.0`. Ask for the volume.
-* **`BoundingBox()` on an empty solid raises** `Standard_Failure: Bnd_Box is
-  void` — the only loud one, if you get that far.
-* **A body a boolean emptied answers as its previous self.**
-  `Workplane.intersect` calls `findSolid(searchParents=True)`, so a body of 8000
-  emptied to 0.00 answered the next `intersect` with a 4×4×4 probe with
-  **64.00 mm³**. A bare `Shape` raises `ValueError: Null TopoDS_Shape object`.
-* **A point classifier on a body with no solids answers IN everywhere**, so an
-  empty part greens every `assert solid(...)`. `checklib.material_at` refuses
-  such a body; a check written before that guard may be passing on nothing.
-
-One question finds all four, in a check, a review round or your own last edit:
-what does it do on the input that should FAIL?
-
-**Measure what the part exists for, not a proxy.** If what matters is how far a
-lever protrudes, cut it against the housing and measure what is left, not the
-variable you set the drop from. (Checked through `GRIP_DROP`, it stayed green
-while the defect was plain in the picture.)
-
-**Repeated features are weighed one by one, never by an extremum.** A `min` or
-`max` stays green with one of four bosses missing. Count them and measure each.
-
-**A number is quoted against what reproduces it.** An FDM machine lays 0.1–0.3
-mm layers and a ~0.4 mm bead, and no print tells 0.003 mm from zero. A number
-that small can matter, but then say what it is a property of — the CAD kernel,
-the machine, a knob's step — and state the consequence in what the person sets.
-(A 0.0034 mm "clearance" was really the ~30 µm at which a boolean stopped
-cutting: one position of 91 on a knob stepping 0.5 mm.)
-
-**A printed pair that has to move — a thread, a sliding fit, a snap, a hinge —
-is never printed whole the first time.** First a gauge: a stub of the pair as a
-ladder over the clearance, each step's number embossed, then the full part once
-a human has printed it and said which step works.
-
-**The gauge is a commit of its own and never part of the product.** A person
-prints it, so its link must outlive the next push. It comes before the product:
-the catalogue holds the one gauge, `assembled` shows it, `print` stands it on
-the bed, and `latest` sits on it until the product is committed. The ladder is
-one fused body (steps on a common base, digits unioned to it); count the steps
-in `<gauge>_preview.png`. **Rewrite `checks()` for the gauge**, a check per step
-measured on the solids — nothing makes you, because the product's `checks()`
-calls its own builders and runs to the end about parts the build no longer has.
-(The starter model cut down to one gauge with `checks()` left verbatim: green,
-`checks: 12 passed`, every section but the last measuring a box and a lid that
-were gone.) Gutting it fails the empty-checks gate, and deleting it throws away
-every complaint ever turned into an assertion, so commit the product's
-`checks()` to git first: `hammerola source <gauge>` brings back the gauge's.
-The person names a step, the number goes into the part, the next commit is the
-product, and the gauge's revision stays as the record of what won.
-
-**Fasteners are checked for tool access, as a body**: a cylinder from the head
-along the axis, driver length, swept through the assembly. A fastener with no
-such check is a hole, not a fastener.
-
-**Every body in the assembly names what holds it along +Z, along −Z and in
-rotation.** "It rests on that" is one direction; a part held only downwards is
-held by gravity.
 
 ## Keeping checks fast enough to run
 
@@ -830,3 +735,112 @@ it was meant to see.
 **Profile with section marks or a sampling profiler, not `cProfile`**: the
 kernel spends ~89% of its time in a thread pool a main-thread profiler cannot
 see, so it reports a slow build as fast.
+
+## Comments
+
+```sh
+hammerola comments                       # the open queue for this project
+hammerola comments files <id>            # its photo and camera frame, into .hammerola/
+hammerola comments resolve <id> -m "..." # close it, saying what was done
+```
+
+A comment is a note a **person** left on a build in the browser: a point on the
+model, their camera angle, usually a photo of the printed part — the strongest
+evidence you get. Read the queue when you start, do the work, resolve it with
+`-m` (`--note`) saying what was done; an unresolved one gets done twice. It is
+a request, not a literal instruction. Fetch the photo with `comments files`
+(its route is behind the secret), and before the next push into that area turn
+the comment into an assertion in `checks()`. `--all` adds the resolved, to read
+before answering; `--since TIMESTAMP` (ISO-8601) cuts to what came after.
+
+## Proposals
+
+```sh
+hammerola proposal     # the standing proposal on this project, if any
+hammerola proposal rm  # remove it — asks for the project id, so ask the owner
+```
+
+A proposal is rough bodies a **person** drew over the model — the motor to
+clear, the wall it bolts to, the layout wanted — reaching you as lines of
+numbers: what, how big, where, and which of your parts they dragged how far. It
+is a STATEMENT, not an edit or code to paste. One per project, never resolved:
+read it at the start with the queue. `proposal rm` cannot be undone and prompts
+for the id, which you cannot answer — deliberately: the decision is the
+owner's. Ask; never remove one to tidy up.
+
+## Starting a project
+
+```sh
+mkdir t13-ceiling-mount && cd t13-ceiling-mount
+hammerola create --title "Ceiling mount for a T13 sensor (t13-ceiling-mount)"
+```
+
+In an empty directory `create` writes `project.json` (a fresh twelve-character
+`id`) and unpacks the starter template, a `model.py` that builds as it stands;
+it overwrites nothing. `--no-template` skips the template for a directory that
+has a model, and needs no hub.
+
+**The title is what it is and what for, then the directory's slug in
+brackets**: a copied project forgets its title, and a mismatched slug shows it.
+A title without one gets a `warning:`.
+
+`create` also writes the slug as `project`, the name the hub publishes under,
+taken from the directory — so **name the directory first**. One the hub cannot
+publish (spaces, Cyrillic, a leading dot, over 200 characters) falls back to
+the title's slug; with neither, the project publishes under its bare id.
+
+**Commit `project.json`, and never edit its `id`**: every permanent URL is
+built from it, so a new id is a new project orphaning the old.
+`hammerola rename "..."` changes the title only. `project` has no command —
+edit the line, and only later builds carry it.
+
+## Fetching things back
+
+```sh
+hammerola source <revision>     # the code that produced it, into .hammerola/
+hammerola artifacts <revision>  # its STL/STEP/3MF and pictures, into .hammerola/
+hammerola diff <old> <new>      # what moved: geometry numbers, and the source
+```
+
+Artefacts are public; source is behind the secret. `.hammerola/` is hidden, so
+the next push skips what you fetched. `-o DIR` (`--output`) lands it elsewhere,
+and a visible directory in the project travels with the next push.
+`source --into-working-copy` overwrites the working copy and needs a clean git
+tree. `diff --json` prints a document for code; `--material` adds material
+gained and lost per part, costing about a build; not both.
+
+## Removing things
+
+`hammerola rm` deletes a project from the hub, asks for its id to be typed, and
+cannot be undone. One build cannot be removed: that would break a permanent URL.
+Never run it to "clean up"; ask the owner.
+
+## Set up, once per machine
+
+`<hub>` is the address you were given. It has no default: never guess one, or
+write one into a repository.
+
+```sh
+mkdir -p ~/.local/bin ~/.claude/skills/hammerola
+curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # this file
+curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
+hammerola login <hub>
+```
+
+Behind a password proxy, add `-u <login>` to both `curl` lines (curl asks the
+password); `hammerola login` notices the proxy and asks its login and password.
+
+`hammerola skill` compares this file's version with the hub's;
+`hammerola skill update` replaces it. A stale skill fails silently, teaching
+commands that no longer exist — ask when you start on a project. Not at that
+default path? Pass `--path FILE`, or both verbs act on a file nobody reads.
+`hammerola update` replaces the client, which `build` and `commit` refuse when
+older than the hub.
+
+`login` asks for the password at the terminal and stores it 0600 in
+`~/.config/hammerola/env`. **Ask the instance's owner for it.** One shared
+secret publishes, reads any project's source and deletes any project: never put
+it in a repository, a CI variable or a command line.
+
+`hammerola` is one stdlib-only file: **python 3.9 or newer** (stock on macOS
+and Debian 11). Not on PATH means `~/.local/bin` is not: run it by path.

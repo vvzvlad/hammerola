@@ -71,8 +71,8 @@ def test_missing_credential_fails(monkeypatch):
 
 def test_empty_credential_fails(monkeypatch):
     # An empty EDIT_TOKEN is worse than a missing one: it would start the
-    # service and then accept `Authorization: Bearer ` from anybody, so it has to
-    # be refused at exactly the same place.
+    # service and then accept an empty `X-Hammerola-Token` from anybody, so it
+    # has to be refused at exactly the same place.
     monkeypatch.setenv("EDIT_TOKEN", "")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)

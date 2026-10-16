@@ -57,7 +57,7 @@ services:
     # container, so that path resolves in the Portainer server's filesystem, not on the host.
     environment:
       # The only secret, one for the whole system. Replace XXX before deploying. It is the
-      # `Authorization: Bearer` value on every route that changes something or reads something
+      # `X-Hammerola-Token` value on every route that changes something or reads something
       # private (publishing, a build's sources and log, renaming or removing a project, the
       # comment queue). The public pages have no read-side auth. The same value goes to
       # whatever publishes here: a model repository's CI secret and `hammerola login`.

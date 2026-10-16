@@ -12,13 +12,13 @@
 // THE TOKEN PATH IS THE PART WORTH THE FILE, and it is one path rather than two:
 // `open()` is what both a stored token and a freshly typed one go through, so
 // what these tests pin is that its three answers stay distinguishable. A list
-// means signed in and stored; a 401 means refused, cleared and shown the door; a
+// means signed in and stored; a 403 means refused, cleared and shown the door; a
 // hub that did not answer means neither — the token stays, because "we could not
 // ask" is not "the answer was no", and retyping a perfectly good token because a
 // proxy hiccuped is the wrong thing to make somebody do.
 //
 // WHAT IS NOT TESTED HERE is that the list is private. It is not this
-// component's to enforce and could not be: /index.json answers 401 on its own
+// component's to enforce and could not be: /index.json answers 403 on its own
 // (tests/test_serving.py). What this side owns is only that a refusal is legible.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -464,7 +464,7 @@ describe('signing in', () => {
     // The one that matters. A token stored on a refusal would be retried on
     // every later page load, each time landing back on the sign-in screen, and
     // nothing would say the stored value is the problem.
-    loadIndex.mockRejectedValue(new Unauthorized('401'))
+    loadIndex.mockRejectedValue(new Unauthorized('403'))
     const c = page()
     await HammerolaEntry.prototype.submit.call(c, 'wrong')
     expect(writeToken).not.toHaveBeenCalled()
@@ -542,7 +542,7 @@ describe('arriving with a token already stored', () => {
     // Rotated on the hub, or this browser has been shut for a month. It has to
     // land exactly where a mistyped one does, and the stale value has to go —
     // otherwise every visit from here on starts by being refused.
-    loadIndex.mockRejectedValue(new Unauthorized('401'))
+    loadIndex.mockRejectedValue(new Unauthorized('403'))
     const c = page('stale')
     await HammerolaEntry.prototype.componentDidMount.call(c)
     await vi.waitFor(() => expect(c.state.refused).toBeTruthy())
@@ -828,7 +828,7 @@ describe('when the page asks the hub about itself', () => {
   it('asks after the hub refused a token', async () => {
     // Quite possibly the owner, setting the hub up with the wrong string in the
     // browser — which is exactly the reader the block is written for.
-    loadIndex.mockRejectedValue(new Unauthorized('401'))
+    loadIndex.mockRejectedValue(new Unauthorized('403'))
     loadStart.mockImplementation(async () => HINT)
     const c = page('stale')
     await HammerolaEntry.prototype.componentDidMount.call(c)
@@ -1257,7 +1257,7 @@ describe('the delete control on a card', () => {
     // once the hub has accepted a token — which is precisely why the condition
     // is written down and pinned here: the class is exported, its `token`
     // defaults to empty, and a control that offers to erase a project to
-    // somebody who cannot is a button whose only outcome is a 401.
+    // somebody who cannot is a button whose only outcome is a 403.
     expect(controls(listing(vi.fn(), { token: '' }))).toEqual([])
   })
 
@@ -1386,7 +1386,7 @@ describe('a confirmed deletion', () => {
     await HammerolaEntry.prototype.remove.call(c, CARD.pid)
     expect(fetching).toHaveBeenCalledWith('/api/v1/projects/0a1b2c3d4e5f', {
       method: 'DELETE',
-      headers: { Authorization: 'Bearer sekrit' },
+      headers: { 'X-Hammerola-Token': 'sekrit' },
       cache: 'no-store',
     })
   })
@@ -1429,13 +1429,13 @@ describe('a deletion the hub refused', () => {
   it('says the token was refused rather than that the hub broke', async () => {
     // The division `loadIndex` makes, at the second route that makes it: "the
     // token is wrong" and "the hub is unreachable" are different sentences.
-    answering({ ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) })
+    answering({ ok: false, status: 403, json: async () => ({ error: 'unauthorized' }) })
     const c = page('sekrit')
     c.state = { ...c.state, projects: [projectCard(CARD)] }
     await expect(HammerolaEntry.prototype.remove.call(c, CARD.pid))
       .rejects.toThrow(/refused that token/)
     // AND THE READER IS NOT SIGNED OUT OVER IT, which is where this path parts
-    // company with `open`'s 401. There is a list on the screen that this same
+    // company with `open`'s 403. There is a list on the screen that this same
     // token fetched, so throwing the token away would answer a failed deletion
     // by emptying the page.
     expect(clearToken).not.toHaveBeenCalled()

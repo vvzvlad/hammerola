@@ -2962,7 +2962,7 @@ export default class HammerolaViewer extends React.Component {
    * would spend a CAD process on an answer already on the volume.
    *
    * No token is not a failure: both documents are behind EDIT_TOKEN, so the
-   * panel says the reader needs one instead of showing the hub's 401.
+   * panel says the reader needs one instead of showing the hub's 403.
    */
   async runCompare(pair, view) {
     const [a, b] = pair;
@@ -4200,7 +4200,7 @@ export default class HammerolaViewer extends React.Component {
    * The payload is recorded as sent before the request, since the memo exists
    * to prevent identical posts racing.
    *
-   * It is forgotten again if the request fails (a 401, a 413, a hub gone
+   * It is forgotten again if the request fails (a 403, a 413, a hub gone
    * mid-request), so the next edit posts whatever it is: a transient failure
    * heals itself and a permanent one costs one request per edit. Still silent.
    *
@@ -4209,7 +4209,7 @@ export default class HammerolaViewer extends React.Component {
   async postProposal(body, says) {
     this._proposalSent = body;
     // NO `hubTrouble` HERE, and that is the silence above rather than an
-    // oversight: this one has no sentence to choose between, so a 401 and a
+    // oversight: this one has no sentence to choose between, so a 403 and a
     // hub that went away take the same path out.
     const { response, error } = await askHub(
       `/api/v1/proposals/${encodeURIComponent(PAGE.pid)}`, this.state.token,
@@ -4285,7 +4285,7 @@ export default class HammerolaViewer extends React.Component {
     if (this.state.sending) return;
     // Refused here rather than only by the hub, since step 0 put the write
     // behind the token. Not a security check — the hub's is — but the difference
-    // between "you are not signed in" and a 401 arriving after the photo has
+    // between "you are not signed in" and a 403 arriving after the photo has
     // been uploaded and the frame grabbed. The composer cannot normally be open
     // without a token, because clearing one closes it; what this covers is the
     // token going away between opening the composer and pressing Send.
@@ -4358,7 +4358,7 @@ export default class HammerolaViewer extends React.Component {
 
       // The token `askHub` sends has been required by the hub since step 0, and
       // is checked there before the body is parsed at all — so it is what makes
-      // this a comment rather than a 401, with the whole upload already spent.
+      // this a comment rather than a 403, with the whole upload already spent.
       const { response, error } = await askHub(
         `/api/v1/comments/${PAGE.pid}/${meta.commit}`, this.state.token,
         { method: 'POST', body: form });
@@ -4370,7 +4370,7 @@ export default class HammerolaViewer extends React.Component {
       // FIXED SENTENCES RATHER THAN THE HUB'S OWN MESSAGE: nothing on this page
       // should be in the habit of putting a response body on the screen. The
       // longest list on this page, because this is the request that can be
-      // refused for reasons the reader can act on; 401 is not among them here,
+      // refused for reasons the reader can act on; 403 is not among them here,
       // since `hubTrouble` answers it with the same sentence it always does.
       const said = hubTrouble(response, 201, {
         404: 'This build is no longer available',

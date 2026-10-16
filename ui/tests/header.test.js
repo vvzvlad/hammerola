@@ -407,7 +407,7 @@ describe('a reader without the token', () => {
   })
 
   it('while the owner asks for it with the token', async () => {
-    // Without the header the owner gets a 401 and an empty picker, silently.
+    // Without the header the owner gets a 403 and an empty picker, silently.
     const seen = []
     vi.stubGlobal('fetch', (url, init) => {
       seen.push(init)
@@ -418,7 +418,7 @@ describe('a reader without the token', () => {
     } finally {
       vi.unstubAllGlobals()
     }
-    expect(seen[0].headers).toEqual({ Authorization: 'Bearer sekrit' })
+    expect(seen[0].headers).toEqual({ 'X-Hammerola-Token': 'sekrit' })
   })
 })
 

@@ -410,15 +410,15 @@ def test_different_content_for_the_same_commit_is_409(hub):
     assert stored == view_bytes("a")
 
 
-def test_missing_token_is_401(hub):
+def test_missing_token_is_403(hub):
     r = hub.publish("proj1", "abc123", good_build(), token=None)
-    assert r.status_code == 401
+    assert r.status_code == 403
     assert not (hub.project_dir("proj1") / "abc123").exists()
 
 
-def test_wrong_token_is_401(hub):
+def test_wrong_token_is_403(hub):
     r = hub.publish("proj1", "abc123", good_build(), token="not-the-token")
-    assert r.status_code == 401
+    assert r.status_code == 403
     assert not (hub.project_dir("proj1") / "abc123").exists()
 
 
@@ -426,7 +426,7 @@ def test_token_prefix_is_not_accepted(hub):
     # A prefix of the real token must fail exactly like garbage does. This is what
     # would break if compare_digest were replaced by a `startswith`-ish check.
     r = hub.publish("proj1", "abc123", good_build(), token="test-publish-toke")
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_oversized_body_is_413(hub_factory):
@@ -455,7 +455,7 @@ def test_a_dribbling_client_cannot_hold_a_publish_slot(hub, monkeypatch):
         sock.sendall(
             b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
             b"Host: hub\r\n"
-            b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
             b"Content-Length: 100000\r\n"
             b"\r\n")
         # One byte at a time, slowly, and never anywhere near the declared length.
@@ -999,7 +999,7 @@ def test_the_minting_route_refuses_a_bad_project_id(hub):
 
 def test_the_minting_route_needs_the_token(hub):
     r = hub.publish_async("proj1", None, good_build(), token=None)
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_the_local_slot_is_still_a_named_route(hub):
@@ -1033,7 +1033,7 @@ def test_only_the_publish_route_s_own_query_parameter_turns_force_on(
         return copying_builder(project_dir, out_dir, pid=pid, **kw)
 
     hub = hub_factory(build_runner=recording_builder)
-    headers = {"Authorization": f"Bearer {TOKEN}",
+    headers = {"X-Hammerola-Token": TOKEN,
                "Content-Type": "application/gzip"}
 
     for path in ("/api/v1/publish/proj1/c1?force=1",

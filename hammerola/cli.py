@@ -65,8 +65,8 @@ from datetime import datetime
 from hammerola import (admin, artifacts, config, gitsuggest, project, proposal,
                        queue, revdiff, setup, skill, sources, status, update)
 from hammerola.errors import ClientError
-from hammerola.hub import (JOB_TIMEOUT, SLOW_BUILD_SECONDS, UNAUTHORIZED, Hub,
-                           HubError, quoted)
+from hammerola.hub import (JOB_TIMEOUT, PROXY_REFUSED, SLOW_BUILD_SECONDS,
+                           UNAUTHORIZED, Hub, HubError, quoted)
 from hammerola.limits import DEV_SLOT, MAX_TEXT_CHARS
 from hammerola.pack import PackError, pack
 
@@ -99,7 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     enter = commands.add_parser(
-        "login", help="store the hub's address and password on this machine")
+        "login", help="store the hub's address and password on this machine, "
+                      "and a password proxy's login if one stands in front")
     enter.add_argument(
         "url", nargs="?", default=None,
         help="the hub's address; asked for if it is not given. THE PASSWORD IS "
@@ -348,12 +349,12 @@ def _publish(args) -> int:
     # Built before `pack`: `Hub.__init__` validates the address and the token
     # (`hub._origin`) without opening a connection, so a malformed one fails
     # before the tree is packed.
-    hub = Hub(hub_url, token)
+    hub = Hub(hub_url, token, basic_auth=config.hub_basic_auth(root))
 
     # Before packing, so an outdated client fails fast. Only publishing verbs
     # ask (see `update.refuse_if_behind`). Takes the address, not `hub`, which
     # carries the push's five-minute timeout.
-    update.refuse_if_behind(hub_url)
+    update.refuse_if_behind(hub_url, root)
 
     archive = pack(root)
 
@@ -378,8 +379,10 @@ def _publish(args) -> int:
         return _published(hub, payload.get("url"), root,
                           revision=payload.get("revision"), message=message)
 
+    # Named separately: the fix is a different command (`login`).
     if code == 401:
-        # Named separately: the fix is a different command (`login`).
+        return _fail(PROXY_REFUSED)
+    if code == 403:
         return _fail(UNAUTHORIZED)
 
     if code != 202:

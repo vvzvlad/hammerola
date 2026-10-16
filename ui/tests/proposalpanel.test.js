@@ -3749,7 +3749,7 @@ describe('the stored proposal', () => {
 
       expect(fetching).toHaveBeenCalledWith(
         `/api/v1/proposals/${PAGE.pid}`,
-        { headers: { Authorization: 'Bearer sekrit' } })
+        { headers: { 'X-Hammerola-Token': 'sekrit' } })
       // THROUGH `setProposal`, which is what puts the bodies over the model:
       // adopting into state alone would leave the branch listing rows for
       // geometry nothing had staged.
@@ -3902,7 +3902,7 @@ describe('the stored proposal', () => {
     })
 
     it('says so and keeps the page as it was when the hub refuses the token', async () => {
-      answering({ status: 401, json: async () => ({}) })
+      answering({ status: 403, json: async () => ({}) })
       const { c } = panel({ proposal: withBlock(), stored: null })
 
       await c.loadProposal()
@@ -4213,7 +4213,7 @@ describe('the stored proposal', () => {
       const [url, sent] = fetching.mock.calls[0]
       expect(url).toBe(`/api/v1/proposals/${PAGE.pid}`)
       expect(sent.method).toBe('POST')
-      expect(sent.headers.Authorization).toBe('Bearer sekrit')
+      expect(sent.headers['X-Hammerola-Token']).toBe('sekrit')
       expect(posted(fetching)).toEqual({
         doc: c.state.proposal,
         // THE PROJECTION TRAVELS WITH IT, because it is what an agent reads:
@@ -4365,7 +4365,7 @@ describe('the stored proposal', () => {
       // took — and the edit is lost until the reader happens to make another one
       // that differs from it. Reading the answer and forgetting the memo is the
       // whole of the retry.
-      const fetching = answering({ status: 401, json: async () => ({}) },
+      const fetching = answering({ status: 403, json: async () => ({}) },
                                  { status: 200, json: async () => ({}) })
       const { c } = panel({ stored: false })
 
@@ -4469,7 +4469,7 @@ describe('the stored proposal', () => {
 
       expect(fetching).toHaveBeenCalledWith(
         `/api/v1/proposals/${PAGE.pid}`,
-        { method: 'DELETE', headers: { Authorization: 'Bearer sekrit' } })
+        { method: 'DELETE', headers: { 'X-Hammerola-Token': 'sekrit' } })
       expect(c.state.proposal.nodes).toEqual([])
       expect(c.state.proposalHeld).toBe(false)
       // AND THE COMMENT STOPS POINTING AT IT, which is the half that outlives
@@ -4499,7 +4499,7 @@ describe('the stored proposal', () => {
     })
 
     it('leaves the page alone when the hub would not delete it', async () => {
-      const fetching = answering({ status: 401, json: async () => ({}) })
+      const fetching = answering({ status: 403, json: async () => ({}) })
       vi.spyOn(window, 'confirm').mockReturnValue(true)
       const { c } = panel({ proposal: withBlock(), stored: true })
 

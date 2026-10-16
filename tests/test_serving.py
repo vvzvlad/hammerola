@@ -21,7 +21,7 @@ from src.app import STATIC_DIR, files_key
 IMMUTABLE = "public, max-age=31536000, immutable"
 IMMUTABLE_PRIVATE = "private, max-age=31536000, immutable"
 # The owner's request: a build's STEP, STL and 3MF are served to it.
-OWNER = {"Authorization": f"Bearer {TOKEN}"}
+OWNER = {"X-Hammerola-Token": TOKEN}
 
 
 def test_health_is_ok(hub):
@@ -186,18 +186,18 @@ def test_the_list_of_projects_needs_the_token(hub):
 
     It is the only document that answers "what is on this hub", and every id in
     it is the prefix of every permanent URL that project will ever have. The
-    front page draws the sign-in screen on the 401 — but the refusal is here,
+    front page draws the sign-in screen on the 403 — but the refusal is here,
     not there: a page that fetched the cards and declined to render them would
     be a decoration one devtools tab wide.
     """
     hub.publish("proj1", "abc123", good_build())
-    assert hub.index(token=None).status_code == 401
-    assert hub.index(token="wrong-token").status_code == 401
+    assert hub.index(token=None).status_code == 403
+    assert hub.index(token="wrong-token").status_code == 403
     assert hub.index().status_code == 200
 
 
 def test_the_refusal_says_nothing_about_what_is_behind_it(hub):
-    """A 401 before the file is read, so a full hub answers like an empty one.
+    """A 403 before the file is read, so a full hub answers like an empty one.
 
     Reading `index.json` first and refusing afterwards would leave the answer
     identical and the TIMING different, on the one route whose whole subject is
@@ -207,7 +207,7 @@ def test_the_refusal_says_nothing_about_what_is_behind_it(hub):
     hub.publish("proj1", "abc123", good_build())
     hub.publish("proj2", "def456", good_build())
     full = hub.index(token=None)
-    assert empty.status_code == full.status_code == 401
+    assert empty.status_code == full.status_code == 403
     assert empty.content == full.content
 
 
@@ -235,7 +235,7 @@ def test_the_list_of_revisions_needs_the_token(hub):
     enumeration like `/index.json` and takes the same token.
     """
     hub.publish("proj1", "abc123", good_build())
-    assert hub.builds("proj1", token=None).status_code == 401
+    assert hub.builds("proj1", token=None).status_code == 403
     assert hub.builds("proj1").status_code == 200
 
 
@@ -374,10 +374,11 @@ def test_the_files_are_refused_without_the_token_or_a_key(hub):
     for path in ([f"/project/proj1/abc123/{name}" for name in CLOSED]
                  + ["/project/proj1/latest/lid.stl"]):
         r = hub.get(path)
-        assert r.status_code == 401, path
+        assert r.status_code == 403, path
         assert r.json() == {
             "error": "this link does not include the files of this build"}, path
-        assert r.headers["WWW-Authenticate"] == "Bearer", path
+        # 401 is left to a password proxy in front of the hub.
+        assert "WWW-Authenticate" not in r.headers, path
 
 
 def test_what_the_page_draws_and_shows_needs_neither(hub):
@@ -408,7 +409,7 @@ def test_a_key_opens_no_other_address(hub):
                       ("/project/proj1/latest/lid.stl", _key("bbb222")),
                       ("/project/proj1/bbb222/lid.stl", _key("latest")),
                       ("/project/proj1/bbb222/lid.stl", "0" * 32)):
-        assert hub.get(f"{path}?files={key}").status_code == 401, (path, key)
+        assert hub.get(f"{path}?files={key}").status_code == 403, (path, key)
 
 
 def test_the_owner_is_handed_every_key_and_the_volume_none(hub):
@@ -447,7 +448,7 @@ def test_a_picker_that_does_not_parse_goes_out_as_it_is(hub):
 def test_a_format_nobody_declared_open_is_closed(hub):
     # The list is of what is OPEN, so a later export format starts closed.
     hub.publish("proj1", "abc123", good_build(extra_files={"scene.glb": b"glTF"}))
-    assert hub.get("/project/proj1/abc123/scene.glb").status_code == 401
+    assert hub.get("/project/proj1/abc123/scene.glb").status_code == 403
     assert hub.get("/project/proj1/abc123/scene.glb",
                    headers=OWNER).status_code == 200
 

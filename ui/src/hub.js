@@ -142,7 +142,7 @@ export const loadMeta = (fresh, base) =>
  * not read its own file.
  */
 export const loadBuilds = (token) =>
-  getJson(`/project/${PAGE.pid}/builds.json`, { headers: bearer(token) });
+  getJson(`/project/${PAGE.pid}/builds.json`, { headers: tokenHeader(token) });
 
 // -- the front page ---------------------------------------------------------
 
@@ -157,15 +157,15 @@ export class Unauthorized extends Error {}
  * front page's access control and its sign-in check: there is no separate
  * "is this token good" endpoint.
  *
- * A 401 is raised apart from everything else: "the token is wrong" and "the hub
+ * A 403 is raised apart from everything else: "the token is wrong" and "the hub
  * is unreachable" lead to different screens.
  */
 export async function loadIndex(token) {
   const response = await fetch('/index.json', {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: tokenHeader(token),
     cache: 'no-store',
   });
-  if (response.status === 401) throw new Unauthorized('/index.json -> HTTP 401');
+  if (response.status === 403) throw new Unauthorized('/index.json -> HTTP 403');
   if (!response.ok) throw new Error(`/index.json -> HTTP ${response.status}`);
   return response.json();
 }
@@ -309,7 +309,7 @@ export function startHint(manifest) {
  * fields all end as "no block"; a rejection would put that burden on every
  * call site.
  *
- * No `Authorization` header: the route is public, and the reader at the door
+ * No token header: the route is public, and the reader at the door
  * has no token.
  *
  * Only the wire is inside the `try`. `startHint` is pure and throws only on a
@@ -417,18 +417,23 @@ export const DIFF_COLOURS = Object.freeze({
 export const JOB_DONE = 'done';
 export const JOB_FAILED = 'failed';
 
-/** The header `loadIndex` sends, for the routes that want the same secret. */
-const bearer = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
+/**
+ * The header every guarded route reads the token from (`TOKEN_HEADER` in
+ * `src/app.py`). Not `Authorization`: a browser attaches the HTTP Basic
+ * credentials it holds for a password proxy in front of the hub only to a
+ * request that does not set `Authorization` itself (the Fetch standard).
+ */
+const tokenHeader = (token) => (token ? { 'X-Hammerola-Token': token } : {});
 
 /**
- * One request to a guarded route, with a 401 told apart from everything else.
+ * One request to a guarded route, with a 403 told apart from everything else.
  *
  * Same division as `loadIndex`. The response is returned unparsed because two
  * of the three callers read the status first — a 404 is an answer here.
  */
 async function guarded(url, init) {
   const response = await fetch(url, { ...init, cache: 'no-store' });
-  if (response.status === 401) throw new Unauthorized(`${url} -> HTTP 401`);
+  if (response.status === 403) throw new Unauthorized(`${url} -> HTTP 403`);
   return response;
 }
 
@@ -442,24 +447,24 @@ async function guarded(url, init) {
 /** The hub never answered at all. */
 export const HUB_UNREACHABLE = 'Could not reach the hub';
 
-/** It answered 401. Unexported: `hubTrouble` is its only reader. */
+/** It answered 403. Unexported: `hubTrouble` is its only reader. */
 const HUB_REFUSED = 'The hub refused the token';
 
 /**
  * One request that reports a dead hub instead of throwing at its caller.
  *
- * `{response}` or `{error}`, never both. Not `guarded`: here the 401 is a
+ * `{response}` or `{error}`, never both. Not `guarded`: here the 403 is a
  * sentence and the init goes out as written, except that the token is merged
  * into `headers` — so a caller's `Content-Type` survives and `FormData` goes
  * without one. The header is unconditional; `_authorized` in `src/app.py`
- * refuses an empty bearer and a missing header alike.
+ * refuses an empty token and a missing header alike.
  */
 export async function askHub(url, token, init) {
   try {
     return {
       response: await fetch(url, {
         ...init,
-        headers: { ...(init && init.headers), Authorization: `Bearer ${token}` },
+        headers: { ...(init && init.headers), 'X-Hammerola-Token': token },
       }),
     };
   } catch (error) {
@@ -474,11 +479,11 @@ export async function askHub(url, token, init) {
  * `ok` is a parameter because a POST that creates something answers 201, and
  * `failed` because the sentence is about what the CALLER was doing — "could not
  * load the comments" and "could not delete the proposal" are not one message.
- * The 401 is the only one the hub itself owns, so it is the only one shared.
+ * The 403 is the only one the hub itself owns, so it is the only one shared.
  */
 export const hubTrouble = (response, ok, failed) => {
   if (response.status === ok) return null;
-  return response.status === 401 ? HUB_REFUSED : failed;
+  return response.status === 403 ? HUB_REFUSED : failed;
 };
 
 /**
@@ -503,7 +508,7 @@ export async function hubBody(response) {
  */
 export async function loadCompareReport(pid, a, b, view, token) {
   const url = `${compareBase(pid, a, b)}report.json?v=${encodeURIComponent(view)}`;
-  const response = await guarded(url, { headers: bearer(token) });
+  const response = await guarded(url, { headers: tokenHeader(token) });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
   return response.json();
@@ -544,7 +549,7 @@ async function refusal(url, response) {
 export async function startCompare(pid, a, b, view, token) {
   const url = `/api/v1/compare/${encodeURIComponent(pid)}/${encodeURIComponent(a)}`
     + `/${encodeURIComponent(b)}/${encodeURIComponent(view)}`;
-  const response = await guarded(url, { method: 'POST', headers: bearer(token) });
+  const response = await guarded(url, { method: 'POST', headers: tokenHeader(token) });
   if (!response.ok) throw new Error(await refusal(url, response));
   const body = await response.json();
   const job = body && typeof body.job === 'string' ? body.job : '';
@@ -555,7 +560,7 @@ export async function startCompare(pid, a, b, view, token) {
 /** How one queued job is going: `{state, error, ...}` as the hub records it. */
 export async function loadJob(id, token) {
   const url = `/api/v1/jobs/${encodeURIComponent(id)}`;
-  const response = await guarded(url, { headers: bearer(token) });
+  const response = await guarded(url, { headers: tokenHeader(token) });
   if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
   return response.json();
 }
@@ -581,7 +586,7 @@ export async function loadJob(id, token) {
  */
 export async function deleteProject(pid, token) {
   const url = `/api/v1/projects/${encodeURIComponent(pid)}`;
-  const response = await guarded(url, { method: 'DELETE', headers: bearer(token) });
+  const response = await guarded(url, { method: 'DELETE', headers: tokenHeader(token) });
   if (!response.ok) throw new Error(await refusal(url, response));
 }
 

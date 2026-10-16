@@ -56,7 +56,7 @@ def payload(doc=None, text="units: mm\nmotor  42 × 42 × 20",
 
 
 def _remove_project(hub, pid, token=TOKEN):
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    headers = {"X-Hammerola-Token": token} if token else {}
     return httpx.request("DELETE", f"{hub.url}/api/v1/projects/{pid}",
                          headers=headers, timeout=10, trust_env=False)
 
@@ -155,8 +155,8 @@ def test_every_route_refuses_a_missing_token(hub):
                           ("POST", {"payload": payload(text="overwritten")}),
                           ("DELETE", {})):
         refused = hub.proposal("proj1", method=method, token=None, **extra)
-        assert refused.status_code == 401, method
-        assert refused.headers["WWW-Authenticate"] == "Bearer"
+        assert refused.status_code == 403, method
+        assert "WWW-Authenticate" not in refused.headers
     # None of that touched what was stored.
     assert hub.proposal("proj1").json()["text"] == \
         "units: mm\nmotor  42 × 42 × 20"
@@ -175,7 +175,7 @@ def test_the_token_is_checked_before_the_hub_says_whether_there_is_one(hub):
         for method, extra in (("GET", {}), ("DELETE", {}),
                               ("POST", {"payload": payload()})):
             refused = hub.proposal(pid, method=method, token=None, **extra)
-            assert refused.status_code == 401, (pid, method)
+            assert refused.status_code == 403, (pid, method)
             assert refused.json() == hub.proposal("proj1", method="GET",
                                                   token=None).json()
     # With the token, the two projects answer differently — which is exactly
@@ -186,8 +186,8 @@ def test_the_token_is_checked_before_the_hub_says_whether_there_is_one(hub):
 
 def test_a_token_prefix_is_not_accepted(hub):
     assert hub.proposal("proj1", method="POST", payload=payload(),
-                        token=TOKEN[:-1]).status_code == 401
-    assert hub.proposal("proj1", token=TOKEN[:-1]).status_code == 401
+                        token=TOKEN[:-1]).status_code == 403
+    assert hub.proposal("proj1", token=TOKEN[:-1]).status_code == 403
 
 
 def test_an_id_that_could_never_name_a_file_is_one_answer(hub):

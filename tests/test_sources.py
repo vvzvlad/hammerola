@@ -32,7 +32,7 @@ def _sources(hub, revision=None):
 
 
 def _fetch(hub, revision, suffix="", token=TOKEN):
-    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+    headers = {"X-Hammerola-Token": token} if token is not None else {}
     return hub.get(f"/api/v1/sources/{revision}{suffix}", headers=headers)
 
 
@@ -86,7 +86,7 @@ def test_the_code_is_outside_the_build_directory_and_not_served(hub):
     # into it however the last segment is spelled — not even with the token.
     assert _sources(hub).parent == hub.data
     assert hub.get(f"/project/proj1/{revision}/{SOURCE_ARCHIVE_NAME}",
-                   headers={"Authorization": f"Bearer {TOKEN}"}
+                   headers={"X-Hammerola-Token": TOKEN}
                    ).status_code == 404
 
     # The build itself is public, unchanged: this is about the code only.
@@ -99,13 +99,13 @@ def test_the_code_leaves_only_under_the_publishing_secret(hub):
     for token in (None, "not-the-token"):
         for suffix in ("", "/log"):
             refused = _fetch(hub, revision, suffix, token=token)
-            assert refused.status_code == 401, (token, suffix)
-            assert refused.headers["WWW-Authenticate"] == "Bearer"
+            assert refused.status_code == 403, (token, suffix)
+            assert "WWW-Authenticate" not in refused.headers
             # The token is checked BEFORE the revision, so a caller without it
             # is told exactly as much about a revision that exists as about one
             # that does not.
             unknown = _fetch(hub, "f" * 64, suffix, token=token)
-            assert unknown.status_code == 401
+            assert unknown.status_code == 403
             assert unknown.json() == refused.json()
 
     assert _fetch(hub, revision).status_code == 200

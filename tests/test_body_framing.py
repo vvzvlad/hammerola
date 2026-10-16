@@ -63,7 +63,7 @@ def _post(hub, path, framing):
         sock.sendall(
             f"POST {path} HTTP/1.1\r\n".encode()
             + b"Host: hub\r\n"
-            b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
             b"Content-Type: application/json\r\n"
             + framing
             + b"\r\n"
