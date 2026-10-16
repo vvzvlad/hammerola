@@ -3,12 +3,16 @@
 # CASE_DIR holds dialog.txt (the quoted conversation, last [user] turn = the trigger),
 # images/ (attached in name order) and meta.json:
 #   {"dir": "<project dir name>", "repo": "<git repo or null>", "commit": "<sha or null>"}
-import base64, json, mimetypes, os, re, subprocess, sys
+# The stream lands in runs/RUN_NAME/; the project copy goes under EVAL_WORK (a temp dir by
+# default), never inside this repository, whose CLAUDE.md the session would otherwise load.
+import base64, json, mimetypes, os, re, subprocess, sys, tempfile
 
 case_dir, run_name, mode = sys.argv[1:4]
 meta = json.load(open(os.path.join(case_dir, 'meta.json')))
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'runs', run_name)
-workdir = os.path.join(root, meta['dir'])
+os.makedirs(root, exist_ok=False)
+work = os.environ.get('EVAL_WORK') or tempfile.mkdtemp(prefix='skill-eval-')
+workdir = os.path.join(work, run_name, meta['dir'])
 os.makedirs(workdir, exist_ok=False)
 
 # The project as it stood at the trigger: a snapshot of that commit, with no later history.
