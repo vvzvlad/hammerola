@@ -17,6 +17,7 @@ import shutil
 import pytest
 from modeldir import make_model
 
+from hammerola import hub as hub_module
 from hammerola.cli import main
 
 # The address and the token, from tests/client/conftest.py.
@@ -47,6 +48,21 @@ def test_a_project_with_nothing_published_is_told_so_and_is_not_a_failure(
     out = capsys.readouterr().out
     assert "nothing published yet" in out
     assert f"{hub.url}/project/demo0001/" in out
+
+
+def test_status_reads_through_a_password_proxy(password_proxy, model,
+                                               monkeypatch, capsys):
+    """The reading verbs share one handle (`sources.hub_for`), and it carries
+    `HUB_BASIC_AUTH` too: `builds.json` is behind the proxy and the token. A
+    wrong login is named as the proxy's, not as a status the hub answered."""
+    monkeypatch.setenv("HUB_URL", password_proxy.url)
+    monkeypatch.setenv("HUB_BASIC_AUTH", password_proxy.basic_auth)
+    assert run(model, "status") == 0
+    assert "nothing published yet" in capsys.readouterr().out
+
+    monkeypatch.setenv("HUB_BASIC_AUTH", "zlo:not-the-password")
+    assert run(model, "status") == 1
+    assert hub_module.PROXY_REFUSED in capsys.readouterr().err
 
 
 # -- the ordinary case -------------------------------------------------------

@@ -161,7 +161,7 @@ def test_a_body_from_an_ordinary_client_encoder_is_accepted(hub):
         f"{hub.url}/api/v1/comments/{pid}/{commit}",
         data={"comment": json.dumps(comment_payload())},
         files={"photo": ("printed.jpg", JPEG_BYTES, "image/jpeg")},
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"X-Hammerola-Token": TOKEN},
         timeout=10, trust_env=False)
     assert r.status_code == 201
 
@@ -190,15 +190,15 @@ def test_a_comment_without_the_token_is_refused(hub):
     """
     pid, commit = _publish(hub)
     r = hub.post_comment(pid, commit, comment_payload(), token=None)
-    assert r.status_code == 401
-    assert r.headers["WWW-Authenticate"] == "Bearer"
+    assert r.status_code == 403
+    assert "WWW-Authenticate" not in r.headers
     assert not _records(hub)
 
 
 def test_a_wrong_token_is_refused_the_same_way(hub):
     pid, commit = _publish(hub)
     r = hub.post_comment(pid, commit, comment_payload(), token=TOKEN[:-1])
-    assert r.status_code == 401
+    assert r.status_code == 403
     assert not _records(hub)
 
 
@@ -208,13 +208,13 @@ def test_the_token_is_checked_before_the_body_is_read(hub_factory):
     A caller without the secret must not make this hub receive and parse a
     multipart body just to be told no. The hub's body ceiling is 4 KiB and the body
     is over it AND not multipart, so either fact would answer 413 or 422 if looked
-    at; 401 means nothing below the token check ran.
+    at; 403 means nothing below the token check ran.
     """
     small = hub_factory(comment_max_body_bytes=4096)
     pid, commit = _publish(small)
     r = small.post_comment(pid, commit, body=b"x" * 8192,
                            content_type="text/plain", token=None)
-    assert r.status_code == 401
+    assert r.status_code == 403
     assert not _records(small)
 
     # And the same body WITH the token gets the answer it deserves, which is
@@ -225,10 +225,10 @@ def test_the_token_is_checked_before_the_body_is_read(hub_factory):
 
 
 def test_an_unpublished_build_is_404_only_once_the_token_is_shown(hub):
-    """Without the token the answer is 401, with it 404 — so the route says
+    """Without the token the answer is 403, with it 404 — so the route says
     nothing about what exists to a caller who has not identified themselves."""
     assert hub.post_comment("proj1", "abc123", comment_payload(),
-                            token=None).status_code == 401
+                            token=None).status_code == 403
     assert hub.post_comment("proj1", "abc123", comment_payload()
                             ).status_code == 404
 
@@ -360,7 +360,7 @@ def test_a_body_of_unknown_length_is_411(hub):
 
     r = httpx.post(f"{hub.url}/api/v1/comments/{pid}/{commit}", content=streamed(),
                    headers={"Content-Type": multipart_body({})[1],
-                            "Authorization": f"Bearer {TOKEN}"},
+                            "X-Hammerola-Token": TOKEN},
                    timeout=10, trust_env=False)
     assert r.status_code == 411
     assert not _records(hub)

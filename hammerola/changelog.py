@@ -30,6 +30,17 @@ ENTRIES = {
         "`build` and `commit` refuse to publish from a client older than the "
         "one the hub serves, and name both versions.",
     ),
+    "0.2.0": (
+        "The hub's password travels in `X-Hammerola-Token`, no longer in "
+        "`Authorization: Bearer`, which the hub now refuses, and a refused "
+        "token is answered 403 rather than 401: a script that calls the hub "
+        "with curl sends `-H \"X-Hammerola-Token: ...\"`.",
+        "Behind a password proxy (Traefik basicAuth and the like), "
+        "`HUB_BASIC_AUTH=login:password` is sent to it as `Authorization: "
+        "Basic` on every request, and a 401 is that proxy refusing it; "
+        "`hammerola login` notices such a proxy, asks its login and password, "
+        "and stores this setting.",
+    ),
 }
 
 

@@ -515,7 +515,7 @@ export class HmrViewport extends HTMLElement {
       const secret = this.state.token;
       const response = await fetch(base + chosen.file,
                                    secret
-                                     ? { headers: { Authorization: `Bearer ${secret}` } }
+                                     ? { headers: { "X-Hammerola-Token": secret } }
                                      : undefined);
       if (!response.ok) throw new Error(`${chosen.file} -> HTTP ${response.status}`);
       const shapes = await response.json();

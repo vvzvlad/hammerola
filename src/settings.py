@@ -7,7 +7,7 @@ from src.config_errors import load_settings_or_exit
 class Settings(BaseSettings):
     # The one credential, without a default: if EDIT_TOKEN is missing from the
     # environment, Settings() fails at startup. Presented as
-    # `Authorization: Bearer <token>`, it means "may change things here":
+    # `X-Hammerola-Token: <token>`, it means "may change things here":
     # publish, read a build's sources and log, rename or remove a project, read
     # and resolve the comment queue, leave a comment. There is no second key.
     #

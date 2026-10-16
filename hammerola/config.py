@@ -1,4 +1,4 @@
-"""Where the hub's address and the token come from, and how they got there.
+"""Where the hub's address and the secrets come from, and how they got there.
 
 Three places, first hit wins:
 
@@ -12,16 +12,22 @@ Three places, first hit wins:
 The third one is what `hammerola login` writes (`write_settings` below); it is
 looked at last because an env var or a project's `.env` is more specific.
 
-NEITHER SETTING HAS A DEFAULT: the address of our own service is never guessed
-(AGENTS.md). A missing one is an error naming the file to write, raised before
-the tree is walked or packed.
+NEITHER `HUB_URL` NOR `EDIT_TOKEN` HAS A DEFAULT: the address of our own service
+is never guessed (AGENTS.md). A missing one is an error naming the file to
+write, raised before the tree is walked or packed.
 
 THE TOKEN IS NEVER PRINTED — not in an error, a banner or a traceback; only its
 length and where it was found. It is the whole system's one secret
 (`EDIT_TOKEN`, used for pushes, the comment queue and every write), which is
 also why `pack.py` drops `.env`, `login` reads it with `getpass` rather than an
 argument, and the file is created 0600. The hub compares it for equality, so
-"logging in" means storing it and nothing more.
+"logging in" means storing it and nothing more. It travels in the hub's own
+header, `X-Hammerola-Token`.
+
+`HUB_BASIC_AUTH` (`login:password`) is OPTIONAL: it is for a password proxy in
+front of the hub (Traefik basicAuth and the like), which wants the
+`Authorization` header the hub leaves alone. Unset means no proxy. Its password
+half is never printed either, only the login.
 """
 
 import os
@@ -29,6 +35,7 @@ from pathlib import Path
 
 HUB_URL_VAR = "HUB_URL"
 EDIT_TOKEN_VAR = "EDIT_TOKEN"
+HUB_BASIC_AUTH_VAR = "HUB_BASIC_AUTH"
 
 # Which machine-wide file to read: an override so tests do not see the
 # developer's real settings.
@@ -167,9 +174,19 @@ def hub_url(project_dir=None) -> str:
 
 
 def edit_token(project_dir=None) -> str:
-    """The bearer token. The VALUE is returned and never logged or printed."""
+    """The hub's token. The VALUE is returned and never logged or printed."""
     hint = EDIT_TOKEN_HINT.format(file=display_path(machine_env_file()))
     return _require(EDIT_TOKEN_VAR, hint, project_dir)
+
+
+def hub_basic_auth(project_dir=None) -> str:
+    """`login:password` for a password proxy in front of the hub, or "".
+
+    Optional, so unset is not an error: no proxy. The VALUE is returned and
+    never logged or printed.
+    """
+    value, _source = resolve(HUB_BASIC_AUTH_VAR, project_dir)
+    return value or ""
 
 
 # -- the write half: what `hammerola login` puts in the machine file ---------
@@ -184,8 +201,9 @@ def write_settings(values: dict, path: Path = None) -> Path:
 
     Every other line of the file survives: an existing key is rewritten in
     place, a new one is appended, comments and unknown settings are copied
-    through. Written through a temporary file and renamed, so an interrupted
-    login leaves the previous settings intact.
+    through. A value of None removes the key, every line of it. Written through
+    a temporary file and renamed, so an interrupted login leaves the previous
+    settings intact.
 
     The new text is parsed back with the same parser BEFORE it is written, and
     nothing is written unless every value survives, so a value the format
@@ -193,7 +211,8 @@ def write_settings(values: dict, path: Path = None) -> Path:
     """
     path = machine_env_file() if path is None else Path(path)
     for name, value in values.items():
-        check_storable(name, value)
+        if value is not None:
+            check_storable(name, value)
 
     parent = path.parent
     # Only a directory this call creates is narrowed: `HAMMEROLA_ENV_FILE` can
@@ -234,8 +253,8 @@ def check_storable(name: str, value) -> None:
 
     The refusal names the variable and the shape, never the value. Public
     because `login` asks it of the password as soon as it is typed, before it is
-    tried against the hub (a line break would also break the `Authorization`
-    header).
+    tried against the hub (a line break would also break the header it travels
+    in).
     """
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{name} cannot be stored: it is empty")
@@ -291,9 +310,10 @@ def check_sendable_as_header(name: str, value) -> None:
     """Refuse a secret that could never be presented to the hub. No echo.
 
     Separate from `check_storable`, which is about the FILE and applies to
-    every value including `HUB_URL`; this is about the `Authorization` header
-    and applies only to the secret. The address has its own, stricter check in
-    `hub._origin` (ASCII request line, latin-1 `Host`, IDNA labels).
+    every value including `HUB_URL`; this is about the header the secret
+    travels in (`X-Hammerola-Token`) and applies only to the secret. The
+    address has its own, stricter check in `hub._origin` (ASCII request line,
+    latin-1 `Host`, IDNA labels).
 
     `login` asks both at the prompt, so the constructor's check in `hub.py`
     (which advises running `hammerola login`) is never reached from `login`.
@@ -306,11 +326,17 @@ def check_sendable_as_header(name: str, value) -> None:
 
 
 def _merge_env_text(text: str, values: dict) -> str:
-    """The file's text with `values` applied, everything else left alone."""
-    remaining = dict(values)
+    """The file's text with `values` applied, everything else left alone.
+
+    A key whose value is None loses every line that assigns it.
+    """
+    remaining = {key: value for key, value in values.items()
+                 if value is not None}
     lines = []
     for line in text.splitlines():
         key = _assigned_key(line)
+        if key is not None and key in values and values[key] is None:
+            continue
         if key is None or key not in remaining:
             lines.append(line)
             continue

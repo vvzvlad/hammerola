@@ -670,7 +670,7 @@ describe('load', () => {
       await vp.load()
 
       expect(fetching).toHaveBeenCalledWith('/project/p/aaa/compare/bbb/a.json',
-                                            { headers: { Authorization: 'Bearer sekrit' } })
+                                            { headers: { 'X-Hammerola-Token': 'sekrit' } })
     })
 
     it('sends none for a build\'s own view file, which is public', async () => {

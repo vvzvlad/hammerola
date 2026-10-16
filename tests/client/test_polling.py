@@ -51,7 +51,14 @@ DRESSED_UP_404 = (404, "application/json", b'["not found"]')
 # alone reads it as the hub denying the job and kills a live build on it.
 GATEWAY_404 = (404, "application/json", b'{"detail": "Not Found"}')
 
-REFUSED = (401, "application/json", b'{"error": "unauthorized"}')
+REFUSED = (403, "application/json", b'{"error": "unauthorized"}')
+
+# The same status from something in front of the hub: what Traefik's
+# ipAllowList or a WAF answers. Not the hub's shape, so not the hub's verdict.
+STRANGERS_403 = (403, "text/plain; charset=utf-8", b"Forbidden\n")
+
+# What a password proxy in front of the hub answers (Traefik basicAuth).
+PROXY_401 = (401, "text/plain; charset=utf-8", b"401 Unauthorized\n")
 
 # A sentinel in place of an answer: read the request, then hang up. The bytes
 # went out and nothing came back, which is the other shape of the same outage —
@@ -187,7 +194,7 @@ def test_a_connection_dropped_with_no_answer_is_outlived_the_same_way(
     assert notices
 
 
-def test_a_401_IN_THE_HUBS_OWN_WORDS_is_final_and_is_never_retried(
+def test_a_403_IN_THE_HUBS_OWN_WORDS_is_final_and_is_never_retried(
         quick, scripted):
     """A refused token is a definite statement about the credential, it cannot
     heal itself, and repeating the request for a whole minute at a hub that is
@@ -200,30 +207,19 @@ def test_a_401_IN_THE_HUBS_OWN_WORDS_is_final_and_is_never_retried(
     with pytest.raises(HubError) as raised:
         hub.await_job("job-1", timeout=10, grace=5)
 
-    assert "HTTP 401" in str(raised.value)
+    assert "HTTP 403" in str(raised.value)
     assert "hammerola login" in str(raised.value)
     assert len(seen) == 1, seen
 
 
-def test_a_401_THAT_IS_NOT_THE_HUBS_is_transient_like_any_other_stranger(
-        quick, scripted):
-    """The same rule as the 404, and it looks surprising until the sentence it
-    would otherwise print is read out loud.
-
-    `UNAUTHORIZED` tells the author to replace the one secret of the system.
-    `Hub.__init__` names that exact harm — "telling somebody to replace the one
-    secret of the system over a typo in an address is the specific harm this
-    arrangement exists to prevent" — and a captive portal, an auth gateway
-    restarting, or an SSO proxy blinking during its own redeploy is not evidence
-    about the token.
-
-    It is safe HERE in particular: the push was accepted with this very token
-    seconds earlier, so a genuine credential failure arriving mid-wait is very
-    nearly impossible. And a 401 that persists still ends the wait — with the
-    give-up message, which quotes it.
+def test_a_proxys_401_during_polling_is_transient(quick, scripted):
+    """The hub never answers 401, so this is the password proxy in front of it
+    — the one the push and every poll before it went through, with the same
+    login, seconds earlier. Mid-wait it is the proxy blinking (a restart, a
+    reload of its users), not a verdict on the login; one that persists ends
+    the wait like any other stranger's refusal (the test below).
     """
-    portal = (401, "text/html", b"<html>Please sign in to the network</html>")
-    hub, seen = scripted([portal, _record("done")])
+    hub, seen = scripted([PROXY_401, _record("done")])
 
     record = hub.await_job("job-1", timeout=10, grace=5)
 
@@ -231,10 +227,17 @@ def test_a_401_THAT_IS_NOT_THE_HUBS_is_transient_like_any_other_stranger(
     assert len(seen) == 2, seen
 
 
-def test_a_STRANGERS_401_that_never_stops_still_ends_the_wait(quick, scripted):
-    """The other half of the decision above: tolerated is not ignored."""
-    portal = (401, "text/html", b"<html>Please sign in to the network</html>")
-    hub, _seen = scripted([portal])
+def test_a_STRANGERS_403_that_never_stops_still_ends_the_wait(quick, scripted):
+    """The same rule as the 404, and it looks surprising until the sentence it
+    would otherwise print is read out loud.
+
+    `UNAUTHORIZED` tells the author to replace the one secret of the system,
+    and a 403 is only the hub's verdict in the hub's own words: an allow-list
+    or a WAF in front of it is not evidence about the token. Tolerated is not
+    ignored, though: one that never stops ends the wait with the give-up
+    message rather than with `UNAUTHORIZED`.
+    """
+    hub, _seen = scripted([STRANGERS_403])
 
     with pytest.raises(HubError) as raised:
         hub.await_job("job-1", timeout=30, grace=0.3)
@@ -242,7 +245,7 @@ def test_a_STRANGERS_401_that_never_stops_still_ends_the_wait(quick, scripted):
     message = str(raised.value)
     assert "stopped answering" in message
     assert "hammerola login" not in message, (
-        "somebody else's 401 sent the author to replace the system's secret")
+        "somebody else's 403 sent the author to replace the system's secret")
 
 
 def test_a_hub_that_never_comes_back_gives_up_and_says_which_budget_ran_out(
@@ -356,7 +359,7 @@ def test_the_hubs_OWN_404_is_final_and_costs_exactly_one_request(
     A 404 carrying the hub's documented error shape is the HUB denying the job,
     which is permanent — waiting a minute for it to change its mind is a minute
     of a person's time for a fact already known. Asserted from the server's
-    side, like the 401: exactly one request.
+    side, like the 403: exactly one request.
 
     This is positive identification and not proxy-sniffing. The client is not
     guessing what sits in front of the hub; it requires the hub's own contract
@@ -394,6 +397,8 @@ def test_the_hubs_OWN_404_is_final_and_costs_exactly_one_request(
      "Traefik's answer when the router exists and the backend does not — at "
      "least as likely in a recreate window as the incident's 404"),
     ((200, "application/json", b"not json"), "a 200 whose body does not parse"),
+    (STRANGERS_403,
+     "an allow-list's or a WAF's 403 — the hub's status, not the hub's words"),
 ])
 def test_an_answer_that_is_not_IDENTIFIABLY_A_VERDICT_is_treated_as_an_outage(
         quick, scripted, answer, what_it_is):

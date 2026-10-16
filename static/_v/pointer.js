@@ -35,7 +35,7 @@ function readToken() {
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch (e) {
-    // Private mode or blocked site data: no token, so builds.json answers 401
+    // Private mode or blocked site data: no token, so builds.json answers 403
     // and the reader lands on `latest`.
     return null;
   }
@@ -49,7 +49,7 @@ async function hasDev() {
     // would resolve today's visit on yesterday's slot. It takes the token, so
     // only a browser holding one can learn the draft exists.
     const token = readToken();
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = token ? { "X-Hammerola-Token": token } : {};
     const r = await fetch("builds.json", { cache: "no-store", headers });
     if (!r.ok) return false;
     const info = await r.json();

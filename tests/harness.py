@@ -116,7 +116,7 @@ class Hub:
         about the front page's data has to carry it, and `token=None` is how a
         test asks the interesting question instead.
         """
-        headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+        headers = {"X-Hammerola-Token": token} if token is not None else {}
         return self.get("/index.json", headers=headers)
 
     def builds(self, pid, token=TOKEN):
@@ -125,7 +125,7 @@ class Hub:
         It lists every revision of the project and its draft, so a shared build
         link must not open it; `token=None` asks what an anonymous reader gets.
         """
-        headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+        headers = {"X-Hammerola-Token": token} if token is not None else {}
         return self.get(f"/project/{pid}/builds.json", headers=headers)
 
     def request(self, method, path, **kw):
@@ -140,7 +140,7 @@ class Hub:
     def publish(self, pid, commit, body, token=TOKEN, headers=None):
         """Push, wait for the build, and answer synchronously.
 
-        201/200/409/422/413/401 come back as they are. A 202 is
+        201/200/409/422/413/403 come back as they are. A 202 is
         followed to its job and turned back into the answer that job reached,
         which is the one nearly every test in this suite is asking about. Use
         `publish_async` when the handover itself is the subject.
@@ -170,7 +170,7 @@ class Hub:
         """
         sent = {"Content-Type": "application/gzip"}
         if token is not None:
-            sent["Authorization"] = f"Bearer {token}"
+            sent["X-Hammerola-Token"] = token
         sent.update(headers or {})
         path = f"/api/v1/publish/{pid}"
         if commit is not None:
@@ -181,12 +181,12 @@ class Hub:
                           trust_env=self.TRUST_ENV)
 
     def job(self, job_id, token=TOKEN):
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        headers = {"X-Hammerola-Token": token} if token else {}
         return httpx.get(f"{self.url}/api/v1/jobs/{job_id}", headers=headers,
                          timeout=10, trust_env=self.TRUST_ENV)
 
     def job_log(self, job_id, token=TOKEN):
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        headers = {"X-Hammerola-Token": token} if token else {}
         return httpx.get(f"{self.url}/api/v1/jobs/{job_id}/log", headers=headers,
                          timeout=10, trust_env=self.TRUST_ENV)
 
@@ -239,7 +239,7 @@ class Hub:
             body, content_type = multipart_body(fields, files)
         sent = {"Content-Type": content_type} if content_type else {}
         if token is not None:
-            sent["Authorization"] = f"Bearer {token}"
+            sent["X-Hammerola-Token"] = token
         sent.update(headers or {})
         return httpx.post(f"{self.url}/api/v1/comments/{pid}/{commit}",
                           content=body, headers=sent, timeout=30,
@@ -248,7 +248,7 @@ class Hub:
     def read_comments(self, path="", token=TOKEN, method="GET", **kw):
         headers = kw.pop("headers", {}) or {}
         if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
+            headers["X-Hammerola-Token"] = token
         # Both defaults through `setdefault`, so this reads like `get` and
         # `request` above and a caller's own `timeout=` is honoured rather than
         # colliding into a TypeError.
@@ -272,7 +272,7 @@ class Hub:
         """
         headers = kw.pop("headers", {}) or {}
         if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
+            headers["X-Hammerola-Token"] = token
         if payload is not NOTHING:
             kw["content"] = json.dumps(payload)
             headers.setdefault("Content-Type", "application/json")

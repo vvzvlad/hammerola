@@ -20,7 +20,7 @@
  *                 the token opens, so there is no separate check call.
  *
  * No token, no list: unlike a build, this page enumerates the whole hub, so
- * there is no view-only state. `/index.json` answers 401 without the token
+ * there is no view-only state. `/index.json` answers 403 without the token
  * (src/app.py, `_serve_index_json`); this component only makes the refusal
  * legible.
  *
@@ -1186,7 +1186,7 @@ export default class HammerolaEntry extends React.Component {
    * `answered` is set on the answer, not the request: a `null` (no answer, or an
    * unreadable one — hub.js) leaves it down and the next arrival asks again. That
    * matters because a failed first ask on page load would otherwise hide the
-   * block after the following 401. `asking` makes concurrent arrivals share one
+   * block after the following 403. `asking` makes concurrent arrivals share one
    * request. `empty` only turns false by a push, after which the reader reloads;
    * the paths are constants of the image.
    *
@@ -1271,9 +1271,9 @@ export default class HammerolaEntry extends React.Component {
    *
    * The request is the page's (it holds the token and the list); the promise
    * lets the box stay open with a sentence on failure
-   * (`HammerolaProjects.remove`). A 401 gets `open`'s wording; anything else
+   * (`HammerolaProjects.remove`). A 403 gets `open`'s wording; anything else
    * carries the hub's message (a 404 means someone removed it already). Unlike
-   * `open`, a 401 here does not sign the reader out: the list on screen was
+   * `open`, a 403 here does not sign the reader out: the list on screen was
    * fetched with this token moments ago.
    */
   remove(pid) {

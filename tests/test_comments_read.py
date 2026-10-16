@@ -6,7 +6,7 @@ Writing is not public either (SPEC 8A.1), and one secret opens both sides.
 
 These tests are mostly about the door: which endpoints demand the token, that a
 near miss is refused, and that a caller without one cannot learn anything from the
-difference between 401 and 404.
+difference between 403 and 404.
 """
 
 import json
@@ -32,8 +32,8 @@ def test_every_read_endpoint_refuses_a_missing_token(hub):
     cid = _setup(hub)
     for path in READ_ENDPOINTS:
         r = hub.read_comments(path.format(cid=cid), token=None)
-        assert r.status_code == 401, path
-        assert r.headers["WWW-Authenticate"] == "Bearer"
+        assert r.status_code == 403, path
+        assert "WWW-Authenticate" not in r.headers
 
 
 def test_the_same_secret_opens_both_sides(hub):
@@ -51,28 +51,28 @@ def test_the_same_secret_opens_both_sides(hub):
     for path in READ_ENDPOINTS:
         r = hub.read_comments(path.format(cid=cid), token=TOKEN)
         # The two attachment routes 404 because this comment carries neither;
-        # what matters is that none of them answers 401.
+        # what matters is that none of them answers 403.
         assert r.status_code in (200, 404), path
 
 
 def test_resolve_refuses_a_missing_token(hub):
     cid = _setup(hub)
     r = hub.read_comments(f"/{cid}/resolve", token=None, method="POST")
-    assert r.status_code == 401
+    assert r.status_code == 403
     assert hub.read_comments(f"/{cid}").json()["status"] == "open"
 
 
 def test_a_token_prefix_is_not_accepted(hub):
     _setup(hub)
     r = hub.read_comments("", token=TOKEN[:-1])
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_an_unknown_id_is_404_only_after_the_token_is_checked(hub):
     """No oracle: without the token, an id that exists looks like one that does not."""
     cid = _setup(hub)
-    assert hub.read_comments(f"/{cid}", token=None).status_code == 401
-    assert hub.read_comments("/" + "0" * 32, token=None).status_code == 401
+    assert hub.read_comments(f"/{cid}", token=None).status_code == 403
+    assert hub.read_comments("/" + "0" * 32, token=None).status_code == 403
     assert hub.read_comments("/" + "0" * 32).status_code == 404
 
 

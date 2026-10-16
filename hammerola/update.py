@@ -74,7 +74,7 @@ def run(args) -> int:
     return 0
 
 
-def refuse_if_behind(hub_url: str) -> None:
+def refuse_if_behind(hub_url: str, root=None) -> None:
     """Stop a client the hub has outgrown before it publishes anything.
 
     Asked only by `build` and `commit`: reading verbs fail loudly on their own,
@@ -85,10 +85,11 @@ def refuse_if_behind(hub_url: str) -> None:
     checkout newer than the hub is normal.
 
     Takes an address and uses `sources.public_hub` (`QUERY_TIMEOUT`), not the
-    push's Hub with its five-minute `HTTP_TIMEOUT`.
+    push's Hub with its five-minute `HTTP_TIMEOUT`. `root` is the project being
+    published, where `public_hub` also looks for `HUB_BASIC_AUTH`.
     """
     try:
-        manifest = public_hub(hub_url).start()
+        manifest = public_hub(hub_url, root).start()
     except HubError:
         return
     served = manifest.get(VERSION_KEY)

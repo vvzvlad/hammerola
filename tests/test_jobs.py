@@ -46,7 +46,7 @@ from src.store import (BODY_PREFIX, DEV_LINK, LEFTOVER_PREFIXES,
 
 # TOKEN comes from the harness rather than being spelled again here: the hub
 # under test is built with that value, and a copy of it in this file was one
-# rename away from a suite that asserted 401 for the right reason by accident.
+# rename away from a suite that asserted 403 for the right reason by accident.
 
 
 def _leftovers(hub, pid):
@@ -661,16 +661,49 @@ def test_both_job_endpoints_need_the_edit_token(hub):
     hub.await_job(job_id)
 
     for path in (f"/api/v1/jobs/{job_id}", f"/api/v1/jobs/{job_id}/log"):
-        assert hub.get(path).status_code == 401, path
-        assert hub.get(path, headers={"Authorization": "Bearer nope"}
-                       ).status_code == 401, path
+        assert hub.get(path).status_code == 403, path
+        assert hub.get(path, headers={"X-Hammerola-Token": "nope"}
+                       ).status_code == 403, path
         # A near miss, because equality is the whole check: one secret for the
         # system means the only wrong token is a wrong string, and a prefix of
         # the right one is the string a timing attack would be building.
-        assert hub.get(path, headers={"Authorization": f"Bearer {TOKEN[:-1]}"}
-                       ).status_code == 401, path
-        assert hub.get(path, headers={"Authorization": f"Bearer {TOKEN}"}
+        assert hub.get(path, headers={"X-Hammerola-Token": TOKEN[:-1]}
+                       ).status_code == 403, path
+        assert hub.get(path, headers={"X-Hammerola-Token": TOKEN}
                        ).status_code == 200, path
+
+
+def test_the_token_is_read_from_its_own_header_and_never_from_Authorization(
+        hub):
+    """`Authorization` belongs to a password proxy in front of the hub.
+
+    Traefik basicAuth forwards its `Authorization: Basic` to the backend, so the
+    hub has to accept the right token beside it — and the right token in
+    `Authorization: Bearer`, where it no longer travels, is no token at all. An
+    id no job has, so "accepted" is a 404 and nothing has to be published.
+    """
+    path = "/api/v1/jobs/" + "0" * 22
+    behind_a_proxy = hub.get(path, headers={
+        "X-Hammerola-Token": TOKEN, "Authorization": "Basic Zm9vOmJhcg=="})
+    assert behind_a_proxy.status_code == 404
+    old_spelling = hub.get(path, headers={"Authorization": f"Bearer {TOKEN}"})
+    assert old_spelling.status_code == 403
+
+
+def test_a_refused_token_is_403_with_no_challenge_at_either_door(hub):
+    """401 is left to a password proxy in front of the hub.
+
+    A browser that gets a 401 without the proxy's Basic challenge drops the
+    credentials it holds for that proxy and asks for them again, so a stale
+    token in the interface would cost the reader the proxy's login. Both doors:
+    `_require_token`, and the publish route, which refuses before the body.
+    """
+    for refused in (
+            hub.get("/api/v1/jobs/" + "0" * 22,
+                    headers={"X-Hammerola-Token": "nope"}),
+            hub.publish_async("proj1", "abc123", good_build(), token="nope")):
+        assert refused.status_code == 403
+        assert "WWW-Authenticate" not in refused.headers
 
 
 def test_an_unknown_job_answers_exactly_as_a_malformed_one_does(hub):
@@ -682,7 +715,7 @@ def test_an_unknown_job_answers_exactly_as_a_malformed_one_does(hub):
 
     stranger = "A" * 22          # well formed, never issued
     malformed = ["short", "..", "x" * 40, f"{real}extra"]
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    headers = {"X-Hammerola-Token": TOKEN}
 
     baseline = hub.get(f"/api/v1/jobs/{stranger}", headers=headers)
     assert baseline.status_code == 404

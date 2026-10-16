@@ -422,5 +422,5 @@ def test_rm_needs_the_right_secret(hub, model, capsys, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
 
     assert run(model, "rm") == 1
-    assert "401" in capsys.readouterr().err
+    assert "403" in capsys.readouterr().err
     assert hub.project_dir("demo0001").is_dir()

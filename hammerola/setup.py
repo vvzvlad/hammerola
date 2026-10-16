@@ -24,10 +24,12 @@ from hammerola.sources import public_hub
 # Prompts, named so tests can drive them.
 HUB_PROMPT = "hub address"
 TOKEN_PROMPT = "hub password (not echoed): "
+PROXY_LOGIN_PROMPT = "proxy login"
+PROXY_PASSWORD_PROMPT = "proxy password (not echoed): "
 
-# Column the two settings line up in when they are reported back — the longer
+# Column the settings line up in when they are reported back — the longest
 # variable name plus a space.
-_LABEL = len(config.EDIT_TOKEN_VAR) + 1
+_LABEL = len(config.HUB_BASIC_AUTH_VAR) + 1
 
 # Said after login when the environment also sets the variable: the
 # environment outranks the file (`config.resolve`).
@@ -51,14 +53,26 @@ SLUG_DISAGREEMENT = (
 
 
 def login(args) -> int:
-    """Ask where and as whom, check it, store it. -> exit code."""
+    """Ask where and as whom, check it, store it. -> exit code.
+
+    A password proxy in front of the hub (Traefik basicAuth and the like) is
+    noticed, not configured: `/start` asked with no credentials answers 401,
+    which the hub never does. Only then are its login and password asked for,
+    and stored as `HUB_BASIC_AUTH`.
+    """
     url = _hub_address(args.url)
+    try:
+        proxied = Hub(url, "", timeout=QUERY_TIMEOUT).behind_a_password_proxy()
+    except HubError as error:
+        raise HubError(f"{error}\n  Nothing was saved.") from error
+    proxy_login, basic_auth = _proxy_credentials() if proxied else ("", "")
     token = _password()
 
     # Checked against the hub before it is stored, and stored only if it
-    # passes.
+    # passes. A proxy that refuses its login is told apart by `check_token`.
     try:
-        if not Hub(url, token, timeout=QUERY_TIMEOUT).check_token():
+        hub = Hub(url, token, timeout=QUERY_TIMEOUT, basic_auth=basic_auth)
+        if not hub.check_token():
             raise HubError(
                 "the hub refused that password.\n"
                 "  It is one shared secret for the whole system, not a "
@@ -66,20 +80,35 @@ def login(args) -> int:
     except HubError as error:
         raise HubError(f"{error}\n  Nothing was saved.") from error
 
-    path = config.write_settings({
-        config.HUB_URL_VAR: url,
-        config.EDIT_TOKEN_VAR: token,
-    })
+    # None when there is no proxy: an earlier login's proxy password must not
+    # go on travelling to this address.
+    values = {config.HUB_URL_VAR: url, config.EDIT_TOKEN_VAR: token,
+              config.HUB_BASIC_AUTH_VAR: basic_auth or None}
+    path = config.write_settings(values)
 
     print(f"saved to {config.display_path(path)} (mode 0600)")
     print(f"  {config.HUB_URL_VAR:<{_LABEL}}{url}")
     # Only the length: the value must not reach a scrollback (see `config.py`).
     print(f"  {config.EDIT_TOKEN_VAR:<{_LABEL}}stored, {len(token)} "
           f"characters")
-    for name in (config.HUB_URL_VAR, config.EDIT_TOKEN_VAR):
+    if basic_auth:
+        # The login and never the password.
+        print(f"  {config.HUB_BASIC_AUTH_VAR:<{_LABEL}}stored, login "
+              f"{proxy_login}")
+    for name in values:
         if os.environ.get(name, "").strip():
             print(SHADOWED.format(name=name))
     return 0
+
+
+def _proxy_credentials():
+    """The proxy's login and password. -> (login, "login:password")."""
+    proxy_login = _ask(PROXY_LOGIN_PROMPT)
+    try:
+        proxy_password = getpass.getpass(PROXY_PASSWORD_PROMPT)
+    except EOFError as error:
+        raise config.ConfigError(_NOTHING_TO_READ) from error
+    return proxy_login, f"{proxy_login}:{proxy_password}"
 
 
 def _hub_address(given) -> str:
@@ -119,9 +148,11 @@ def _password() -> str:
 _NOTHING_TO_READ = (
     "`hammerola login` asks for the password on the terminal and there is "
     "nothing to read.\n"
-    "  On a machine being set up by a script, pass the two values in the "
+    "  On a machine being set up by a script, pass the values in the "
     "environment for\n"
-    "  one run instead: `HUB_URL=... EDIT_TOKEN=... hammerola status`.")
+    "  one run instead: `HUB_URL=... EDIT_TOKEN=... hammerola status`, plus\n"
+    "  `HUB_BASIC_AUTH=login:password` for a password proxy in front of the "
+    "hub.")
 
 
 def _ask(prompt: str, default=None) -> str:
@@ -206,7 +237,7 @@ def _template_for(root: Path):
     try:
         # Inside the try: building a Hub refuses a malformed address
         # (`hub._origin`), which needs the same way forward.
-        hub = public_hub(hub_url)
+        hub = public_hub(hub_url, root)
         manifest = hub.start()
         path = manifest.get(TEMPLATE_KEY)
         if not isinstance(path, str) or not path:

@@ -54,7 +54,7 @@ VIEW = "assembled"
 
 def ask(hub, pid=PID, old=OLD, new=NEW, token=TOKEN, tail=""):
     """POST the comparison and return the raw reply, 4xx included."""
-    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+    headers = {"X-Hammerola-Token": token} if token is not None else {}
     return hub.request("POST", f"/api/v1/compare/{pid}/{old}/{new}{tail}",
                        headers=headers)
 
@@ -99,7 +99,7 @@ def compared(hub, pid=PID, old=OLD, new=NEW, view=VIEW):
 
 def fetch(hub, name, pid=PID, old=OLD, new=NEW, view=VIEW, token=TOKEN):
     """GET one file of a comparison, with the view in the query (SPEC 3)."""
-    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+    headers = {"X-Hammerola-Token": token} if token is not None else {}
     tail = "" if view is None else f"?v={view}"
     return hub.get(f"/project/{pid}/{old}/compare/{new}/{name}{tail}",
                    headers=headers)
@@ -114,7 +114,7 @@ def test_a_comparison_is_refused_without_the_token(hub, token):
     the writing side of the token.
     """
     two_revisions(hub)
-    assert ask(hub, token=token).status_code == 401
+    assert ask(hub, token=token).status_code == 403
 
 
 @pytest.mark.parametrize("pid,old,new", [
@@ -123,7 +123,7 @@ def test_a_comparison_is_refused_without_the_token(hub, token):
     (PID, OLD, "not$a$name"),           # a name no build could ever have
 ])
 def test_the_token_is_checked_before_the_url_is_looked_at(hub, pid, old, new):
-    """401 AND NOT 404, and the difference is the point.
+    """403 AND NOT 404, and the difference is the point.
 
     Every one of these would be a 404 with the token — the project is unknown,
     the revision is not there, the name could never be a build id. Answering
@@ -131,7 +131,7 @@ def test_the_token_is_checked_before_the_url_is_looked_at(hub, pid, old, new):
     ask "does this hub hold that project" without holding the secret.
     """
     two_revisions(hub)
-    assert ask(hub, pid=pid, old=old, new=new, token=None).status_code == 401
+    assert ask(hub, pid=pid, old=old, new=new, token=None).status_code == 403
 
 
 # -- what there is to compare ------------------------------------------------
@@ -175,7 +175,7 @@ def test_a_comparison_takes_three_segments_or_four(hub, path):
     """Two revisions of one project, and at most a view, said in the URL."""
     two_revisions(hub)
     reply = hub.request("POST", path,
-                        headers={"Authorization": f"Bearer {TOKEN}"})
+                        headers={"X-Hammerola-Token": TOKEN})
     assert reply.status_code == 404
 
 
@@ -796,7 +796,7 @@ def test_the_files_of_a_comparison_are_behind_the_token(hub_factory, token):
     two_revisions(hub)
     finished(hub, ask(hub, tail=f"/{VIEW}"))
 
-    assert fetch(hub, "scene.json", token=token).status_code == 401
+    assert fetch(hub, "scene.json", token=token).status_code == 403
 
 
 def test_a_comparison_nobody_has_computed_is_404(hub):
@@ -811,9 +811,9 @@ def test_a_computed_comparison_is_served_with_a_year_when_both_ends_are_commits(
     """`immutable`, like a build URL: a comparison of two commits cannot change.
 
     PRIVATE, unlike every other year here: this is the only GET that is both
-    cacheable and behind the token, and RFC 9111 section 3.5 lets a shared cache
-    keep a response to a request with `Authorization` when it says `public`,
-    `must-revalidate` or `s-maxage`. `public` would let a proxy serve it to
+    cacheable and behind the token. The token travels in `X-Hammerola-Token`,
+    which a shared cache does not recognise as credentials, so only `private`
+    keeps it from storing the answer; `public` would let a proxy serve it to
     somebody who never presented the token.
     """
     hub = hub_factory(compare_runner=scene_comparer)

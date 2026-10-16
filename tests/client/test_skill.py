@@ -30,6 +30,7 @@ from harness import TOKEN
 
 from src import onboarding
 from hammerola import config, skill, sources
+from hammerola import hub as hub_module
 from hammerola.cli import main
 
 
@@ -171,6 +172,20 @@ def test_a_hub_that_cannot_be_reached_still_says_what_is_installed(
     assert "cannot reach" in captured.err
 
 
+def test_skill_asks_through_a_password_proxy(password_proxy, installed,
+                                             monkeypatch, capsys):
+    """`/start` is public to the hub and not to a password proxy in front of
+    it: the right `HUB_BASIC_AUTH` gets the answer, and a wrong one is named
+    as the proxy's refusal rather than as a hub without the route."""
+    monkeypatch.setenv("HUB_URL", password_proxy.url)
+    monkeypatch.setenv("HUB_BASIC_AUTH", password_proxy.basic_auth)
+    assert main(["skill", "--path", str(installed)]) == 0
+
+    monkeypatch.setenv("HUB_BASIC_AUTH", "zlo:not-the-password")
+    assert main(["skill", "--path", str(installed)]) == 1
+    assert hub_module.PROXY_REFUSED in capsys.readouterr().err
+
+
 # -- what `hammerola skill update` does --------------------------------------
 def test_update_writes_the_hubs_copy_and_makes_the_directory_for_it(
         configured, installed, capsys):
@@ -280,8 +295,8 @@ def test_update_refuses_a_document_it_cannot_read_a_version_out_of(
 
 
 def test_neither_verb_presents_a_secret(configured, installed, monkeypatch):
-    """NO `Authorization` GOES OUT, which is what lets the reader of the
-    instructions fetch them before anybody has handed them a password.
+    """NO TOKEN GOES OUT, which is what lets the reader of the instructions
+    fetch them before anybody has handed them the hub's password.
 
     Asserted on the token the commands construct their `Hub` with, and not by
     watching the hub answer: `/start` and the file it names are public, so a

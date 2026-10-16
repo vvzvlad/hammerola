@@ -1233,7 +1233,7 @@ describe('runCompare', () => {
   it('tells a reader with no token, and asks the hub nothing', async () => {
     // Both documents are behind EDIT_TOKEN, so there is nothing to fetch and
     // nothing to show — and the panel says which of the two it is rather than
-    // handing them the 401 the hub would send.
+    // handing them the 403 the hub would send.
     const c = page({ token: null, cmpPair: [A, B], cmpView: 'assembled', compare: true })
 
     await c.runCompare([A, B], 'assembled')

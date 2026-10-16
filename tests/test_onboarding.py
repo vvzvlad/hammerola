@@ -61,7 +61,7 @@ def test_the_manifest_is_served_without_a_token(hub):
     assert reply.status_code == 200
     assert reply.headers["content-type"] == "application/json"
     # And a token is not refused either — the same document either way.
-    with_token = hub.get("/start", headers={"Authorization": f"Bearer {TOKEN}"})
+    with_token = hub.get("/start", headers={"X-Hammerola-Token": TOKEN})
     assert with_token.json() == reply.json()
 
 

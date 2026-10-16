@@ -138,9 +138,11 @@ from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK,
 # only honest because a build directory can never change: republishing the same
 # commit with different content is refused with a 409 rather than overwriting.
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
-# The same year, only in the reader's own browser. RFC 9111 section 3.5 lets a
-# shared cache store a response to an `Authorization` request when it says
-# `public`, so an answer behind EDIT_TOKEN must say `private`.
+# The same year, only in the reader's own browser. The token travels in
+# `TOKEN_HEADER`, not in `Authorization`, so RFC 9111 section 3.5 does not keep
+# a shared cache off the request: a response with a lifetime and no `private`
+# may be stored by a proxy and served to somebody who never presented the
+# token. `private` is what keeps an answer behind EDIT_TOKEN out of one.
 CACHE_IMMUTABLE_PRIVATE = "private, max-age=31536000, immutable"
 CACHE_NONE = "no-cache"
 
@@ -211,6 +213,18 @@ PUBLISH_WAIT_SECONDS = 60
 # The header carrying a revision's message. The client (`hammerola/hub.py`)
 # percent-encodes it so non-latin-1 text can travel; the route unquotes it.
 MESSAGE_HEADER = "X-Hammerola-Message"
+
+# The header carrying EDIT_TOKEN. Its own, so `Authorization` stays free for a
+# password proxy in front of the hub (Traefik basicAuth forwards its
+# `Authorization: Basic` to the backend); the hub never reads `Authorization`.
+TOKEN_HEADER = "X-Hammerola-Token"
+
+# What a missing or wrong token is answered with. 403 and never 401, and with no
+# `WWW-Authenticate`: a browser that gets a 401 without the proxy's Basic
+# challenge drops the credentials it holds for that proxy and asks for them
+# again, so a stale token in the interface would cost the reader the proxy's
+# login. A 401 therefore only ever comes from a proxy in front of the hub.
+TOKEN_REFUSED_STATUS = 403
 
 # A view id passes `cadbuild.hubspec.MEMBER_RE` at build time, but the
 # comparison cache spells it as a directory, which is stricter. A sentence
@@ -868,7 +882,7 @@ class HubHandler(BaseHTTPRequestHandler):
         """Everything under GET /api/v1/comments (SPEC 7A.2).
 
         The token is checked BEFORE the shape of the request is, so a caller
-        without it cannot use the difference between 401 and 404 to find out
+        without it cannot use the difference between 403 and 404 to find out
         which comment ids exist.
         """
         if not self._require_token(with_body):
@@ -954,23 +968,23 @@ class HubHandler(BaseHTTPRequestHandler):
 
     # -- publish ---------------------------------------------------
     def _authorized(self) -> bool:
-        """Constant-time check of the bearer token (SPEC 7, 7A.2).
+        """Constant-time check of the token in `TOKEN_HEADER` (SPEC 7, 7A.2).
 
         One secret, so no parameter. `hmac.compare_digest` rather than `==`,
         which short-circuits and leaks the token byte by byte through timing.
         Encoded to bytes first: compare_digest raises on non-ASCII str.
+        `Authorization` is not read: it belongs to a proxy in front of the hub.
         """
-        header = self.headers.get("Authorization", "")
-        scheme, _, presented = header.partition(" ")
-        if scheme.lower() != "bearer" or not presented:
+        presented = self.headers.get(TOKEN_HEADER, "").strip()
+        if not presented:
             return False
         return hmac.compare_digest(
-            presented.strip().encode("utf-8"),
+            presented.encode("utf-8"),
             self.server.edit_token.encode("utf-8"))
 
     def _require_token(self, with_body: bool = True,
                        close: bool = False) -> bool:
-        """Answer 401 and return False unless the caller presented the token.
+        """Answer 403 and return False unless the caller presented the token.
 
         `close` for the verbs that carry a body: refusing before reading it
         leaves the remains on the socket, and on a keep-alive connection
@@ -981,11 +995,9 @@ class HubHandler(BaseHTTPRequestHandler):
         logger.warning(
             f"refused: bad or missing token from {self.address_string()} "
             f"for {self.path.split('?', 1)[0]}")
-        extra = {"WWW-Authenticate": "Bearer"}
-        if close:
-            extra["Connection"] = "close"
-        self._error(401, "invalid or missing bearer token", extra,
-                    with_body=with_body)
+        extra = {"Connection": "close"} if close else {}
+        self._error(TOKEN_REFUSED_STATUS, f"invalid or missing {TOKEN_HEADER}",
+                    extra, with_body=with_body)
         return False
 
     def _revision_message(self):
@@ -1033,8 +1045,8 @@ class HubHandler(BaseHTTPRequestHandler):
                 f"publish refused: bad or missing token from "
                 f"{self.address_string()}")
             return self._error(
-                401, "invalid or missing bearer token",
-                {"WWW-Authenticate": "Bearer", "Connection": "close"})
+                TOKEN_REFUSED_STATUS, f"invalid or missing {TOKEN_HEADER}",
+                {"Connection": "close"})
 
         length = self._body_length(
             self.server.max_build_bytes,
@@ -1331,7 +1343,7 @@ class HubHandler(BaseHTTPRequestHandler):
     def _serve_jobs(self, rest: list[str], with_body: bool):
         """GET /api/v1/jobs/<id>[/log] — for whoever pushed (SPEC 8A.2).
 
-        The token is checked before the id, so 401 vs 404 reveals nothing.
+        The token is checked before the id, so 403 vs 404 reveals nothing.
         """
         if not self._require_token(with_body):
             return None
