@@ -131,10 +131,15 @@ export const loadMeta = (fresh, base) =>
   getJson(`${base === undefined ? PAGE.base : base}meta.json`,
           fresh ? { cache: 'no-store' } : undefined);
 
-/** The build picker: `{pid, project, title, has_dev, latest, builds[]}`.
+/** The build picker: `{pid, project, title, has_dev, latest, builds[],
+ * files_keys}`.
  *
  * Behind the token: it lists every revision and the draft, and a shared build
- * link must open that build alone.
+ * link must open that build alone. `files_keys` is added by the hub as it
+ * answers and is never in the file on its volume: address -> the key that
+ * opens that build's STEP, STL and 3MF in a link (`latest`, each revision of
+ * `builds`, and `dev` while the slot is occupied). Absent when the hub could
+ * not read its own file.
  */
 export const loadBuilds = (token) =>
   getJson(`/project/${PAGE.pid}/builds.json`, { headers: tokenHeader(token) });
@@ -339,7 +344,8 @@ export async function loadStart() {
 // revisions' view documents (`cadbuild/comparescene.py`), and each is cached
 // separately. The query is required; without it the hub answers 404.
 //
-// Both are behind the token while a build's own files are not. The report is
+// Both are behind the token, like a build's own STEP, STL and 3MF and unlike its
+// meta.json, views and pictures, and they take no key in the link. The report is
 // fetched here with the same header `loadIndex` sends; the scene is fetched by
 // the viewport (element.js), so the token travels to it in `hmr:state`.
 //

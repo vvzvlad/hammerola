@@ -20,7 +20,7 @@ import { SANS } from './style.jsx';
 export function rowMenu(s, deps) {
   const {
     // -- what `computed()` has already worked out
-    tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref,
+    tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref, filesKey,
     clearSection, stop, SECTION_ROW,
     // -- the lookups that stay beside the component
     noteFor, partRecord, fileList,
@@ -101,13 +101,16 @@ export function rowMenu(s, deps) {
    *
    * Read off `files`, not `kind` (`_catalogue` keeps them consistent, but
    * `files` is what names the files). `preview` is not read: see `fileList`.
+   *
+   * Without `filesKey` the block is not drawn at all, sentences included: the
+   * hub would refuse every link, and "No files in this build" would be untrue.
    */
   const fileRows = (key) => {
     if (!anyDownloads) return [mi('No files in this build', '', () => {}, 'said')];
     const files = fileList(partRecord(catalogue, key));
     if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
     return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
-                                   at === 0 ? 'top' : '', fileHref(f.file)));
+                                   at === 0 ? 'top' : '', fileHref(f.file, filesKey)));
   };
 
   // WHILE A COMPARISON IS UP, VISIBILITY IS THE THREE TABS AND NOTHING ELSE.
@@ -174,7 +177,7 @@ export function rowMenu(s, deps) {
     // Files hang on a part, so a group row has none: the union of its leaves'
     // files would be invented. Bulk download (one format, all parts) is in the
     // header's menu.
-    ...(compared || mNode.isNode ? [] : fileRows(mKey)),
+    ...(compared || mNode.isNode || !filesKey ? [] : fileRows(mKey)),
     // Inside a comparison the row's label is an internal piece label
     // (`plate #1`, from `cadbuild/comparescene`), so the catalogue key is
     // copied instead. Everywhere else the row's name is the answer; a group

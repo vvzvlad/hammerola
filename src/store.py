@@ -25,7 +25,8 @@ because the volume would shadow them.
     <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison
 
 `compare/` is outside the build directories (SPEC 8A.3) for rights — a build
-directory is public, a comparison is behind EDIT_TOKEN — and for caching: a
+directory opens its JSON and pictures to anybody with its address and the rest
+to the token or a key, a comparison is behind EDIT_TOKEN — and for caching: a
 build URL carries a year of `immutable`, while a comparison whose end is a
 pointer moves with the pointer. It is a cache written like a build (a staging
 directory beside the entry, then one rename); recomputing costs about as much
@@ -33,7 +34,8 @@ as a build (~1.5 s a pair), and nothing prunes it.
 
 `sources/` is the code of every published revision:
 
-  * Outside the build directory, which is served publicly with a year of
+  * Outside the build directory, which is served to anybody holding its
+    address (its JSON and pictures) or its key (the rest), with a year of
     `immutable`. This tree is served only by `GET /api/v1/sources/<revision>`,
     behind EDIT_TOKEN; the file server's `_safe_name` never reaches it.
   * Content-addressed: `<digest>` is `_payload_digest` of the sources, the same

@@ -12,12 +12,16 @@ import json
 import os
 import re
 
-from harness import (DEFAULT_EXPORTS, good_build, meta_bytes, tar_gz,
+from harness import (DEFAULT_EXPORTS, TOKEN, good_build, meta_bytes, tar_gz,
                      view_bytes)
+from loguru import logger
 
-from src.app import STATIC_DIR
+from src.app import STATIC_DIR, files_key
 
 IMMUTABLE = "public, max-age=31536000, immutable"
+IMMUTABLE_PRIVATE = "private, max-age=31536000, immutable"
+# The owner's request: a build's STEP, STL and 3MF are served to it.
+OWNER = {"X-Hammerola-Token": TOKEN}
 
 
 def test_health_is_ok(hub):
@@ -326,12 +330,127 @@ def test_downloads_are_served_as_bytes(hub):
                 "file": "assembled.json", "parts": ["lid"]}],
         view_keys=("lid",),
         extra_files={"model.stl": b"solid demo"}))
-    r = hub.get("/project/proj1/abc123/model.stl")
+    r = hub.get("/project/proj1/abc123/model.stl", headers=OWNER)
     assert r.status_code == 200
     assert r.content == b"solid demo"
     # A model format, not something the browser should try to render inline.
     assert r.headers["Content-Type"] == "model/stl"
     assert r.headers["X-Content-Type-Options"] == "nosniff"
+
+
+# -- the files of a build: the token, or the key of that address --------------
+#
+# Everything but `.json` and `.png` leaves only to EDIT_TOKEN or to
+# `?files=<key>`, the key derived for the one address asked for. The page and
+# its pictures stay open: a link must show the model without a secret.
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+CLOSED = ("lid.step", "lid.stl", "lid.3mf", "assembled.stl")
+
+
+def _shipping(marker="a"):
+    """A build whose part exports all three formats, plus the view's mesh and
+    picture — every kind of file a real build hands out."""
+    return good_build(
+        marker,
+        parts={"lid": {"kind": "printable",
+                       "files": {"step": "lid.step", "stl": "lid.stl",
+                                 "3mf": "lid.3mf"}}},
+        views=[{"id": "assembled", "name": "assembled",
+                "file": "assembled.json", "parts": ["lid"],
+                "overview": "assembled.stl",
+                "preview": "assembled_preview.png"}],
+        view_keys=("lid",),
+        extra_files={"lid.step": b"ISO-10303-21;", "lid.3mf": b"PK 3mf",
+                     "assembled.stl": b"solid all",
+                     "assembled_preview.png": PNG})
+
+
+def _key(build, pid="proj1"):
+    return files_key(TOKEN, pid, build)
+
+
+def test_the_files_are_refused_without_the_token_or_a_key(hub):
+    hub.publish("proj1", "abc123", _shipping())
+    for path in ([f"/project/proj1/abc123/{name}" for name in CLOSED]
+                 + ["/project/proj1/latest/lid.stl"]):
+        r = hub.get(path)
+        assert r.status_code == 403, path
+        assert r.json() == {
+            "error": "this link does not include the files of this build"}, path
+        # 401 is left to a password proxy in front of the hub.
+        assert "WWW-Authenticate" not in r.headers, path
+
+
+def test_what_the_page_draws_and_shows_needs_neither(hub):
+    # Without meta.json and the view the browser draws nothing, and the front
+    # page shows the pictures through `<img>`, which carries no token.
+    hub.publish("proj1", "abc123", _shipping())
+    for name in ("meta.json", "assembled.json", "assembled_preview.png"):
+        assert hub.get(f"/project/proj1/abc123/{name}").status_code == 200, name
+
+
+def test_a_key_opens_the_files_of_its_own_address(hub):
+    hub.publish("proj1", "abc123", _shipping())
+    for name in CLOSED:
+        r = hub.get(f"/project/proj1/abc123/{name}?files={_key('abc123')}")
+        assert r.status_code == 200, name
+        # The answer depends on what was presented, so no shared cache may
+        # keep it for somebody who presented nothing.
+        assert r.headers["Cache-Control"] == IMMUTABLE_PRIVATE, name
+    r = hub.get(f"/project/proj1/latest/lid.stl?files={_key('latest')}")
+    assert r.status_code == 200
+    assert r.headers["Cache-Control"] == "no-cache"
+
+
+def test_a_key_opens_no_other_address(hub):
+    hub.publish("proj1", "aaa111", _shipping("first"))
+    hub.publish("proj1", "bbb222", _shipping("second"))
+    for path, key in (("/project/proj1/bbb222/lid.stl", _key("aaa111")),
+                      ("/project/proj1/latest/lid.stl", _key("bbb222")),
+                      ("/project/proj1/bbb222/lid.stl", _key("latest")),
+                      ("/project/proj1/bbb222/lid.stl", "0" * 32)):
+        assert hub.get(f"{path}?files={key}").status_code == 403, (path, key)
+
+
+def test_the_owner_is_handed_every_key_and_the_volume_none(hub):
+    """`files_keys` rides on the answer under the token and is never written:
+    a key is derived from the secret and does not belong on the volume."""
+    hub.publish("proj1", "aaa111", _shipping("first"))
+    hub.publish("proj1", "bbb222", _shipping("second"))
+    keys = hub.builds("proj1").json()["files_keys"]
+    # A commit fills the local slot with itself, so `dev` is offered too.
+    assert set(keys) == {"latest", "dev", "aaa111", "bbb222"}
+    for build, key in keys.items():
+        assert hub.get(f"/project/proj1/{build}/lid.stl?files={key}"
+                       ).status_code == 200, build
+    on_disk = json.loads(hub.store.builds_json_path("proj1").read_bytes())
+    assert "files_keys" not in on_disk
+
+
+def test_a_picker_that_does_not_parse_goes_out_as_it_is(hub):
+    """The keys are an addition to the file, not a condition of serving it:
+    the owner keeps the list the hub has, byte for byte, and the log is the
+    only place that says why the Share window offers no files."""
+    hub.publish("proj1", "aaa111", _shipping("first"))
+    hub.store.builds_json_path("proj1").write_bytes(b"{")
+    said = []
+    sink = logger.add(said.append, level="WARNING")
+    try:
+        response = hub.builds("proj1")
+    finally:
+        logger.remove(sink)
+    assert response.status_code == 200
+    assert response.content == b"{"
+    assert [line for line in said
+            if "proj1" in line and "download keys" in line]
+
+
+def test_a_format_nobody_declared_open_is_closed(hub):
+    # The list is of what is OPEN, so a later export format starts closed.
+    hub.publish("proj1", "abc123", good_build(extra_files={"scene.glb": b"glTF"}))
+    assert hub.get("/project/proj1/abc123/scene.glb").status_code == 403
+    assert hub.get("/project/proj1/abc123/scene.glb",
+                   headers=OWNER).status_code == 200
 
 
 def test_a_preview_is_served_as_a_picture_and_not_as_a_download(hub):
@@ -398,13 +517,14 @@ def test_an_uploaded_html_file_can_never_be_active_content(hub):
     # The member-name whitelist says nothing about extensions, so a push CAN
     # contain page.html. A build URL is permanent, same-origin and immutable, so
     # serving that as text/html would be an unrecallable stored XSS against every
-    # other project on the host.
+    # other project on the host. Asked with the token: both are closed files,
+    # and what matters is how they reach the reader who does get them.
     hub.publish("proj1", "abc123", good_build(extra_files={
         "page.html": b"<script>alert(document.domain)</script>",
         "logo.svg": b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>",
     }))
     for name in ("page.html", "logo.svg"):
-        r = hub.get(f"/project/proj1/abc123/{name}")
+        r = hub.get(f"/project/proj1/abc123/{name}", headers=OWNER)
         assert r.status_code == 200, name
         assert r.headers["Content-Type"] == "application/octet-stream", name
         assert r.headers["Content-Disposition"] == "attachment", name

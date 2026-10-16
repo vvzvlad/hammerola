@@ -44,17 +44,21 @@ The routes the read-only commands use (`status` and `comments` read what the
 browser fetches):
 
     GET  /project/<pid>/builds.json       Token. `{pid, project, title,
-                                          has_dev, latest, builds[]}`, and
-                                          404 for a project that has never
-                                          published anything.
+                                          has_dev, latest, builds[],
+                                          files_keys}`, and 404 for a project
+                                          that has never published anything.
+                                          `files_keys` is added by the hub as
+                                          it answers: the key that opens each
+                                          build's files in a link.
     GET  /project/<pid>/<name>/meta.json  PUBLIC. One build's own record;
                                           `<name>` is `dev`, `latest` or a
                                           revision.
-    GET  /project/<pid>/<name>/<file>     PUBLIC. Any file the build ships —
-                                          the STL, STEP and 3MF a part's
-                                          `files` names in meta.json, the
-                                          pictures and the overview meshes, and
-                                          metrics.json.
+    GET  /project/<pid>/<name>/<file>     Any file the build ships. PUBLIC for
+                                          the `.json` and `.png` ones —
+                                          metrics.json and the pictures;
+                                          Token for the rest — the STL, STEP
+                                          and 3MF a part's `files` names in
+                                          meta.json, and the overview meshes.
     GET  /api/v1/comments?project=<pid>   Token -> `{"comments": [...]}`
     POST /api/v1/comments/<id>/resolve    Token, `{"note": ...}` -> the record
     GET  /api/v1/proposals/<pid>          Token -> `{"pid", "doc", "text",
@@ -84,8 +88,9 @@ The code of a revision, and the two routes that unmake something:
                                           gone, and the boolean is the only
                                           thing that says whether there was one
 
-A build is public and its code is not, which is why `source` and `artifacts`
-are two verbs. Every guarded route checks the one secret, `EDIT_TOKEN`.
+A build's files open to a link that carries their key, and its code to
+nothing but the secret, which is why `source` and `artifacts` are two verbs.
+Every guarded route checks the one secret, `EDIT_TOKEN`.
 
 A 4xx is returned to the caller rather than raised: 200, 202, 409 and 422 are
 all meaningful answers to a push and the caller is the one that knows what to do
@@ -660,18 +665,17 @@ class Hub:
     def build_file(self, pid: str, name: str, filename: str):
         """One file out of a published build, or None when it is not there.
 
-        PUBLIC: the same URL the viewer fetches. None for a 404, because "this
-        revision ships no such file" (e.g. an old build without metrics.json) is
-        an answer callers act on.
+        The same URL the viewer fetches. The JSON and PNG files are public; the
+        STEP, STL and 3MF are behind the token, which `_call` sends with every
+        request. None for a 404, because "this revision ships no such file"
+        (e.g. an old build without metrics.json) is an answer callers act on.
         """
         code, raw = self._call(
             f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
             f"/{urllib.parse.quote(filename)}")
         if code == 404:
             return None
-        if code == 401:
-            # A public route, so only the proxy's refusal can stop it.
-            raise HubError(PROXY_REFUSED, code)
+        _refuse_unauthorized(code)
         if code != 200:
             raise HubError(
                 f"the hub answered HTTP {code} for {name}/{filename} of {pid}")

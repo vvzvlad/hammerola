@@ -63,7 +63,7 @@ beforeEach(() => onSlot(REV))
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds } from '../src/hub.js'
 import { makeComponent } from './component.js'
-import { collect } from './eltree.js'
+import { collect, texts } from './eltree.js'
 
 /** The component as `computed()` sees it, on a pinned revision with a history. */
 function component({ builds = null, rail = null, props = {} } = {}) {
@@ -422,8 +422,31 @@ describe('a reader without the token', () => {
   })
 })
 
-describe('Copy link', () => {
-  /** Run the button's click with a stubbed clipboard; what was written, and the toast. */
+describe('the Share window', () => {
+  // THE ONE WAY TO A LINK. It opens from a row of the revision picker, which
+  // only the owner has; `latest` gives a link that follows every new build, a
+  // revision a link to exactly that one, and the box adds the key that opens
+  // that address's files.
+  const KEYS = { latest: 'key-of-latest', [REV]: 'key-of-rev', dev: 'key-of-dev' }
+  const click = { stopPropagation() {} }
+
+  /** The owner's page, the picker holding both pointers and one revision. */
+  const owner = (keys = KEYS) => component({
+    builds: {
+      has_dev: true, latest: REV,
+      builds: [{ commit: REV, built: '2026-08-27T18:20:00Z' }],
+      ...(keys ? { files_keys: keys } : {}),
+    },
+  })
+  const row = (c, key) => c.computed().revRows.find((r) => r.key === key)
+  /** The window opened from one row, as a click on its icon opens it. */
+  const opened = (key, keys) => {
+    const c = owner(keys)
+    row(c, key).onShare(click)
+    return c
+  }
+
+  /** Copy with a stubbed clipboard: what was written, and the toast. */
   const copy = async (c, writeText) => {
     const written = []
     Object.defineProperty(navigator, 'clipboard', {
@@ -431,68 +454,138 @@ describe('Copy link', () => {
       configurable: true,
     })
     try {
-      await c.computed().copyLink()
+      await c.computed().copyShare()
     } finally {
       delete navigator.clipboard
     }
     return { written, toast: c.state.toast }
   }
 
-  it('copies the revision behind `latest`, not the moving name', async () => {
-    onSlot('latest')
-    const { written, toast } = await copy(component())
-    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/`])
-    expect(toast).toBe('link copied')
+  it('is offered on latest and on every revision, and not on the draft', () => {
+    // The draft has no permanent address to give. Its icon keeps its space,
+    // so the rows still line up.
+    const c = owner()
+    expect(typeof row(c, 'latest').onShare).toBe('function')
+    expect(typeof row(c, REV).onShare).toBe('function')
+    expect(row(c, 'dev').onShare).toBeUndefined()
+    expect(row(c, 'dev').shareIconStyle).toContain('visibility:hidden')
   })
 
-  it('carries the view on screen when it is not the first one', async () => {
-    const c = component()
+  it('opens without the files, on the full commit, and closes the picker', () => {
+    const c = owner()
+    c.state.revOpen = true
+    row(c, REV).onShare(click)
+    expect(c.state.revOpen).toBe(false)
+    // The row SHOWS seven characters; the address needs all of them.
+    expect(c.state.share).toEqual({ id: REV, files: false })
+    const v = c.computed()
+    expect(v.shareOpen).toBe(true)
+    expect(v.shareHead).toBe('Share e05f73b')
+    expect(v.shareFilesMark).toBe('')
+    expect(v.shareLink).toBe(`${location.origin}/project/proj1/${REV}/`)
+  })
+
+  it('gives latest the moving address, not the revision behind it', () => {
+    const v = opened('latest').computed()
+    expect(v.shareHead).toBe('Share latest')
+    expect(v.shareLink).toBe(`${location.origin}/project/proj1/latest/`)
+  })
+
+  it('adds the key of THAT address when the files are ticked', () => {
+    const latest = opened('latest')
+    latest.computed().toggleShareFiles()
+    expect(latest.computed().shareLink)
+      .toBe(`${location.origin}/project/proj1/latest/?files=key-of-latest`)
+
+    const rev = opened(REV)
+    rev.computed().toggleShareFiles()
+    expect(rev.computed().shareFilesMark).toBe('✓')
+    expect(rev.computed().shareLink)
+      .toBe(`${location.origin}/project/proj1/${REV}/?files=key-of-rev`)
+  })
+
+  it('carries the view on screen when it is not the first one, beside the key', () => {
+    const c = opened(REV)
     c.state.meta.views = [
       { id: 'assembled', name: 'assembled', file: 'a.json', parts: [], gzip: 0 },
       { id: 'print', name: 'print', file: 'p.json', parts: [], gzip: 0 },
     ]
     c.state.view = 'print'
-    const { written } = await copy(c)
-    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/?v=print`])
+    expect(c.computed().shareLink).toBe(`${location.origin}/project/proj1/${REV}/?v=print`)
+    c.computed().toggleShareFiles()
+    expect(c.computed().shareLink)
+      .toBe(`${location.origin}/project/proj1/${REV}/?v=print&files=key-of-rev`)
   })
 
-  it('works for a reader without the token too', async () => {
-    const c = component()
-    c.state.token = null
-    const { written } = await copy(c)
-    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/`])
+  it('cannot be ticked when builds.json came without the keys, and says why', () => {
+    const c = opened(REV, null)
+    const v = c.computed()
+    expect(v.toggleShareFiles).toBeUndefined()
+    expect(v.shareFilesHint).toBe('This hub did not send the download keys')
+    // Even a ticked box puts no key that does not exist into the link.
+    c.state.share = { id: REV, files: true }
+    expect(c.computed().shareLink).toBe(`${location.origin}/project/proj1/${REV}/`)
+    expect(c.computed().shareFilesMark).toBe('')
+  })
+
+  it('copies the link it shows, and says so', async () => {
+    const c = opened(REV)
+    c.computed().toggleShareFiles()
+    const { written, toast } = await copy(c)
+    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/?files=key-of-rev`])
+    expect(toast).toBe('link copied')
   })
 
   it('says so when the clipboard refuses, rather than "copied"', async () => {
-    const { toast } = await copy(component(), () => Promise.reject(new Error('denied')))
+    const { toast } = await copy(opened(REV), () => Promise.reject(new Error('denied')))
     expect(toast).toBe('Could not copy the link')
   })
 
-  it('is a button that does it', async () => {
-    // Render half: the handler has to be on the element that says Copy link.
-    const c = component()
-    const button = collect(c.render(), (el) =>
-      (el.props.children === 'Copy link' ? el : undefined))
-    expect(button).toHaveLength(1)
-    const written = []
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: (t) => { written.push(t) } }, configurable: true,
-    })
-    try {
-      await button[0].props.onClick()
-    } finally {
-      delete navigator.clipboard
-    }
-    expect(written).toEqual([`${location.origin}/project/proj1/${REV}/`])
+  it('closes on Close and on the overlay, and a click on the card stays in it', () => {
+    // Render half: what closes it has to be on the elements that say so.
+    // The overlay is the element whose child is the 380px card.
+    const c = opened(REV)
+    const isCard = (el) => !!(el && el.props && el.props.style && el.props.style.width === '380px')
+    const overlay = collect(c.render(), (el) => (
+      [].concat(el.props.children).some(isCard) ? el : undefined))
+    expect(overlay).toHaveLength(1)
+    const card = [].concat(overlay[0].props.children).find(isCard)
+    const stopped = vi.fn()
+    card.props.onClick({ stopPropagation: stopped })
+    expect(stopped).toHaveBeenCalled()
+    expect(c.state.share).not.toBeNull()
+
+    overlay[0].props.onClick(click)
+    expect(c.state.share).toBeNull()
+    expect(texts(c.render())).not.toContain('Copy')
+
+    const again = opened(REV)
+    const close = collect(again.render(), (el) => (el.props.children === 'Close' ? el : undefined))
+    expect(close).toHaveLength(1)
+    close[0].props.onClick(click)
+    expect(again.state.share).toBeNull()
   })
 
-  it('has nothing to copy in the draft slot', () => {
-    // The local slot is rewritten by every push and has no permanent address.
-    onSlot('dev')
-    const c = component()
-    c.state.meta.commit = 'dev'
-    const v = c.computed()
-    expect(v.copyLink).toBeUndefined()
-    expect(v.shareTitle).toMatch(/hammerola commit/)
+  it('closes on Escape, with the menus', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = opened(REV)
+    Object.assign(c, { load: vi.fn(async () => {}), loadFeed: vi.fn(),
+                       loadProposal: vi.fn(), sync: vi.fn() })
+    c.componentDidMount()
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      expect(c.state.share).toBeNull()
+    } finally {
+      c.componentWillUnmount()
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('is the only way to a link: the header copies none', () => {
+    // A copied address without the key, sent on, would lose its reader the
+    // files without anybody noticing.
+    const c = owner()
+    expect(texts(c.render())).not.toContain('Copy link')
+    expect(c.computed().copyLink).toBeUndefined()
   })
 })

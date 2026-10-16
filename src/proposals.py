@@ -13,7 +13,8 @@ asking — `DELETE /api/v1/proposals/<pid>`, or removing the project it belongs
 to (SPEC 5.3). A proposal is a working document, so saving replaces it.
 
 Outside the build directory for the comment queue's reasons (SPEC 7A.3): build
-directories are public and cached `immutable`, while this is read and written
+directories open their JSON and pictures to anybody with the address and are
+cached `immutable`, while this is read and written
 under EDIT_TOKEN; and a proposal is about the project, edited across rebuilds.
 The `published` stamp notes which build the moves were measured on.
 

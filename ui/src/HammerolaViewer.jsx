@@ -121,20 +121,21 @@ import { chromeView } from './chromeview.js';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
-// part that the header's menu builds for all of them.
+// part that the header's menu builds for all of them, and `filesKeyFor`
+// because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
-import { downloadsView, fileHref } from './downloadsview.js';
+import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
 import { feedView } from './feedview.js';
 import { comparePanel } from './compareview.js';
 // The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
 // were spelled out once per call site.
 import {
-  ACCENT_BTN, BLANK_BOX, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN, HEADER_RULE,
-  HEAD_MONO, HEAD_SANS, IDLE, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK, META_MONO,
-  ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, QUIET_BTN, RELATIVE, ROW, ROW_LABELLED,
-  RULE, SLOT_22, SLOT_24, SPAN_MONO, SWATCH, TITLE, TOOL_SQUARE, WARN_BODY, WARN_CAPS,
-  WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover,
+  ACCENT_BTN, BLANK_BOX, CARD, DIALOG_BTN, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN,
+  HEADER_RULE, HEAD_MONO, HEAD_SANS, IDLE, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK,
+  META_MONO, ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, QUIET_BTN, RELATIVE, ROW,
+  ROW_LABELLED, RULE, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TITLE, TOOL_SQUARE,
+  WARN_BODY, WARN_CAPS, WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover,
 } from './panelstyle.js';
 import {
   css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG,
@@ -968,6 +969,15 @@ export default class HammerolaViewer extends React.Component {
     // never collide; the prefix (`n1`, `m2`) says which kind a node is.
     // Not state, like `this.carry`: nothing is drawn from it.
     this._proposalSeq = 0;
+    // The key to the files that the ADDRESS carried when the page loaded
+    // (`?files=`), with the slot it was carried for: a key opens one address
+    // only (`filesKeyFor`). Read once and never written — the address of a
+    // reader without the token does not move, and the owner's keys come with
+    // builds.json instead.
+    this._linkKey = {
+      slot: PAGE.slot,
+      key: new URLSearchParams(location.search).get('files') || '',
+    };
     // The rest of this page's instance fields, declared in one place because
     // `componentWillUnmount` must know every one: it removes the listeners and
     // clears the timers, and a field it misses is a leaked listener or a timer
@@ -1028,6 +1038,10 @@ export default class HammerolaViewer extends React.Component {
       // menu is added beside it.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
       settingsOpen: false,
+      // The Share window: `{id, files}` while it is open, where `id` is
+      // `latest` or the full commit of the row it was opened from and `files`
+      // is its one checkbox; null while it is closed.
+      share: null,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison: five fields answering five questions.
       //
@@ -1410,7 +1424,7 @@ export default class HammerolaViewer extends React.Component {
       if (e.key !== 'Escape') return;
       this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
                  viewsOpen: false, opsOpen: false, settingsOpen: false,
-                 notePop: null, tokenPop: false, tool: null });
+                 notePop: null, tokenPop: false, tool: null, share: null });
     };
     window.addEventListener('keydown', this._kd);
 
@@ -4810,9 +4824,14 @@ export default class HammerolaViewer extends React.Component {
     });
 
     // -- the downloads, out of the part catalogue: key -> {extension -> file}
+    //
+    // With the key to the build on screen, asked of `PAGE.slot` here rather
+    // than kept: the address moves under a revision switch, and builds.json
+    // carries a key for every address it can move to.
     const catalogue = (meta && meta.parts) || null;
-    const { downloadGroups, anyDownloads } = downloadsView(catalogue, {
-      groupDownloads, downloadAll: this.downloadAll.bind(this),
+    const filesKey = filesKeyFor(s.builds, PAGE.slot, this._linkKey);
+    const { downloadGroups, anyDownloads, dlShown } = downloadsView(catalogue, {
+      groupDownloads, downloadAll: this.downloadAll.bind(this), key: filesKey,
     });
 
     // -- the project's comment queue, as `loadFeed` fetched it
@@ -4854,7 +4873,7 @@ export default class HammerolaViewer extends React.Component {
     // the tree row and the part in the scene, write `s.menu`, so the module is
     // handed the whole state and reads the subject out of that one field.
     const menu = rowMenu(s, {
-      tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref,
+      tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref, filesKey,
       clearSection, stop, SECTION_ROW,
       noteFor, partRecord, fileList,
       node: this.node.bind(this),
@@ -4927,7 +4946,7 @@ export default class HammerolaViewer extends React.Component {
     // second count worked out up there could disagree with the rail it is about.
     const chrome = chromeView(s, this.props, {
       meta, viewer, narrow, stop,
-      revRows, downloadGroups, threads, openCount,
+      revRows, downloadGroups, dlShown, threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
       setState: this.setState.bind(this),
@@ -5304,6 +5323,9 @@ export default class HammerolaViewer extends React.Component {
                           <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
                           <span style={css(META_MONO)}>{r.date}</span>
                         </span>
+                        <span onClick={r.onShare} title="Share" style={css(r.shareIconStyle)}>
+                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 10V1.8M5 4.8l3-3 3 3M3.5 7.5v6.5h9V7.5" /></svg>
+                        </span>
                       </div>
                     </React.Fragment>
                   ))}
@@ -5320,45 +5342,43 @@ export default class HammerolaViewer extends React.Component {
             )}
           </div>
 
-          {/* the permanent link of the build on screen, for every reader */}
-          <div onClick={v.copyLink} title={v.shareTitle} style={css(v.shareBtnStyle)}>
-            Copy link
-          </div>
-
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
           <div style={css(FILL)} />
 
-          {/* downloads: whole-build files, exactly the ones meta.json names */}
-          <div style={css(RELATIVE)}>
-            <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
-              Downloads
-            </div>
-            {/* One block per FORMAT, each with a link that takes the whole
-                group: on a ten-part build the flat list was thirty rows in no
-                useful order, and "every STL" meant aiming at every third one. */}
-            <div style={css(v.dlMenuStyle)}>
-              {v.downloadGroups.map((g) => (
-                <React.Fragment key={g.key}>
-                  <div style={css(g.headStyle)}>
-                    <span style={css(FILL)}>{g.ext}</span>
-                    <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
+          {/* downloads: whole-build files, exactly the ones meta.json names,
+              for a reader holding the key that opens them */}
+          {v.dlShown && (
+            <div style={css(RELATIVE)}>
+              <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
+                Downloads
+              </div>
+              {/* One block per FORMAT, each with a link that takes the whole
+                  group: on a ten-part build the flat list was thirty rows in no
+                  useful order, and "every STL" meant aiming at every third one. */}
+              <div style={css(v.dlMenuStyle)}>
+                {v.downloadGroups.map((g) => (
+                  <React.Fragment key={g.key}>
+                    <div style={css(g.headStyle)}>
+                      <span style={css(FILL)}>{g.ext}</span>
+                      <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
+                    </div>
+                    {g.files.map((f) => (
+                      <a key={f.key} href={f.href} download style={css(f.style)}>
+                        <span style={css(FILL)}>{f.label}</span>
+                        <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
+                      </a>
+                    ))}
+                  </React.Fragment>
+                ))}
+                {v.downloadGroups.length === 0 && (
+                  <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
+                    This build ships no files to download.
                   </div>
-                  {g.files.map((f) => (
-                    <a key={f.key} href={f.href} download style={css(f.style)}>
-                      <span style={css(FILL)}>{f.label}</span>
-                      <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
-                    </a>
-                  ))}
-                </React.Fragment>
-              ))}
-              {v.downloadGroups.length === 0 && (
-                <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
-                  This build ships no files to download.
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* access: the token is what turns a viewer into the customer */}
           <div style={css(RELATIVE)}>
@@ -5372,7 +5392,7 @@ export default class HammerolaViewer extends React.Component {
               </div>
               <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft);margin-bottom:9px`)}>
                 {v.viewer
-                  ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one everything else still works: orbiting, the tree, the section, measuring and the downloads. It is kept in this browser, for the whole site.'
+                  ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.'
                   : 'The token is stored in this browser, for the whole site. Remove it to go back to viewing.'}
               </div>
               {v.viewer ? (
@@ -6112,6 +6132,47 @@ export default class HammerolaViewer extends React.Component {
           </div>
 
         </div>
+
+        {/* ── the Share window, over the whole page like the front page's
+            delete confirmation. The overlay closes it; a click on the card
+            stops at the card, so its own controls do not close it. ── */}
+        {v.shareOpen && (
+          <div onClick={v.closeShare}
+               style={css('position:fixed;inset:0;z-index:40;padding:20px;box-sizing:border-box;'
+                 + 'display:flex;align-items:center;justify-content:center;background:var(--shadow)')}>
+            <div onClick={(e) => e.stopPropagation()}
+                 style={css('width:380px;max-width:100%;box-sizing:border-box;'
+                   + CARD
+                   + 'box-shadow:0 14px 44px var(--shadow);padding:22px 22px 18px;'
+                   + 'display:flex;flex-direction:column;gap:10px')}>
+              <div style={css(`font:700 15px ${SANS}`)}>{v.shareHead}</div>
+              <div onClick={v.toggleShareFiles} style={css(v.shareFilesRowStyle)}>
+                <span style={css(v.shareFilesBox)}>{v.shareFilesMark}</span>
+                Include files (STEP, STL, 3MF)
+              </div>
+              {v.shareFilesHint && (
+                <div style={css(`font:400 11px/1.5 ${SANS};color:var(--text-muted)`)}>{v.shareFilesHint}</div>
+              )}
+              <div style={css(`padding:8px 10px;border-radius:6px;${SUNKEN};font:400 11.5px/1.5 ${MONO};color:var(--text);overflow-wrap:anywhere;user-select:all`)}>
+                {v.shareLink}
+              </div>
+              <div style={css('display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:2px')}>
+                <div onClick={v.closeShare}
+                     style={css(DIALOG_BTN
+                       + `cursor:pointer;user-select:none;font:600 12px ${SANS};`
+                       + 'border:1px solid var(--line);background:var(--card-bg);color:var(--text)')}>
+                  Close
+                </div>
+                <div onClick={v.copyShare}
+                     style={css(DIALOG_BTN
+                       + `cursor:pointer;user-select:none;font:600 12px ${SANS};`
+                       + ON_ACCENT)}>
+                  Copy
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -6,7 +6,7 @@
     commit -m "..."           sources -> an immutable revision the hub names
     status                    latest, dev, and the revisions that exist
     source <revision>         fetch the CODE of a revision, under the secret
-    artifacts <revision>      fetch the STL/STEP/3MF, which are public
+    artifacts <revision>      fetch the STL/STEP/3MF, which a link can open
     diff <rev> <rev>          what moved: the geometry, and the source
     log [dev|<revision>]      read a build log again
     comments                  the project's comment queue
@@ -27,8 +27,8 @@ create), `status.py`, `queue.py` (comments), `proposal.py`, `sources.py`
 `skill.py`, `update.py`. They all RAISE on refusal, so `main` below is the one
 place that decides what a failure looks like.
 
-  * `source` and `artifacts` are separate verbs because artefacts are PUBLIC
-    and code is not.
+  * `source` and `artifacts` are separate verbs because artefacts open to a
+    link that carries their key and code opens to nothing but the secret.
   * `source` unpacks into its own directory; writing over the working copy is
     a flag that also requires a clean git tree.
   * `rename` changes the TITLE. Nothing changes an id: every permanent URL of

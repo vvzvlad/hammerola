@@ -7,8 +7,10 @@
 //
 // WHAT THE DEFAULT STATE REPRESENTS: an ordinary build, opened by its owner.
 // One printable part with an STL, one view with that part in it, a tree of one
-// empty node, a token in hand, nothing selected, nothing open, no section, no
-// comparison, no menu, and the light theme.
+// empty node, a token in hand and the build picker it read — no other build in
+// it, but the key to the files of the build on screen, as the hub adds to
+// builds.json — nothing selected, nothing open, no section, no comparison, no
+// menu, and the light theme.
 //
 // AND HOW TO DIFFER FROM IT: a fixture that needs something else PASSES IT AS
 // AN OVERRIDE. It does not get normalised onto the default, and the default
@@ -28,8 +30,12 @@
 
 import { vi } from 'vitest'
 
-import { indexTree } from '../src/hub.js'
+import { PAGE, indexTree } from '../src/hub.js'
 import { HmrViewport } from '../src/viewport/element.js'
+
+/** The key the default owner holds to the build on screen. Any string will do:
+ *  the page never checks one, it only puts it into a link. */
+export const FILES_KEY = 'f00dfeedf00dfeedf00dfeedf00dfeed'
 
 // -- the canvas the viewport tests measure against -----------------------------
 // 800x600 at the origin: jsdom computes no layout, so the rect a fixture hands
@@ -126,7 +132,10 @@ export const replaceState = (c) => vi.fn((patch, done) => {
   if (done) done()
 })
 
-/** The ordinary build, opened by its owner. See the note at the top of the file. */
+/** The ordinary build, opened by its owner. See the note at the top of the file.
+ *
+ * The key is filed under the slot `PAGE` names when the fixture is made, which
+ * is the build on screen whichever address a test file stands the page on. */
 const defaultState = () => ({
   meta: {
     project: 'fixture', commit: 'abc1234', built: '',
@@ -134,7 +143,8 @@ const defaultState = () => ({
     views: [{ id: 'assembled', name: 'assembled', file: 'a.json',
               parts: ['lid'], gzip: 1000 }],
   },
-  builds: null,
+  builds: { has_dev: false, latest: null, builds: [],
+            files_keys: { [PAGE.slot]: FILES_KEY } },
   tree: indexTree({ id: '/model', name: 'model', children: [] }),
   error: null, viewError: null, pending: null, swapping: false,
   view: 'assembled', tool: null, held: false,
