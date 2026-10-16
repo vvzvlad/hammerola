@@ -51,7 +51,7 @@ function write(key, value) {
 //
 // Verification is not done here and could not be: the only thing that can say
 // whether a token is good is the hub. The front page writes this key only after
-// `loadIndex` has answered with a list, and clears it when that answers 401
+// `loadIndex` has answered with a list, and clears it when that answers 403
 // (HammerolaEntry.open). This module's whole job is remembering.
 
 const TOKEN_KEY = `${NS}token`;

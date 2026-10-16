@@ -37,7 +37,7 @@ def _publish(hub, pid="proj1", body=None):
 def _rename(hub, pid, title, token=TOKEN, body=None):
     headers = {"Content-Type": "application/json"}
     if token is not None:
-        headers["Authorization"] = f"Bearer {token}"
+        headers["X-Hammerola-Token"] = token
     payload = json.dumps({"title": title}).encode() if body is None else body
     return httpx.post(f"{hub.url}/api/v1/projects/{pid}/title",
                       content=payload, headers=headers, timeout=10,
@@ -45,7 +45,7 @@ def _rename(hub, pid, title, token=TOKEN, body=None):
 
 
 def _remove(hub, pid, token=TOKEN):
-    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+    headers = {"X-Hammerola-Token": token} if token is not None else {}
     return httpx.request("DELETE", f"{hub.url}/api/v1/projects/{pid}",
                          headers=headers, timeout=10, trust_env=False)
 
@@ -102,13 +102,13 @@ def test_renaming_needs_the_publishing_secret_and_says_nothing_without_it(hub):
     _publish(hub)
     for token in (None, "not-the-token"):
         refused = _rename(hub, "proj1", "nope", token=token)
-        assert refused.status_code == 401
-        assert refused.headers["WWW-Authenticate"] == "Bearer"
+        assert refused.status_code == 403
+        assert "WWW-Authenticate" not in refused.headers
         # Checked BEFORE the project is looked at, so a caller without the
         # secret learns exactly as much about a project that exists as about
         # one that does not.
         unknown = _rename(hub, "nosuchproject", "nope", token=token)
-        assert unknown.status_code == 401
+        assert unknown.status_code == 403
         assert unknown.json() == refused.json()
     assert hub.builds("proj1").json()["title"] == \
         "Demo project"
@@ -158,7 +158,7 @@ def test_removing_a_project_takes_everything_it_had(hub):
     assert hub.get("/project/proj1/").status_code == 404
     # And the code is gone from behind the secret too, not merely unlisted.
     assert hub.get(f"/api/v1/sources/{revision}",
-                   headers={"Authorization": f"Bearer {TOKEN}"}
+                   headers={"X-Hammerola-Token": TOKEN}
                    ).status_code == 404
 
 
@@ -175,7 +175,7 @@ def test_code_another_project_still_points_at_is_kept(hub):
 
     assert (_sources(hub, revision) / SOURCE_ARCHIVE_NAME).is_file()
     assert hub.get(f"/api/v1/sources/{revision}",
-                   headers={"Authorization": f"Bearer {TOKEN}"}
+                   headers={"X-Hammerola-Token": TOKEN}
                    ).status_code == 200
     # And proj2 is untouched in every other way.
     assert hub.get(f"/project/proj2/{revision}/meta.json").status_code == 200
@@ -202,10 +202,10 @@ def test_removing_needs_the_publishing_secret(hub):
     revision = _publish(hub)
     for token in (None, "not-the-token"):
         refused = _remove(hub, "proj1", token=token)
-        assert refused.status_code == 401
-        assert refused.headers["WWW-Authenticate"] == "Bearer"
+        assert refused.status_code == 403
+        assert "WWW-Authenticate" not in refused.headers
         unknown = _remove(hub, "nosuchproject", token=token)
-        assert unknown.status_code == 401
+        assert unknown.status_code == 403
         assert unknown.json() == refused.json()
     # Nothing was touched by any of that.
     assert hub.get(f"/project/proj1/{revision}/meta.json").status_code == 200
@@ -226,7 +226,7 @@ def test_there_is_no_route_that_removes_one_build(hub):
     build turns a promise into a 404 while the project goes on standing. Pinned
     as a test because "add a narrower delete" is the obvious next request."""
     revision = _publish(hub)
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    headers = {"X-Hammerola-Token": TOKEN}
     for path in (f"/api/v1/projects/proj1/{revision}",
                  f"/project/proj1/{revision}",
                  f"/project/proj1/{revision}/",
@@ -244,7 +244,7 @@ def test_a_path_this_hub_does_not_answer_is_a_404_even_with_a_body(hub):
     reads cleaner — which is the change this test exists to fail. Hoisted, a
     DELETE of a path with no route answers "this endpoint takes no body", which
     tells a caller the URL was understood when it was not."""
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    headers = {"X-Hammerola-Token": TOKEN}
     for path in ("/api/v1/nonsense/x", "/api/v1/projects/proj1/extra"):
         reply = httpx.request("DELETE", f"{hub.url}{path}", headers=headers,
                               content=b"x", timeout=10, trust_env=False)

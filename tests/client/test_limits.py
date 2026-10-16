@@ -47,20 +47,23 @@ def test_the_text_ceiling_is_the_hubs():
     assert limits.MAX_TEXT_CHARS == MAX_TITLE_CHARS
 
 
-def test_the_message_header_is_spelled_the_same_on_both_sides():
-    """The name of the header a revision's message travels on.
+def test_the_two_headers_are_spelled_the_same_on_both_sides():
+    """The names of the headers a revision's message and the token travel on.
 
     Spelled twice for the reason everything in this file is: the client must
-    import under a bare python3 and cannot see `src`. This one would break
-    QUIETLY, because a header
+    import under a bare python3 and cannot see `src`. The message one would
+    break QUIETLY, because a header
     nobody reads is not an error: the push succeeds, the build publishes, and the
     message is simply gone from every row.
     """
     from src.app import MESSAGE_HEADER as hub_header
+    from src.app import TOKEN_HEADER as hub_token_header
 
     from hammerola.hub import MESSAGE_HEADER as client_header
+    from hammerola.hub import TOKEN_HEADER as client_token_header
 
     assert client_header == hub_header
+    assert client_token_header == hub_token_header
 
 
 def test_the_size_ceiling_matches_the_hubs_default():
@@ -137,7 +140,7 @@ def test_the_id_login_probes_with_is_one_the_hub_would_look_up():
     """The trick `hammerola login` stands on.
 
     `check_token` asks the jobs route for an id no job can have and reads the
-    answer as a verdict on the SECRET: 401 is "wrong token", anything else is
+    answer as a verdict on the SECRET: 403 is "wrong token", anything else is
     "the token was accepted and there is no such job". That reading is only
     worth anything while the id gets past the hub's SHAPE check and misses in
     the LOOKUP — which is what `IMPOSSIBLE_JOB_ID` is built for: 22 characters

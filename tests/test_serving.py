@@ -182,18 +182,18 @@ def test_the_list_of_projects_needs_the_token(hub):
 
     It is the only document that answers "what is on this hub", and every id in
     it is the prefix of every permanent URL that project will ever have. The
-    front page draws the sign-in screen on the 401 — but the refusal is here,
+    front page draws the sign-in screen on the 403 — but the refusal is here,
     not there: a page that fetched the cards and declined to render them would
     be a decoration one devtools tab wide.
     """
     hub.publish("proj1", "abc123", good_build())
-    assert hub.index(token=None).status_code == 401
-    assert hub.index(token="wrong-token").status_code == 401
+    assert hub.index(token=None).status_code == 403
+    assert hub.index(token="wrong-token").status_code == 403
     assert hub.index().status_code == 200
 
 
 def test_the_refusal_says_nothing_about_what_is_behind_it(hub):
-    """A 401 before the file is read, so a full hub answers like an empty one.
+    """A 403 before the file is read, so a full hub answers like an empty one.
 
     Reading `index.json` first and refusing afterwards would leave the answer
     identical and the TIMING different, on the one route whose whole subject is
@@ -203,7 +203,7 @@ def test_the_refusal_says_nothing_about_what_is_behind_it(hub):
     hub.publish("proj1", "abc123", good_build())
     hub.publish("proj2", "def456", good_build())
     full = hub.index(token=None)
-    assert empty.status_code == full.status_code == 401
+    assert empty.status_code == full.status_code == 403
     assert empty.content == full.content
 
 
@@ -231,7 +231,7 @@ def test_the_list_of_revisions_needs_the_token(hub):
     enumeration like `/index.json` and takes the same token.
     """
     hub.publish("proj1", "abc123", good_build())
-    assert hub.builds("proj1", token=None).status_code == 401
+    assert hub.builds("proj1", token=None).status_code == 403
     assert hub.builds("proj1").status_code == 200
 
 

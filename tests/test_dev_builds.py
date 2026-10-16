@@ -479,8 +479,8 @@ def test_a_project_whose_only_build_is_a_commit_still_offers_the_slot(hub):
 
 # -- the ordinary publish path still applies ---------------------------------
 def test_a_local_push_needs_the_token_like_any_other(hub):
-    assert hub.publish_dev("proj1", _build("v1"), token=None).status_code == 401
-    assert hub.publish_dev("proj1", _build("v1"), token="wrong").status_code == 401
+    assert hub.publish_dev("proj1", _build("v1"), token=None).status_code == 403
+    assert hub.publish_dev("proj1", _build("v1"), token="wrong").status_code == 403
     assert _dirs_on_disk(hub, "proj1") == []
 
 

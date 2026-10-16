@@ -132,7 +132,7 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
         path = example_path(pattern)
         # The token, because DELETE checks it before its table is consulted.
         reply = hub.request(verb, path,
-                            headers={"Authorization": f"Bearer {TOKEN}"})
+                            headers={"X-Hammerola-Token": TOKEN})
         assert fired == [index], (
             f"{verb} {path} (answered {reply.status_code}) should have reached "
             f"entry {index} of {TABLES[verb]} and reached {fired} instead: "
@@ -153,7 +153,7 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
         fired.clear()
         path = re.sub(r"<[^>]+>", "probe", url.split("?", 1)[0])
         reply = hub.request(verb, path,
-                            headers={"Authorization": f"Bearer {TOKEN}"})
+                            headers={"X-Hammerola-Token": TOKEN})
         assert fired == [owner], (
             f"{verb} {path} (answered {reply.status_code}) should have reached "
             f"entry {owner} of {TABLES[verb]} and reached {fired} instead: "

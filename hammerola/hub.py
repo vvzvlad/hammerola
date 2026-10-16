@@ -4,9 +4,18 @@
 python3 and self-updates as one file. httpx stays a dev dependency for the
 tests; the note in `requirements.txt` is about outbound calls from `src/`.
 
-THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it:
+THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it. "Token" below is
+`X-Hammerola-Token: <EDIT_TOKEN>`, the hub's own header. The hub never reads
+`Authorization`: that header is left to a password proxy in front of it, and
+this client puts `Basic <HUB_BASIC_AUTH>` there on every request, public ones
+included, when that setting is present.
 
-    POST /api/v1/publish/<pid>            Bearer, body = tar.gz. The HUB names
+A missing or wrong token is answered 403, never 401: a browser that gets a 401
+drops the credentials it holds for the proxy. So a 401 on any route is the
+proxy refusing its login (`PROXY_REFUSED`) and a 403 is the hub refusing its
+token (`UNAUTHORIZED`).
+
+    POST /api/v1/publish/<pid>            Token, body = tar.gz. The HUB names
                                           the revision, out of the sources in
                                           the body. `X-Hammerola-Message`, when
                                           the push carries one, is what this
@@ -16,14 +25,14 @@ THE PROTOCOL, as `src/app.py` and `src/jobs.py` define it:
       200 {"url", "revision"}                          -> this exact push is
                                                           already published, and
                                                           nothing was rebuilt
-      413 / 422 / 401 / 503 {"error"}                  -> refused, here is why
+      413 / 422 / 403 / 503 {"error"}                  -> refused, here is why
     POST /api/v1/publish/<pid>/dev        the same, into the local slot, whose
                                           name is the constant `dev` and which
                                           therefore has no `revision` to report
 
-    GET  /api/v1/jobs/<id>                Bearer -> the record, `state` in
+    GET  /api/v1/jobs/<id>                Token -> the record, `state` in
                                           queued|building|done|failed
-    GET  /api/v1/jobs/<id>/log            Bearer -> text/plain, what the build
+    GET  /api/v1/jobs/<id>/log            Token -> text/plain, what the build
                                           printed
 
 A 202 carries two identifiers: `job` is this build attempt (progress, log),
@@ -34,7 +43,7 @@ other is meant.
 The routes the read-only commands use (`status` and `comments` read what the
 browser fetches):
 
-    GET  /project/<pid>/builds.json       Bearer. `{pid, project, title,
+    GET  /project/<pid>/builds.json       Token. `{pid, project, title,
                                           has_dev, latest, builds[]}`, and
                                           404 for a project that has never
                                           published anything.
@@ -46,9 +55,9 @@ browser fetches):
                                           `files` names in meta.json, the
                                           pictures and the overview meshes, and
                                           metrics.json.
-    GET  /api/v1/comments?project=<pid>   Bearer -> `{"comments": [...]}`
-    POST /api/v1/comments/<id>/resolve    Bearer, `{"note": ...}` -> the record
-    GET  /api/v1/proposals/<pid>          Bearer -> `{"pid", "doc", "text",
+    GET  /api/v1/comments?project=<pid>   Token -> `{"comments": [...]}`
+    POST /api/v1/comments/<id>/resolve    Token, `{"note": ...}` -> the record
+    GET  /api/v1/proposals/<pid>          Token -> `{"pid", "doc", "text",
                                           "published", "view", "saved"}` — the
                                           one proposal a project has, and 404
                                           when nobody has drawn one over it
@@ -65,12 +74,12 @@ The one route asked for with NO token, because it is read before login:
 
 The code of a revision, and the two routes that unmake something:
 
-    GET    /api/v1/sources/<revision>     Bearer -> the pushed body, byte for
+    GET    /api/v1/sources/<revision>     Token -> the pushed body, byte for
                                           byte, as an opaque attachment
-    GET    /api/v1/sources/<revision>/log Bearer -> what that build printed
-    POST   /api/v1/projects/<pid>/title   Bearer, `{"title": ...}` -> renames
-    DELETE /api/v1/projects/<pid>         Bearer -> removes the project whole
-    DELETE /api/v1/proposals/<pid>        Bearer -> `{"removed": true|false}`,
+    GET    /api/v1/sources/<revision>/log Token -> what that build printed
+    POST   /api/v1/projects/<pid>/title   Token, `{"title": ...}` -> renames
+    DELETE /api/v1/projects/<pid>         Token -> removes the project whole
+    DELETE /api/v1/proposals/<pid>        Token -> `{"removed": true|false}`,
                                           and 200 either way: the document is
                                           gone, and the boolean is the only
                                           thing that says whether there was one
@@ -83,6 +92,7 @@ all meaningful answers to a push and the caller is the one that knows what to do
 with each. Only "the hub could not be reached at all" is an exception.
 """
 
+import base64
 import http.client
 import json
 import time
@@ -151,11 +161,21 @@ LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 # and would otherwise fail later as a bare ValueError.
 ALLOWED_SCHEMES = ("http", "https")
 
-# What a 401 means on any route: there is one secret, so one remedy.
+# What a 403 means on any guarded route: the hub refused its one secret, so one
+# remedy.
 UNAUTHORIZED = (
-    "the hub refused the token (HTTP 401).\n"
+    "the hub refused the token (HTTP 403).\n"
     "  Run `hammerola login` to store the right one, or check EDIT_TOKEN in "
     "the environment.")
+
+# What a 401 means on any route. The hub never answers 401, so the request
+# stopped at a password proxy in front of it and the hub was never asked.
+PROXY_REFUSED = (
+    "the password proxy in front of the hub refused its login and password "
+    "(HTTP 401),\n"
+    "  so the hub itself was never asked. `hammerola login` stores the proxy's "
+    "login and\n"
+    "  password; or check HUB_BASIC_AUTH in the environment.")
 
 # The manifest of what a first run needs, fetched without a token. Copied, not
 # imported from `src.onboarding` (the client takes nothing from the service);
@@ -165,7 +185,7 @@ START_PATH = "/start"
 
 # An id no job can have but with the alphabet and length of
 # `secrets.token_urlsafe(16)`, so it passes the shape check and misses the
-# lookup. `check_token`: 404 means the token was accepted, 401 that it was not.
+# lookup. `check_token`: 404 means the token was accepted, 403 that it was not.
 IMPOSSIBLE_JOB_ID = "0" * 22
 
 # The revision message travels as a header, outside the archive whose digest
@@ -173,13 +193,18 @@ IMPOSSIBLE_JOB_ID = "0" * 22
 # `src/app.py`.
 MESSAGE_HEADER = "X-Hammerola-Message"
 
+# The header the token travels in, read by `src/app.py`. Its own rather than
+# `Authorization`, which a password proxy in front of the hub wants for itself.
+TOKEN_HEADER = "X-Hammerola-Token"
+
 
 class HubError(Exception):
     """The hub could not be reached, or answered something unusable.
 
-    `status` is set only by `compare`, `job` and `job_log` (read by
-    `sources._dev_log` to tell a missing job from other failures). None means
-    "not recorded here", never "the hub did not answer".
+    `status` is set only by `compare`, `job`, `job_log` and the refusals
+    (`_refuse_unauthorized`, `PROXY_REFUSED`); `sources._dev_log` reads it to
+    tell a missing job from other failures. None means "not recorded here",
+    never "the hub did not answer".
     """
 
     def __init__(self, message, status=None):
@@ -192,9 +217,11 @@ _NEVER = object()
 
 
 class Hub:
-    """One hub, one token. Nothing here logs or prints the token."""
+    """One hub, one token. Nothing here logs or prints the token, nor the
+    proxy's `login:password`."""
 
-    def __init__(self, url: str, token: str, timeout: int = HTTP_TIMEOUT):
+    def __init__(self, url: str, token: str, timeout: int = HTTP_TIMEOUT,
+                 basic_auth: str = ""):
         self.url = url.rstrip("/")
         # Both inputs are checked before any request, separately, because the
         # advice differs: "check HUB_URL" vs "run `hammerola login`". A typo in
@@ -202,6 +229,13 @@ class Hub:
         self._origin = _origin(self.url)
         _refuse_unsendable_token(token)
         self._token = token
+        # `HUB_BASIC_AUTH`, as a password proxy in front of the hub reads it:
+        # base64 of the UTF-8 `login:password`, which is ASCII whatever the
+        # value holds. Empty means no proxy and no `Authorization` header.
+        self._proxy_authorization = ""
+        if basic_auth:
+            encoded = base64.b64encode(basic_auth.encode("utf-8"))
+            self._proxy_authorization = f"Basic {encoded.decode('ascii')}"
         self.timeout = timeout
         self._opener = _opener_for(self._origin)
 
@@ -217,12 +251,16 @@ class Hub:
         uses it so a silent socket does not stretch the grace window to the
         push's 300 s.
 
-        No Authorization header without a token: `create` builds a Hub with none
-        for the public `/start` route.
+        No token header without a token: `create` builds a Hub with none for
+        the public `/start` route. The proxy's `Authorization` goes on every
+        request, public ones included, since the proxy stands in front of all
+        of them.
         """
         headers = {}
         if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
+            headers[TOKEN_HEADER] = self._token
+        if self._proxy_authorization:
+            headers["Authorization"] = self._proxy_authorization
         if content_type is not None:
             headers["Content-Type"] = content_type
         if body is not None:
@@ -240,7 +278,7 @@ class Hub:
             # checked earlier (`_origin`, `_refuse_unsendable_token`), so this is
             # something unanticipated, e.g. an unparseable `Location` from a
             # proxy. The exception text is NOT printed: `http.client` puts the
-            # offending header in it, which could be `Bearer <the token>`.
+            # offending header in it, which could be the token.
             raise HubError(
                 f"the request to {self.url} could not be built "
                 f"({type(error).__name__}), and was not sent.\n"
@@ -346,6 +384,11 @@ class Hub:
         status, raw = self._call(path, method="POST", body=body,
                                  content_type="application/gzip",
                                  message=message)
+        if status in (401, 403):
+            # The caller answers these two with PROXY_REFUSED and UNAUTHORIZED,
+            # and a password proxy's refusal is not JSON, so the body is not
+            # parsed.
+            return status, {}
         return status, self._payload(status, raw)
 
     def compare(self, pid: str, old: str, new: str) -> dict:
@@ -358,21 +401,19 @@ class Hub:
         path = (f"/api/v1/compare/{urllib.parse.quote(pid)}"
                 f"/{urllib.parse.quote(old)}/{urllib.parse.quote(new)}")
         status, raw = self._call(path, method="POST")
-        if status == 401:
-            raise HubError(UNAUTHORIZED, status)
+        _refuse_unauthorized(status)
         if status != 202:
             raise HubError(
                 f"the hub answered HTTP {status} when asked to compare {old} "
                 f"with {new}: {quoted(raw)}", status)
         return self._payload(status, raw)
 
-    # Both name a 401 explicitly: `hammerola log dev` calls them after a public
-    # read, so a stale token first shows up here. Both set `status` on every
+    # Both name a refusal explicitly: `hammerola log dev` calls them after a
+    # public read, so a stale token first shows up here. Both set `status` on every
     # raise that had an answer.
     def job(self, job_id: str) -> dict:
         status, raw = self._call(f"/api/v1/jobs/{urllib.parse.quote(job_id)}")
-        if status == 401:
-            raise HubError(UNAUTHORIZED, status)
+        _refuse_unauthorized(status)
         if status != 200:
             raise HubError(
                 f"the hub answered HTTP {status} for job {job_id}: "
@@ -382,8 +423,7 @@ class Hub:
     def job_log(self, job_id: str) -> str:
         status, raw = self._call(
             f"/api/v1/jobs/{urllib.parse.quote(job_id)}/log")
-        if status == 401:
-            raise HubError(UNAUTHORIZED, status)
+        _refuse_unauthorized(status)
         if status != 200:
             raise HubError(f"the hub answered HTTP {status} for the log of "
                            f"job {job_id}", status)
@@ -396,12 +436,12 @@ class Hub:
         the caller may tolerate: the far end may be briefly gone (e.g. Traefik's
         own `404 page not found` while the container is recreated).
 
-        Only a 401 or 404 in the hub's own error shape (`{"error": ...}`, from
+        Only a 403 or 404 in the hub's own error shape (`{"error": ...}`, from
         `_error` in `src/app.py`) is final: the record is gone, or the token is
-        refused. A 401 not identifiably the hub's is transient (the push was
-        accepted with this token seconds earlier); if it persists, the grace
-        window ends the wait. Headers (`Server:`, content type) are not evidence
-        of who wrote a body.
+        refused. Any other refusal, a 401 included (never the hub's), is
+        transient: the push was accepted through the same doors seconds
+        earlier; if it persists, the grace window ends the wait. Headers
+        (`Server:`, content type) are not evidence of who wrote a body.
 
         Only `HubError` (no answer at all) becomes trouble; anything else is a
         bug and must not be swallowed by the retry loop.
@@ -414,8 +454,8 @@ class Hub:
         except HubError as error:
             # `str`, not `quoted`: `_call` already quoted any far-end text.
             return None, f"the hub could not be reached ({error})"
-        mine = status in (401, 404) and _carries_the_hubs_error_shape(raw)
-        if status == 401 and mine:
+        mine = status in (403, 404) and _carries_the_hubs_error_shape(raw)
+        if status == 403 and mine:
             raise HubError(UNAUTHORIZED)
         if status == 404 and mine:
             raise HubError(
@@ -610,6 +650,7 @@ class Hub:
         status, raw = self._call(path)
         if status == 404:
             return None
+        _refuse_unauthorized(status)
         if status != 200:
             raise HubError(
                 f"the hub answered HTTP {status} for {path}: "
@@ -628,6 +669,9 @@ class Hub:
             f"/{urllib.parse.quote(filename)}")
         if code == 404:
             return None
+        if code == 401:
+            # A public route, so only the proxy's refusal can stop it.
+            raise HubError(PROXY_REFUSED, code)
         if code != 200:
             raise HubError(
                 f"the hub answered HTTP {code} for {name}/{filename} of {pid}")
@@ -657,8 +701,7 @@ class Hub:
         published, one whose build failed, removed code and a malformed id, so
         the message names all of them.
         """
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code == 404:
             raise HubError(
                 f"the hub has no stored code for revision {revision}.\n"
@@ -696,8 +739,7 @@ class Hub:
 
     def _project_reply(self, code: int, raw: bytes, pid: str,
                        verb: str) -> dict:
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code == 404:
             raise HubError(
                 f"the hub has no project {pid}.\n"
@@ -723,8 +765,7 @@ class Hub:
             query["since"] = since
         code, raw = self._call(
             f"/api/v1/comments?{urllib.parse.urlencode(query)}")
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code != 200:
             raise HubError(
                 f"the hub answered HTTP {code} for the comment queue: "
@@ -746,8 +787,7 @@ class Hub:
         code, raw = self._call(
             f"/api/v1/comments/{urllib.parse.quote(cid)}/resolve",
             method="POST", body=body, content_type="application/json")
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code == 404:
             raise HubError(
                 f"the hub has no comment {cid}.\n"
@@ -766,8 +806,7 @@ class Hub:
         which attachments exist before fetching them.
         """
         code, raw = self._call(f"/api/v1/comments/{urllib.parse.quote(cid)}")
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code == 404:
             raise HubError(
                 f"the hub has no comment {cid}.\n"
@@ -787,8 +826,7 @@ class Hub:
         """
         code, raw = self._call(
             f"/api/v1/comments/{urllib.parse.quote(cid)}/{kind}")
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code == 404:
             # The caller asks only after the record named the attachment, so a
             # 404 means the record and the volume disagree.
@@ -807,11 +845,10 @@ class Hub:
         """The one proposal this project has, or None when it has none.
 
         None for a 404: most projects have no proposal, and "there is none" is
-        an answer, not a failure. A 401 still raises: nothing was learned.
+        an answer, not a failure. A refusal still raises: nothing was learned.
         """
         code, raw = self._call(f"/api/v1/proposals/{urllib.parse.quote(pid)}")
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code == 404:
             return None
         if code != 200:
@@ -829,8 +866,7 @@ class Hub:
         """
         code, raw = self._call(
             f"/api/v1/proposals/{urllib.parse.quote(pid)}", method="DELETE")
-        if code == 401:
-            raise HubError(UNAUTHORIZED)
+        _refuse_unauthorized(code)
         if code != 200:
             raise HubError(
                 f"the hub refused to remove the proposal of {pid} with HTTP "
@@ -847,6 +883,9 @@ class Hub:
         and one boolean about the hub (see `src/onboarding.py`).
         """
         code, raw = self._call(START_PATH)
+        if code == 401:
+            # A public route, so only the proxy's refusal can stop it.
+            raise HubError(PROXY_REFUSED, code)
         if code != 200:
             # Names the route, not one reader: several verbs read it.
             raise HubError(
@@ -886,12 +925,28 @@ class Hub:
         """Is this token the one the hub checks on a push?
 
         Asks the jobs route for an impossible id: it needs the token and
-        changes nothing. 401 is "wrong secret", 404 "right secret, no such job".
+        changes nothing. 403 is "wrong secret", 404 "right secret, no such job".
         Any other status counts as accepted: it is not evidence of a mistyped
         password.
+
+        A 401 never reached the hub: a password proxy in front of it refused its
+        login, so it is raised as `PROXY_REFUSED` rather than answered as a
+        wrong token.
         """
         status, _raw = self._call(f"/api/v1/jobs/{IMPOSSIBLE_JOB_ID}")
-        return status != 401
+        if status == 401:
+            raise HubError(PROXY_REFUSED, status)
+        return status != 403
+
+    def behind_a_password_proxy(self) -> bool:
+        """Does a password proxy in front of the hub refuse this Hub's request?
+
+        Asks `/start`, which the hub answers to anybody, so a 401 there was
+        written by something in front of it. `login` asks it with no
+        credentials at all, to learn whether to ask for the proxy's.
+        """
+        status, _raw = self._call(START_PATH)
+        return status == 401
 
     def absolute(self, url: str) -> str:
         """A `build_url` from the hub (`/project/<pid>/<name>/`) made clickable."""
@@ -965,6 +1020,19 @@ def _carries_the_hubs_error_shape(raw: bytes) -> bool:
     except (ValueError, UnicodeDecodeError):
         return False
     return isinstance(payload, dict) and "error" in payload
+
+
+def _refuse_unauthorized(status: int) -> None:
+    """Raise for the two refusals a guarded route can meet; otherwise return.
+
+    401 is a password proxy in front of the hub refusing its login, since the
+    hub never answers 401; 403 is the hub refusing its token. The body is not
+    read: a proxy's refusal is not JSON.
+    """
+    if status == 401:
+        raise HubError(PROXY_REFUSED, status)
+    if status == 403:
+        raise HubError(UNAUTHORIZED, status)
 
 
 def _origin(url: str):

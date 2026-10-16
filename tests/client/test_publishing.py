@@ -24,6 +24,7 @@ from modeldir import MODEL_SOURCE, git, git_repo, make_model
 from harness import TOKEN, copying_builder, failing_builder
 
 from hammerola import gitsuggest
+from hammerola import hub as hub_module
 from hammerola.cli import main
 from hammerola.limits import MAX_TEXT_CHARS
 
@@ -391,7 +392,30 @@ def test_a_bad_token_fails_with_the_hubs_own_answer(hub, model, monkeypatch,
                                                     capsys):
     monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
     assert run(model, "build") == 1
-    assert "401" in capsys.readouterr().err
+    assert "403" in capsys.readouterr().err
+
+
+# -- behind a password proxy -------------------------------------------------
+def test_build_publishes_through_a_password_proxy(hub, password_proxy, model,
+                                                  monkeypatch):
+    """`HUB_BASIC_AUTH` reaches every request of a push: the upload, the polls
+    and the reads after it all pass the same proxy."""
+    monkeypatch.setenv("HUB_URL", password_proxy.url)
+    monkeypatch.setenv("HUB_BASIC_AUTH", password_proxy.basic_auth)
+    assert run(model, "build") == 0
+    assert (hub.project_dir("demo0001") / "dev" / "meta.json").is_file()
+
+
+def test_a_wrong_proxy_login_is_named_as_the_proxys(hub, password_proxy, model,
+                                                    monkeypatch, capsys):
+    """The proxy's refusal is plain text, so it is named, not parsed: "not
+    JSON" or "the hub refused the token" would both send the reader to the
+    wrong place."""
+    monkeypatch.setenv("HUB_URL", password_proxy.url)
+    monkeypatch.setenv("HUB_BASIC_AUTH", "zlo:not-the-password")
+    assert run(model, "build") == 1
+    assert hub_module.PROXY_REFUSED in capsys.readouterr().err
+    assert not (hub.project_dir("demo0001") / "dev").exists()
 
 
 def test_a_missing_hub_url_fails_before_anything_is_packed(model, monkeypatch,

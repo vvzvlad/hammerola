@@ -158,7 +158,7 @@ describe('loadFeed', () => {
     await c.loadFeed()
 
     expect(fetching).toHaveBeenCalledWith('/api/v1/comments?project=proj1',
-      { headers: { Authorization: 'Bearer sekrit' } })
+      { headers: { 'X-Hammerola-Token': 'sekrit' } })
     expect(c.state.feed).toEqual(records)
   })
 
@@ -171,7 +171,7 @@ describe('loadFeed', () => {
   })
 
   it('says so and keeps the queue it had when the hub refuses the token', async () => {
-    answering({ status: 401, json: async () => ({}) })
+    answering({ status: 403, json: async () => ({}) })
     const c = page({ feed: [record()] })
 
     await c.loadFeed()
@@ -541,7 +541,7 @@ describe('the token', () => {
     await settled()
 
     expect(fetching).toHaveBeenCalledWith('/api/v1/comments?project=proj1',
-      { headers: { Authorization: 'Bearer sekrit' } })
+      { headers: { 'X-Hammerola-Token': 'sekrit' } })
     expect(c.state.feed).toHaveLength(1)
   })
 

@@ -1214,7 +1214,7 @@ def test_a_refusal_is_answered_only_after_the_spool_is_gone(hub, monkeypatch):
         sock.sendall(
             b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
             b"Host: hub\r\n"
-            b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
             b"Content-Length: 100000\r\n"
             b"\r\n" + b"\0" * 4096)
         sock.shutdown(socket.SHUT_WR)  # EOF long before the declared length

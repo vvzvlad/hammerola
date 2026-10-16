@@ -15,12 +15,14 @@ in real use: the prompt is driven by replacing `getpass`.
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 from harness import TOKEN
 from modeldir import make_model
 
 from hammerola import config, limits, pack, project, setup
+from hammerola import hub as hub_module
 from hammerola.cli import main
 
 
@@ -180,6 +182,71 @@ def test_a_password_the_file_format_cannot_carry_is_refused_without_echoing_it(
     error = capsys.readouterr().err
     assert "line break" in error
     assert "two" not in error
+
+
+@pytest.fixture
+def prompts(monkeypatch, password_proxy):
+    """Drive `login` through the password proxy. -> `.asked`, the prompts it
+    showed, and `.replies`, the answers, by prompt.
+
+    Answers by prompt, so a question asked out of turn, or one that should not
+    have been asked at all, shows up in the list rather than being answered.
+    """
+    login, password = password_proxy.basic_auth.split(":", 1)
+    asked = []
+    replies = {setup.PROXY_PASSWORD_PROMPT: password,
+               setup.TOKEN_PROMPT: TOKEN}
+
+    def answer(prompt="", *_a, **_kw):
+        asked.append(prompt)
+        if prompt.startswith(setup.PROXY_LOGIN_PROMPT):
+            return login
+        return replies[prompt]
+
+    monkeypatch.setattr("hammerola.setup.getpass.getpass", answer)
+    monkeypatch.setattr("builtins.input", answer)
+    return SimpleNamespace(asked=asked, replies=replies)
+
+
+def test_login_notices_a_password_proxy_and_stores_its_login_beside_the_rest(
+        hub, password_proxy, env_file, prompts, capsys):
+    """Asked only when there is one: `/start` answers 401, which the hub never
+    does. Then all three settings are checked through the proxy and
+    stored, and the proxy's password is never printed. Straight at the hub, the
+    same login asks for nothing but the hub's password, and takes the proxy's
+    login out of the file: it would otherwise go on travelling to the new
+    address."""
+    assert main(["login", password_proxy.url]) == 0
+
+    assert prompts.asked == [f"{setup.PROXY_LOGIN_PROMPT}: ",
+                             setup.PROXY_PASSWORD_PROMPT, setup.TOKEN_PROMPT]
+    stored = config.parse_env_file(env_file)
+    assert stored == {"HUB_URL": password_proxy.url, "EDIT_TOKEN": TOKEN,
+                      "HUB_BASIC_AUTH": password_proxy.basic_auth}
+    login, password = password_proxy.basic_auth.split(":", 1)
+    out = capsys.readouterr().out
+    assert f"stored, login {login}" in out
+    assert password not in out
+
+    prompts.asked.clear()
+    assert main(["login", hub.url]) == 0
+    assert prompts.asked == [setup.TOKEN_PROMPT]
+    assert config.parse_env_file(env_file) == {"HUB_URL": hub.url,
+                                               "EDIT_TOKEN": TOKEN}
+
+
+def test_a_proxy_that_refuses_its_password_is_named_and_nothing_is_stored(
+        password_proxy, env_file, prompts, capsys):
+    """The proxy said no, so the hub's password was never tried: saying "the
+    hub refused that password" would send the reader to the wrong secret."""
+    prompts.replies[setup.PROXY_PASSWORD_PROMPT] = "not-the-password"
+
+    assert main(["login", password_proxy.url]) == 1
+
+    error = capsys.readouterr().err
+    assert hub_module.PROXY_REFUSED in error
+    assert "Nothing was saved" in error
+    assert not env_file.exists()
 
 
 # -- create ------------------------------------------------------------------
@@ -638,11 +705,11 @@ def test_a_template_the_client_cannot_read_says_what_to_do_as_well(
     ("secret\tvalue", "a tab, which this refuses by decision"),
 ])
 def test_a_password_that_could_never_be_sent_is_refused_at_the_PROMPT(
-        answers, env_file, tmp_path, capsys, password, why):
+        hub, answers, env_file, tmp_path, capsys, password, why):
     """The loop this closes: `login` telling somebody to run `login`.
 
     `check_storable` answers for the FILE, which is UTF-8 and takes a Cyrillic
-    password happily. The `Authorization` header is latin-1 and cannot, so such
+    password happily. The token's header is latin-1 and cannot, so such
     a password passed the prompt, was tried against the hub, and came back from
     `Hub.__init__` as "the stored secret ... run `hammerola login`" — said to
     somebody in the middle of running `hammerola login`, about a secret that had
@@ -650,10 +717,11 @@ def test_a_password_that_could_never_be_sent_is_refused_at_the_PROMPT(
     """
     answers["password"] = password
 
-    # The address is an argument so only the password is under test, and it
-    # points at a port nothing answers on: the refusal has to land BEFORE the
-    # hub is asked anything, which is the whole story.
-    assert main(["login", "http://127.0.0.1:1"]) == 1
+    # The address is an argument so only the password is under test. A live
+    # hub with no proxy in front, because `login` asks `/start` before the
+    # password: the refusal has to land BEFORE the password is tried, and were
+    # it gone, `Hub.__init__` would refuse instead, naming no EDIT_TOKEN.
+    assert main(["login", hub.url]) == 1
 
     error = capsys.readouterr().err
     assert "EDIT_TOKEN" in error, why

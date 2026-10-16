@@ -299,7 +299,7 @@ def test_source_with_the_wrong_secret_says_which_command_fixes_it(hub, model,
     monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
     assert run(model, "source", revision) == 1
     err = capsys.readouterr().err
-    assert "401" in err and "hammerola login" in err
+    assert "403" in err and "hammerola login" in err
 
 
 def test_source_will_not_fetch_the_dev_slot(hub, model, capsys):
@@ -397,7 +397,7 @@ def test_artifacts_reads_the_public_route_and_source_does_not(hub, tmp_path,
     revision = publish(model, capsys)
 
     assert hub.get(f"/project/demo0001/{revision}/lid.stl").status_code == 200
-    assert hub.get(f"/api/v1/sources/{revision}").status_code == 401
+    assert hub.get(f"/api/v1/sources/{revision}").status_code == 403
 
 
 def test_artifacts_can_fetch_the_dev_slot(hub, tmp_path, capsys):
@@ -705,14 +705,14 @@ def test_log_dev_with_a_stale_token_blames_the_token(hub, model, capsys,
     """The slot's meta.json is PUBLIC, so a wrong token gets through the first
     request of this command and is refused only by the second. That must not be
     reported as a job the hub has lost: the advice attached to that reading is
-    `hammerola build`, and a push fails on the same 401 a moment later."""
+    `hammerola build`, and a push fails on the same 403 a moment later."""
     assert run(model, "build") == 0
     capsys.readouterr()
     monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
 
     assert run(model, "log", "dev") == 1
     err = capsys.readouterr().err
-    assert "401" in err and "hammerola login" in err
+    assert "403" in err and "hammerola login" in err
     assert "does not have it" not in err
     assert "wiped" not in err
 

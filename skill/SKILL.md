@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 21
+version: 22
 ---
 
 # hammerola
@@ -598,7 +598,9 @@ build what it published.
 
 **A size comes back three ways**: the footer, `metrics.json` and the log.
 `curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every PRINTABLE
-right after a `build`; hardware and mocks are measured nowhere. The log prints
+right after a `build`; hardware and mocks are measured nowhere. A hub behind a
+password proxy refuses a bare `curl`; the log's per-part line gives the same
+sizes. The log prints
 `<part>: … cm3, …x…x… mm, first layer … mm2, overhang … mm2` per part, the
 assembly's line, and, after an earlier `dev` build, a `metrics vs dev:` block of
 what moved. So a `print()` is for what the build does NOT measure — a
@@ -824,6 +826,9 @@ curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # this 
 curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
 hammerola login <hub>
 ```
+
+Behind a password proxy, add `-u <login>` to both `curl` lines (curl asks the
+password); `hammerola login` notices the proxy and asks its login and password.
 
 `hammerola skill` compares this file's version with the hub's;
 `hammerola skill update` replaces it. A stale skill fails silently, teaching

@@ -57,18 +57,21 @@ def hub_for(root) -> Hub:
     longer push timeout.
     """
     return Hub(config.hub_url(root), config.edit_token(root),
-               timeout=QUERY_TIMEOUT)
+               timeout=QUERY_TIMEOUT, basic_auth=config.hub_basic_auth(root))
 
 
-def public_hub(hub_url: str) -> Hub:
+def public_hub(hub_url: str, root=None) -> Hub:
     """The hub handle for the routes that present no secret. -> Hub.
 
     Used by `create`'s template download, `skill`, `skill update`, `update` and
     the version check before a publish. The empty token is deliberate: `/start`
-    and the files it names are public (`src/onboarding.py`). Takes an address,
-    not a project root: none of these verbs addresses a project.
+    and the files it names are public (`src/onboarding.py`). Takes an address:
+    none of these verbs addresses a project. `root` is only where to look for
+    `HUB_BASIC_AUTH`, since a password proxy in front of the hub stands in front
+    of the public routes too; `create` passes the directory it is making.
     """
-    return Hub(hub_url, "", timeout=QUERY_TIMEOUT)
+    return Hub(hub_url, "", timeout=QUERY_TIMEOUT,
+               basic_auth=config.hub_basic_auth(root))
 
 
 def scratch_dir(base, name: str):

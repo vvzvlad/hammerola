@@ -188,7 +188,7 @@ def test_builds_json_answers_has_dev_for_real(hub):
     assert hub.request("POST", "/api/v1/projects/proj1/title",
                        content=json.dumps({"title": "Renamed"}).encode(),
                        headers={"Content-Type": "application/json",
-                                "Authorization": f"Bearer {TOKEN}"},
+                                "X-Hammerola-Token": TOKEN},
                        ).status_code == 200
     assert hub.builds("proj1").json()["has_dev"] is False
 
@@ -243,7 +243,7 @@ def test_the_writer_and_the_reader_spell_the_same_key():
     resolver = _code(RESOLVER)
     assert re.search(r'fetch\("builds\.json",[^)]*headers', resolver), \
         "static/_v/pointer.js asks for builds.json without the token's header"
-    assert "Authorization: `Bearer ${token}`" in resolver
+    assert '"X-Hammerola-Token": token' in resolver
 
 
 def test_a_stored_value_that_is_not_a_pointer_reads_as_nothing():

@@ -300,7 +300,7 @@ def test_a_failed_publish_leaves_latest_untouched(hub):
     assert hub.publish("proj1", "bad2",
                        tar_gz({"meta.json": b"{broken"})).status_code == 422
     assert hub.publish("proj1", "bad3", _build("x", "2026-09-01T00:00:00Z"),
-                       token="wrong").status_code == 401
+                       token="wrong").status_code == 403
 
     assert os.readlink(hub.project_dir("proj1") / "latest") == before
     assert hub.get("/project/proj1/latest/meta.json").json()["commit"] == "good1"
