@@ -207,11 +207,13 @@
   `data/compare/<pid>/<a>/<b>/<view>/` is the one subtree that is neither a
   build nor a job: the cached scene of a revision comparison (step 8, issue
   #10). It sits OUTSIDE the build directories deliberately — a build directory
-  is public and carries a year-long `immutable`, while a comparison is served
-  behind the token and only earns that year when both ends of the pair are
-  commits. The path is nested rather than one joined name because `SAFE_ID`
-  allows `_`: `<a>__<b>` would let the pair `x` + `y__z` and the pair `x__y` +
-  `z` collide, and a collision here serves one comparison the other's geometry
+  opens its JSON and pictures to anybody with the link (the STEP, STL and 3MF
+  to the token or a key in the link) and carries a year-long `immutable`,
+  while a comparison is served behind the token and only earns that year when
+  both ends of the pair are commits. The path is nested rather than one
+  joined name because `SAFE_ID` allows `_`: `<a>__<b>` would let the pair
+  `x` + `y__z` and the pair `x__y` + `z` collide, and a collision here serves
+  one comparison the other's geometry
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):

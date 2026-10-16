@@ -48,10 +48,12 @@ its neighbour. A build that fails any of it is thrown away whole — `latest` an
 `dev` do not move — and what comes back is a failure code and the build's own
 log.
 
-**The files are public and the code is not.** A build's page, its geometry and
-its STEP/STL/3MF are anonymous: being given the link is what gets you the part.
-The sources a revision was built from are kept too, but behind the one secret,
-and so is the list of what exists on the hub at all.
+**The model is public, the files go with a link that includes them, and the
+code is not.** A build's page and the geometry it is drawn from are anonymous:
+being given the link is what lets you look at the part. Its STEP/STL/3MF leave
+only with the one secret or with a link the owner's Share window made with the
+files included. The sources a revision was built from are kept too, but behind
+the secret, and so is the list of what exists on the hub at all.
 
 ![The same revision as it goes on the bed, and what it hands out](docs/images/print-view.png)
 
