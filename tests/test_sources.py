@@ -83,9 +83,10 @@ def test_the_code_is_outside_the_build_directory_and_not_served(hub):
     assert not (build / SOURCE_ARCHIVE_NAME).exists()
     assert not (build / SOURCE_LOG_NAME).exists()
     # The store is a sibling of `project/`, so no URL under /project/ can reach
-    # into it however the last segment is spelled.
+    # into it however the last segment is spelled — not even with the token.
     assert _sources(hub).parent == hub.data
-    assert hub.get(f"/project/proj1/{revision}/{SOURCE_ARCHIVE_NAME}"
+    assert hub.get(f"/project/proj1/{revision}/{SOURCE_ARCHIVE_NAME}",
+                   headers={"Authorization": f"Bearer {TOKEN}"}
                    ).status_code == 404
 
     # The build itself is public, unchanged: this is about the code only.

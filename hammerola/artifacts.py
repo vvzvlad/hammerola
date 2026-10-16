@@ -1,10 +1,11 @@
 """`hammerola artifacts` — the STL, STEP and 3MF a build produced.
 
-A separate verb from `source` because the rights differ: a build directory is
-public (served to anyone with the URL, cached for a year), while the code that
-produced it is behind the publishing secret. Two verbs make fetching one or the
-other a deliberate choice. The route used here needs no secret, but the command
-still expects a logged-in machine, since that is how it knows the hub.
+A separate verb from `source` because the rights differ: a build's files are
+served to the publishing secret or to a link that carries their key, while the
+code that produced it is behind the secret alone. Two verbs make fetching one
+or the other a deliberate choice. The route used here takes the secret for the
+STL, STEP and 3MF, which the client sends with every request, so the command
+expects a logged-in machine.
 
 It fetches what `meta.json` declares; the hub never lists a build directory. A file
 belongs to one of two owners:

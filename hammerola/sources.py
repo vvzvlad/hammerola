@@ -5,8 +5,9 @@ BOTH STAND ON ONE ROUTE PAIR the hub already serves (SPEC 7.8):
     GET /api/v1/sources/<revision>      the pushed body, byte for byte
     GET /api/v1/sources/<revision>/log  what that build printed
 
-Behind the token: a build directory is public, the sources that produced it
-are not (hence `artifacts` is a separate verb).
+Behind the token: a build's files open to a link that carries their key, the
+sources that produced it to nothing else (hence `artifacts` is a separate
+verb).
 
 `source` never writes over the working copy by default: it unpacks into its own
 directory. Writing over the working copy is a flag that also requires a clean

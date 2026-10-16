@@ -20,10 +20,14 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/                      picks the pointer this reader last
                                               opened (SPEC 9); the URL without
                                               the slash 302s to this one
-    GET  /project/<pid>/builds.json           build picker             EDIT_TOKEN
+    GET  /project/<pid>/builds.json           build picker, and the key to
+                                              each build's files       EDIT_TOKEN
     GET  /project/<pid>/latest/<file>         newest build of a commit, no-cache
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
-    GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever
+    GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever;
+                                              of these three, every file but
+                                              `.json` and `.png` (the STEP,
+                                              STL, 3MF) EDIT_TOKEN or ?files=<key>
     GET  /project/<pid>/<commit>/             the page shell, from the template;
                                               `latest/` and `dev/` answer the
                                               same, and a URL without the slash
@@ -69,11 +73,16 @@ Routing (SPEC 3, 7.4):
 
 ONE SECRET, EDIT_TOKEN, guards every write and every private read.
 
-The line is not "pages public, API private". A BUILD is public: its page,
-meta.json and geometry, anonymous and cached for a year, because a shared link
-must work without a secret. THE ENUMERATION is not: `/index.json` (what is on
-this hub) and `builds.json` (every revision of a project, and whether a draft
-exists) need the token. A link gets you that build; nothing gets you the list.
+The line is not "pages public, API private". A BUILD can be LOOKED AT by
+anybody holding its address: its page, meta.json, the views and the pictures,
+anonymous and cached for a year, because a shared link must work without a
+secret. Its FILES — everything but `.json` and `.png` (`OPEN_SUFFIXES`), so the
+STEP, STL and 3MF — leave only to the token or to a link carrying the key of
+that address (`files_key`), which the owner's Share window adds or leaves out.
+THE ENUMERATION is not public at all: `/index.json` (what is on this hub) and
+`builds.json` (every revision of a project, and whether a draft exists) need
+the token. A link gets you that build, and its files only if it says so;
+nothing gets you the list.
 
 `/start` is the one exception, at the width of a single boolean: it is read
 before login and says whether the hub is empty, so the sign-in page
@@ -85,8 +94,8 @@ reader of each manifest field (`tests/test_onboarding.py` pins the set).
 Writing a comment needs the token (SPEC 8A.1): the hub executes the code it is
 sent, and an anonymous comment could become an agent's task to edit model.py.
 
-The code of a revision is the one thing served that is not public: it is
-behind EDIT_TOKEN and lives in a tree the file server cannot reach.
+The code of a revision opens to no key: it is behind EDIT_TOKEN and lives in
+a tree the file server cannot reach.
 
 The two project routes are the only ones that unmake something (SPEC 3.1):
 `title` renames and nothing else, since no route ever changes an id; `DELETE`
@@ -105,6 +114,7 @@ place (SPEC 7.6), and `no-cache` is precisely what makes that safe — which is 
 it must never be able to fall through to the immutable branch.
 """
 
+import hashlib
 import hmac
 import json
 import os
@@ -258,6 +268,34 @@ BUILD_CONTENT_TYPES = {
     ".3mf": "model/3mf",
     ".png": "image/png",
 }
+
+# What a build hands to anybody holding its address: the documents the page
+# draws the model from (meta.json and each view's tessellation) and the
+# pictures the front page shows through `<img>`, which carries no token.
+# Everything else — the STEP, STL and 3MF a part exports, the overview meshes,
+# and any format a later export adds — leaves only to EDIT_TOKEN or to a link
+# carrying the key of its address (`files_key`). A list of what is OPEN rather
+# than of what is closed, so a new format starts closed.
+OPEN_SUFFIXES = {".json", ".png"}
+
+# The body of the 401 on a closed file asked for without the token or the key.
+FILES_REFUSED_ERROR = "this link does not include the files of this build"
+
+
+def files_key(token: str, pid: str, build: str) -> str:
+    """The key that opens the files of one build address, `<pid>/<build>`.
+
+    The ONLY place a key is derived. `build` is the URL segment as asked for —
+    `latest`, `dev` or a revision — so a key opens exactly the address it was
+    made for: the key of `latest` opens whatever `latest` is now and later, a
+    revision's key that revision only. Derived from EDIT_TOKEN and stored
+    nowhere, so there is no second secret and no table of links, and changing
+    the token revokes every key at once. Neither id can hold a `/`
+    (`store.SAFE_ID`), so the joined message is unambiguous. 32 hex
+    characters, 128 bits.
+    """
+    return hmac.new(token.encode("utf-8"), f"{pid}/{build}".encode("utf-8"),
+                    hashlib.sha256).hexdigest()[:32]
 
 
 # Types a comment attachment may be served as: the three extensions
@@ -725,6 +763,52 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
         return self._serve_page(render.pointer_page_html, with_body)
 
+    def _serve_builds_json(self, pid: str, with_body: bool):
+        """The build picker, with the key to each build's files — EDIT_TOKEN.
+
+        `files_keys` maps every address the picker offers to its key
+        (`files_key`): `latest`, each revision of `builds`, and `dev` while the
+        slot is occupied. The owner's page puts them into its download links and
+        its Share window's links, because a browser download cannot carry the
+        token. Added here and never written: a key is derived from the secret
+        and does not belong on the volume (the file is `render.builds_json`'s).
+
+        A file that does not parse is served as it is, without keys, with a log
+        line: the picker still works and only the downloads are lost.
+        """
+        try:
+            path = self.server.store.resolve_inside(
+                self.server.store.builds_json_path(pid))
+            raw = path.read_bytes()
+        except (OSError, ValueError):
+            return self._error(404, "not found", with_body=with_body)
+        token = self.server.edit_token
+        try:
+            picker = json.loads(raw)
+            keys = {"latest": files_key(token, pid, "latest")}
+            for entry in picker["builds"]:
+                keys[entry["commit"]] = files_key(token, pid, entry["commit"])
+            if picker.get("has_dev"):
+                keys["dev"] = files_key(token, pid, "dev")
+            picker["files_keys"] = keys
+        except (ValueError, TypeError, KeyError) as error:
+            logger.warning(
+                f"the build picker of {pid} could not be read ({error}); "
+                f"serving it without the download keys")
+            return self._send(200, raw, content_type_for(path.name),
+                              CACHE_NONE, with_body=with_body)
+        return self._json(200, picker, CACHE_NONE, with_body=with_body)
+
+    def _presents_files_key(self, pid: str, build: str, query: str) -> bool:
+        """Does `?files=` carry the key of `<pid>/<build>`?
+
+        Constant time over bytes, for the reason `_authorized` gives.
+        """
+        presented = (parse_qs(query).get("files") or [""])[0]
+        return hmac.compare_digest(
+            presented.encode("utf-8"),
+            files_key(self.server.edit_token, pid, build).encode("utf-8"))
+
     def _redirect(self, location: str, with_body: bool):
         self._json(302, {"location": location}, CACHE_NONE,
                    {"Location": location}, with_body)
@@ -733,7 +817,8 @@ class HubHandler(BaseHTTPRequestHandler):
                        with_body: bool, query: str = ""):
         """Everything under /project/.
 
-        `query` is read only by the comparison branch (`?v=<view>`, SPEC 3).
+        `query` is read by the comparison branch (`?v=<view>`, SPEC 3) and by
+        the gate on a build's closed files (`?files=<key>`).
         """
         if not rest:
             return self._error(404, "not found", with_body=with_body)
@@ -753,8 +838,7 @@ class HubHandler(BaseHTTPRequestHandler):
         if second == PROJECT_BUILDS_FILE and len(rest) == 2:
             if not self._require_token(with_body):
                 return None
-            return self._send_file(self.server.store.builds_json_path(pid),
-                                   CACHE_NONE, with_body)
+            return self._serve_builds_json(pid, with_body)
 
         # A comparison of two revisions. `compare` is in the fourth position
         # because it is a valid build id, so `/project/<pid>/compare/` could
@@ -789,6 +873,22 @@ class HubHandler(BaseHTTPRequestHandler):
         # Generated, never read from the build directory.
         if rest[2] == "index.html":
             return self._serve_build_page(build_dir, with_body)
+        # A closed file leaves only to the token or to the key of THIS address,
+        # checked before the volume is touched. Its year is `private` on a
+        # revision: the answer depends on what was presented, the token or the
+        # key, and a shared cache must not hand it to somebody who presented
+        # nothing. The pointers stay `no-cache`.
+        if Path(rest[2]).suffix.lower() not in OPEN_SUFFIXES:
+            if not (self._authorized()
+                    or self._presents_files_key(pid, second, query)):
+                logger.warning(
+                    f"refused: no token and no files key from "
+                    f"{self.address_string()} for {self.path.split('?', 1)[0]}")
+                return self._error(401, FILES_REFUSED_ERROR,
+                                   {"WWW-Authenticate": "Bearer"},
+                                   with_body=with_body)
+            if second not in POINTER_NAMES:
+                cache = CACHE_IMMUTABLE_PRIVATE
         # meta.json is written by the hub after validation; everything else in
         # a build directory arrived in the tarball and is served under the
         # narrow uploaded-file content-type whitelist.

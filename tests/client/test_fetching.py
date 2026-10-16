@@ -25,12 +25,13 @@ import json
 import tarfile
 
 import pytest
-from harness import failing_comparer, meta_bytes, view_bytes
+from harness import TOKEN, failing_comparer, meta_bytes, view_bytes
 from modeldir import git, git_repo, make_model
 
 from hammerola import artifacts, sources
 from hammerola.cli import main
 from hammerola.hub import Hub, HubError
+from src.app import files_key
 
 # The address and the token, from tests/client/conftest.py.
 pytestmark = pytest.mark.usefixtures("configured")
@@ -389,15 +390,19 @@ def test_a_record_that_exports_nothing_is_stepped_over(hub, tmp_path, capsys):
     assert "wall" not in out and "m3" not in out
 
 
-def test_artifacts_reads_the_public_route_and_source_does_not(hub, tmp_path,
-                                                              capsys):
+def test_a_link_key_opens_the_artifacts_and_not_the_source(hub, tmp_path,
+                                                           capsys):
     """The two verbs exist because the rights differ. The build's files are
-    served to anybody with the URL; the code is not."""
+    served to a link that carries their key; the code is not, with or without
+    one."""
     model = with_artifacts(tmp_path / "demo")
     revision = publish(model, capsys)
+    key = files_key(TOKEN, "demo0001", revision)
 
-    assert hub.get(f"/project/demo0001/{revision}/lid.stl").status_code == 200
-    assert hub.get(f"/api/v1/sources/{revision}").status_code == 401
+    assert hub.get(f"/project/demo0001/{revision}/lid.stl").status_code == 401
+    assert hub.get(f"/project/demo0001/{revision}/lid.stl?files={key}"
+                   ).status_code == 200
+    assert hub.get(f"/api/v1/sources/{revision}?files={key}").status_code == 401
 
 
 def test_artifacts_can_fetch_the_dev_slot(hub, tmp_path, capsys):
@@ -592,6 +597,19 @@ def test_artifacts_of_a_build_that_is_not_there(hub, model, capsys):
     publish(model, capsys)
     assert run(model, "artifacts", "f" * 64) == 1
     assert "no build" in capsys.readouterr().err
+
+
+def test_artifacts_with_a_stale_token_blames_the_token(hub, tmp_path, capsys,
+                                                       monkeypatch):
+    """meta.json is open, so a wrong token gets past the first request and is
+    refused only on the first closed file (the STEP): that refusal must send the reader to
+    `hammerola login`, not read as a broken hub."""
+    model = with_artifacts(tmp_path / "demo")
+    revision = publish(model, capsys)
+    monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
+
+    assert run(model, "artifacts", revision) == 1
+    assert "hammerola login" in capsys.readouterr().err
 
 
 # -- log ---------------------------------------------------------------------
