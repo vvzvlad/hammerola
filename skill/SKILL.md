@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 22
+version: 23
 ---
 
 # hammerola
@@ -802,9 +802,10 @@ hammerola artifacts <revision>  # its STL/STEP/3MF and pictures, into .hammerola
 hammerola diff <old> <new>      # what moved: geometry numbers, and the source
 ```
 
-Artefacts are public; source is behind the secret. `.hammerola/` is hidden, so
-the next push skips what you fetched. `-o DIR` (`--output`) lands it elsewhere,
-and a visible directory in the project travels with the next push.
+Artefacts take the secret or a link that includes them; source takes the
+secret. `.hammerola/` is hidden, so the next push skips what you fetched.
+`-o DIR` (`--output`) lands it elsewhere, and a visible directory in the
+project travels with the next push.
 `source --into-working-copy` overwrites the working copy and needs a clean git
 tree. `diff --json` prints a document for code; `--material` adds material
 gained and lost per part, costing about a build; not both.
