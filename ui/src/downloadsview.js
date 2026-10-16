@@ -12,22 +12,50 @@
  *
  * The catalogue is the whole input (no `s`): the menu shows what the build
  * ships, not anything the reader did. `groupDownloads` stays beside the
- * component, where the tests reach for it.
+ * component, where the tests reach for it. `key` is `filesKeyFor`'s answer for
+ * the build on screen; without one the hub refuses every file, so the menu is
+ * not drawn at all (`dlShown`).
  */
 import { PAGE } from './hub.js';
 import { MONO, SANS } from './style.jsx';
 
-export const fileHref = (file) => PAGE.base + encodeURIComponent(String(file));
+/**
+ * One file of the build on screen, with the key that opens it.
+ *
+ * The key travels in the query because the link is a plain `<a download>`,
+ * which cannot carry the token in a header (src/app.py, `files_key`).
+ */
+export const fileHref = (file, key) => PAGE.base + encodeURIComponent(String(file))
+  + (key ? `?files=${encodeURIComponent(key)}` : '');
+
+/**
+ * The key to the files of the build at `slot`, or '' when this page has none.
+ *
+ * The owner's first: `files_keys` rides on builds.json, which only the token
+ * reads, and covers every address the picker can move this page to. Then the
+ * key the ADDRESS carried when the page loaded, and only for the slot it was
+ * carried for — a reader without the token never moves the address, but a
+ * key is good for one address alone and must not be offered on another.
+ *
+ * Own properties only: a slot may be any build id, and `constructor` read off
+ * a plain object is a function.
+ */
+export function filesKeyFor(builds, slot, fromAddress) {
+  const keys = builds && builds.files_keys;
+  const owned = keys && Object.prototype.hasOwnProperty.call(keys, slot) ? keys[slot] : '';
+  if (typeof owned === 'string' && owned) return owned;
+  return fromAddress && fromAddress.slot === slot && fromAddress.key ? fromAddress.key : '';
+}
 
 export function downloadsView(catalogue, deps) {
-  const { groupDownloads, downloadAll } = deps;
+  const { groupDownloads, downloadAll, key } = deps;
 
   const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
   const downloadGroups = groupDownloads(catalogue).map((g) => ({
     key: g.ext,
     ext: g.ext,
     files: g.files.map((f) => ({
-      key: f.file, label: f.label, file: f.file, href: fileHref(f.file),
+      key: f.file, label: f.label, file: f.file, href: fileHref(f.file, key),
       style: dlRowStyle,
     })),
     headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`,
@@ -39,9 +67,9 @@ export function downloadsView(catalogue, deps) {
     //
     // No `stop()`: the click bubbles to `rootClick` and closes the menu, which
     // is exactly what a file row beside it already does by being a plain link.
-    onAll: () => downloadAll(g.files.map((f) => fileHref(f.file))),
+    onAll: () => downloadAll(g.files.map((f) => fileHref(f.file, key))),
   }));
   const anyDownloads = downloadGroups.length > 0;
 
-  return { downloadGroups, anyDownloads };
+  return { downloadGroups, anyDownloads, dlShown: !!key };
 }

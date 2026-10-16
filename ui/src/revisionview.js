@@ -80,6 +80,18 @@ export function revisionView(s, info, deps) {
         switchBuild(PAGE.pid, r.id)
           .catch((error) => console.error('switch', error));
       }),
+      // The Share window for this row's address: `latest` itself on that row,
+      // the full commit on a revision. Not on `dev`, which has no permanent
+      // address to give; the icon keeps its space there so rows line up. The
+      // click closes the menus as `rootClick` does, and the window opens
+      // without the files.
+      onShare: r.id === 'dev' ? undefined : stop(() => setState({
+        menu: null, revOpen: false, dlOpen: false, viewsOpen: false,
+        opsOpen: false, settingsOpen: false, tokenPop: false,
+        share: { id: r.id, files: false },
+      })),
+      shareIconStyle: 'width:22px;height:22px;flex:none;margin-left:4px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer'
+        + (r.id === 'dev' ? ';visibility:hidden;cursor:default' : ''),
     };
   });
 

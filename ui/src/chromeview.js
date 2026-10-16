@@ -33,7 +33,7 @@ export function chromeView(s, props, deps) {
     // -- what `computed()` has already worked out
     meta, viewer, narrow, stop,
     // -- the other panels' answers, drawn by controls that live up here
-    revRows, downloadGroups, threads, openCount,
+    revRows, downloadGroups, dlShown, threads, openCount,
     // -- the lookups and constants that stay beside the component
     viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
     // -- the page's own doors
@@ -83,7 +83,23 @@ export function chromeView(s, props, deps) {
   const views = (meta && meta.views) || [];
   const shownView = views.find((v) => v.id === s.view);
 
-  const draft = (meta && meta.commit) === 'dev';
+  // The Share window's address and the key it may add, read once: the link
+  // text and Copy must say the same thing. `s.share.id` is `latest` or a full
+  // commit, never the shortened one a row shows. The key is the hub's own
+  // (`files_keys` on builds.json); without one the box cannot be ticked.
+  const share = s.share || null;
+  const shareKeys = (s.builds && s.builds.files_keys) || null;
+  const shareKey = share && shareKeys
+    && Object.prototype.hasOwnProperty.call(shareKeys, share.id)
+    && typeof shareKeys[share.id] === 'string' ? shareKeys[share.id] : '';
+  const shareFiles = !!(share && share.files && shareKey);
+  // On the view on screen, as every address this page writes (`viewQuery`). A
+  // revision without that view opens on its first one, as a fresh load with
+  // an unknown `?v=` does.
+  const shareView = share ? viewQuery(s.view, views) : '';
+  const shareLink = !share ? ''
+    : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareView}`
+      + (shareFiles ? `${shareView ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
 
   return {
     // -- the header row ------------------------------------------------------
@@ -147,33 +163,45 @@ export function chromeView(s, props, deps) {
     compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? ON_ACCENT : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
     startCompare: stop(() => compareRevisions(s.cmp)),
 
-    // -- the permanent link of the build on screen ---------------------------
+    // -- the Share window, opened from a row of the revision picker ----------
     //
-    // `meta.commit` and not `PAGE.slot`: on `latest` the address is a moving
-    // name, while meta names the revision that answered. The local slot's
-    // commit is the constant `dev`, which has no permanent address to give.
-    // No `stop()`: it opens nothing, so the click may close a menu elsewhere.
-    shareTitle: draft ? 'A draft has no permanent link — publish it with hammerola commit' : '',
-    shareBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)'
-      + (draft ? ';color:var(--text-faint);cursor:default' : ''),
+    // Over the whole page, built like the front page's delete confirmation:
+    // the overlay, Close and Escape close it, and a click on the card stops
+    // there. The row says which address: `latest` gives a link that follows
+    // every new build, a revision a link to exactly that one. Ticked, the link
+    // carries that address's key and its reader may download the files.
+    shareOpen: !!share,
+    shareHead: !share ? '' : share.id === 'latest' ? 'Share latest' : `Share ${shortId(share.id)}`,
+    shareFilesRowStyle: `display:flex;align-items:center;gap:8px;font:400 12px ${SANS};`
+      + (shareKey ? 'cursor:pointer;color:var(--text)' : 'cursor:default;color:var(--text-faint)'),
+    shareFilesBox: `width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};`
+      + (shareFiles ? ON_ACCENT : BLANK_BOX),
+    shareFilesMark: shareFiles ? '✓' : '',
+    // Untickable when builds.json came without the keys (the hub could not
+    // read its own file, and logged it): a link offering files it cannot open
+    // would be a lie.
+    shareFilesHint: share && !shareKey ? 'This hub did not send the download keys' : '',
+    toggleShareFiles: !shareKey ? undefined
+      : () => setState({ share: { ...share, files: !share.files } }),
+    shareLink,
     // `writeText` refuses through its promise (no focus, no permission), and
     // `navigator.clipboard` is missing altogether outside https — both have to
     // end in the failure toast rather than in "copied".
-    copyLink: (draft || !meta) ? undefined : () => {
-      const link = `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(meta.commit)}/${viewQuery(s.view, views)}`;
-      return Promise.resolve()
-        .then(() => navigator.clipboard.writeText(link))
-        .then(() => toast('link copied'), (error) => {
-          console.warn('clipboard', error);
-          toast('Could not copy the link');
-        });
-    },
+    copyShare: !share ? undefined : () => Promise.resolve()
+      .then(() => navigator.clipboard.writeText(shareLink))
+      .then(() => toast('link copied'), (error) => {
+        console.warn('clipboard', error);
+        toast('Could not copy the link');
+      }),
+    closeShare: () => setState({ share: null }),
 
     statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
     statusText: status.text,
     statusDotStyle: `width:8px;height:8px;border-radius:4px;background:${status.dot};flex:none`,
 
     downloadGroups,
+    // NO KEY, NO BUTTON: the hub would refuse every file in the menu.
+    dlShown,
     dlToggle: stop(() => setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false })),
     dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
     // Clamped like the other two: this header button survives the narrow

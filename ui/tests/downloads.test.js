@@ -21,13 +21,15 @@
 // for a group and for a build with no files — and each of those is a sentence
 // about the menu, not about the helper.
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer, {
   DOWNLOAD_GAP_MS, groupDownloads, menuAt, partRecord, sequentialDownload,
 } from '../src/HammerolaViewer.jsx'
-import { indexTree } from '../src/hub.js'
-import { makeComponent } from './component.js'
+import { filesKeyFor } from '../src/downloadsview.js'
+import { PAGE, indexTree, rereadPage } from '../src/hub.js'
+import { FILES_KEY, makeComponent } from './component.js'
+import { texts } from './eltree.js'
 
 /**
  * `meta.parts`: two printables and a bought screw, as the hub writes it.
@@ -146,11 +148,17 @@ const TREE_WITH_A_RESERVED_NAME = {
  * is from INSIDE its own `onClick`, and its gate asks only `viewer`, `narrow`
  * and `isNode` — so the ref is touched only by a test that clicks that row, and
  * no case here does.
+ *
+ * The key to the files is the default fixture's, on builds.json. `builds` and
+ * `linkKey` (the key the address carried at load) are for the cases about
+ * where a key comes from; `builds: null` is a page that has no picker.
  */
 function component({ node, parts = PARTS, token = null, expanded = {},
-                     tree = TREE, viewFiles = {} } = {}) {
+                     tree = TREE, viewFiles = {}, builds, linkKey } = {}) {
   return makeComponent(HammerolaViewer, {
+    ...(linkKey ? { _linkKey: linkKey } : {}),
     state: {
+      ...(builds === undefined ? {} : { builds }),
       meta: {
         project: 'fixture', commit: 'abc1234', built: '',
         // `parts: null` means the field is not there, spelled by omission
@@ -630,6 +638,63 @@ describe('the header\'s downloads menu', () => {
   })
 })
 
+describe('the key to the files', () => {
+  // The hub refuses a build's STEP, STL and 3MF without the token or the key
+  // of that address, so which key the page holds decides whether it offers
+  // the files at all.
+  const carried = (key) => ({ slot: 'abc1234', key })
+
+  it('is the owner\'s from builds.json first, then the one the address carried', () => {
+    const owned = { files_keys: { abc1234: 'owned' } }
+    expect(filesKeyFor(owned, 'abc1234', carried('carried'))).toBe('owned')
+    expect(filesKeyFor(null, 'abc1234', carried('carried'))).toBe('carried')
+    // builds.json the hub could not add keys to.
+    expect(filesKeyFor({ has_dev: false }, 'abc1234', carried('carried'))).toBe('carried')
+  })
+
+  it('opens only the address it was made for', () => {
+    // A key is good for one address alone: the address key on another slot, or
+    // an owner's map without this slot, is no key.
+    expect(filesKeyFor(null, 'latest', carried('carried'))).toBe('')
+    expect(filesKeyFor({ files_keys: { latest: 'l' } }, 'abc1234', null)).toBe('')
+  })
+
+  it('is read off the address the page opened on, bound to that slot', () => {
+    // A recipient's only key is `files=` in the link. It belongs to the slot
+    // the page was opened on, so a later move of the address carries nothing.
+    const before = `${location.pathname}${location.search}`
+    onTestFinished(() => {
+      window.history.replaceState(null, '', before)
+      rereadPage(location.pathname)
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const rev = 'abc1234'.padEnd(64, '0')
+    window.history.replaceState(null, '', `/project/proj1/${rev}/?v=print&files=K`)
+    rereadPage(location.pathname)
+    expect(new HammerolaViewer({})._linkKey).toEqual({ slot: rev, key: 'K' })
+    window.history.replaceState(null, '', `/project/proj1/${rev}/`)
+    expect(new HammerolaViewer({})._linkKey).toEqual({ slot: rev, key: '' })
+  })
+
+  it('answers nothing for a slot named after what every object has', () => {
+    expect(filesKeyFor({ files_keys: {} }, 'constructor', null)).toBe('')
+  })
+
+  it('takes Downloads away without one, and brings it back when the picker lands', () => {
+    // The owner who types the token in gets the menu without a reload:
+    // `tokenSave` asks for builds.json, and the key rides on it.
+    const c = component({ node: null, token: null, builds: null })
+    expect(c.computed().dlShown).toBe(false)
+    expect(texts(c.render())).not.toContain('Downloads')
+
+    c.state.token = 'sekrit'
+    c.state.builds = { has_dev: false, latest: null, builds: [],
+                       files_keys: { [PAGE.slot]: FILES_KEY } }
+    expect(c.computed().dlShown).toBe(true)
+    expect(texts(c.render())).toContain('Downloads')
+  })
+})
+
 describe('the row menu', () => {
   it('offers a part its own three files, under the extension', () => {
     const items = menuOn({ node: '/model/plate' })
@@ -650,15 +715,27 @@ describe('the row menu', () => {
     fileRows(v.menuItems).forEach((m) => {
       expect(m.href).toBe(header.get(m.hint))
     })
-    expect(header.get('plate.step')).toMatch(/plate\.step$/)
+    // With the key in the query: an `<a download>` cannot carry the token, so
+    // without it the hub refuses the file.
+    expect(header.get('plate.step')).toBe(`${PAGE.base}plate.step?files=${FILES_KEY}`)
   })
 
-  it('offers them without a token, because looking is open to everyone', () => {
-    // The files are on the open side of the customer/viewer split, exactly as
-    // the header's Downloads menu is; only the note is not.
-    const items = menuOn({ node: '/model/plate', token: null })
+  it('offers none to a reader with no key, not even the sentence', () => {
+    // A shared link without the files: every one of these would be a 401, and
+    // "No files in this build" would be untrue.
+    const items = menuOn({ node: '/model/plate', token: null, builds: null })
+    expect(fileRows(items)).toHaveLength(0)
+    expect(labels(items).filter((l) => /^No files/.test(l))).toEqual([])
+    expect(labels(items)).toContain('Copy name')
+  })
+
+  it('offers them to a reader without the token whose link carried the key', () => {
+    const items = menuOn({ node: '/model/plate', token: null, builds: null,
+                           linkKey: { slot: PAGE.slot, key: 'from-the-link' } })
     expect(labels(items)).not.toContain('Note')
-    expect(fileRows(items)).toHaveLength(3)
+    expect(fileRows(items).map((m) => m.href))
+      .toEqual(['plate.step', 'plate.stl', 'plate.3mf']
+        .map((f) => `${PAGE.base}${f}?files=from-the-link`))
   })
 
   it('SAYS a part that is not printed has no files rather than dropping the row', () => {
