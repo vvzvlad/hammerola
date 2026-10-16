@@ -695,8 +695,9 @@ def test_a_refused_token_is_403_with_no_challenge_at_either_door(hub):
 
     A browser that gets a 401 without the proxy's Basic challenge drops the
     credentials it holds for that proxy and asks for them again, so a stale
-    token in the interface would cost the reader the proxy's login. Both doors:
-    `_require_token`, and the publish route, which refuses before the body.
+    token in the interface would cost the reader the proxy's login. Two of the
+    doors here: `_require_token`, and the publish route, which refuses before
+    the body; a build's closed file is the third, in tests/test_serving.py.
     """
     for refused in (
             hub.get("/api/v1/jobs/" + "0" * 22,
