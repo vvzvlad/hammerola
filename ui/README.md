@@ -72,7 +72,8 @@ react is not a small freedom — it is a standing permission for any later 18.x 
 land in production without a commit.
 
 `package-lock.json` is committed and is the other half of that. The pins cover
-the four packages named in `package.json`; the lockfile covers everything they
+the eight packages named in `package.json` (`markdown-it` 15.0.3 among them, for
+the documents page); the lockfile covers everything they
 drag in transitively, which is the majority of what actually ends up in the
 bundle. `npm ci` installs the lockfile exactly and fails if `package.json`
 disagrees with it, whereas `npm install` would quietly resolve and rewrite. The
@@ -133,6 +134,12 @@ panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,
 style strings more than one of them spells, `src/style.jsx` the ones both pages
 do (#104).
 `src/HammerolaEntry.jsx` is the front page and the project page.
+`src/DocShell.jsx` is the page of a build with no model
+(`"kind": "documents"`), a tab per document; `src/main.jsx` mounts it instead
+of `HammerolaViewer`. `src/DocumentView.jsx` draws one document for both pages:
+under DocShell's tabs, and over the 3D area when a document is chosen in the
+model page's view list. `src/docmd.js` turns a markdown document into React
+elements through markdown-it, with raw HTML off.
 `src/viewport/` is the imperative half: one custom element (`<hmr-viewport>`)
 around the vendored `three-cad-viewer`, and the modules that draw on top of it —
 the manipulators, the section plane, the view cube, the picking; `layer.js` and

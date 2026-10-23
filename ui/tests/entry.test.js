@@ -125,6 +125,13 @@ describe('a card of /index.json', () => {
     })
   })
 
+  it('counts documents, and only documents, for a build with no model', () => {
+    // `documents` is a number on such a card and null on a model's
+    // (`render.index_card`), and the model's line is the one a null keeps.
+    expect(projectCard({ ...CARD, documents: 3, mb: '0.1' }).meta).toBe('3 documents · 0.1 MB')
+    expect(projectCard({ ...CARD, documents: null }).meta).toBe('14 printables · 3 views · 1.2 MB')
+  })
+
   it('falls back through the names a project can be known by', () => {
     // `title` comes out of the pushed project.json and a rename can clear it.
     // An empty heading is a card nobody can tell from another; the id is ugly

@@ -18,8 +18,9 @@
  * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
  * come from ui/src/panelstyle.js.
  */
+import { DOC_QUERY, docHint } from './DocumentView.jsx';
 import {
-  PAGE, isPointerPage, mb, projectUrl, shortId, stamp,
+  PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
 import {
   BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
@@ -82,6 +83,16 @@ export function chromeView(s, props, deps) {
   // are three chances for the button to name a view the rows disagree with.
   const views = (meta && meta.views) || [];
   const shownView = views.find((v) => v.id === s.view);
+  // THE BUILD'S DOCUMENTS, the files its project.json lists to be read: rows of
+  // the same list as the views, below them. `docOpen` is the one laid over the
+  // model, or null; looked up rather than trusted, so a revision switched to
+  // that does not list `s.doc` shows its model.
+  const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
+  const docOpen = documents.find((d) => d.id === s.doc) || null;
+  // One row shape for a view and a document, so the two halves of the list
+  // read as one list.
+  const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
+    + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -95,11 +106,15 @@ export function chromeView(s, props, deps) {
   const shareFiles = !!(share && share.files && shareKey);
   // On the view on screen, as every address this page writes (`viewQuery`). A
   // revision without that view opens on its first one, as a fresh load with
-  // an unknown `?v=` does.
+  // an unknown `?v=` does. And on the document over it, when one is open: a
+  // revision that does not list it opens on the model, as a fresh load with
+  // an unknown `?d=` does.
   const shareView = share ? viewQuery(s.view, views) : '';
+  const shareQuery = shareView + (share && docOpen
+    ? `${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}` : '');
   const shareLink = !share ? ''
-    : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareView}`
-      + (shareFiles ? `${shareView ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
+    : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareQuery}`
+      + (shareFiles ? `${shareQuery ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
 
   return {
     // -- the header row ------------------------------------------------------
@@ -297,10 +312,11 @@ export function chromeView(s, props, deps) {
     // button in the header is what opens it. Its openness is state and only
     // state; the constructor says why it is not remembered.
     // Not while two revisions are compared either: the compare panel stands in
-    // the tree's place, so the button would open nothing.
+    // the tree's place, so the button would open nothing. Nor under a document,
+    // which hides the tree with the rest of the model.
     treeShown: !narrow || s.treeOpen,
     treeToggle: stop(() => setState({ treeOpen: !s.treeOpen })),
-    treeBtnStyle: btn(false, !narrow || s.compare) + ';border:1px solid '
+    treeBtnStyle: btn(false, !narrow || s.compare || !!docOpen) + ';border:1px solid '
       + (s.treeOpen ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);background:var(--card-bg)'),
 
     railToggle: stop(() => setState({ rail: !railOpen })),
@@ -413,21 +429,61 @@ export function chromeView(s, props, deps) {
       // The menu's own row, shaped like the tree menu's items (`mi`) rather
       // than like a pill: in a column it is the highlight that says which one
       // is on, and a pill's raised card in a list reads as a stray button.
-      rowStyle: `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
-        + (s.view === v.id ? 'color:var(--accent-text);background:var(--accent-bg)' : INK),
+      // Not lit while a document covers the model.
+      rowStyle: menuRow(!docOpen && s.view === v.id),
       // CLOSES THE MENU WHATEVER `showView` DOES WITH THE CLICK — it returns
       // without touching a thing when the view asked for is the one already
       // on screen, and a menu left standing open on the row you just pressed
-      // is a control that ignored you.
-      onClick: () => { showView(v.id); setState({ viewsOpen: false }); },
+      // is a control that ignored you. And puts the model back: a view chosen
+      // while a document is open is a request to see the model.
+      onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
     })),
+    // The documents, one row each below the views and a rule: the name (its
+    // path in the tree) and, where a view gives its parts and size, its type
+    // and size. Choosing one lays it over the model (`docOpen`), which stays
+    // mounted underneath with its camera, cut and hidden parts. Like a view,
+    // the choice does not move the address; `?d=` in it opens one on arrival
+    // (`load`).
+    docRows: documents.map((d) => ({
+      key: d.id,
+      label: d.name,
+      hint: docHint(d),
+      rowStyle: menuRow(!!docOpen && docOpen.id === d.id),
+      onClick: () => setState({ doc: d.id, viewsOpen: false }),
+    })),
+    // The rule and the documents sit UNDER the scroll of the views
+    // (`viewListStyle`), so a model with twelve views does not push them out of
+    // sight. Four rows and the top of a fifth: a longer list shows that it goes
+    // on, and scrolls on its own.
+    docRuleStyle: 'flex:none;height:1px;margin:6px 0;background:var(--line-soft)',
+    docListStyle: 'flex:none;max-height:132px;overflow:auto',
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
-    // for what the strip does to the toolbar when it is too long for it.
-    viewMenu: views.length > VIEW_TABS_MAX,
-    // What that button says: the view on screen. Empty where none matches —
-    // `s.view` is null until the first view lands, and a switcher captioned
-    // `undefined` is worse than a bare one.
-    viewLabel: shownView ? shownView.name : '',
+    // for what the strip does to the toolbar when it is too long for it. A
+    // build with documents always gets the menu: they are rows of it.
+    viewMenu: views.length > VIEW_TABS_MAX || documents.length > 0,
+    // What that button says: the document over the model, else the view on
+    // screen. Empty where none matches — `s.view` is null until the first view
+    // lands, and a switcher captioned `undefined` is worse than a bare one.
+    viewLabel: docOpen ? docOpen.name : shownView ? shownView.name : '',
+    // The document laid over the model, or null. Over the WHOLE of the model's
+    // area, down to its bottom edge, so nothing drawn for the model shows
+    // beside it (the view cube, the "drag — orbit" hint). The layers, while
+    // one is open: the overlays about the model under it (the failed-view
+    // card 14, the section panel 15); the comment composer, a sibling at the
+    // same 16 drawn later, hidden rather than over it (`composerStyle`); the
+    // new-build banner over it (`bannerLayerStyle`, 17), because a newer
+    // build is news about the documents too; the toolbar over both (18), so
+    // the list stays in reach. The bottom padding is the toolbar's strip: the
+    // last lines of a page and the end of a PDF's frame stop above the
+    // buttons rather than under them.
+    docOpen,
+    // A NEW ELEMENT FOR ANOTHER REVISION: a markdown document is fetched once,
+    // when its view mounts, so a revision switch with the same document open
+    // must mount a new one rather than keep the old revision's text.
+    docKey: docOpen ? `${buildKey(meta)}:${docOpen.id}` : '',
+    bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
+      + (docOpen ? '17' : '13'),
+    docLayerStyle: 'position:absolute;top:0;left:0;right:0;bottom:0;overflow:auto;padding-bottom:72px;box-sizing:border-box;background:var(--page-bg);z-index:16',
     // A view's name is the model's own sentence and can be any length; the
     // button is in a toolbar that must not grow past the window (`viewBtnStyle`
     // caps it), so the name is cut rather than allowed to push.
@@ -461,16 +517,22 @@ export function chromeView(s, props, deps) {
     //
     // Height capped like the revision menu's list: a model may declare twenty
     // views, and under the root's `overflow:hidden` a taller menu is cut off.
-    viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;overflow:auto;'
+    // A column: the views scroll inside it (`viewListStyle`), and the build's
+    // documents stay under them, outside that scroll (`docListStyle`).
+    viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;flex-direction:column;'
       + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
-      + (s.viewsOpen ? 'block' : 'none'),
+      + (s.viewsOpen ? 'flex' : 'none'),
+    viewListStyle: 'flex:1 1 auto;min-height:0;overflow:auto',
     // The toolbar's layer, raised while any of its menus is open so it covers
     // the overlays sharing the model's area — the "This view did not render"
     // card (14), the section panel (15) and the composer (16) — otherwise a
     // click on a covered row lands in the overlay. It stays under the narrow
-    // tree rail (20) and the header (30). Closed, it is 12.
+    // tree rail (20) and the header (30). Closed, it is 12. While a document
+    // covers the model it is 18, over the document (16) and over the banner
+    // the document lifts to 17 (`docLayerStyle`), so the list that brings the
+    // model back opens over both.
     toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
-      + (s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
+      + (docOpen ? '18' : s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
     // At phone width the toolbar keeps the view tabs and Fit, the controls for
     // looking at the model. Measure and Comment want a pointer and room to aim,
     // Frame saves a PNG a phone has nowhere to put, the theme toggle is a
@@ -482,7 +544,12 @@ export function chromeView(s, props, deps) {
     // None of these buttons opens a popover, so this narrows only the toolbar.
     // Which popovers are clamped is asserted in `narrow.test.js`, not listed
     // here.
-    showTools: !narrow,
+    //
+    // A document over the model takes them away too, with Fit and the parts
+    // tree (`showFit`): every one of them is about the model, and the list
+    // that brings the model back stays.
+    showTools: !narrow && !docOpen,
+    showFit: !docOpen,
     // Both are out of service while the scene is a comparison's. That differs
     // from `viewer`: that one is about who the reader is, this about what is
     // under the cursor. `toolsOff()` documents why it is not `s.compare`. The

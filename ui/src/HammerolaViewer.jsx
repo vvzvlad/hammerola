@@ -118,6 +118,9 @@ import { rowMenu } from './rowmenu.js';
 // And the chrome round the model: the header, the token control, the tab strip,
 // the view switcher and the floating toolbar.
 import { chromeView } from './chromeview.js';
+// And one of the build's documents, laid over the model when it is chosen in
+// the view list; drawn as the documents page draws it.
+import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -1023,7 +1026,8 @@ export default class HammerolaViewer extends React.Component {
       // what stops the button looking like it still works.
       swapping: false,
       // -- what the reader is doing
-      view: null, tool: null, held: false, sel: null, selName: '',
+      // `doc`: the document laid over the model, or null (`docOpen`).
+      view: null, doc: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
@@ -1533,8 +1537,13 @@ export default class HammerolaViewer extends React.Component {
       console.warn('builds', error);
       return null;
     });
-    const wanted = new URLSearchParams(location.search).get('v');
+    const query = new URLSearchParams(location.search);
+    const wanted = query.get('v');
     const opening = meta.views.find((v) => v.id === wanted) || meta.views[0];
+    // `?d=` opens one of the build's documents over the model, as `?v=` opens a
+    // view; the model loads underneath either way. An id the build does not
+    // list is ignored (`docOpen` in chromeview.js looks it up).
+    const doc = query.get(DOC_QUERY);
     // The arrival on the tab strip, recorded here rather than in
     // `componentDidMount` because this is the first moment a human-readable
     // project name exists; before `meta` lands there is only `PAGE.pid`.
@@ -1544,7 +1553,7 @@ export default class HammerolaViewer extends React.Component {
     rememberTab(PAGE.pid, meta.title || meta.project);
     // `view` is what makes the viewport fetch and render: it starts null on both
     // sides, so this first sync is also the load.
-    this.setState({ meta, builds, view: opening.id, tabs: readTabs() },
+    this.setState({ meta, builds, view: opening.id, doc, tabs: readTabs() },
                   () => {
                     this.sync();
                     this.schedulePoll(POLL_MS);
@@ -1811,7 +1820,7 @@ export default class HammerolaViewer extends React.Component {
     // `rereadPage` (writes only `PAGE`) nor `setState({ meta })` touches `tree`;
     // the tree's writers are `onModel` (replace), `onViewError` (clear) and the
     // constructor (null).
-    const gone = this.leaveBuild(view === this.state.view);
+    const gone = this.leaveBuild(view === this.state.view, meta);
 
     if (push) history.pushState({ hmr: slot }, '', path + query);
     // In place, so every module that imported `PAGE` sees the new revision —
@@ -1920,6 +1929,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * `keepView` is whether the view id landing on screen is the one that was on
    * it, the strongest question the plane can be asked here (`sectionAcross`).
+   * `next` is the meta.json of the build landing, asked whether it lists the
+   * document open over the model.
    *
    * Returned in two halves because the section is two things: fields on this
    * side and an instruction to the viewport, which holds its own cut. A caller
@@ -1933,7 +1944,7 @@ export default class HammerolaViewer extends React.Component {
    * A chain running across the banner resolves against the pointer as asked,
    * and cutting it would silently truncate a group download.
    */
-  leaveBuild(keepView) {
+  leaveBuild(keepView, next) {
     const sec = this.sectionAcross(keepView);
     // The frame Fit goes back to belongs to the build it was measured on, and
     // this is another build. Spent by the model event that lands the swap; see
@@ -1990,6 +2001,12 @@ export default class HammerolaViewer extends React.Component {
         // clearing it would blink the panel empty on every successful switch.
         // A view that never lands is handled in `onViewError`.
         sel: null, selName: '', menu: null,
+        // The document over the model stays where the build landing lists it
+        // too, and otherwise goes for good: left standing, it would lay itself
+        // over the model again the moment the reader came back to a revision
+        // that lists it.
+        doc: next && Array.isArray(next.documents)
+          && next.documents.some((d) => d.id === this.state.doc) ? this.state.doc : null,
         // The comparison goes too: the panel stands where the tree stands and
         // the scene is the comparison's, so keeping it would change nothing the
         // reader sees. The picker's ticks (`cmp`) stay: they are the reader's
@@ -3894,7 +3911,7 @@ export default class HammerolaViewer extends React.Component {
     // nothing, and `leaveBuild` would empty the draft and put the section away
     // for a swap that did not happen. It must also precede the `setState` its
     // answer is spread into.
-    const gone = this.leaveBuild(keep);
+    const gone = this.leaveBuild(keep, next);
     this.setState({
       meta: next,
       view: keep ? this.state.view : next.views[0].id,
@@ -5202,7 +5219,9 @@ export default class HammerolaViewer extends React.Component {
       },
       measClear: () => this.set({ measure: null }, { __clearMeasure: true }),
 
-      composerStyle: 'position:absolute;right:16px;bottom:16px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:' + (s.composer && !viewer ? 'block' : 'none'),
+      // Hidden, not unmounted, while a document covers the model: the draft is
+      // about the model and comes back with it, sentence and all.
+      composerStyle: 'position:absolute;right:16px;bottom:16px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:' + (s.composer && !viewer && !chrome.docOpen ? 'block' : 'none'),
       nextLabel: String(s.feed.length + 1),
       composerPart: s.composer ? s.composer.part : '',
       composerText: s.composer ? s.composer.text : '',
@@ -5466,8 +5485,9 @@ export default class HammerolaViewer extends React.Component {
 
         <div style={css('flex:1;display:flex;min-height:0;position:relative')}>
 
-          {/* ── the tree, floating over the model ── */}
-          <div style={css('position:absolute;left:12px;top:10px;max-height:calc(100% - 20px);display:flex;flex-direction:column;align-items:flex-start;overflow:auto;z-index:10')}>
+          {/* ── the tree, floating over the model; gone while a document
+                covers the model (`docOpen`) ── */}
+          <div style={css('position:absolute;left:12px;top:10px;max-height:calc(100% - 20px);display:flex;flex-direction:column;align-items:flex-start;overflow:auto;z-index:10' + (v.docOpen ? ';display:none' : ''))}>
 
             {v.notCompare && v.treeShown && (
               <div style={css('display:flex;flex-direction:column;min-height:0')}>
@@ -5802,6 +5822,16 @@ export default class HammerolaViewer extends React.Component {
               style: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
             })}
 
+            {/* A document chosen in the view list, laid OVER the model rather
+                in place of it: the viewport stays mounted underneath, camera,
+                cut and hidden parts and all. Drawn by the component the
+                documents page uses (DocumentView.jsx). */}
+            {v.docOpen && (
+              <div style={css(v.docLayerStyle)}>
+                <DocumentView key={v.docKey} doc={v.docOpen} base={PAGE.base} />
+              </div>
+            )}
+
             {/* views and tools. THE LAYER IS A VALUE rather than a constant
                 here — see `toolbarStyle`: the view menu opens INSIDE this
                 toolbar, so it is the toolbar that has to rise above the
@@ -5826,12 +5856,27 @@ export default class HammerolaViewer extends React.Component {
                       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 6l4 4 4-4" /></svg>
                     </div>
                     <div onClick={(e) => e.stopPropagation()} style={css(v.viewMenuStyle)}>
-                      {v.viewTabs.map((t) => (
-                        <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                          <span style={css(FILL)}>{t.label}</span>
-                          <span style={css(FAINT_MONO)}>{t.hint}</span>
+                      <div style={css(v.viewListStyle)}>
+                        {v.viewTabs.map((t) => (
+                          <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
+                            <span style={css(FILL)}>{t.label}</span>
+                            <span style={css(FAINT_MONO)}>{t.hint}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {/* the build's documents, under the views and outside
+                          their scroll (`docRows`, `docListStyle`) */}
+                      {v.docRows.length > 0 && <div style={css(v.docRuleStyle)} />}
+                      {v.docRows.length > 0 && (
+                        <div style={css(v.docListStyle)}>
+                          {v.docRows.map((t) => (
+                            <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
+                              <span style={css(FILL)}>{t.label}</span>
+                              <span style={css(FAINT_MONO)}>{t.hint}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -5885,10 +5930,12 @@ export default class HammerolaViewer extends React.Component {
                     <div style={css(RULE)} />
                   </>
                 )}
-                <div onClick={v.fitView} title="back to the frame this view opened in" style={css(QUIET_BTN)}>
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
-                  Fit
-                </div>
+                {v.showFit && (
+                  <div onClick={v.fitView} title="back to the frame this view opened in" style={css(QUIET_BTN)}>
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
+                    Fit
+                  </div>
+                )}
                 {v.showTools && (
                   <>
                     <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
@@ -5916,7 +5963,7 @@ export default class HammerolaViewer extends React.Component {
             </div>
 
             {/* a newer build landed — offered, not substituted */}
-            <div style={css('position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:13')}>
+            <div style={css(v.bannerLayerStyle)}>
               <div style={css(v.bannerStyle)}>
                 <span style={css('width:8px;height:8px;border-radius:4px;background:var(--ok);flex:none')} />
                 <span style={css(`font:500 12.5px ${SANS}`)}>

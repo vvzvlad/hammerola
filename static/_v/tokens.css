@@ -211,6 +211,13 @@
    * (`renderOptions.edgeColor`), and it is the thing to re-measure before
    * moving it. */
   --canvas-bg: #ffffff;
+
+  /* -- a document's own sheet ---------------------------------------------
+   * What a published HTML page, SVG drawing or picture is laid on in a
+   * project of documents (ui/src/DocShell.jsx). WHITE IN BOTH THEMES: such a
+   * file was drawn for a white page by its author, and black ink on a
+   * transparent drawing laid on the dark page would not be seen at all. */
+  --paper-bg: #ffffff;
 }
 
 :root[data-theme="dark"] {
@@ -317,6 +324,8 @@
   --mark-hole: #1c1f23;
 
   --canvas-bg: #444444;
+
+  --paper-bg: #ffffff;
 }
 
 /* THE PAGE COLOUR, before there is a page.

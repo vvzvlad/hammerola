@@ -517,6 +517,23 @@ describe('the Share window', () => {
       .toBe(`${location.origin}/project/proj1/${REV}/?v=print&files=key-of-rev`)
   })
 
+  it('carries the document over the model, between the view and the key', () => {
+    const c = opened(REV)
+    c.state.meta.documents = [{ id: 'docs__cut-list.md', name: 'docs/cut-list.md',
+                                type: 'markdown', file: 'docs/cut-list.md', bytes: 10 }]
+    c.state.doc = 'docs__cut-list.md'
+    expect(c.computed().shareLink)
+      .toBe(`${location.origin}/project/proj1/${REV}/?d=docs__cut-list.md`)
+    c.state.meta.views = [
+      { id: 'assembled', name: 'assembled', file: 'a.json', parts: [], gzip: 0 },
+      { id: 'print', name: 'print', file: 'p.json', parts: [], gzip: 0 },
+    ]
+    c.state.view = 'print'
+    c.computed().toggleShareFiles()
+    expect(c.computed().shareLink).toBe(
+      `${location.origin}/project/proj1/${REV}/?v=print&d=docs__cut-list.md&files=key-of-rev`)
+  })
+
   it('cannot be ticked when builds.json came without the keys, and says why', () => {
     const c = opened(REV, null)
     const v = c.computed()

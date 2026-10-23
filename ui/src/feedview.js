@@ -71,7 +71,9 @@ export function feedView(s, deps) {
       // than about where the pin went, so it is the one that is coloured.
       saysStyle: `margin-top:6px;font:400 10.5px/1.5 ${MONO};color:`
         + (anchor.state === 'orphan' ? 'var(--warn)' : 'var(--text-muted)'),
-      onOpen: stop(() => set({ activePin: record.id })),
+      // And the model comes back from under a document, so the pin it lights
+      // is in sight.
+      onOpen: stop(() => set({ activePin: record.id, doc: null })),
       resolved,
       // A real request — see resolveComment. Closing an item is mostly the
       // agent's move, but the person who raised it can take it back too.

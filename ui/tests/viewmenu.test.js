@@ -143,7 +143,7 @@ describe('the menu itself', () => {
 
     c.computed().viewsToggle(click)
     expect(c.state.viewsOpen).toBe(true)
-    expect(css(c.computed().viewMenuStyle).display).toBe('block')
+    expect(css(c.computed().viewMenuStyle).display).toBe('flex')
 
     c.computed().viewsToggle(click)
     expect(css(c.computed().viewMenuStyle).display).toBe('none')
@@ -249,9 +249,10 @@ describe('the menu itself', () => {
       expect(style.bottom).toBe('38px')
     }
     // A model may declare twenty views and the root is `overflow:hidden`, so a
-    // menu taller than the window would be cut off rather than scrolled.
+    // menu taller than the window would be cut off rather than scrolled: the
+    // card is capped and the views scroll inside it.
     expect(wide.maxHeight).toBe('308px')
-    expect(wide.overflow).toBe('auto')
+    expect(css(component({ views: someViews(9) }).computed().viewListStyle).overflow).toBe('auto')
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {
