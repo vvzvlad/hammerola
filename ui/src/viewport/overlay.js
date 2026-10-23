@@ -8,9 +8,9 @@
 // (`state.pins`) and the CLICK (`hmr:pin`).
 //
 // Only the POSITION is set here. Everything about how a pin looks is a class
-// name the interface's own stylesheet owns — `.hmr_pin`, plus `.is_active` and
-// `.is_resolved` — because the mock-up's colours are the designer's business and
-// baking them in would mean two places to change them.
+// name the interface's own stylesheet owns — `.hmr_pin`, plus `.is_active` —
+// because the mock-up's colours are the designer's business and baking them in
+// would mean two places to change them.
 
 import { EVENT_PIN, emit } from "./events.js";
 import { spot } from "./camera.js";
@@ -110,7 +110,6 @@ export function createOverlay(vp) {
       entry.point = pin.p;
       entry.el.textContent = pin.label === undefined ? "" : String(pin.label);
       entry.el.classList.toggle("is_active", !!pin.active);
-      entry.el.classList.toggle("is_resolved", !!pin.resolved);
     }
     for (const [key, entry] of [...pins]) {
       if (seen.has(key)) continue;

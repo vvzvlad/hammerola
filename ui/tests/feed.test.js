@@ -614,7 +614,7 @@ describe('the pins', () => {
     c.sync()
 
     expect(seen[0].pins).toEqual([
-      { id: 'c1', label: '1', p: [1, 2, 3], resolved: false, active: false },
+      { id: 'c1', label: '1', p: [1, 2, 3], active: false },
     ])
   })
 
@@ -632,7 +632,7 @@ describe('the pins', () => {
 
     expect(partPoint).toHaveBeenCalledWith('/model/plate')
     expect(seen[0].pins).toEqual([
-      { id: 'c1', label: '1', p: [7, 8, 9], resolved: false, active: false },
+      { id: 'c1', label: '1', p: [7, 8, 9], active: false },
     ])
   })
 
@@ -663,5 +663,21 @@ describe('the pins', () => {
     c.sync()
 
     expect(seen[0].pins.map((pin) => pin.id)).toEqual(['c1', 'draft'])
+  })
+
+  it('draws no pin for a processed comment, and the next keeps its rail number', () => {
+    const c = page({
+      feed: [record({ id: 'c1', point: [1, 2, 3], status: 'resolved',
+                      resolved: '2026-08-27T20:00:00Z' }),
+             record({ id: 'c2', point: [4, 5, 6] })],
+      watch: true,
+    })
+    const seen = listening()
+
+    c.sync()
+
+    expect(seen[0].pins).toEqual([
+      { id: 'c2', label: '2', p: [4, 5, 6], active: false },
+    ])
   })
 })

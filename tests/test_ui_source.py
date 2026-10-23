@@ -951,8 +951,7 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
     substitution for one of them (a waiting button takes `--accent-muted`).
 
     The neutral ramp is not swept: its line roles legitimately paint fills —
-    1px `<div>` dividers (`--line`); `.hmr_pin.is_resolved` (`--line-strong`, it
-    lies on the model, a contrast trade PIN_CSS states); the compare legend's
+    1px `<div>` dividers (`--line`); the compare legend's
     grey swatch (a sample of a model colour); and the tree's tri-state eye dot
     (`eyeDot` in ui/src/panelstyle.js, half `--text-soft`, half `--line-strong`,
     the outline's two states side by side). Chip-fill visibility is measured in

@@ -207,22 +207,6 @@ const PIN_CSS = `
    nothing the rail does not already give.
    (No backticks in here either: this block is still the template literal.) */
 .hmr_pin.is_active { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-ring); z-index: 1; }
-/* THE LINE ROLE AND NOT THE CHIP FILL, which is a line painting a surface on
-   purpose: this pin lies on the 3D MODEL rather than on any of our own
-   surfaces, so its ground is a WHITE canvas in one theme and a mid-grey one in
-   the other. Those two pull in opposite directions and no neutral fill is the
-   better one on both. Against white this is dE 20.01 and the chip fill 9.12;
-   against the dark canvas it is 6.06 and the chip fill 12.03. So the line role
-   takes the decisive margin on the ground where a pale badge washes out, and
-   the smaller of the two where both are far above the dE 2.5 a shape needs to
-   read as a shape at all.
-   An earlier version of this note said the chip fill "has no silhouette
-   against either", which was the light measurement written as if it held in
-   both: in dark it is the chip fill that has the wider margin. The rail draws
-   the same badge ON the chip fill, because there it lies on a card and none of
-   this arises.
-   (No backticks in here: this block is a template literal.) */
-.hmr_pin.is_resolved { background: var(--line-strong); color: var(--text-soft); }
 .hmr_measure_label {
   padding: 3px 7px; border-radius: 4px;
   background: var(--tooltip-bg); color: var(--tooltip-text);
@@ -3090,6 +3074,9 @@ export default class HammerolaViewer extends React.Component {
     };
     const pins = [];
     s.feed.forEach((record, i) => {
+      // A processed comment stays in the rail and draws no pin: the model shows
+      // only what is still waiting.
+      if (record.status === 'resolved') return;
       const anchor = anchorFor(record, at);
       let p = null;
       if (anchor.state === 'point') p = anchor.point;
@@ -3100,7 +3087,6 @@ export default class HammerolaViewer extends React.Component {
       // and the number in the rail are the same number.
       if (p) {
         pins.push({ id: record.id, label: String(i + 1), p,
-                    resolved: record.status === 'resolved',
                     active: s.activePin === record.id });
       }
     });
