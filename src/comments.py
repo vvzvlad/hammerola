@@ -72,9 +72,9 @@ IMAGE_MAGIC = (
 # How much of an upload is enough to identify it. WebP puts `WEBP` at offset 8.
 SNIFF_BYTES = 16
 
-# Ceiling on the parts of a comment that are not text or an image: the coordinate
-# and the camera. Fixed shapes, so this is only here to keep a hand-written
-# request from asking for a hundred-element "quaternion".
+# Ceiling on the parts of a comment that are not text or an image: the coordinate,
+# its normal and the camera. Fixed shapes, so this is only here to keep a
+# hand-written request from asking for a hundred-element "quaternion".
 MAX_VECTOR_LEN = 4
 
 
@@ -187,6 +187,10 @@ def validate_payload(raw, max_text_chars: int) -> dict:
                           else one_line(value, field, CommentError))
     point = raw.get("point")
     payload["point"] = None if point is None else _numbers(point, "point", 3)
+    # The face normal at that point, which the build page stands the comment's
+    # arrow on. Checked exactly like the point it belongs to.
+    normal = raw.get("normal")
+    payload["normal"] = None if normal is None else _numbers(normal, "normal", 3)
     payload["camera"] = _camera(raw.get("camera"))
     return payload
 
@@ -306,6 +310,7 @@ class CommentStore:
             "part": payload["part"],
             "key": payload["key"],
             "point": payload["point"],
+            "normal": payload["normal"],
             "camera": payload["camera"],
             "text": payload["text"],
             PHOTO_KIND: None,

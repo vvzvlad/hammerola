@@ -165,7 +165,8 @@ def _print_comment(record: dict) -> None:
              else f"open, written {record.get('created')}")
     print(f"{cid}  {stamp}")
 
-    # Where, on one line: build, then the optional part, view and point.
+    # Where, on one line: build, then the optional part, view, point and the
+    # face normal.
     where = [f"build {record.get('commit')}"]
     if record.get("part"):
         where.append(f"part {record['part']}")
@@ -174,6 +175,11 @@ def _print_comment(record: dict) -> None:
     point = record.get("point")
     if isinstance(point, list) and len(point) == 3:
         where.append("at " + " ".join(f"{float(v):.1f}" for v in point))
+    # The outward normal of the face that was clicked: which side of the part
+    # the comment is on.
+    normal = record.get("normal")
+    if isinstance(normal, list) and len(normal) == 3:
+        where.append("facing " + " ".join(f"{float(v):.2f}" for v in normal))
     print(f"  {'  '.join(where)}")
 
     for line in str(record.get("text", "")).splitlines() or [""]:
