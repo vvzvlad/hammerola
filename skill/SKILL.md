@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 26
+version: 27
 ---
 
 # hammerola
@@ -309,9 +309,9 @@ spaces, Cyrillic, `×`, `Ø` or leading underscore. One bad name refuses the
 The alphabet is a security boundary, not relaxed. Hidden entries (`.git`,
 `.env`, `.venv`) are dropped, not refused, and so is what an open KiCad keeps
 beside a design: any file starting with `~` (its `~*.lck` locks), `_autosave-*`
-and any directory named `*-backups`. At most 8 components deep,
-1024 files and 64 MiB unpacked ("67 MB" to the client; a deployment's own
-limit is in its 413).
+and any directory named `*-backups`. At most 8 components deep and
+1024 files; there is no size limit, but the upload has to arrive within 300 s
+(`408` otherwise).
 
 **2. No `checklib.py` at a model's root.** The model's directory is first on
 `sys.path`, so your copy shadows the image's: interference volumes go into one
@@ -348,7 +348,7 @@ not kept: `hammerola source dev` refuses.
 * `build failed: ...` — your model or a gate said no; what it names is in `model.py`.
 * a traceback — `model.py` raised; the bottom frame is yours.
 * `timeout` / `cpu_exhausted` — past a ceiling; usually a boolean out of hand.
-* `413` / `422` on the push — rule 1, by size or by a path; no build ran.
+* `422` on the push — rule 1, by a path; no build ran.
 
 **When what is wrong is your own `checks()`, `--force` publishes anyway.** It
 skips `checks()` and nothing else: every gate of the hub still refuses. The log
