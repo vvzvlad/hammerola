@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 23
+version: 24
 ---
 
 # hammerola
@@ -793,6 +793,30 @@ the title's slug; with neither, the project publishes under its bare id.
 built from it, so a new id is a new project orphaning the old.
 `hammerola rename "..."` changes the title only. `project` has no command —
 edit the line, and only later builds carry it.
+
+## Documents beside the model
+
+A cut list, a shopping list, a report, a drawing: files to read, published
+with the revision they belong to. List them in `project.json`, in the order
+the page shows them:
+
+```json
+"documents": ["docs/cut-list.md", "ref/terr-raspil.svg"]
+```
+
+Each is a path in the project of a `.md`, `.pdf`, `.png`, `.jpg`, `.jpeg`,
+`.gif`, `.webp`, `.html`, `.htm` or `.svg`, and is published under the same
+path; nothing unlisted is. The build page lists them in its view menu, after
+the views: choosing one shows it over the model, choosing a view brings the
+model back, and `?d=<id>` in the address (the path with `/` written as `__`)
+opens one on arrival. With no `model.py` the documents are the whole build, a
+tab each. Markdown is drawn with its relative links resolved from its own
+directory, web links open in a new tab; a picture it shows must be a file of
+the build, because an image from another site is not loaded (the page allows
+`img-src 'self' data:`). HTML and SVG run as written; every document opens to
+the link without a key.
+A path that is not a file, has another extension, is listed twice or would
+overwrite what the model's build wrote refuses the push with a 422 naming it.
 
 ## Fetching things back
 

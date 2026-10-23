@@ -49,6 +49,16 @@
   can fail, and a half-applied pass leaves a state the hub was never in.
   Creation order used to be stored that way; it is now stored nowhere at all,
   because retention was its only reader
+- `src/docsbuild.py` — the documents a project publishes to be read (issue
+  #122): the paths its `project.json` lists under `documents` (markdown, PDF,
+  pictures, HTML, SVG — `render.DOCUMENT_TYPES`), published under the same
+  paths. `BuildQueue._build_and_publish` checks the list before anything runs
+  (a wrong entry is a 422 naming it); with a model in the tree the model is
+  built as always and the documents are copied in beside it afterwards
+  (`add_documents`); with none they are the whole build (`run_documents_build`,
+  no process, `"kind": "documents"` in meta.json), answering with the same
+  `BuildOutcome` a model's build does, so `publish_built`, `latest`,
+  `builds.json` and the card are the ordinary path
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). `build` fills the `dev` slot, `commit`
   publishes an immutable revision; around them sit `login`, `create`, `status`,
@@ -78,7 +88,8 @@
   `hammerola log dev` is answered — the slot's `meta.json` carries a `job` field
   naming the build that filled it (issue #79)
 - `hammerola/buildnames.py` — what a build file may be CALLED, and the ONE place
-  that decides it. Three sides ask: the file server (`app._safe_name`), the
+  that decides it. Three sides ask: the file server (`app._safe_build_path` for a
+  build's files, every segment of the path; `app._safe_name` for `/_v/`), the
   declaration of every name a push names in `meta.json`
   (`render._check_declared_file`), and the client, before it writes a name the hub
   handed back (`hammerola/artifacts.py`). Before this module each of the three had
@@ -331,6 +342,17 @@
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
+- `ui/src/DocShell.jsx` — the page of a build with no model
+  (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
+  `HammerolaViewer.jsx`. A header, a tab per document and the document;
+  `?d=<id>` picks the tab, and a tab click rewrites it
+- `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
+  drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
+  React elements, relative links resolved from the document's directory, short
+  table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
+  as `<img>`. DocShell draws it under its tabs; the model page draws it over the
+  3D area when a document is chosen in the view list (the rows are built in
+  `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
 - `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
   this tree (MIT, issue #14; the tag and commit it sits on are recorded in
   `static/_v/PROVENANCE.md` and nowhere else, so an upgrade moves one file),
