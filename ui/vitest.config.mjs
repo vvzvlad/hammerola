@@ -28,5 +28,13 @@ export default defineConfig({
     // include pattern wide enough to pick either up would fail in a way that
     // reads like a broken test rather than a mis-scoped glob.
     include: ['tests/**/*.test.js'],
+
+    // The jsdom worker pool defaults to the CPU count, and every worker holds
+    // its own jsdom and the interface modules, so the suite's memory grows with
+    // the machine it happens to run on. The CI container is held to 3 GB
+    // (`--memory=3g`); on the 72-CPU runner the default pool was killed at that
+    // ceiling, at 4 GB and at 6 GB, on the same code that had passed on fewer
+    // CPUs. Eight workers is the pool the 3 GB margin was measured with.
+    maxWorkers: 8,
   },
 })
