@@ -192,6 +192,25 @@ export const HANDLE_CASE_PX = 2;
  */
 export const HANDLE_RING_PX = (HANDLE_PX * 3) / 4;
 
+/* A comment's arrow on the model (pins.js), in CSS pixels for the same reason
+ * as the section grip: the same size on a 2 mm part and a 200 mm one. Separate
+ * constants from `HANDLE_*`: the grip is a control standing on the cut, this is
+ * a marker pointing into a face. */
+
+/** The whole arrow, tip to tail. Long enough to stand clear of the face it
+ *  points into, short enough that two comments on one part do not cross the
+ *  model. */
+export const PIN_PX = 40;
+
+/** The head, as long as it is wide, like the grip's (`HANDLE_HEAD_PX`). It is
+ *  most of what a press lands on, so it is wider than the grip's. */
+export const PIN_HEAD_PX = 12;
+
+/** The shaft's thickness. Heavier than the grip's 2 px, which stands on a white
+ *  casing: this is red ink with nothing under it, on whatever colour the part
+ *  is. */
+export const PIN_SHAFT_PX = 3;
+
 /**
  * Pixels of `deltaY` the browser emits per e-fold of pinch scale. A measurement.
  *

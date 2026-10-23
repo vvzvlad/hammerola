@@ -114,7 +114,7 @@ export function panCamera(viewer, b, d) {
 
 /**
  * A world point in NDC, or null — for anything the interface draws OVER the
- * canvas at a place on the model (pins, a measurement label).
+ * canvas at a place on the model (a measurement label).
  *
  * Same borrowed-`Vector3` trick as `ndcOffset`. The library's `project` reads
  * the matrix in use, rather than hard-coding three.js's column-major layout.
@@ -132,15 +132,15 @@ export function projectPoint(g, point) {
  * NDC depth alongside — `[x, y, z]`, or null for a point the projection cannot
  * place.
  *
- * The two rects are passed in rather than measured here: the pin overlay WRITES
- * styles between projections, so a `getBoundingClientRect()` per point would
- * force a reflow each time inside a rAF loop. Neither rect changes within one
- * frame (nothing here writes the canvas or the layer's container).
+ * The two rects are passed in rather than measured here: a layer WRITES styles
+ * between projections, so a `getBoundingClientRect()` per point would force a
+ * reflow each time inside a rAF loop. Neither rect changes within one frame
+ * (nothing here writes the canvas or the layer's container).
  *
  * The canvas rect gives the pixel size of the NDC cube and the container rect is
  * what an absolutely-positioned child is placed against, so the corner
- * difference is the offset. All four layers (pin overlay, section grip,
- * manipulator arrows, rotation handles) use this one sum.
+ * difference is the offset. The measurement label's layer (overlay.js) uses
+ * this sum.
  *
  * `z > 1` is for the caller to read: behind the far plane, i.e. behind the
  * reader, which happens as the model rotates through the frustum's back.

@@ -135,15 +135,7 @@
    *     pressed and is waiting on the network. It was `--accent-line` at two
    *     call sites, which is a line role spent as a fill, and a palette where
    *     the names have stopped describing what they paint is a palette that
-   *     rots from here on.
-   *   * `--accent-ring` is the halo on the active comment pin, and it is the
-   *     one token here with an alpha of its own rather than a flat value.
-   *     That is functional: the pin sits ON the 3D model, and a halo the
-   *     model shows through is a halo that does not hide the geometry it is
-   *     pointing at. Opaque, it is a blue disc over the part.
-   *
-   * ITS VALUE IS THE SAME IN BOTH THEMES for the reason `--accent` is: it is
-   * that fill spread thin, so it follows the fill and not the inks. */
+   *     rots from here on. */
   --accent: #1f7ae0;
   --accent-strong: #155bb5;
   --accent-text: #1c67c2;
@@ -151,7 +143,6 @@
   --accent-bg: #dcebfc;
   --accent-bg-soft: #f0f6fd;
   --accent-muted: #9cc0e8;
-  --accent-ring: rgba(31, 122, 224, .35);
 
   /* -- states --------------------------------------------------------------
    * Amber for "look at this", red for "this failed", green for "this is
@@ -260,8 +251,8 @@
    * split until it was measured. Lifted to #4e97ea it dropped white text to
    * 3.03:1 — under AA, and under the 4.27:1 of the RESTING button it is the
    * hover state of, so hovering made the label fainter and the whole signal ran
-   * backwards. Every one of its four call sites is a filled surface or a rim on
-   * one (a hover, a pressed pin, two borders drawn on `--accent` itself); none
+   * backwards. Every one of its three call sites is a filled surface or a rim on
+   * one (a hover, two borders drawn on `--accent` itself); none
    * of them is ink on a page, which is the only thing the lift was for. So it
    * takes the light value here for exactly the reason `--accent` does: white on
    * it reads the same whatever is behind the button — 6.57:1, above AA and
@@ -283,11 +274,7 @@
    * that inverts one. In CIELAB, the strong tint sits 12.6 from the card it
    * marks a row on in light and 10.6 in dark; the soft one 5.3 and 5.7; and
    * the two stand 7.3 apart in light against 7.1 in dark. So the heavier
-   * marker stays the heavier one, by nearly the same margin, in both.
-   *
-   * `--accent-ring` is NOT here, and its absence is the point: it is the one
-   * value the two blocks share besides the fill it is made of. The light block
-   * says why. */
+   * marker stays the heavier one, by nearly the same margin, in both. */
   --accent: #1f7ae0;
   --accent-strong: #155bb5;
   --accent-text: #7cb4f2;
@@ -295,7 +282,6 @@
   --accent-bg: #17293c;
   --accent-bg-soft: #17202b;
   --accent-muted: #1a4575;
-  --accent-ring: rgba(31, 122, 224, .35);
 
   /* Lifted for the same reason the accent ink is: an amber, a red and a green
    * picked to be read on white are all too dark to be seen on #16181b. The

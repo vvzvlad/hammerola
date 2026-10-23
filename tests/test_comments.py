@@ -53,6 +53,26 @@ def test_a_comment_without_a_photo_is_accepted(hub):
     assert record["photo"] is None and record["shot"] is None
 
 
+def test_the_face_normal_is_stored_beside_the_point(hub):
+    """The direction the build page stands the comment's arrow along.
+
+    Optional, like the point: a comment sent without one stores None, and the
+    page draws that comment's arrow from above.
+    """
+    pid, commit = _publish(hub)
+    with_normal = hub.post_comment(pid, commit,
+                                   comment_payload(normal=[0, 0, -1]))
+    without = hub.post_comment(pid, commit, comment_payload())
+    assert with_normal.status_code == 201 and without.status_code == 201
+
+    def stored(reply):
+        name = f"{reply.json()['id']}.json"
+        return json.loads((hub.comment_dir(pid) / name).read_text())
+
+    assert stored(with_normal)["normal"] == [0.0, 0.0, -1.0]
+    assert stored(without)["normal"] is None
+
+
 def test_the_catalogue_key_is_stored(hub):
     """The anchor that outlives one revision (SPEC 7A.1).
 
@@ -280,6 +300,15 @@ def test_a_non_finite_camera_value_is_422(hub):
         "comment": '{"text": "x", "camera": {"position": [NaN, 0, 0], '
                    '"quaternion": [0,0,0,1], "target": [0,0,0]}}'})
     r = hub.post_comment(pid, commit, body=body, content_type=ctype)
+    assert r.status_code == 422
+    assert not _records(hub)
+
+
+@pytest.mark.parametrize("normal", [[0, 1], [0, "1", 0], [True, 0, 0]])
+def test_a_malformed_normal_is_422(hub, normal):
+    """The same door as the point: three finite numbers, or nothing stored."""
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(normal=normal))
     assert r.status_code == 422
     assert not _records(hub)
 

@@ -27,7 +27,7 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 }))
 
 import {
-  EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK,
+  EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PLACE,
 } from '../src/viewport/events.js'
 import { projectPoint } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
@@ -205,6 +205,38 @@ describe('which branch a click takes', () => {
     pointerUp()
     expect(faceNormalAt).toHaveBeenCalledTimes(1)
     expect(pickEntity).not.toHaveBeenCalled()
+  })
+})
+
+describe('a comment tool click', () => {
+  // The camera looks down -Z (`orthoCamera`), so a normal with +Z in it faces
+  // the reader. No zero components, so a flip is exact negation and no -0
+  // stands in for a 0.
+  const AWAY = [0.48, 0.6, -0.64]
+  const TOWARDS = [-0.48, -0.6, 0.64]
+
+  /** One click of the comment tool on a face whose normal the picker gives. */
+  function placed(normal) {
+    pickEntity.mockReturnValue({ id: '/model/plate', name: 'plate', point: [1, 2, 3] })
+    faceNormalAt.mockReturnValue({ normal, point: { x: 1, y: 2, z: 3 }, info: null })
+    const vp = toolViewport({ tool: 'comment' })
+    pointerDown(vp)
+    pointerUp()
+    return details(vp, EVENT_PLACE)
+  }
+
+  it('turns a normal facing away from the reader round, so the arrow stands out', () => {
+    // `faceNormalAt`'s sign is whichever way its samples wound; left as it came,
+    // the comment's arrow would stand out of the back of the face, in the part.
+    expect(placed(AWAY)).toEqual([
+      { id: '/model/plate', name: 'plate', p: [1, 2, 3], n: TOWARDS },
+    ])
+  })
+
+  it('leaves a normal already facing the reader as it is', () => {
+    expect(placed(TOWARDS)).toEqual([
+      { id: '/model/plate', name: 'plate', p: [1, 2, 3], n: TOWARDS },
+    ])
   })
 })
 

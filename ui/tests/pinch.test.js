@@ -398,37 +398,31 @@ describe('one frame per gesture, and none outside one', () => {
 })
 
 describe('the overlay measures once per frame', () => {
-  it('reads each rect once however many pins there are', () => {
-    // `place()` must not read the canvas and the container itself: `draw()`
-    // calls it in a loop that WRITES styles, so every iteration would
-    // invalidate the layout and the next would force a flush — one synchronous
-    // reflow per pin, inside a rAF loop that runs right through a pinch.
+  it('reads each rect once a frame', () => {
+    // `place()` reads the canvas and the container before it writes a style:
+    // a read after a write forces a synchronous reflow, inside a rAF loop that
+    // runs right through a pinch.
     const { viewer } = scene()
     const canvasRect = vi.spyOn(viewer.canvas, 'getBoundingClientRect')
     const box = { getBoundingClientRect: vi.fn(() => ({ left: 0, top: 0, width: 800, height: 600 })) }
     // The canvas `internals()` hands the overlay is the one the fake measures;
     // this half of the module needs a rect, not an event target.
     viewer.renderer = { domElement: viewer.canvas }
-    const vp = { viewer, box, measureLabel: null }
+    // In front of the camera — behind it the label would be hidden, and a
+    // hidden label never reaches the arithmetic that reads a rect.
+    const vp = { viewer, box, measureLabel: { text: '12.00', point: [1, 2, 45] } }
 
     const overlay = createOverlay(vp)
-    // Three pins in front of the camera — behind it they would be hidden, and a
-    // hidden pin never reaches the arithmetic that reads a rect.
-    overlay.setPins([
-      { id: 'a', p: [1, 2, 45] },
-      { id: 'b', p: [3, 4, 45] },
-      { id: 'c', p: [5, 6, 45] },
-    ])
+    overlay.refresh()
     runFrames()
 
     expect(canvasRect).toHaveBeenCalledTimes(1)
     expect(box.getBoundingClientRect).toHaveBeenCalledTimes(1)
-    // The pins really were placed — otherwise "read once" would be the reading
-    // of a loop that did nothing.
-    for (const pin of overlay.root.querySelectorAll('.hmr_pin')) {
-      expect(pin.style.display).toBe('')
-      expect(pin.style.left).not.toBe('')
-    }
+    // The label really was placed — otherwise "read once" would be the reading
+    // of a frame that did nothing.
+    const label = overlay.root.querySelector('.hmr_measure_label')
+    expect(label.style.display).toBe('')
+    expect(label.style.left).not.toBe('')
 
     overlay.destroy()
   })
@@ -438,10 +432,10 @@ describe('the overlay measures once per frame', () => {
     const canvasRect = vi.spyOn(viewer.canvas, 'getBoundingClientRect')
     const box = { getBoundingClientRect: vi.fn() }
     viewer.renderer = { domElement: viewer.canvas }
-    const vp = { viewer, box, measureLabel: null }
+    const vp = { viewer, box, measureLabel: { text: '12.00', point: [1, 2, 45] } }
 
     const overlay = createOverlay(vp)
-    overlay.setPins([{ id: 'a', p: [1, 2, 45] }])
+    overlay.refresh()
     viewer.ready = false
     runFrames()
 

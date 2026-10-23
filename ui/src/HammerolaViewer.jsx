@@ -64,7 +64,7 @@
  *     and shows what it is told.
  *
  * STYLING is inline — `css()` parses a CSS string into a React style object.
- * Two exceptions: the comment pins are DOM the viewport creates, so they are
+ * Two exceptions: the measurement label is DOM the viewport creates, so it is
  * styled by class from the one `<style>` block below; and the fonts are a
  * system stack, because this page's CSP is `default-src 'self'`.
  */
@@ -149,6 +149,9 @@ import {
 // the library's tab strip and the Clip panel's checkboxes are `<input>` too, so
 // "any input" is the wrong test — and a second copy would be free to drift.
 import { typingTarget } from './viewport/holdkey.js';
+// And the viewport's test of a stored vector, which `sync` applies to a
+// comment's normal before handing it to the arrows: `math.js` imports nothing.
+import { finite3 } from './viewport/math.js';
 
 // `css()`, the font stacks and the mark now live in style.jsx: this page stopped
 // being the only one drawn with them when the front page landed, and a second
@@ -158,29 +161,29 @@ import { typingTarget } from './viewport/holdkey.js';
 /**
  * The only rules that cannot be inline styles.
  *
- * A comment pin is an element the VIEWPORT creates and positions — it has to be,
- * because its place on screen is a world point projected through a camera that
- * moves sixty times a second, and routing that through React would re-render the
- * interface on every mouse move. What crosses the boundary is the data and the
- * click; how a pin LOOKS stays here, which is why the viewport sets only class
- * names on it.
+ * The measurement label is an element the VIEWPORT creates and positions — it
+ * has to be, because its place on screen is a world point projected through a
+ * camera that moves sixty times a second, and routing that through React would
+ * re-render the interface on every mouse move. How it LOOKS stays here, which is
+ * why the viewport sets only class names on it. (The comment arrows are objects
+ * in the scene, drawn by the viewport, ui/src/viewport/pins.js.)
  *
- * Four class names, and the division between them and the viewport is the same
- * one every time: the viewport POSITIONS (inline, per frame, in code), this
+ * Three class names, and the division between them and the viewport is the
+ * same one every time: the viewport POSITIONS (inline, per frame, in code), this
  * stylesheet DECIDES HOW IT LOOKS. `.hmr_canvas` and `.hmr_overlay` are the two
- * layers the element builds — the library's container and the layer of pins over
- * it. Neither needs layout from here; what they need is the page's own colour
- * under the model instead of the browser's white, which is what shows while the
- * viewer module is still loading, and a font for anything the overlay grows
- * later. `.hmr_pin` and `.hmr_measure_label` are the two things drawn IN that
- * overlay, and their whole appearance is here.
+ * layers the element builds — the library's container and the layer over it.
+ * Neither needs layout from here; what they need is the page's own colour under
+ * the model instead of the browser's white, which is what shows while the viewer
+ * module is still loading, and a font for anything the overlay grows later.
+ * `.hmr_measure_label` is the thing drawn IN that overlay, and its whole
+ * appearance is here.
  *
  * Injected as a `<style>` element rather than an imported stylesheet: an
  * `import './x.css'` would make this build emit a second output file, and that
  * name would then have to be added to the Makefile, the Dockerfile, ci/smoke.py
  * and the page template — see ui/vite.config.mjs, which says so at length.
  */
-const PIN_CSS = `
+const VIEWPORT_CSS = `
 .hmr_canvas {
   background: var(--page-bg);
 }
@@ -188,41 +191,6 @@ const PIN_CSS = `
   color: var(--text);
   font-family: ${FONTS['--hmr-sans']};
 }
-.hmr_pin {
-  display: flex; align-items: center; justify-content: center;
-  min-width: 20px; height: 20px; padding: 0 5px;
-  transform: translate(-50%, -100%);
-  border: none; border-radius: 10px 10px 10px 3px;
-  background: var(--accent); color: var(--text-on-accent); cursor: pointer;
-  font: 600 10.5px ${FONTS['--hmr-mono']};
-  box-shadow: 0 2px 6px var(--shadow);
-}
-/* THE Z-INDEX IS WHAT MAKES A STACK OF PINS REACHABLE, and it is not decoration.
-   Two comments left on the SAME part now resolve to the same anchor — one
-   catalogue key, one bounding-box centre — so setPins places them at the same
-   screen point, exactly overlapping, and only the last one appended can be
-   clicked. Raising the active pin turns the rail into the way out: clicking
-   either row lifts its own pin to the top, and the one underneath is a click
-   away rather than lost. A screen-space fan-out was the other answer and buys
-   nothing the rail does not already give.
-   (No backticks in here either: this block is still the template literal.) */
-.hmr_pin.is_active { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-ring); z-index: 1; }
-/* THE LINE ROLE AND NOT THE CHIP FILL, which is a line painting a surface on
-   purpose: this pin lies on the 3D MODEL rather than on any of our own
-   surfaces, so its ground is a WHITE canvas in one theme and a mid-grey one in
-   the other. Those two pull in opposite directions and no neutral fill is the
-   better one on both. Against white this is dE 20.01 and the chip fill 9.12;
-   against the dark canvas it is 6.06 and the chip fill 12.03. So the line role
-   takes the decisive margin on the ground where a pale badge washes out, and
-   the smaller of the two where both are far above the dE 2.5 a shape needs to
-   read as a shape at all.
-   An earlier version of this note said the chip fill "has no silhouette
-   against either", which was the light measurement written as if it held in
-   both: in dark it is the chip fill that has the wider margin. The rail draws
-   the same badge ON the chip fill, because there it lies on a card and none of
-   this arises.
-   (No backticks in here: this block is a template literal.) */
-.hmr_pin.is_resolved { background: var(--line-strong); color: var(--text-soft); }
 .hmr_measure_label {
   padding: 3px 7px; border-radius: 4px;
   background: var(--tooltip-bg); color: var(--tooltip-text);
@@ -1369,6 +1337,9 @@ export default class HammerolaViewer extends React.Component {
           composer: {
             part: (row && row.name) || d.name || 'model',
             partId: d.id || null, key: (row && row.key) || null, p: d.p || null,
+            // The face normal at that point, turned towards the reader: the
+            // direction the comment's arrow stands out along.
+            n: d.n || null,
             text: '', photo: null,
             meas: this.state.measure ? this.state.measure.full : null,
           },
@@ -2069,7 +2040,7 @@ export default class HammerolaViewer extends React.Component {
         composer: this.state.composer
           ? {
             ...this.state.composer,
-            part: '', partId: null, key: null, p: null, meas: null,
+            part: '', partId: null, key: null, p: null, n: null, meas: null,
           }
           : null,
         // The toast that `clearTimeout(this._tt)` above disarmed.
@@ -3089,23 +3060,29 @@ export default class HammerolaViewer extends React.Component {
       parts: (meta && meta.parts) || {},
     };
     const pins = [];
-    s.feed.forEach((record, i) => {
+    s.feed.forEach((record) => {
+      // A processed comment stays in the rail and draws no pin: the model shows
+      // only what is still waiting.
+      if (record.status === 'resolved') return;
       const anchor = anchorFor(record, at);
       let p = null;
-      if (anchor.state === 'point') p = anchor.point;
+      // The stored normal belongs to the stored point, so it is used only where
+      // the point is: on the build it was taken on, the arrow stands out of the
+      // face that was clicked. Everywhere else `n` is null and the viewport
+      // stands the arrow from above.
+      let n = null;
+      if (anchor.state === 'point') {
+        p = anchor.point;
+        if (finite3(record.normal)) n = record.normal;
+      }
       if (anchor.state === 'part' && el && typeof el.partPoint === 'function') {
         p = el.partPoint(anchor.path);
       }
-      // The label is the row's place in the queue, so the number over the model
-      // and the number in the rail are the same number.
-      if (p) {
-        pins.push({ id: record.id, label: String(i + 1), p,
-                    resolved: record.status === 'resolved',
-                    active: s.activePin === record.id });
-      }
+      if (p) pins.push({ id: record.id, p, n, active: s.activePin === record.id });
     });
     if (s.composer && s.composer.p) {
-      pins.push({ id: 'draft', label: '+', p: s.composer.p, active: true });
+      pins.push({ id: 'draft', p: s.composer.p, n: s.composer.n || null,
+                  active: true });
     }
     // Which document the viewport is pointed at — all that comparing changes
     // here. A comparison is an ordinary view document at its own address
@@ -4319,9 +4296,10 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ sending: true });
     try {
       // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
-      // `part`, `key`, `published`, `point` and `camera` and DROPS everything else
-      // without saying so — so the measurement rides in the text, where the agent
-      // will actually read it, rather than in a field discarded on the way in.
+      // `part`, `key`, `published`, `point`, `normal` and `camera` and DROPS
+      // everything else without saying so — so the measurement rides in the text,
+      // where the agent will actually read it, rather than in a field discarded on
+      // the way in.
       const extra = [];
       if (c.meas) extra.push(`measured: ${c.meas}`);
       // Where the hub holds a proposal, a pointer to it. The document is not
@@ -4350,6 +4328,8 @@ export default class HammerolaViewer extends React.Component {
         // reader is still typing, and only this page knows which one it is showing.
         published: meta.published || null,
         point: c.p || null,
+        // Which way the comment's arrow stands out of the face at that point.
+        normal: c.n || null,
         camera: this.frameCamera(),
       }));
       // The two attachments, and the only place either is shrunk (shrink.js):
@@ -5302,7 +5282,7 @@ export default class HammerolaViewer extends React.Component {
       // carries nothing but the div this mounts into, so there is no page
       // layout to fit into and nothing underneath to leave visible.
       <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
-        <style>{PIN_CSS}</style>
+        <style>{VIEWPORT_CSS}</style>
 
         {/* ── header: model, revision, status, downloads, access, comments ── */}
         <div style={css(v.headerStyle)}>

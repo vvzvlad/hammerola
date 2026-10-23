@@ -16,8 +16,8 @@ export function feedView(s, deps) {
   // -- the project's comment queue, as `loadFeed` fetched it
   //
   // The hub answers with the project's queue, oldest first (SPEC 7A.2), and the
-  // row number is the position in it — the same number `sync` writes on the
-  // pin, so the badge on the model and the badge in the rail name the same item.
+  // row number is the position in it. The arrow on the model carries no number:
+  // pressing it opens its row here.
   //
   // EVERY ROW SAYS WHERE IT HANGS, in words, because most of them cannot be
   // pointed at: a comment left on another revision follows its catalogue key
@@ -62,10 +62,8 @@ export function feedView(s, deps) {
       text: record.text,
       says,
       style: 'padding:10px 12px;background:var(--card-bg);border:1px solid ' + (s.activePin === record.id ? 'var(--accent-line)' : 'var(--line)') + ';border-radius:8px;cursor:pointer;' + (resolved ? 'opacity:.62' : ''),
-      // Resolved is a lighter grey here than on the canvas on purpose: on a rail
-      // card the chip fill is already a visible pill, while `.hmr_pin.is_resolved`
-      // sits on the 3D model, where nothing lighter than `--line-strong` keeps a
-      // silhouette against a white canvas.
+      // Only the rail draws a resolved badge: the canvas draws no pin for a
+      // processed comment (`sync` in HammerolaViewer.jsx).
       pinStyle: `width:20px;height:20px;border-radius:10px 10px 10px 3px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10.5px ${MONO};` + (resolved ? 'background:var(--chip-bg);color:var(--text-muted)' : ON_ACCENT),
       // An orphan is the one anchor state that is news about the model rather
       // than about where the pin went, so it is the one that is coloured.

@@ -27,6 +27,7 @@ import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.
 import { createOverlay } from "./overlay.js";
 import { createGizmo } from "./gizmo.js";
 import { createHandle } from "./handle.js";
+import { createPins } from "./pins.js";
 import { createRings } from "./rings.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
@@ -250,7 +251,7 @@ export class HmrViewport extends HTMLElement {
     // (ui/src/proposalgeom.js), which belongs to no build and must survive every
     // rebuild. Only `staged()` composes them.
     //
-    // Not `this.overlay`, which is the pin layer below.
+    // Not `this.overlay`, which is the measurement label's layer below.
     this.payload = null;
     // Which build the geometry on screen is of; `show()` says why it is not
     // `state.buildKey`.
@@ -267,22 +268,24 @@ export class HmrViewport extends HTMLElement {
     this.overlay = createOverlay(this);
     this.appendChild(this.overlay.root);
 
-    // AFTER the overlay, so its cells stay clickable where a pin happens to be
-    // over the same corner: the overlay's layer covers the whole canvas, and the
-    // later sibling is the one that gets the press.
+    // AFTER the overlay: the overlay's layer covers the whole canvas, and of two
+    // absolutely-positioned siblings the later is painted on top, so a
+    // measurement label never covers a cell.
     this.viewcube = createViewCube(this);
     this.appendChild(this.viewcube.root);
 
-    // The section grip, the move tool's arrows/quads/dot and its rotation
-    // handles are meshes in the library's own scene (`scene3d.js`), so they have
-    // no root to append; their lifecycle lines are in `show()`.
+    // The section grip, the move tool's arrows/quads/dot, its rotation handles
+    // and the comment arrows are meshes in the library's own scene
+    // (`scene3d.js`), so they have no root to append; their lifecycle lines are
+    // in `show()`.
     //
     // A press goes by paint band, not by this order: `joinPresses`
-    // (scene3d.js) asks the top band first, and the arrows are on top. Only the
-    // hover cursor goes by creation order.
+    // (scene3d.js) asks the top band first, and the move tool's arrows are on
+    // top. Only the hover cursor goes by creation order.
     this.gizmo = createGizmo(this);
     this.handle = createHandle(this);
     this.rings = createRings(this);
+    this.pins = createPins(this);
 
     setPointingDevice(this, initialPointingDevice(), false);
 
@@ -371,6 +374,7 @@ export class HmrViewport extends HTMLElement {
     // The rings also own a hover listener on the window (which knob is lit),
     // beside the one `scene3d.js` keeps for each widget.
     if (this.rings) this.rings.destroy();
+    if (this.pins) this.pins.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {
@@ -626,6 +630,7 @@ export class HmrViewport extends HTMLElement {
         this.handle.detach();
         this.gizmo.detach();
         this.rings.detach();
+        this.pins.detach();
         this.viewer.clear();
       }
       this.viewer.render(scene, renderOptions, viewerOptions);
@@ -634,6 +639,7 @@ export class HmrViewport extends HTMLElement {
       this.handle.attach(library.THREE);
       this.gizmo.attach(library.THREE);
       this.rings.attach(library.THREE);
+      this.pins.attach(library.THREE);
       // Only now does the widget exist to be measured; the first pass asked for
       // the whole container, so re-fit it to what is left once its own chrome is
       // accounted for. A no-op on every later call.
@@ -755,7 +761,8 @@ export class HmrViewport extends HTMLElement {
       setCutHatch(internals(this.viewer), s.cutHatch);
       this.viewer.update(true, true);
     }
-    this.overlay.setPins(s.pins);
+    // The comment arrows follow the list, and ask for the frame that draws them.
+    this.pins.setPins(s.pins);
     // The widgets are placed by the library's render pass (`scene3d.js`), so
     // `refresh` asks for a frame. The grip comes and goes with the cut; the
     // arrows/quads/dot and the rings with the Move tool and the selection.

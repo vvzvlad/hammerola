@@ -822,7 +822,7 @@ export function fakeViewport(viewer, state = {}) {
     // Empty, exactly as `connectedCallback` starts it: a viewport nothing has
     // pushed a step at, where every drag rounds to the grid's own.
     snapSteps: new Map(),
-    overlay: { setPins: vi.fn(), refresh: vi.fn() },
+    overlay: { refresh: vi.fn() },
   }
 }
 

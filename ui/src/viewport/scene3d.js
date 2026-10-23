@@ -39,24 +39,26 @@ import { ndcAt } from "./camera.js";
 import { internals } from "./internals.js";
 
 /** Where each widget is drawn relative to the model and to each other: after
- *  all of the model, bottom to top rings, grip, manipulator.
+ *  all of the model, bottom to top comment arrows, rings, grip, manipulator.
  *
  * Above the library's own: its edges and translucent faces are at 999
  * (viewer/src/scene/nestedgroup.ts:523), its highlight points and the section
  * contour (outline.js) at 1000. A handle must never be hidden by any of them,
  * and with no depth test it is drawn over the part it stands on.
  *
- * Three bands because the band is also the press order: `joinPresses` gives a
+ * Four bands because the band is also the press order: `joinPresses` gives a
  * contested press to the highest band that takes it, so the widget on top is
- * the one that answers.
+ * the one that answers. The comment arrows are the bottom one: a control
+ * standing over an arrow keeps its press.
  *
  * Each widget's own ladder still works inside its band: three carries a group's
  * `renderOrder` down as `groupOrder` and sorts on it before each mesh's own, so
  * the bands need only be distinct; the tens are for readability.
  */
-export const RINGS_ORDER = 1001;
-export const HANDLE_ORDER = 1011;
-export const GIZMO_ORDER = 1021;
+export const PINS_ORDER = 1001;
+export const RINGS_ORDER = 1011;
+export const HANDLE_ORDER = 1021;
+export const GIZMO_ORDER = 1031;
 
 /**
  * The material every 3D handle is drawn with: flat ink, never hidden, never
@@ -172,8 +174,11 @@ export function joinPresses(vp, order, take) {
  *     the namespace. Everything in it is measured in CSS pixels (see the scale).
  *   `wanted()` is whether there is anything to draw, asked on every frame, so
  *     a widget with nothing to stand on disappears by itself.
- *   `place(group, g)` positions and orients the group and returns false when it
- *     cannot. The scale is this module's and is overwritten every frame.
+ *   `place(group, g, k)` positions and orients the group and returns false when
+ *     it cannot. The scale is this module's and is overwritten every frame;
+ *     `k` is that scale, world units per CSS pixel, for a widget whose children
+ *     stand at world points of their own and so have to divide it out
+ *     (pins.js).
  *   `press(event, g, hit)` handles a press the raycast found on ours and
  *     returns whether the widget took it; `hit` is the intersection.
  *
@@ -257,7 +262,7 @@ export function createScene3D(vp,
     if (!group) return;
     const g = wanted() ? internals(vp.viewer) : null;
     const k = g ? pixelScale(g) : null;
-    if (k === null || !place(group, g)) {
+    if (k === null || !place(group, g, k)) {
       group.visible = false;
       return;
     }

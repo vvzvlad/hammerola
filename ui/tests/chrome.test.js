@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { HammerolaProjects } from '../src/HammerolaEntry.jsx'
+import { HammerolaLogin, HammerolaProjects } from '../src/HammerolaEntry.jsx'
 import { rereadPage } from '../src/hub.js'
 import {
   css, FONTS, HEADER_BG, HEADER_LINE, Mark, PAGE_BG, PAGE_FG,
@@ -244,30 +244,6 @@ describe('the palette', () => {
           + 'the two things they tell apart are painted the same').not.toBe(set[other])
       }
     }
-  })
-
-  it('leaves the pin\'s halo translucent, in both themes', () => {
-    // The active comment pin wears `box-shadow: 0 0 0 3px var(--accent-ring)`,
-    // and it wears it ON THE MODEL. Opaque, that is a blue disc sitting over
-    // the geometry the pin is pointing at — so the alpha is doing a job here
-    // rather than softening an edge, and it is the only alpha in the palette
-    // that is not a shadow or a floating panel.
-    //
-    // ONE VALUE FOR BOTH THEMES, like the fill it is made of: the ring is
-    // `--accent` spread thin, and `--accent` is one of the two accent roles the
-    // dark set does not lift — the other is `--accent-strong`, its hover — for
-    // the same reason. White on a fill reads the same whatever is behind the
-    // button, so lifting one only makes its label harder to read.
-    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
-      expect(set['--accent-ring'], `no --accent-ring in the ${theme} theme`)
-        .toMatch(/^rgba\(/)
-      const alpha = Number(set['--accent-ring'].split(',').pop().replace(')', '').trim())
-      expect(alpha, `--accent-ring is opaque in the ${theme} theme — the halo now `
-        + 'hides the geometry the pin is pointing at').toBeLessThan(1)
-      expect(alpha).toBeGreaterThan(0)
-    }
-    expect(DARK['--accent-ring'], 'the halo is the accent FILL spread thin, and that '
-      + 'fill is the same in both themes').toBe(LIGHT['--accent-ring'])
   })
 
   it('keeps a chip visible against every surface a chip is laid on', () => {
@@ -1343,99 +1319,48 @@ describe('the shapes the palette is measured for', () => {
     }
   })
 
-  /**
-   * PIN_CSS as text, off the render.
-   *
-   * The one stylesheet this bundle writes, because a pin is placed by the
-   * viewport sixty times a second and cannot be a React element — so it arrives
-   * here as a `<style>` element's only child rather than as a style object.
-   */
-  function pinSheet() {
-    const found = collect(buildPage().render(),
-      (el) => (el.type === 'style' ? el : undefined))
-    expect(found, 'the build page injects no stylesheet, so the pins have no rules')
-      .toHaveLength(1)
-    return String(found[0].props.children)
+  /** The front page's Sign in button as drawn, resting or under the pointer:
+   *  the one element whose click is the form's submit. */
+  function signInButton(hover) {
+    const c = new HammerolaLogin({ ...HammerolaLogin.defaultProps, animate: false })
+    c.state = { ...c.state, hover }
+    const found = collect(c.render(), (el) => (el.props.onClick === c.submit ? el : undefined))
+    expect(found, 'the front page draws no Sign in button').toHaveLength(1)
+    return found[0].props.style
   }
-
-  /** One rule's declarations out of that sheet, by selector. */
-  function pinRule(sheet, selector) {
-    const rule = new RegExp(`${selector.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`).exec(sheet)
-    expect(rule, `PIN_CSS no longer carries a ${selector} rule`).toBeTruthy()
-    return rule[1]
-  }
-
-  it('leaves the active pin\'s halo something the model shows through', () => {
-    // The halo is drawn ON the geometry the pin points at, so what matters is
-    // not which name is spelled in the rule but that the name resolves to a
-    // value with an alpha: an opaque one is a blue disc over the part.
-    const halo = /box-shadow:[^;]*var\(\s*(--[\w-]+)\s*\)/
-      .exec(pinRule(pinSheet(), '.hmr_pin.is_active'))
-    expect(halo, 'the active pin wears no halo from the palette').toBeTruthy()
-    for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
-      expect(set[halo[1]], `the ${theme} theme has no ${halo[1]}`).toBeTruthy()
-      expect(set[halo[1]], `in the ${theme} theme the pin's halo is ${halo[1]}, which is `
-        + 'opaque — a disc of it covers the geometry the pin is pointing at')
-        .toMatch(/^rgba\(/)
-    }
-  })
-
-  it('lifts the picked pin above the ones it overlaps', () => {
-    // NOT DECORATION, WHICH IS WHY IT IS HERE AND NOT ONLY IN THE COMMENT ABOVE
-    // THE RULE. Two comments left on the same part resolve to one anchor — one
-    // catalogue key, one bounding-box centre — so their pins land on the same
-    // screen point and only the one appended last can be clicked. The active
-    // pin's lift is the way out of that stack: clicking either rail row raises
-    // its own pin. Tidying the `z-index` away as a stray declaration during some
-    // later pass over the palette would pass every other case in this file.
-    expect(pinRule(pinSheet(), '.hmr_pin.is_active'),
-      'the picked pin no longer rises above the pins it exactly overlaps, so a '
-      + 'second comment on the same part is unreachable on the model')
-      .toMatch(/z-index:\s*1\b/)
-  })
 
   it('never lifts a filled accent above the label it carries', () => {
     // The dark set lifts the accent inks (#1f7ae0 is too dim as a link on
     // near-black), but `--accent-strong` is a fill under a white label — the
-    // picked pin here, the hovered button on the front page — so lifting it
-    // would make the emphasis state fainter than the resting one.
+    // hovered Sign in button on the front page — so lifting it would make the
+    // emphasis state fainter than the resting one.
     //
-    // Read off the pin rules rather than named here, so what is asserted is
-    // "the emphasis state of a filled accent, whatever it is painted in". The
-    // pin is a proxy for the front page's button, which spends the same pair;
-    // that is checked below.
+    // Read off the button as drawn rather than named here, so what is asserted
+    // is "the emphasis state of a filled accent, whatever it is painted in".
     //
     // The resting floor is 4.2, not 4.5: white on `--accent` is 4.27:1 in both
     // themes, under AA for a label this size. The floor sits just under the
     // current value, pinning it rather than allowing a slide down to 3.
-    const sheet = pinSheet()
-    const resting = pinRule(sheet, '.hmr_pin')
-    const label = inkOf(resting, 'the comment pin')
+    const resting = signInButton(false)
+    const label = inkOf(resting, 'the Sign in button')
     const fills = {
-      resting: fillOf(resting, 'the comment pin'),
-      picked: fillOf(pinRule(sheet, '.hmr_pin.is_active'), 'the picked comment pin'),
+      resting: fillOf(resting, 'the Sign in button'),
+      hovered: fillOf(signInButton(true), 'the hovered Sign in button'),
     }
-    expect(fills.picked, 'a picked pin is filled exactly like a resting one, so '
-      + 'nothing on the model says which comment is open').not.toBe(fills.resting)
-
-    const button = read('../src/HammerolaEntry.jsx')
-    for (const fill of [fills.resting, fills.picked]) {
-      expect(button, `the front page's button no longer spends ${fill}, so it is `
-        + 'no longer the pair measured here and needs a case of its own')
-        .toContain(fill)
-    }
+    expect(fills.hovered, 'a hovered button is filled exactly like a resting one, '
+      + 'so nothing says the press will land on it').not.toBe(fills.resting)
 
     for (const [theme, set] of [['light', LIGHT], ['dark', DARK]]) {
       const reads = (fill) => contrast(set[nameOf(fill)], set[nameOf(label)])
-      const [rest, picked] = [reads(fills.resting), reads(fills.picked)]
-      expect(picked, `in the ${theme} theme the picked pin carries its label at `
-        + `${picked.toFixed(2)}:1 against the resting pin's ${rest.toFixed(2)}:1 — the `
+      const [rest, hovered] = [reads(fills.resting), reads(fills.hovered)]
+      expect(hovered, `in the ${theme} theme the hovered button carries its label at `
+        + `${hovered.toFixed(2)}:1 against the resting one's ${rest.toFixed(2)}:1 — the `
         + 'emphasis state is the fainter of the two, so the signal runs backwards')
         .toBeGreaterThan(rest)
-      expect(picked, `in the ${theme} theme the picked pin's label reads at `
-        + `${picked.toFixed(2)}:1, under the 4.5 a small label needs`)
+      expect(hovered, `in the ${theme} theme the hovered button's label reads at `
+        + `${hovered.toFixed(2)}:1, under the 4.5 a small label needs`)
         .toBeGreaterThanOrEqual(4.5)
-      expect(rest, `in the ${theme} theme the resting pin's label reads at `
+      expect(rest, `in the ${theme} theme the resting button's label reads at `
         + `${rest.toFixed(2)}:1 — it has been 4.27:1 since before this palette, and `
         + 'this floor is here so it cannot quietly drop further').toBeGreaterThanOrEqual(4.2)
     }

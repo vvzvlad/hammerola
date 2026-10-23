@@ -18,9 +18,10 @@
 import {
   EVENT_FACE, EVENT_MEASURE, EVENT_MENU, EVENT_PICK, EVENT_PLACE, emit,
 } from "./events.js";
-import { canvasXY, ndcAt } from "./camera.js";
+import { cameraBasis, canvasXY, ndcAt } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { internals } from "./internals.js";
+import { dot3 } from "./math.js";
 import { measureDistance, measureEntity } from "./measure.js";
 import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
 import {
@@ -183,6 +184,32 @@ export function installTools(vp) {
     });
   };
 
+  /**
+   * The normal of the face under a comment's click, turned to the side the
+   * reader is looking from, or null where the face gives none.
+   *
+   * `faceNormalAt` takes it from a cross product, so its sign is whichever way
+   * the samples happened to wind; an arrow stood along the other sign would come
+   * out of the back of the face, inside the part. So the camera decides, as it
+   * does for the cut in `placeSectionPlane` (which wants the opposite side).
+   * Under the orthographic camera every pixel looks along the one view axis.
+   *
+   * Guarded like `seedCut`: a picker that throws costs the arrow its direction,
+   * not the comment its point.
+   */
+  const facingNormalAt = (g, x, y) => {
+    let found = null;
+    try {
+      found = faceNormalAt(g.picker, x, y);
+    } catch (error) {
+      console.warn("comment normal", error);
+    }
+    const basis = found ? cameraBasis(vp.viewer, g) : null;
+    if (!basis) return null;
+    const n = found.normal;
+    return dot3(n, basis.view) > 0 ? [-n[0], -n[1], -n[2]] : n;
+  };
+
   /** One click of the measure tool. */
   const measureAt = (g, x, y) => {
     const entity = pickEntity(g, x, y);
@@ -308,6 +335,7 @@ export function installTools(vp) {
       if (!entity) return;
       emit(vp, EVENT_PLACE, {
         id: entity.id, name: entity.name, p: entity.point,
+        n: facingNormalAt(g, x, y),
       });
       return;
     }

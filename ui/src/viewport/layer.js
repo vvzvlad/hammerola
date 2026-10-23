@@ -1,8 +1,8 @@
 // Scaffolding for a layer drawn over the canvas: the absolutely-positioned
 // root, one rAF loop that keeps it in step with the moving camera, and the
-// teardown that stops both. The pin overlay (overlay.js) uses it; `scene3d.js`
-// is the counterpart for widgets that live in the scene, where the render
-// places them.
+// teardown that stops both. The measurement label (overlay.js) uses it;
+// `scene3d.js` is the counterpart for widgets that live in the scene, where the
+// render places them.
 //
 // A loop rather than the trackball's `change` event, which fires on camera
 // moves but not on frames redrawn for a live swap, a visibility change or a
