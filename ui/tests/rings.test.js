@@ -527,10 +527,11 @@ describe('what a ring is built out of', () => {
       .toBeGreaterThan(band(s, 2, 'whole', 'ink').renderOrder)
   })
 
-  it('stands in the lowest band, in the one list all three widgets share', () => {
-    // The band is where this widget is drawn among the three in this scene, and
-    // it is the lowest because a contested press goes to the highest band: what
-    // the reader presses must be what they see. `transparent` matters too: three
+  it('stands in the lowest band of the controls, in the one list all four widgets share', () => {
+    // The band is where this widget is drawn among the four in this scene, and
+    // it is the lowest of the controls (only the comment arrows are under it)
+    // because a contested press goes to the highest band: what the reader
+    // presses must be what they see. `transparent` matters too: three
     // sorts into opaque and transparent lists by that flag before any order, so
     // blended rings beside opaque neighbours would be drawn last regardless.
     const s = scene()

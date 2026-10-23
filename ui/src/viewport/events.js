@@ -90,7 +90,7 @@ export const EVENT_PROPOSALTURN = "hmr:proposalturn";
 /** Up: a point on the model was picked as a comment anchor. */
 export const EVENT_PLACE = "hmr:place";
 
-/** Up: one of the pins drawn over the canvas was clicked. */
+/** Up: one of the comment arrows in the scene was pressed (pins.js). */
 export const EVENT_PIN = "hmr:pin";
 
 // The two below are not in the mock-up:

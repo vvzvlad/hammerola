@@ -216,6 +216,22 @@ describe('a comment that was just filed', () => {
     expect(sent.part).toBe('/model/plate')
   })
 
+  it('posts the face normal beside the point', async () => {
+    // What the comment's arrow stands out along once the queue comes back; the
+    // hub keeps it next to `point`.
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({
+      composer: { part: 'plate(2)', partId: '/model/plate', key: 'plate',
+                  p: [1, 2, 3], n: [0, -1, 0], text: 'too thin', photo: null },
+    })
+
+    await c.sendComment()
+
+    const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
+    expect(sent.point).toEqual([1, 2, 3])
+    expect(sent.normal).toEqual([0, -1, 0])
+  })
+
   it('stamps the build on screen, not the one the slot holds when it lands', async () => {
     // THE SHARP ONE, and the reason `published` is a payload field at all. On
     // the local slot `commit` is the constant `dev` for every build it ever
@@ -261,7 +277,7 @@ describe('a comment that was just filed', () => {
   })
 
   it('carries the measurement in the TEXT', async () => {
-    // The hub's comment schema is CLOSED — `validate_payload` keeps seven keys
+    // The hub's comment schema is CLOSED — `validate_payload` keeps eight keys
     // and drops everything else without a word, which is the quietest failure on
     // this page: the field reaches the hub, is discarded, and the sender sees a
     // 201. So everything that has to survive the trip is spliced into `text`,
@@ -607,24 +623,33 @@ describe('the rail', () => {
 // -- what reaches the viewport ------------------------------------------------
 
 describe('the pins', () => {
-  it('uses the stored coordinate on the build it was taken on', () => {
-    const c = page({ feed: [record({ point: [1, 2, 3] })], watch: true })
+  it('uses the stored coordinate and normal on the build they were taken on', () => {
+    const c = page({
+      feed: [record({ point: [1, 2, 3], normal: [0, -1, 0] }),
+             record({ id: 'c2', point: [4, 5, 6] })],
+      watch: true,
+    })
     const seen = listening()
 
     c.sync()
 
+    // The second record predates the field: its arrow comes from above, which
+    // the viewport reads off a null.
     expect(seen[0].pins).toEqual([
-      { id: 'c1', label: '1', p: [1, 2, 3], active: false },
+      { id: 'c1', p: [1, 2, 3], n: [0, -1, 0], active: false },
+      { id: 'c2', p: [4, 5, 6], n: null, active: false },
     ])
   })
 
   it('asks the viewport where the part IS on any other build', () => {
     // The coordinate was measured on geometry that has been rebuilt since, so
     // the pin goes where the key is drawn today — which only the viewport can
-    // answer.
+    // answer. The normal goes with the coordinate it was taken at: the part's
+    // centre has no face, so the arrow comes from above.
     const partPoint = vi.fn(() => [7, 8, 9])
     const c = page({
-      feed: [record({ commit: OLDER, point: [1, 2, 3] })], partPoint, watch: true,
+      feed: [record({ commit: OLDER, point: [1, 2, 3], normal: [0, -1, 0] })],
+      partPoint, watch: true,
     })
     const seen = listening()
 
@@ -632,7 +657,7 @@ describe('the pins', () => {
 
     expect(partPoint).toHaveBeenCalledWith('/model/plate')
     expect(seen[0].pins).toEqual([
-      { id: 'c1', label: '1', p: [7, 8, 9], active: false },
+      { id: 'c1', p: [7, 8, 9], n: null, active: false },
     ])
   })
 
@@ -652,10 +677,11 @@ describe('the pins', () => {
     expect(seen[0].pins).toEqual([])
   })
 
-  it('keeps the draft\'s own pin beside the queue\'s', () => {
+  it('keeps the draft\'s own pin beside the queue\'s, standing on its normal', () => {
     const c = page({
       feed: [record({ point: [1, 2, 3] })],
-      composer: { part: 'plate(2)', partId: '/model/plate', p: [4, 5, 6], text: '' },
+      composer: { part: 'plate(2)', partId: '/model/plate', p: [4, 5, 6],
+                  n: [1, 0, 0], text: '' },
       watch: true,
     })
     const seen = listening()
@@ -663,9 +689,11 @@ describe('the pins', () => {
     c.sync()
 
     expect(seen[0].pins.map((pin) => pin.id)).toEqual(['c1', 'draft'])
+    expect(seen[0].pins[1]).toEqual(
+      { id: 'draft', p: [4, 5, 6], n: [1, 0, 0], active: true })
   })
 
-  it('draws no pin for a processed comment, and the next keeps its rail number', () => {
+  it('draws no pin for a processed comment', () => {
     const c = page({
       feed: [record({ id: 'c1', point: [1, 2, 3], status: 'resolved',
                       resolved: '2026-08-27T20:00:00Z' }),
@@ -677,7 +705,7 @@ describe('the pins', () => {
     c.sync()
 
     expect(seen[0].pins).toEqual([
-      { id: 'c2', label: '2', p: [4, 5, 6], active: false },
+      { id: 'c2', p: [4, 5, 6], n: null, active: false },
     ])
   })
 })

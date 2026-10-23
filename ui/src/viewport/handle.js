@@ -9,8 +9,9 @@
 // is no screen-space projection maths here. `scene3d.js` carries the shared
 // half.
 //
-// A module of its own, not part of overlay.js: what it draws comes from the
-// SECTION rather than `state.pins`, and it carries a live drag.
+// A module of its own, not part of pins.js, the other widget standing at a place
+// on the model: what it draws comes from the SECTION rather than `state.pins`,
+// and it carries a live drag.
 //
 // It also TURNS the plane, with two rings round the same arrow. They are
 // children of the arrow's group rather than a separate widget: they share its

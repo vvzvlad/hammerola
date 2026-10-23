@@ -334,10 +334,10 @@ def test_the_adapter_is_imported_for_its_side_effect():
 def test_every_class_the_viewport_sets_is_styled_here():
     """The viewport positions its elements; this stylesheet is what makes them visible.
 
-    A pin is an empty `<div>` with a class on it. If the interface stops defining
-    that class the pin is still created, still positioned, still clickable — and
-    zero pixels across, which reads as "comments are not showing" rather than as
-    a stylesheet that lost a rule.
+    The measurement label is a `<div>` with a class on it. If the interface stops
+    defining that class the label is still created and still positioned — and
+    drawn in the browser's defaults, which reads as a broken measurement rather
+    than as a stylesheet that lost a rule.
     """
     styled = read(COMPONENT)
     wanted = {name for path in ADAPTER_FILES
@@ -879,7 +879,7 @@ def test_the_build_page_spends_the_palette_and_writes_no_colour_of_its_own():
     """Not one value on the build page — every colour is a role in tokens.css.
 
     The same assertion as the front page's, over `css()` strings and the
-    `PIN_CSS` block. Many shades were collapsed onto few roles, so a near-miss
+    `VIEWPORT_CSS` block. Many shades were collapsed onto few roles, so a near-miss
     shade tempts a hex that would break the theme for one element; the answer is
     a role in tokens.css. Comments are stripped.
 
@@ -943,7 +943,7 @@ def declarations(source):
 
 
 def test_the_accents_line_roles_are_never_spent_as_a_fill():
-    """The accent's line roles (`--accent-line`, `--accent-ring`) never fill a surface.
+    """The accent's line role (`--accent-line`) never fills a surface.
 
     A role spent outside its name couples unrelated restyles. The accent owns
     five surfaces — `--accent`, `--accent-strong`, `--accent-muted`,
@@ -959,7 +959,7 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
 
     Declarations are found by `declarations` above.
     """
-    role = re.compile(r"var\(\s*--accent-(?:line|ring)\s*\)")
+    role = re.compile(r"var\(\s*--accent-line\s*\)")
     offenders = []
     for path in ALL_UI_FILES:
         flat, pieces = declarations(strip_comments(read(path)))
@@ -981,10 +981,10 @@ def test_the_accents_line_roles_are_never_spent_as_a_fill():
         f"a line role is filling a surface at {offenders}. The accent has five "
         f"surfaces of its own — --accent, --accent-strong, --accent-muted, "
         f"--accent-bg, --accent-bg-soft — and one of them is the one meant here")
-    # The sweep has to be looking at something: these roles ARE used, as lines.
-    used = sum(len(re.findall(r"var\(\s*--accent-(?:line|ring)\s*\)",
+    # The sweep has to be looking at something: the role IS used, as a line.
+    used = sum(len(re.findall(r"var\(\s*--accent-line\s*\)",
                               strip_comments(read(path)))) for path in ALL_UI_FILES)
-    assert used, "no --accent-line or --accent-ring anywhere — this check sweeps nothing"
+    assert used, "no --accent-line anywhere — this check sweeps nothing"
 
 
 def test_every_localstorage_access_is_guarded():

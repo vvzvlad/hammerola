@@ -144,7 +144,10 @@ function element(state = {}, viewer = fakeViewer()) {
   // would let a test assert the right thing about the wrong absence.
   vp.payload = null
   vp.overlayParts = []
-  vp.overlay = { setPins: vi.fn(), refresh: vi.fn() }
+  vp.overlay = { refresh: vi.fn() }
+  // The comment arrows: a widget in the scene like the three below, handed the
+  // pin list on every pass and carried across a scene the library disposes.
+  vp.pins = { setPins: vi.fn(), attach: vi.fn(), detach: vi.fn() }
   // The section handle draws itself from `sectionSeed`, placed by the library's
   // own render pass; here it is a stub for the same reason the overlay is one.
   // What `reconcile` owes it is the frame a cut appearing needs, what `show`
@@ -211,7 +214,7 @@ describe('reconcile', () => {
     vp.viewer = null
     vp.reconcile()
     expect(applyHidden).not.toHaveBeenCalled()
-    expect(vp.overlay.setPins).not.toHaveBeenCalled()
+    expect(vp.pins.setPins).not.toHaveBeenCalled()
   })
 
   it('applies everything on the first pass, because nothing is applied yet', () => {
@@ -415,14 +418,14 @@ describe('reconcile', () => {
     })
   })
 
-  it('hands the pins to the overlay on every pass', () => {
-    // No diffing here on purpose: the overlay redraws from scratch and the pins
-    // move with the camera, so there is no state to compare against.
+  it('hands the pins to the comment arrows on every pass', () => {
+    // No diffing here on purpose: the arrows reconcile against the list
+    // themselves, as the other widgets answer `refresh` on every pass.
     const vp = element({ pins: [{ id: 1 }] })
     vp.reconcile()
     vp.reconcile()
-    expect(vp.overlay.setPins).toHaveBeenCalledTimes(2)
-    expect(vp.overlay.setPins).toHaveBeenLastCalledWith(vp.state.pins)
+    expect(vp.pins.setPins).toHaveBeenCalledTimes(2)
+    expect(vp.pins.setPins).toHaveBeenLastCalledWith(vp.state.pins)
   })
 
   it('asks for a frame for the section handle on every pass', () => {
@@ -1590,6 +1593,25 @@ describe('the overlay laid over the model', () => {
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[1])
   })
 
+  it('takes the comment arrows out of the scene before that scene is disposed', async () => {
+    // The grip's ordering, for the grip's reason: the arrows' shapes and inks
+    // are built once and kept, so a `clear()` that found them in the scene
+    // would free what nothing builds again, and every arrow after the second
+    // render would be drawn from freed geometry.
+    const { vp, viewer } = staging()
+    await vp.show(model(), { view: 'a', token: 0 })
+    expect(vp.pins.detach, 'nothing to leave on a first render').not.toHaveBeenCalled()
+
+    await vp.show(model(), { view: 'a', token: 0 })
+
+    expect(vp.pins.detach).toHaveBeenCalledTimes(1)
+    expect(vp.pins.detach.mock.invocationCallOrder[0])
+      .toBeLessThan(viewer.clear.mock.invocationCallOrder[0])
+    expect(vp.pins.attach).toHaveBeenCalledTimes(2)
+    expect(vp.pins.attach.mock.invocationCallOrder[1])
+      .toBeGreaterThan(viewer.render.mock.invocationCallOrder[1])
+  })
+
   it('does not take the load token off a fetch that is already on its way', async () => {
     // A bumped token would make an overlay edit typed during a fetch cancel the
     // build on its way to the screen — `show` refuses any token but the newest,
@@ -1656,9 +1678,9 @@ describe('the widgets connectedCallback puts on the page', () => {
     const cube = cubeIn(el)
     expect(cube).toBeTruthy()
     expect(cube.querySelector('svg')).toBeTruthy()
-    // AFTER the overlay, so a cell stays clickable where a pin happens to be
-    // over the same corner: the overlay's layer covers the whole canvas, and the
-    // later sibling is the one that gets the press.
+    // AFTER the overlay: the overlay's layer covers the whole canvas, and the
+    // later sibling is painted on top, so a measurement label never covers a
+    // cell.
     const kids = [...el.children]
     expect(kids.indexOf(cube))
       .toBeGreaterThan(kids.findIndex((c) => c.className === 'hmr_overlay'))
@@ -1686,7 +1708,8 @@ describe('the widgets connectedCallback puts on the page', () => {
       expect(typeof el.handle[name], name).toBe('function')
     }
     // And no root of its own: what `connectedCallback` appends is the container
-    // the library renders into plus TWO layers — the pins and the cube.
+    // the library renders into plus TWO layers — the measurement label's and the
+    // cube.
     expect([...el.children]).toHaveLength(3)
   })
 
@@ -1697,6 +1720,15 @@ describe('the widgets connectedCallback puts on the page', () => {
     // to see that in, so the call itself is what this holds.
     const el = mount()
     const gone = vi.spyOn(el.handle, 'destroy')
+    el.destroy()
+    expect(gone).toHaveBeenCalledTimes(1)
+  })
+
+  it('takes the comment arrows down too when the element leaves the document', () => {
+    // The same two window listeners every scene widget keeps, and the shapes
+    // and inks the arrows share, which nothing else frees.
+    const el = mount()
+    const gone = vi.spyOn(el.pins, 'destroy')
     el.destroy()
     expect(gone).toHaveBeenCalledTimes(1)
   })

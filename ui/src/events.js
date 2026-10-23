@@ -53,8 +53,10 @@ import {
  *            `turn` is how far this gesture took it, to be added to the body's
  *            own `rot`, because the document is where a body's pose lives and
  *            the viewport has never read it
- *   PLACE    {id, name, p: [x, y, z]}       -- a point was picked for a comment
- *   PIN      {id}                           -- a comment pin was clicked
+ *   PLACE    {id, name, p: [x, y, z], n: [x, y, z] | null}
+ *                                           -- a point was picked for a comment;
+ *            `n` is the face normal there, turned toward the camera
+ *   PIN      {id}                           -- a comment arrow was pressed
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering
  *   ERROR    {stage, message}  -- something asked for did not happen
  *   TOOL     {tool, held, escape}

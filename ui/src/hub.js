@@ -780,8 +780,8 @@ export function indexTree(root) {
  * Every catalogue key in a tree, mapped to the row that draws it.
  *
  * First row in tree order wins: `runsOf` collapses adjacent siblings only, so a
- * part placed in two groups draws as two rows. A comment gets one pin, because
- * the rail numbers its rows against the pins on the canvas.
+ * part placed in two groups draws as two rows. A comment gets one arrow, because
+ * pressing it opens one row in the rail.
  */
 export function rowsByKey(tree) {
   const rows = new Map();

@@ -27,7 +27,7 @@ import * as THREE from '../../static/_v/three.module.js'
 
 import { internals } from '../src/viewport/internals.js'
 import {
-  GIZMO_ORDER, HANDLE_ORDER, RINGS_ORDER, createScene3D, joinPresses,
+  GIZMO_ORDER, HANDLE_ORDER, PINS_ORDER, RINGS_ORDER, createScene3D, joinPresses,
   widgetMaterial,
 } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
@@ -495,13 +495,13 @@ describe('what a handle promises the rest of the scene', () => {
     // The library puts its own edges and translucent faces at 999 and its
     // highlight points at 1000, and the section contour takes that same 1000
     // (outline.js). A handle has to be above all of them or it is drawn into the
-    // part it is a handle for — and WHICH of the three bands it takes is the
-    // caller's to say, because being drawn over the other two is a fact about
-    // the set of widgets rather than about this scaffolding.
+    // part it is a handle for — and WHICH of the four bands it takes is the
+    // caller's to say, because being drawn over the others is a fact about the
+    // set of widgets rather than about this scaffolding.
     const s = stage({ order: GIZMO_ORDER })
     const group = drawn(s)
     expect(group.renderOrder).toBe(GIZMO_ORDER)
-    for (const band of [RINGS_ORDER, HANDLE_ORDER, GIZMO_ORDER]) {
+    for (const band of [PINS_ORDER, RINGS_ORDER, HANDLE_ORDER, GIZMO_ORDER]) {
       expect(band, `${band}`).toBeGreaterThan(1000)
     }
   })

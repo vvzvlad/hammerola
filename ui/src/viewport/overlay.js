@@ -1,31 +1,29 @@
-// The things drawn OVER the canvas at a place on the model: comment pins, and
-// the label on a finished measurement.
+// The thing drawn OVER the canvas at a place on the model: the label on a
+// finished measurement. (Comments are arrows in the scene, pins.js.)
 //
-// They live in the viewport rather than in React because their position is a
+// It lives in the viewport rather than in React because its position is a
 // projection of a world point through a camera that moves sixty times a second,
 // and routing that through a state update per frame would make the interface
-// re-render on every mouse move. What crosses the boundary instead is the DATA
-// (`state.pins`) and the CLICK (`hmr:pin`).
+// re-render on every mouse move.
 //
-// Only the POSITION is set here. Everything about how a pin looks is a class
-// name the interface's own stylesheet owns — `.hmr_pin`, plus `.is_active` —
+// Only the POSITION is set here. Everything about how the label looks is a
+// class name the interface's own stylesheet owns — `.hmr_measure_label` —
 // because the mock-up's colours are the designer's business and baking them in
 // would mean two places to change them.
 
-import { EVENT_PIN, emit } from "./events.js";
 import { spot } from "./camera.js";
 import { internals } from "./internals.js";
 import { createLayer } from "./layer.js";
 import { finite3 } from "./math.js";
 
 export function createOverlay(vp) {
-  // The root, the rAF loop and the teardown are `layer.js`'s, which three other
-  // layers are built out of as well. `wanted` and `place` are the declarations
-  // below, so the root exists before anything is put on it.
+  // The root, the rAF loop and the teardown are `layer.js`'s. `wanted` and
+  // `place` are the declarations below, so the root exists before anything is
+  // put on it.
   const layer = createLayer({ wanted, place });
   const { root } = layer;
   // THE ONE LAYER WITH A CLASS NAME, for the reason at the head of this file:
-  // the pins' looks are the designer's and the stylesheet owns them.
+  // the label's looks are the designer's and the stylesheet owns them.
   root.className = "hmr_overlay";
 
   const label = document.createElement("div");
@@ -34,19 +32,15 @@ export function createOverlay(vp) {
     + "transform:translate(-50%,-50%);white-space:nowrap;pointer-events:none";
   root.appendChild(label);
 
-  const pins = new Map();
-
-  /** Whether there is anything to place at all — a pin, or a measurement. */
+  /** Whether there is anything to place at all: a measurement. */
   function wanted() {
-    return !!(pins.size || vp.measureLabel);
+    return !!vp.measureLabel;
   }
 
   /** Put one absolutely-positioned child at a world point, or hide it.
    *
-   * THE TWO RECTS ARE PASSED IN rather than measured here, and `spot` in
-   * camera.js says why: `place` calls this in a loop and every iteration WRITES
-   * styles, so a `getBoundingClientRect()` at the top of the next one forces
-   * the browser to flush the layout the previous one invalidated.
+   * The two rects are passed in rather than measured here, read by `place`
+   * before anything is written (see `spot` in camera.js).
    */
   const put = (el, point, g, rect, box) => {
     if (!g || !finite3(point)) {
@@ -67,13 +61,12 @@ export function createOverlay(vp) {
   };
 
   function place() {
-    // READ EVERYTHING FIRST, THEN WRITE — one measurement per frame instead of
-    // one per pin. Nothing is read when the library is not there: `put` hides
-    // its element without looking at a rect, so the rects are not taken either.
+    // READ FIRST, THEN WRITE. Nothing is read when the library is not there:
+    // `put` hides its element without looking at a rect, so the rects are not
+    // taken either.
     const g = internals(vp.viewer);
     const rect = g ? g.canvas.getBoundingClientRect() : null;
     const box = g ? vp.box.getBoundingClientRect() : null;
-    for (const [, entry] of pins) put(entry.el, entry.point, g, rect, box);
     if (vp.measureLabel) {
       label.textContent = vp.measureLabel.text;
       put(label, vp.measureLabel.point, g, rect, box);
@@ -82,50 +75,9 @@ export function createOverlay(vp) {
     }
   }
 
-  /** Reconcile the pin elements against `state.pins`. */
-  const setPins = (list) => {
-    const wanted = Array.isArray(list) ? list : [];
-    const seen = new Set();
-    for (const pin of wanted) {
-      if (!pin || pin.id === undefined || !finite3(pin.p)) continue;
-      const key = String(pin.id);
-      seen.add(key);
-      let entry = pins.get(key);
-      if (!entry) {
-        const el = document.createElement("button");
-        el.type = "button";
-        el.className = "hmr_pin";
-        el.style.cssText = "position:absolute;left:0;top:0;pointer-events:auto";
-        // The press must not reach the canvas, or clicking a pin would also
-        // start a rotation under it.
-        el.addEventListener("pointerdown", (event) => event.stopPropagation());
-        el.addEventListener("click", (event) => {
-          event.stopPropagation();
-          emit(vp, EVENT_PIN, { id: pin.id });
-        });
-        root.appendChild(el);
-        entry = { el, point: pin.p };
-        pins.set(key, entry);
-      }
-      entry.point = pin.p;
-      entry.el.textContent = pin.label === undefined ? "" : String(pin.label);
-      entry.el.classList.toggle("is_active", !!pin.active);
-    }
-    for (const [key, entry] of [...pins]) {
-      if (seen.has(key)) continue;
-      entry.el.remove();
-      pins.delete(key);
-    }
-    layer.refresh();
-  };
-
   return {
     root,
-    setPins,
     refresh: layer.refresh,
-    destroy() {
-      pins.clear();
-      layer.destroy();
-    },
+    destroy: layer.destroy,
   };
 }

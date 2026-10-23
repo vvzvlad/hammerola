@@ -746,6 +746,16 @@ describe('the part a comment is opened against', () => {
     expect(c.state.composer.key).toBe('pin')
   })
 
+  it('keeps the face normal the point was placed with', () => {
+    // The direction the draft's arrow stands out along, and what `sendComment`
+    // posts as `normal`.
+    const c = mounted(THREE_PINS)
+    window.dispatchEvent(new CustomEvent(PLACE,
+      { detail: { id: '/model/pin(2)', name: 'pin(2)', p: [1, 2, 3], n: [0, 0, 1] } }))
+    expect(c.state.composer.p).toEqual([1, 2, 3])
+    expect(c.state.composer.n).toEqual([0, 0, 1])
+  })
+
   it('falls back to the placed name for a path no row claims', () => {
     // A point placed before the tree landed, which is the case every lookup on
     // this side answers by keeping what it was handed.

@@ -16,8 +16,8 @@ export function feedView(s, deps) {
   // -- the project's comment queue, as `loadFeed` fetched it
   //
   // The hub answers with the project's queue, oldest first (SPEC 7A.2), and the
-  // row number is the position in it — the same number `sync` writes on the
-  // pin, so the badge on the model and the badge in the rail name the same item.
+  // row number is the position in it. The arrow on the model carries no number:
+  // pressing it opens its row here.
   //
   // EVERY ROW SAYS WHERE IT HANGS, in words, because most of them cannot be
   // pointed at: a comment left on another revision follows its catalogue key

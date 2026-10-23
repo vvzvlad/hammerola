@@ -551,8 +551,8 @@ export function createRings(vp) {
     const g = internals(vp.viewer);
     if (!drag) {
       // Which knob the cursor is on, if a press could land there: `onDown`
-      // takes presses only off the canvas, so a knob under the toolbar, a pin
-      // or the view cube is not lit.
+      // takes presses only off the canvas, so a knob under the toolbar or the
+      // view cube is not lit.
       const k = g && event.target === g.canvas ? aimed(g, event) : -1;
       if (k === lit) return;
       lit = k;

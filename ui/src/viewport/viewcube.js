@@ -472,10 +472,9 @@ export function createViewCube(vp) {
 
   // A safeguard only. The cube's root is a sibling of `vp.box`, and every press
   // listener (tools.js, orbit.js, live.js, wheel.js) is on `vp.box` or `window`,
-  // so a cell press never traverses them; overlay.js listens on the pin buttons.
-  // tools.js, the capture-phase one, also checks `event.target !== g.canvas`,
-  // which is what actually keeps it safe. This matters only if the cube is ever
-  // reparented under `vp.box`.
+  // so a cell press never traverses them. tools.js, the capture-phase one, also
+  // checks `event.target !== g.canvas`, which is what actually keeps it safe.
+  // This matters only if the cube is ever reparented under `vp.box`.
   svg.addEventListener("pointerdown", (event) => {
     if (cellAt(event.target)) event.stopPropagation();
   });
@@ -588,7 +587,7 @@ export function createViewCube(vp) {
   /**
    * One rAF loop that never stops, with four float comparisons per frame.
    *
-   * Unlike the overlay (whose loop stops when there are no pins), the cube
+   * Unlike the overlay (whose loop stops when there is no measurement), the cube
    * always has something to draw. The loop is cheap; the DOM is what costs, so
    * elements are built once and a moving camera costs attribute writes. The
    * browser suspends rAF for hidden tabs.
