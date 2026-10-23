@@ -435,7 +435,7 @@ export function chromeView(s, props, deps) {
       // while a document is open is a request to see the model.
       onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
     })),
-    // The documents below the views and a rule (viewlist.jsx): a row each, two
+    // The documents below the views (viewlist.jsx): a row each, two
     // for a KiCad design, its schematic and its board. Choosing one lays it
     // over the model (`docOpen`), which stays mounted underneath with its
     // camera, cut and hidden parts; `docSide` is the KiCad side on screen,

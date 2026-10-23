@@ -1,6 +1,6 @@
 // The list of views at the bottom of a page: the button that names what is on
-// screen, and the card of rows it opens upwards — the views a model declares, a
-// rule, and the build's documents. Both pages draw it with this, so it is one
+// screen, and the card of rows it opens upwards — the views a model declares,
+// then the build's documents. Both pages draw it with this, so it is one
 // list and one look: the model's page (HammerolaViewer.jsx, its values from
 // chromeview.js) and the page of a build with no model (DocShell.jsx), which
 // has documents only.
@@ -97,10 +97,9 @@ export const viewMenuStyle = (open, alone = false) => 'position:absolute;'
   + (open ? 'flex' : 'none');
 
 export const VIEW_LIST = 'flex:1 1 auto;min-height:0;overflow:auto';
-// The rule and the documents sit UNDER the scroll of the views, so a model with
-// twelve views does not push them out of sight. Four rows and the top of a
-// fifth: a longer list shows that it goes on, and scrolls on its own.
-export const DOC_RULE = 'flex:none;height:1px;margin:6px 0;background:var(--line-soft)';
+// The documents sit UNDER the scroll of the views, so a model with twelve views
+// does not push them out of sight. Four rows and the top of a fifth: a longer
+// list shows that it goes on, and scrolls on its own.
 export const DOC_LIST = 'flex:none;max-height:132px;overflow:auto';
 // A document's name and its hint share a row of a narrow menu: the hint
 // (`pdf · 4.7 MB`) stays on one line and the name wraps.
@@ -124,9 +123,8 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
 
 /**
  * The button and its card, as elements. `views` and `documents` are rows
- * (`{ key, label, hint, rowStyle, onClick }`); the rule between them is drawn
- * only where there are both. `alone` says the button is the bar's only
- * control. `onToggle` must stop the click: the pages shut their menus on a
+ * (`{ key, label, hint, rowStyle, onClick }`), the documents under the views.
+ * `alone` says the button is the bar's only control. `onToggle` must stop the click: the pages shut their menus on a
  * click that reaches the root. Pure.
  *
  * The wrapper is `position:relative` so that the card is anchored to the
@@ -152,7 +150,6 @@ export function viewList({ label, open, onToggle, views = [], documents = [], al
             ))}
           </div>
         )}
-        {views.length > 0 && documents.length > 0 && <div style={css(DOC_RULE)} />}
         {documents.length > 0 && (
           <div style={css(DOC_LIST)}>
             {documents.map((t) => (

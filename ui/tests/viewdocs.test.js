@@ -29,7 +29,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
 import { VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
-import { DOC_LIST, DOC_RULE, VIEW_LIST, viewMenuStyle } from '../src/viewlist.jsx'
+import { DOC_LIST, VIEW_LIST, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -169,18 +169,16 @@ describe('the documents in the list of views', () => {
     const [menu] = drawnAs(tree, viewMenuStyle(true))
     const [views] = drawnAs(tree, VIEW_LIST)
     const [docs] = drawnAs(tree, DOC_LIST)
-    // The card holds the scroll of the views, the rule and the documents, in
-    // that order, and scrolls none of them itself.
-    expect(menu.props.children.filter(Boolean)).toEqual(
-      [views, drawnAs(tree, DOC_RULE)[0], docs])
+    // The card holds the scroll of the views and the documents, in that order,
+    // and scrolls none of them itself.
+    expect(menu.props.children.filter(Boolean)).toEqual([views, docs])
     expect(css(viewMenuStyle(true))).toMatchObject({ display: 'flex', flexDirection: 'column', maxHeight: '308px' })
     expect(css(viewMenuStyle(true)).overflow).toBeUndefined()
     expect(css(VIEW_LIST)).toMatchObject({ overflow: 'auto', minHeight: '0', flex: '1 1 auto' })
     expect(texts(views)).toContain('view 11')
     expect(texts(views)).not.toContain('docs/cut-list.md')
     // The documents keep their height and scroll on their own past four rows.
-    for (const style of [DOC_RULE, DOC_LIST]) expect(css(style).flex).toBe('none')
-    expect(css(DOC_LIST)).toMatchObject({ maxHeight: '132px', overflow: 'auto' })
+    expect(css(DOC_LIST)).toMatchObject({ flex: 'none', maxHeight: '132px', overflow: 'auto' })
     expect(texts(docs)).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
   })
 
