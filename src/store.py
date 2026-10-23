@@ -5,6 +5,13 @@ age ceiling (SPEC 5.3, 7.3). Every build URL is served with a year of
 `immutable`, so a pasted link resolves for as long as the volume does; the
 volume grows monotonically, and running out of space is manual work.
 
+It grows by what changed rather than by what was pushed: after every publish
+`_dedupe` makes each file of a project's builds with the same sha256 a hard link
+to one copy, so a part that did not change between revisions is one file on
+disk. That is safe only because nothing writes into a published file in
+place — `_restate_message` replaces meta.json by rename, and the files the hub
+writes into a build itself (meta.json and the dot files) are never linked.
+
 Layout under DATA_DIR (SPEC 3, 7.2). Everything here is runtime state and lives on
 the docker volume; templates and viewer assets deliberately live outside it,
 because the volume would shadow them.
@@ -154,6 +161,11 @@ SITE_INDEX_FILE = "index.json"
 # Dot-prefixed: the file server refuses to serve dot entries.
 PAYLOAD_DIGEST_FILE = ".payload.sha256"
 
+# `{relative path: sha256}` of the files a build ships, written beside it at
+# publication so `_dedupe` finds identical files without reading them again.
+# Dot-prefixed for the reason the digest file above is.
+FILE_DIGESTS_FILE = ".files.sha256"
+
 # The store of pushed SOURCES, one directory per revision, named by the digest of
 # what was pushed. See the module docstring for why it is here and not inside the
 # build directory. Not dot-prefixed and it does not need to be: nothing serves
@@ -226,9 +238,10 @@ UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTE
 TRASH_PREFIX = ".trash-"
 # Any atomic write this module makes, for as long as it is not yet renamed into
 # place — a rule rather than a list, because naming three of them invites the
-# fourth to be forgotten. All of them land where the sweep below looks; the one
-# that has to ask for it is `_restate_message`, whose target lives in a build
-# directory the sweep does not walk.
+# fourth to be forgotten. All of them land where the sweep below looks; the ones
+# that have to ask for it are `_restate_message` and `_file_digests`, whose
+# targets live in a build directory the sweep does not walk, and `_dedupe`,
+# which makes its temporary link in the project directory for the same reason.
 JSON_TMP_PREFIX = ".wip-"
 # One pushed SOURCE tree, from the moment it is unpacked until its build ends.
 # At the root and not inside the project directory, and that is deliberate: it is
@@ -701,8 +714,9 @@ class Store:
                 if meta.get("message") == message:
                     return
                 meta["message"] = message
-                # THE TEMPORARY GOES ONE LEVEL UP, into `<pid>/`: the only
-                # target in this module that sits where the sweep cannot reach.
+                # THE TEMPORARY GOES ONE LEVEL UP, into `<pid>/`: the target
+                # sits inside a build, where the sweep cannot reach
+                # (`_file_digests` writes there too, the same way).
                 # `_atomic_write_json` explains the parameter, and
                 # `test_a_restate_writes_its_temporary_where_the_startup_sweep_looks`
                 # holds it.
@@ -815,6 +829,9 @@ class Store:
                 self.clear_draft_job(pid)
                 self._switch_latest(pid)
                 self._write_builds_json(pid)
+                # Last: after the mirror, so the slot's fresh copy is linked
+                # too, and inside this guard, because linking only saves space.
+                self._dedupe(pid)
             except Exception:
                 logger.exception(
                     f"publish {pid}/{commit}: the build is published, but the "
@@ -883,10 +900,12 @@ class Store:
                 # title, so an earlier rename has been answered.
                 self.clear_title(pid)
                 self._write_builds_json(pid)
+                self._dedupe(pid)
             except Exception:
                 logger.exception(
                     f"publish {pid}/{DEV_LINK}: the slot is published, but the "
-                    f"build picker was not rewritten")
+                    f"bookkeeping after it did not finish; the next push "
+                    f"redoes it")
 
         # The site index too, and this is the one thing a local push changes
         # about the front page. The card still describes the newest COMMIT and
@@ -1052,6 +1071,9 @@ class Store:
         """
         tmp = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
         try:
+            # A copy and not hard links: the two writes below go into these
+            # files in place, and through a link they would rewrite the
+            # revision. `_dedupe` links the rest once the slot is in place.
             shutil.copytree(final, tmp)
             (tmp / BUILD_META_FILE).write_text(
                 json.dumps(dict(meta, commit=DEV_LINK, dev=True, job=job),
@@ -1068,6 +1090,90 @@ class Store:
             logger.exception(
                 f"publish {pid}/{final.name}: the revision is published, but "
                 f"the {DEV_LINK} slot was not updated to match it")
+
+    # -- one file per content ----------------------------------------------
+    def _dedupe(self, pid: str) -> int:
+        """Hard-link identical files across one project's builds. -> files linked.
+
+        Every build directory of the project, the `dev` slot included, is
+        walked in name order with the sha256 of each file it ships
+        (`_file_digests`), and a file whose content was already seen is
+        replaced by a hard link to the first copy in that order — which may be
+        the build just published, the others then relinked to it. Run after
+        every publish under the project lock, which every writer of the
+        project's directories holds; another process running this without that
+        lock could link a revision's file to a slot that was swapped meanwhile.
+
+        Within one project only: across projects the live volume held no
+        identical file, and this scope keeps the whole walk under the one lock
+        every writer of the project already takes.
+
+        The replacement is a link under a temporary name renamed over the file,
+        so a reader opens the old inode or the new one, both with the same
+        bytes, and never finds the name missing. The temporary sits in the
+        project directory, where `_sweep_leftovers` collects one a SIGKILL left.
+
+        A file that will not link is logged and skipped: the build is published
+        either way, and the next publish of the project tries again.
+        """
+        pdir = self.projects_dir / pid
+        first: dict[str, Path] = {}
+        linked = 0
+        for build in sorted(pdir.iterdir()):
+            if (build.name.startswith(".") or build.is_symlink()
+                    or not build.is_dir()):
+                continue
+            for name, sha in self._file_digests(pid, build).items():
+                path = build / name
+                seen = first.setdefault(sha, path)
+                if seen is path:
+                    continue
+                tmp = pdir / f"{JSON_TMP_PREFIX}{uuid.uuid4().hex}"
+                try:
+                    if os.path.samefile(seen, path):
+                        continue
+                    os.link(seen, tmp)
+                    os.rename(tmp, path)
+                except OSError as error:
+                    logger.warning(f"dedupe {pid}: could not link {path} to "
+                                   f"{seen}: {error}")
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    continue
+                linked += 1
+        if linked:
+            logger.info(f"dedupe {pid}: {linked} files linked")
+        return linked
+
+    def _file_digests(self, pid: str, build: Path) -> dict:
+        """`{relative path: sha256}` of one build directory, for `_dedupe`.
+
+        Read off the record publication writes (`FILE_DIGESTS_FILE`). A build
+        published before that record existed has none, so its files are hashed
+        here once and the record written: every regular file outside a dot
+        entry, less the ones the hub writes itself (`_linkable`).
+        """
+        record = build / FILE_DIGESTS_FILE
+        try:
+            digests = json.loads(record.read_text(encoding="utf-8"))
+            if isinstance(digests, dict):
+                return digests
+        except (OSError, ValueError):
+            pass
+        names = []
+        for path in sorted(build.rglob("*")):
+            relative = path.relative_to(build)
+            if (path.is_file() and not path.is_symlink()
+                    and not any(part.startswith(".") for part in relative.parts)):
+                names.append(str(relative))
+        digests = _linkable(_hash_output(build, names))
+        # The temporary in the project directory, for the reason
+        # `_restate_message` gives: the sweep never walks a build directory.
+        atomic_write_bytes(record, json.dumps(digests).encode("utf-8"),
+                           tmp_dir=self.projects_dir / pid)
+        return digests
 
     # -- the code of a revision --------------------------------------------
     def source_archive(self, revision: str) -> Path:
@@ -1180,6 +1286,8 @@ class Store:
         (staging / BUILD_META_FILE).write_text(
             json.dumps(meta, indent=1), encoding="utf-8")
         (staging / PAYLOAD_DIGEST_FILE).write_text(digest, encoding="utf-8")
+        (staging / FILE_DIGESTS_FILE).write_text(
+            json.dumps(_linkable(files)), encoding="utf-8")
         return meta
 
     @staticmethod
@@ -1809,6 +1917,18 @@ def _hash_output(directory: Path, names) -> dict:
     return files
 
 
+def _linkable(files: dict) -> dict:
+    """The part of a `_hash_output` mapping `_dedupe` may link.
+
+    Less the files the hub writes into a build itself (`render.GENERATED_FILES`):
+    their hash is taken before the hub rewrites them, so it does not describe
+    what ends up on disk. Two builds whose own meta.json matched would otherwise
+    share one meta.json naming one of the two commits.
+    """
+    return {name: sha for name, sha in files.items()
+            if name not in render.GENERATED_FILES}
+
+
 def _read_digest(build_dir: Path) -> str | None:
     """The payload digest of one build directory, or None if there is not one.
 
@@ -1828,7 +1948,7 @@ def _atomic_write_json(path: Path, payload, *, tmp_dir: Path = None) -> None:
 
     `tmp_dir` is passed straight through, and it exists for ONE caller:
     `_restate_message`, whose target sits inside `<pid>/<commit>/`. Every other
-    write here lands in `self.root` or in `<pid>/`, which are exactly the two
+    write through this function lands in `self.root` or in `<pid>/`, the two
     levels `_sweep_leftovers` walks — so their temporaries are collectable where
     a build directory's would not be, the sweep never descending into one. Same
     volume either way, so the rename stays a rename.

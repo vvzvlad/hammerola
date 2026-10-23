@@ -28,6 +28,7 @@ from harness import (DEFAULT_EXPORTS, PNG_BYTES, good_build, meta_bytes,
 from src import docsbuild, render
 from src.app import BUILD_CONTENT_TYPES, OPEN_SUFFIXES, _safe_build_path
 from src.buildproc import STATUS_OK, BuildOutcome
+from src.store import FILE_DIGESTS_FILE, PAYLOAD_DIGEST_FILE
 from hammerola import buildnames
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -248,7 +249,7 @@ def test_a_model_that_lists_no_documents_publishes_what_it_always_did(
     assert set(meta) == {"pid", "project", "title", "commit", "dev", "built",
                          "published", "views", "parts"}
     assert sorted(path.name for path in build.iterdir()) == sorted(
-        {*ARTEFACTS, ".payload.sha256"})
+        {*ARTEFACTS, PAYLOAD_DIGEST_FILE, FILE_DIGESTS_FILE})
     assert hub.job_log(record["id"]).text == (
         f"copying builder: {len(ARTEFACTS)} files\n")
 
