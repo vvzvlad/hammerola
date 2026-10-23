@@ -47,7 +47,8 @@ def load_model():
         raise BuildError(
             f"importing model.py failed{model_site(exc)}: "
             f"{shown(exc, str, limit=MAX_MESSAGE_CHARS)}"
-            f"{_shadowed_src_hint(root_path, exc)}") from exc
+            f"{_shadowed_src_hint(root_path, exc)}"
+            f"{_nothing_to_build_hint(exc)}") from exc
     for name in ("parts", "views"):
         if not callable(getattr(model, name, None)):
             raise BuildError(
@@ -77,6 +78,25 @@ def _contract_moved(model):
             "is gone: parts() is now the whole catalogue, each entry keyed by "
             "what identifies the piece, and views() selects from it. Nothing "
             "translates the old form; rewrite parts() and drop printables()")
+
+
+def _nothing_to_build_hint(exc):
+    """Say what a tree with no model would have needed, when that is the error.
+
+    The hub sends a tree here when it has a model, or when its project.json
+    lists no documents (`src/docsbuild.py`); so a tree with no `model` at all
+    has neither, and the import error alone reads as if model.py were broken
+    rather than absent. Only for the import of `model` itself: a model.py that
+    imports something missing is a different error with its own line.
+    """
+    if not (isinstance(exc, ModuleNotFoundError)
+            and getattr(exc, "name", None) == "model"):
+        return ""
+    return (
+        " -- there is no model.py, and project.json lists no documents, so "
+        "there is nothing to build. A model project needs model.py; a "
+        "project of documents lists its files under \"documents\" in "
+        "project.json and needs no model.py.")
 
 
 def _shadowed_src_hint(root, exc):

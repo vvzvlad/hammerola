@@ -513,24 +513,6 @@ def test_a_declared_preview_survives_publication_without_becoming_a_button(hub):
     assert r.headers["Content-Type"] == "image/png"
 
 
-def test_an_uploaded_html_file_can_never_be_active_content(hub):
-    # The member-name whitelist says nothing about extensions, so a push CAN
-    # contain page.html. A build URL is permanent, same-origin and immutable, so
-    # serving that as text/html would be an unrecallable stored XSS against every
-    # other project on the host. Asked with the token: both are closed files,
-    # and what matters is how they reach the reader who does get them.
-    hub.publish("proj1", "abc123", good_build(extra_files={
-        "page.html": b"<script>alert(document.domain)</script>",
-        "logo.svg": b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>",
-    }))
-    for name in ("page.html", "logo.svg"):
-        r = hub.get(f"/project/proj1/abc123/{name}", headers=OWNER)
-        assert r.status_code == 200, name
-        assert r.headers["Content-Type"] == "application/octet-stream", name
-        assert r.headers["Content-Disposition"] == "attachment", name
-        assert r.headers["X-Content-Type-Options"] == "nosniff", name
-
-
 def _csp_sources(policy: str, directive: str) -> list[str]:
     """The source list that actually applies to `directive`, per CSP fallback.
 

@@ -32,6 +32,7 @@ def test_the_publishing_half_re_exports_the_shared_objects_and_not_copies():
     copy looks like on the day it is made, and this has to fail then rather than
     a year later, when the two have quietly drifted apart."""
     assert render.unservable_reason is buildnames.unservable_reason
+    assert render.unservable_path_reason is buildnames.unservable_path_reason
     assert render.first_nonprintable is buildnames.first_nonprintable
     # The fourth reader, and the only one that answers at a write door: both
     # helpers in `src/records.py` refuse a comment or a proposal field with a
@@ -48,6 +49,8 @@ def test_the_client_asks_the_hubs_own_rule_and_not_an_approximation_of_it():
     because this command prints the name and then saves the file.
     """
     assert artifacts.unservable_reason is buildnames.unservable_reason
+    # A document's path, which `artifacts` writes into subdirectories.
+    assert artifacts.unservable_path_reason is buildnames.unservable_path_reason
 
 
 def test_the_client_scans_project_titles_with_the_shared_rule_too():
@@ -62,14 +65,17 @@ def test_the_client_scans_project_titles_with_the_shared_rule_too():
 
 def test_the_file_server_answers_through_the_same_module():
     """`app` calls the rule through the module rather than binding the function,
-    so the identity assertion is on the module — and the behaviour is checked
-    beside it, because a re-inlined `_safe_name` would still leave that import
+    so the identity assertion is on the module — and the behaviour of both doors
+    is checked beside it (`_safe_name` for `/_v/`, `_safe_build_path` for a
+    build's files), because a re-inlined door would still leave that import
     sitting there unused."""
     assert app.buildnames is buildnames
-    for name in ("lid.png", ".payload.sha256", "a/b.png", "",
+    for name in ("lid.png", ".payload.sha256", "a/b.png", "a/.b.png", "",
                  "lid\u202egnp.png", "lid\npreview.png"):
         assert app._safe_name(name) is (
             buildnames.unservable_reason(name) is None), name
+        assert app._safe_build_path(name) is (
+            buildnames.unservable_path_reason(name) is None), name
 
 
 def test_the_shared_module_imports_nothing_but_the_standard_library():

@@ -17,6 +17,11 @@ belongs to one of two owners:
     whole view (`assembled.stl`, and `print.stl` for a `print` view) and
     `preview` is its picture.
 
+A DOCUMENT, under `documents`, owns one `file`: the files project.json lists to
+be read, published under their paths in the tree (`docs/cut-list.md`) and
+written under the same paths here. A model's build carries them after its
+views; a build with no model (`"kind": "documents"`) carries nothing else.
+
 The build page draws download buttons only for a printable's `files`, so every
 declared pointer here is fetchable without implying a button.
 
@@ -32,7 +37,7 @@ any other build directory.
 import reprlib
 from pathlib import Path
 
-from hammerola.buildnames import unservable_reason
+from hammerola.buildnames import unservable_path_reason, unservable_reason
 from hammerola import project
 from hammerola.errors import ClientError
 from hammerola.limits import DEV_SLOT, SAFE_ID
@@ -55,7 +60,15 @@ ONE, MANY = False, True
 DECLARING_FIELDS = {
     "part": {"files": MANY, "preview": ONE},
     "view": {"overview": ONE, "preview": ONE},
+    "document": {"file": ONE},
 }
+
+# What a build with no model says it is (`render.DOCUMENTS_KIND` on the hub).
+DOCUMENTS_KIND = "documents"
+
+# The prefix of `where` for a document's file, the one pointer that may be a
+# path into subdirectories (`buildnames.unservable_path_reason`).
+DOCUMENT_WHERE = "document "
 
 
 def run(args) -> int:
@@ -102,7 +115,12 @@ def run(args) -> int:
         # not come from a published build: refuse rather than skip. The
         # non-printable clause matters here because the name is printed and
         # written to disk, and a U+202E would reverse the report.
-        reason = unservable_reason(filename)
+        # A document keeps its path, every other file sits at the top; the
+        # path rule is the name rule per segment, so nothing it passes climbs
+        # out of `dest`.
+        is_document = where.startswith(DOCUMENT_WHERE)
+        reason = (unservable_path_reason if is_document
+                  else unservable_reason)(filename)
         if reason is not None:
             raise ClientError(
                 f"{name} declares the {field!r} of {where} pointing at "
@@ -118,6 +136,7 @@ def run(args) -> int:
                 f"half-written.")
         target = dest / filename
         try:
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(body)
         except OSError as error:
             raise ClientError(f"cannot write {target}: {error}") from error
@@ -222,7 +241,8 @@ def _declared(meta: dict) -> list:
 
     Each entry says whose file it is (`part 'lid'`, `view 'assembled'`). Parts are
     walked in key order (a catalogue reads best alphabetically), views in the
-    document's order (the author's tab order, as `render._view_parts` keeps it).
+    document's order (the author's tab order, as `render._view_parts` keeps it),
+    and documents last, in the order project.json lists them.
 
     Deduplicated by filename, since two owners may name one file; a non-string
     filename skips the dedup and is refused by the caller.
@@ -240,6 +260,22 @@ def _declared(meta: dict) -> list:
                 return
             seen.add(filename)
         found.append((where, field, filename))
+
+    def take_documents(documents) -> None:
+        if not isinstance(documents, list):
+            raise _not_from_the_hub("the `documents` of this build", documents)
+        for index, document in enumerate(documents):
+            if not isinstance(document, dict):
+                raise _not_from_the_hub(f"document #{index}", document)
+            doc_id = document.get("id")
+            where = (f"{DOCUMENT_WHERE}{doc_id!r}" if isinstance(doc_id, str)
+                     else f"{DOCUMENT_WHERE}#{index}")
+            for field, filename in _pointers(document, "document", where):
+                take(where, field, filename)
+
+    if meta.get("kind") == DOCUMENTS_KIND:
+        take_documents(meta.get("documents"))
+        return found
 
     catalogue = meta.get("parts")
     if not isinstance(catalogue, dict):
@@ -266,6 +302,10 @@ def _declared(meta: dict) -> list:
                  else f"view #{index}")
         for field, filename in _pointers(view, "view", where):
             take(where, field, filename)
+    # A model's build carries documents only when its project.json lists
+    # them, so absent is the ordinary case and not a wrong shape.
+    if meta.get("documents") is not None:
+        take_documents(meta.get("documents"))
     return found
 
 

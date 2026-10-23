@@ -98,6 +98,10 @@ def test_a_model_that_is_not_there_names_no_file_at_all(isolated_project):
     assert ".py:" not in message, (
         f"the refusal for a missing model.py names a file and a line, and every "
         f"file on that traceback is the hub's: {message}")
+    # The hub sends a tree here with no model only when its project.json lists
+    # no documents either (`src/docsbuild.py`), so the refusal says both.
+    assert ("there is no model.py, and project.json lists no documents, so "
+            "there is nothing to build") in message
 
 
 def test_a_project_with_a_src_of_its_own_is_named_when_an_import_of_src_fails(

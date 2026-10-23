@@ -693,10 +693,12 @@ def test_a_name_claimed_by_both_a_file_and_a_directory_is_a_422(hub):
 
 
 def test_a_view_file_inside_a_subdirectory_is_refused(hub):
-    """A tree is unpacked, but what the browser fetches is still a flat name.
+    """A tree is unpacked, but a model's files sit at the top of its build.
 
-    Serving answers `/project/<pid>/<commit>/<name>` and nothing deeper, so a view
-    pointing into a subdirectory would publish with a 201 and then 404 in the viewer.
+    The hub serves a subdirectory (a document keeps its path there), and a
+    model's pointers are held to the top level all the same
+    (`buildnames.unservable_reason`): a view pointing into a subdirectory is a
+    422 naming it.
     """
     body = raw_tar_gz([
         file_entry("meta.json", meta_bytes(views=[
@@ -714,9 +716,9 @@ def test_a_view_file_inside_a_subdirectory_is_refused(hub):
 
 
 def test_a_download_inside_a_subdirectory_is_refused(hub):
-    # The same rule for downloads: a download links to a build URL, which is flat
-    # too. The reference hangs off its part in meta.json; a name is checked the
-    # same wherever the document names one.
+    # The same rule for downloads: a model's export sits at the top of its
+    # build. The reference hangs off its part in meta.json; a name is checked
+    # the same wherever the document names one.
     body = raw_tar_gz([
         file_entry("meta.json", meta_bytes(
             parts={"lid": {"kind": "printable",

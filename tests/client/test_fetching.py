@@ -552,6 +552,28 @@ def test_a_declared_name_the_hub_could_never_serve_is_refused(
     assert ("part 'lid'" if owner == "part" else "view 'assembled'") in err
 
 
+def test_a_document_path_that_climbs_out_of_the_destination_is_refused(
+        hub, tmp_path, capsys):
+    """A document keeps its path, so `artifacts` writes into subdirectories;
+    the path rule, the name rule per segment, is what keeps every write inside
+    the destination. Staged as the table above is: the hub refuses such a path
+    at publish time (`render._check_declared_file`)."""
+    model = with_artifacts(tmp_path / "demo")
+    revision = publish(model, capsys)
+
+    build = hub.project_dir("demo0001") / revision
+    meta = json.loads((build / "meta.json").read_text(encoding="utf-8"))
+    meta["documents"] = [{"id": "escape.md", "name": "escape.md",
+                          "type": "markdown", "file": "../escape.md"}]
+    (build / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert run(model, "artifacts", revision) == 1
+    err = capsys.readouterr().err
+    assert "document 'escape.md'" in err
+    assert "'../escape.md', which has the segment '..'" in err
+    assert not list(tmp_path.rglob("escape.md"))
+
+
 @pytest.mark.parametrize("planted,said", [
     ({"parts": []}, "`parts` catalogue"),
     ({"parts": {"lid": "lid.stl"}}, "part 'lid'"),

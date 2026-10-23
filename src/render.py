@@ -24,11 +24,12 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-# The file-name rule lives in hammerola/buildnames.py, so this module,
-# `app._safe_name` and hammerola/artifacts.py share one object
+# The file-name rule lives in hammerola/buildnames.py, so this module, the file
+# server (`app._safe_build_path`) and hammerola/artifacts.py share one object
 # (tests/test_buildnames.py asserts it). `first_nonprintable` comes with it so
 # `_plain_text` agrees with it on what "printable" means.
-from hammerola.buildnames import first_nonprintable, unservable_reason
+from hammerola.buildnames import (first_nonprintable, unservable_path_reason,
+                                  unservable_reason)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -57,6 +58,29 @@ MAX_PARTS = 200
 # so a kind nothing recognises is a part nobody sees.
 KIND_PRINTABLE = "printable"
 PART_KINDS = (KIND_PRINTABLE, "hardware", "mock")
+
+# A project lists the files it publishes to be read under `documents` in its
+# project.json (`src/docsbuild.py`); a model's build carries them beside its
+# views. A tree with no model publishes nothing else, and its meta.json says
+# `"kind": "documents"` instead of carrying views and parts; the page picks
+# its shell by that word alone (`DOCUMENTS_KIND` in `ui/src/DocShell.jsx`).
+DOCUMENTS_KIND = "documents"
+
+# What a document is, by its extension: which files may be listed at all, and
+# how the page shows each. `app.OPEN_SUFFIXES` and `app.BUILD_CONTENT_TYPES`
+# cover every key (tests/test_documents.py).
+DOCUMENT_TYPES = {
+    ".md": "markdown",
+    ".pdf": "pdf",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".webp": "image",
+    ".html": "html",
+    ".htm": "html",
+    ".svg": "svg",
+}
 
 # `built` is displayed like the rest but it is a timestamp, so its ceiling is the
 # length of one, with room for a long timezone spelling. It lands in the shared
@@ -277,6 +301,26 @@ def _view_fields(pairs):
     return {key: value for key, value in pairs if key in VIEW_KEPT_KEYS}
 
 
+def document_type(name: str) -> str | None:
+    """The type a document called `name` is shown as, or None if it is none."""
+    return DOCUMENT_TYPES.get(Path(name).suffix.lower())
+
+
+# What stands for `/` in a document's id, which the page carries as `?d=<id>`.
+DOCUMENT_ID_SEPARATOR = "__"
+
+
+def document_id(path: str) -> str:
+    """The id of the document at `path`: the path, with `/` spelled `__`.
+
+    Readable in an address (`?d=docs__cut-list.md`) where a slash would be
+    `%2F`. Two paths can meet under one id (`a/b.md` and `a__b.md`), and a
+    build listing both is refused (`_documents`, `docsbuild`), so within one
+    build an id names one document.
+    """
+    return path.replace("/", DOCUMENT_ID_SEPARATOR)
+
+
 def _check_part_name(value, where: str) -> None:
     """A part name, checked harder than `project` and `title` are.
 
@@ -295,14 +339,19 @@ def _check_part_name(value, where: str) -> None:
         raise ValueError(f"{where} contains an angle bracket: {value!r}")
 
 
-def _check_declared_file(name, files: dict, where: str) -> None:
+def _check_declared_file(name, files: dict, where: str, *,
+                         path: bool = False) -> None:
     """Every file this document points at, wherever it is pointed at from.
 
-    Callers: a view's `file`, `overview`, `preview` and `card`, and a catalogue
-    record's exported `files` and `preview`. They all claim "this build wrote a
-    file called that, and the hub will hand it back". Each check below is a way
-    a push could be accepted and then serve something other than what was
-    measured here, so they apply to every pointer together.
+    Callers: a view's `file`, `overview`, `preview` and `card`, a catalogue
+    record's exported `files` and `preview`, and a document's `file`. They all
+    claim "this build wrote a file called that, and the hub will hand it back".
+    Each check below is a way a push could be accepted and then serve something
+    other than what was measured here, so they apply to every pointer together.
+
+    `path` is for a document, which keeps its place in the tree and so may sit
+    in a subdirectory (`buildnames.unservable_path_reason`); every other
+    pointer names a file at the top of the build.
     """
     # `files` is what the build DECLARED it wrote, hashed by `_hash_output`. It
     # is a real file under this build — `runner._verify_output_file` checked
@@ -323,7 +372,7 @@ def _check_declared_file(name, files: dict, where: str) -> None:
     # The name the file server will and will not answer for, asked in the one
     # place that decides it. An entry the server refuses would publish with a
     # 201 and 404 in the browser — a build that is accepted and cannot be opened.
-    reason = unservable_reason(name)
+    reason = (unservable_path_reason if path else unservable_reason)(name)
     if reason is not None:
         raise ValueError(f"{where} points at {name!r}, which {reason}")
     # A name the hub writes itself would be measured here and then answered by
@@ -338,7 +387,7 @@ def _check_declared_file(name, files: dict, where: str) -> None:
 
 
 def _check_map_size(value, field: str, files: dict) -> None:
-    """How many entries one file-declaring collection (`views`) may carry.
+    """How many entries one file-declaring list (`views`, `documents`) may carry.
 
     Every view entry costs a full parse (`check_view_file`) and a full gzip
     (`measure_view`) of its file, ~18 ms on a 0.9 MB view, and many entries may
@@ -811,7 +860,125 @@ def _match_selection(declared: list, shown: set, view_id: str) -> None:
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                files: dict, published: str, dev: bool = False,
                job: str = None, message: str = None) -> dict:
-    """Validate the uploaded meta.json and normalize it for the viewer.
+    """Validate the uploaded meta.json and normalize it for the page.
+
+    What the build is OF decides the body: a model's `views` and `parts`
+    (`_model_body`), with the `documents` its project.json lists when it lists
+    any, or — a tree with no model — `kind` and `documents` alone. The fields
+    around the body are the same for both.
+    """
+    if raw.get("kind") == DOCUMENTS_KIND:
+        body = {"kind": DOCUMENTS_KIND,
+                "documents": _documents(raw, staging, files)}
+    else:
+        body = _model_body(raw, staging, files)
+        # Only when the hub put them there (`docsbuild.add_documents`): a
+        # model's build without a list writes the document it always wrote.
+        if "documents" in raw:
+            body["documents"] = _documents(raw, staging, files)
+
+    # Both are shown verbatim on the index and the build page. The pages render
+    # them with textContent, but a push is not allowed to smuggle control
+    # characters or a page-wide banner through them either.
+    project = _plain_text(str(raw.get("project") or pid), "project")
+    title = _plain_text(str(raw.get("title") or project), "title")
+
+    # `built` is the model's own timestamp, which the build picker and `latest`
+    # order by. Optional: without it the moment the hub accepted the push is
+    # used. Not parsed as a date (`_built_key` tolerates an unparseable one) but
+    # displayed like `project` and `title`, so it gets their validation.
+    raw_built = raw.get("built")
+    built = (_plain_text(raw_built, "built", MAX_BUILT)
+             if isinstance(raw_built, str) and raw_built.strip() else published)
+
+    meta = {
+        "pid": pid,
+        "project": project,
+        "title": title,
+        "commit": commit,
+        # True for the one build that is not addressed by a commit at all: the
+        # local slot (SPEC 7.6), where `commit` reads `dev` because that is the
+        # slot's name. Recorded so the page can say "local build" instead of
+        # showing `dev` where a commit hash belongs, and so the viewer knows the
+        # thing on screen can be overwritten under it.
+        "dev": bool(dev),
+        "built": built,
+        # Arrival time, recorded separately so two builds carrying the same
+        # `built` still have a stable order.
+        "published": published,
+        # REBUILT, not passed through. The body was assembled field by field
+        # out of the upload, so a key of the pushed document that nothing here
+        # reads cannot reach the browser by riding along — which is what makes
+        # "an unvalidated field is a field that does not exist here" true
+        # rather than aspirational.
+        **body,
+    }
+    # The slot is not addressed by a revision, so no log is stored under its
+    # name; `job` records the job that produced it so `hammerola log dev` can
+    # find the log. Added only for the slot so a revision's meta.json does not
+    # carry it, and None-able because a slot can be written without one.
+    if dev:
+        meta["job"] = job
+    # The one field that comes from the push rather than the build: what the
+    # author says this revision is. Written only when present, like `job`; the
+    # picker reads it back (`Store.builds_of`). Validated by `revision_message`
+    # at the door.
+    if message:
+        meta["message"] = message
+    return meta
+
+
+def _documents(raw: dict, staging: Path, files: dict) -> list:
+    """`documents`: the files a build publishes to be read, one tab each.
+
+    Each entry is rebuilt: `file` is held to the rule every pointer is
+    (`_check_declared_file`, as a path: a document keeps its place in the
+    tree), `type` has to be what the file's extension makes it, `id` is
+    derived from the path (`document_id`) rather than read, and `bytes` is
+    measured off the file rather than read from the upload. `name` falls back
+    to the path.
+    """
+    documents = raw.get("documents")
+    if not isinstance(documents, list) or not documents:
+        raise ValueError(
+            "`documents` in meta.json must list at least one document")
+    _check_map_size(documents, "documents", files)
+
+    read = []
+    seen: dict[str, str] = {}
+    for entry in documents:
+        if not isinstance(entry, dict):
+            raise ValueError("every entry of `documents` must be an object")
+        name = entry.get("file")
+        _check_declared_file(name, files, f"document {name!r}", path=True)
+        shown_as = document_type(name)
+        if shown_as is None:
+            raise ValueError(
+                f"document {name!r} is none of the types a build publishes "
+                f"to be read: {', '.join(sorted(DOCUMENT_TYPES))}")
+        if entry.get("type") != shown_as:
+            raise ValueError(
+                f"document {name!r} says it is {entry.get('type')!r}, and its "
+                f"extension makes it {shown_as!r}")
+        doc_id = document_id(name)
+        if doc_id in seen:
+            raise ValueError(
+                f"documents {seen[doc_id]!r} and {name!r} get the same id "
+                f"{doc_id!r}, so one address would name both")
+        seen[doc_id] = name
+        read.append({
+            "id": doc_id,
+            "name": _plain_text(str(entry.get("name") or name),
+                                "document name"),
+            "type": shown_as,
+            "file": name,
+            "bytes": (staging / name).stat().st_size,
+        })
+    return read
+
+
+def _model_body(raw: dict, staging: Path, files: dict) -> dict:
+    """`views` and `parts`: what a build of a model publishes.
 
     The catalogue is read first: every view names the keys it shows and every
     leaf of every view file carries one, so `parts` has to exist before any of
@@ -898,56 +1065,7 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
             entry["card"] = card
         rendered.append(entry)
 
-    # Both are shown verbatim on the index and the build page. The pages render
-    # them with textContent, but a push is not allowed to smuggle control
-    # characters or a page-wide banner through them either.
-    project = _plain_text(str(raw.get("project") or pid), "project")
-    title = _plain_text(str(raw.get("title") or project), "title")
-
-    # `built` is the model's own timestamp, which the build picker and `latest`
-    # order by. Optional: without it the moment the hub accepted the push is
-    # used. Not parsed as a date (`_built_key` tolerates an unparseable one) but
-    # displayed like `project` and `title`, so it gets their validation.
-    raw_built = raw.get("built")
-    built = (_plain_text(raw_built, "built", MAX_BUILT)
-             if isinstance(raw_built, str) and raw_built.strip() else published)
-
-    meta = {
-        "pid": pid,
-        "project": project,
-        "title": title,
-        "commit": commit,
-        # True for the one build that is not addressed by a commit at all: the
-        # local slot (SPEC 7.6), where `commit` reads `dev` because that is the
-        # slot's name. Recorded so the page can say "local build" instead of
-        # showing `dev` where a commit hash belongs, and so the viewer knows the
-        # thing on screen can be overwritten under it.
-        "dev": bool(dev),
-        "built": built,
-        # Arrival time, recorded separately so two builds carrying the same
-        # `built` still have a stable order.
-        "published": published,
-        # REBUILT, not passed through. Both of these were assembled field by
-        # field out of the upload above, so a key of the pushed document that
-        # nothing here reads cannot reach the browser by riding along — which is
-        # what makes "an unvalidated field is a field that does not exist here"
-        # true rather than aspirational.
-        "views": rendered,
-        "parts": catalogue,
-    }
-    # The slot is not addressed by a revision, so no log is stored under its
-    # name; `job` records the job that produced it so `hammerola log dev` can
-    # find the log. Added only for the slot so a revision's meta.json does not
-    # carry it, and None-able because a slot can be written without one.
-    if dev:
-        meta["job"] = job
-    # The one field that comes from the push rather than the build: what the
-    # author says this revision is. Written only when present, like `job`; the
-    # picker reads it back (`Store.builds_of`). Validated by `revision_message`
-    # at the door.
-    if message:
-        meta["message"] = message
-    return meta
+    return {"views": rendered, "parts": catalogue}
 
 
 def builds_json(pid: str, metas: list[dict], dev: bool = False,
@@ -1043,8 +1161,17 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     `first_built` is the oldest build still here: the hub never learns when a
     project was created (`hammerola create` runs locally), and with no retention
     (SPEC 5.3) the oldest build stays the oldest. The page labels it as that.
+
+    A build with no model has no views and no catalogue: its card counts the
+    documents and their bytes. A model's card is the model's whether or not
+    it lists documents, and its `documents` is None.
     """
-    total_gzip = sum(v["gzip"] for v in meta["views"])
+    documents = (meta["documents"] if meta.get("kind") == DOCUMENTS_KIND
+                 else None)
+    views = meta["views"] if documents is None else []
+    records = meta["parts"] if documents is None else {}
+    size = (sum(v["gzip"] for v in views) if documents is None
+            else sum(d["bytes"] for d in documents))
     # The picture is the first one any view of this build declares. It is not a
     # promise about what the card's link opens: pictures hang only on the view
     # ids the build knows while view order is the model's, and the link opens
@@ -1052,12 +1179,12 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
     # up by view id, because the serving side does not import the build half
     # (`cadbuild.artifacts.ASSEMBLED_VIEW_ID`; see docs/repo-map.md). `None` is a
     # normal answer: an image with no rendering stack ships no PNGs.
-    preview = next((view["preview"] for view in meta["views"]
+    preview = next((view["preview"] for view in views
                     if view.get("preview") is not None), None)
     # The same pick for the card picture (the sheet without its title band and
     # footer). `None` also means a build made before the build side wrote it; the
     # front page falls back to `preview` (`ui/src/HammerolaEntry.jsx`).
-    card = next((view["card"] for view in meta["views"]
+    card = next((view["card"] for view in views
                  if view.get("card") is not None), None)
     return {
         "pid": meta["pid"],
@@ -1074,10 +1201,11 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
         "status": None,
         # How many parts get printed: catalogue records of kind printable, so
         # bought screws and scenery are not counted.
-        "printables": sum(1 for record in meta["parts"].values()
+        "printables": sum(1 for record in records.values()
                           if record["kind"] == KIND_PRINTABLE),
-        "views": len(meta["views"]),
-        "mb": f"{total_gzip / 1e6:.1f}",
+        "views": len(views),
+        "documents": None if documents is None else len(documents),
+        "mb": f"{size / 1e6:.1f}",
         "preview": preview,
         "card": card,
     }

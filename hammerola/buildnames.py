@@ -2,13 +2,18 @@
 
 Three callers import the name rule (`unservable_reason`):
 
-  * the file server, for every request for `/project/<pid>/<commit>/<name>`
-    (`_safe_name` in src/app.py);
+  * the file server, for every segment of a request for
+    `/project/<pid>/<commit>/<path>` (`_safe_build_path` in src/app.py, through
+    `unservable_path_reason`) and for `/_v/<name>` (`_safe_name`);
   * the publishing half, for every name a push DECLARES (`_check_declared_file`
     in src/render.py: a view's `file`, `overview`, `preview` and `card`, and a
-    catalogue record's `files` and `preview`);
+    catalogue record's `files` and `preview`, each a single name at the top of
+    the build; a document's `file`, a path);
   * the client, for every name the hub's answer hands back, before writing it to
     the author's disk (`hammerola/artifacts.py`).
+
+A DOCUMENT keeps its place in the tree (`docs/cut-list.md`), so its path is
+asked of `unservable_path_reason`: the name rule applied to each segment.
 
 `first_nonprintable`, the category-C scan, has further readers: `render._plain_text`,
 `_clean_title` in hammerola/project.py, and `src/records.py` (a 422 on the comment
@@ -74,12 +79,14 @@ def unservable_reason(name) -> Optional[str]:
     """
     if not isinstance(name, str) or not name:
         return "is not a file name at all"
-    # The file sits at the TOP LEVEL. Serving answers
-    # `/project/<pid>/<commit>/<name>` and nothing deeper, so a name inside a
-    # subdirectory has no URL on this service.
+    # The file sits at the TOP LEVEL. A model's build writes its files there
+    # (`cadbuild.build`), the viewer and `hammerola artifacts` look for them
+    # there, and only a document keeps a path of its own
+    # (`unservable_path_reason` below).
     if "/" in name:
-        return ("is inside a subdirectory; it has to sit at the top level of "
-                "the build, because that is the only place the hub serves from")
+        return ("is inside a subdirectory; a model's files sit at the top "
+                "level of its build, and only a document keeps its path in "
+                "the tree")
     # A leading dot is refused by the file server: that is how `.` and `..` die
     # and how `.payload.sha256` beside a build stays unreadable. Nothing on the
     # build path restricts output names (`runner._verify_output_file`), so the
@@ -96,4 +103,28 @@ def unservable_reason(name) -> Optional[str]:
         return (f"carries the non-printable character {bad!r}; a file name is "
                 f"read by a person and written to their disk, and the C "
                 f"category is where U+202E RIGHT-TO-LEFT OVERRIDE lives")
+    return None
+
+
+def unservable_path_reason(path) -> Optional[str]:
+    """Why `/project/<pid>/<commit>/<path>` would not answer — or None if it would.
+
+    The rule for a path that may go into subdirectories, as a document's does
+    (`docs/cut-list.md`): every segment is held to `unservable_reason`, which
+    is how `..` and `.` die and how nothing under a build is reached through a
+    dot-name. An empty segment is refused too. The file server drops empty
+    segments from a request (`_split` in src/app.py), so it answers
+    `docs//x.md` as `docs/x.md`; it is a DECLARATION that must not carry one:
+    `/x.md` joined onto the tree is an absolute path outside it, and
+    `docs//x.md` is the file `docs/x.md` under a second id.
+    """
+    if not isinstance(path, str) or not path:
+        return "is not a file name at all"
+    for segment in path.split("/"):
+        if not segment:
+            return "has an empty segment: a leading, trailing or doubled slash"
+        reason = unservable_reason(segment)
+        if reason is not None:
+            return (reason if segment == path
+                    else f"has the segment {segment!r}, which {reason}")
     return None

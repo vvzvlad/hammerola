@@ -26,8 +26,12 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever;
                                               of these three, every file but
-                                              `.json` and `.png` (the STEP,
-                                              STL, 3MF) EDIT_TOKEN or ?files=<key>
+                                              `.json` and a document's own
+                                              types (the STEP, STL, 3MF)
+                                              EDIT_TOKEN or ?files=<key>;
+                                              `<file>` may be a path, since a
+                                              document keeps its place in the
+                                              tree (`docs/cut-list.md`)
     GET  /project/<pid>/<commit>/             the page shell, from the template;
                                               `latest/` and `dev/` answer the
                                               same, and a URL without the slash
@@ -76,8 +80,9 @@ ONE SECRET, EDIT_TOKEN, guards every write and every private read.
 The line is not "pages public, API private". A BUILD can be LOOKED AT by
 anybody holding its address: its page, meta.json, the views and the pictures,
 anonymous and cached for a year, because a shared link must work without a
-secret. Its FILES — everything but `.json` and `.png` (`OPEN_SUFFIXES`), so the
-STEP, STL and 3MF — leave only to the token or to a link carrying the key of
+secret, and so are the documents it lists, which are what its link with
+`?d=` shows. Its other FILES — everything outside `OPEN_SUFFIXES`, so the STEP,
+STL and 3MF — leave only to the token or to a link carrying the key of
 that address (`files_key`), which the owner's Share window adds or leaves out.
 THE ENUMERATION is not public at all: `/index.json` (what is on this hub) and
 `builds.json` (every revision of a project, and whether a draft exists) need
@@ -266,14 +271,12 @@ CONTENT_TYPES = {
     ".txt": "text/plain; charset=utf-8",
 }
 
-# Types a file that ARRIVED IN A PUSH may be served as; everything else is an
-# opaque attachment. A build could contain `page.html` or `logo.svg`, and a
-# build URL is permanent, immutable and same-origin with every other project, so
-# serving either natively would be an unrecallable stored XSS.
-#
-# A type qualifies only if a browser cannot execute anything with it. `.png`
-# does; `image/svg+xml` must NEVER be added: an SVG runs script in this origin
-# (which is also why `comments.sniff_image` refuses SVG uploads).
+# Types a file that ARRIVED IN A PUSH is served as; everything else is an
+# opaque attachment. The models' formats, and every type a build's documents
+# may be (`render.DOCUMENT_TYPES`). HTML and SVG are among them and are
+# served as themselves, scripts and all, WITHOUT the hub's CSP (`_send_file`):
+# the owner's decision of 2026-10-23 (SPEC §4), on a hub with one user, so that
+# a page or a drawing pushed by its author works as its author wrote it.
 BUILD_CONTENT_TYPES = {
     ".json": "application/json",
     ".stl": "model/stl",
@@ -281,16 +284,27 @@ BUILD_CONTENT_TYPES = {
     ".stp": "model/step",
     ".3mf": "model/3mf",
     ".png": "image/png",
+    ".md": MARKDOWN_TYPE,
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".html": HTML_TYPE,
+    ".htm": HTML_TYPE,
+    ".svg": "image/svg+xml",
 }
 
 # What a build hands to anybody holding its address: the documents the page
-# draws the model from (meta.json and each view's tessellation) and the
-# pictures the front page shows through `<img>`, which carries no token.
-# Everything else — the STEP, STL and 3MF a part exports, the overview meshes,
-# and any format a later export adds — leaves only to EDIT_TOKEN or to a link
-# carrying the key of its address (`files_key`). A list of what is OPEN rather
-# than of what is closed, so a new format starts closed.
-OPEN_SUFFIXES = {".json", ".png"}
+# draws the model from (meta.json and each view's tessellation), the pictures
+# the front page shows through `<img>`, which carries no token, and the
+# documents a build lists — those files ARE what its link with `?d=` shows,
+# each by the type its extension makes it. Everything
+# else — the STEP, STL and 3MF a part exports, the overview meshes, and any
+# format a later export adds — leaves only to EDIT_TOKEN or to a link carrying
+# the key of its address (`files_key`). A list of what is OPEN rather than of
+# what is closed, so a new format starts closed.
+OPEN_SUFFIXES = {".json", *render.DOCUMENT_TYPES}
 
 # The body of the refusal of a closed file asked for without the token or the
 # key; the status is `TOKEN_REFUSED_STATUS`, for its reasons.
@@ -341,26 +355,38 @@ def build_content_type(name: str) -> tuple[str, dict]:
 
 
 def _safe_name(name: str) -> bool:
-    """One ordinary filename, and nothing that navigates.
+    """One ordinary filename under `/_v/`, and nothing that navigates.
 
-    The rule is `buildnames.unservable_reason`, shared with the check on every
-    name a push declares (`render._check_declared_file`) and with the client's
-    re-check before writing (`hammerola/artifacts.py`), so a build can never
-    declare a file it then cannot serve (`tests/test_publish.py` compares
-    them).
-
-    Rejecting a leading dot kills `.` and `..` and hides the store's
-    bookkeeping files (`.payload.sha256`). Non-printable names (categories Cc,
-    Cf) are refused too; a URL segment arrives via `unquote` with
-    `errors='replace'`, so it never carries a lone surrogate. Output names get
-    no alphabet elsewhere (`runner._verify_output_file` checks shape, symlinks
-    and existence only); an honest `cadbuild` writes only
-    `<stem>.stl|.step|.3mf`, `<vid>.json`, `<stem>_preview.png`, `meta.json` and
-    `metrics.json`.
+    The shared name rule, `buildnames.unservable_reason`, on the one segment
+    `/_v/<file>` takes; a build's files go through `_safe_build_path`.
+    Rejecting a leading dot kills `.` and `..`; a URL segment arrives via
+    `unquote` with `errors='replace'`, so it never carries a lone surrogate.
 
     Module-level so tests can call it without a server.
     """
     return buildnames.unservable_reason(name) is None
+
+
+def _safe_build_path(path: str) -> bool:
+    """A file under `/project/<pid>/<commit>/`, which may sit in a subdirectory.
+
+    The name rule on every segment (`buildnames.unservable_path_reason`), the
+    rule a document's path is declared under; a model's pointers are held to
+    the same name rule on a single segment (`render._check_declared_file`), so a
+    build can never declare a file this then refuses (`tests/test_publish.py`
+    compares them), and the client re-checks both before writing
+    (`hammerola/artifacts.py`).
+
+    Rejecting a leading dot on every segment kills `.` and `..` at any depth and
+    hides the store's bookkeeping files (`.payload.sha256`). Non-printable names
+    (categories Cc, Cf) are refused too. Output names get no alphabet elsewhere
+    (`runner._verify_output_file` checks shape, symlinks and existence only); an
+    honest `cadbuild` writes only `<stem>.stl|.step|.3mf`, `<vid>.json`,
+    `<stem>_preview.png`, `meta.json` and `metrics.json`, all at the top.
+
+    Module-level so tests can call it without a server.
+    """
+    return buildnames.unservable_path_reason(path) is None
 
 
 # What `_handle_post` answers itself, after `POST_ROUTES` has had its look.
@@ -486,18 +512,20 @@ class HubHandler(BaseHTTPRequestHandler):
         logger.debug(f"{self.address_string()} {fmt % args}")
 
     def _headers(self, status: int, content_type: str, length: int,
-                 cache: str, extra: dict | None = None):
+                 cache: str, extra: dict | None = None, own: bool = True):
         """The one place a response line and its headers are written.
 
         `nosniff` on every reply, so the browser cannot override the
-        content-type policy; on HTML, the CSP.
+        content-type policy; on the hub's OWN HTML, the CSP. `own` is False for
+        a file that arrived in a push: an HTML document of a build is its
+        author's page and runs as written (see BUILD_CONTENT_TYPES).
         """
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
-        if content_type.startswith("text/html"):
+        if own and content_type.startswith("text/html"):
             self.send_header("Content-Security-Policy", CSP_HTML)
         for key, value in (extra or {}).items():
             self.send_header(key, value)
@@ -693,7 +721,8 @@ class HubHandler(BaseHTTPRequestHandler):
             else:
                 ctype, extra = content_type_for(resolved.name), {}
             # Size from the open handle: the bytes about to be sent.
-            self._headers(200, ctype, info.st_size, cache, extra)
+            self._headers(200, ctype, info.st_size, cache, extra,
+                          own=not uploaded)
             if not with_body:
                 return None
             # In chunks: views and STEP files are megabytes.
@@ -857,7 +886,9 @@ class HubHandler(BaseHTTPRequestHandler):
 
         # A comparison of two revisions. `compare` is in the fourth position
         # because it is a valid build id, so `/project/<pid>/compare/` could
-        # be a published build; build URLs are at most three segments deep.
+        # be a published build. A build's file may sit deeper than that (a
+        # document keeps its path), so a document path that starts with
+        # `compare/` is refused where it is declared (`docsbuild`).
         if len(rest) in (4, 5) and rest[2] == "compare":
             return self._serve_compare(
                 pid, rest[1], rest[3],
@@ -883,17 +914,20 @@ class HubHandler(BaseHTTPRequestHandler):
                 return self._redirect(f"/project/{pid}/{second}/", with_body)
             return self._serve_build_page(build_dir, with_body)
 
-        if len(rest) != 3 or not _safe_name(rest[2]):
+        # The rest of the address is one file of the build: a name at the top,
+        # or a document's path in the tree.
+        name = "/".join(rest[2:])
+        if not _safe_build_path(name):
             return self._error(404, "not found", with_body=with_body)
         # Generated, never read from the build directory.
-        if rest[2] == "index.html":
+        if name == "index.html":
             return self._serve_build_page(build_dir, with_body)
         # A closed file leaves only to the token or to the key of THIS address,
         # checked before the volume is touched. Its year is `private` on a
         # revision: the answer depends on what was presented, the token or the
         # key, and a shared cache must not hand it to somebody who presented
         # nothing. The pointers stay `no-cache`.
-        if Path(rest[2]).suffix.lower() not in OPEN_SUFFIXES:
+        if Path(name).suffix.lower() not in OPEN_SUFFIXES:
             if not (self._authorized()
                     or self._presents_files_key(pid, second, query)):
                 logger.warning(
@@ -906,8 +940,8 @@ class HubHandler(BaseHTTPRequestHandler):
         # meta.json is written by the hub after validation; everything else in
         # a build directory arrived in the tarball and is served under the
         # narrow uploaded-file content-type whitelist.
-        uploaded = rest[2] not in render.GENERATED_FILES
-        return self._send_file(build_dir / rest[2], cache, with_body,
+        uploaded = name not in render.GENERATED_FILES
+        return self._send_file(build_dir / name, cache, with_body,
                                uploaded=uploaded)
 
     # -- one comparison of two revisions ----------------------------

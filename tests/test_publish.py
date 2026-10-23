@@ -494,15 +494,16 @@ def test_missing_meta_json_is_422(hub):
 
 
 # -- every place this document names a file ----------------------------------
-# There are SIX and they are enumerated here once. A view names its own file, its
-# overview, its picture and the card cut of that picture; a part names what it
-# was exported to and its own picture.
+# There are SEVEN and they are enumerated here once. A view names its own file,
+# its overview, its picture and the card cut of that picture; a part names what
+# it was exported to and its own picture; a document of a documents build names
+# its file.
 #
 # ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test: a pointer
 # that quietly stops being checked is a 404 under an immutable URL, and per-test
 # lists go stale one entry at a time.
 FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
-                 "part files", "part preview")
+                 "part files", "part preview", "document file")
 
 
 # The export the one-printable catalogue below declares when the case under
@@ -516,10 +517,11 @@ PART_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
 
 
 def _pointing_at(where, name):
-    """meta.json fields naming `name` in one of the six places, and nowhere else.
+    """meta.json fields naming `name` in one of the seven places, and nowhere else.
 
     Returns kwargs for `meta_bytes`, so the document around the pointer is the
-    ordinary one — a catalogue of one printable and a view that selects it.
+    ordinary one — a catalogue of one printable and a view that selects it. A
+    document's file comes in a documents build, which reads neither of those.
     """
     view = {"id": "assembled", "name": "assembled",
             "file": "assembled.json", "parts": ["lid"]}
@@ -536,6 +538,9 @@ def _pointing_at(where, name):
         part["files"] = {"stl": name}
     elif where == "part preview":
         part["preview"] = name
+    elif where == "document file":
+        return {"kind": "documents", "documents": [
+            {"id": "list", "name": "list", "type": "markdown", "file": name}]}
     else:
         raise AssertionError(f"no such file pointer: {where!r}")
     return {"views": [view], "parts": {"lid": part}}
@@ -562,7 +567,7 @@ def _pointing_archive(fields, extra=None):
     return members
 
 
-def test_the_six_file_pointers_are_the_six_the_document_has():
+def test_the_seven_file_pointers_are_the_seven_the_document_has():
     """The list above, checked against the document rather than trusted.
 
     `_pointing_at` refuses a name it does not know, so a seventh pointer added to
@@ -1709,29 +1714,32 @@ def test_a_part_key_longer_than_a_button_caption_still_publishes(hub):
 
 
 # -- what a build file may be called ----------------------------------------
-# One row per name, and the answer both sides have to give: does the hub serve
-# `/project/<pid>/<commit>/<name>`? The file server asks it of every request
-# (`app._safe_name`) and the declaration asks it of every name a push offers
-# (`render._check_declared_file`), and for as long as those were two rules they
-# disagreed. Nothing here is a name the hub GENERATES: those are served happily
-# and may not be declared, which is the one question only one side asks.
+# One row per name and two answers: does the hub serve
+# `/project/<pid>/<commit>/<name>` (`app._safe_build_path`, the name rule on
+# every segment), and may a model's pointer name it (`render._check_declared_file`,
+# which keeps a model's files at the top of its build)? A name a model may
+# declare is always one the hub serves; the one row where they part is a name in
+# a subdirectory, which the hub serves (a document lives there) and a model may
+# not declare. Nothing here is a name the hub GENERATES: those are served
+# happily and may not be declared, which is the one question only one side asks.
 SERVABLE_NAMES = (
-    ("lid_preview.png", True),
+    # (name, served, declarable by a model)
+    ("lid_preview.png", True, True),
     # 124 characters: over a caption's 32, under MEMBER_RE's 128, so a real
     # build can produce it and neither side may refuse it.
-    ("a" * 120 + ".stl", True),
-    (".lid_preview.png", False),
+    ("a" * 120 + ".stl", True, True),
+    (".lid_preview.png", False, False),
     # The hub's own bookkeeping beside a build, and the reason the dot rule is
     # not cosmetic: it is what tells a retry from a collision.
-    (".payload.sha256", False),
-    ("..", False),
-    (".", False),
-    ("", False),
-    ("sub/lid_preview.png", False),
+    (".payload.sha256", False, False),
+    ("..", False, False),
+    (".", False, False),
+    ("", False, False),
+    ("sub/lid_preview.png", True, False),
     # U+202E RIGHT-TO-LEFT OVERRIDE. `hammerola artifacts` prints this name and
     # then writes it to the author's disk.
-    ("lid\u202egnp.png", False),
-    ("lid\npreview.png", False),
+    ("lid\u202egnp.png", False, False),
+    ("lid\npreview.png", False, False),
 )
 
 
@@ -1764,17 +1772,19 @@ def test_the_file_server_and_a_push_agree_on_what_a_build_file_may_be_called(
         tmp_path):
     """Three doors onto one rule, over a table of names, with the answers pinned.
 
-    If the declaration and the file server disagree, a build declaring e.g.
-    `.lid_preview.png` publishes with a 201 into an immutable directory and answers
-    404 for a file it named. The rule is `buildnames.unservable_reason`, and this
-    compares its CALLERS (a re-inlined copy goes red) and each against the expected
-    answer (so weakening the shared rule cannot leave them agreeing about the wrong
-    thing). The three: the file server, the declaration helper, and `views`.
+    A name a model may declare and the file server refuses, e.g.
+    `.lid_preview.png`, publishes with a 201 into an immutable directory and
+    answers 404 for a file it named. The rule is `buildnames.unservable_reason`,
+    which the file server applies to every segment of a path and a model's
+    pointer to the whole name; this compares its CALLERS (a re-inlined copy goes
+    red) and each against the expected answer (so weakening the shared rule
+    cannot leave them agreeing about the wrong thing). The three: the file
+    server, the declaration helper, and `views`.
     """
     # Every row is in `files`, so the membership question — the one thing
     # `_check_declared_file` asks that the server does not — never fires and
     # what is left is exactly the shared rule.
-    files = {name: "digest" for name, _ in SERVABLE_NAMES}
+    files = {name: "digest" for name, _, _ in SERVABLE_NAMES}
     # ...and so are the exports the default catalogue declares, which is what
     # keeps this walk about the VIEW's name: `_view_declarable` builds the
     # ordinary document around the row, and a printable whose export is not in
@@ -1784,22 +1794,23 @@ def test_the_file_server_and_a_push_agree_on_what_a_build_file_may_be_called(
     # to be real files. The refused ones are refused before anything is opened.
     staging = tmp_path / "staging"
     staging.mkdir()
-    for name, servable in SERVABLE_NAMES:
-        if servable:
+    for name, _served, declarable in SERVABLE_NAMES:
+        if declarable:
             # One leaf, keyed `lid`, because that is what the entry
             # `_view_declarable` builds declares: the hub compares the two
             # halves, so a file naming more would refuse every row for a reason
             # that has nothing to do with its NAME.
             (staging / name).write_bytes(view_bytes(keys=("lid",)))
-    for name, servable in SERVABLE_NAMES:
-        assert app._safe_name(name) is servable, f"the file server on {name!r}"
+    for name, served, declarable in SERVABLE_NAMES:
+        assert not declarable or served, f"the table on {name!r}"
+        assert app._safe_build_path(name) is served, f"the file server on {name!r}"
         try:
             render._check_declared_file(name, files, "`previews` entry 'lid'")
-            declarable = True
+            accepted = True
         except ValueError:
-            declarable = False
-        assert declarable is servable, f"the declaration on {name!r}"
-        assert _view_declarable(name, files, staging) is servable, (
+            accepted = False
+        assert accepted is declarable, f"the declaration on {name!r}"
+        assert _view_declarable(name, files, staging) is declarable, (
             f"the `views` declaration on {name!r}")
 
 

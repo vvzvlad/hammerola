@@ -37,7 +37,8 @@ as a build (~1.5 s a pair), and nothing prunes it.
   * Outside the build directory, which is served to anybody holding its
     address (its JSON and pictures) or its key (the rest), with a year of
     `immutable`. This tree is served only by `GET /api/v1/sources/<revision>`,
-    behind EDIT_TOKEN; the file server's `_safe_name` never reaches it.
+    behind EDIT_TOKEN; the file server's `_safe_build_path` looks only inside
+    a build directory and never reaches it.
   * Content-addressed: `<digest>` is `_payload_digest` of the sources, the same
     string `mint_revision` names the revision after. Pushing the same tree twice
     cannot produce a second archive, and a revision published under a name the
@@ -828,7 +829,7 @@ class Store:
                 f"index was not refreshed")
         logger.info(
             f"publish {pid}/{commit}: {len(files)} files, "
-            f"{len(meta['views'])} views")
+            f"{_contents(meta)}")
         return 201, _build_url(pid, commit)
 
     def publish_dev_built(self, pid: str, staging: Path, names,
@@ -912,7 +913,7 @@ class Store:
 
         logger.info(
             f"publish {pid}/{DEV_LINK}: {len(files)} files, "
-            f"{len(meta['views'])} views")
+            f"{_contents(meta)}")
         return 201, url
 
     @staticmethod
@@ -1681,6 +1682,13 @@ class Store:
         return digests
 
 
+def _contents(meta: dict) -> str:
+    """What a published build holds, for the line that reports it."""
+    if meta.get("kind") == render.DOCUMENTS_KIND:
+        return f"{len(meta['documents'])} documents"
+    return f"{len(meta['views'])} views"
+
+
 def _usable_meta(meta, dir_name: str) -> bool:
     """Can everything downstream read this meta.json without a KeyError?
 
@@ -1696,7 +1704,8 @@ def _usable_meta(meta, dir_name: str) -> bool:
 
     Each field is asked what the subscript downstream needs: every view a
     `gzip` int (`index_card` sums them), and every catalogue record a `kind`
-    string (the card counts printables).
+    string (the card counts printables). A build with no model has neither:
+    every document a `bytes` int instead, which the card sums.
     """
     if not isinstance(meta, dict):
         return False
@@ -1705,6 +1714,11 @@ def _usable_meta(meta, dir_name: str) -> bool:
             return False
     if meta["commit"] != dir_name:
         return False
+    if meta.get("kind") == render.DOCUMENTS_KIND:
+        documents = meta.get("documents")
+        return (isinstance(documents, list) and bool(documents)
+                and all(isinstance(d, dict) and isinstance(d.get("bytes"), int)
+                        for d in documents))
     views = meta.get("views")
     if not isinstance(views, list) or not views:
         return False
@@ -1764,10 +1778,11 @@ def _hash_output(directory: Path, names) -> dict:
     server holds the undeclared half, and what it lets through is served by
     design:
 
-      * the NAME. `app._safe_name` asks `buildnames.unservable_reason` of every
-        name requested under `/project/<pid>/<commit>/`, so a name that starts
-        with a dot or carries a character of the C category is not served at
-        all. That, and not the content type, is what covers a
+      * the NAME. `app._safe_build_path` asks
+        `buildnames.unservable_path_reason` of every path requested under
+        `/project/<pid>/<commit>/`, so a path with a segment that starts with a
+        dot or carries a character of the C category is not served at all.
+        That, and not the content type, is what covers a
         `.payload.sha256`-shaped name;
       * WHERE IT LANDS. `app._send_file` resolves the path and refuses anything
         outside `store.root` — on the RESOLVED path, because `latest` is a

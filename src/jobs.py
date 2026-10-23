@@ -78,6 +78,7 @@ from src.buildproc import (
     run_build,
     run_compare,
 )
+from src import docsbuild
 from src.store import (DEV_LINK, PublishError, atomic_write_bytes,
                        utcnow_iso)
 
@@ -841,12 +842,24 @@ class BuildQueue:
                         f"not be written; the front page will not show this "
                         f"build until it finishes")
             staging = self._store.build_staging(task.pid, task.commit)
-            # The baseline is looked up here: the build process gets a copy of
-            # the file, not access to the store. None for a first build.
-            args, keywords = build_arguments(
-                task.sources, staging, task.pid, force=task.force,
-                baseline=self._store.dev_metrics_path(task.pid))
-            outcome = self._run_build(*args, **keywords)
+            # The documents project.json lists, checked before anything runs:
+            # a wrong entry is a 422 now rather than after a model's build.
+            documents = docsbuild.declared_documents(task.sources)
+            if documents and not docsbuild.has_model(task.sources):
+                # Files to read, not a model to run: nothing from the tree is
+                # executed, so no build process (`src/docsbuild.py`).
+                outcome = docsbuild.run_documents_build(
+                    task.sources, staging, documents, pid=task.pid)
+            else:
+                # The baseline is looked up here: the build process gets a copy
+                # of the file, not access to the store. None for a first build.
+                args, keywords = build_arguments(
+                    task.sources, staging, task.pid, force=task.force,
+                    baseline=self._store.dev_metrics_path(task.pid))
+                outcome = self._run_build(*args, **keywords)
+                if outcome.ok and documents:
+                    outcome = docsbuild.add_documents(
+                        task.sources, staging, documents, outcome)
             if outcome.ok:
                 # The job id goes into meta.json so `hammerola log dev` can read
                 # the build's log back. Both routes fill the slot (a commit
