@@ -48,7 +48,7 @@ TOKEN = "test-edit-token"
 NOTHING = object()
 
 
-def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
+def settings_for(data_dir, **overrides):
     """A settings-shaped object, without touching the process environment.
 
     src.settings builds its singleton at import time from real env vars; a test
@@ -66,7 +66,6 @@ def settings_for(data_dir, max_build_bytes=8 * 1024 * 1024, **overrides):
         host="127.0.0.1",
         port=0,  # ask the OS for a free port, then read back which one
         data_dir=str(data_dir),
-        max_build_bytes=max_build_bytes,
         comment_max_text_chars=4000,
         comment_max_photo_bytes=1024 * 1024,
         comment_max_body_bytes=4 * 1024 * 1024,
@@ -140,7 +139,7 @@ class Hub:
     def publish(self, pid, commit, body, token=TOKEN, headers=None):
         """Push, wait for the build, and answer synchronously.
 
-        201/200/409/422/413/403 come back as they are. A 202 is
+        201/200/409/422/403 come back as they are. A 202 is
         followed to its job and turned back into the answer that job reached,
         which is the one nearly every test in this suite is asking about. Use
         `publish_async` when the handover itself is the subject.

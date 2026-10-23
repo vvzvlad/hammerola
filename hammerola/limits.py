@@ -6,8 +6,7 @@ module that enforces it in `tests/client/test_limits.py`, so the two cannot
 drift silently.
 
 The ceilings are enforced before anything is sent, naming the offending file.
-The hub remains the authority: it re-checks every one and is the only side
-that knows a deployment's real MAX_BUILD_BYTES.
+The hub remains the authority: it re-checks every one.
 """
 
 import re
@@ -45,8 +44,3 @@ RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})
 # slug is simply left out (the project id stands behind it); a too-long title
 # stops the command and asks for `--title` rather than truncating.
 MAX_TEXT_CHARS = 200
-
-# Ceiling on the request body and on the unpacked total. Authority: the
-# DEFAULT of `src.settings.Settings.max_build_bytes`; a deployment may set
-# another, so this is a courtesy check and the hub's 413 is what counts.
-MAX_BUILD_BYTES = 64 * 1024 * 1024

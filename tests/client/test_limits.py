@@ -12,7 +12,6 @@ bearable.
 
 from src import store
 from hammerola import limits
-from src.settings import Settings
 
 
 def test_the_path_alphabets_are_the_hubs():
@@ -64,19 +63,6 @@ def test_the_two_headers_are_spelled_the_same_on_both_sides():
 
     assert client_header == hub_header
     assert client_token_header == hub_token_header
-
-
-def test_the_size_ceiling_matches_the_hubs_default():
-    """The DEFAULT, which is all the client can know.
-
-    MAX_BUILD_BYTES is a setting: a deployment may raise or lower it and the
-    client has no way to ask. So the local check exists to catch the archive
-    nobody would accept, and the hub's 413 — carrying its own number — is the
-    authority. What this test pins is that the client's default matches the
-    hub's.
-    """
-    assert (limits.MAX_BUILD_BYTES
-            == Settings.model_fields["max_build_bytes"].default)
 
 
 def test_the_states_a_poller_stops_on_are_the_hubs():

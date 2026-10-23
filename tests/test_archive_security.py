@@ -251,43 +251,6 @@ def test_a_refusal_repeats_no_control_characters(hub):
     assert "\\x1b" in error and "\\r" in error
 
 
-def test_a_survey_after_a_bad_name_still_stops_at_the_size_ceiling(hub_factory):
-    """The walk after the first bad name still stops at the size ceiling.
-
-    Collecting the remaining names iterates to the end of the archive, and
-    `tarfile` decompresses past each member's data to reach the next header, so
-    declared sizes are counted: a bad first name must not buy a free decompression
-    of a gzip bomb. 413 wins over the list of names. Here the bad name is followed
-    by well-named members.
-    """
-    cap = 64 * 1024
-    small = hub_factory(max_build_bytes=cap)
-    entries = _payload() + [file_entry("ref/чертёж.jpg", b"x")]
-    entries += [file_entry(f"f{i}.bin", b"\0" * (cap // 2)) for i in range(4)]
-
-    r = small.publish("proj1", "abc123", raw_tar_gz(entries))
-    assert r.status_code == 413, r.text
-    assert not (small.project_dir("proj1") / "abc123").exists()
-
-
-def test_a_survey_of_nothing_but_bad_names_still_stops_at_the_size_ceiling(
-        hub_factory):
-    """The same ceiling when every member is badly named.
-
-    Sizes are charged on the bad-name branch too; otherwise the running total stays
-    at zero however far the archive expands (a 1 MB body decompressed to 1.07 GB and
-    was answered 422 instead of 413).
-    """
-    cap = 64 * 1024
-    small = hub_factory(max_build_bytes=cap)
-    entries = [file_entry(f"чертёж-{i}.bin", b"\0" * (cap // 2))
-               for i in range(4)]
-
-    r = small.publish("proj1", "abc123", raw_tar_gz(entries))
-    assert r.status_code == 413, r.text
-    assert not (small.project_dir("proj1") / "abc123").exists()
-
-
 def _widest_legal_component() -> str:
     """The widest component `SAFE_COMPONENT` accepts, found by ASKING it.
 
@@ -1243,96 +1206,9 @@ def test_a_refusal_is_answered_only_after_the_spool_is_gone(hub, monkeypatch):
         f"the volume: {late}")
 
 
-def test_gzip_bomb_is_refused_without_filling_the_disk(hub_factory):
-    """A small body that claims to expand far beyond the ceiling.
-
-    The compressed body passes the Content-Length check easily — that is the whole
-    trick — so the only thing standing between this and a full volume is the
-    running total kept while extracting.
-    """
-    small = hub_factory(max_build_bytes=256 * 1024)
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for info, data in _payload():
-            tar.addfile(info, io.BytesIO(data))
-        bomb = b"\0" * (4 * 1024 * 1024)  # compresses to a few KB
-        info = tarfile.TarInfo("bomb.json")
-        info.size = len(bomb)
-        tar.addfile(info, io.BytesIO(bomb))
-    body = buffer.getvalue()
-
-    assert len(body) < 256 * 1024, "the compressed body must pass the size gate"
-    assert small.publish("proj1", "abc123", body).status_code == 413
-    assert not (small.project_dir("proj1") / "abc123").exists()
-    # And the tree it was unpacking into is gone with it.
-    assert _leftovers(small, "proj1") == []
-
-
 def _tar_blocks(info, data: bytes) -> bytes:
     """One member as raw tar blocks: header, content, padding to 512."""
     return info.tobuf() + data + b"\0" * (-len(data) % 512)
-
-
-def test_a_header_understating_its_size_cannot_smuggle_bytes_past_the_cap(
-        hub_factory):
-    """The cap counts the bytes WRITTEN, not the size the header declares.
-
-    Assembled block by block, because tarfile will not produce it: the member's
-    header declares 16 bytes while a megabyte of content follows it. The header's
-    checksum is computed over that lie, so it is a perfectly well-formed header.
-
-    The property being asserted is NOT a particular status code — the extractor
-    is free to hand back only the 16 bytes the header promised, in which case the
-    push is ordinary and succeeds. It is that no amount of lying in a header can
-    put more than max_build_bytes on disk. A ceiling written against
-    `member.size`, or one that trusted the extractor's framing, would fail here.
-    """
-    cap = 128 * 1024
-    small = hub_factory(max_build_bytes=cap)
-    payload = b"\0" * (1024 * 1024)
-
-    header = tarfile.TarInfo("big.json")
-    header.type = tarfile.REGTYPE
-    header.mode = 0o644
-    header.size = 16
-
-    body = b"".join(_tar_blocks(info, data) for info, data in _payload())
-    body += _tar_blocks(header, payload)
-    body += b"\0" * 1024  # end-of-archive marker
-
-    buffer = io.BytesIO()
-    with gzip.GzipFile(fileobj=buffer, mode="wb") as gz:
-        gz.write(body)
-
-    small.publish("proj1", "abc123", buffer.getvalue())
-    build = small.project_dir("proj1") / "abc123"
-    if build.exists():
-        written = sum(p.stat().st_size for p in build.iterdir() if p.is_file())
-        assert written <= cap, (
-            f"a lying header put {written} bytes on disk against a {cap} cap")
-    # Whatever happened, no staging tree was left holding the megabyte either.
-    assert _leftovers(small, "proj1") == []
-
-
-def test_a_member_larger_than_the_cap_is_refused_while_extracting(hub_factory):
-    """The honest version: a member that declares, and carries, too much.
-
-    Compresses to a few KB, so the body sails through the Content-Length gate —
-    the running total kept while extracting is the only thing that stops it.
-    """
-    small = hub_factory(max_build_bytes=128 * 1024)
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for info, data in _payload():
-            tar.addfile(info, io.BytesIO(data))
-        big = b"\0" * (1024 * 1024)
-        info = tarfile.TarInfo("big.json")
-        info.size = len(big)
-        tar.addfile(info, io.BytesIO(big))
-    body = buffer.getvalue()
-    assert len(body) < 128 * 1024, "the compressed body must pass the size gate"
-    assert small.publish("proj1", "abc123", body).status_code == 413
-    assert not (small.project_dir("proj1") / "abc123").exists()
 
 
 def test_too_many_members_is_refused(hub):
@@ -1375,26 +1251,6 @@ def test_a_tree_at_the_depth_ceiling_is_accepted(hub):
     body = raw_tar_gz(_payload() + [file_entry(ok, b"{}")])
     assert hub.publish("proj1", "abc123", body).status_code == 201
     assert (hub.project_dir("proj1") / "abc123" / ok).is_file()
-
-
-def test_a_tree_that_expands_past_the_cap_is_refused(hub_factory):
-    """The unpacked-size ceiling counts the WHOLE tree, not one file.
-
-    A ceiling applied per member, or reset when the extractor moves into a
-    subdirectory, would let a tree of individually modest files fill the volume.
-    Every one of these is a quarter of the cap and they sit in different
-    directories, so only a running total across the walk catches them.
-    """
-    cap = 128 * 1024
-    small = hub_factory(max_build_bytes=cap)
-    chunk = b"\0" * (cap // 4)
-    body = raw_tar_gz(_payload() + [
-        file_entry(f"ref/part{i}/blob.step", chunk) for i in range(8)])
-    assert len(body) < cap, "the compressed body must pass the size gate"
-
-    assert small.publish("proj1", "abc123", body).status_code == 413
-    assert not (small.project_dir("proj1") / "abc123").exists()
-    assert _leftovers(small, "proj1") == []
 
 
 def test_empty_archive_is_refused(hub):

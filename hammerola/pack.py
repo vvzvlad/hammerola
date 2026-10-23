@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hammerola.limits import (
-    MAX_BUILD_BYTES,
     MAX_MEMBERS,
     MAX_PATH_DEPTH,
     SAFE_COMPONENT,
@@ -112,7 +111,6 @@ class Packed:
 
     body: bytes
     names: tuple
-    unpacked_bytes: int
 
     @property
     def size(self) -> int:
@@ -259,28 +257,12 @@ def _shown_text(text: str) -> str:
     return repr(text)
 
 
-def pack(root: Path, max_bytes: int = MAX_BUILD_BYTES) -> Packed:
+def pack(root: Path) -> Packed:
     """Collect the tree and gzip it. Raises PackError, never writes to disk.
 
-    In memory: a source tree is kilobytes and the body is held for the POST
-    anyway.
-
-    Both ceilings the hub applies are checked here — the unpacked total and the
-    body — with its DEFAULT number, since the deployment's real one is unknown
-    (see `limits.MAX_BUILD_BYTES`).
+    In memory: the body is held for the POST anyway.
     """
     members = collect(Path(root))
-
-    total = 0
-    for member, path in members:
-        try:
-            total += path.stat().st_size
-        except OSError as error:
-            raise PackError(f"cannot read {member}: {error}") from error
-    if total > max_bytes:
-        raise PackError(
-            f"the source tree unpacks to {total / 1e6:.1f} MB and the hub's "
-            f"ceiling is {max_bytes / 1e6:.0f} MB")
 
     buffer = io.BytesIO()
     try:
@@ -292,12 +274,7 @@ def pack(root: Path, max_bytes: int = MAX_BUILD_BYTES) -> Packed:
         raise PackError(f"cannot pack {root}: {error}") from error
 
     body = buffer.getvalue()
-    if len(body) > max_bytes:
-        raise PackError(
-            f"the archive is {len(body) / 1e6:.1f} MB and the hub's ceiling is "
-            f"{max_bytes / 1e6:.0f} MB")
-    return Packed(body=body, names=tuple(name for name, _ in members),
-                  unpacked_bytes=total)
+    return Packed(body=body, names=tuple(name for name, _ in members))
 
 
 def _scrub(info: tarfile.TarInfo) -> tarfile.TarInfo:

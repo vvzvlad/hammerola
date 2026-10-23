@@ -116,7 +116,7 @@ def _await_no_workers(timeout=10):
 
 def _bare_store(data):
     """A Store on `data`, without a server around it."""
-    return Store(data_dir=data, max_build_bytes=8 * 1024 * 1024)
+    return Store(data_dir=data)
 
 
 def _accepted_body(data, index):

@@ -9,9 +9,10 @@ Not `tarfile.extractall(filter="data")`: `filter=` needs Python 3.11.4+, and
 the client must run on older ones (`hammerola/__init__.py`). The rules below
 (the hub's alphabet) are stricter anyway.
 
-The ceilings are the push's (`limits.py`): the total is counted from the
-member headers before anything is written, and again while writing, since a
-header can lie.
+The ceilings are the push's (`limits.py`), checked against the member headers
+before anything is written. A member that yields more bytes than its header
+declares is a damaged archive, and it is refused rather than written past the
+size the header promised.
 """
 
 import io
@@ -22,7 +23,6 @@ from typing import NamedTuple
 
 from hammerola.errors import ClientError
 from hammerola.limits import (
-    MAX_BUILD_BYTES,
     MAX_MEMBERS,
     MAX_PATH_DEPTH,
     SAFE_COMPONENT,
@@ -117,8 +117,8 @@ def extract(body: bytes, dest: Path, where: str = "the archive",
 def _copy(source, out, info, where: str) -> None:
     """Move one member, refusing to write more than its header declared.
 
-    The ceilings were counted from headers, and tarfile does not promise to
-    stop at the declared size.
+    tarfile does not promise to stop at the declared size, and bytes past it
+    mean the archive is damaged.
     """
     remaining = info.size
     while True:
@@ -158,7 +158,6 @@ def _checked(tar, where: str, rules: Rules = PUSH_RULES) -> list:
             f"{where} holds {len(files)} members and at most {MAX_MEMBERS} are "
             f"accepted")
 
-    total = 0
     for info in files:
         if not info.isfile():
             # Links, devices, fifos: the hub refuses them on the way in.
@@ -168,12 +167,6 @@ def _checked(tar, where: str, rules: Rules = PUSH_RULES) -> list:
         check_name(info.name, where, rules)
         if info.size < 0:
             raise ClientError(f"{where} is damaged: {info.name!r} has no size")
-        total += info.size
-        if total > MAX_BUILD_BYTES:
-            raise ClientError(
-                f"{where} unpacks to more than "
-                f"{MAX_BUILD_BYTES / 1e6:.0f} MB, which is past the ceiling a "
-                f"push is allowed; nothing was written")
     return files
 
 

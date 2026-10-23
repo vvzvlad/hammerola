@@ -783,9 +783,9 @@ def measure_view(path: Path) -> tuple[int, int]:
 
     Streamed through a counter rather than `len(gzip.compress(data))`, because
     that spelling holds the file AND its compressed copy at once — for four
-    concurrent publishes, of files that are 2 MB each on a real model and up to
-    MAX_BUILD_BYTES on a hostile one. That is the same peak `_spool_body` went to
-    some trouble to avoid, put back one module over.
+    concurrent publishes, of files that are 2 MB each on a real model and far
+    bigger on a broken one. That is the same peak `_spool_body` went to some
+    trouble to avoid, put back one module over.
     """
     counter = _ByteCounter()
     raw = 0

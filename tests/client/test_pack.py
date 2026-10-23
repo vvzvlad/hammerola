@@ -258,12 +258,16 @@ def test_too_many_files_are_refused_before_anything_is_sent(tmp_path):
     assert str(MAX_MEMBERS) in str(caught.value)
 
 
-def test_a_tree_over_the_size_ceiling_is_refused(tmp_path):
+def test_a_tree_of_any_size_is_packed(tmp_path):
+    """A push has no size ceiling, so the client refuses no tree for its size.
+
+    A sparse file of zeros: it costs no disk, and the body stays small.
+    """
     root = make_model(tmp_path / "demo")
-    (root / "big.bin").write_bytes(b"\x00" * 4096)
-    with pytest.raises(PackError) as caught:
-        pack(root, max_bytes=1024)
-    assert "ceiling" in str(caught.value)
+    with open(root / "big.bin", "wb") as handle:
+        handle.truncate(65 * 1024 * 1024)
+    packed = pack(root)
+    assert "big.bin" in packed.names
 
 
 @pytest.mark.skipif(os.geteuid() == 0,

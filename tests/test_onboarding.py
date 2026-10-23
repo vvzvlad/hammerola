@@ -739,11 +739,11 @@ def test_the_hub_refuses_to_build_a_template_a_client_would_refuse(name):
 
 
 def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
-    """The first of the two ceilings that belong to the SET rather than a name.
+    """The ceiling that belongs to the SET rather than a name.
 
-    They are checked on this side rather than delegated, because `unpack` applies
-    them to a tar while this side holds files: a "nearly the same check" that can
-    drift, so both are asserted (the other is the test below).
+    It is checked on this side rather than delegated, because `unpack` applies
+    it to a tar while this side holds files: a "nearly the same check" that can
+    drift, so it is asserted.
     """
     from hammerola.limits import MAX_MEMBERS
 
@@ -751,26 +751,6 @@ def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
     with pytest.raises(ValueError) as raised:
         onboarding._refuse_unservable(many)
     assert str(MAX_MEMBERS) in str(raised.value)
-
-
-def test_the_hub_refuses_a_template_that_unpacks_to_more_than_a_push_may_be(
-        tmp_path):
-    """The second one: the VOLUME.
-
-    It cannot be staged with many files (`MAX_MEMBERS` fires first), so it is one
-    member bigger than the ceiling on its own, made with `truncate`: sparse, so
-    `st_size`, which `_refuse_unservable` measures, is big while no 64 MB is
-    written to disk.
-    """
-    from hammerola.limits import MAX_BUILD_BYTES
-
-    huge = tmp_path / "huge.py"
-    with open(huge, "wb") as handle:
-        handle.truncate(MAX_BUILD_BYTES + 1)
-
-    with pytest.raises(ValueError) as raised:
-        onboarding._refuse_unservable([("huge.py", huge)])
-    assert str(MAX_BUILD_BYTES) in str(raised.value)
 
 
 def test_what_the_template_really_holds_is_servable():

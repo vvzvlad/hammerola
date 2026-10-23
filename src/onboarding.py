@@ -528,11 +528,11 @@ def _refuse_unservable(members) -> None:
     The client's `unpack` is the control; this keeps the two sides from
     disagreeing, so a bad template fails here rather than on `create`.
 
-    It calls the client's own check rather than repeating it. Ceilings on the
-    set rather than one name are checked here, since `unpack` applies those to
-    a tar and this side has files.
+    It calls the client's own check rather than repeating it. The one ceiling
+    on the set rather than one name, `MAX_MEMBERS`, is checked here, since
+    `unpack` applies it to a tar and this side has files.
     """
-    from hammerola.limits import MAX_BUILD_BYTES, MAX_MEMBERS
+    from hammerola.limits import MAX_MEMBERS
     from hammerola.unpack import TEMPLATE_RULES, check_name
     from hammerola.errors import ClientError
 
@@ -540,20 +540,11 @@ def _refuse_unservable(members) -> None:
         raise ValueError(
             f"{TEMPLATE_DIR} holds {len(members)} files and a client unpacks at "
             f"most {MAX_MEMBERS}")
-    total = 0
-    for name, path in members:
+    for name, _path in members:
         try:
             check_name(name, f"the template in {TEMPLATE_DIR}", TEMPLATE_RULES)
         except ClientError as error:
             raise ValueError(str(error)) from error
-        try:
-            total += path.stat().st_size
-        except OSError as error:
-            raise ValueError(f"cannot measure {path}: {error}") from error
-    if total > MAX_BUILD_BYTES:
-        raise ValueError(
-            f"{TEMPLATE_DIR} unpacks to {total} bytes, over the "
-            f"{MAX_BUILD_BYTES} a client accepts")
 
 
 def _add_zip_entry(archive: zipfile.ZipFile, name: str, data: bytes) -> None:

@@ -359,7 +359,7 @@ def key_cases():
 def hub_refuses(hub, notes, commit):
     """Does a real push carrying this `notes` get turned away?"""
     reply = publish_notes(hub, notes, commit=commit)
-    # 409 or 413 here would mean the push was answered for a reason that has
+    # 409 here would mean the push was answered for a reason that has
     # nothing to do with the text, and the comparison below would be a
     # coincidence rather than a verdict.
     assert reply.status_code in (201, 422), reply.text

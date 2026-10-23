@@ -212,10 +212,10 @@ class Limits:
     # parent on the wait loop's polls (`runner._OutputGuard`) and once more
     # after exit, since a fast writer can cross between two polls.
     #
-    # An order of magnitude above any real build (the upload is capped at
-    # 64 MiB, MAX_BUILD_BYTES; builds export single-digit megabytes across tens
-    # of files). 512 MiB is twice the single-file limit; 4096 entries stops a
-    # million empty files, which cost inodes rather than bytes.
+    # An order of magnitude above any real build (builds export single-digit
+    # megabytes across tens of files). 512 MiB is twice the single-file limit;
+    # 4096 entries stops a million empty files, which cost inodes rather than
+    # bytes.
     output_bytes: int | None = 512 * MiB
     output_files: int | None = 4096
 
@@ -234,8 +234,8 @@ class Limits:
     # the real quota (SPEC 8A.2 step 0); this stops one absurd allocation and
     # holds when the parent is gone.
     memory_bytes: int | None = 6 * 1024 * MiB
-    # One file's size; exceeding it raises SIGXFSZ, which kills by default. The
-    # upload is capped at 64 MiB (MAX_BUILD_BYTES).
+    # One file's size; exceeding it raises SIGXFSZ, which kills by default. It
+    # bounds what the build writes, not the pushed sources it reads.
     file_bytes: int | None = 256 * MiB
     # File descriptors. Generous: matplotlib and VTK open fonts and data files
     # by the dozen; this stops a leak, it is not meant to be tight.

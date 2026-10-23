@@ -30,10 +30,6 @@ class Settings(BaseSettings):
     # No retention setting: nothing published is ever deleted (SPEC 5.3, 7.3),
     # so there is no window to configure.
 
-    # Hard ceiling on one uploaded build, applied to the compressed body AND to
-    # the total uncompressed size — the second one is what stops a gzip bomb.
-    max_build_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
-
     # -- ceilings on the comment endpoint (SPEC 7A.4) --------------------------
     # Not secrets, so they get defaults. All of them bound size: how much work
     # one body makes the hub do, and what it hands back on the same origin as
@@ -46,10 +42,10 @@ class Settings(BaseSettings):
     comment_max_text_chars: int = Field(default=4000, ge=1)
 
     # One attachment: the uploaded photo, or the viewer's own render of the
-    # frame. Separate from MAX_BUILD_BYTES on purpose — a build is 64 MiB of
-    # geometry that goes through the archive rules and into a build directory;
-    # this is a phone photo that the hub stores as it arrived and hands back on
-    # the same origin, and the two ceilings have nothing to do with each other.
+    # frame. A build has no size ceiling and this one does, on purpose — a
+    # build is geometry that goes through the archive rules and into a build
+    # directory; this is a phone photo that the hub stores as it arrived and
+    # hands back on the same origin.
     comment_max_photo_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
 
     # The whole multipart body. Must leave room for a photo AND a render AND the

@@ -230,7 +230,7 @@ PROJECT_DRAFT_JOB_FILE = "draft.json"
 # one is left behind by a SIGKILL, and why they are swept explicitly at startup.
 STAGING_PREFIX = ".tmp-"        # a build's OUTPUT, on its way to <pid>/<commit>
 LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
-UPLOAD_PREFIX = ".upload-"      # one spooled request body, up to MAX_BUILD_BYTES
+UPLOAD_PREFIX = ".upload-"      # one spooled request body
 # The `dev` slot renamed out of the way while a new one takes its name. POSIX
 # cannot replace a non-empty directory under a fixed name in one step — see
 # `_swap_dev_slot`. Nothing else parks a directory: published builds are never
@@ -358,14 +358,13 @@ def _built_key(meta: dict) -> tuple:
 class Store:
     """Everything that touches DATA_DIR.
 
-    One instance per process. `max_build_bytes` is passed in rather than read
-    from the settings singleton so tests can build a Store on a tmp_path without
+    One instance per process. `data_dir` is passed in rather than read from
+    the settings singleton so tests can build a Store on a tmp_path without
     touching the process environment.
     """
 
-    def __init__(self, data_dir, max_build_bytes: int):
+    def __init__(self, data_dir):
         self.root = Path(data_dir).resolve()
-        self.max_build_bytes = max_build_bytes
         self.projects_dir = self.root / "project"
         # NOT created here, unlike `projects_dir`. It is created by the first
         # publish that puts something in it, so a hub that has never published a
@@ -394,8 +393,8 @@ class Store:
 
         Nothing else ever will. Every name here is dot-prefixed, so `builds_of`
         skips it and the file server refuses to serve it — a SIGKILL during a
-        push therefore leaves up to MAX_BUILD_BYTES of spooled body plus a
-        half-unpacked staging tree on the volume, permanently.
+        push therefore leaves a whole spooled body plus a half-unpacked staging
+        tree on the volume, permanently.
 
         Only entries older than `LEFTOVER_MAX_AGE_SECONDS` — four hours, and the
         block at its definition says what fixes that figure — are touched,
@@ -558,7 +557,7 @@ class Store:
     def upload_path(self) -> Path:
         """A private path under DATA_DIR for one request body.
 
-        On the volume rather than in /tmp: a body is up to MAX_BUILD_BYTES, the
+        On the volume rather than in /tmp: a body is as big as the build, the
         container's writable layer is not where that belongs, and the dot prefix
         keeps it out of `builds_of` and out of the file server. Swept by
         `_sweep_leftovers` if the process dies before deleting it.
@@ -571,12 +570,12 @@ class Store:
         return self.root / f"{UPLOAD_PREFIX}{uuid.uuid4().hex}"
 
     # -- accepting a push (in the request thread) ---------------------------
-    def accept_sources(self, pid: str, commit: str | None, body_path: Path,
-                       body_size: int) -> "AcceptedPush":
+    def accept_sources(self, pid: str, commit: str | None,
+                       body_path: Path) -> "AcceptedPush":
         """Unpack one pushed SOURCE tree and hash it. Raises PublishError.
 
         Runs in the request, because everything it can refuse is a property of
-        the upload itself — the ids, the size, the archive — and has to be a 4xx
+        the upload itself — the ids and the archive — and has to be a 4xx
         on the push, not a job to poll. It does not touch the project's
         directory: a push that never builds leaves no trace of the project.
 
@@ -601,10 +600,6 @@ class Store:
         if commit is not None and commit != DEV_LINK \
                 and not self.valid_build_id(commit):
             raise PublishError(422, f"invalid commit id: {commit!r}")
-        if body_size > self.max_build_bytes:
-            raise PublishError(
-                413, f"body is {body_size} bytes, limit is {self.max_build_bytes}")
-
         sources = self.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
         sources.mkdir()
         try:
@@ -1253,7 +1248,7 @@ class Store:
     # -- unpacking ---------------------------------------------------------
     def _unpack(self, body_path: Path, dest: Path) -> dict:
         """Extract the archive into `dest`. The rules are `src/archive.py`."""
-        return unpack(body_path, dest, self.max_build_bytes)
+        return unpack(body_path, dest)
 
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest,

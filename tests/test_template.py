@@ -44,7 +44,7 @@ from src.cadbuild.parts import KIND_PRINTABLE, KINDS, RESERVED_STEMS
 from src.buildproc.limits import DEFAULT_LIMITS, memory_limit_supported
 from src.buildproc.runner import STATUS_OK
 from hammerola import pack
-from hammerola.limits import MAX_BUILD_BYTES, MAX_MEMBERS, SAFE_COMPONENT
+from hammerola.limits import MAX_MEMBERS, SAFE_COMPONENT
 from hammerola.errors import ClientError
 from hammerola.project import PROJECT_FILE
 from hammerola.unpack import TEMPLATE_RULES, check_name
@@ -142,7 +142,6 @@ def test_every_path_in_the_template_is_one_the_client_will_unpack():
         f"the template holds paths the client would refuse to unpack: "
         f"{offenders}")
     assert len(template_files()) <= MAX_MEMBERS
-    assert sum(p.stat().st_size for p in template_files()) < MAX_BUILD_BYTES
 
 
 def test_the_visible_half_of_the_template_is_one_the_hub_would_accept():

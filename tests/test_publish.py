@@ -429,13 +429,37 @@ def test_token_prefix_is_not_accepted(hub):
     assert r.status_code == 403
 
 
-def test_oversized_body_is_413(hub_factory):
-    small = hub_factory(max_build_bytes=2048)
-    # Incompressible payload, so the COMPRESSED body really does exceed the cap.
-    r = small.publish("proj1", "abc123", good_build(
-        extra_files={"model.stl": os.urandom(8192)}))
-    assert r.status_code == 413
-    assert not (small.project_dir("proj1") / "abc123").exists()
+def test_a_push_has_no_size_ceiling(hub):
+    """A tree that unpacks to 65 MiB publishes like any other.
+
+    Zeros, so the body stays small and the size that is tested is the unpacked
+    one.
+    """
+    big = b"\0" * (65 * 1024 * 1024)
+    r = hub.publish("proj1", "abc123",
+                    good_build(extra_files={"ref/big.bin": big}))
+    assert r.status_code == 201, r.text
+    published = hub.project_dir("proj1") / "abc123" / "ref" / "big.bin"
+    assert published.stat().st_size == len(big)
+
+
+def test_a_declared_length_of_any_size_is_read_rather_than_refused(hub):
+    """The other half: a body announced at a terabyte is read, not answered
+    with a refusal before the first byte. It ends early here, so the answer is
+    the 400 of a short body — which a hub that refused by length never gives.
+    Over a raw socket because httpx cannot under-deliver a body it announced.
+    """
+    host, port = hub.server.server_address[:2]
+    with socket.create_connection((host, port), timeout=30) as sock:
+        sock.sendall(
+            b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
+            b"Host: hub\r\n"
+            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
+            b"Content-Length: " + str(1 << 40).encode() + b"\r\n"
+            b"\r\n" + b"\0" * 4096)
+        sock.shutdown(socket.SHUT_WR)
+        reply = sock.recv(4096)
+    assert reply.startswith(b"HTTP/1.1 400"), reply[:200]
 
 
 def test_a_dribbling_client_cannot_hold_a_publish_slot(hub, monkeypatch):
@@ -1543,7 +1567,7 @@ def test_the_selection_is_checked_before_the_view_file_is_read(hub):
     at all, so a hub that opened it first would answer "not valid JSON" — the
     422 it really gives names the list instead, which is the only evidence that
     `_view_parts` ran before `check_view_file` and `measure_view`. On a real
-    push the file is up to MAX_BUILD_BYTES and the work happens in one of two
+    push the file can be many megabytes and the work happens in one of two
     build workers.
     """
     r = _publish_view(
@@ -1865,7 +1889,7 @@ def test_a_build_declaring_a_file_the_hub_cannot_serve_is_refused(tmp_path, name
     the line `hammerola artifacts` prints while writing it to the author's disk
     reads backwards from the point the override lands.
     """
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=8 * 1024 * 1024)
+    store = Store(data_dir=tmp_path / "data")
     staging, names = _built(
         store, "proj1", "abc123",
         # The export beside the picture is what keeps the refusal ON THE NAME: a
@@ -1904,7 +1928,7 @@ def test_a_build_declaring_a_view_the_hub_cannot_serve_is_refused(tmp_path, name
     file for the reason its `extra_bytes` explains: this member is the one
     `check_view_file` opens.
     """
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=8 * 1024 * 1024)
+    store = Store(data_dir=tmp_path / "data")
     # The catalogue is spelled out rather than left to the default, and for the
     # same reason the picture case above spells one out: `_catalogue` runs
     # BEFORE `views`, so a printable whose export this build did not write is a

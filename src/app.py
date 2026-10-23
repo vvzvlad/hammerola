@@ -209,8 +209,8 @@ SOCKET_TIMEOUT = 30
 # Ceiling on how long ONE request body may take to arrive, end to end.
 #
 # The socket timeout is rearmed by every packet, so a byte every 29 s would
-# hold a publish slot forever (slowloris). 300 s against a 64 MiB ceiling asks
-# for ~1.7 Mbit/s sustained.
+# hold a publish slot forever (slowloris). A push has no size ceiling, so this
+# is also what a big one has to beat: 300 s moves ~1 GB at ~27 Mbit/s sustained.
 BODY_DEADLINE_SECONDS = 300
 
 # How many publishes may be RECEIVED at once (a body on disk, a tar reader and
@@ -1183,7 +1183,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 len(segments) not in (4, 5):
             return self._error(404, "not found", {"Connection": "close"})
 
-        # Auth before the body: no 64 MiB upload just to be told no.
+        # Auth before the body: no whole upload just to be told no.
         if not self._authorized():
             logger.warning(
                 f"publish refused: bad or missing token from "
@@ -1192,9 +1192,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 TOKEN_REFUSED_STATUS, f"invalid or missing {TOKEN_HEADER}",
                 {"Connection": "close"})
 
-        length = self._body_length(
-            self.server.max_build_bytes,
-            too_large="body is {length} bytes, limit is {limit}")
+        length = self._body_length()
         if length is None:
             return None
 
@@ -1245,7 +1243,7 @@ class HubHandler(BaseHTTPRequestHandler):
                     # (SPEC 7.6), a reserved name. Both routes are accepted
                     # identically; only the worker's last step differs.
                     accepted = self.server.store.accept_sources(
-                        pid, commit, spool, length)
+                        pid, commit, spool)
             except PublishError as error:
                 logger.warning(
                     f"publish {target} refused: {error.message}")
@@ -1796,7 +1794,8 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(error.status, error.message)
         return self._json(200, record)
 
-    def _body_length(self, limit: int, *, too_large: str) -> int | None:
+    def _body_length(self, limit: int | None = None, *,
+                     too_large: str = "") -> int | None:
         """The declared length of a body this route will read. Or None.
 
         None means the request has already been answered. The preamble every
@@ -1804,10 +1803,12 @@ class HubHandler(BaseHTTPRequestHandler):
         unread body bytes would be parsed as the next request.
 
         `limit` and the 413 text `too_large` (formatted with `length` and
-        `limit`) are the caller's; the 413 is answered without reading.
+        `limit`) are the caller's; the 413 is answered without reading. A
+        `limit` of None means the route has no ceiling: a publish, whose body
+        goes to disk (`_spool_body`).
 
         A chunked body is refused like a missing length: nothing here decodes
-        chunked, and the ceiling is applied to Content-Length.
+        chunked, and the length is what the body is read by.
         """
         if self.headers.get("Transfer-Encoding"):
             self._error(411, "Content-Length is required",
@@ -1823,7 +1824,7 @@ class HubHandler(BaseHTTPRequestHandler):
             self._error(400, "invalid Content-Length",
                         {"Connection": "close"})
             return None
-        if length > limit:
+        if limit is not None and length > limit:
             self._error(413, too_large.format(length=length, limit=limit),
                         {"Connection": "close"})
             return None
@@ -1879,8 +1880,7 @@ class HubHandler(BaseHTTPRequestHandler):
         * the body did not finish inside BODY_DEADLINE_SECONDS, which the
           per-packet socket timeout cannot see.
 
-        Straight to disk, so a 64 MiB push is never held in memory. `length`
-        was already checked against the ceiling.
+        Straight to disk, so a push is never held in memory, however big.
         """
         deadline = time.monotonic() + BODY_DEADLINE_SECONDS
         remaining = length
@@ -1913,10 +1913,7 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     `run_compare` and the `src.jobs` defaults so a test can drive the pipeline
     without CadQuery or observe a full queue.
     """
-    store = Store(
-        data_dir=settings.data_dir,
-        max_build_bytes=settings.max_build_bytes,
-    )
+    store = Store(data_dir=settings.data_dir)
     # A separate tree: a comment must not inherit a build directory's
     # immutable caching or public reach (SPEC 7A.3).
     comment_store = CommentStore(
@@ -1964,7 +1961,6 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     # concurrency budget.
     server.publish_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PUBLISHES)
     server.edit_token = settings.edit_token
-    server.max_build_bytes = settings.max_build_bytes
     # Last, so a bind that fails leaves no threads behind to be joined by nobody.
     builds.start()
     return server

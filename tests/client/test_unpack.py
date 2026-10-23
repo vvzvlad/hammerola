@@ -181,30 +181,15 @@ def test_a_path_deeper_than_a_push_may_carry_is_refused(tmp_path):
         unpack.extract(raw_tar_gz([file_entry(deep, b"x")]), tmp_path / "out")
 
 
-def test_an_archive_that_unpacks_to_more_than_a_push_may_be_is_refused(
-        tmp_path, monkeypatch):
-    """The ceiling is counted from the headers, so a tarbomb is refused before
-    a byte of it is written rather than after the disk is full."""
-    monkeypatch.setattr(unpack, "MAX_BUILD_BYTES", 1024)
-    body = raw_tar_gz([file_entry("big.bin", b"x" * 2048)])
-    dest = tmp_path / "out"
-    with pytest.raises(ClientError) as raised:
-        unpack.extract(body, dest)
-    assert "nothing was written" in str(raised.value)
-    assert not dest.exists() or list(dest.iterdir()) == []
-
-
-def test_a_member_that_lies_about_its_size_is_cut_off(tmp_path):
-    """The ceilings were counted from the headers, so a member that goes on
-    producing bytes past its declared size would be a way past all of them."""
+def test_a_member_is_written_to_its_declared_size(tmp_path):
+    """The copy loop writes a member whole. The refusal of bytes past the
+    header is not exercised here: tarfile stops at the declared size itself."""
     info = tarfile.TarInfo("liar.py")
     info.type = tarfile.REGTYPE
     info.size = 4
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         tar.addfile(info, io.BytesIO(b"1234"))
-    # tarfile stops at the declared size on its own; what this pins is that the
-    # copy loop does not depend on it doing so.
     written = unpack.extract(buffer.getvalue(), tmp_path / "out")
     assert (tmp_path / "out" / "liar.py").read_bytes() == b"1234"
     assert written == ["liar.py"]

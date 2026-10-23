@@ -9,8 +9,8 @@ nothing here is served.
 What it guards against is MISTAKES. The path rules are a second line behind
 the packer: a bug there that lets `../` or an absolute path into a member name
 must not turn into a write outside staging. The ceilings are there so that an
-honest error — the wrong directory packed, a gigantic file in `ref/` — comes
-back as a refusal saying what was measured, not as a full volume or a 500.
+honest error — the wrong directory packed — comes back as a refusal saying
+what was measured, not as a 500.
 
 WHAT IT REFUSES. Every one of these is a refusal of the whole push rather than
 a skipped member, and that is the point: a skipped member produces a build that
@@ -25,8 +25,8 @@ is missing a file and looks fine.
     fifos too; a directory ENTRY is skipped rather than refused, because
     directories are created by US, from the paths of the files that need them;
   * two members whose paths fold to one name on a filesystem ignoring case;
-  * an archive carrying more members or more bytes than the ceilings below
-    admit — each of which says what it was measured against;
+  * an archive carrying more members than the ceiling below admits — the
+    refusal says what it was measured against;
   * an archive that is corrupt, whichever way the parser fails on it.
 
 THE DISK IS NOT THE ARCHIVE: a failure of the archive comes back as a
@@ -75,8 +75,8 @@ MAX_PATH_DEPTH = 8
 # every entry costs an iteration whether or not anything is extracted from it.
 #
 # Per member: one `openat`, one write loop and ~1 KiB in the duplicate map
-# (~1 MiB worst case). Bytes are bounded separately (`max_build_bytes`), so this
-# governs syscalls and bookkeeping, not disk.
+# (~1 MiB worst case). It governs syscalls and bookkeeping, not bytes: the
+# archive's size has no ceiling.
 MAX_MEMBERS = 1024
 
 # How many refused member names one 422 carries.
@@ -104,7 +104,7 @@ LAYOUT_ERRNOS = frozenset({errno.EEXIST, errno.ENOTDIR, errno.EISDIR,
 # named because it subclasses OSError, which otherwise means "the disk failed".
 CORRUPT_ARCHIVE_ERRORS = (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile)
 
-# Copy buffer: the running total is checked once per chunk.
+# Copy buffer.
 CHUNK = 64 * 1024
 
 
@@ -270,7 +270,7 @@ def _create_member_file(parent_fd: int, leaf: str, raw_name: str) -> int:
         raise
 
 
-def unpack(body_path: Path, dest: Path, max_build_bytes: int) -> dict:
+def unpack(body_path: Path, dest: Path) -> dict:
     """Extract the archive into `dest`, refusing anything unusual.
 
     Not `tar.extractall(filter="data")`: that clamps permissions and strips
@@ -308,7 +308,7 @@ def unpack(body_path: Path, dest: Path, max_build_bytes: int) -> dict:
         # Resolved once: every member's landing spot is compared against this.
         real_dest = os.path.realpath(dest)
         try:
-            _extract_members(tar, dest, real_dest, files, max_build_bytes)
+            _extract_members(tar, dest, real_dest, files)
         except CORRUPT_ARCHIVE_ERRORS as error:
             # A truncated body or a member lying about its size fails here,
             # when the data and CRC are actually read.
@@ -331,14 +331,12 @@ def unpack(body_path: Path, dest: Path, max_build_bytes: int) -> dict:
     return files
 
 
-def _extract_members(tar, dest: Path, real_dest: str,
-                     files: dict, max_build_bytes: int) -> None:
+def _extract_members(tar, dest: Path, real_dest: str, files: dict) -> None:
     """The member loop of `unpack`. Fills `files` with path -> sha256.
 
     Split out so the caller can wrap the whole walk in one place. Keys of
     `files` are relative paths with `/` separators.
     """
-    total = 0
     # Folded PATH -> the path that claimed it, for the message below.
     seen_names: dict[str, str] = {}
     # Bad member names as (name already escaped, why not), plus their count,
@@ -373,15 +371,7 @@ def _extract_members(tar, dest: Path, real_dest: str,
                 # is even looked at.
                 parts, fault = _member_parts(name)
                 if fault or refused_count:
-                    # Surveying. Badly named members count toward the size
-                    # ceiling too: `tarfile` decompresses past every member's
-                    # data, so this is what bounds a gzip bomb of bad names.
-                    total += member.size
-                    if total > max_build_bytes:
-                        raise PublishError(
-                            413,
-                            f"archive expands beyond "
-                            f"{max_build_bytes} bytes")
+                    # Surveying.
                     if fault:
                         refused_count += 1
                         if len(refused) < MAX_REFUSED_NAMES_REPORTED:
@@ -441,8 +431,6 @@ def _extract_members(tar, dest: Path, real_dest: str,
                 finally:
                     if parent_fd != dest_fd:
                         os.close(parent_fd)
-                # The ceiling applies to bytes actually written, not to the
-                # header's `size`.
                 try:
                     out = os.fdopen(fd, "wb")
                 except BaseException:
@@ -457,12 +445,6 @@ def _extract_members(tar, dest: Path, real_dest: str,
                         chunk = source.read(CHUNK)
                         if not chunk:
                             break
-                        total += len(chunk)
-                        if total > max_build_bytes:
-                            raise PublishError(
-                                413,
-                                f"archive expands beyond "
-                                f"{max_build_bytes} bytes")
                         digest.update(chunk)
                         out.write(chunk)
                 files["/".join(parts)] = digest.hexdigest()

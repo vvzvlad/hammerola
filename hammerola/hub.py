@@ -25,7 +25,7 @@ token (`UNAUTHORIZED`).
       200 {"url", "revision"}                          -> this exact push is
                                                           already published, and
                                                           nothing was rebuilt
-      413 / 422 / 403 / 503 {"error"}                  -> refused, here is why
+      422 / 403 / 503 {"error"}                        -> refused, here is why
     POST /api/v1/publish/<pid>/dev        the same, into the local slot, whose
                                           name is the constant `dev` and which
                                           therefore has no `revision` to report

@@ -68,7 +68,6 @@ services:
       DATA_DIR: /app/data
       # No retention variable exists: a published build is never deleted, so the volume grows
       # until cleared by hand.
-      # MAX_BUILD_BYTES: 67108864 # 64 MiB ceiling on one uploaded build
       # The size ceilings on the comment endpoint; defaults are in src/settings.py. There is no
       # count ceiling or rate limit: writing a comment takes EDIT_TOKEN.
       # COMMENT_MAX_TEXT_CHARS: 4000

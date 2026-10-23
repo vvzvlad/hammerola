@@ -72,8 +72,8 @@ def parse_multipart(body: bytes, content_type: str) -> dict:
 
     The whole body is already in memory by the time this runs, and that is a
     deliberate consequence of the ceiling being small: a comment is a few
-    kilobytes of text plus one photo, so the cap is single-digit megabytes rather
-    than the 64 MiB a build may be. A streaming parser would buy nothing here and
+    kilobytes of text plus one photo, so the cap is tens of megabytes,
+    unlike a build, which has none. A streaming parser would buy nothing here and
     would be a great deal more code to get wrong.
     """
     mime, params = parse_content_type(content_type)

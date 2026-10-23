@@ -346,7 +346,7 @@ def test_a_queued_comparison_is_dropped_by_the_stop_without_a_tree_to_remove(
     """
     data = tmp_path / "data"
     jobs = JobStore(data)
-    pool = BuildQueue(Store(data_dir=data, max_build_bytes=8 * 1024 * 1024),
+    pool = BuildQueue(Store(data_dir=data),
                       jobs, compare_runner=reading_comparer)
     record = jobs.create(PID, NEW)
     # Put straight into the queue rather than through `submit`, so nothing can
@@ -892,7 +892,7 @@ def test_the_cache_refuses_a_segment_that_is_not_an_id(tmp_path, segments):
     Raised rather than returned as a bool because both callers want it that
     way: the route turns it into a 404 and the worker never reaches it.
     """
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=1024)
+    store = Store(data_dir=tmp_path / "data")
     with pytest.raises(ValueError):
         store.compare_dir(*segments)
 
@@ -909,7 +909,7 @@ def test_the_cache_can_name_every_view_a_build_is_allowed_to_publish(tmp_path):
 
     assert SAFE_VIEW_ID.pattern == MEMBER_RE.pattern
 
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=1024)
+    store = Store(data_dir=tmp_path / "data")
     for view in ("assembled", "top.v2", "a_b-c.d", "x" * 128, "9"):
         assert store.valid_view_id(view)
         assert store.compare_dir(PID, OLD, NEW, view).name == view
@@ -930,7 +930,7 @@ def test_the_cache_refuses_a_view_name_that_is_not_a_segment(tmp_path, view):
     a non-string for the reason the other three segments check their type: this
     is called with whatever a URL carried.
     """
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=1024)
+    store = Store(data_dir=tmp_path / "data")
 
     assert not store.valid_view_id(view)
     with pytest.raises(ValueError):
@@ -945,7 +945,7 @@ def test_two_pairs_that_would_share_a_joined_name_land_in_different_places(
     `y__z` and `x__y` against `z` would spell one entry. A `/` is the one
     character no segment `SAFE_ID` passes can contain.
     """
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=1024)
+    store = Store(data_dir=tmp_path / "data")
 
     one = store.compare_dir(PID, "x", "y__z", VIEW)
     other = store.compare_dir(PID, "x__y", "z", VIEW)
@@ -967,7 +967,7 @@ def test_a_comparison_stages_beside_the_entry_it_becomes(tmp_path):
     the staging name is dot-prefixed so the sweep at startup can collect one
     that a SIGKILL left behind.
     """
-    store = Store(data_dir=tmp_path / "data", max_build_bytes=1024)
+    store = Store(data_dir=tmp_path / "data")
     entry = store.compare_dir(PID, OLD, NEW, VIEW)
 
     staging = store.compare_staging(PID, OLD, NEW, VIEW)
@@ -989,7 +989,7 @@ def test_a_staging_directory_left_by_a_kill_is_swept_at_startup(tmp_path):
     `.tmp-` left by a SIGKILL stays on the volume.
     """
     data = tmp_path / "data"
-    store = Store(data_dir=data, max_build_bytes=1024)
+    store = Store(data_dir=data)
     staging = store.compare_staging(PID, OLD, NEW, VIEW)
     entry = store.compare_dir(PID, OLD, NEW, VIEW)
     entry.mkdir()
@@ -997,7 +997,7 @@ def test_a_staging_directory_left_by_a_kill_is_swept_at_startup(tmp_path):
     for path in (staging, entry):
         os.utime(path, (old, old))
 
-    Store(data_dir=data, max_build_bytes=1024)
+    Store(data_dir=data)
 
     assert not staging.exists()
     # And the entry itself is not a leftover: it is the cache.

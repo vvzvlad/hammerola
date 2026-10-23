@@ -450,13 +450,13 @@ def test_concurrent_publishes_to_one_project_all_land(hub):
 def test_stale_leftovers_are_swept_at_startup(tmp_path):
     """A SIGKILL mid-push leaves dot-prefixed debris nothing else ever removes.
 
-    `builds_of` skips it and the file server refuses it, so a spooled 64 MiB body
+    `builds_of` skips it and the file server refuses it, so a whole spooled body
     would sit on the volume indefinitely. The sweep runs in Store.__init__, the one
     moment no publish of ours is in flight. Every one of these names is the
     temporary half of a temporary-plus-rename publish (SPEC 7.2).
     """
     data = tmp_path / "data"
-    store = Store(data_dir=data, max_build_bytes=1024 * 1024)
+    store = Store(data_dir=data)
     pdir = store.projects_dir / "proj1"
     pdir.mkdir(parents=True, exist_ok=True)
 
@@ -489,7 +489,7 @@ def test_stale_leftovers_are_swept_at_startup(tmp_path):
     fresh = pdir / ".tmp-c9-cafebabe"
     fresh.mkdir()
 
-    Store(data_dir=data, max_build_bytes=1024 * 1024)
+    Store(data_dir=data)
 
     for path in stale:
         assert not path.exists(), path
