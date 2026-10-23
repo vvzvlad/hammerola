@@ -18,16 +18,17 @@
  * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
  * come from ui/src/panelstyle.js.
  */
-import { DOC_QUERY, docHint } from './DocumentView.jsx';
+import { DOC_QUERY } from './DocumentView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
 import {
-  BLANK_BOX, ELLIPSIS, FAINT_MONO, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
+  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, btn, popover, tab,
 } from './panelstyle.js';
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
 import { MONO, SANS } from './style.jsx';
+import { BAR_LAYER, DOC_LAYER, documentRows, menuRow, openLabel } from './viewlist.jsx';
 
 export function chromeView(s, props, deps) {
   const {
@@ -89,10 +90,6 @@ export function chromeView(s, props, deps) {
   // that does not list `s.doc` shows its model.
   const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
   const docOpen = documents.find((d) => d.id === s.doc) || null;
-  // One row shape for a view and a document, so the two halves of the list
-  // read as one list.
-  const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
-    + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -438,29 +435,16 @@ export function chromeView(s, props, deps) {
       // while a document is open is a request to see the model.
       onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
     })),
-    // The documents, one row each below the views and a rule: the name (its
-    // `title`, else its path in the tree) and, where a view gives its parts and size, its type
-    // and size. Choosing one lays it over the model (`docOpen`), which stays
-    // mounted underneath with its camera, cut and hidden parts. Like a view,
-    // the choice does not move the address; `?d=` in it opens one on arrival
-    // (`load`).
-    docRows: documents.map((d) => ({
-      key: d.id,
-      label: d.name,
-      hint: docHint(d),
-      rowStyle: menuRow(!!docOpen && docOpen.id === d.id),
-      onClick: () => setState({ doc: d.id, viewsOpen: false }),
-    })),
-    // The rule and the documents sit UNDER the scroll of the views
-    // (`viewListStyle`), so a model with twelve views does not push them out of
-    // sight. Four rows and the top of a fifth: a longer list shows that it goes
-    // on, and scrolls on its own.
-    docRuleStyle: 'flex:none;height:1px;margin:6px 0;background:var(--line-soft)',
-    docListStyle: 'flex:none;max-height:132px;overflow:auto',
-    // A document's name and its hint share a row of a narrow menu: the hint
-    // (`kicad · 7 sheets · 4.6 MB`) stays on one line and the name wraps.
-    docLabelStyle: 'flex:1;min-width:0;overflow-wrap:anywhere',
-    docHintStyle: `flex:none;white-space:nowrap;${FAINT_MONO}`,
+    // The documents below the views and a rule (viewlist.jsx): a row each, two
+    // for a KiCad design, its schematic and its board. Choosing one lays it
+    // over the model (`docOpen`), which stays mounted underneath with its
+    // camera, cut and hidden parts; `docSide` is the KiCad side on screen,
+    // which a double click across the link also moves (`onDocSide`). Like a
+    // view, the choice does not move the address; `?d=` in it opens one on
+    // arrival (`load`), on its schematic.
+    docRows: documentRows(documents, docOpen ? docOpen.id : null, s.docSide,
+      (id, side) => setState({ doc: id, docSide: side, viewsOpen: false })),
+    onDocSide: (side) => setState({ docSide: side }),
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
     // for what the strip does to the toolbar when it is too long for it. A
     // build with documents always gets the menu: they are rows of it.
@@ -468,7 +452,7 @@ export function chromeView(s, props, deps) {
     // What that button says: the document over the model, else the view on
     // screen. Empty where none matches — `s.view` is null until the first view
     // lands, and a switcher captioned `undefined` is worse than a bare one.
-    viewLabel: docOpen ? docOpen.name : shownView ? shownView.name : '',
+    viewLabel: docOpen ? openLabel(docOpen, s.docSide) : shownView ? shownView.name : '',
     // The document laid over the model, or null. Over the WHOLE of the model's
     // area, down to its bottom edge, so nothing drawn for the model shows
     // beside it (the view cube, the "drag — orbit" hint). The layers, while
@@ -487,46 +471,12 @@ export function chromeView(s, props, deps) {
     docKey: docOpen ? `${buildKey(meta)}:${docOpen.id}` : '',
     bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (docOpen ? '17' : '13'),
-    docLayerStyle: 'position:absolute;top:0;left:0;right:0;bottom:0;overflow:auto;padding-bottom:72px;box-sizing:border-box;background:var(--page-bg);z-index:16',
-    // A view's name is the model's own sentence and can be any length; the
-    // button is in a toolbar that must not grow past the window (`viewBtnStyle`
-    // caps it), so the name is cut rather than allowed to push.
-    viewLabelStyle: ELLIPSIS,
+    docLayerStyle: DOC_LAYER,
     viewsToggle: stop(() => setState({
       viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
       // The other menus in this toolbar, which open upwards from buttons a few
       // pixels along: two of them at once would overlap.
       opsOpen: false, settingsOpen: false })),
-    viewBtnStyle: `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
-      + (s.viewsOpen ? TAB_ON : TAB_OFF),
-    // Opens upwards, unlike every other popover on this page: the toolbar
-    // floats at the bottom of the model, so a menu measured from the top of its
-    // button would be drawn off the bottom of the window.
-    //
-    // `bottom:38px` is a measurement: the button is about 25px tall (a 12px
-    // line box and 5px padding either side), the toolbar adds 4px padding and a
-    // 1px border, the rest is the gap between the cards. It moves with
-    // `viewBtnStyle`, or the menu covers the control that opened it.
-    //
-    // No sheet on a narrow window: the toolbar has `contain:layout`, which makes
-    // it the containing block for `fixed` as well as `absolute` descendants
-    // (CSS Containment 1, §3.2), so `popSheet` would resolve against the
-    // toolbar. No clamp either: the toolbar is centred on the bottom edge and
-    // narrow it holds only this button and Fit, so 260px from the button's left
-    // edge fits a 320px window.
-    //
-    // No `z-index`: the toolbar is its own stacking context, so a value here
-    // only sorts this menu against its siblings; `toolbarStyle` raises the
-    // container instead.
-    //
-    // Height capped like the revision menu's list: a model may declare twenty
-    // views, and under the root's `overflow:hidden` a taller menu is cut off.
-    // A column: the views scroll inside it (`viewListStyle`), and the build's
-    // documents stay under them, outside that scroll (`docListStyle`).
-    viewMenuStyle: 'position:absolute;left:0;bottom:38px;width:260px;max-height:308px;flex-direction:column;'
-      + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
-      + (s.viewsOpen ? 'flex' : 'none'),
-    viewListStyle: 'flex:1 1 auto;min-height:0;overflow:auto',
     // The toolbar's layer, raised while any of its menus is open so it covers
     // the overlays sharing the model's area — the "This view did not render"
     // card (14), the section panel (15) and the composer (16) — otherwise a
@@ -535,7 +485,7 @@ export function chromeView(s, props, deps) {
     // covers the model it is 18, over the document (16) and over the banner
     // the document lifts to 17 (`docLayerStyle`), so the list that brings the
     // model back opens over both.
-    toolbarStyle: 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:'
+    toolbarStyle: BAR_LAYER
       + (docOpen ? '18' : s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
     // At phone width the toolbar keeps the view tabs and Fit, the controls for
     // looking at the model. Measure and Comment want a pointer and room to aim,

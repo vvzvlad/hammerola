@@ -1,6 +1,10 @@
 // One KiCad design, as a document of a build: its schematic and its board,
-// each in an `<ecad-viewer>` of its own, under two tabs. DocumentView.jsx draws
-// a document of type `kicad` with this.
+// each in an `<ecad-viewer>` of its own. DocumentView.jsx draws a document of
+// type `kicad` with this.
+//
+// WHICH SIDE IS ON SCREEN IS THE PAGE'S, not this component's: the schematic
+// and the board are two rows of the page's list of views (viewlist.jsx), and
+// the side chosen there arrives here as `side`.
 //
 // The viewer is the vendored `ecad-viewer.js` (static/_v/PROVENANCE.md),
 // fetched by URL only when a design is opened: nothing of it is in this bundle.
@@ -21,14 +25,14 @@
 // and the other an empty circle.
 //
 // THE TWO ARE LINKED HERE, not in the viewer: a double click in one reports
-// `ecad-viewer:crossprobe`, and this component switches to the other tab and
-// asks the other element to select the same thing — a part by its designator,
-// or a net by its name (`crossProbeRequest`).
+// `ecad-viewer:crossprobe`, and this component asks the page for the other side
+// (`onSide`, which moves the lit row of its list too) and, once the page has
+// handed that side down, asks the other element to select the same thing — a
+// part by its designator, or a net by its name (`crossProbeRequest`).
 
 import React from 'react';
 
 import { addPinEntries } from './kicadpins.js';
-import { tab } from './panelstyle.js';
 import { css, MONO } from './style.jsx';
 
 /** Where the hub serves the viewer; `parser.worker.js` is fetched beside it. */
@@ -40,7 +44,8 @@ export const CROSSPROBE_EVENT = 'ecad-viewer:crossprobe';
 /** The two views, by the names the viewer gives them (`targetContext`). */
 export const SCH = 'SCH';
 export const PCB = 'PCB';
-const TAB_NAMES = { [SCH]: 'Schematic', [PCB]: 'PCB' };
+/** What the page's list calls each side. */
+export const SIDE_NAMES = { [SCH]: 'Schematic', [PCB]: 'PCB' };
 
 let pending = null;
 
@@ -58,8 +63,12 @@ export function loadEcadViewer() {
   return pending;
 }
 
-/** The tabs a design has: the schematic, and the board when it has one. */
-export const kicadTabs = (doc) => (doc.kicad.pcb ? [SCH, PCB] : [SCH]);
+/** The sides a design has: the schematic, and the board when it has one. */
+export const kicadSides = (doc) => (doc.kicad.pcb ? [SCH, PCB] : [SCH]);
+
+/** The side of `doc` that `side` names, or its schematic: the side a page
+ *  holds may be one this design does not have, or none yet. */
+export const sideOf = (doc, side) => (kicadSides(doc).includes(side) ? side : SCH);
 
 /** Every file of the design, the project first. */
 export const designFiles = (doc) => [doc.file, ...doc.kicad.schematics,
@@ -89,17 +98,18 @@ export function crossProbeRequest(detail, targetContext) {
   return null;
 }
 
-const SHELL = 'position:relative;height:100%;min-height:320px;display:flex;flex-direction:column';
-const TABS = 'flex:none;display:flex;gap:4px;padding:6px 10px;background:var(--sunken-bg);border-bottom:1px solid var(--line)';
-const STAGE = 'position:relative;flex:1;min-height:0';
+const SHELL = 'position:relative;height:100%;min-height:320px';
 const VIEWER = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
 
-/** One design: its tabs, both viewers, and the link between them. */
+/** One design: both viewers, the side on screen, and the link between them. */
 export default class KicadView extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { tab: SCH, ready: false, error: '' };
+    this.state = { ready: false, error: '' };
+    // A selection waiting for the page to hand down the side it is on:
+    // `{ to, request }`, or null.
+    this.probe = null;
     this.elements = {};
     // One ref callback per view, made once, so React does not detach and
     // reattach the listener on every render.
@@ -117,13 +127,19 @@ export default class KicadView extends React.Component {
     };
   }
 
-  /** A double click in `from`: the other tab, and the same thing selected there. */
+  /** The side on screen: the one the page hands down, where the design has it. */
+  side() {
+    return sideOf(this.props.doc, this.props.side);
+  }
+
+  /** A double click in `from`: the page is asked for the other side, and the
+   *  same thing is selected there once it is on screen (`componentDidUpdate`). */
   relay(from, detail) {
     const to = from === SCH ? PCB : SCH;
-    const target = this.elements[to];
     const request = crossProbeRequest(detail, to);
-    if (!target || !request) return;
-    this.setState({ tab: to }, () => target.requestCrossProbe(request));
+    if (!this.elements[to] || !request) return;
+    this.probe = { to, request };
+    if (this.props.onSide) this.props.onSide(to);
   }
 
   componentDidMount() {
@@ -139,7 +155,7 @@ export default class KicadView extends React.Component {
         if (this._gone) return undefined;
         const sources = designSources(doc, Object.fromEntries(files.map((file, i) => [file, texts[i]])));
         const revisionKey = `${base}${doc.file}`;
-        return Promise.all(kicadTabs(doc).map((context) => this.elements[context]
+        return Promise.all(kicadSides(doc).map((context) => this.elements[context]
           && this.elements[context].replaceSources({ revisionKey, sources: sources[context] })));
       })
       .then(() => {
@@ -151,6 +167,12 @@ export default class KicadView extends React.Component {
 
   componentDidUpdate() {
     this.activate();
+    const { probe } = this;
+    if (probe && probe.to === this.side()) {
+      this.probe = null;
+      const target = this.elements[probe.to];
+      if (target) target.requestCrossProbe(probe.request);
+    }
   }
 
   componentWillUnmount() {
@@ -159,34 +181,23 @@ export default class KicadView extends React.Component {
 
   /** Tell each element whether it is the one on screen. */
   activate() {
-    for (const context of kicadTabs(this.props.doc)) {
+    for (const context of kicadSides(this.props.doc)) {
       const element = this.elements[context];
-      if (element && typeof element.setActive === 'function') element.setActive(context === this.state.tab);
+      if (element && typeof element.setActive === 'function') element.setActive(context === this.side());
     }
   }
 
   render() {
-    const tabs = kicadTabs(this.props.doc);
+    const side = this.side();
     const { ready, error } = this.state;
     return (
       <div style={css(SHELL)}>
-        <div role="tablist" style={css(TABS)}>
-          {tabs.map((context) => (
-            <button key={context} type="button" role="tab" aria-selected={context === this.state.tab}
-                    onClick={() => this.setState({ tab: context })}
-                    style={css(`border:0;background:none;${tab(context === this.state.tab)}`)}>
-              {TAB_NAMES[context]}
-            </button>
-          ))}
-        </div>
-        <div style={css(STAGE)}>
-          {tabs.map((context) => (
-            <ecad-viewer key={context} ref={this.refCallbacks[context]} source-mode="host"
-                         show-header="false" hide-chrome="true" data-view={context}
-                         style={css(`${VIEWER};visibility:${context === this.state.tab ? 'visible' : 'hidden'}`)} />
-          ))}
-          {(error || !ready) && <div style={css(NOTE)}>{error || 'Loading…'}</div>}
-        </div>
+        {kicadSides(this.props.doc).map((context) => (
+          <ecad-viewer key={context} ref={this.refCallbacks[context]} source-mode="host"
+                       show-header="false" hide-chrome="true" data-view={context}
+                       style={css(`${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`)} />
+        ))}
+        {(error || !ready) && <div style={css(NOTE)}>{error || 'Loading…'}</div>}
       </div>
     );
   }

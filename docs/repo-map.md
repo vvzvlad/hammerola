@@ -354,24 +354,34 @@
   what keeps them in step; `ui/README.md` has the layout and the pins
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
-  `HammerolaViewer.jsx`. A header, a tab per document and the document;
-  `?d=<id>` picks the tab, and a tab click rewrites it
+  `HammerolaViewer.jsx`. A header, the document, and the list of
+  `ui/src/viewlist.jsx` floating at the bottom with the documents in it;
+  `?d=<id>` picks the document, and a row rewrites it. It holds the KiCad side
+  on screen
+- `ui/src/viewlist.jsx` — the list of views both pages choose from: the
+  button at the bottom, the card it opens upwards with the views, a rule and
+  the documents (`documentRows`: a row each, two for a KiCad design, its
+  schematic and its board), and the styles of the bar, the card and the
+  document's layer. `chromeview.js` builds the model page's rows and DocShell
+  its own; `viewList` draws them on both
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
   React elements, relative links resolved from the document's directory, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
-  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`. DocShell draws it under
-  its tabs; the model page draws it over the
+  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`. DocShell draws it
+  under its list; the model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
-- `ui/src/KicadView.jsx` — a KiCad design: tabs Schematic and PCB (PCB only
-  with a board), two `<ecad-viewer source-mode="host">` elements, both mounted,
-  the one off screen hidden by `visibility` and told `setActive(false)`. It
+- `ui/src/KicadView.jsx` — a KiCad design: two `<ecad-viewer source-mode="host">`
+  elements, the schematic and the board (only with a board), both mounted, the
+  side on screen the one its page hands down (`side`; the rows that choose it
+  are the page's list), the other hidden by `visibility` and told
+  `setActive(false)`. It
   fetches the design's files out of the build and hands each element its own
   (`designSources`), and it is where the two are LINKED: the viewer reports a
-  double click as `ecad-viewer:crossprobe`, and this component switches tabs
-  and calls `requestCrossProbe` on the other element with the designator or
-  the net. The viewer is `static/_v/ecad-viewer.js`, imported by URL on first
+  double click as `ecad-viewer:crossprobe`, and this component asks the page
+  for the other side (`onSide`) and, once it is on screen, calls
+  `requestCrossProbe` on the other element with the designator or the net. The viewer is `static/_v/ecad-viewer.js`, imported by URL on first
   use (`loadEcadViewer`)
 - `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
   entries the viewer draws a placed symbol's pins from, added from the sheet's

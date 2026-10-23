@@ -121,6 +121,7 @@ import { chromeView } from './chromeview.js';
 // And one of the build's documents, laid over the model when it is chosen in
 // the view list; drawn as the documents page draws it.
 import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
+import { FLOAT_BAR, viewList } from './viewlist.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -1026,8 +1027,10 @@ export default class HammerolaViewer extends React.Component {
       // what stops the button looking like it still works.
       swapping: false,
       // -- what the reader is doing
-      // `doc`: the document laid over the model, or null (`docOpen`).
-      view: null, doc: null, tool: null, held: false, sel: null, selName: '',
+      // `doc`: the document laid over the model, or null (`docOpen`);
+      // `docSide`: the side of a KiCad design on screen, `SCH` or `PCB`, null
+      // for its schematic.
+      view: null, doc: null, docSide: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
@@ -5828,7 +5831,8 @@ export default class HammerolaViewer extends React.Component {
                 documents page uses (DocumentView.jsx). */}
             {v.docOpen && (
               <div style={css(v.docLayerStyle)}>
-                <DocumentView key={v.docKey} doc={v.docOpen} base={PAGE.base} />
+                <DocumentView key={v.docKey} doc={v.docOpen} base={PAGE.base}
+                              side={this.state.docSide} onSide={v.onDocSide} />
               </div>
             )}
 
@@ -5837,48 +5841,15 @@ export default class HammerolaViewer extends React.Component {
                 toolbar, so it is the toolbar that has to rise above the
                 overlays sharing the model with it. */}
             <div style={css(v.toolbarStyle)}>
-              {/* `contain:layout` and NOT a `backdrop-filter`: both make the bar
-                  the containing block and stacking context its menus are built
-                  around, but a backdrop filter over the WebGL canvas cost a third
-                  of the frame rate while orbiting on a retina Mac (measured). */}
-              <div style={css('pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)')}>
+              {/* the bar (`FLOAT_BAR` in viewlist.jsx says why it is drawn so) */}
+              <div style={css(FLOAT_BAR)}>
                 {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
-                    `VIEW_TABS_MAX`. The wrapper is `position:relative` so that
-                    the menu is anchored to the BUTTON: the toolbar carries
-                    `contain:layout` and is therefore already a containing
-                    block for it (CSS Containment 1, §3.2), so without the
-                    wrapper the menu would be measured from the toolbar's whole
-                    box and start at its left end rather than at the button. */}
+                    `VIEW_TABS_MAX`. The menu, with the build's documents under
+                    the views, is the one the documents page draws too
+                    (viewlist.jsx). */}
                 {v.viewMenu ? (
-                  <div style={css(RELATIVE)}>
-                    <div onClick={v.viewsToggle} title={v.viewLabel} style={css(v.viewBtnStyle)}>
-                      <span style={css(v.viewLabelStyle)}>{v.viewLabel}</span>
-                      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 6l4 4 4-4" /></svg>
-                    </div>
-                    <div onClick={(e) => e.stopPropagation()} style={css(v.viewMenuStyle)}>
-                      <div style={css(v.viewListStyle)}>
-                        {v.viewTabs.map((t) => (
-                          <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                            <span style={css(FILL)}>{t.label}</span>
-                            <span style={css(FAINT_MONO)}>{t.hint}</span>
-                          </div>
-                        ))}
-                      </div>
-                      {/* the build's documents, under the views and outside
-                          their scroll (`docRows`, `docListStyle`) */}
-                      {v.docRows.length > 0 && <div style={css(v.docRuleStyle)} />}
-                      {v.docRows.length > 0 && (
-                        <div style={css(v.docListStyle)}>
-                          {v.docRows.map((t) => (
-                            <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                              <span style={css(v.docLabelStyle)}>{t.label}</span>
-                              <span style={css(v.docHintStyle)}>{t.hint}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  viewList({ label: v.viewLabel, open: !!this.state.viewsOpen, onToggle: v.viewsToggle,
+                    views: v.viewTabs, documents: v.docRows, alone: !!v.docOpen })
                 ) : (
                   <div style={css('display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px')}>
                     {v.viewTabs.map((t) => (

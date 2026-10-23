@@ -1,16 +1,20 @@
-// The page of a build with no model: a header, a tab per document, and the
-// document. `ui/src/main.jsx` mounts it instead of HammerolaViewer when the
-// build's meta.json says `"kind": "documents"` (src/render.py); a model's build
-// shows its documents in its own list of views instead (chromeview.js).
+// The page of a build with no model: a header, the document, and the list of
+// views floating at the bottom — the model's page's list, drawn by the same
+// code (viewlist.jsx), here with the build's documents only. `ui/src/main.jsx`
+// mounts it instead of HammerolaViewer when the build's meta.json says
+// `"kind": "documents"` (src/render.py).
 //
-// The document under a tab is drawn by DocumentView.jsx, which the model's page
-// uses too.
+// The document is drawn by DocumentView.jsx, which the model's page uses too. A
+// KiCad design is two rows of the list, its schematic and its board; the side
+// on screen is held here (`side`), and a double click across the design's link
+// moves it (`onSide`).
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
-// `?v=<id>`; the first document needs none, so a plain link opens on it. Its id
-// is its path with `/` spelled `__` (`render.document_id`). Switching tabs
-// REPLACES the address rather than pushing one: a tab is not a place the reader
-// went, and a copied link still lands on what was showing.
+// `?v=<id>`; the first document needs none, so a plain link opens on it, and a
+// KiCad design always opens on its schematic. Its id is its path with `/`
+// spelled `__` (`render.document_id`). Choosing a document REPLACES the address
+// rather than pushing one: it is not a place the reader went, and a copied link
+// still lands on what was showing.
 //
 // `DocPage` is the drawing and takes everything as props, so a test reads the
 // tree it returns without mounting anything (ui/tests/docshell.test.js).
@@ -19,8 +23,10 @@ import React from 'react';
 
 import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
 import { PAGE, shortId } from './hub.js';
+import { SCH } from './KicadView.jsx';
 import { HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { css, FONTS, Mark, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
+import { BAR_LAYER, DOC_LAYER, documentRows, FLOAT_BAR, openLabel, viewList } from './viewlist.jsx';
 
 /** What a build with no model says it is, in meta.json's `kind`. The hub
  *  spells it `render.DOCUMENTS_KIND` (tests/test_documents.py compares). */
@@ -43,19 +49,21 @@ export function docQuery(search, id, documents) {
 
 const SHELL = `position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px`;
 const HEADER = `min-height:50px;flex:none;display:flex;align-items:center;gap:6px 12px;padding:0 16px;${HEADER_BAR}`;
-const TABS = 'flex:none;display:flex;gap:2px;padding:0 12px;overflow-x:auto;background:var(--header-bg);border-bottom:1px solid var(--line)';
-// The underline's colour is its own longhand in BOTH styles, so a tab that
-// stops being the open one changes one value. Left to the shorthand in TAB,
-// React would drop TAB_ON's longhand on the switch without re-setting the
-// unchanged shorthand, and the underline would turn `currentcolor`.
-const TAB = `flex:none;border:0;border-bottom:2px solid;border-bottom-color:transparent;background:none;padding:9px 10px 7px;font:500 12.5px ${SANS};color:var(--text-soft);cursor:pointer;white-space:nowrap`;
-const TAB_ON = `${TAB};border-bottom-color:var(--accent);color:var(--text)`;
+const STAGE = 'position:relative;flex:1;min-height:0';
+// The bar's layer over the document's (`DOC_LAYER`, 16), as on the model's page.
+const BAR = `${BAR_LAYER}18`;
 
-/** The whole page, from what the shell holds. Pure. */
-export function DocPage({ meta, active, base, onPick }) {
+/**
+ * The whole page, from what the shell holds. Pure. `side` is the KiCad side on
+ * screen; `onPick(id, side)` is what a row of the list does, `onSide(side)`
+ * what a double click across a design's link does; `viewsOpen` says the list is
+ * open, `onToggle` opens or shuts it and `onClose` shuts it, from a click
+ * anywhere else on the page.
+ */
+export function DocPage({ meta, active, side, base, onPick, onSide, viewsOpen, onToggle, onClose }) {
   const doc = pickDocument(meta.documents, active);
   return (
-    <div style={{ ...css(SHELL), ...FONTS }}>
+    <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
       <div style={css(HEADER)}>
         <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
           <Mark />
@@ -67,17 +75,16 @@ export function DocPage({ meta, active, base, onPick }) {
           {meta.dev ? 'dev' : shortId(meta.commit)}
         </span>
       </div>
-      <div role="tablist" style={css(TABS)}>
-        {meta.documents.map((one) => (
-          <button key={one.id} type="button" role="tab" aria-selected={one.id === doc.id}
-                  onClick={() => onPick(one.id)}
-                  style={css(one.id === doc.id ? TAB_ON : TAB)}>
-            {one.name}
-          </button>
-        ))}
-      </div>
-      <div style={css('flex:1;min-height:0;overflow:auto')}>
-        <DocumentView key={doc.id} doc={doc} base={base} />
+      <div style={css(STAGE)}>
+        <div style={css(DOC_LAYER)}>
+          <DocumentView key={doc.id} doc={doc} base={base} side={side} onSide={onSide} />
+        </div>
+        <div style={css(BAR)}>
+          <div style={css(FLOAT_BAR)}>
+            {viewList({ label: openLabel(doc, side), open: !!viewsOpen, onToggle, alone: true,
+              documents: documentRows(meta.documents, doc.id, side, onPick) })}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -89,18 +96,27 @@ export default class DocShell extends React.Component {
   constructor(props) {
     super(props);
     const wanted = new URLSearchParams(window.location.search).get(DOC_QUERY);
-    this.state = { active: pickDocument(props.meta.documents, wanted).id };
+    this.state = { active: pickDocument(props.meta.documents, wanted).id, side: SCH, viewsOpen: false };
   }
 
-  pick(id) {
-    if (id === this.state.active) return;
-    window.history.replaceState(window.history.state, '',
-      window.location.pathname + docQuery(window.location.search, id, this.props.meta.documents));
-    this.setState({ active: id });
+  /** Document `id` on screen, a KiCad design on `side`; the list shuts. */
+  pick(id, side = null) {
+    if (id !== this.state.active) {
+      window.history.replaceState(window.history.state, '',
+        window.location.pathname + docQuery(window.location.search, id, this.props.meta.documents));
+    }
+    this.setState({ active: id, side: side || SCH, viewsOpen: false });
   }
 
   render() {
-    return <DocPage meta={this.props.meta} active={this.state.active}
-                    base={PAGE.base} onPick={(id) => this.pick(id)} />;
+    return <DocPage meta={this.props.meta} active={this.state.active} side={this.state.side}
+                    base={PAGE.base} onPick={(id, side) => this.pick(id, side)}
+                    onSide={(side) => this.setState({ side })}
+                    viewsOpen={this.state.viewsOpen}
+                    onToggle={(e) => {
+                      e.stopPropagation();
+                      this.setState({ viewsOpen: !this.state.viewsOpen });
+                    }}
+                    onClose={() => { if (this.state.viewsOpen) this.setState({ viewsOpen: false }); }} />;
   }
 }

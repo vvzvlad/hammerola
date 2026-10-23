@@ -31,7 +31,9 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
+import { ELLIPSIS } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
+import { VIEW_LIST, viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -86,8 +88,8 @@ describe('how many views it takes to fold the strip into a menu', () => {
     // The menu's two halves are ABSENT rather than hidden: a button that named
     // the current view beside a strip that already names every view would be
     // the switcher twice over.
-    expect(drawnWith(c, v.viewBtnStyle)).toHaveLength(0)
-    expect(drawnWith(c, v.viewMenuStyle)).toHaveLength(0)
+    expect(drawnWith(c, viewButtonStyle(false))).toHaveLength(0)
+    expect(drawnWith(c, viewMenuStyle(false))).toHaveLength(0)
   })
 
   it('folds into one button the moment there is a view past the threshold', () => {
@@ -95,8 +97,8 @@ describe('how many views it takes to fold the strip into a menu', () => {
     const v = c.computed()
 
     expect(v.viewMenu).toBe(true)
-    expect(drawnWith(c, v.viewBtnStyle)).toHaveLength(1)
-    expect(drawnWith(c, v.viewMenuStyle)).toHaveLength(1)
+    expect(drawnWith(c, viewButtonStyle(false))).toHaveLength(1)
+    expect(drawnWith(c, viewMenuStyle(false))).toHaveLength(1)
     // And the pills are gone with it — left standing they would be the row that
     // stretched the toolbar, with a button beside it for company.
     v.viewTabs.forEach((t) => expect(drawnWith(c, t.style)).toHaveLength(0))
@@ -122,9 +124,10 @@ describe('how many views it takes to fold the strip into a menu', () => {
     // A view's name is the model's own sentence. The button is inside the same
     // non-wrapping row the strip was, so an uncapped name reintroduces the
     // failure the menu was written to remove.
-    const v = component({ views: someViews(9) }).computed()
-    expect(v.viewBtnStyle).toContain('max-width')
-    expect(v.viewLabelStyle).toContain('text-overflow:ellipsis')
+    expect(viewButtonStyle(false)).toContain('max-width')
+    expect(ELLIPSIS).toContain('text-overflow:ellipsis')
+    // and the caption inside it is the one that is cut
+    expect(drawnWith(component({ views: someViews(9) }), ELLIPSIS)).toHaveLength(1)
   })
 })
 
@@ -139,14 +142,14 @@ describe('the menu itself', () => {
 
   it('is closed until it is asked for, and the toggle takes it back', () => {
     const c = component({ views: someViews(9) })
-    expect(css(c.computed().viewMenuStyle).display).toBe('none')
+    expect(drawnWith(c, viewMenuStyle(false))).toHaveLength(1)
 
     c.computed().viewsToggle(click)
     expect(c.state.viewsOpen).toBe(true)
-    expect(css(c.computed().viewMenuStyle).display).toBe('flex')
+    expect(drawnWith(c, viewMenuStyle(true))).toHaveLength(1)
 
     c.computed().viewsToggle(click)
-    expect(css(c.computed().viewMenuStyle).display).toBe('none')
+    expect(drawnWith(c, viewMenuStyle(false))).toHaveLength(1)
   })
 
   it('draws a row per view, whichever one is showing', () => {
@@ -240,19 +243,16 @@ describe('the menu itself', () => {
     // come up over the button that opened it. No clamp is needed anyway: the
     // toolbar is centred on the bottom edge and narrow leaves this button and
     // Fit in it, so 260px from the button's left edge is inside the window.
-    const wide = css(component({ views: someViews(9) }).computed().viewMenuStyle)
-    const narrow = css(component({ views: someViews(9), narrow: true }).computed().viewMenuStyle)
-
-    for (const style of [wide, narrow]) {
-      expect(style.position).toBe('absolute')
-      expect(style.width).toBe('260px')
-      expect(style.bottom).toBe('38px')
-    }
+    const card = css(viewMenuStyle(true))
+    expect(drawnWith(component({ views: someViews(9), narrow: true }), viewMenuStyle(false))).toHaveLength(1)
+    expect(card.position).toBe('absolute')
+    expect(card.width).toBe('260px')
+    expect(card.bottom).toBe('38px')
     // A model may declare twenty views and the root is `overflow:hidden`, so a
     // menu taller than the window would be cut off rather than scrolled: the
     // card is capped and the views scroll inside it.
-    expect(wide.maxHeight).toBe('308px')
-    expect(css(component({ views: someViews(9) }).computed().viewListStyle).overflow).toBe('auto')
+    expect(card.maxHeight).toBe('308px')
+    expect(css(VIEW_LIST).overflow).toBe('auto')
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {

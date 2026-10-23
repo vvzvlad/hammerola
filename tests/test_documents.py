@@ -42,7 +42,7 @@ DOCUMENTS = {
     "page.html": b"<!doctype html><script>document.title = 'ran'</script>",
     "drawing.svg": b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>",
 }
-# The order project.json lists them in, which is the order of the tabs.
+# The order project.json lists them in, which is the order of the rows in the list of views.
 LISTED = ["list.md", "ref/photo.png", "docs/report.pdf", "page.html", "drawing.svg"]
 
 TYPES = {"list.md": "text/markdown; charset=utf-8",

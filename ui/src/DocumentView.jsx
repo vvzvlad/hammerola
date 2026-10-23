@@ -1,7 +1,7 @@
 // One document of a build, drawn — the one drawing both pages use: what
-// DocShell.jsx puts under a tab of a build with no model, and what the model's
-// page lays over the model when a document is chosen in its list of views
-// (HammerolaViewer.jsx, `docOpen` in chromeview.js).
+// DocShell.jsx shows for a build with no model, and what the model's page lays
+// over the model, each the document chosen in the page's list of views
+// (viewlist.jsx; HammerolaViewer.jsx, `docOpen` in chromeview.js).
 //
 // What a document becomes, by its `type`:
 //
@@ -11,7 +11,8 @@
 //   svg        the file itself in an <iframe>: the hub serves it as its own
 //              type, and an HTML page runs as its author wrote it
 //   image      an <img>
-//   kicad      a KiCad design, its schematic and board linked (KicadView.jsx)
+//   kicad      a KiCad design, its schematic and board linked (KicadView.jsx):
+//              the side on screen is the page's (`side`, `onSide`)
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
@@ -29,7 +30,7 @@ import KicadView from './KicadView.jsx';
 import { css, MONO } from './style.jsx';
 
 /** The query key that names a document in a build's address, on both pages:
- *  the tab on screen of a build with no model, the document over a model. */
+ *  the document on screen of a build with no model, the document over a model. */
 export const DOC_QUERY = 'd';
 
 const encodePath = (path) => path.split('/').map(encodeURIComponent).join('/');
@@ -43,11 +44,8 @@ export function docBase(base, doc) {
   return cut < 0 ? base : `${base}${encodePath(doc.file.slice(0, cut))}/`;
 }
 
-/** What a document is labelled with beside its name: its type and size, and
- *  how many sheets a KiCad design has. */
+/** What a document is labelled with beside its name: its type and size. */
 export const docHint = (doc) => [doc.type,
-  ...(doc.type === 'kicad'
-    ? [`${doc.kicad.schematics.length} sheet${doc.kicad.schematics.length === 1 ? '' : 's'}`] : []),
   doc.bytes >= 1e6 ? mb(doc.bytes) : `${(doc.bytes / 1e3).toFixed(1)} kB`].join(' · ');
 
 const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--paper-bg)';
@@ -60,8 +58,9 @@ const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`
 // rule is one line in one place rather than a property on every short cell.
 const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`;
 
-/** One document as elements, from what its holder knows. Pure. */
-export function documentBody(doc, base, text, error) {
+/** One document as elements, from what its holder knows: `side` and `onSide`
+ *  are the page's, for a KiCad design. Pure. */
+export function documentBody(doc, base, text, error, side, onSide) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>Loading…</div>;
@@ -75,7 +74,7 @@ export function documentBody(doc, base, text, error) {
   if (doc.type === 'image') {
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} />;
   }
-  if (doc.type === 'kicad') return <KicadView doc={doc} base={base} />;
+  if (doc.type === 'kicad') return <KicadView doc={doc} base={base} side={side} onSide={onSide} />;
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
 }
 
@@ -106,6 +105,7 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    return documentBody(this.props.doc, this.props.base, this.state.text, this.state.error);
+    const { doc, base, side, onSide } = this.props;
+    return documentBody(doc, base, this.state.text, this.state.error, side, onSide);
   }
 }

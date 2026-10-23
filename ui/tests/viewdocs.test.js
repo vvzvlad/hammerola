@@ -29,6 +29,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
 import { VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
+import { DOC_LIST, DOC_RULE, VIEW_LIST, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -38,6 +39,12 @@ const DOCS = [
   { id: 'ref__terr-raspil.svg', name: 'ref/terr-raspil.svg', type: 'svg',
     file: 'ref/terr-raspil.svg', bytes: 4235 },
 ]
+
+// A KiCad design: two rows of the list, its schematic and its board.
+const KICAD = {
+  id: 'hw__board.kicad_pro', name: 'Схема и плата', type: 'kicad', file: 'hw/board.kicad_pro',
+  bytes: 4_612_345, kicad: { schematics: ['hw/board.kicad_sch'], pcb: 'hw/board.kicad_pcb' },
+}
 
 // Two views: few enough that without documents the views are a strip of tabs.
 const VIEWS = [
@@ -142,26 +149,38 @@ describe('the documents in the list of views', () => {
     expect([c.state.doc, c.state.view]).toEqual([null, 'open'])
   })
 
+  it('centre the card on the button while it is the bar\'s only control, and start it at the button otherwise', () => {
+    // With a document open the tools go and the bar holds the button alone, in
+    // the middle of the window; with the model on screen Fit stands beside it.
+    expect(css(viewMenuStyle(true, true))).toMatchObject({ left: '50%', transform: 'translateX(-50%)' })
+    expect(css(viewMenuStyle(true, false)).left).toBe('0')
+    const open = component({ doc: 'docs__cut-list.md', viewsOpen: true })
+    expect(drawnAs(open.render(), viewMenuStyle(true, true))).toHaveLength(1)
+    expect(drawnAs(open.render(), viewMenuStyle(true, false))).toHaveLength(0)
+    const model = component({ viewsOpen: true })
+    expect(drawnAs(model.render(), viewMenuStyle(true, false))).toHaveLength(1)
+  })
+
   it('stay in sight under twelve views: those scroll, the documents do not', () => {
     const twelve = Array.from({ length: 12 }, (_, i) => ({ ...VIEWS[0], id: `v${i}`, name: `view ${i}` }))
     const c = component({ meta: { ...meta(), views: twelve }, view: 'v0', viewsOpen: true })
     const v = c.computed()
     const tree = c.render()
-    const [menu] = drawnAs(tree, v.viewMenuStyle)
-    const [views] = drawnAs(tree, v.viewListStyle)
-    const [docs] = drawnAs(tree, v.docListStyle)
+    const [menu] = drawnAs(tree, viewMenuStyle(true))
+    const [views] = drawnAs(tree, VIEW_LIST)
+    const [docs] = drawnAs(tree, DOC_LIST)
     // The card holds the scroll of the views, the rule and the documents, in
     // that order, and scrolls none of them itself.
     expect(menu.props.children.filter(Boolean)).toEqual(
-      [views, drawnAs(tree, v.docRuleStyle)[0], docs])
-    expect(css(v.viewMenuStyle)).toMatchObject({ display: 'flex', flexDirection: 'column', maxHeight: '308px' })
-    expect(css(v.viewMenuStyle).overflow).toBeUndefined()
-    expect(css(v.viewListStyle)).toMatchObject({ overflow: 'auto', minHeight: '0', flex: '1 1 auto' })
+      [views, drawnAs(tree, DOC_RULE)[0], docs])
+    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'flex', flexDirection: 'column', maxHeight: '308px' })
+    expect(css(viewMenuStyle(true)).overflow).toBeUndefined()
+    expect(css(VIEW_LIST)).toMatchObject({ overflow: 'auto', minHeight: '0', flex: '1 1 auto' })
     expect(texts(views)).toContain('view 11')
     expect(texts(views)).not.toContain('docs/cut-list.md')
     // The documents keep their height and scroll on their own past four rows.
-    for (const style of [v.docRuleStyle, v.docListStyle]) expect(css(style).flex).toBe('none')
-    expect(css(v.docListStyle)).toMatchObject({ maxHeight: '132px', overflow: 'auto' })
+    for (const style of [DOC_RULE, DOC_LIST]) expect(css(style).flex).toBe('none')
+    expect(css(DOC_LIST)).toMatchObject({ maxHeight: '132px', overflow: 'auto' })
     expect(texts(docs)).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
   })
 
@@ -214,6 +233,43 @@ describe('the documents in the list of views', () => {
     const c = component({ doc: 'docs__cut-list.md', feed: [comment] })
     c.computed().threads[0].onOpen({ stopPropagation() {} })
     expect([c.state.activePin, c.state.doc]).toEqual(['c1', null])
+  })
+
+  it('give a KiCad design two rows, its schematic and its board, and one without a board', () => {
+    const rows = component({ meta: meta([...DOCS, KICAD]) }).computed().docRows
+    expect(rows.map((t) => [t.label, t.hint])).toEqual([
+      ['docs/cut-list.md', 'markdown · 7.8 kB'],
+      ['ref/terr-raspil.svg', 'svg · 4.2 kB'],
+      ['Схема и плата · Schematic', '1 sheet'],
+      ['Схема и плата · PCB', 'board']])
+    const flat = { ...KICAD, kicad: { ...KICAD.kicad, pcb: null } }
+    expect(component({ meta: meta([flat]) }).computed().docRows.map((t) => t.label))
+      .toEqual(['Схема и плата · Schematic'])
+  })
+
+  it('open a KiCad design on the side its row names, and hand that side down', () => {
+    const c = component({ meta: meta([KICAD]), viewsOpen: true })
+    const board = () => c.computed().docRows[1]
+    board().onClick()
+    expect([c.state.doc, c.state.docSide, c.state.viewsOpen]).toEqual([KICAD.id, 'PCB', false])
+    expect(window.location.search).toBe('')
+    const v = c.computed()
+    expect(v.viewLabel).toBe('Схема и плата · PCB')
+    expect(v.docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([false, true])
+    expect(shownDocs(c)[0].props.side).toBe('PCB')
+    c.computed().docRows[0].onClick()
+    expect(c.state.docSide).toBe('SCH')
+    expect(shownDocs(c)[0].props.side).toBe('SCH')
+  })
+
+  it('move the lit row to the other side when a double click crosses to it', () => {
+    const c = component({ meta: meta([KICAD]), doc: KICAD.id })
+    // `?d=` alone opens the schematic
+    expect(c.computed().docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([true, false])
+    shownDocs(c)[0].props.onSide('PCB')
+    expect(c.state.docSide).toBe('PCB')
+    expect(c.computed().docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([false, true])
+    expect(shownDocs(c)[0].props.side).toBe('PCB')
   })
 
   it('show the model for a document this revision does not list', () => {

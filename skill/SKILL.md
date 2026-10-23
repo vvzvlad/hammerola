@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 25
+version: 26
 ---
 
 # hammerola
@@ -813,8 +813,8 @@ project's title). Each path is a file of the project, a `.md`, `.pdf`, `.png`, `
 under the same path; nothing unlisted is. The build page lists them in its view menu, after
 the views: choosing one shows it over the model, choosing a view brings the
 model back, and `?d=<id>` in the address (the path with `/` written as `__`)
-opens one on arrival. With no `model.py` the documents are the whole build, a
-tab each. Markdown is drawn with its relative links resolved from its own
+opens one on arrival. With no `model.py` the documents are the whole build,
+chosen in the same menu at the bottom of the page. Markdown is drawn with its relative links resolved from its own
 directory, web links open in a new tab; a picture it shows must be a file of
 the build, because an image from another site is not loaded (the page allows
 `img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
@@ -825,9 +825,11 @@ overwrite what the model's build wrote refuses the push with a 422 naming it.
 A KiCad design is listed by its `.kicad_pro` alone
 (`"documents": ["hw/board.kicad_pro"]`): the hub publishes with it the root
 schematic `board.kicad_sch` beside it, the board `board.kicad_pcb` if there is
-one, and every sheet the schematics name, wherever in the project they sit. Its
-page has a Schematic and a PCB tab, and a double click on a part or a net in one
-shows it selected in the other. Listing a `.kicad_sch` or `.kicad_pcb` on its
+one, and every sheet the schematics name, wherever in the project they sit. It is
+two rows of the view menu, `<caption> · Schematic` and `<caption> · PCB` (the
+second only with a board), and a double click on a part or a net on one side
+switches the menu to the other with it selected there; `?d=` opens it on the
+schematic. Listing a `.kicad_sch` or `.kicad_pcb` on its
 own, a missing root schematic, a sheet outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
 the push with a 422 naming the file. The design's files open to the link without a key: whoever has it can

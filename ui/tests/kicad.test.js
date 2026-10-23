@@ -1,5 +1,10 @@
-// A KiCad design as a document: its tabs, what each viewer is handed, and the
-// link between the two.
+// A KiCad design as a document: the side on screen, what each viewer is
+// handed, and the link between the two.
+//
+// Which side is on screen, the schematic or the board, is the page's: two rows
+// of its list of views (viewlist.jsx), handed down as `side`. A double click
+// that crosses to the other side asks the page for it (`onSide`) and selects
+// there once the page has answered.
 //
 // The viewer itself (static/_v/ecad-viewer.js) needs a GPU and is checked in a
 // browser; here its two elements are plain DOM elements carrying the two
@@ -8,9 +13,10 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { docHint, documentBody } from '../src/DocumentView.jsx'
+import { documentBody } from '../src/DocumentView.jsx'
+import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  CROSSPROBE_EVENT, crossProbeRequest, designFiles, designSources, kicadTabs, PCB, SCH,
+  CROSSPROBE_EVENT, crossProbeRequest, designFiles, designSources, kicadSides, PCB, SCH,
 } from '../src/KicadView.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -24,15 +30,21 @@ const design = (pcb = 'hw/board.kicad_pcb') => ({
 
 const ofType = (tree, type) => collect(tree, (el) => (el.type === type ? el : undefined))
 
-/** A view with its two elements attached, as React would attach them. */
-function mounted(doc = design()) {
-  const view = new KicadView({ doc, base: BASE })
+/** A view with its two elements attached, as React would attach them, under a
+ *  page that answers `onSide` by handing the side down, as both pages do. */
+function mounted(doc = design(), side = SCH) {
+  const onSide = vi.fn((next) => {
+    const before = view.props
+    view.props = { ...before, side: next }
+    view.componentDidUpdate(before)
+  })
+  const view = new KicadView({ doc, base: BASE, side, onSide })
   view.setState = (patch, done) => {
     Object.assign(view.state, patch)
     if (done) done()
   }
   const elements = {}
-  for (const context of kicadTabs(doc)) {
+  for (const context of kicadSides(doc)) {
     const element = document.createElement('ecad-viewer')
     element.requestCrossProbe = vi.fn(() => true)
     element.setActive = vi.fn()
@@ -45,20 +57,29 @@ function mounted(doc = design()) {
 const doubleClick = (element, detail) => element.dispatchEvent(new CustomEvent(CROSSPROBE_EVENT, { detail }))
 
 describe('a KiCad design', () => {
-  it('is labelled with its sheets and size, and drawn by its own view', () => {
-    expect(docHint(design())).toBe('kicad · 2 sheets · 4.6 MB')
-    const flat = { ...design(), kicad: { schematics: ['hw/board.kicad_sch'], pcb: null } }
-    expect(docHint(flat)).toBe('kicad · 1 sheet · 4.6 MB')
+  it('has a row per side hinted with its sheets and its board, and is drawn by its own view', () => {
+    expect(documentRows([design()], null, null, () => {}).map((row) => [row.label, row.hint])).toEqual([
+      ['hw/board.kicad_pro · Schematic', '2 sheets'], ['hw/board.kicad_pro · PCB', 'board']])
     const [view] = collect(documentBody(design(), BASE, null, ''), (el) => (el.type === KicadView ? el : undefined))
-    expect(view.props).toEqual({ doc: design(), base: BASE })
+    expect(view.props).toMatchObject({ doc: design(), base: BASE })
+    // the side the page holds, and its door for changing it
+    const onSide = () => {}
+    const [handed] = collect(documentBody(design(), BASE, null, '', PCB, onSide),
+      (el) => (el.type === KicadView ? el : undefined))
+    expect(handed.props).toMatchObject({ side: PCB, onSide })
   })
 
-  it('has a PCB tab only when it has a board', () => {
-    expect(kicadTabs(design())).toEqual([SCH, PCB])
-    expect(kicadTabs(design(null))).toEqual([SCH])
-    const { view } = mounted()
-    expect(ofType(view.render(), 'button').map((b) => texts(b).join(''))).toEqual(['Schematic', 'PCB'])
-    expect(ofType(new KicadView({ doc: design(null), base: BASE }).render(), 'button')).toHaveLength(1)
+  it('draws no tabs of its own: the side on screen is the one it is handed', () => {
+    expect(kicadSides(design())).toEqual([SCH, PCB])
+    expect(kicadSides(design(null))).toEqual([SCH])
+    const { view } = mounted(design(), PCB)
+    const tree = view.render()
+    expect(ofType(tree, 'button')).toEqual([])
+    expect(texts(tree)).not.toContain('Schematic')
+    expect(ofType(tree, 'ecad-viewer').map((v) => v.props.style.visibility)).toEqual(['hidden', 'visible'])
+    // a board asked of a design without one shows the schematic
+    const flat = new KicadView({ doc: design(null), base: BASE, side: PCB })
+    expect(ofType(flat.render(), 'ecad-viewer').map((v) => v.props.style.visibility)).toEqual(['visible'])
   })
 
   it('keeps both viewers mounted and hides the other one without collapsing it', () => {
@@ -68,14 +89,10 @@ describe('a KiCad design', () => {
       .toEqual([['host', 'false', 'true'], ['host', 'false', 'true']])
     expect(viewers.map((v) => v.props.style.visibility)).toEqual(['visible', 'hidden'])
     expect(viewers.map((v) => v.props.style.height)).toEqual(['100%', '100%'])
-    view.state.tab = PCB
-    expect(ofType(view.render(), 'ecad-viewer').map((v) => v.props.style.visibility))
-      .toEqual(['hidden', 'visible'])
   })
 
   it('tells each viewer whether it is the one on screen', () => {
-    const { view, elements } = mounted()
-    view.state.tab = PCB
+    const { view, elements } = mounted(design(), PCB)
     view.activate()
     expect(elements[SCH].setActive).toHaveBeenLastCalledWith(false)
     expect(elements[PCB].setActive).toHaveBeenLastCalledWith(true)
@@ -111,32 +128,52 @@ describe('the link between the schematic and the board', () => {
     expect(crossProbeRequest({ itemType: 'wire' }, PCB)).toBeNull()
   })
 
-  it('a double click on the schematic opens the board with that part selected', () => {
+  it('a double click on the schematic asks the page for the board, then selects the part there', () => {
     const { view, elements } = mounted()
     doubleClick(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'C523' })
-    expect(view.state.tab).toBe(PCB)
+    expect(view.props.onSide).toHaveBeenCalledWith(PCB)
+    // selected once the board is the side on screen, not before
+    expect(elements[PCB].setActive).toHaveBeenLastCalledWith(true)
     expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(
       { targetContext: PCB, kind: 'designator', value: 'C523' })
     expect(elements[SCH].requestCrossProbe).not.toHaveBeenCalled()
   })
 
-  it('a double click on a track opens the schematic with its net selected', () => {
-    const { view, elements } = mounted()
-    view.state.tab = PCB
+  it('a double click on a track asks for the schematic, and selects its net there', () => {
+    const { view, elements } = mounted(design(), PCB)
     doubleClick(elements[PCB], { sourceContext: PCB, itemType: 'net', net: 'GND' })
-    expect(view.state.tab).toBe(SCH)
+    expect(view.props.onSide).toHaveBeenCalledWith(SCH)
     expect(elements[SCH].requestCrossProbe).toHaveBeenCalledWith(
       { targetContext: SCH, kind: 'net', value: 'GND' })
+  })
+
+  it('selects nothing while the page has not moved to the other side', () => {
+    const view = new KicadView({ doc: design(), base: BASE, side: SCH, onSide: vi.fn() })
+    view.setState = (patch, done) => {
+      Object.assign(view.state, patch)
+      if (done) done()
+    }
+    const elements = {}
+    for (const context of [SCH, PCB]) {
+      elements[context] = document.createElement('ecad-viewer')
+      elements[context].requestCrossProbe = vi.fn(() => true)
+      elements[context].setActive = vi.fn()
+      view.refCallbacks[context](elements[context])
+    }
+    doubleClick(elements[SCH], { reference: 'R1' })
+    view.componentDidUpdate(view.props)
+    expect(elements[PCB].requestCrossProbe).not.toHaveBeenCalled()
   })
 
   it('does nothing without a board, or once an element is detached', () => {
     const lone = mounted(design(null))
     doubleClick(lone.elements[SCH], { reference: 'R1' })
-    expect(lone.view.state.tab).toBe(SCH)
+    expect(lone.view.props.onSide).not.toHaveBeenCalled()
 
     const { view, elements } = mounted()
     view.refCallbacks[SCH](null)
     doubleClick(elements[SCH], { reference: 'R1' })
+    expect(view.props.onSide).not.toHaveBeenCalled()
     expect(elements[PCB].requestCrossProbe).not.toHaveBeenCalled()
   })
 })

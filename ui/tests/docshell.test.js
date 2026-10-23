@@ -13,6 +13,8 @@ import DocumentView, { docBase, docHint, documentBody, docUrl } from '../src/Doc
 import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
+import { css } from '../src/style.jsx'
+import { viewMenuStyle } from '../src/viewlist.jsx'
 
 const BASE = '/project/docs0001/abc123/'
 
@@ -206,24 +208,45 @@ describe('one document, as both pages draw it', () => {
   })
 })
 
-describe('the page of a build with no model', () => {
-  const page = (active) => DocPage({ meta: META, active, base: BASE, onPick: () => {} })
-  const shown = (tree) => collect(tree, (el) => (el.type === DocumentView ? el : undefined))
+// A KiCad design among them: two rows of the list, its schematic and its board.
+const KICAD = {
+  id: 'hw__board.kicad_pro', name: 'Схема и плата', type: 'kicad', file: 'hw/board.kicad_pro',
+  bytes: 4_612_345, kicad: { schematics: ['hw/board.kicad_sch'], pcb: 'hw/board.kicad_pcb' },
+}
+const WITH_KICAD = { ...META, documents: [KICAD, ...META.documents.slice(0, 1)] }
 
-  it('draws one tab per document, in the order meta.json lists them', () => {
-    const tabs = ofType(page('list.md'), 'button')
-    expect(tabs.map(text)).toEqual(META.documents.map((d) => d.name))
-    expect(tabs.map((tab) => tab.props['aria-selected'])).toEqual([true, false, false, false])
+describe('the page of a build with no model', () => {
+  const page = (active, extra = {}) => DocPage({ meta: META, active, base: BASE, onPick: () => {}, ...extra })
+  const shown = (tree) => collect(tree, (el) => (el.type === DocumentView ? el : undefined))
+  /** The rows of the list, by what they say, and the click each one makes. */
+  const rows = (tree) => collect(tree, (el) => (el.props.onClick && el.type === 'div'
+    && texts(el).length === 2 ? texts(el) : undefined))
+
+  it('has the list of views at the bottom and no tabs at the top', () => {
+    const tree = page('list.md', { viewsOpen: true })
+    expect(ofType(tree, 'button')).toEqual([])
+    expect(collect(tree, (el) => (el.props.role === 'tablist' ? el : undefined))).toEqual([])
+    // a row per document, in the order meta.json lists them, with its type and size
+    expect(rows(tree)).toEqual(META.documents.map((d) => [d.name, docHint(d)]))
+    // the button names the document on screen
+    expect(texts(tree)).toContain('list.md')
+    // and is the bar's only control, so the card is centred on it
+    expect(collect(tree, (el) => (el.props.style === css(viewMenuStyle(true, true)) ? el : undefined)))
+      .toHaveLength(1)
   })
 
-  it('styles the open tab and the others with the same properties', () => {
-    // React patches only the properties that differ between two renders. A
-    // longhand that only the open tab carries is REMOVED when the tab closes,
-    // and the shorthand it sat on is not re-applied, so the underline of the
-    // tab just left turned `currentcolor` (black) in a real browser.
-    const [open, closed] = ofType(page('list.md'), 'button')
-    expect(Object.keys(closed.props.style)).toEqual(Object.keys(open.props.style))
-    expect(closed.props.style.borderBottomColor).toBe('transparent')
+  it('gives a KiCad design two rows, and opens it on the side the page holds', () => {
+    const picked = []
+    const tree = DocPage({ meta: WITH_KICAD, active: KICAD.id, side: 'PCB', base: BASE,
+      onPick: (id, side) => picked.push([id, side]), viewsOpen: true })
+    expect(rows(tree).map(([label]) => label)).toEqual(
+      ['Схема и плата · Schematic', 'Схема и плата · PCB', 'list.md'])
+    expect(texts(tree)).toContain('Схема и плата · PCB')
+    expect(shown(tree)[0].props.side).toBe('PCB')
+    for (const row of collect(tree, (el) => (el.props.onClick && texts(el).length === 2 ? el : undefined))) {
+      row.props.onClick({ stopPropagation() {} })
+    }
+    expect(picked).toEqual([[KICAD.id, 'SCH'], [KICAD.id, 'PCB'], ['list.md', null]])
   })
 
   it('names the project and the revision in the header', () => {
@@ -235,7 +258,7 @@ describe('the page of a build with no model', () => {
     expect(texts(dev)).toContain('dev')
   })
 
-  it('puts the open document under the tabs, one instance per document', () => {
+  it('puts the open document on the page, one instance per document', () => {
     const [view] = shown(page('report.pdf'))
     expect(view.props.doc.id).toBe('report.pdf')
     expect(view.key).toBe('report.pdf')
@@ -274,7 +297,32 @@ describe('the shell', () => {
     expect(shell.render().props.active).toBe('report.pdf')
   })
 
-  it('writes the tab into the address, and drops ?d= for the first', () => {
+  it('opens the first document on its schematic, and keeps the side out of the address', () => {
+    window.history.replaceState(null, '', BASE)
+    rereadPage(BASE)
+    shell = new DocShell({ meta: WITH_KICAD })
+    shell.setState = (patch) => Object.assign(shell.state, patch)
+    expect([shell.state.active, shell.state.side]).toEqual([KICAD.id, 'SCH'])
+    shell.pick(KICAD.id, 'PCB')
+    expect([shell.state.active, shell.state.side]).toEqual([KICAD.id, 'PCB'])
+    expect(window.location.search).toBe('')
+    expect(shell.render().props.side).toBe('PCB')
+    // a double click that crosses to the schematic moves the page with it
+    shell.render().props.onSide('SCH')
+    expect(shell.state.side).toBe('SCH')
+  })
+
+  it('opens the list on its button and shuts it on a click elsewhere', () => {
+    mount('')
+    const stop = vi.fn()
+    shell.render().props.onToggle({ stopPropagation: stop })
+    expect(stop).toHaveBeenCalled()
+    expect(shell.state.viewsOpen).toBe(true)
+    shell.render().props.onClose()
+    expect(shell.state.viewsOpen).toBe(false)
+  })
+
+  it('writes the document into the address, and drops ?d= for the first', () => {
     mount('?d=report.pdf')
     shell.pick('list.md')
     expect(window.location.search).toBe('')
