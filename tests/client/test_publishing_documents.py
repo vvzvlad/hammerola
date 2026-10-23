@@ -62,6 +62,32 @@ def test_build_fills_the_draft_slot_with_documents(hub, docs):
     assert (slot / "docs" / "receipt.pdf").read_bytes() == FILES["docs/receipt.pdf"]
 
 
+def test_artifacts_fetches_a_kicad_design_whole_and_not_its_project_file_alone(
+        hub, tmp_path, capsys):
+    # A root sheet naming a second sheet in a subdirectory, and a board.
+    design = {
+        "hw/board.kicad_pro": b"{}\n",
+        "hw/board.kicad_sch": b'(kicad_sch (sheet (property "Sheetfile" "sub/power.kicad_sch")))\n',
+        "hw/sub/power.kicad_sch": b"(kicad_sch)\n",
+        "hw/board.kicad_pcb": b"(kicad_pcb)\n",
+    }
+    root = tmp_path / "board"
+    for name, data in design.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(data)
+    (root / "project.json").write_text(json.dumps(
+        {"id": "docs0002", "project": "board", "title": "Board (board)",
+         "documents": ["hw/board.kicad_pro"]}), encoding="utf-8")
+    assert run(root, "commit") == 0
+    capsys.readouterr()
+
+    out_dir = tmp_path / "fetched"
+    assert main(["-C", str(root), "artifacts", "latest", "-o", str(out_dir)]) == 0
+    fetched = {path.relative_to(out_dir).as_posix(): path.read_bytes()
+               for path in out_dir.rglob("*") if path.is_file()}
+    assert fetched == design
+
+
 def test_artifacts_fetches_the_documents_back_under_their_paths(
         hub, docs, tmp_path, capsys):
     assert run(docs, "commit") == 0

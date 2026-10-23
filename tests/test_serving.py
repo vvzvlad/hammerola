@@ -589,6 +589,29 @@ def test_the_policy_allows_inline_style_attributes(hub):
         assert "'unsafe-inline'" not in _csp_sources(policy, "script-src"), policy
 
 
+def test_the_policy_allows_what_the_kicad_viewer_builds_itself(hub):
+    # SPEC 7.4: the vendored KiCad viewer draws its panel icons from an SVG
+    # sprite it turns into a `blob:` URL, and triangulates with a WebAssembly
+    # module embedded in its own file. Without `blob:` the icons are blank,
+    # without 'wasm-unsafe-eval' it falls back to JS — the page still works, so
+    # only an assertion on what the policy PERMITS notices. Both premises are
+    # read off the bundle, so a viewer that stops needing them says so here.
+    bundle = (STATIC_DIR / "_v" / "ecad-viewer.js").read_text(
+        encoding="utf-8", errors="replace")
+    assert 'type:"image/svg+xml"' in bundle and "createObjectURL" in bundle, (
+        "the KiCad viewer no longer builds a blob: sprite; drop blob: from img-src")
+    assert "WebAssembly.instantiate" in bundle, (
+        "the KiCad viewer no longer compiles WebAssembly; drop 'wasm-unsafe-eval'")
+    hub.publish("proj1", "abc123", good_build())
+    for path in ("/", "/project/proj1/abc123/"):
+        policy = hub.get(path).headers["Content-Security-Policy"]
+        assert "blob:" in _csp_sources(policy, "img-src"), policy
+        # WebAssembly compilation and nothing more: the scripts themselves still
+        # come from this origin only.
+        assert sorted(_csp_sources(policy, "script-src")) == sorted(
+            ["'self'", "'wasm-unsafe-eval'"]), policy
+
+
 def test_the_index_page_has_no_inline_script(hub):
     # An inline script would be blocked by our own CSP, i.e. a blank index page.
     # The front page is drawn by the React bundle now, exactly like the build

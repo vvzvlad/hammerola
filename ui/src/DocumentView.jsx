@@ -11,6 +11,7 @@
 //   svg        the file itself in an <iframe>: the hub serves it as its own
 //              type, and an HTML page runs as its author wrote it
 //   image      an <img>
+//   kicad      a KiCad design, its schematic and board linked (KicadView.jsx)
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
@@ -24,6 +25,7 @@ import React from 'react';
 
 import { markdownElements, NOWRAP_CLASS } from './docmd.js';
 import { mb } from './hub.js';
+import KicadView from './KicadView.jsx';
 import { css, MONO } from './style.jsx';
 
 /** The query key that names a document in a build's address, on both pages:
@@ -41,8 +43,12 @@ export function docBase(base, doc) {
   return cut < 0 ? base : `${base}${encodePath(doc.file.slice(0, cut))}/`;
 }
 
-/** What a document is labelled with beside its name: its type and size. */
-export const docHint = (doc) => `${doc.type} · ${doc.bytes >= 1e6 ? mb(doc.bytes) : `${(doc.bytes / 1e3).toFixed(1)} kB`}`;
+/** What a document is labelled with beside its name: its type and size, and
+ *  how many sheets a KiCad design has. */
+export const docHint = (doc) => [doc.type,
+  ...(doc.type === 'kicad'
+    ? [`${doc.kicad.schematics.length} sheet${doc.kicad.schematics.length === 1 ? '' : 's'}`] : []),
+  doc.bytes >= 1e6 ? mb(doc.bytes) : `${(doc.bytes / 1e3).toFixed(1)} kB`].join(' · ');
 
 const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--paper-bg)';
 const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55';
@@ -69,6 +75,7 @@ export function documentBody(doc, base, text, error) {
   if (doc.type === 'image') {
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} />;
   }
+  if (doc.type === 'kicad') return <KicadView doc={doc} base={base} />;
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
 }
 

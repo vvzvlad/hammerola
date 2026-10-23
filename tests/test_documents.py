@@ -12,6 +12,7 @@ does, minus the files a model's build never writes, so the documents are left
 for the hub to add.
 """
 
+import dataclasses
 import http.client
 import json
 import re
@@ -262,6 +263,43 @@ def test_a_document_may_not_land_on_what_the_model_wrote(model_hub):
         record["error"])
 
 
+# A KiCad design is several files under one entry: the project, a root sheet
+# naming a second one, and the board.
+BOARD = {
+    "hw/board.kicad_pro": b"{}\n",
+    "hw/board.kicad_sch": b'(kicad_sch (sheet (property "Sheetfile" "power.kicad_sch")))\n',
+    "hw/power.kicad_sch": b"(kicad_sch)\n",
+    "hw/board.kicad_pcb": b"(kicad_pcb)\n",
+}
+
+
+def test_a_kicad_design_beside_a_model_is_published_with_every_file(model_hub):
+    revision = published(model_hub, model_tree(["hw/board.kicad_pro"], **BOARD))
+    meta = model_hub.get(f"/project/docs0001/{revision}/meta.json").json()
+
+    doc, = meta["documents"]
+    assert doc["kicad"] == {"schematics": ["hw/board.kicad_sch", "hw/power.kicad_sch"],
+                            "pcb": "hw/board.kicad_pcb"}
+    for name, data in BOARD.items():
+        served = model_hub.get(f"/project/docs0001/{revision}/{name}")
+        assert (served.status_code, served.content) == (200, data), name
+
+
+def test_a_file_of_a_design_may_not_land_on_what_the_model_wrote(hub_factory):
+    def builder(project_dir, out_dir, *, pid, **kwargs):
+        outcome = model_builder(project_dir, out_dir, pid=pid, **kwargs)
+        wrote = Path(out_dir) / "hw" / "board.kicad_sch"
+        wrote.parent.mkdir()
+        wrote.write_bytes(b"the model's own")
+        return dataclasses.replace(outcome, files=(*outcome.files, "hw/board.kicad_sch"))
+
+    record = refused(hub_factory(build_runner=builder),
+                     model_tree(["hw/board.kicad_pro"], **BOARD))
+    assert record["code"] == 422
+    assert "would overwrite what the model's build wrote: 'hw/board.kicad_sch'" in (
+        record["error"])
+
+
 # -- what a list may say -------------------------------------------------------
 
 @pytest.mark.parametrize("listed, named", [
@@ -301,6 +339,47 @@ def test_a_list_that_is_not_a_list_of_paths_is_refused(hub):
     assert record["code"] == 422
     assert "`documents` in project.json has to be a list of paths" in (
         record["error"])
+
+
+TITLED = [{"file": "list.md", "title": "Список покупок"}, "ref/photo.png",
+          {"file": "drawing.svg", "title": "Схема распила"}]
+
+
+@pytest.mark.parametrize("tree", [documents_tree, model_tree])
+def test_a_title_is_the_caption_of_its_document_and_the_path_stays_its_address(
+        model_hub, tree):
+    revision = published(model_hub, tree(TITLED))
+    meta = model_hub.get(f"/project/docs0001/{revision}/meta.json").json()
+
+    assert [(d["name"], d["file"], d["id"]) for d in meta["documents"]] == [
+        ("Список покупок", "list.md", "list.md"),
+        ("ref/photo.png", "ref/photo.png", "ref__photo.png"),
+        ("Схема распила", "drawing.svg", "drawing.svg")]
+    # The document is served where the path says, whatever it is called.
+    assert model_hub.get(
+        f"/project/docs0001/{revision}/drawing.svg").status_code == 200
+
+
+@pytest.mark.parametrize("entry, named", [
+    ({"title": "Список"}, "has no `file`, the path of the document"),
+    ({"file": "list.md", "titel": "Список"},
+     "'list.md', which has keys the hub does not read: titel"),
+    ({"file": "list.md", "title": "   "},
+     "'list.md', which has a title the page cannot show: `title` must be a "
+     "non-empty string"),
+    ({"file": "list.md", "title": None}, "`title` must be a non-empty string"),
+    ({"file": "list.md", "title": "two\nlines"}, "non-printable character"),
+    ({"file": "list.md", "title": "x" * 201}, "is longer than"),
+    ({"file": "nope.md", "title": "Список"},
+     "'nope.md', which is not a file in the pushed tree"),
+])
+def test_a_titled_entry_the_hub_cannot_publish_refuses_the_push(
+        hub, entry, named):
+    record = refused(hub, documents_tree([entry]))
+    assert record["code"] == 422
+    assert record["error"].startswith(
+        "project.json lists documents the hub cannot publish:\n")
+    assert named in record["error"], record["error"]
 
 
 def test_a_tree_with_no_model_and_no_list_goes_to_the_model_build(hub_factory):

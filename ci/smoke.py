@@ -140,6 +140,10 @@ REQUIRED_PATHS = [
     # module graph fails in the browser.
     "/app/static/_v/three.module.js",
     "/app/static/_v/three.core.js",
+    # The KiCad viewer, fetched by URL when a design is opened (`ECAD_VIEWER_URL` in
+    # ui/src/KicadView.jsx), and the parser worker it starts from beside itself.
+    "/app/static/_v/ecad-viewer.js",
+    "/app/static/_v/parser.worker.js",
     # The palette, linked by every page. Missing, every page still answers 200 but every
     # `var(--…)` resolves to nothing.
     "/app/static/_v/tokens.css",

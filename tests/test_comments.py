@@ -528,10 +528,12 @@ def test_the_committed_page_scripts_never_build_markup_from_a_string():
     # The viewer library builds markup from strings; it is a library, not a page
     # script of ours (static/_v/PROVENANCE.md). `three.module.js` and
     # `three.core.js` are npm's builds of three, here because the viewer bundle
-    # imports three by URL. The build artefact is skipped for the reason the
-    # docstring gives. Each is named, so a further library file here is a decision
-    # made in this line.
-    skipped = {"three-cad-viewer.esm.js", "three.module.js", "three.core.js"}
+    # imports three by URL. `ecad-viewer.js` and its `parser.worker.js` are the
+    # KiCad viewer, vendored built. The build artefact is skipped for the reason
+    # the docstring gives. Each is named, so a further library file here is a
+    # decision made in this line.
+    skipped = {"three-cad-viewer.esm.js", "three.module.js", "three.core.js",
+               "ecad-viewer.js", "parser.worker.js"}
     ours = sorted(path.name for path in directory.glob("*.js")
                   if path.name not in skipped
                   and not path.name.startswith("hammerola"))

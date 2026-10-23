@@ -86,6 +86,50 @@ carries a `version` field (currently 3) produced by `ocp-tessellate` on the mode
 side, and the renderer must still understand it — so bump the two together and
 re-check that a real project's build renders.
 
+## The KiCad viewer: `ecad-viewer.js` and `parser.worker.js`
+
+Unlike the files above these are **not built here**. They are the built viewer
+out of the KiCAD-Prism repository,
+[`krishna-swaroop/KiCAD-Prism`](https://github.com/krishna-swaroop/KiCAD-Prism) at
+commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63`, `frontend/public/`, copied
+byte for byte, taken 2026-10-23. Prism builds them (`scripts/build-ecad-viewer.sh`)
+from its fork of ecad-viewer,
+[`krishna-swaroop/ecad-viewer`](https://github.com/krishna-swaroop/ecad-viewer) at
+commit `461a091952ef44b56610e3ccbac4ba3c94139c4a` (`adapterCommit` in the
+`ecad-viewer.manifest.json` beside them; `dirty: false`), which sits on the
+fork's pinned upstream `c3537042ff7156ce077d204df00a9d4add0e29b1`
+(`upstreamCommit`). The fork is a fork of `Huaqiu-Electronics/ecad-viewer`.
+Licence: **MIT**, the fork's `LICENSE.md` at `461a091` copied as
+`ecad-viewer-LICENSE.md`, its copyright line included. Prism's own code is
+Apache-2.0 and none of it is here.
+
+| File | sha256 |
+| --- | --- |
+| `ecad-viewer.js` | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
+| `parser.worker.js` | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
+| `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
+
+The first two equal the hashes Prism's manifest records for them. The manifest
+names a third artefact, `ecad-renderer.js`, which is not here: Prism's library
+panel draws symbols and footprints with it, and `ecad-viewer.js` never imports
+it. Neither are `3d-viewer.js` (the viewer's own 3D tab) and `glyph-full.js` (CJK
+glyphs): `ecad-viewer.js` imports both by the bare names `3d-viewer` and
+`glyph-full`, which only an import map resolves, and the hub serves no inline
+script. So a design whose text holds Chinese, Japanese or Korean characters
+fails to load here (not checked against a real one).
+
+`ecad-viewer.js` is an ES module, fetched by URL when a KiCad design is opened
+(`ECAD_VIEWER_URL` in `ui/src/KicadView.jsx`), and it starts its parser workers
+from `./parser.worker.js` relative to its own URL, which is why the two sit side
+by side under these names. It needs two things of the hub's CSP (SPEC §7.4):
+`'wasm-unsafe-eval'` in `script-src` for the WebAssembly triangulation embedded
+in it, and `blob:` in `img-src` for the icons of its panels, an SVG sprite it
+builds into a `blob:` URL.
+
+To move it: take the same three things from a newer Prism commit — the two files
+and the manifest's commits — replace both files together, and update this
+section and the hashes in one commit.
+
 ## Do not put these in `data/`
 
 They are assets, not state. `data/` is covered by a docker volume on prod, which

@@ -181,15 +181,22 @@ FAVICON_ASSET = "favicon.svg"
 # `render.check_view_file`), not a substitute: it stops script, not a <form> or
 # an overlaid <a>.
 #
-# `img-src 'self' data:`: the vendored viewer css carries its toolbar icons as
-# `data:image/svg+xml` custom properties (SPEC 2.2), which `'self'` does not
-# cover; an SVG fetched as an image cannot run script. `script-src` inherits
-# `default-src 'self'` and must stay there.
+# `img-src 'self' data: blob:`: the vendored viewer css carries its toolbar
+# icons as `data:image/svg+xml` custom properties (SPEC 2.2), and the KiCad
+# viewer (`/_v/ecad-viewer.js`) draws its panel icons from an SVG sprite it
+# builds into a `blob:` URL; `'self'` covers neither scheme, and an SVG loaded
+# as an image cannot run script.
+#
+# `script-src 'self' 'wasm-unsafe-eval'`: the KiCad viewer triangulates its
+# polygons with a WebAssembly module embedded in its own file. The keyword
+# allows compiling WebAssembly and nothing else — no `eval` of JS, no inline
+# script, no source but this origin (SPEC 7.4).
 #
 # `style-src 'unsafe-inline'`: the viewer writes `style="flex: 1"` attributes at
 # runtime with model-dependent values (no hash or nonce possible), and without
 # it the tab bar collapses. Inline styles cannot execute code.
-CSP_HTML = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+CSP_HTML = ("default-src 'self'; img-src 'self' data: blob:; "
+            "script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'")
 
 # Extra headers on the three HTML pages: they are rendered in the theme the
 # cookie asks for (`render.cookie_theme`), so one URL has two documents. The
@@ -293,18 +300,21 @@ BUILD_CONTENT_TYPES = {
     ".html": HTML_TYPE,
     ".htm": HTML_TYPE,
     ".svg": "image/svg+xml",
+    # A KiCad design's files, which the page's viewer fetches and parses itself.
+    **dict.fromkeys(render.KICAD_SUFFIXES, "text/plain; charset=utf-8"),
 }
 
 # What a build hands to anybody holding its address: the documents the page
 # draws the model from (meta.json and each view's tessellation), the pictures
 # the front page shows through `<img>`, which carries no token, and the
 # documents a build lists — those files ARE what its link with `?d=` shows,
-# each by the type its extension makes it. Everything
+# each by the type its extension makes it, a KiCad design's schematics and
+# board with its `.kicad_pro` (decision of 2026-10-23, SPEC §4). Everything
 # else — the STEP, STL and 3MF a part exports, the overview meshes, and any
 # format a later export adds — leaves only to EDIT_TOKEN or to a link carrying
 # the key of its address (`files_key`). A list of what is OPEN rather than of
 # what is closed, so a new format starts closed.
-OPEN_SUFFIXES = {".json", *render.DOCUMENT_TYPES}
+OPEN_SUFFIXES = {".json", *render.DOCUMENT_TYPES, *render.KICAD_SUFFIXES}
 
 # The body of the refusal of a closed file asked for without the token or the
 # key; the status is `TOKEN_REFUSED_STATUS`, for its reasons.

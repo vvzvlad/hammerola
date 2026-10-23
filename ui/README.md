@@ -24,7 +24,7 @@ publish gate and then 404 in the browser.
 
 The consequence is that built files share a directory with committed ones —
 `tokens.css`, `site.css`, `pointer.js`, `pointer_pref.js`,
-`three-cad-viewer.esm.js` —
+`three-cad-viewer.esm.js`, `ecad-viewer.js` —
 so **everything that copies this build copies it BY NAME**, one file per line:
 `UI_FILES` in the `Makefile`, `COPY --from=ui /ui/dist/hammerola.js
 static/_v/hammerola.js` in the `Dockerfile`. Never a directory copy. A directory
@@ -139,7 +139,13 @@ do (#104).
 of `HammerolaViewer`. `src/DocumentView.jsx` draws one document for both pages:
 under DocShell's tabs, and over the 3D area when a document is chosen in the
 model page's view list. `src/docmd.js` turns a markdown document into React
-elements through markdown-it, with raw HTML off.
+elements through markdown-it, with raw HTML off. `src/KicadView.jsx` draws a
+KiCad design: its schematic and its board in two `<ecad-viewer>` elements under
+two tabs, both mounted, a double click in one selecting the same part or net in
+the other; `src/kicadpins.js` gives each schematic the pin entries the viewer
+draws pins from. The viewer is the vendored `static/_v/ecad-viewer.js`, imported by
+URL when a design is opened, as `src/viewport/library.js` imports
+`three-cad-viewer`, so it is in neither the bundle nor the page until then.
 `src/viewport/` is the imperative half: one custom element (`<hmr-viewport>`)
 around the vendored `three-cad-viewer`, and the modules that draw on top of it —
 the manipulators, the section plane, the view cube, the picking; `layer.js` and

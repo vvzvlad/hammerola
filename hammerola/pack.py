@@ -42,8 +42,14 @@ EXCLUDED_DIRS = frozenset({
     "htmlcov", "site-packages",
 })
 
+# Directory patterns, matched against the base name: KiCad's `<project>-backups/`,
+# the zipped copies it writes on every save.
+EXCLUDED_DIR_PATTERNS = ("*-backups",)
+
 # File patterns, matched against the base name; same rule as the directories.
-EXCLUDED_FILES = ("*.pyc", "*.pyo", "*~")
+# `~*` and `_autosave-*` are what a KiCad with the project open keeps beside it:
+# `~board.kicad_pcb.lck` and `_autosave-board.kicad_pcb`.
+EXCLUDED_FILES = ("*.pyc", "*.pyo", "*~", "~*", "_autosave-*")
 
 # How many paths of one kind a refusal lists. Past it, the problem is a
 # directory that should not be packed at all, and the tail line says so.
@@ -172,7 +178,9 @@ def _walk(root: Path, directory: Path, prefix: tuple, found: list,
             continue
 
         if entry.is_dir():
-            if name in EXCLUDED_DIRS:
+            if name in EXCLUDED_DIRS or any(
+                    fnmatch.fnmatch(name, pattern)
+                    for pattern in EXCLUDED_DIR_PATTERNS):
                 continue
             if not SAFE_COMPONENT.match(name):
                 # Not entered: for build output like `_out/` the fix is to

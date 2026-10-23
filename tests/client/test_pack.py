@@ -133,6 +133,24 @@ def test_build_output_and_caches_are_dropped(tmp_path):
                              "model.py", "pin.stl", "project.json"]
 
 
+def test_what_an_open_kicad_writes_beside_a_design_is_dropped(tmp_path):
+    """A push from the directory KiCad has open: its locks, autosaves and
+    backups come back on their own. A name with a space is still refused."""
+    root = make_model(tmp_path / "demo")
+    (root / "board.kicad_pcb").write_text("(kicad_pcb)\n")
+    (root / "~board.kicad_pcb.lck").write_text("{}")
+    (root / "_autosave-board.kicad_pcb").write_text("(kicad_pcb)\n")
+    (root / "board-backups").mkdir()
+    (root / "board-backups" / "board-2026-10-23_120000.zip").write_bytes(b"PK")
+
+    assert [name for name in members(root) if "board" in name] == ["board.kicad_pcb"]
+
+    (root / "Sheet 2.kicad_sch").write_text("(kicad_sch)\n")
+    with pytest.raises(PackError) as caught:
+        collect(root)
+    assert listed_paths(str(caught.value)) == [shown("Sheet 2.kicad_sch")]
+
+
 def test_the_old_publishers_output_is_refused_rather_than_dropped(tmp_path):
     """`_out` is not on the exclusion list, and being refused is the point.
 

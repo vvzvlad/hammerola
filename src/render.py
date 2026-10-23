@@ -80,7 +80,22 @@ DOCUMENT_TYPES = {
     ".html": "html",
     ".htm": "html",
     ".svg": "svg",
+    ".kicad_pro": "kicad",
 }
+
+# A KiCad design is listed by its `.kicad_pro` and arrives as the files the page's
+# viewer reads raw (`src/docsbuild.py` finds the schematics and the board):
+# every one of them is served as text and opens without a key, like a document
+# (`app.BUILD_CONTENT_TYPES`, `app.OPEN_SUFFIXES`). The schematics and the board
+# are never listed on their own.
+KICAD_SUFFIXES = (".kicad_pro", ".kicad_sch", ".kicad_pcb")
+KICAD_SCHEMATIC = ".kicad_sch"
+KICAD_BOARD = ".kicad_pcb"
+
+# How many schematic files one design may bring, its root among them. A ceiling
+# rather than a measurement: a real hierarchy is a handful, and the hub reads
+# every one of them to find the next.
+MAX_KICAD_SHEETS = 64
 
 # `built` is displayed like the rest but it is a timestamp, so its ceiling is the
 # length of one, with room for a long timezone spelling. It lands in the shared
@@ -936,7 +951,8 @@ def _documents(raw: dict, staging: Path, files: dict) -> list:
     tree), `type` has to be what the file's extension makes it, `id` is
     derived from the path (`document_id`) rather than read, and `bytes` is
     measured off the file rather than read from the upload. `name` falls back
-    to the path.
+    to the path. A KiCad design also carries `kicad`, its schematics and board
+    (`_kicad_design`), and its `bytes` are the sum of all its files.
     """
     documents = raw.get("documents")
     if not isinstance(documents, list) or not documents:
@@ -966,15 +982,62 @@ def _documents(raw: dict, staging: Path, files: dict) -> list:
                 f"documents {seen[doc_id]!r} and {name!r} get the same id "
                 f"{doc_id!r}, so one address would name both")
         seen[doc_id] = name
-        read.append({
+        one = {
             "id": doc_id,
             "name": _plain_text(str(entry.get("name") or name),
                                 "document name"),
             "type": shown_as,
             "file": name,
             "bytes": (staging / name).stat().st_size,
-        })
+        }
+        if shown_as == "kicad":
+            design = _kicad_design(entry.get("kicad"), name, files)
+            one["bytes"] += sum((staging / part).stat().st_size
+                                for part in design["schematics"])
+            if design["pcb"] is not None:
+                one["bytes"] += (staging / design["pcb"]).stat().st_size
+            one["kicad"] = design
+        read.append(one)
     return read
+
+
+def _kicad_design(raw, name: str, files: dict) -> dict:
+    """`kicad` of the design whose `.kicad_pro` is `name`, rebuilt.
+
+    `{"schematics": [root, ...], "pcb": path or None}`. Every file is held to
+    the rule every pointer is; the root schematic and the board are the ones
+    the project's own stem names, as `docsbuild` found them, and there are at
+    most `MAX_KICAD_SHEETS` schematics, each once.
+    """
+    where = f"document {name!r}"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where} is a KiCad design with no `kicad` object")
+    stem = name[:-len(".kicad_pro")]
+    schematics = raw.get("schematics")
+    if (not isinstance(schematics, list) or not schematics
+            or len(schematics) > MAX_KICAD_SHEETS):
+        raise ValueError(
+            f"{where} has to list between 1 and {MAX_KICAD_SHEETS} schematics, "
+            f"its root first")
+    for sheet in schematics:
+        _check_declared_file(sheet, files, f"{where}'s schematic {sheet!r}",
+                             path=True)
+        if not sheet.endswith(KICAD_SCHEMATIC):
+            raise ValueError(f"{where} lists {sheet!r} as a schematic")
+    if schematics[0] != stem + KICAD_SCHEMATIC:
+        raise ValueError(
+            f"{where} lists {schematics[0]!r} first, and its root schematic is "
+            f"{stem + KICAD_SCHEMATIC!r}")
+    if len(set(schematics)) != len(schematics):
+        raise ValueError(f"{where} lists a schematic twice")
+    board = raw.get("pcb")
+    if board is not None:
+        _check_declared_file(board, files, f"{where}'s board", path=True)
+        if board != stem + KICAD_BOARD:
+            raise ValueError(
+                f"{where} names the board {board!r}, and its board is "
+                f"{stem + KICAD_BOARD!r}")
+    return {"schematics": list(schematics), "pcb": board}
 
 
 def _model_body(raw: dict, staging: Path, files: dict) -> dict:

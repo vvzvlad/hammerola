@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 24
+version: 25
 ---
 
 # hammerola
@@ -307,7 +307,9 @@ then runs as if started in that directory.
 spaces, Cyrillic, `×`, `Ø` or leading underscore. One bad name refuses the
 **whole push** — `детали.py` beside `model.py` stops the project publishing.
 The alphabet is a security boundary, not relaxed. Hidden entries (`.git`,
-`.env`, `.venv`) are dropped, not refused. At most 8 components deep,
+`.env`, `.venv`) are dropped, not refused, and so is what an open KiCad keeps
+beside a design: any file starting with `~` (its `~*.lck` locks), `_autosave-*`
+and any directory named `*-backups`. At most 8 components deep,
 1024 files and 64 MiB unpacked ("67 MB" to the client; a deployment's own
 limit is in its 413).
 
@@ -801,22 +803,35 @@ with the revision they belong to. List them in `project.json`, in the order
 the page shows them:
 
 ```json
-"documents": ["docs/cut-list.md", "ref/terr-raspil.svg"]
+"documents": ["docs/cut-list.md", {"file": "ref/terr-raspil.svg", "title": "Saw plan"}]
 ```
 
-Each is a path in the project of a `.md`, `.pdf`, `.png`, `.jpg`, `.jpeg`,
-`.gif`, `.webp`, `.html`, `.htm` or `.svg`, and is published under the same
-path; nothing unlisted is. The build page lists them in its view menu, after
+An entry is a path, or an object with the path as `file` and a `title`: the
+caption the page shows for it in place of the path (one line of text, as a
+project's title). Each path is a file of the project, a `.md`, `.pdf`, `.png`, `.jpg`,
+`.jpeg`, `.gif`, `.webp`, `.html`, `.htm`, `.svg` or `.kicad_pro`, and is published
+under the same path; nothing unlisted is. The build page lists them in its view menu, after
 the views: choosing one shows it over the model, choosing a view brings the
 model back, and `?d=<id>` in the address (the path with `/` written as `__`)
 opens one on arrival. With no `model.py` the documents are the whole build, a
 tab each. Markdown is drawn with its relative links resolved from its own
 directory, web links open in a new tab; a picture it shows must be a file of
 the build, because an image from another site is not loaded (the page allows
-`img-src 'self' data:`). HTML and SVG run as written; every document opens to
+`img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
 the link without a key.
 A path that is not a file, has another extension, is listed twice or would
 overwrite what the model's build wrote refuses the push with a 422 naming it.
+
+A KiCad design is listed by its `.kicad_pro` alone
+(`"documents": ["hw/board.kicad_pro"]`): the hub publishes with it the root
+schematic `board.kicad_sch` beside it, the board `board.kicad_pcb` if there is
+one, and every sheet the schematics name, wherever in the project they sit. Its
+page has a Schematic and a PCB tab, and a double click on a part or a net in one
+shows it selected in the other. Listing a `.kicad_sch` or `.kicad_pcb` on its
+own, a missing root schematic, a sheet outside the project or under a name the
+alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
+the push with a 422 naming the file. The design's files open to the link without a key: whoever has it can
+download the whole editable design.
 
 ## Fetching things back
 

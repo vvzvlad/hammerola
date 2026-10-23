@@ -51,8 +51,14 @@
   because retention was its only reader
 - `src/docsbuild.py` — the documents a project publishes to be read (issue
   #122): the paths its `project.json` lists under `documents` (markdown, PDF,
-  pictures, HTML, SVG — `render.DOCUMENT_TYPES`), published under the same
-  paths. `BuildQueue._build_and_publish` checks the list before anything runs
+  pictures, HTML, SVG, a KiCad design — `render.DOCUMENT_TYPES`), published
+  under the same paths. A KiCad design is listed by its `.kicad_pro`, and this
+  module finds the rest (`_kicad_design`, issue #123): the root schematic and the
+  board beside it under the project's stem, and every sheet a schematic names
+  by `Sheetfile` (`Sheet file` in KiCad 6), relative to that schematic, as KiCad
+  resolves it; all of them
+  are published, and the document's `kicad` in meta.json lists them.
+  `BuildQueue._build_and_publish` checks the list before anything runs
   (a wrong entry is a 422 naming it); with a model in the tree the model is
   built as always and the documents are copied in beside it afterwards
   (`add_documents`); with none they are the whole build (`run_documents_build`,
@@ -233,7 +239,11 @@
   `viewer/` and `PROVENANCE.md` beside them), the scripts for the pointer page,
   `tokens.css` (THE
   PALETTE — every colour the site paints with, named once per theme, linked by
-  all three templates; issue #35), the resolver's `site.css` and `favicon.svg`.
+  all three templates; issue #35), the resolver's `site.css` and `favicon.svg`,
+  and the KiCad viewer: `ecad-viewer.js` with the `parser.worker.js` it starts
+  from beside itself, taken BUILT out of KiCAD-Prism's repository and never
+  rebuilt here (where from, the commits, the hashes and what the hub's CSP cuts
+  out of it — `PROVENANCE.md`; its licence — `ecad-viewer-LICENSE.md`).
   A separate tree with its own `COPY` line in the Dockerfile and its own smoke
   check (g), which names `tokens.css` because its absence looks like nothing —
   every page still answers 200 and every `var(--…)` in it resolves to nothing.
@@ -350,9 +360,24 @@
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
   React elements, relative links resolved from the document's directory, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
-  as `<img>`. DocShell draws it under its tabs; the model page draws it over the
+  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`. DocShell draws it under
+  its tabs; the model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
+- `ui/src/KicadView.jsx` — a KiCad design: tabs Schematic and PCB (PCB only
+  with a board), two `<ecad-viewer source-mode="host">` elements, both mounted,
+  the one off screen hidden by `visibility` and told `setActive(false)`. It
+  fetches the design's files out of the build and hands each element its own
+  (`designSources`), and it is where the two are LINKED: the viewer reports a
+  double click as `ecad-viewer:crossprobe`, and this component switches tabs
+  and calls `requestCrossProbe` on the other element with the designator or
+  the net. The viewer is `static/_v/ecad-viewer.js`, imported by URL on first
+  use (`loadEcadViewer`)
+- `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
+  entries the viewer draws a placed symbol's pins from, added from the sheet's
+  `lib_symbols` to every symbol that has none (konnect writes none); text it
+  cannot read comes back as it was. `KicadView.designSources` runs every
+  schematic through it
 - `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
   this tree (MIT, issue #14; the tag and commit it sits on are recorded in
   `static/_v/PROVENANCE.md` and nowhere else, so an upgrade moves one file),

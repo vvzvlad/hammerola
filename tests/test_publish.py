@@ -494,16 +494,21 @@ def test_missing_meta_json_is_422(hub):
 
 
 # -- every place this document names a file ----------------------------------
-# There are SEVEN and they are enumerated here once. A view names its own file,
+# There are NINE and they are enumerated here once. A view names its own file,
 # its overview, its picture and the card cut of that picture; a part names what
 # it was exported to and its own picture; a document of a documents build names
-# its file.
+# its file, and a KiCad design among them its schematics and its board.
 #
 # ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test: a pointer
 # that quietly stops being checked is a 404 under an immutable URL, and per-test
 # lists go stale one entry at a time.
 FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
-                 "part files", "part preview", "document file")
+                 "part files", "part preview", "document file",
+                 "kicad schematic", "kicad board")
+
+# The KiCad design the two KiCad pointers sit in: its project and its root
+# schematic ride along in every archive, as `PART_EXPORT` does.
+KICAD_MEMBERS = {"board.kicad_pro": b"{}\n", "board.kicad_sch": b"(kicad_sch)\n"}
 
 
 # The export the one-printable catalogue below declares when the case under
@@ -517,7 +522,7 @@ PART_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
 
 
 def _pointing_at(where, name):
-    """meta.json fields naming `name` in one of the seven places, and nowhere else.
+    """meta.json fields naming `name` in one of the nine places, and nowhere else.
 
     Returns kwargs for `meta_bytes`, so the document around the pointer is the
     ordinary one — a catalogue of one printable and a view that selects it. A
@@ -541,6 +546,12 @@ def _pointing_at(where, name):
     elif where == "document file":
         return {"kind": "documents", "documents": [
             {"id": "list", "name": "list", "type": "markdown", "file": name}]}
+    elif where in ("kicad schematic", "kicad board"):
+        design = ({"schematics": [name], "pcb": None} if where == "kicad schematic"
+                  else {"schematics": ["board.kicad_sch"], "pcb": name})
+        return {"kind": "documents", "documents": [
+            {"name": "board", "type": "kicad", "file": "board.kicad_pro",
+             "kicad": design}]}
     else:
         raise AssertionError(f"no such file pointer: {where!r}")
     return {"views": [view], "parts": {"lid": part}}
@@ -562,15 +573,15 @@ def _pointing_archive(fields, extra=None):
     """
     members = {"meta.json": meta_bytes(**fields),
                "assembled.json": view_bytes(keys=("lid",)),
-               PART_EXPORT: PART_EXPORT_BYTES}
+               PART_EXPORT: PART_EXPORT_BYTES, **KICAD_MEMBERS}
     members.update(extra or {})
     return members
 
 
-def test_the_seven_file_pointers_are_the_seven_the_document_has():
+def test_the_nine_file_pointers_are_the_nine_the_document_has():
     """The list above, checked against the document rather than trusted.
 
-    `_pointing_at` refuses a name it does not know, so a seventh pointer added to
+    `_pointing_at` refuses a name it does not know, so a tenth pointer added to
     `build_meta` without a row here would be checked by nothing below and this
     would not notice — the list has to be compared against something. What it is
     compared against is the number of places `build_meta` calls the shared name

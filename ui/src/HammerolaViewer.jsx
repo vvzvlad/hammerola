@@ -5871,8 +5871,8 @@ export default class HammerolaViewer extends React.Component {
                         <div style={css(v.docListStyle)}>
                           {v.docRows.map((t) => (
                             <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                              <span style={css(FILL)}>{t.label}</span>
-                              <span style={css(FAINT_MONO)}>{t.hint}</span>
+                              <span style={css(v.docLabelStyle)}>{t.label}</span>
+                              <span style={css(v.docHintStyle)}>{t.hint}</span>
                             </div>
                           ))}
                         </div>

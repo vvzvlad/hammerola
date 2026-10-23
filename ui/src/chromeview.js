@@ -23,7 +23,7 @@ import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
 import {
-  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
+  BLANK_BOX, ELLIPSIS, FAINT_MONO, HEADER_BAR, INK, ON_ACCENT, TAB_OFF, TAB_ON, btn, popover, tab,
 } from './panelstyle.js';
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
@@ -439,7 +439,7 @@ export function chromeView(s, props, deps) {
       onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
     })),
     // The documents, one row each below the views and a rule: the name (its
-    // path in the tree) and, where a view gives its parts and size, its type
+    // `title`, else its path in the tree) and, where a view gives its parts and size, its type
     // and size. Choosing one lays it over the model (`docOpen`), which stays
     // mounted underneath with its camera, cut and hidden parts. Like a view,
     // the choice does not move the address; `?d=` in it opens one on arrival
@@ -457,6 +457,10 @@ export function chromeView(s, props, deps) {
     // on, and scrolls on its own.
     docRuleStyle: 'flex:none;height:1px;margin:6px 0;background:var(--line-soft)',
     docListStyle: 'flex:none;max-height:132px;overflow:auto',
+    // A document's name and its hint share a row of a narrow menu: the hint
+    // (`kicad · 7 sheets · 4.6 MB`) stays on one line and the name wraps.
+    docLabelStyle: 'flex:1;min-width:0;overflow-wrap:anywhere',
+    docHintStyle: `flex:none;white-space:nowrap;${FAINT_MONO}`,
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
     // for what the strip does to the toolbar when it is too long for it. A
     // build with documents always gets the menu: they are rows of it.
