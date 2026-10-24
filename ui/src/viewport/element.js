@@ -963,6 +963,40 @@ export class HmrViewport extends HTMLElement {
     return partCentre(this.viewer, path);
   }
 
+  /** Where a point and a face normal taken in ANOTHER view of this build stand
+   * on the part at `path` in this one: `{p, n}`, or null when the scene draws no
+   * part there. `n` is null when no normal is given.
+   *
+   * A view moves a part and keeps its vertices, so the point is taken out of
+   * `from` (`{position, quaternion}`, where that view placed the part,
+   * `hub.placementIn`) and put back where this scene stands it:
+   * `M_here · M_from⁻¹`. The normal takes the rotation only.
+   *
+   * `M_here` is `front.matrixWorld`, recomposed first, as `partCentre` reads it,
+   * so a part the reader dragged takes its arrow along. It is the composed locs
+   * and nothing more: the library hangs the document's root group straight on
+   * the scene (`buildInitialGroup`, viewer/src/core/viewer.ts) and `front` at
+   * the identity in its part's group (`renderShape`,
+   * viewer/src/scene/nestedgroup.ts).
+   */
+  carryPoint(path, from, point, normal) {
+    const three = this.three;
+    const g = internals(this.viewer);
+    const group = g && g.nestedGroup && g.nestedGroup.groups
+      ? g.nestedGroup.groups[path] : null;
+    const front = group && group.front;
+    if (!three || !front || !front.matrixWorld) return null;
+    group.updateMatrixWorld();
+    const source = new three.Matrix4().compose(
+      new three.Vector3(...from.position),
+      new three.Quaternion(...from.quaternion),
+      new three.Vector3(1, 1, 1));
+    const m = front.matrixWorld.clone().multiply(source.invert());
+    const p = new three.Vector3(...point).applyMatrix4(m);
+    const n = normal ? new three.Vector3(...normal).transformDirection(m) : null;
+    return { p: [p.x, p.y, p.z], n: n ? [n.x, n.y, n.z] : null };
+  }
+
   /** This frame as a PNG blob, for the snapshot a comment carries. */
   snapshot(label) {
     return snapshot(this, label);

@@ -39,6 +39,8 @@
 // Nothing here invents an endpoint: where a block of the brief has no source on
 // the server, the component says so on screen.
 
+import { after, turned } from './viewport/math.js';
+
 /** The two moving names. Same list as static/_v/pointer_pref.js. */
 export const POINTER_NAMES = ['latest', 'dev'];
 
@@ -798,19 +800,27 @@ export function rowsByKey(tree) {
  * Where one stored comment hangs in the build on screen: `{state, path, point}`.
  *
  * `path` is a tree path to hang the pin on and `point` a world coordinate to
- * hang it at; each is null unless the state names it. The five states, each a
+ * hang it at; each is null unless the state names it. The six states, each a
  * different sentence for the reader:
  *
  *   `point`     — the record was written on THIS build in THIS view, so the
  *                 coordinate it stored is still a place in the model on screen.
- *                 Only then: on any other build the same numbers point at
- *                 whatever the rebuild moved there.
+ *                 On any other build the same numbers point at whatever the
+ *                 rebuild moved there.
  *
- *                 Which build this is takes `published` as well as `commit`:
- *                 the local slot's commit is the constant `dev` (SPEC 7.6).
- *                 Unlike `buildKey`, which reads one field or the other, this
- *                 requires BOTH to match. An absent stamp never matches.
+ *                 Which build this is is `published` alone, and an absent stamp
+ *                 never matches. Not `commit`: the local slot's commit is the
+ *                 constant `dev` (SPEC 7.6), and a revision minted from the
+ *                 slot keeps its stamp, so one build is served under `dev` and
+ *                 under its hash.
  *
+ *   `carried`   — THIS build in ANOTHER view, and the key names a row here. A
+ *                 view moves a part and keeps its vertices, so `point` (the
+ *                 coordinate as the record's own view placed the part) is still
+ *                 a place on it; `sync` carries it through the two placements.
+ *                 `path` is the stored one when this view draws it under the
+ *                 same key (`nodes`, the tree's map), else the row's first
+ *                 instance.
  *   `part`      — the key names a row in the tree on screen. The pin goes on the
  *                 first instance, `leaves[0]` (see `rowsByKey`).
  *   `elsewhere` — the catalogue has the part, but this view does not draw it:
@@ -823,17 +833,16 @@ export function rowsByKey(tree) {
  * `parts` is read through `hasOwnProperty` and never by `parts[key]`: a key is a
  * string the author chose, and `__proto__` is one they may choose.
  */
-export function anchorFor(record, { commit, published, view, keyRows, parts }) {
+export function anchorFor(record, { published, view, keyRows, nodes, parts }) {
   const unanchored = { state: 'none', path: null, point: null };
   if (!record || typeof record !== 'object') return unanchored;
 
   const p = record.point;
-  const here = record.commit === commit
-    && typeof published === 'string' && published !== ''
-    && record.published === published
-    && record.view === view;
-  if (here && Array.isArray(p) && p.length === 3
-      && p.every((n) => typeof n === 'number' && Number.isFinite(n))) {
+  const placed = Array.isArray(p) && p.length === 3
+    && p.every((n) => typeof n === 'number' && Number.isFinite(n));
+  const build = typeof published === 'string' && published !== ''
+    && record.published === published;
+  if (build && placed && record.view === view) {
     return { state: 'point', path: null, point: [p[0], p[1], p[2]] };
   }
 
@@ -842,10 +851,45 @@ export function anchorFor(record, { commit, published, view, keyRows, parts }) {
 
   const row = keyRows ? keyRows.get(key) : null;
   if (row && row.leaves && row.leaves.length) {
+    if (build && placed) {
+      // The clicked instance when this view draws it under the same key, even
+      // in a group the key's first row is not in (`rowsByKey` keeps that row only).
+      const own = nodes && record.part ? nodes.get(record.part) : null;
+      const path = own && own.key === key ? record.part : row.leaves[0];
+      return { state: 'carried', path, point: [p[0], p[1], p[2]] };
+    }
     return { state: 'part', path: row.leaves[0], point: null };
   }
   const known = !!parts && Object.prototype.hasOwnProperty.call(parts, key);
   return { state: known ? 'elsewhere' : 'orphan', path: null, point: null };
+}
+
+/**
+ * Where a view document places one node: `{position, quaternion}` in the
+ * world, or null when the document does not draw `path`.
+ *
+ * The node's `loc` composed with every ancestor's from the root down, as the
+ * library nests one group per node and writes `loc` onto each (`renderLoop` in
+ * viewer/src/scene/nestedgroup.ts); a node without one stands where its parent
+ * does, as the library renders it.
+ */
+export function placementIn(doc, path) {
+  const walk = (node, parent) => {
+    if (!node || typeof node !== 'object') return null;
+    const loc = Array.isArray(node.loc) ? node.loc : null;
+    const offset = loc ? turned(parent.quaternion, loc[0]) : null;
+    const here = loc ? {
+      position: parent.position.map((v, i) => v + offset[i]),
+      quaternion: after(parent.quaternion, loc[1]),
+    } : parent;
+    if (node.id === path) return here;
+    for (const kid of Array.isArray(node.parts) ? node.parts : []) {
+      const found = walk(kid, here);
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(doc, { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
 }
 
 // -- display helpers --------------------------------------------------------

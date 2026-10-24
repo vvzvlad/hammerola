@@ -1888,20 +1888,21 @@ describe('what does not survive', () => {
 
   it('sends the viewport no pin at the coordinate the build it left recorded', async () => {
     // A stored point is only true on the build it was taken on: `anchorFor` reads
-    // the coordinate only when the record's commit and view are on screen, and
-    // after a swap neither is. The comment goes wherever its catalogue key is
+    // the coordinate only when the record's build stamp is on screen, and after
+    // a swap it is not. The comment goes wherever its catalogue key is
     // drawn, which only `partPoint` can answer; with no viewport here
     // (`host.current` is null) no pin is sent. The draft's own pin goes through
     // the composer's anchor.
     const c = component({
       feed: [{ id: 'c1', commit: A, view: 'assembled', part: '/model/plate',
                key: 'plate', point: [1, 2, 3], status: 'open',
+               published: '2026-08-27T18:00:00.000Z',
                created: '2026-08-27T18:30:00Z' }],
       activePin: 'c1',
       composer: { part: 'plate', partId: '/model/plate', p: [4, 5, 6], text: 'x' },
     })
     delete c.sync
-    loadMeta.mockResolvedValue(build())
+    loadMeta.mockResolvedValue({ ...build(), published: '2026-08-28T09:00:00.000Z' })
     const seen = []
     const listen = (event) => seen.push(event.detail)
     window.addEventListener(STATE, listen)

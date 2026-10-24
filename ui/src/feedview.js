@@ -26,10 +26,10 @@ export function feedView(s, deps) {
   // ORPHANED — a fact about the model, and the one the reader must not have to
   // infer from a missing pin.
   const anchoredAt = {
-    commit: (meta && meta.commit) || null,
     published: (meta && meta.published) || null,
     view: s.view,
     keyRows: rowsByKey(s.tree),
+    nodes: s.tree ? s.tree.nodes : null,
     parts: catalogue || {},
   };
   const threads = s.feed.map((record, i) => {
@@ -38,15 +38,18 @@ export function feedView(s, deps) {
     // THE HEADING IS A ROW OF THE TREE ON SCREEN or it is the catalogue key,
     // and never the stored path used as a stand-in: on another build that
     // path is a number the tessellator was free to hand to something else.
+    // A carried point reads as a point does, under the path this view draws.
     const node = anchor.state === 'point'
       ? nodeAt(record.part)
-      : (anchor.state === 'part' ? nodeAt(anchor.path) : null);
+      : (anchor.state === 'part' || anchor.state === 'carried'
+        ? nodeAt(anchor.path) : null);
     // The sentences claim no cause the record does not carry: `none` covers any
     // null key (`measAdd` and the place handler send one whenever nothing or a
     // group is selected), and the hub may store `view` as null
     // (`validate_payload`), so `elsewhere` names it only when present.
     const says = {
       point: 'left here, on this build',
+      carried: 'left here, on this build',
       part: 'follows the part through the rebuild',
       elsewhere: record.view
         ? `the part is not in this view — left on ${record.view}`

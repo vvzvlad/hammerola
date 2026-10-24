@@ -29,8 +29,11 @@ import { emptyProposal } from '../src/proposal.js'
 import {
   shrink, SHOT_MAX_SIDE, SHOT_QUALITY, PHOTO_MAX_SIDE, PHOTO_QUALITY,
 } from '../src/shrink.js'
+import { HmrViewport } from '../src/viewport/element.js'
+import * as THREE from '../../static/_v/three.module.js'
 import { drained as settled, makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
+import { fakeViewer } from './fakes.js'
 import { guardPage } from './pageguard.js'
 
 // THE RE-ENCODE IS SPIED HERE RATHER THAN RUN, and the constants beside it are
@@ -604,6 +607,14 @@ describe('the rail', () => {
       'the part this was left on is no longer in the catalogue')
   })
 
+  it('says a point left in another view of this build was left here', () => {
+    // The arrow stands on the face that was clicked, carried through the two
+    // views' placements, so the row says what it says for a point in this view.
+    const v = page({ feed: [record({ view: 'exploded', point: [1, 2, 3] })] }).computed()
+    expect(v.threads[0].says).toBe('left here, on this build')
+    expect(v.threads[0].part).toBe('plate(2)')
+  })
+
   it('names the view a comment belongs to when this one does not draw it', () => {
     // `post` is in the catalogue and no row of this view draws it.
     const v = page({ feed: [record({ key: 'post', view: 'exploded' })] }).computed()
@@ -648,7 +659,8 @@ describe('the pins', () => {
     // centre has no face, so the arrow comes from above.
     const partPoint = vi.fn(() => [7, 8, 9])
     const c = page({
-      feed: [record({ commit: OLDER, point: [1, 2, 3], normal: [0, -1, 0] })],
+      feed: [record({ commit: OLDER, published: '2026-08-20T09:00:00.000Z',
+                      point: [1, 2, 3], normal: [0, -1, 0] })],
       partPoint, watch: true,
     })
     const seen = listening()
@@ -707,6 +719,147 @@ describe('the pins', () => {
     expect(seen[0].pins).toEqual([
       { id: 'c2', p: [4, 5, 6], n: null, active: false },
     ])
+  })
+})
+
+// -- one build, several views, and the two pages it is served under ------------
+//
+// The owner's report: on the latest page, an arrow left from the `dev` page and
+// one left from another view both stood straight down at the part's centre. The
+// build is the same in all three places (`published` says so); only the view's
+// placement of the part differs, and the page carries the point through it.
+
+describe('the pins on the same build, wherever they were left', () => {
+  const S = Math.SQRT1_2
+  // The part in its own frame: a box whose centre is [1, 3, 0], one point on
+  // it, and the face normal there.
+  const BOX = [0, 0, -1, 2, 0, -1, 2, 6, -1, 0, 6, -1, 0, 0, 1, 2, 0, 1, 2, 6, 1, 0, 6, 1]
+  const CENTRE = [1, 3, 0]
+  const LOCAL = [2, 4, 1]
+  const LOCAL_N = [0, 0, 1]
+  // The glass view lays the part flat — a quarter turn about -x, (x, y, z) to
+  // (x, z, -y), then a shift — so the comment left there stored these.
+  const GLASS_LOC = [[-672.5, -603.5, 495], [-S, 0, 0, S]]
+  const IN_GLASS = [2 - 672.5, 1 - 603.5, -4 + 495]
+  const IN_GLASS_N = [0, 1, 0]
+  const GLASS_DOC = {
+    id: '/model', loc: [[0, 0, 0], [0, 0, 0, 1]],
+    parts: [{ id: '/model/plate', loc: GLASS_LOC }],
+  }
+  const VIEWS = [
+    { id: 'assembled', name: 'assembled', file: 'a.json', parts: ['plate'], gzip: 1000 },
+    { id: 'glass', name: 'glass', file: 'g.json', parts: ['plate'], gzip: 1000 },
+  ]
+
+  /** The latest page on the assembled view, where the part stands as modelled,
+   *  with a real viewport drawing it. */
+  function latest(feed, over = {}) {
+    const c = page({
+      feed, watch: true,
+      meta: {
+        project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
+        built: '2026-08-27T18:00:00Z', parts: PARTS, views: VIEWS,
+      },
+      view: 'assembled',
+      ...over,
+    })
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(BOX, 3))
+    const group = new THREE.Group()
+    group.front = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial())
+    group.add(group.front)
+    group.updateMatrixWorld()
+    const el = Object.create(HmrViewport.prototype)
+    el.viewer = fakeViewer({ groups: { '/model/plate': group } })
+    el.three = THREE
+    c.host = { current: el }
+    return c
+  }
+
+  // A from the `dev` page, B from the revision page on the glass view: the two
+  // comments of the report, each with the normal it was clicked with.
+  const fromSlot = record({ id: 'A', commit: 'dev', view: 'assembled',
+                            point: LOCAL, normal: LOCAL_N })
+  const fromGlass = record({ id: 'B', view: 'glass', point: IN_GLASS, normal: IN_GLASS_N })
+
+  const near = (actual, expected) => {
+    expect(actual).toHaveLength(3)
+    expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 9))
+  }
+
+  it('stands every arrow on the face it was clicked on', async () => {
+    const fetching = answering({ ok: true, status: 200, json: async () => GLASS_DOC })
+    const c = latest([fromSlot, fromGlass])
+    const seen = listening()
+
+    c.sync()
+
+    // The slot's comment is a place on this very view; the glass one waits for
+    // the glass document and stands at the part's centre until then.
+    expect(seen[0].pins).toEqual([
+      { id: 'A', p: LOCAL, n: LOCAL_N, active: false },
+      { id: 'B', p: CENTRE, n: null, active: false },
+    ])
+    expect(fetching).toHaveBeenCalledTimes(1)
+    expect(fetching.mock.calls[0][0]).toBe(`/project/proj1/${REV}/g.json`)
+
+    await settled()
+
+    // The document landed and drew the page again.
+    expect(seen).toHaveLength(2)
+    const [a, b] = seen[1].pins
+    expect(a).toEqual({ id: 'A', p: LOCAL, n: LOCAL_N, active: false })
+    near(b.p, LOCAL)
+    near(b.n, LOCAL_N)
+
+    c.sync()
+    expect(fetching, 'the glass document is fetched once').toHaveBeenCalledTimes(1)
+  })
+
+  it('carries nothing into a comparison, whose scene is neither view', async () => {
+    const fetching = answering({ ok: true, status: 200, json: async () => GLASS_DOC })
+    const c = latest([fromGlass], {
+      compare: true, cmpStage: 'ready', cmpView: 'assembled',
+      cmpPair: [REV, 'c'.repeat(64)],
+    })
+    const seen = listening()
+
+    c.sync()
+    await settled()
+
+    expect(fetching).not.toHaveBeenCalled()
+    expect(seen[seen.length - 1].pins).toEqual([
+      { id: 'B', p: CENTRE, n: null, active: false },
+    ])
+  })
+
+  it('keeps the part centre when the other view cannot be read', async () => {
+    const fetching = answering({ ok: false, status: 404, json: async () => ({}) })
+    const c = latest([fromGlass])
+    const seen = listening()
+
+    c.sync()
+    await settled()
+    c.sync()
+
+    expect(fetching, 'a failed view is not asked for again').toHaveBeenCalledTimes(1)
+    expect(seen[seen.length - 1].pins).toEqual([
+      { id: 'B', p: CENTRE, n: null, active: false },
+    ])
+  })
+
+  it('fetches the other view again for the next build', async () => {
+    const fetching = answering({ ok: true, status: 200, json: async () => GLASS_DOC })
+    const c = latest([fromGlass])
+    c.sync()
+    await settled()
+
+    const NEXT = '2026-08-28T09:00:00.000Z'
+    c.state.meta = { ...c.state.meta, published: NEXT }
+    c.state.feed = [record({ ...fromGlass, published: NEXT })]
+    c.sync()
+
+    expect(fetching).toHaveBeenCalledTimes(2)
   })
 })
 

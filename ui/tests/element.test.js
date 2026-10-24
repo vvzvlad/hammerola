@@ -99,6 +99,7 @@ import {
   applyGhost, applyHidden, applySelected, reconcileMoves, restageMoves,
 } from '../src/viewport/parts.js'
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
+import * as THREE from '../../static/_v/three.module.js'
 import { fakeViewer } from './fakes.js'
 
 /**
@@ -1853,5 +1854,90 @@ describe('activeTool', () => {
     expect(vp.activeTool).toBe('measure')
     vp.state = { ...vp.state, tool: '' }
     expect(vp.activeTool).toBeNull()
+  })
+})
+
+// -- a comment's point, carried into another view of the same build ------------
+//
+// A view moves a part and keeps its vertices, so a point clicked in one view is
+// a place on the part in every other: undo the placement it was clicked under,
+// redo the one on screen. The scene is real three, because what is asked is the
+// arithmetic of its matrices.
+
+describe('carryPoint', () => {
+  const S = Math.SQRT1_2
+  const PATH = '/Group/glass/back_right'
+  const STILL = { position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
+  // Where the glass view of the owner's build lays `back_right` flat: a quarter
+  // turn about -x, then a shift.
+  const GLASS = { position: [-672.5, -603.5, 495], quaternion: [-S, 0, 0, S] }
+  // One point of the part in its own frame, and the face normal there.
+  const LOCAL = [12, 34, 5]
+  const LOCAL_N = [0, -1, 0]
+  // The same point and normal as the glass view shows them: (x, y, z) turns to
+  // (x, z, -y), then the shift.
+  const IN_GLASS = [-660.5, -598.5, 461]
+  const IN_GLASS_N = [0, 0, 1]
+
+  /** A viewport drawing one solid at PATH: its group at `leaf` under a parent
+   *  group at `parent`, the matrices composed as a render leaves them. */
+  function scene({ parent = STILL, leaf = STILL } = {}) {
+    const root = new THREE.Group()
+    root.position.set(...parent.position)
+    root.quaternion.set(...parent.quaternion)
+    const group = new THREE.Group()
+    group.position.set(...leaf.position)
+    group.quaternion.set(...leaf.quaternion)
+    group.front = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial())
+    group.add(group.front)
+    root.add(group)
+    root.updateMatrixWorld()
+    const vp = element({}, fakeViewer({ groups: { [PATH]: group } }))
+    vp.three = THREE
+    return { vp, group }
+  }
+
+  const near = (actual, expected) => {
+    expect(actual).toHaveLength(3)
+    expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 9))
+  }
+
+  it('takes a point and its normal out of the glass view into an unmoved part', () => {
+    const { vp } = scene()
+    const at = vp.carryPoint(PATH, GLASS, IN_GLASS, IN_GLASS_N)
+    near(at.p, LOCAL)
+    near(at.n, LOCAL_N)
+  })
+
+  it('puts them where the part stands on screen, its parent group included', () => {
+    // The shift on the parent and the turn on the part's own group: the world
+    // matrix composes both, the way the document's locs nest.
+    const { vp } = scene({
+      parent: { position: GLASS.position, quaternion: STILL.quaternion },
+      leaf: { position: STILL.position, quaternion: GLASS.quaternion },
+    })
+    const at = vp.carryPoint(PATH, STILL, LOCAL, LOCAL_N)
+    near(at.p, IN_GLASS)
+    near(at.n, IN_GLASS_N)
+  })
+
+  it('reads the part where a move left it, before the next render', () => {
+    // As `partCentre` does: a drag writes the group's position, and the matrix
+    // is composed by the next frame.
+    const { vp, group } = scene()
+    group.position.x = 100
+    near(vp.carryPoint(PATH, STILL, LOCAL, null).p, [LOCAL[0] + 100, LOCAL[1], LOCAL[2]])
+  })
+
+  it('carries no normal when the comment stored none', () => {
+    const { vp } = scene()
+    expect(vp.carryPoint(PATH, GLASS, IN_GLASS, null).n).toBeNull()
+  })
+
+  it('answers null for a part the scene does not draw, or without three', () => {
+    const { vp } = scene()
+    expect(vp.carryPoint('/Group/glass/riser', GLASS, IN_GLASS, IN_GLASS_N)).toBeNull()
+    vp.three = null
+    expect(vp.carryPoint(PATH, GLASS, IN_GLASS, IN_GLASS_N)).toBeNull()
   })
 })
