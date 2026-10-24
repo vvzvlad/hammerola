@@ -144,6 +144,13 @@ REQUIRED_PATHS = [
     # ui/src/KicadView.jsx), and the parser worker it starts from beside itself.
     "/app/static/_v/ecad-viewer.js",
     "/app/static/_v/parser.worker.js",
+    # The board's 3D view (`ui/src/BoardView3D.jsx`) imports three's loader and controls by URL
+    # when a `.glb` is opened; the loader pulls the two helpers, and all four import three
+    # from beside themselves.
+    "/app/static/_v/GLTFLoader.js",
+    "/app/static/_v/OrbitControls.js",
+    "/app/static/_v/BufferGeometryUtils.js",
+    "/app/static/_v/SkeletonUtils.js",
     # The palette, linked by every page. Missing, every page still answers 200 but every
     # `var(--…)` resolves to nothing.
     "/app/static/_v/tokens.css",

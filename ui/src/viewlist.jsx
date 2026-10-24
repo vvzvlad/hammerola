@@ -5,9 +5,9 @@
 // chromeview.js) and the page of a build with no model (DocShell.jsx), which
 // has documents only.
 //
-// A KiCad design is TWO rows, its schematic and its board (`documentRows`):
-// which one is on screen is the page's to hold, and KicadView.jsx draws the
-// side it is handed. A design without a board has the schematic's row alone.
+// Every listed document is one row, a KiCad schematic, board and 3D model as
+// much as a PDF, except one listed `hidden`: it has no row and is still opened
+// by its address (`?d=`) or by a link from another document.
 //
 // `viewList` is the drawing and takes everything as arguments, so a test reads
 // the tree it returns without mounting anything (ui/tests/viewmenu.test.js,
@@ -16,7 +16,6 @@
 import React from 'react';
 
 import { docHint } from './DocumentView.jsx';
-import { kicadSides, PCB, SCH, SIDE_NAMES, sideOf } from './KicadView.jsx';
 import { ELLIPSIS, FAINT_MONO, FILL, INK, RELATIVE, TAB_OFF, TAB_ON } from './panelstyle.js';
 import { css, SANS } from './style.jsx';
 
@@ -26,35 +25,17 @@ export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding
   + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
 
 /**
- * The build's documents as rows: the name (its `title`, else its path in the
- * tree) and its type and size. A KiCad design is a row per side it has, named
- * `<name> · Schematic` and `<name> · PCB`, hinted with its sheet count and
- * `board`. `open` is the id of the document on screen, or null, and `side` the
- * KiCad side the page holds; `choose(id, side)`
- * is what a row does, `side` null for any other document.
+ * The build's documents as rows, one per document not listed `hidden`: the
+ * name (its `title`, else its path in the tree) and its hint (`docHint`).
+ * `open` is the id of the document on screen, or null; `choose(id)` is what a
+ * row does.
  */
-export function documentRows(documents, open, side, choose) {
-  return documents.flatMap((doc) => {
-    if (doc.type !== 'kicad') {
-      return [{ key: doc.id, label: doc.name, hint: docHint(doc), rowStyle: menuRow(open === doc.id),
-        onClick: () => choose(doc.id, null) }];
-    }
-    const shown = sideOf(doc, side);
-    // A side's own words, short because the name beside them is not: the
-    // design's size belongs to neither side, so it is left out.
-    const sheets = doc.kicad.schematics.length;
-    const hints = { [SCH]: `${sheets} sheet${sheets === 1 ? '' : 's'}`, [PCB]: 'board' };
-    return kicadSides(doc).map((one) => ({
-      key: `${doc.id}:${one}`, label: `${doc.name} · ${SIDE_NAMES[one]}`, hint: hints[one],
-      rowStyle: menuRow(open === doc.id && shown === one),
-      onClick: () => choose(doc.id, one),
-    }));
-  });
+export function documentRows(documents, open, choose) {
+  return documents.filter((doc) => !doc.hidden).map((doc) => ({
+    key: doc.id, label: doc.name, hint: docHint(doc), rowStyle: menuRow(open === doc.id),
+    onClick: () => choose(doc.id),
+  }));
 }
-
-/** What the button says while document `doc` is on screen: its row's words. */
-export const openLabel = (doc, side) => (doc.type === 'kicad'
-  ? `${doc.name} · ${SIDE_NAMES[sideOf(doc, side)]}` : doc.name);
 
 /** The button. A view's name is the model's own sentence and can be any
  *  length; the button sits in a bar that must not grow past the window, so it

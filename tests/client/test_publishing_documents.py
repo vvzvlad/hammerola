@@ -62,9 +62,19 @@ def test_build_fills_the_draft_slot_with_documents(hub, docs):
     assert (slot / "docs" / "receipt.pdf").read_bytes() == FILES["docs/receipt.pdf"]
 
 
-def test_artifacts_fetches_a_kicad_design_whole_and_not_its_project_file_alone(
-        hub, tmp_path, capsys):
-    # A root sheet naming a second sheet in a subdirectory, and a board.
+@pytest.mark.parametrize("listed, fetched", [
+    (["hw/board.kicad_sch", "hw/board.kicad_pcb"],
+     ["hw/board.kicad_pro", "hw/board.kicad_sch", "hw/sub/power.kicad_sch",
+      "hw/board.kicad_pcb"]),
+    # Each alone brings what it is published with, and no more.
+    (["hw/board.kicad_sch"],
+     ["hw/board.kicad_pro", "hw/board.kicad_sch", "hw/sub/power.kicad_sch"]),
+    (["hw/board.kicad_pcb"], ["hw/board.kicad_pro", "hw/board.kicad_pcb"]),
+])
+def test_artifacts_fetches_what_a_kicad_schematic_and_board_are_published_with(
+        hub, tmp_path, capsys, listed, fetched):
+    # A schematic naming a second sheet in a subdirectory, a board, and the
+    # project beside them, which neither lists.
     design = {
         "hw/board.kicad_pro": b"{}\n",
         "hw/board.kicad_sch": b'(kicad_sch (sheet (property "Sheetfile" "sub/power.kicad_sch")))\n',
@@ -77,15 +87,15 @@ def test_artifacts_fetches_a_kicad_design_whole_and_not_its_project_file_alone(
         (root / name).write_bytes(data)
     (root / "project.json").write_text(json.dumps(
         {"id": "docs0002", "project": "board", "title": "Board (board)",
-         "documents": ["hw/board.kicad_pro"]}), encoding="utf-8")
+         "documents": listed}), encoding="utf-8")
     assert run(root, "commit") == 0
     capsys.readouterr()
 
     out_dir = tmp_path / "fetched"
     assert main(["-C", str(root), "artifacts", "latest", "-o", str(out_dir)]) == 0
-    fetched = {path.relative_to(out_dir).as_posix(): path.read_bytes()
-               for path in out_dir.rglob("*") if path.is_file()}
-    assert fetched == design
+    got = {path.relative_to(out_dir).as_posix(): path.read_bytes()
+           for path in out_dir.rglob("*") if path.is_file()}
+    assert got == {name: design[name] for name in fetched}
 
 
 def test_artifacts_fetches_the_documents_back_under_their_paths(

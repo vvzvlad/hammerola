@@ -19,10 +19,10 @@ belongs to one of two owners:
 
 A DOCUMENT, under `documents`, owns one `file`: the files project.json lists to
 be read, published under their paths in the tree (`docs/cut-list.md`) and
-written under the same paths here. A KiCad design (its `file` is the
-`.kicad_pro`) owns, besides, the schematics and the board of its `kicad`. A
-model's build carries documents after its views; a build with no model
-(`"kind": "documents"`) carries nothing else.
+written under the same paths here. A KiCad schematic or board owns, besides,
+the files its `kicad` names: a schematic's sheets, and the project either one
+is published with. A model's build carries documents after its views; a build
+with no model (`"kind": "documents"`) carries nothing else.
 
 The build page draws download buttons only for a printable's `files`, so every
 declared pointer here is fetchable without implying a button.
@@ -59,9 +59,9 @@ ONE, MANY = False, True
 # order entries are printed. The list is closed: a view's `file` and `card` are not
 # on it (see the module docstring). It is also the only place these names are
 # written; `_fields_sentence` builds the "declares nothing" message from it. The
-# one exception is the schematics and the board of a KiCad document, which sit
-# in an object of their own and are read by `_design_files`: a document with
-# them always declares its `file` too, so that message is never theirs to say.
+# one exception is the sheets and the project of a KiCad document, which sit in
+# an object of their own and are read by `_design_files`: a document with them
+# always declares its `file` too, so that message is never theirs to say.
 DECLARING_FIELDS = {
     "part": {"files": MANY, "preview": ONE},
     "view": {"overview": ONE, "preview": ONE},
@@ -242,20 +242,26 @@ def _pointers(record: dict, owner: str, where: str):
 
 
 def _design_files(document: dict, where: str) -> list:
-    """The schematics and the board of a KiCad document, as `(field, filename)`.
+    """The files a KiCad document is published with, as `(field, filename)`.
 
-    Only a document with a `kicad` has any; a `kicad` that is not an object
-    holding a list of schematics is refused like every wrong shape here.
+    Only a schematic or a board has a `kicad`: a schematic's lists its
+    `schematics`, itself first, and either names its `project` or null. A
+    `kicad` that is not an object, or `schematics` that is not a list, is
+    refused like every wrong shape here.
     """
     design = document.get("kicad")
     if design is None:
         return []
-    schematics = design.get("schematics") if isinstance(design, dict) else None
+    if not isinstance(design, dict):
+        raise _not_from_the_hub(f"the 'kicad' of {where}", design)
+    schematics = design.get("schematics")
+    if schematics is None:
+        schematics = []
     if not isinstance(schematics, list):
         raise _not_from_the_hub(f"the 'kicad' of {where}", design)
-    board = design.get("pcb")
+    project = design.get("project")
     return [("schematic", name) for name in schematics] + (
-        [("board", board)] if board is not None else [])
+        [("project", project)] if project is not None else [])
 
 
 def _declared(meta: dict) -> list:

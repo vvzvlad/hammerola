@@ -999,10 +999,8 @@ export default class HammerolaViewer extends React.Component {
       // what stops the button looking like it still works.
       swapping: false,
       // -- what the reader is doing
-      // `doc`: the document laid over the model, or null (`docOpen`);
-      // `docSide`: the side of a KiCad design on screen, `SCH` or `PCB`, null
-      // for its schematic.
-      view: null, doc: null, docSide: null, tool: null, held: false, sel: null, selName: '',
+      // `doc`: the document laid over the model, or null (`docOpen`).
+      view: null, doc: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
@@ -1368,7 +1366,10 @@ export default class HammerolaViewer extends React.Component {
 
     // Escape closes what is open — a menu, a popover, an armed tool. It does
     // not close the composer: a half-written comment is the most expensive
-    // thing on this page to lose, and Escape gets pressed by reflex.
+    // thing on this page to lose, and Escape gets pressed by reflex. An Escape
+    // that closed something is taken (`preventDefault()`): a KiCad design laid
+    // over the model puts its selection out on an Escape nobody took
+    // (KicadView.jsx), and listens after this page.
     //
     // Ctrl+Z and Cmd+Z take back the last thing done, of either kind: hiding,
     // ghosting or isolating in the tree, or a build part or proposal body
@@ -1401,9 +1402,14 @@ export default class HammerolaViewer extends React.Component {
         return;
       }
       if (e.key !== 'Escape') return;
-      this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
-                 viewsOpen: false, opsOpen: false, settingsOpen: false,
-                 notePop: null, tokenPop: false, tool: null, share: null });
+      const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
+                     viewsOpen: false, opsOpen: false, settingsOpen: false,
+                     notePop: null, tokenPop: false, tool: null, share: null };
+      // An armed tool is not on screen under an open document (`showTools`), so
+      // it does not count as something this Escape closed.
+      const seen = (key) => this.state[key] && !(key === 'tool' && this.state.doc);
+      if (Object.keys(shut).some(seen)) e.preventDefault();
+      this.set(shut);
     };
     window.addEventListener('keydown', this._kd);
 
@@ -5892,8 +5898,8 @@ export default class HammerolaViewer extends React.Component {
                 documents page uses (DocumentView.jsx). */}
             {v.docOpen && (
               <div style={css(v.docLayerStyle)}>
-                <DocumentView key={v.docKey} doc={v.docOpen} base={PAGE.base}
-                              side={this.state.docSide} onSide={v.onDocSide} />
+                <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
+                              base={PAGE.base} onOpen={v.onDocOpen} />
               </div>
             )}
 

@@ -447,9 +447,9 @@ def test_a_picker_that_does_not_parse_goes_out_as_it_is(hub):
 
 def test_a_format_nobody_declared_open_is_closed(hub):
     # The list is of what is OPEN, so a later export format starts closed.
-    hub.publish("proj1", "abc123", good_build(extra_files={"scene.glb": b"glTF"}))
-    assert hub.get("/project/proj1/abc123/scene.glb").status_code == 403
-    assert hub.get("/project/proj1/abc123/scene.glb",
+    hub.publish("proj1", "abc123", good_build(extra_files={"scene.obj": b"o x\n"}))
+    assert hub.get("/project/proj1/abc123/scene.obj").status_code == 403
+    assert hub.get("/project/proj1/abc123/scene.obj",
                    headers=OWNER).status_code == 200
 
 

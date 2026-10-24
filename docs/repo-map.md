@@ -51,13 +51,15 @@
   because retention was its only reader
 - `src/docsbuild.py` — the documents a project publishes to be read (issue
   #122): the paths its `project.json` lists under `documents` (markdown, PDF,
-  pictures, HTML, SVG, a KiCad design — `render.DOCUMENT_TYPES`), published
-  under the same paths. A KiCad design is listed by its `.kicad_pro`, and this
-  module finds the rest (`_kicad_design`, issue #123): the root schematic and the
-  board beside it under the project's stem, and every sheet a schematic names
-  by `Sheetfile` (`Sheet file` in KiCad 6), relative to that schematic, as KiCad
-  resolves it; all of them
-  are published, and the document's `kicad` in meta.json lists them.
+  pictures, HTML, SVG, and a KiCad schematic, board or 3D model — `render.DOCUMENT_TYPES`),
+  published under the same paths, an entry optionally `hidden` (no row in the
+  list, still served and opened by `?d=`). A schematic, a board and a `.glb`
+  are each a document with a row of their own (issue #123); for a schematic this
+  module finds every sheet it names by `Sheetfile` (`Sheet file` in KiCad 6),
+  relative to the schematic that names it, as KiCad resolves it (`_kicad_schematic`),
+  and for a schematic or a board the `.kicad_pro` with the same path minus the
+  extension (`_kicad_project`); all of them are published, and the document's
+  `kicad` in meta.json lists them.
   `BuildQueue._build_and_publish` checks the list before anything runs
   (a wrong entry is a 422 naming it); with a model in the tree the model is
   built as always and the documents are copied in beside it afterwards
@@ -356,13 +358,12 @@
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
   `HammerolaViewer.jsx`. A header, the document, and the list of
   `ui/src/viewlist.jsx` floating at the bottom with the documents in it;
-  `?d=<id>` picks the document, and a row rewrites it. It holds the KiCad side
-  on screen
+  `?d=<id>` picks the document, and a row rewrites it. It holds only the id of
+  the open document
 - `ui/src/viewlist.jsx` — the list of views both pages choose from: the
-  button at the bottom, the card it opens upwards with the views, a rule and
-  the documents (`documentRows`: a row each, two for a KiCad design, its
-  schematic and its board), and the styles of the bar, the card and the
-  document's layer. `chromeview.js` builds the model page's rows and DocShell
+  button at the bottom, the card it opens upwards with the views and then
+  the documents (`documentRows`: a row each but for a hidden one), and the
+  styles of the bar, the card and the document's layer. `chromeview.js` builds the model page's rows and DocShell
   its own; `viewList` draws them on both
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
@@ -372,17 +373,39 @@
   under its list; the model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
-- `ui/src/KicadView.jsx` — a KiCad design: two `<ecad-viewer source-mode="host">`
-  elements, the schematic and the board (only with a board), both mounted, the
-  side on screen the one its page hands down (`side`; the rows that choose it
-  are the page's list), the other hidden by `visibility` and told
-  `setActive(false)`. It
-  fetches the design's files out of the build and hands each element its own
-  (`designSources`), and it is where the two are LINKED: the viewer reports a
-  double click as `ecad-viewer:crossprobe`, and this component asks the page
-  for the other side (`onSide`) and, once it is on screen, calls
-  `requestCrossProbe` on the other element with the designator or the net. The viewer is `static/_v/ecad-viewer.js`, imported by URL on first
-  use (`loadEcadViewer`)
+- `ui/src/KicadView.jsx` — a KiCad DESIGN: the listed schematic, board and 3D
+  model with one path minus the extension (`designKey`), one view per listed
+  member — a `<ecad-viewer source-mode="host">` for the schematic and for the
+  board, `BoardView3D` for the `.glb` — all mounted, the one on screen the open
+  document the page hands down (`doc`; the rows that choose it are the page's
+  list), the others hidden by `visibility` and the viewers told
+  `setActive(false)`. It fetches the files out of the build and hands each
+  element its own (`designSources`), and it is where the views are LINKED: a
+  single click selecting a part in one view selects it in the others
+  (`ecad-viewer:selection`), a click on nothing or Escape clears it in all of
+  them, and a right click opens the menu `Show in …` (`menuFor` says which views
+  take a part or a net) whose choice asks the page to open the sibling (`onOpen`)
+  and, once it is on screen, calls `requestCrossProbe` on its element with the
+  designator or the net. The viewer cannot be asked what is under a point, so a
+  right click replays its own left click there and builds the menu from the
+  selection it reports. The viewer is `static/_v/ecad-viewer.js`,
+  imported by URL on first use (`loadEcadViewer`)
+- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three,
+  `GLTFLoader.js` and `OrbitControls.js` imported by URL from `static/_v/` (three's
+  own add-ons, `static/_v/PROVENANCE.md`) on first use, the `.glb` of
+  `kicad-cli pcb export glb` drawn on demand and only while on screen. `board3d.js`
+  is the part that needs no WebGL: which nodes are parts (a child of the scene
+  root named by its designator), merging a part's meshes, lighting one part on
+  copies of its materials, framing it
+- `ui/src/PcbPanel.jsx` — the board view's own panel over its canvas (the
+  viewer's panels are hidden by `hide-chrome`): layer presets, a row per layer
+  with an eye and an active-layer click, the zone fill opacity (dimmed to
+  `ZONE_OPACITY` on open), and the net of the last click, lit whole through the
+  viewer's own highlight. The viewer owns the state; the panel re-reads it
+- `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
+  reference → value from the placed symbols of the schematics and the
+  footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
+  matched to a listed document (`KicadView` offers it as an item of the part's menu)
 - `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
   entries the viewer draws a placed symbol's pins from, added from the sheet's
   `lib_symbols` to every symbol that has none (konnect writes none); text it

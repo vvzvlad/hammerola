@@ -47,6 +47,15 @@ NOT_FOR_THE_AGENT = {
     "--yes",
 }
 
+# Flags of OTHER programs the document shows a command of: the `kicad-cli` line
+# that makes the 3D model of a board. They are the author's to type on his own
+# machine, and no parser of ours has them (asserted below, so a name that comes
+# to mean one of ours is no longer excused).
+OTHER_PROGRAMS = {
+    "--include-pads", "--include-silkscreen", "--include-soldermask",
+    "--include-tracks", "--include-zones", "--subst-models",
+}
+
 
 def _long_options(parser) -> set:
     """Every long option this parser and its sub-commands accept. `--help` out.
@@ -83,7 +92,7 @@ def _shorthand_only(parser) -> set:
 def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
     declared = _long_options(build_parser())
     mentioned = set(MENTIONED.findall(
-        onboarding.SKILL_FILE.read_text(encoding="utf-8")))
+        onboarding.SKILL_FILE.read_text(encoding="utf-8"))) - OTHER_PROGRAMS
 
     # BOTH SIDES ARE NON-EMPTY AND OVERLAP, asserted before they are compared:
     # a parser read through a renamed argparse internal, or a document moved out
@@ -95,6 +104,9 @@ def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
         f"Either `build_parser` no longer declares its flags through "
         f"`add_argument`, or `onboarding.SKILL_FILE` is not the document any "
         f"more")
+    assert not OTHER_PROGRAMS & declared, (
+        f"{sorted(OTHER_PROGRAMS & declared)} is excused as another program's "
+        f"flag and the parser has it, so the document has to teach it")
     assert NOT_FOR_THE_AGENT <= declared, (
         f"{sorted(NOT_FOR_THE_AGENT - declared)} is excused from the skill and "
         f"the parser does not have it, so the exception outlived the flag")

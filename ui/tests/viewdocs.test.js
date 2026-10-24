@@ -40,11 +40,18 @@ const DOCS = [
     file: 'ref/terr-raspil.svg', bytes: 4235 },
 ]
 
-// A KiCad design: two rows of the list, its schematic and its board.
-const KICAD = {
-  id: 'hw__board.kicad_pro', name: 'Схема и плата', type: 'kicad', file: 'hw/board.kicad_pro',
-  bytes: 4_612_345, kicad: { schematics: ['hw/board.kicad_sch'], pcb: 'hw/board.kicad_pcb' },
+// Two KiCad designs, a schematic and a board each, every one a document with
+// its own title, and a datasheet listed hidden.
+const SUFFIX = { schematic: 'kicad_sch', board: 'kicad_pcb' }
+function kicad(stem, type, name) {
+  const file = `${stem}.${SUFFIX[type]}`
+  return { id: file.replaceAll('/', '__'), name, type, file, bytes: 4_612_345,
+    kicad: { ...(type === 'schematic' ? { schematics: [file] } : {}), project: `${stem}.kicad_pro` } }
 }
+const KICAD = [kicad('hw/main', 'schematic', 'Главная · схема'), kicad('hw/main', 'board', 'Главная · плата'),
+  kicad('hw/psu', 'schematic', 'БП · схема'), kicad('hw/psu', 'board', 'БП · плата')]
+const DATASHEET = { id: 'ds__ne555.pdf', name: 'ds/ne555.pdf', type: 'pdf', file: 'ds/ne555.pdf',
+  bytes: 9, hidden: true }
 
 // Two views: few enough that without documents the views are a strip of tabs.
 const VIEWS = [
@@ -233,41 +240,50 @@ describe('the documents in the list of views', () => {
     expect([c.state.activePin, c.state.doc]).toEqual(['c1', null])
   })
 
-  it('give a KiCad design two rows, its schematic and its board, and one without a board', () => {
-    const rows = component({ meta: meta([...DOCS, KICAD]) }).computed().docRows
+  it('give each schematic and each board a row of its own, by its title, and a hidden one none', () => {
+    const rows = component({ meta: meta([...DOCS, ...KICAD, DATASHEET]) }).computed().docRows
     expect(rows.map((t) => [t.label, t.hint])).toEqual([
       ['docs/cut-list.md', 'markdown · 7.8 kB'],
       ['ref/terr-raspil.svg', 'svg · 4.2 kB'],
-      ['Схема и плата · Schematic', '1 sheet'],
-      ['Схема и плата · PCB', 'board']])
-    const flat = { ...KICAD, kicad: { ...KICAD.kicad, pcb: null } }
-    expect(component({ meta: meta([flat]) }).computed().docRows.map((t) => t.label))
-      .toEqual(['Схема и плата · Schematic'])
+      ['Главная · схема', '1 sheet'], ['Главная · плата', 'board'],
+      ['БП · схема', '1 sheet'], ['БП · плата', 'board']])
+    // Only hidden documents: no rows, so the views keep their strip.
+    const hidden = component({ meta: meta([DATASHEET]) }).computed()
+    expect([hidden.docRows, hidden.viewMenu]).toEqual([[], false])
   })
 
-  it('open a KiCad design on the side its row names, and hand that side down', () => {
-    const c = component({ meta: meta([KICAD]), viewsOpen: true })
-    const board = () => c.computed().docRows[1]
-    board().onClick()
-    expect([c.state.doc, c.state.docSide, c.state.viewsOpen]).toEqual([KICAD.id, 'PCB', false])
-    expect(window.location.search).toBe('')
+  it('open a hidden document by its id, named on the button though it has no row', () => {
+    const c = component({ meta: meta([...DOCS, DATASHEET]), doc: DATASHEET.id })
     const v = c.computed()
-    expect(v.viewLabel).toBe('Схема и плата · PCB')
-    expect(v.docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([false, true])
-    expect(shownDocs(c)[0].props.side).toBe('PCB')
-    c.computed().docRows[0].onClick()
-    expect(c.state.docSide).toBe('SCH')
-    expect(shownDocs(c)[0].props.side).toBe('SCH')
+    expect(v.docOpen.id).toBe(DATASHEET.id)
+    expect(v.viewLabel).toBe('ds/ne555.pdf')
+    expect(v.docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([false, false])
+    expect(shownDocs(c)[0].props.doc.file).toBe('ds/ne555.pdf')
   })
 
-  it('move the lit row to the other side when a double click crosses to it', () => {
-    const c = component({ meta: meta([KICAD]), doc: KICAD.id })
-    // `?d=` alone opens the schematic
-    expect(c.computed().docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([true, false])
-    shownDocs(c)[0].props.onSide('PCB')
-    expect(c.state.docSide).toBe('PCB')
-    expect(c.computed().docRows.map((t) => t.rowStyle.includes(LIT))).toEqual([false, true])
-    expect(shownDocs(c)[0].props.side).toBe('PCB')
+  it('give a page whose only document is hidden and open the menu, naming it', () => {
+    const v = component({ meta: meta([DATASHEET]), doc: DATASHEET.id }).computed()
+    expect([v.docRows, v.viewMenu, v.viewLabel]).toEqual([[], true, 'ds/ne555.pdf'])
+  })
+
+  it('open the member the right-click menu shows a part in, light its row and keep the one view of the design', () => {
+    const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
+    const lit = () => c.computed().docRows.map((t) => t.rowStyle.includes(LIT))
+    expect(lit()).toEqual([true, false, false, false])
+    const [before] = shownDocs(c)
+    expect(before.props.documents).toBe(KICAD)
+    // The page's door for opening a document, which the view calls with the
+    // other member's id.
+    before.props.onOpen(KICAD[1].id)
+    expect(c.state.doc).toBe(KICAD[1].id)
+    expect(lit()).toEqual([false, true, false, false])
+    expect(c.computed().viewLabel).toBe('Главная · плата')
+    const [after] = shownDocs(c)
+    expect(after.props.doc.id).toBe(KICAD[1].id)
+    expect(after.key).toBe(before.key)
+    // another design is another view
+    c.computed().docRows[2].onClick()
+    expect(shownDocs(c)[0].key).not.toBe(before.key)
   })
 
   it('show the model for a document this revision does not list', () => {

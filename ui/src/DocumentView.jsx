@@ -11,22 +11,28 @@
 //   svg        the file itself in an <iframe>: the hub serves it as its own
 //              type, and an HTML page runs as its author wrote it
 //   image      an <img>
-//   kicad      a KiCad design, its schematic and board linked (KicadView.jsx):
-//              the side on screen is the page's (`side`, `onSide`)
+//   schematic,
+//   board,
+//   board3d    a member of a KiCad design, drawn with the design's other
+//              listed members linked to it (KicadView.jsx); the build's
+//              `documents` say which those are, and its right-click menu
+//              asks the page to open one (`onOpen`, with its id)
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
 //
-// The parent keys this by the document's id, so another document is another
-// instance and a fetch still running for the last one lands nowhere.
-// `documentBody` is the drawing and takes everything as arguments, so a test
-// reads the tree it returns without mounting anything (ui/tests/docshell.test.js).
+// The parent keys this by `docViewKey`, so another document is another
+// instance and a fetch still running for the last one lands nowhere — except
+// another member of the same KiCad design, which keeps the instance and its
+// viewers. `documentBody` is the drawing and takes everything as arguments, so
+// a test reads the tree it returns without mounting anything
+// (ui/tests/docshell.test.js).
 
 import React from 'react';
 
 import { markdownElements, NOWRAP_CLASS } from './docmd.js';
 import { mb } from './hub.js';
-import KicadView from './KicadView.jsx';
+import KicadView, { designKey, viewOf } from './KicadView.jsx';
 import { css, MONO } from './style.jsx';
 
 /** The query key that names a document in a build's address, on both pages:
@@ -44,9 +50,28 @@ export function docBase(base, doc) {
   return cut < 0 ? base : `${base}${encodePath(doc.file.slice(0, cut))}/`;
 }
 
-/** What a document is labelled with beside its name: its type and size. */
-export const docHint = (doc) => [doc.type,
-  doc.bytes >= 1e6 ? mb(doc.bytes) : `${(doc.bytes / 1e3).toFixed(1)} kB`].join(' · ');
+/** What a document is labelled with beside its name: a KiCad schematic its
+ *  sheet count, a board and its 3D model what they are, any other its type and
+ *  size. */
+export function docHint(doc) {
+  if (doc.type === 'schematic') {
+    const sheets = doc.kicad.schematics.length;
+    return `${sheets} sheet${sheets === 1 ? '' : 's'}`;
+  }
+  if (doc.type === 'board') return 'board';
+  if (doc.type === 'board3d') return '3D';
+  return [doc.type, doc.bytes >= 1e6 ? mb(doc.bytes) : `${(doc.bytes / 1e3).toFixed(1)} kB`].join(' · ');
+}
+
+/** What a page keys the drawing of `doc` by: a member of a KiCad design by the
+ *  design, so that moving between its schematic and its board keeps one
+ *  KicadView and both its viewers; any other document by its id. A design's
+ *  key holds a `/`, which no id does (`render.document_id`), so the two never
+ *  meet. */
+export function docViewKey(doc) {
+  const design = designKey(doc);
+  return design === null ? doc.id : `design/${design}`;
+}
 
 const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--paper-bg)';
 const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55';
@@ -58,9 +83,10 @@ const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`
 // rule is one line in one place rather than a property on every short cell.
 const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`;
 
-/** One document as elements, from what its holder knows: `side` and `onSide`
- *  are the page's, for a KiCad design. Pure. */
-export function documentBody(doc, base, text, error, side, onSide) {
+/** One document as elements, from what its holder knows: `documents` (the
+ *  build's) and `onOpen` (the page's door for opening one by id) are for a
+ *  member of a KiCad design. Pure. */
+export function documentBody(doc, base, text, error, documents, onOpen) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>Loading…</div>;
@@ -74,7 +100,7 @@ export function documentBody(doc, base, text, error, side, onSide) {
   if (doc.type === 'image') {
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} />;
   }
-  if (doc.type === 'kicad') return <KicadView doc={doc} base={base} side={side} onSide={onSide} />;
+  if (viewOf(doc)) return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} />;
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
 }
 
@@ -105,7 +131,7 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, side, onSide } = this.props;
-    return documentBody(doc, base, this.state.text, this.state.error, side, onSide);
+    const { doc, base, documents, onOpen } = this.props;
+    return documentBody(doc, base, this.state.text, this.state.error, documents, onOpen);
   }
 }
