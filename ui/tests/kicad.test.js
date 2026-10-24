@@ -311,6 +311,11 @@ describe('a click selects the same part in every view', () => {
     field.remove()
     view.key(new KeyboardEvent('keydown', { key: 'Enter' }))
     expect([cleared(), view.state.selected]).toEqual([[1, 1], 'U501'])
+    // an Escape the page took (it closed an overlay with it) leaves the selection alone
+    const taken = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    taken.preventDefault()
+    view.key(taken)
+    expect([cleared(), view.state.selected]).toEqual([[1, 1], 'U501'])
     view.key(ESCAPE())
     expect([cleared(), view.state.selected]).toEqual([[2, 2], null])
   })

@@ -1404,7 +1404,10 @@ export default class HammerolaViewer extends React.Component {
       const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
                      viewsOpen: false, opsOpen: false, settingsOpen: false,
                      notePop: null, tokenPop: false, tool: null, share: null };
-      if (Object.keys(shut).some((key) => this.state[key])) e.preventDefault();
+      // An armed tool is not on screen under an open document (`showTools`), so
+      // it does not count as something this Escape closed.
+      const seen = (key) => this.state[key] && !(key === 'tool' && this.state.doc);
+      if (Object.keys(shut).some(seen)) e.preventDefault();
       this.set(shut);
     };
     window.addEventListener('keydown', this._kd);

@@ -615,6 +615,12 @@ describe('the Share window', () => {
       const share = taken()
       c.setState({ viewsOpen: true })
       expect([share, taken(), taken(), c.state.viewsOpen]).toEqual([true, true, false, false])
+      // an armed tool is not on screen under an open document: closing it is no
+      // Escape the design under that document should miss
+      c.setState({ tool: 'measure', doc: 'readme' })
+      const underDocument = taken()
+      c.setState({ tool: 'measure', doc: null })
+      expect([underDocument, taken()]).toEqual([false, true])
     } finally {
       c.componentWillUnmount()
       vi.restoreAllMocks()

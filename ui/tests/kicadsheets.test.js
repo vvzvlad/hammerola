@@ -1,7 +1,7 @@
 // A KiCad part's datasheet (ui/src/kicadsheets.js): the `Datasheet` field of its
 // placed symbol and of its footprint, read from the design's texts, and the
 // listed document the value names. The files are synthetic s-expressions shaped
-// as KiCad writes them; the chip KicadView draws from this is in kicad.test.js.
+// as KiCad writes them; the menu item KicadView offers from this is in kicad.test.js.
 
 import { describe, expect, it } from 'vitest'
 
