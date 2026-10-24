@@ -845,10 +845,11 @@ document is a 422). The `.glb` is made on your machine, not on the hub:
 makes it four times that and is not needed, the board view draws the copper).
 Entries with the same path minus the extension are ONE design: `hw/main.kicad_sch`,
 `hw/main.kicad_pcb` and `hw/main.glb` above. Picking a part in one of them (a click)
-picks the same part, by its reference, in the others, and a double click on a part
-or a net switches the menu to the other view with it selected there (schematic and
-board to each other, the 3D model to the board). An entry without siblings is a
-design of one. To hang a datasheet on a part, put the PDF in the project, list it
+picks the same part, by its reference, in the others (a click on nothing or Escape
+clears it everywhere), and a right click on a part, or on a net in the schematic
+and the board, opens a menu `Show in <caption>` with one item for every other
+listed entry of the design; choosing one opens it with the part or net selected
+there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
 `.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): selecting the part shows a `Datasheet`
 chip in the view, and clicking it opens the PDF. A web address in the field is not

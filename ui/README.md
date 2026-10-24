@@ -146,7 +146,8 @@ a KiCad design, the listed schematic, board and 3D model with one path minus the
 extension: an `<ecad-viewer>` each for the schematic and the board and
 `src/BoardView3D.jsx` for the `.glb`, all mounted, the one on screen the open
 document its page hands down; a single click selects the same part in the other
-views, a double click opens the sibling with the same part or net selected;
+views, a right click opens a menu `Show in …` that opens another view of the
+design with the same part or net selected;
 the board has a panel of its own over its canvas, `src/PcbPanel.jsx`: layers,
 presets, the opacity of the zone fills and the net of the last click;
 `src/kicadsheets.js` reads each part's `Datasheet` field, and the view shows a

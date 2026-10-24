@@ -382,10 +382,13 @@
   `setActive(false)`. It fetches the files out of the build and hands each
   element its own (`designSources`), and it is where the views are LINKED: a
   single click selecting a part in one view selects it in the others
-  (`ecad-viewer:selection`), and a double click (`ecad-viewer:crossprobe`, or a
-  double click in 3D) asks the page to open the sibling (`onOpen`, `jumpTarget`
-  says which) and, once it is on screen, calls `requestCrossProbe` on its element
-  with the designator or the net. The viewer is `static/_v/ecad-viewer.js`,
+  (`ecad-viewer:selection`), a click on nothing or Escape clears it in all of
+  them, and a right click opens the menu `Show in …` (`menuFor` says which views
+  take a part or a net) whose choice asks the page to open the sibling (`onOpen`)
+  and, once it is on screen, calls `requestCrossProbe` on its element with the
+  designator or the net. The viewer cannot be asked what is under a point, so a
+  right click replays its own left click there and builds the menu from the
+  selection it reports. The viewer is `static/_v/ecad-viewer.js`,
   imported by URL on first use (`loadEcadViewer`)
 - `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three,
   `GLTFLoader.js` and `OrbitControls.js` imported by URL from `static/_v/` (three's
