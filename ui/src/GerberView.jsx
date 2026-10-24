@@ -25,9 +25,11 @@
 // the layers are drawn, and when they cannot be, the link is under the note:
 // a zip this page cannot read is still the fab's.
 //
-// THE CANVAS: a drag with the left button or a finger pans, the wheel zooms
-// about the pointer, two fingers pinch, a double click fits the board again. Drawing is on demand, a frame
-// when the view, the size or the layers change. Everything the renderer holds
+// THE CANVAS: a drag with the left button or a finger pans, so does a wheel
+// (the two-finger swipe of a touchpad is one), a pinch or Control and the wheel
+// zoom about the pointer, two fingers on a touch screen pinch, a double click
+// fits the board again. Drawing is on demand, a frame when the view, the size
+// or the layers change. Everything the renderer holds
 // is freed on unmount, the WebGL context included: a page has few to give.
 //
 // Props:
@@ -63,9 +65,12 @@ const LINK_SIZE = `flex:none;font:400 10.5px ${MONO};color:var(--text-muted)`;
 /** The sides the board is seen from, as the panel names them. */
 const SIDES = [['top', 'Top'], ['bottom', 'Bottom']];
 
-/** How much a wheel's notch zooms: the factor is `exp(-deltaY · WHEEL_RATE)`,
- *  a line counting as 16 pixels. */
-const WHEEL_RATE = 0.0015;
+/** How much a pinch (a wheel event with Control held, which is how a touchpad
+ *  pinch arrives) zooms: the factor is `exp(-deltaY · ZOOM_RATE)`, a line counting
+ *  as 16 pixels, and one event moves `deltaY` by at most `ZOOM_STEP_MAX` so a
+ *  notch of a mouse wheel under Control is a step, not a leap. */
+const ZOOM_RATE = 0.01;
+const ZOOM_STEP_MAX = 40;
 
 /** The width of a plated hole's ring, mm: the package's default plating. */
 const PLATING_MM = 0.02;
@@ -205,9 +210,15 @@ class Stage {
     canvas.addEventListener('pointercancel', up);
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
-      const [px, py] = this.at(event);
-      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
-      this.view = zoomAt(this.view, px, py, this.width, this.height, Math.exp(-delta * WHEEL_RATE));
+      const unit = event.deltaMode === 1 ? 16 : 1;
+      if (event.ctrlKey) {
+        const [px, py] = this.at(event);
+        const delta = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX, event.deltaY * unit));
+        this.view = zoomAt(this.view, px, py, this.width, this.height, Math.exp(-delta * ZOOM_RATE));
+      } else {
+        // The board follows the fingers: a swipe up moves it up.
+        this.view = panBy(this.view, -event.deltaX * unit, -event.deltaY * unit);
+      }
       this.request();
     }, { passive: false });
     canvas.addEventListener('dblclick', () => this.fit());

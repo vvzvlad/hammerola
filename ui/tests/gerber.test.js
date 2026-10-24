@@ -415,7 +415,7 @@ describe('the view on the page', () => {
     expect(host.querySelector('canvas')).toBeNull()
   })
 
-  it('pans with a drag, zooms about the pointer with the wheel, and scales with a pinch', async () => {
+  it('pans with a drag or a swipe, zooms about the pointer with a pinch, and scales with two fingers', async () => {
     const { canvas, processor } = await loaded()
     const spot = pointAt(last(processor), [610, 95])
     pointer(canvas, 'pointerdown', { x: 100, y: 100 })
@@ -424,13 +424,21 @@ describe('the view on the page', () => {
     runFrames()
     close(pixelOf(last(processor), spot), [640, 75])
 
+    // A two-finger swipe is a wheel event without Control: the board follows it.
+    const swiped = new WheelEvent('wheel', { deltaX: -15, deltaY: 25, clientX: 300, clientY: 300, bubbles: true, cancelable: true })
+    canvas.dispatchEvent(swiped)
+    runFrames()
+    expect(swiped.defaultPrevented).toBe(true)
+    close(pixelOf(last(processor), spot), [655, 50])
+
+    // A pinch arrives as a wheel event with Control held, and zooms about the pointer.
     const before = last(processor)
-    const wheel = new WheelEvent('wheel', { deltaY: -120, clientX: 640, clientY: 75, bubbles: true, cancelable: true })
+    const wheel = new WheelEvent('wheel', { ctrlKey: true, deltaY: -120, clientX: 655, clientY: 50, bubbles: true, cancelable: true })
     canvas.dispatchEvent(wheel)
     runFrames()
     expect(wheel.defaultPrevented).toBe(true)
     expect(Math.abs(last(processor).zoomY)).toBeGreaterThan(Math.abs(before.zoomY))
-    close(pixelOf(last(processor), spot), [640, 75])
+    close(pixelOf(last(processor), spot), [655, 50])
 
     // Two fingers 200 px apart moved to 400, their midpoint from 400 to 500.
     const pinched = last(processor)
