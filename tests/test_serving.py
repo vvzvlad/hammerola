@@ -81,6 +81,27 @@ def test_latest_urls_are_not_cached(hub):
         assert hub.get(path).headers["Cache-Control"] == "no-cache", path
 
 
+def test_a_pointer_file_revalidates_instead_of_being_sent_twice(hub):
+    """`no-cache` on `latest` is only affordable with a validator, as for `/_v/`.
+
+    Without one the browser refetches every file of the build on each visit,
+    and the 3D model of a board is 40 MB of them.
+    """
+    hub.publish("proj1", "abc123", good_build())
+    for path in ("/project/proj1/latest/assembled.json",
+                 "/project/proj1/latest/meta.json"):
+        first = hub.get(path)
+        etag = first.headers.get("ETag")
+        assert etag and etag.startswith('W/"'), path
+        again = hub.get(path, headers={"If-None-Match": etag})
+        assert again.status_code == 304, path
+        assert again.headers["Cache-Control"] == "no-cache", path
+        assert not again.content, path
+        # a tag that does not match gets the file
+        stale = hub.get(path, headers={"If-None-Match": 'W/"0-0-0"'})
+        assert stale.status_code == 200 and stale.content, path
+
+
 def test_the_vendored_viewer_is_not_immutable(hub):
     # The fork in `viewer/` is rebuilt by `make viewer` under these exact names, so
     # an immutable year would leave returning readers on a stale viewer.

@@ -1126,7 +1126,7 @@ artifacts`.
 | `/project/<pid>/<commit>/*.json`, файлы с расширениями документов и файлы KiCad (`OPEN_SUFFIXES`) — описание, сетка видов, картинки, документы | `public, max-age=31536000, immutable` |
 | `/project/<pid>/<commit>/*` — остальные файлы сборки (STEP, STL, 3MF), по токену или ключу | `private, max-age=31536000, immutable` |
 | `/project/<pid>/<commit>/` и `.../index.html` — сама страница | `no-cache` |
-| `/project/<pid>/latest/*` и `/project/<pid>/dev/*` | `no-cache` |
+| `/project/<pid>/latest/*` и `/project/<pid>/dev/*` — файлы сборки | `no-cache` + слабый `ETag` (размер, mtime, inode), условный запрос отвечает 304: 3D платы весит 40 МБ, и без валидатора его качали бы заново при каждом открытии |
 | `/_v/*` — всё целиком | `no-cache` + слабый `ETag`, условный запрос отвечает 304 |
 | `/`, `/index.json`, `/project/<pid>/builds.json` | `no-cache` |
 | `/api/v1/jobs/<id>` и `/api/v1/jobs/<id>/log` | `no-cache` |

@@ -114,7 +114,7 @@ becomes a job (`src/jobs.py`) the 202 points at.
 
 Cache-Control is not a detail here, it is the load-bearing half of the URL scheme:
 a commit directory is immutable by construction, so it gets a year; `latest` and
-`dev` move, so they get none. `dev` is the only URL whose CONTENT is rewritten in
+`dev` move, so they get none, and a weak ETag so that a revisit is a 304. `dev` is the only URL whose CONTENT is rewritten in
 place (SPEC 7.6), and `no-cache` is precisely what makes that safe — which is why
 it must never be able to fall through to the immutable branch.
 """
@@ -732,6 +732,20 @@ class HubHandler(BaseHTTPRequestHandler):
                 ctype, extra = build_content_type(resolved.name)
             else:
                 ctype, extra = content_type_for(resolved.name), {}
+            # A pointer (`latest`, `dev`) is `no-cache`, and with no validator
+            # that is the whole file again on every visit: 40 MB for the 3D
+            # model of a board. The weak tag comes from the open file's size,
+            # mtime and inode, which change whenever its bytes do (`dev` is
+            # rewritten in place) and stay put when a revision change leaves
+            # a file as it was (the same hard link).
+            if cache == CACHE_NONE:
+                tag = 'W/"{:x}-{:x}-{:x}"'.format(
+                    info.st_size, info.st_mtime_ns, info.st_ino)
+                extra = {**extra, "ETag": tag}
+                if self.headers.get("If-None-Match") == tag:
+                    self._headers(304, ctype, 0, cache, extra,
+                                  own=not uploaded)
+                    return None
             # Size from the open handle: the bytes about to be sent.
             self._headers(200, ctype, info.st_size, cache, extra,
                           own=not uploaded)
