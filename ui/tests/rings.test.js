@@ -313,8 +313,8 @@ function press(canvas, [clientX, clientY], button = 0) {
  * below lean on that: the widget reads the same `event.target` for a hover that
  * `handOver` reads for a press, so a move dispatched anywhere else is a cursor
  * standing over some other widget. `hoverAt` is the one that says otherwise. */
-const pointerMove = ([clientX, clientY]) =>
-  window.dispatchEvent(new MouseEvent('pointermove', { clientX, clientY }))
+const pointerMove = ([clientX, clientY], { shiftKey = false } = {}) =>
+  window.dispatchEvent(new MouseEvent('pointermove', { clientX, clientY, shiftKey }))
 
 /** The cursor standing over the CANVAS at a point, which is what a hover is. */
 const hoverAt = (canvas, [clientX, clientY]) =>
@@ -1081,9 +1081,10 @@ describe('one whole drag', () => {
     expect(sent[2]).toBeCloseTo(0, 9)
   })
 
-  it('carries the knob round under the hand while the drag runs', () => {
-    // The knob sits at its resting place plus the angle swept so far, so it moves
-    // with the hand while the part turns.
+  it('carries the knob round under the hand while Shift frees the turn', () => {
+    // Under Shift the knob sits at its resting place plus the angle swept so far,
+    // so it moves with the hand while the part turns (without Shift it stands on
+    // the step with the part, pinned in the thirty-degree test below).
     //
     // A sweep that is not a whole number of degrees, on purpose: the part turns
     // in whole degrees and the knob follows the hand, so one radian of sweep puts
@@ -1095,7 +1096,7 @@ describe('one whole drag', () => {
 
     const hand = onZ(DISC_T + 1)
     press(s.canvas, AT_KNOB)
-    pointerMove(hand)
+    pointerMove(hand, { shiftKey: true })
     rendered(s.viewer)
 
     expect(s.vp.moved.get(PART).turn, 'the part moved in whole degrees')
@@ -1119,7 +1120,7 @@ describe('one whole drag', () => {
     rendered(s.viewer)
 
     press(s.canvas, onKnob(s, 2))
-    pointerMove(onRing(s, 2, DISC_T + 1))
+    pointerMove(onRing(s, 2, DISC_T + 1), { shiftKey: true })
     rendered(s.viewer)
 
     expect(knobAt(s, 2)).toBeCloseTo(DISC_T + 1, 6)
@@ -1198,21 +1199,100 @@ describe('one whole drag', () => {
     expect(sent[2]).toBeCloseTo(0, 9)
   })
 
-  it('snaps to whole degrees', async () => {
+  it('turns by whole degrees under Shift', async () => {
     // A number this gesture produces travels to an agent in a sentence, and
-    // 31.7413 degrees claims a precision no hand has. A degree is also the step
-    // the row's own field takes, so a turn made with a ring and a turn typed
-    // into the panel land on the same grid.
+    // 31.7413 degrees claims a precision no hand has.
     const s = scene()
     rendered(s.viewer)
 
     press(s.canvas, AT_KNOB)
     // A tenth of a radian along the curve, which is 5.729... degrees.
-    pointerMove(onZ(DISC_T + 0.1))
+    pointerMove(onZ(DISC_T + 0.1), { shiftKey: true })
     pointerUp(MIDDLE)
     await settled()
 
     expect(details(s.vp, EVENT_TURNED)[0].turn).toEqual([0, 0, 6])
+  })
+
+  it('goes in thirty-degree steps, and by the whole degree under Shift', async () => {
+    // Fixed angles by default and any angle on demand, as in Bambu Studio and
+    // OrcaSlicer. The part and its knob both stand on the step, so the step is
+    // seen; Shift lets go of it.
+    const s = scene()
+    rendered(s.viewer)
+    const deg = (d) => (d * Math.PI) / 180
+
+    press(s.canvas, AT_KNOB)
+    pointerMove(onZ(DISC_T + deg(100)))
+    rendered(s.viewer)
+    expect(s.vp.moved.get(PART).turn, 'a hundred is nearest ninety')
+      .toEqual([0, 0, 90])
+    expect(knobAt(s, 2), 'the knob stands on the step too')
+      .toBeCloseTo(DISC_T + Math.PI / 2, 9)
+    pointerMove(onZ(DISC_T + deg(110)))
+    expect(s.vp.moved.get(PART).turn, 'past halfway to the next step')
+      .toEqual([0, 0, 120])
+
+    // The same drag with Shift down turns the part where the hand is, and the
+    // knob is back under it.
+    pointerMove(onZ(DISC_T + deg(97)), { shiftKey: true })
+    rendered(s.viewer)
+    expect(s.vp.moved.get(PART).turn).toEqual([0, 0, 97])
+    expect(knobAt(s, 2)).toBeCloseTo(DISC_T + deg(97), 6)
+
+    // Shift let go, the next move is on the step again, the other way round too.
+    pointerMove(onZ(DISC_T + deg(40)))
+    pointerMove(onZ(DISC_T - deg(50)))
+    pointerUp(onZ(DISC_T - deg(50)))
+    await settled()
+    expect(details(s.vp, EVENT_TURNED)[0].turn).toEqual([0, 0, -60])
+  })
+
+  it('takes Shift going down or up at once, with the hand standing still', async () => {
+    // The usual order is to let go of the modifier and then of the button, often
+    // without moving in between: the part must already be on the step the reader
+    // sees by then, not left at the free angle of the last move.
+    const s = scene()
+    rendered(s.viewer)
+    const deg = (d) => (d * Math.PI) / 180
+    const shift = (type, shiftKey) => window.dispatchEvent(
+      new KeyboardEvent(type, { key: 'Shift', shiftKey }))
+
+    press(s.canvas, AT_KNOB)
+    pointerMove(onZ(DISC_T + deg(97)), { shiftKey: true })
+    expect(s.vp.moved.get(PART).turn).toEqual([0, 0, 97])
+
+    shift('keyup', false)
+    rendered(s.viewer)
+    expect(s.vp.moved.get(PART).turn, 'Shift let go').toEqual([0, 0, 90])
+    expect(knobAt(s, 2)).toBeCloseTo(DISC_T + Math.PI / 2, 9)
+    shift('keydown', true)
+    expect(s.vp.moved.get(PART).turn, 'Shift down again').toEqual([0, 0, 97])
+    shift('keyup', false)
+
+    pointerUp(onZ(DISC_T + deg(97)))
+    await settled()
+    expect(details(s.vp, EVENT_TURNED)[0].turn).toEqual([0, 0, 90])
+
+    // And after the release Shift turns nothing: the listeners went with it.
+    shift('keydown', true)
+    expect(s.vp.moved.get(PART).turn).toEqual([0, 0, 90])
+  })
+
+  it('counts the steps from where the part stood at the press', async () => {
+    // A step is a step of this gesture, as in the slicers' gizmo: a part standing
+    // at ten degrees turned three steps stands at a hundred, where steps on the
+    // absolute angle would have put it at a hundred and twenty.
+    const s = scene()
+    rendered(s.viewer)
+    s.vp.moved.set(PART, { delta: [0, 0, 0], turn: [0, 0, 10] })
+
+    press(s.canvas, AT_KNOB)
+    pointerMove(onZ(DISC_T + (100 * Math.PI) / 180))
+    pointerUp(onZ(DISC_T + (100 * Math.PI) / 180))
+    await settled()
+
+    expect(details(s.vp, EVENT_TURNED)[0].turn).toEqual([0, 0, 100])
   })
 
   it('leaves the two axes it is not on exactly as it found them', async () => {
@@ -1270,11 +1350,16 @@ describe('one whole drag', () => {
     // twitch between press and release can do is turn the part a degree and
     // file a node — and the interface answers a filed node by opening the
     // panel.
+    //
+    // Every move here is under Shift, the free turn: the thirty-degree step
+    // rounds a twitch of a degree or two to nothing, which would pass this
+    // test whether or not the twitch was refused.
     const s = scene()
     rendered(s.viewer)
 
     press(s.canvas, AT_KNOB)
-    pointerMove([AT_KNOB[0] + CLICK_PX - 1, AT_KNOB[1] + CLICK_PX - 1])
+    pointerMove([AT_KNOB[0] + CLICK_PX - 1, AT_KNOB[1] + CLICK_PX - 1],
+                { shiftKey: true })
     expect(facing(s.groups[PART]), 'still a click').toEqual([0, 0, 0, 1])
     pointerUp([AT_KNOB[0] + CLICK_PX - 1, AT_KNOB[1] + CLICK_PX - 1])
     await settled()
@@ -1294,8 +1379,9 @@ describe('one whole drag', () => {
     const again = scene()
     rendered(again.viewer)
     press(again.canvas, AT_KNOB)
-    pointerMove([AT_KNOB[0] + CLICK_PX - 1, AT_KNOB[1] + CLICK_PX - 1])
-    pointerMove([AT_KNOB[0], AT_KNOB[1] + CLICK_PX])
+    pointerMove([AT_KNOB[0] + CLICK_PX - 1, AT_KNOB[1] + CLICK_PX - 1],
+                { shiftKey: true })
+    pointerMove([AT_KNOB[0], AT_KNOB[1] + CLICK_PX], { shiftKey: true })
     const swept = Math.atan2(Math.SQRT1_2 - CLICK_PX / RING_PX, Math.SQRT1_2)
       - DISC_T
     expect(again.vp.moved.get(PART).turn)
