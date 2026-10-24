@@ -196,3 +196,23 @@ export const SPAN_MONO = `flex:1;font:400 10px ${MONO};color:var(--text-muted)`;
 export const BODY_MONO = `font:400 11px/1.55 ${MONO};color:var(--text);overflow-wrap:anywhere`;
 export const WARN_CAPS = `font:600 9px ${MONO};color:var(--warn-soft);letter-spacing:.07em`;
 export const WARN_BODY = `font:400 11.5px/1.5 ${SANS};color:var(--text-soft);margin-top:3px`;
+
+/* -- the layer panel over a board ------------------------------------------ *
+ *
+ * The card in the top right corner of a board's canvas with a row per layer:
+ * the KiCad board's (PcbPanel.jsx) and the Gerbers' (GerberView.jsx). The
+ * board's panel adds `visibility` to the card, because it stays mounted while
+ * the board is hidden. */
+export const LAYER_PANEL = 'position:absolute;top:10px;right:10px;width:200px;max-width:calc(100% - 20px);max-height:calc(100% - 20px);'
+  + 'box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;'
+  + `background:var(--float-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft);font:400 11.5px ${SANS};color:var(--text)`;
+export const LAYER_PANEL_HEAD = `flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;user-select:none;font:600 11.5px ${SANS}`;
+export const LAYER_PANEL_BODY = 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line-soft)';
+/* The row of pills over the list (presets on the board, the side on the Gerbers). */
+export const LAYER_PILLS = `flex:none;margin:8px 10px 0;${SEGMENTED}`;
+export const LAYER_PILL = `flex:1 1 auto;padding:3px 6px;text-align:center;border-radius:4px;font:500 11px ${SANS};color:var(--text-soft);cursor:pointer;user-select:none`;
+export const LAYER_LIST = 'flex:1 1 auto;min-height:0;overflow:auto;padding:2px 0 6px';
+export const layerRow = (active) => 'display:flex;align-items:center;gap:6px;padding:3px 10px;'
+  + (active ? 'background:var(--accent-bg);color:var(--accent-text)' : '');
+export const LAYER_NAME = `${FILL};min-width:0;display:flex;align-items:center;cursor:pointer;user-select:none`;
+export const LAYER_EYE = 'flex:none;display:flex;padding:3px 0 3px 4px;cursor:pointer';

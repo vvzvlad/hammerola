@@ -209,6 +209,13 @@
    * file was drawn for a white page by its author, and black ink on a
    * transparent drawing laid on the dark page would not be seen at all. */
   --paper-bg: #ffffff;
+
+  /* -- the sheet a board's Gerbers are drawn on ---------------------------
+   * Behind the layers of ui/src/GerberView.jsx, and showing through every
+   * drilled hole. KiCad's own board background, DARK IN BOTH THEMES: the
+   * layers wear KiCad's default colours (ui/src/gerber.js), which were chosen
+   * for it — its silkscreen is a pale yellow a white sheet would swallow. */
+  --gerber-bg: #001023;
 }
 
 :root[data-theme="dark"] {
@@ -312,6 +319,8 @@
   --canvas-bg: #444444;
 
   --paper-bg: #ffffff;
+
+  --gerber-bg: #001023;
 }
 
 /* THE PAGE COLOUR, before there is a page.

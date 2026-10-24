@@ -188,9 +188,10 @@ FAVICON_ASSET = "favicon.svg"
 # as an image cannot run script.
 #
 # `script-src 'self' 'wasm-unsafe-eval'`: the KiCad viewer triangulates its
-# polygons with a WebAssembly module embedded in its own file. The keyword
-# allows compiling WebAssembly and nothing else — no `eval` of JS, no inline
-# script, no source but this origin (SPEC 7.4).
+# polygons with a WebAssembly module embedded in its own file, and the Gerber
+# renderer (`/_v/wasm_gerber_processor.js`) is a WebAssembly module fetched
+# from beside it. The keyword allows compiling WebAssembly and nothing else —
+# no `eval` of JS, no inline script, no source but this origin (SPEC 7.4).
 #
 # `style-src 'unsafe-inline'`: the viewer writes `style="flex: 1"` attributes at
 # runtime with model-dependent values (no hash or nonce possible), and without
@@ -276,6 +277,10 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
     ".map": "application/json",
     ".txt": "text/plain; charset=utf-8",
+    # The Gerber renderer's module (static/_v/PROVENANCE.md): under any other
+    # type `WebAssembly.instantiateStreaming` refuses it, and the module falls
+    # back to the slower compile with a console warning.
+    ".wasm": "application/wasm",
 }
 
 # Types a file that ARRIVED IN A PUSH is served as; everything else is an
@@ -302,8 +307,9 @@ BUILD_CONTENT_TYPES = {
     ".svg": "image/svg+xml",
     # A KiCad design's files, which the page's viewer fetches and parses itself.
     **dict.fromkeys(render.KICAD_SUFFIXES, "text/plain; charset=utf-8"),
-    # The 3D model of a board (`render.DOCUMENT_TYPES`).
+    # The 3D model of a board, and a board's Gerbers (`render.DOCUMENT_TYPES`).
     ".glb": "model/gltf-binary",
+    ".zip": "application/zip",
 }
 
 # What a build hands to anybody holding its address: the documents the page

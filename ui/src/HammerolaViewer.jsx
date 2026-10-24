@@ -121,6 +121,8 @@ import { chromeView } from './chromeview.js';
 // And one of the build's documents, laid over the model when it is chosen in
 // the view list; drawn as the documents page draws it.
 import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
+// The type the downloads menu knows the board's Gerbers by.
+import { GERBERS_TYPE } from './gerber.js';
 import { FLOAT_BAR, viewList } from './viewlist.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
@@ -483,6 +485,9 @@ function fileList(record) {
  */
 const PRINT_FIRST = ['STL', '3MF', 'STEP'];
 
+/** The heading the board's Gerbers are offered under, among the formats. */
+const GERBERS_GROUP = 'GERBERS';
+
 /**
  * `meta.parts` as ordered groups of one FORMAT each, rows ordered by part.
  *
@@ -503,8 +508,12 @@ const PRINT_FIRST = ['STL', '3MF', 'STEP'];
  * A Map because the group key is an extension out of a pushed document, so
  * `__proto__` is reachable and an object literal would silently store nothing
  * under it.
+ *
+ * The board's Gerbers are the one document here: `documents` is
+ * `meta.documents`, and every zip it lists (`GERBERS_TYPE`) is a row
+ * of one GERBERS group, named by its title, ordered like any other format.
  */
-export function groupDownloads(parts) {
+export function groupDownloads(parts, documents) {
   const groups = new Map();
   Object.entries((parts && typeof parts === 'object') ? parts : {})
     .forEach(([key, record]) => {
@@ -514,6 +523,10 @@ export function groupDownloads(parts) {
         groups.get(group).push({ label: key, file });
       });
     });
+  const gerbers = (Array.isArray(documents) ? documents : [])
+    .filter((doc) => doc && doc.type === GERBERS_TYPE && typeof doc.file === 'string' && doc.file)
+    .map((doc) => ({ label: String(doc.name || doc.file), file: doc.file }));
+  if (gerbers.length) groups.set(GERBERS_GROUP, [...(groups.get(GERBERS_GROUP) || []), ...gerbers]);
   const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   const rank = (ext) => {
     const at = PRINT_FIRST.indexOf(ext);
@@ -4904,7 +4917,8 @@ export default class HammerolaViewer extends React.Component {
       switchBuild: this.switchBuild.bind(this),
     });
 
-    // -- the downloads, out of the part catalogue: key -> {extension -> file}
+    // -- the downloads, out of the part catalogue: key -> {extension -> file},
+    //    and the board's Gerbers among the build's documents
     //
     // With the key to the build on screen, asked of `PAGE.slot` here rather
     // than kept: the address moves under a revision switch, and builds.json
@@ -4913,6 +4927,7 @@ export default class HammerolaViewer extends React.Component {
     const filesKey = filesKeyFor(s.builds, PAGE.slot, this._linkKey);
     const { downloadGroups, anyDownloads, dlShown } = downloadsView(catalogue, {
       groupDownloads, downloadAll: this.downloadAll.bind(this), key: filesKey,
+      documents: meta && meta.documents,
     });
 
     // -- the project's comment queue, as `loadFeed` fetched it

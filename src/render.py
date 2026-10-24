@@ -84,6 +84,10 @@ DOCUMENT_TYPES = {
     ".kicad_pcb": "board",
     # The 3D model of a board, as `kicad-cli pcb export glb` writes it.
     ".glb": "board3d",
+    # The Gerber and drill files of a board, the one zip that goes to the fab.
+    # The page unpacks it and draws the layers (ui/src/GerberView.jsx); the hub
+    # neither opens nor checks it.
+    ".zip": "gerbers",
 }
 SCHEMATIC_TYPE = DOCUMENT_TYPES[".kicad_sch"]
 BOARD_TYPE = DOCUMENT_TYPES[".kicad_pcb"]

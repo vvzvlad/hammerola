@@ -144,6 +144,10 @@ REQUIRED_PATHS = [
     # ui/src/KicadView.jsx), and the parser worker it starts from beside itself.
     "/app/static/_v/ecad-viewer.js",
     "/app/static/_v/parser.worker.js",
+    # The Gerber renderer, fetched by URL when a set of Gerbers is opened (`GERBER_MODULE_URL`
+    # in ui/src/gerber.js), and the WebAssembly module it fetches from beside itself.
+    "/app/static/_v/wasm_gerber_processor.js",
+    "/app/static/_v/wasm_gerber_processor_bg.wasm",
     # The board's 3D view (`ui/src/BoardView3D.jsx`) imports three's loader and controls by URL
     # when a `.glb` is opened; the loader pulls the two helpers, and all four import three
     # from beside themselves.

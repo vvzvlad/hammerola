@@ -1,5 +1,6 @@
 /**
- * The downloads menu, built out of the part catalogue: key -> {extension -> file}.
+ * The downloads menu, built out of the part catalogue: key -> {extension -> file},
+ * and of the build's documents, of which the board's Gerbers are offered.
  *
  * Returns `downloadGroups`, which `chromeView` puts back in the object because
  * the menu hangs off a header button, and `anyDownloads`, which the row
@@ -10,11 +11,13 @@
  * part; one spelling of the address keeps files from downloading under the
  * wrong name.
  *
- * The catalogue is the whole input (no `s`): the menu shows what the build
- * ships, not anything the reader did. `groupDownloads` stays beside the
+ * The catalogue and the documents are the whole input (no `s`): the menu shows
+ * what the build ships, not anything the reader did. `groupDownloads` stays beside the
  * component, where the tests reach for it. `key` is `filesKeyFor`'s answer for
- * the build on screen; without one the hub refuses every file, so the menu is
- * not drawn at all (`dlShown`).
+ * the build on screen; without one the hub refuses every part's file, so the
+ * menu is not drawn at all (`dlShown`). The Gerbers' zip opens without a key
+ * (a document, `app.OPEN_SUFFIXES`), and its own view links it for a reader
+ * who has none (GerberView.jsx).
  */
 import { PAGE } from './hub.js';
 import { MONO, SANS } from './style.jsx';
@@ -23,9 +26,11 @@ import { MONO, SANS } from './style.jsx';
  * One file of the build on screen, with the key that opens it.
  *
  * The key travels in the query because the link is a plain `<a download>`,
- * which cannot carry the token in a header (src/app.py, `files_key`).
+ * which cannot carry the token in a header (src/app.py, `files_key`). A
+ * document keeps its directory in the build (`fab/board.zip`), and each
+ * segment is encoded apart, so the browser saves it under its own name.
  */
-export const fileHref = (file, key) => PAGE.base + encodeURIComponent(String(file))
+export const fileHref = (file, key) => PAGE.base + String(file).split('/').map(encodeURIComponent).join('/')
   + (key ? `?files=${encodeURIComponent(key)}` : '');
 
 /**
@@ -48,10 +53,10 @@ export function filesKeyFor(builds, slot, fromAddress) {
 }
 
 export function downloadsView(catalogue, deps) {
-  const { groupDownloads, downloadAll, key } = deps;
+  const { groupDownloads, downloadAll, key, documents } = deps;
 
   const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
-  const downloadGroups = groupDownloads(catalogue).map((g) => ({
+  const downloadGroups = groupDownloads(catalogue, documents).map((g) => ({
     key: g.ext,
     ext: g.ext,
     files: g.files.map((f) => ({

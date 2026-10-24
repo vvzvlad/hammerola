@@ -40,8 +40,11 @@
 import React from 'react';
 
 import { SELECTION_EVENT } from './KicadView.jsx';
-import { ELLIPSIS, eyeDot, eyeOuter, FILL, SEGMENTED, SWATCH } from './panelstyle.js';
-import { css, MONO, SANS } from './style.jsx';
+import {
+  ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_EYE, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY, LAYER_PANEL_HEAD,
+  LAYER_PILL, LAYER_PILLS, layerRow, SWATCH,
+} from './panelstyle.js';
+import { css, MONO } from './style.jsx';
 
 /** What an element reports after each `setPcb…` and `applyPcbLayerPreset`. */
 export const VIEW_STATE_EVENT = 'ecad-viewer:view-state-change';
@@ -86,26 +89,16 @@ export function readBoard(element) {
   };
 }
 
-const PANEL = 'position:absolute;top:10px;right:10px;width:200px;max-width:calc(100% - 20px);max-height:calc(100% - 20px);'
-  + 'box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;'
-  + `background:var(--float-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft);font:400 11.5px ${SANS};color:var(--text);visibility:`;
-const HEAD = `flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;user-select:none;font:600 11.5px ${SANS}`;
+const PANEL = `${LAYER_PANEL};visibility:`;
 const NET_LABEL = 'flex:none;font-weight:400;color:var(--text-muted)';
 const NET_NAME = `min-width:0;${ELLIPSIS};font:600 11px ${MONO};color:var(--accent-text)`;
-const BODY = 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line-soft)';
-const PRESET_ROW = `flex:none;margin:8px 10px 0;${SEGMENTED}`;
-const presetPill = `flex:1 1 auto;padding:3px 6px;text-align:center;border-radius:4px;font:500 11px ${SANS};color:var(--text-soft);cursor:pointer;user-select:none`;
 const ZONES = 'flex:none;display:flex;align-items:center;gap:8px;padding:8px 10px 6px';
 const ZONES_LABEL = 'flex:none;color:var(--text-soft)';
 const ZONES_VALUE = `flex:none;width:30px;text-align:right;font:400 10.5px ${MONO};color:var(--text-muted)`;
 const ZONES_INPUT = 'flex:1;min-width:0;margin:0;accent-color:var(--accent)';
-const LIST = 'flex:1 1 auto;min-height:0;overflow:auto;padding:2px 0 6px';
-const layerRow = (active) => 'display:flex;align-items:center;gap:6px;padding:3px 10px;'
-  + (active ? 'background:var(--accent-bg);color:var(--accent-text)' : '');
-const LAYER_NAME = `${FILL};min-width:0;display:flex;align-items:center;cursor:pointer;user-select:none`;
-const EYE = 'flex:none;display:flex;padding:3px 0 3px 4px;cursor:pointer';
 
-const CHEVRON = (open) => (
+/** The panel header's fold mark, shared with the Gerbers' panel (GerberView.jsx). */
+export const CHEVRON = (open) => (
   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
        style={{ flex: 'none', transform: open ? 'none' : 'rotate(-90deg)' }}>
     <path d="M4 6l4 4 4-4" />
@@ -184,17 +177,17 @@ export default class PcbPanel extends React.Component {
     const { open, layers, zones, net } = this.state;
     return (
       <div data-panel="pcb" style={css(PANEL + (this.props.active ? 'visible' : 'hidden'))}>
-        <div onClick={this.toggle} title={open ? 'Hide the layers' : 'Show the layers'} style={css(HEAD)}>
+        <div onClick={this.toggle} title={open ? 'Hide the layers' : 'Show the layers'} style={css(LAYER_PANEL_HEAD)}>
           {CHEVRON(open)}
           <span style={css(FILL)}>Layers</span>
           {net && <span style={css(NET_LABEL)}>net</span>}
           {net && <span title={net} style={css(NET_NAME)}>{net}</span>}
         </div>
         {open && (
-          <div style={css(BODY)}>
-            <div style={css(PRESET_ROW)}>
+          <div style={css(LAYER_PANEL_BODY)}>
+            <div style={css(LAYER_PILLS)}>
               {PRESETS.map(([preset, label]) => (
-                <div key={preset} data-preset={preset} style={css(presetPill)}
+                <div key={preset} data-preset={preset} style={css(LAYER_PILL)}
                      onClick={() => this.change((element) => {
                        element.setPcbLayerHighlight(null);
                        element.applyPcbLayerPreset(preset);
@@ -206,7 +199,7 @@ export default class PcbPanel extends React.Component {
               <input type="range" min="0" max="1" step="0.05" value={zones} onChange={this.onZones} style={css(ZONES_INPUT)} />
               <span style={css(ZONES_VALUE)}>{`${Math.round(zones * 100)}%`}</span>
             </label>
-            <div style={css(LIST)}>
+            <div style={css(LAYER_LIST)}>
               {layers.map((layer) => (
                 <div key={layer.name} data-layer={layer.name} style={css(layerRow(layer.highlighted))}>
                   <span title={layer.highlighted ? 'The active layer, drawn over the others' : 'Draw this layer over the others'}
@@ -215,7 +208,7 @@ export default class PcbPanel extends React.Component {
                     <span style={css(SWATCH + layer.color + (layer.visible ? '' : ';opacity:.35'))} />
                     <span style={css(ELLIPSIS)}>{layer.name}</span>
                   </span>
-                  <span data-eye={layer.name} title={layer.visible ? 'Hide this layer' : 'Show this layer'} style={css(EYE)}
+                  <span data-eye={layer.name} title={layer.visible ? 'Hide this layer' : 'Show this layer'} style={css(LAYER_EYE)}
                         onClick={() => this.change((element) => element.setPcbLayerVisibility(layer.name, !layer.visible))}>
                     <span style={css(eyeOuter(layer.visible ? 'on' : 'off'))}>
                       <span style={css(eyeDot(layer.visible ? 'on' : 'off'))} />

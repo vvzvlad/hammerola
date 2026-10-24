@@ -149,6 +149,40 @@ To move it: take the same three things from a newer Prism commit — the two fil
 and the manifest's commits — replace both files together, and update this
 section and the hashes in one commit.
 
+## The Gerber renderer: `wasm_gerber_processor.js` and `wasm_gerber_processor_bg.wasm`
+
+Not built here either. They are the `wasm/` directory of the npm package
+[`wasm-gerber-renderer`](https://www.npmjs.com/package/wasm-gerber-renderer)
+**0.8.1** (published 2026-10-09, `gitHead`
+`02d079729a1e5125a7cc096931c00603d9453ec1` of
+[`dsafdsaf132/wasm-gerber-viewer`](https://github.com/dsafdsaf132/wasm-gerber-viewer),
+`packages/wasm-gerber-renderer`), taken with `npm pack wasm-gerber-renderer@0.8.1`
+and copied byte for byte. The package's own `LICENSE` (**MIT**, copyright line
+included) is copied as `wasm-gerber-renderer-LICENSE.txt`. Its other files — the
+`index.js`/`shared.js` front end, the Node half, the CLI and the 64-bit build in
+`wasm/pkg64/` — are not here: the page drives `GerberProcessor` of the first
+file directly (`ui/src/GerberView.jsx`), because the front end parses every
+layer again for each frame it draws.
+
+| File | sha256 |
+| --- | --- |
+| `wasm-gerber-renderer-0.8.1.tgz` (npm's tarball, not here) | `2663cc45617d7044f4a526bc3a4a39f5b3735f1bce5eff3952fda8535a1665c6` |
+| `wasm_gerber_processor.js` | `484724887e1cde60076ccee9955eb6ecf8bd4fd6bc0bac0360ef46286fc118d5` |
+| `wasm_gerber_processor_bg.wasm` | `201b4cf697506a51b0723abe3537f26136c34d663a093cabfbd9cffd2e7e44bc` |
+| `wasm-gerber-renderer-LICENSE.txt` | `61953d24005a26ce1ef6bd75c01eda5cd850d7f059d89a337baaed131ed5b625` |
+
+`wasm_gerber_processor.js` is wasm-bindgen's ES module, fetched by URL when a set
+of Gerbers is opened (`GERBER_MODULE_URL` in `ui/src/gerber.js`); its `default`
+export fetches `./wasm_gerber_processor_bg.wasm` relative to its own URL, which
+is why the two sit side by side under these names. Two things of the hub make
+it work: `'wasm-unsafe-eval'` in the CSP's `script-src` (SPEC §7.4), and the
+`.wasm` served as `application/wasm` (`CONTENT_TYPES` in `src/app.py`) — under
+any other type `WebAssembly.instantiateStreaming` refuses it and the module
+falls back to the slower `WebAssembly.instantiate` with a console warning.
+
+To move it: `npm pack` the new version, replace the three files together, and
+update this section and the hashes in one commit.
+
 ## Do not put these in `data/`
 
 They are assets, not state. `data/` is covered by a docker volume on prod, which

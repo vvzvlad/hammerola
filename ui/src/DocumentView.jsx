@@ -17,6 +17,8 @@
 //              listed members linked to it (KicadView.jsx); the build's
 //              `documents` say which those are, and its right-click menu
 //              asks the page to open one (`onOpen`, with its id)
+//   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
+//              layer by layer (GerberView.jsx), with a link that downloads it
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
@@ -31,6 +33,8 @@
 import React from 'react';
 
 import { markdownElements, NOWRAP_CLASS } from './docmd.js';
+import { GERBERS_TYPE } from './gerber.js';
+import GerberView from './GerberView.jsx';
 import { mb } from './hub.js';
 import KicadView, { designKey, viewOf } from './KicadView.jsx';
 import { css, MONO } from './style.jsx';
@@ -50,6 +54,9 @@ export function docBase(base, doc) {
   return cut < 0 ? base : `${base}${encodePath(doc.file.slice(0, cut))}/`;
 }
 
+/** A file's size as a reader reads it: megabytes from one, else kilobytes. */
+export const docSize = (bytes) => (bytes >= 1e6 ? mb(bytes) : `${(bytes / 1e3).toFixed(1)} kB`);
+
 /** What a document is labelled with beside its name: a KiCad schematic its
  *  sheet count, a board and its 3D model what they are, any other its type and
  *  size. */
@@ -60,7 +67,7 @@ export function docHint(doc) {
   }
   if (doc.type === 'board') return 'board';
   if (doc.type === 'board3d') return '3D';
-  return [doc.type, doc.bytes >= 1e6 ? mb(doc.bytes) : `${(doc.bytes / 1e3).toFixed(1)} kB`].join(' · ');
+  return [doc.type, docSize(doc.bytes)].join(' · ');
 }
 
 /** What a page keys the drawing of `doc` by: a member of a KiCad design by the
@@ -101,6 +108,7 @@ export function documentBody(doc, base, text, error, documents, onOpen) {
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} />;
   }
   if (viewOf(doc)) return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} />;
+  if (doc.type === GERBERS_TYPE) return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} />;
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
 }
 

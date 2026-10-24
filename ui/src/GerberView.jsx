@@ -1,0 +1,404 @@
+// A board's Gerbers: the zip that goes to the fab (`gerbers` in
+// render.DOCUMENT_TYPES), unpacked in the page and drawn layer by layer with
+// the vendored renderer (static/_v/PROVENANCE.md). A look at what the fab
+// gets, not a view of the board: KicadView.jsx draws the board from its design.
+//
+// What it reads of the zip and of each file, how the layers are stacked from
+// either side, and the arithmetic of the view are gerber.js, where they are
+// tested.
+//
+// THE RENDERER IS DRIVEN BELOW ITS FRONT END. The package's
+// `createGerberRenderer` parses every layer again for each frame, which a drag
+// cannot afford; its `GerberProcessor` keeps the parsed layers on the GPU and
+// draws a frame from a list of layer ids, colours and blend modes. Gerber
+// layers are drawn source-over in stack order (blend mode 1): the package's
+// default, additive blending, turns four layers of copper white. A drill
+// program is two layers to it: the hole's ring, drawn in the hole colour, and
+// the hole, punched out to transparent (blend mode 2) after everything else,
+// so the sheet under the canvas shows through. A plated hole's ring is the
+// plating, 20 µm; an unplated hole has none — both the package's own defaults.
+//
+// THE PANEL, over the top right corner as on the board (PcbPanel.jsx): the
+// side the board is seen from, which mirrors it and restacks the layers and
+// shows that side's layers (`shownOn`); an eye per layer; and the link that
+// downloads the zip, under the list and kept when the list is folded. Until
+// the layers are drawn, and when they cannot be, the link is under the note:
+// a zip this page cannot read is still the fab's.
+//
+// THE CANVAS: a drag with the left button or a finger pans, the wheel zooms
+// about the pointer, two fingers pinch, a double click fits the board again. Drawing is on demand, a frame
+// when the view, the size or the layers change. Everything the renderer holds
+// is freed on unmount, the WebGL context included: a page has few to give.
+//
+// Props:
+//   url   the zip, fetched on mount; also what the link downloads
+//   size  its size, said beside the link
+
+import React from 'react';
+
+import {
+  fitView, HOLE_RING, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, swatch,
+  toProcessor, turned, zoomAt,
+} from './gerber.js';
+import { CHEVRON } from './PcbPanel.jsx';
+import {
+  ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_EYE, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY,
+  LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, layerRow, SWATCH, TAB_ON,
+} from './panelstyle.js';
+import { css, MONO, SANS } from './style.jsx';
+
+// The canvas goes into HOLDER, which React renders empty and so never touches.
+const SHELL = 'position:relative;width:100%;height:100%;overflow:hidden;background:var(--gerber-bg)';
+const HOLDER = 'position:absolute;top:0;left:0;width:100%;height:100%';
+const CANVAS = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab';
+const NOTE = `position:absolute;top:0;left:0;right:0;box-sizing:border-box;padding:24px 28px;`
+  + `font:400 12.5px ${MONO};color:var(--text-muted)`;
+const LINK = `flex:none;display:flex;align-items:center;gap:6px;padding:7px 10px;border-top:1px solid var(--line-soft);`
+  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
+// The same link under the note, before there is a panel to hold it.
+const LINK_ALONE = `display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:10px;`
+  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
+const LINK_SIZE = `flex:none;font:400 10.5px ${MONO};color:var(--text-muted)`;
+
+/** The sides the board is seen from, as the panel names them. */
+const SIDES = [['top', 'Top'], ['bottom', 'Bottom']];
+
+/** How much a wheel's notch zooms: the factor is `exp(-deltaY · WHEEL_RATE)`,
+ *  a line counting as 16 pixels. */
+const WHEEL_RATE = 0.0015;
+
+/** The width of a plated hole's ring, mm: the package's default plating. */
+const PLATING_MM = 0.02;
+
+const flipOf = (side) => (side === 'bottom' ? -1 : 1);
+
+/** The renderer's layers on one canvas: the WebGL half of the view. */
+class Stage {
+  constructor(lib, host, layers) {
+    this.host = host;
+    this.layers = layers;
+    this.side = 'top';
+    this.shown = {};
+    this.frame = 0;
+    this.pointers = new Map();
+
+    this.canvas = document.createElement('canvas');
+    this.canvas.setAttribute('style', CANVAS);
+    host.append(this.canvas);
+    this.gl = this.canvas.getContext('webgl2', { alpha: true, antialias: false, preserveDrawingBuffer: true });
+    if (!this.gl) throw new Error('this browser has no WebGL2');
+    this.measure();
+    this.processor = new lib.GerberProcessor();
+    this.processor.init(this.gl);
+    this.processor.set_anti_aliasing(true);
+
+    // Each layer parsed once: a Gerber layer is one id, a drill program a
+    // ring and a hole. A file the renderer refuses is named in `failed`.
+    this.ids = new Map();
+    this.failed = {};
+    let all = null;
+    let outline = null;
+    for (const layer of layers) {
+      try {
+        let ids;
+        let box;
+        if (layer.excellon) {
+          const added = this.processor.add_drill_layer(layer.text);
+          ids = { ring: added.outlineLayerId, hole: added.fillLayerId };
+          this.processor.set_layer_inner_outline(ids.ring, 0, layer.plated ? PLATING_MM : 0);
+          box = this.boundsOf(ids.ring);
+        } else {
+          ids = { layer: this.processor.add_layer(layer.text) };
+          box = this.boundsOf(ids.layer);
+        }
+        this.ids.set(layer.file, ids);
+        all = merged(all, box);
+        if (layer.kind === 'profile') outline = merged(outline, box);
+      } catch (error) {
+        this.failed[layer.file] = String((error && error.message) || error);
+      }
+    }
+    // The board is fitted by its outline, or by everything there is.
+    this.bounds = outline || all || { minX: -1, maxX: 1, minY: -1, maxY: 1 };
+    this.fit();
+
+    this.bind();
+    // A holder with no size yet is fitted when it gets one.
+    this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      if (!this.measure()) return;
+      if (this.fitted) this.request();
+      else this.fit();
+    }) : null;
+    if (this.observer) this.observer.observe(host);
+  }
+
+  boundsOf(id) {
+    const boundary = this.processor.get_layer_boundary(id);
+    const box = { minX: boundary.min_x, maxX: boundary.max_x, minY: boundary.min_y, maxY: boundary.max_y };
+    boundary.free();
+    return [box.minX, box.maxX, box.minY, box.maxY].every(Number.isFinite) ? box : null;
+  }
+
+  /** The canvas sized to its holder, in device pixels. False while it has no size. */
+  measure() {
+    const width = this.host.clientWidth;
+    const height = this.host.clientHeight;
+    if (!width || !height) return false;
+    const ratio = window.devicePixelRatio || 1;
+    this.width = width;
+    this.height = height;
+    this.canvas.width = Math.round(width * ratio);
+    this.canvas.height = Math.round(height * ratio);
+    if (this.processor) this.processor.resize();
+    return true;
+  }
+
+  fit() {
+    this.fitted = Boolean(this.width);
+    this.view = fitView(this.bounds, this.width || 1, this.height || 1, flipOf(this.side));
+    this.request();
+  }
+
+  /** The canvas point of a pointer event, CSS pixels. */
+  at(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return [event.clientX - rect.left, event.clientY - rect.top];
+  }
+
+  bind() {
+    const { canvas } = this;
+    // A mouse drags with its left button only: the right one opens the
+    // browser's menu, and its release lands on that menu, not on the canvas.
+    canvas.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      canvas.setPointerCapture(event.pointerId);
+      this.pointers.set(event.pointerId, this.at(event));
+    });
+    canvas.addEventListener('pointermove', (event) => {
+      const was = this.pointers.get(event.pointerId);
+      if (!was) return;
+      // A move with nothing pressed is a press whose release went elsewhere
+      // (another window, a menu): that drag is over.
+      if (!event.buttons) {
+        this.pointers.delete(event.pointerId);
+        return;
+      }
+      const now = this.at(event);
+      if (this.pointers.size === 1) {
+        this.view = panBy(this.view, now[0] - was[0], now[1] - was[1]);
+      } else if (this.pointers.size === 2) {
+        // A pinch: zoomed about the two fingers' midpoint by how far apart
+        // they moved, then moved with the midpoint.
+        const other = [...this.pointers].find(([id]) => id !== event.pointerId)[1];
+        const before = Math.hypot(was[0] - other[0], was[1] - other[1]);
+        const after = Math.hypot(now[0] - other[0], now[1] - other[1]);
+        const from = [(was[0] + other[0]) / 2, (was[1] + other[1]) / 2];
+        const to = [(now[0] + other[0]) / 2, (now[1] + other[1]) / 2];
+        const zoomed = before > 0 ? zoomAt(this.view, from[0], from[1], this.width, this.height, after / before) : this.view;
+        this.view = panBy(zoomed, to[0] - from[0], to[1] - from[1]);
+      }
+      this.pointers.set(event.pointerId, now);
+      this.request();
+    });
+    const up = (event) => this.pointers.delete(event.pointerId);
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      const [px, py] = this.at(event);
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+      this.view = zoomAt(this.view, px, py, this.width, this.height, Math.exp(-delta * WHEEL_RATE));
+      this.request();
+    }, { passive: false });
+    canvas.addEventListener('dblclick', () => this.fit());
+  }
+
+  /** The layers drawn and the side they are seen from. */
+  show(shown, side) {
+    if (side !== this.side) this.view = turned(this.view);
+    this.side = side;
+    this.shown = shown;
+    this.request();
+  }
+
+  request() {
+    if (this.frame) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      this.draw();
+    });
+  }
+
+  draw() {
+    if (!this.width) return;
+    const ids = [];
+    const colours = [];
+    const modes = [];
+    const add = (id, rgb, alpha, mode) => {
+      ids.push(id);
+      colours.push(...rgb, alpha);
+      modes.push(mode);
+    };
+    const holes = [];
+    for (const layer of stacked(this.layers, this.side)) {
+      const parsed = this.ids.get(layer.file);
+      if (!parsed || !this.shown[layer.file]) continue;
+      if (parsed.layer === undefined) holes.push([layer, parsed]);
+      else add(parsed.layer, layer.rgb, layer.alpha, 1);
+    }
+    for (const [layer, parsed] of holes) if (layer.plated) add(parsed.ring, HOLE_RING, 1, 1);
+    for (const [, parsed] of holes) add(parsed.hole, [0, 0, 0], 1, 2);
+    const view = toProcessor(this.view, this.width, this.height, flipOf(this.side));
+    this.processor.render_with_clear_and_blend_modes(
+      new Uint32Array(ids), new Float32Array(colours), new Uint8Array(modes),
+      view.zoomX, view.zoomY, view.offsetX, view.offsetY, 1, true,
+    );
+  }
+
+  dispose() {
+    if (this.frame) cancelAnimationFrame(this.frame);
+    if (this.observer) this.observer.disconnect();
+    this.processor.free();
+    const lose = this.gl.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+    this.canvas.remove();
+  }
+}
+
+/** Two boxes as one; either may be null. */
+function merged(a, b) {
+  if (!a || !b) return a || b;
+  return {
+    minX: Math.min(a.minX, b.minX), maxX: Math.max(a.maxX, b.maxX),
+    minY: Math.min(a.minY, b.minY), maxY: Math.max(a.maxY, b.maxY),
+  };
+}
+
+/** Each layer's visibility as the board is first seen from `side`. */
+const shownFrom = (layers, side) => Object.fromEntries(layers.map((layer) => [layer.file, shownOn(layer, side)]));
+
+/** The Gerbers of one zip. */
+export default class GerberView extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { layers: null, failed: {}, shown: {}, side: 'top', open: true, error: '' };
+    this.host = null;
+    this.stage = null;
+    this.setHost = (element) => {
+      this.host = element;
+    };
+    this.toggle = () => this.setState({ open: !this.state.open });
+  }
+
+  componentDidMount() {
+    const { url } = this.props;
+    const zip = fetch(url).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.arrayBuffer();
+    }).then(readZip);
+    Promise.all([loadGerberRenderer(), zip])
+      .then(([lib, files]) => {
+        if (this._gone || !this.host) return;
+        const layers = layersOf(files);
+        if (!layers.length) throw new Error('the zip holds no Gerber or drill file');
+        this.stage = new Stage(lib, this.host, layers);
+        const shown = shownFrom(layers, 'top');
+        this.stage.show(shown, 'top');
+        // The panel lists the board from its top down, whichever side is shown.
+        this.setState({ layers: stacked(layers, 'top').reverse(), failed: this.stage.failed, shown });
+      })
+      .catch((error) => {
+        if (!this._gone) this.setState({ error: `The Gerbers did not load: ${(error && error.message) || error}` });
+      });
+  }
+
+  componentDidUpdate(prev, before) {
+    const { shown, side } = this.state;
+    if (this.stage && (shown !== before.shown || side !== before.side)) this.stage.show(shown, side);
+  }
+
+  componentWillUnmount() {
+    this._gone = true;
+    if (this.stage) this.stage.dispose();
+    this.stage = null;
+  }
+
+  /** Layer `file` shown if it was hidden, hidden if it was shown. From the
+   *  state as it stands, so two clicks inside one render both land. */
+  flip(file) {
+    this.setState((state) => ({ shown: { ...state.shown, [file]: !state.shown[file] } }));
+  }
+
+  /** The board turned to `side`, with that side's layers shown. */
+  turn(side) {
+    if (side !== this.state.side) this.setState({ side, shown: shownFrom(this.state.layers, side) });
+  }
+
+  render() {
+    const { url, size } = this.props;
+    const { layers, failed, shown, side, open, error } = this.state;
+    const note = error || (!layers && 'Loading…');
+    const name = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+    const link = (
+      <a href={url} download title={`Download ${name}`} style={css(layers ? LINK : LINK_ALONE)}>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flex: 'none' }}>
+          <path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" />
+        </svg>
+        <span style={css(`${FILL};min-width:0;${ELLIPSIS}`)}>{name}</span>
+        {size && <span style={css(LINK_SIZE)}>{size}</span>}
+      </a>
+    );
+    return (
+      <div style={css(SHELL)}>
+        <div ref={this.setHost} style={css(HOLDER)} />
+        {note && (
+          <div style={css(NOTE)}>
+            <div>{note}</div>
+            {link}
+          </div>
+        )}
+        {layers && (
+          <div data-panel="gerbers" style={css(LAYER_PANEL)}>
+            <div onClick={this.toggle} title={open ? 'Hide the layers' : 'Show the layers'} style={css(LAYER_PANEL_HEAD)}>
+              {CHEVRON(open)}
+              <span style={css(FILL)}>Layers</span>
+            </div>
+            {open && (
+              <div style={css(LAYER_PANEL_BODY)}>
+                <div style={css(LAYER_PILLS)}>
+                  {SIDES.map(([one, label]) => (
+                    <div key={one} data-side={one} onClick={() => this.turn(one)}
+                         title={`The board seen from the ${one}`}
+                         style={css(LAYER_PILL + (one === side ? `;${TAB_ON}` : ''))}>{label}</div>
+                  ))}
+                </div>
+                <div style={css(LAYER_LIST)}>
+                  {layers.map((layer) => {
+                    const broken = failed[layer.file];
+                    const on = !broken && shown[layer.file];
+                    return (
+                      <div key={layer.file} data-layer={layer.file} style={css(layerRow(false))}
+                           title={broken ? `${layer.file}: ${broken}` : layer.file}
+                           onClick={() => !broken && this.flip(layer.file)}>
+                        <span style={css(LAYER_NAME + (on ? '' : ';color:var(--text-faint)'))}>
+                          <span style={css(SWATCH + swatch(layer) + (on ? '' : ';opacity:.35'))} />
+                          <span style={css(ELLIPSIS)}>{layer.label}</span>
+                        </span>
+                        <span data-eye={layer.file} style={css(LAYER_EYE)}>
+                          <span style={css(eyeOuter(on ? 'on' : 'off'))}>
+                            <span style={css(eyeDot(on ? 'on' : 'off'))} />
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {link}
+          </div>
+        )}
+      </div>
+    );
+  }
+}

@@ -187,6 +187,13 @@ const labels = (items) => items.map((m) => m.label)
 /** The rows that actually carry a file. */
 const fileRows = (items) => items.filter((m) => m.href)
 
+/** `meta.documents` of a build that lists its Gerbers, twice, beside a note. */
+const GERBER_DOCUMENTS = [
+  { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 },
+  { id: 'fab__board_gerber.zip', name: 'Gerbers', type: 'gerbers', file: 'fab/board_gerber.zip', bytes: 9 },
+  { id: 'panel.zip', name: 'panel.zip', type: 'gerbers', file: 'panel.zip', bytes: 9 },
+]
+
 describe('partRecord', () => {
   it('answers with the record the key names', () => {
     expect(partRecord(PARTS, 'plate')).toBe(PARTS.plate)
@@ -283,6 +290,16 @@ describe('groupDownloads', () => {
       },
     })
     expect(groups.map((g) => g.ext)).toEqual(['STL', 'STEP', 'AMF', 'ZIP'])
+  })
+
+  it('offers the board\'s Gerbers, every listed zip, as one more group named by their titles', () => {
+    // The zip that goes to the fab is a document of the build (`gerbers` in
+    // src/render.py), not a part's export; the menu offers it beside them.
+    const groups = groupDownloads(PARTS, GERBER_DOCUMENTS)
+    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP', 'GERBERS'])
+    expect(groups[3].files).toEqual([{ label: 'Gerbers', file: 'fab/board_gerber.zip' },
+                                     { label: 'panel.zip', file: 'panel.zip' }])
+    expect(groupDownloads(null, GERBER_DOCUMENTS).map((g) => g.ext)).toEqual(['GERBERS'])
   })
 
   it('answers an absent, empty or unusable catalogue with no groups at all', () => {
@@ -619,6 +636,14 @@ describe('the header\'s downloads menu', () => {
     const c = component({ node: '/model/plate', parts: null })
     expect('parts' in c.state.meta, 'the fixture still carries a catalogue').toBe(false)
     expect(c.computed().downloadGroups).toEqual([])
+  })
+
+  it('links the Gerbers with the key, under the directory they sit in', () => {
+    const c = component({ node: '/model/plate' })
+    c.state.meta.documents = GERBER_DOCUMENTS
+    const gerbers = c.computed().downloadGroups.find((g) => g.ext === 'GERBERS')
+    expect(gerbers.files.map((f) => f.href)).toEqual([
+      `${PAGE.base}fab/board_gerber.zip?files=${FILES_KEY}`, `${PAGE.base}panel.zip?files=${FILES_KEY}`])
   })
 
   it('reads the catalogue\'s `files` and nothing else on the document', () => {

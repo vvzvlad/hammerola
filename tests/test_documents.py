@@ -14,10 +14,12 @@ for the hub to add.
 
 import dataclasses
 import http.client
+import io
 import json
 import re
 import shutil
 import time
+import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -25,6 +27,7 @@ import pytest
 from harness import (DEFAULT_EXPORTS, PNG_BYTES, good_build, meta_bytes,
                      tar_gz, view_bytes)
 
+from ci.smoke import REQUIRED_PATHS
 from src import docsbuild, render
 from src.app import BUILD_CONTENT_TYPES, OPEN_SUFFIXES, _safe_build_path
 from src.buildproc import STATUS_OK, BuildOutcome
@@ -33,7 +36,15 @@ from hammerola import buildnames
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# One file per type, two of them in subdirectories, with a page that runs a
+def gerber_zip() -> bytes:
+    """A board's Gerbers as the fab gets them: one zip, which the hub never opens."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("board-F_Cu.gtl", "%TF.FileFunction,Copper,L1,Top*%\n%FSLAX45Y45*%\nM02*\n")
+    return buffer.getvalue()
+
+
+# One file per type, three of them in subdirectories, with a page that runs a
 # script and a drawing that carries one: both are served as written.
 DOCUMENTS = {
     "list.md": b"# List\n\n- [x] [report](docs/report.pdf)\n\n![photo](ref/photo.png)\n",
@@ -41,15 +52,18 @@ DOCUMENTS = {
     "ref/photo.png": PNG_BYTES,
     "page.html": b"<!doctype html><script>document.title = 'ran'</script>",
     "drawing.svg": b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>",
+    "fab/board_gerber.zip": gerber_zip(),
 }
 # The order project.json lists them in, which is the order of the rows in the list of views.
-LISTED = ["list.md", "ref/photo.png", "docs/report.pdf", "page.html", "drawing.svg"]
+LISTED = ["list.md", "ref/photo.png", "docs/report.pdf", "page.html", "drawing.svg",
+          "fab/board_gerber.zip"]
 
 TYPES = {"list.md": "text/markdown; charset=utf-8",
          "docs/report.pdf": "application/pdf",
          "ref/photo.png": "image/png",
          "page.html": "text/html; charset=utf-8",
-         "drawing.svg": "image/svg+xml"}
+         "drawing.svg": "image/svg+xml",
+         "fab/board_gerber.zip": "application/zip"}
 
 # What the suite pushes in place of a model's geometry (`good_build`'s members).
 ARTEFACTS = {"meta.json": meta_bytes(), "assembled.json": view_bytes("a"),
@@ -180,7 +194,7 @@ def test_publication_moves_latest_the_picker_and_the_card(hub):
 
     card, = hub.index().json()
     total = sum(len(data) for data in DOCUMENTS.values())
-    assert (card["documents"], card["views"], card["printables"]) == (5, 0, 0)
+    assert (card["documents"], card["views"], card["printables"]) == (len(LISTED), 0, 0)
     assert card["mb"] == f"{total / 1e6:.1f}"
     assert card["preview"] is None
 
@@ -514,7 +528,35 @@ def test_the_document_types_are_open_and_served_as_themselves():
     assert set(render.DOCUMENT_TYPES) <= set(BUILD_CONTENT_TYPES)
 
 
+def test_the_page_loads_the_gerber_renderer_from_files_the_image_ships(hub):
+    """gerber.js imports the renderer by URL and the renderer fetches its
+    WebAssembly from beside itself, so only these rows notice either missing
+    from the image. The `.wasm` has to arrive as `application/wasm`: under any
+    other type the browser compiles it the slow way and says so in the console
+    (static/_v/PROVENANCE.md)."""
+    source = (ROOT / "ui" / "src" / "gerber.js").read_text(encoding="utf-8")
+    url = re.search(r"export const GERBER_MODULE_URL = '/_v/([^'/]+)';", source)
+    assert url, "gerber.js no longer declares GERBER_MODULE_URL"
+    glue = (ROOT / "static" / "_v" / url.group(1)).read_text(encoding="utf-8")
+    wasm = "wasm_gerber_processor_bg.wasm"
+    assert f"new URL('{wasm}', import.meta.url)" in glue
+    for name, ctype in ((url.group(1), "text/javascript; charset=utf-8"),
+                        (wasm, "application/wasm")):
+        assert f"/app/static/_v/{name}" in REQUIRED_PATHS, name
+        reply = hub.get(f"/_v/{name}")
+        assert (reply.status_code, reply.headers["Content-Type"]) == (200, ctype), name
+
+
 def test_the_page_and_the_hub_spell_the_kind_the_same_way():
     source = (ROOT / "ui" / "src" / "DocShell.jsx").read_text(encoding="utf-8")
     spelled = re.search(r"export const DOCUMENTS_KIND = '([^']+)'", source)
     assert spelled and spelled.group(1) == render.DOCUMENTS_KIND
+
+
+def test_the_page_and_the_hub_spell_the_gerbers_type_the_same_way():
+    # The page picks the Gerbers' view and their row in the downloads menu by
+    # this type; renamed on one side only, the zip goes to an iframe, which
+    # downloads it instead of showing it, and leaves the menu.
+    source = (ROOT / "ui" / "src" / "gerber.js").read_text(encoding="utf-8")
+    spelled = re.search(r"export const GERBERS_TYPE = '([^']+)'", source)
+    assert spelled and spelled.group(1) == render.DOCUMENT_TYPES[".zip"]
