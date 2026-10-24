@@ -215,6 +215,8 @@ export class HmrViewport extends HTMLElement {
       cutHatch: null,
     };
     this.viewer = null;
+    // The three namespace the library brought, null until `show()` has it.
+    this.three = null;
     this.view = null;
     this.tab = "tree";          // the library's own runtime default
     this.lastPick = null;
@@ -640,6 +642,9 @@ export class HmrViewport extends HTMLElement {
       this.gizmo.attach(library.THREE);
       this.rings.attach(library.THREE);
       this.pins.attach(library.THREE);
+      // Kept for the comment tool, which casts a ray at the picked part for the
+      // exact normal under the click (`meshNormalAt` in tools.js).
+      this.three = library.THREE;
       // Only now does the widget exist to be measured; the first pass asked for
       // the whole container, so re-fit it to what is left once its own chrome is
       // accounted for. A no-op on every later call.
