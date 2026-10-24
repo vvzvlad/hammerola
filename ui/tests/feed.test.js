@@ -30,7 +30,7 @@ import {
   shrink, SHOT_MAX_SIDE, SHOT_QUALITY, PHOTO_MAX_SIDE, PHOTO_QUALITY,
 } from '../src/shrink.js'
 import { drained as settled, makeComponent, replaceState } from './component.js'
-import { texts } from './eltree.js'
+import { collect, texts } from './eltree.js'
 import { guardPage } from './pageguard.js'
 
 // THE RE-ENCODE IS SPIED HERE RATHER THAN RUN, and the constants beside it are
@@ -707,5 +707,60 @@ describe('the pins', () => {
     expect(seen[0].pins).toEqual([
       { id: 'c2', p: [4, 5, 6], n: null, active: false },
     ])
+  })
+})
+
+describe('the composer keyboard', () => {
+  const draft = {
+    part: 'plate(2)', partId: '/model/plate', key: 'plate',
+    p: [1, 2, 3], text: 'too thin', photo: null,
+  }
+  const posts = (fetching) => fetching.mock.calls
+    .filter(([, init]) => init && init.method === 'POST')
+  const key = (over) => ({ key: 'Enter', shiftKey: false, preventDefault: vi.fn(), ...over })
+  // The textarea as the page DREW it, found by the ref the focus goes through:
+  // a handler or a ref left off the markup fails here, not only in a browser.
+  const box = (c) => collect(c.render(),
+    (el) => (el.type === 'textarea' && el.ref === c.compBox ? el : undefined))[0]
+  it('sends on Enter, and on no other key', async () => {
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({ composer: draft })
+    const letter = key({ key: 'a' })
+    const enter = key()
+
+    box(c).props.onKeyDown(letter)
+    await settled()
+    expect(letter.preventDefault).not.toHaveBeenCalled()
+    expect(posts(fetching)).toHaveLength(0)
+
+    box(c).props.onKeyDown(enter)
+    await settled()
+    expect(enter.preventDefault).toHaveBeenCalled()
+    expect(posts(fetching)).toHaveLength(1)
+  })
+
+  it('leaves Shift+Enter to the textarea as a newline', async () => {
+    const fetching = answering({ status: 201 }, served([]))
+    const c = page({ composer: draft })
+    const e = key({ shiftKey: true })
+
+    box(c).props.onKeyDown(e)
+    await settled()
+
+    expect(e.preventDefault).not.toHaveBeenCalled()
+    expect(posts(fetching)).toHaveLength(0)
+  })
+
+  it('takes focus when a measurement opens it', () => {
+    // The point placed on the model is the other door, in repeats.test.js.
+    const c = page({ measure: { text: '12.0 mm', note: '', full: '12.0 mm' } })
+    expect(box(c)).toBeDefined()
+    const focus = vi.fn()
+    c.compBox.current = { focus }
+
+    c.computed().measAdd()
+
+    expect(c.state.composer.meas).toBe('12.0 mm')
+    expect(focus).toHaveBeenCalledTimes(1)
   })
 })

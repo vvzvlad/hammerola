@@ -756,6 +756,21 @@ describe('the part a comment is opened against', () => {
     expect(c.state.composer.n).toEqual([0, 0, 1])
   })
 
+  it('takes the keyboard for each point placed, over a standing draft too', () => {
+    // A second point while a draft stands replaces it, and the click on the
+    // Comment tool has already taken the focus out of the textarea.
+    const c = mounted(THREE_PINS)
+    const focus = vi.fn()
+    c.compBox.current = { focus }
+    const place = () => window.dispatchEvent(new CustomEvent(PLACE,
+      { detail: { id: '/model/lid', name: 'lid', p: [1, 2, 3] } }))
+
+    place()
+    place()
+
+    expect(focus).toHaveBeenCalledTimes(2)
+  })
+
   it('falls back to the placed name for a path no row claims', () => {
     // A point placed before the tree landed, which is the case every lookup on
     // this side answers by keeping what it was handed.

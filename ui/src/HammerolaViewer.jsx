@@ -899,6 +899,8 @@ export default class HammerolaViewer extends React.Component {
   constructor(props) {
     super(props);
     this.host = React.createRef();
+    // The composer's textarea, focused when the composer opens.
+    this.compBox = React.createRef();
     // The frame the library fitted when it first rendered this view, which is
     // the only definition of "fit" available to a side that does not know the
     // model's bounding box.
@@ -1333,17 +1335,14 @@ export default class HammerolaViewer extends React.Component {
         // is what the reader can find in the tree. They stay distinct by the
         // pin on the model and by the posted `partId`, the copy's own path.
         const row = this.node(d.id);
-        this.set({
-          composer: {
-            part: (row && row.name) || d.name || 'model',
-            partId: d.id || null, key: (row && row.key) || null, p: d.p || null,
-            // The face normal at that point, turned towards the reader: the
-            // direction the comment's arrow stands out along.
-            n: d.n || null,
-            text: '', photo: null,
-            meas: this.state.measure ? this.state.measure.full : null,
-          },
-          tool: null,
+        this.openComposer({
+          part: (row && row.name) || d.name || 'model',
+          partId: d.id || null, key: (row && row.key) || null, p: d.p || null,
+          // The face normal at that point, turned towards the reader: the
+          // direction the comment's arrow stands out along.
+          n: d.n || null,
+          text: '', photo: null,
+          meas: this.state.measure ? this.state.measure.full : null,
         });
       },
       [PIN]: (e) => this.set({ activePin: e.detail && e.detail.id, rail: true }),
@@ -1499,6 +1498,21 @@ export default class HammerolaViewer extends React.Component {
     // files of a build nobody is looking at any more.
     this.cancelDownloads();
     this._gone = true;
+  }
+
+  /**
+   * A fresh draft in the composer, which takes the keyboard so the reader types
+   * without clicking into it first. The two doors are the measurement's
+   * `add to comment` and a point placed on the model — the second also over a
+   * draft already standing, which it replaces. Only here: a draft carried
+   * across a revision swap must not pull focus from wherever the reader moved
+   * it.
+   */
+  openComposer(composer) {
+    this.setState({ composer, tool: null }, () => {
+      this.sync();
+      if (this.compBox.current) this.compBox.current.focus();
+    });
   }
 
   async load() {
@@ -4973,6 +4987,12 @@ export default class HammerolaViewer extends React.Component {
       stageProposal: this.stageProposal.bind(this),
     });
 
+    // The composer's Send, reached by the button and by Enter in the textarea.
+    const send = () => this.sendComment().catch((error) => {
+      console.error('comment', error);
+      this.toast('Could not send the comment');
+    });
+
     return {
       rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, tokenPop: false }),
 
@@ -5190,14 +5210,11 @@ export default class HammerolaViewer extends React.Component {
         // as `${parent}/${name}`, driven by ui/tests/proposalpanel.test.js.
         const proposed = this.proposalBody(s.sel)
           || (!!s.sel && !s.sel.startsWith('/'));
-        this.set({
-          composer: {
-            part: proposed ? '' : (node ? node.name : (s.selName || 'model')),
-            partId: proposed ? null : (s.sel || null),
-            key: node ? node.key : null,
-            p: null, text: '', photo: null, meas: s.measure.full,
-          },
-          tool: null,
+        this.openComposer({
+          part: proposed ? '' : (node ? node.name : (s.selName || 'model')),
+          partId: proposed ? null : (s.sel || null),
+          key: node ? node.key : null,
+          p: null, text: '', photo: null, meas: s.measure.full,
         });
       },
       measClear: () => this.set({ measure: null }, { __clearMeasure: true }),
@@ -5218,10 +5235,13 @@ export default class HammerolaViewer extends React.Component {
         this.setState({ composer: { ...s.composer, photo: file || null } });
       },
       compCancel: stop(() => this.set({ composer: null })),
-      compSend: () => this.sendComment().catch((error) => {
-        console.error('comment', error);
-        this.toast('Could not send the comment');
-      }),
+      compSend: send,
+      // Enter sends, Shift+Enter falls through to the textarea's own newline.
+      compKey: (e) => {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+        e.preventDefault();
+        send();
+      },
       // The press must be visible — the other half of the refusal in
       // `sendComment`, as with `bannerSwitchStyle`. The send spans a frame grab,
       // an upload and two requests, and the composer keeps its draft until the
@@ -6004,8 +6024,10 @@ export default class HammerolaViewer extends React.Component {
                 <span onClick={v.compCancel} style={css(FAINT_CLICK)}>&#10005;</span>
               </div>
               <textarea
+                ref={this.compBox}
                 value={v.composerText}
                 onChange={v.compType}
+                onKeyDown={v.compKey}
                 maxLength={MAX_COMMENT_CHARS}
                 placeholder="e.g. gap here is 2.4 — make it 3"
                 style={css(`width:100%;box-sizing:border-box;border:none;outline:none;resize:none;padding:10px 12px;font:400 12.5px/1.5 ${SANS};color:var(--text);height:64px;background:transparent`)}

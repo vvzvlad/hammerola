@@ -177,10 +177,12 @@ const defaultState = () => ({
 export function makeComponent(Klass, { state = {}, setState = mergeState, ...fields } = {}) {
   const c = Object.create(Klass.prototype)
   c.props = { ...Klass.defaultProps }
-  // The four the constructor seeds and every page here needs: the ref
-  // `render()` hangs the viewport off, the fitted frame, the visibility a build
-  // swap carries across, and the undo stack.
+  // The five the constructor seeds and every page here needs: the ref
+  // `render()` hangs the viewport off, the composer's textarea that a fresh
+  // draft focuses, the fitted frame, the visibility a build swap carries
+  // across, and the undo stack.
   c.host = { current: null }
+  c.compBox = { current: null }
   c.home = null
   c.carry = null
   c.history = []
