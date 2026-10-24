@@ -200,16 +200,21 @@ export const HANDLE_RING_PX = (HANDLE_PX * 3) / 4;
 /** The whole arrow, tip to tail. Long enough to stand clear of the face it
  *  points into, short enough that two comments on one part do not cross the
  *  model. */
-export const PIN_PX = 40;
+export const PIN_PX = 46;
 
-/** The head, as long as it is wide, like the grip's (`HANDLE_HEAD_PX`). It is
- *  most of what a press lands on, so it is wider than the grip's. */
-export const PIN_HEAD_PX = 12;
+/** The head's length along the arrow. Longer than it is wide, so it reads as a
+ *  point from any side. It is most of what a press lands on. */
+export const PIN_HEAD_PX = 20;
 
-/** The shaft's thickness. Heavier than the grip's 2 px, which stands on a white
- *  casing: this is red ink with nothing under it, on whatever colour the part
- *  is. */
-export const PIN_SHAFT_PX = 3;
+/** The head's width at its base. */
+export const PIN_HEAD_WIDTH_PX = 16;
+
+/** The shaft's thickness. */
+export const PIN_SHAFT_PX = 5;
+
+/** The white casing standing out of the ink all round, the tip included, as the
+ *  grip's `HANDLE_CASE_PX`. */
+export const PIN_CASE_PX = 2;
 
 /**
  * Pixels of `deltaY` the browser emits per e-fold of pinch scale. A measurement.

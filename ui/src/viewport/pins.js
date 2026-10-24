@@ -1,4 +1,4 @@
-// The comments on the model: one red arrow per entry of `state.pins`, standing
+// The comments on the model: one arrow per entry of `state.pins`, standing
 // in the library's scene with its tip on the comment's point and its body out
 // along the face normal taken when the comment was placed. A press on one says
 // which comment it is (`hmr:pin`) and the interface opens that row in the rail;
@@ -16,20 +16,26 @@
 
 import { EVENT_PIN, emit } from "./events.js";
 import { finite3, unit3 } from "./math.js";
-import { PIN_HEAD_PX, PIN_PX, PIN_SHAFT_PX } from "./options.js";
+import {
+  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_PX, PIN_SHAFT_PX,
+} from "./options.js";
 import { PINS_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
 
-/** The arrows' red, as a hex the material takes. One colour for both themes, as
- *  the grip's ink is (`INK` in handle.js): the canvas is white or near-black
- *  (`readTheme` in ui/src/store.js), and a strong red reads on either. */
-const INK = 0xe02424;
+/** The arrows' tomato red, as a hex the material takes. One colour for both
+ *  themes, as the grip's ink is (`INK` in handle.js): the white casing under it
+ *  is what holds it on a canvas or a part of any colour. */
+const INK = 0xf0613f;
 
-/** The open comment's arrow, and the draft's: the same red, darker, so the arrow
+/** The open comment's arrow, and the draft's: the same hue, darker, so the arrow
  *  the rail is talking about is the one that stands out. */
-const INK_ACTIVE = 0x8c0c0c;
+const INK_ACTIVE = 0xc2410c;
 
-/** How round the shaft and the head are: the grip's number (handle.js). */
-const SIDES = 12;
+/** The casing under the ink, as under the section grip (`CASING` in handle.js). */
+const CASING = 0xffffff;
+
+/** How round the shaft and the head are. Twice the grip's: these are lit, and
+ *  a lit cone shows its facets where a flat one does not. */
+const SIDES = 24;
 
 /** Which way an arrow stands when its comment carries no normal: from above,
  *  along the viewer's up axis (`up: "Z"` in options.js). */
@@ -61,7 +67,8 @@ export function createPins(vp) {
   // What the interface sent last, kept so a list that arrives before the first
   // `attach` is drawn once the group is built.
   let list = [];
-  // One arrow per comment id: `{id, point, active, drawn, node, meshes}`.
+  // One arrow per comment id: `{id, point, active, drawn, node, meshes,
+  // casings}`.
   const arrows = new Map();
   // The arrow each node stands for. A ray hits a mesh, and every mesh of an
   // arrow is a child of its node.
@@ -74,6 +81,9 @@ export function createPins(vp) {
   let head = null;
   let ink = null;
   let inkActive = null;
+  let caseShaft = null;
+  let caseHead = null;
+  let casing = null;
   let up = null;
   let aim = null;
 
@@ -87,23 +97,42 @@ export function createPins(vp) {
    * three gives a cylinder and a cone) with the TIP at the origin: a node put
    * at the point and turned from +Y onto the direction points into the face,
    * its body standing out of it.
+   *
+   * The casing is the same shaft and head grown by `PIN_CASE_PX` all round,
+   * the tip included, and drawn under the ink (`sync` orders them), so it
+   * shows as a white rim.
+   *
+   * The ink is lit (Phong) and the casing flat; both carry the flags of
+   * `widgetMaterial`: never hidden, never cut, always blended.
    */
   function build(namespace, grp) {
     three = namespace;
     group = grp;
     up = new three.Vector3(0, 1, 0);
     aim = new three.Vector3();
-    head = new three.ConeGeometry(PIN_HEAD_PX / 2, PIN_HEAD_PX, SIDES);
-    // A cone is centred on the origin and points +Y: turned over to point at
-    // the tip, and lifted so its point is the origin.
-    head.rotateZ(Math.PI);
-    head.translate(0, PIN_HEAD_PX / 2, 0);
-    const length = PIN_PX - PIN_HEAD_PX;
-    shaft = new three.CylinderGeometry(PIN_SHAFT_PX / 2, PIN_SHAFT_PX / 2,
-                                       length, SIDES);
-    shaft.translate(0, PIN_HEAD_PX + length / 2, 0);
-    ink = widgetMaterial(three, INK);
-    inkActive = widgetMaterial(three, INK_ACTIVE);
+    const shapes = (grow) => {
+      const headLength = PIN_HEAD_PX + 2 * grow;
+      const cone = new three.ConeGeometry(PIN_HEAD_WIDTH_PX / 2 + grow,
+                                          headLength, SIDES);
+      // A cone is centred on the origin and points +Y: turned over to point at
+      // the tip, and lifted so its point is `grow` beyond the origin.
+      cone.rotateZ(Math.PI);
+      cone.translate(0, headLength / 2 - grow, 0);
+      const length = PIN_PX - PIN_HEAD_PX + grow;
+      const rod = new three.CylinderGeometry(PIN_SHAFT_PX / 2 + grow,
+                                             PIN_SHAFT_PX / 2 + grow, length, SIDES);
+      rod.translate(0, PIN_HEAD_PX + length / 2, 0);
+      return [rod, cone];
+    };
+    [shaft, head] = shapes(0);
+    [caseShaft, caseHead] = shapes(PIN_CASE_PX);
+    const lit = (color) => new three.MeshPhongMaterial({
+      color, shininess: 60, transparent: true, depthTest: false,
+      depthWrite: false, clippingPlanes: [],
+    });
+    ink = lit(INK);
+    inkActive = lit(INK_ACTIVE);
+    casing = widgetMaterial(three, CASING);
     sync();
   }
 
@@ -125,9 +154,11 @@ export function createPins(vp) {
         // this widget's band (handle.js nests its rings the same way).
         const node = new three.Object3D();
         const meshes = [new three.Mesh(shaft, ink), new three.Mesh(head, ink)];
-        node.add(...meshes);
+        const casings = [new three.Mesh(caseShaft, casing),
+                         new three.Mesh(caseHead, casing)];
+        node.add(...meshes, ...casings);
         group.add(node);
-        arrow = { id: pin.id, node, meshes };
+        arrow = { id: pin.id, node, meshes, casings };
         arrows.set(key, arrow);
         owners.set(node, arrow);
       }
@@ -144,11 +175,14 @@ export function createPins(vp) {
       arrow.node.quaternion.setFromUnitVectors(up, aim.set(...along));
       // The open arrow is drawn after the others, and with no depth test the
       // last drawn is on top. Two comments on one part resolve to one anchor,
-      // so this is how the rail brings either one's arrow to the top.
+      // so this is how the rail brings either one's arrow to the top. All closed
+      // casings go under all closed inks, so crossing closed arrows merge; the
+      // open arrow's casing and ink go above them, so its rim covers the others.
       for (const mesh of arrow.meshes) {
         mesh.material = arrow.active ? inkActive : ink;
-        mesh.renderOrder = arrow.active ? 1 : 0;
+        mesh.renderOrder = arrow.active ? 2 : 0;
       }
+      for (const mesh of arrow.casings) mesh.renderOrder = arrow.active ? 1 : -1;
     }
     for (const [key, arrow] of [...arrows]) {
       if (seen.has(key)) continue;
@@ -214,7 +248,8 @@ export function createPins(vp) {
       widget.destroy();
       // The shared shapes and inks: `widget.destroy` reaches them only through
       // the arrows standing at the time, and there may be none.
-      for (const owned of [shaft, head, ink, inkActive]) {
+      for (const owned of [shaft, head, caseShaft, caseHead, ink, inkActive,
+                           casing]) {
         if (owned) owned.dispose();
       }
       arrows.clear();

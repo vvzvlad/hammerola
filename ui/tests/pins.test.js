@@ -16,7 +16,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as THREE from '../../static/_v/three.module.js'
 
 import { EVENT_PIN } from '../src/viewport/events.js'
-import { PIN_HEAD_PX, PIN_PX } from '../src/viewport/options.js'
+import {
+  PIN_CASE_PX, PIN_HEAD_WIDTH_PX, PIN_PX,
+} from '../src/viewport/options.js'
 import { createPins, pinDirection } from '../src/viewport/pins.js'
 import { PINS_ORDER, RINGS_ORDER } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
@@ -112,15 +114,27 @@ describe('where an arrow stands', () => {
     // makes "put the node on the point" mean "the arrow touches the point".
     const { group } = scene([{ id: 'c1', p: [0, 0, 45] }])
     const [node] = group.children
-    const box = new THREE.Box3()
-    for (const mesh of node.children) {
-      mesh.geometry.computeBoundingBox()
-      box.union(mesh.geometry.boundingBox)
+    const white = (mesh) => mesh.material.color.getHex() === 0xffffff
+    const bounds = (meshes) => {
+      const box = new THREE.Box3()
+      for (const mesh of meshes) {
+        mesh.geometry.computeBoundingBox()
+        box.union(mesh.geometry.boundingBox)
+      }
+      return box
     }
-    expect(box.min.y).toBeCloseTo(0, 9)
-    expect(box.max.y).toBeCloseTo(PIN_PX, 9)
-    expect(box.max.x).toBeCloseTo(PIN_HEAD_PX / 2, 9)
-    const head = node.children.find((mesh) => mesh.geometry.type === 'ConeGeometry')
+    const ink = bounds(node.children.filter((mesh) => !white(mesh)))
+    expect(ink.min.y).toBeCloseTo(0, 9)
+    expect(ink.max.y).toBeCloseTo(PIN_PX, 9)
+    expect(ink.max.x).toBeCloseTo(PIN_HEAD_WIDTH_PX / 2, 9)
+    // The white casing stands PIN_CASE_PX out of the ink all round, the tip and
+    // the tail included.
+    const rim = bounds(node.children.filter(white))
+    expect(rim.min.y).toBeCloseTo(-PIN_CASE_PX, 9)
+    expect(rim.max.y).toBeCloseTo(PIN_PX + PIN_CASE_PX, 9)
+    expect(rim.max.x).toBeCloseTo(PIN_HEAD_WIDTH_PX / 2 + PIN_CASE_PX, 9)
+    const head = node.children.find(
+      (mesh) => mesh.geometry.type === 'ConeGeometry' && !white(mesh))
     const at = head.geometry.getAttribute('position')
     for (let i = 0; i < at.count; i += 1) {
       if (Math.abs(at.getY(i)) > 1e-9) continue
@@ -211,8 +225,17 @@ describe('the open comment', () => {
       return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
     expect(luminance(open)).toBeLessThan(luminance(shut))
-    for (const mesh of shut.children) expect(mesh.renderOrder).toBe(0)
-    for (const mesh of open.children) expect(mesh.renderOrder).toBe(1)
+    // Every piece of the open arrow, its white rim included, over every piece
+    // of the other; and in each arrow the rim under the ink.
+    const orders = (node) => node.children.map((mesh) => mesh.renderOrder)
+    expect(Math.min(...orders(open))).toBeGreaterThan(Math.max(...orders(shut)))
+    for (const node of [shut, open]) {
+      const rims = node.children.filter((m) => m.material.color.getHex() === 0xffffff)
+      const inks = node.children.filter((m) => m.material.color.getHex() !== 0xffffff)
+      expect(rims).toHaveLength(2)
+      expect(Math.max(...rims.map((m) => m.renderOrder)))
+        .toBeLessThan(Math.min(...inks.map((m) => m.renderOrder)))
+    }
     expect(group.renderOrder).toBe(PINS_ORDER)
     expect(PINS_ORDER).toBeLessThan(RINGS_ORDER)
   })
