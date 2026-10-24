@@ -266,7 +266,7 @@ describe('the documents in the list of views', () => {
     expect([v.docRows, v.viewMenu, v.viewLabel]).toEqual([[], true, 'ds/ne555.pdf'])
   })
 
-  it('open the member a double click crosses to, light its row and keep the one view of the design', () => {
+  it('open the member the right-click menu shows a part in, light its row and keep the one view of the design', () => {
     const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
     const lit = () => c.computed().docRows.map((t) => t.rowStyle.includes(LIT))
     expect(lit()).toEqual([true, false, false, false])

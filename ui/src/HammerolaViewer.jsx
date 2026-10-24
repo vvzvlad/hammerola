@@ -1365,7 +1365,10 @@ export default class HammerolaViewer extends React.Component {
 
     // Escape closes what is open — a menu, a popover, an armed tool. It does
     // not close the composer: a half-written comment is the most expensive
-    // thing on this page to lose, and Escape gets pressed by reflex.
+    // thing on this page to lose, and Escape gets pressed by reflex. An Escape
+    // that closed something is taken (`preventDefault()`): a KiCad design laid
+    // over the model puts its selection out on an Escape nobody took
+    // (KicadView.jsx), and listens after this page.
     //
     // Ctrl+Z and Cmd+Z take back the last thing done, of either kind: hiding,
     // ghosting or isolating in the tree, or a build part or proposal body
@@ -1398,9 +1401,11 @@ export default class HammerolaViewer extends React.Component {
         return;
       }
       if (e.key !== 'Escape') return;
-      this.set({ menu: null, secPop: false, revOpen: false, dlOpen: false,
-                 viewsOpen: false, opsOpen: false, settingsOpen: false,
-                 notePop: null, tokenPop: false, tool: null, share: null });
+      const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
+                     viewsOpen: false, opsOpen: false, settingsOpen: false,
+                     notePop: null, tokenPop: false, tool: null, share: null };
+      if (Object.keys(shut).some((key) => this.state[key])) e.preventDefault();
+      this.set(shut);
     };
     window.addEventListener('keydown', this._kd);
 

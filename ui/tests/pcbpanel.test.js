@@ -168,6 +168,9 @@ describe('the board\'s panel', () => {
       expect(element.setHighlightedNets).toHaveBeenLastCalledWith([])
       expect(header(panel)).toEqual(['Layers'])
     }
+    // and asks for nothing on the footprint: `requestCrossProbe` would paint
+    // the fill and frame of a part shown from another view
+    expect(element.requestCrossProbe).not.toHaveBeenCalled()
     // and when nothing is lit, it asks the viewer for nothing
     element.setHighlightedNets.mockClear()
     select(element, { sourceContext: 'PCB', itemType: '' })
@@ -179,25 +182,6 @@ describe('the board\'s panel', () => {
     select(element, { sourceContext: 'PCB', itemType: 'via', net: 'GND', netCode: 1 })
     element.clearSelection()
     expect(header(panel)).toEqual(['Layers'])
-  })
-
-  it('outlines a footprint clicked while a net is lit, which the viewer does not, and keeps the camera', () => {
-    const { panel, element } = mounted()
-    const footprint = { sourceContext: 'PCB', itemType: 'footprint', reference: 'U501' }
-    // nothing lit: the viewer outlined it itself
-    select(element, footprint)
-    expect(element.requestCrossProbe).not.toHaveBeenCalled()
-    select(element, { sourceContext: 'PCB', itemType: 'track', net: 'GND', netCode: 1 })
-    select(element, footprint)
-    expect(element.requestCrossProbe.mock.calls).toEqual([[{ targetContext: 'PCB', kind: 'designator', value: 'U501', mode: 'hover' }]])
-    // asked once the net is out, not before
-    expect(element.setHighlightedNets).toHaveBeenLastCalledWith([])
-    expect(element.setHighlightedNets.mock.invocationCallOrder.at(-1)).toBeLessThan(element.requestCrossProbe.mock.invocationCallOrder[0])
-    expect(header(panel)).toEqual(['Layers'])
-    // the bare board asks for no part
-    select(element, { sourceContext: 'PCB', itemType: 'via', net: 'GND', netCode: 1 })
-    select(element, { sourceContext: 'PCB', itemType: '' })
-    expect(element.requestCrossProbe).toHaveBeenCalledTimes(1)
   })
 
   it('puts the active layer out before a preset, so that a selection made elsewhere does not light it hidden', () => {

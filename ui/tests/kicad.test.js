@@ -75,15 +75,20 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.clearSelection = vi.fn()
     }
     // The canvas the viewer draws on: a click reports what is under the
-    // pointer, after the move that put it there. `picks` is what it was handed.
+    // pointer, after the move that put it there. `picks` is what it was handed,
+    // and anything handed to the element itself instead.
     const canvas = document.createElement('canvas')
     element.append(canvas)
+    element.canvas = canvas
     element.picks = []
     canvas.addEventListener('mousemove', (event) => element.picks.push(['move', event.clientX, event.clientY]))
     canvas.addEventListener('click', (event) => {
       element.picks.push([`click ${event.button}`, event.clientX, event.clientY])
       click(element, element.under)
     })
+    for (const type of ['mousemove', 'click']) {
+      element.addEventListener(type, (event) => event.target === element && element.picks.push([`${type} on the element`]))
+    }
     view.refCallbacks[context](element)
     elements[context] = element
   }
@@ -95,7 +100,7 @@ const click = (element, detail) => element.dispatchEvent(new CustomEvent(SELECTI
 /** A right press on a view's canvas and its release `moved` px further on, as
  *  the browser reports them, out of the viewer's shadow tree. */
 function rightClick(element, x, y, moved = 0, button = 2) {
-  const canvas = element.querySelector('canvas')
+  const { canvas } = element
   const at = (type, dx) => new MouseEvent(type, { button, clientX: x + dx, clientY: y, bubbles: true, composed: true })
   canvas.dispatchEvent(at('pointerdown', 0))
   canvas.dispatchEvent(at('pointerup', moved))
@@ -344,8 +349,9 @@ describe('the right-click menu', () => {
       // no board, no 3D model
       offered(SCH, C523, [SCH, BOARD3D]), offered(SCH, label, [SCH, BOARD3D]), offered(BOARD3D, { reference: 'L101' }, [SCH, BOARD3D]),
       offered(PCB, pad, [SCH, PCB]), offered(PCB, track, [PCB, BOARD3D]),
-      // neither a part nor a net, a design of one
+      // neither a part nor a net, a design of one, a power symbol (never on the board)
       offered(SCH, { itemType: 'wire' }, all), offered(SCH, { itemType: '' }, all), offered(PCB, pad, [PCB]),
+      offered(SCH, { itemType: 'symbol', reference: '#PWR0101' }, all), offered(SCH, { itemType: 'pin', reference: '#FLG0101', pin: '1' }, all),
     ]).toEqual([
       'designator C523: Show in PCB (id-PCB), Show in 3D (id-3D)',
       'designator U501: Show in SCH (id-SCH), Show in 3D (id-3D)',
@@ -354,7 +360,7 @@ describe('the right-click menu', () => {
       'net EFUSE_PGOOD: Show in PCB (id-PCB)',
       'designator C523: Show in 3D (id-3D)', null, 'designator L101: Show in SCH (id-SCH)',
       'designator U501: Show in SCH (id-SCH)', null,
-      null, null, null,
+      null, null, null, null, null,
     ])
   })
 
@@ -384,6 +390,24 @@ describe('the right-click menu', () => {
     expect([elements[SCH].picks, menuOf(view)]).toEqual([[], undefined])
     rightClick(elements[SCH], 300, 250, PAN_SLOP - 1)
     expect(menuOf(view)).toBeDefined()
+  })
+
+  it('closes the list of a label\'s namesakes its click opens in the schematic, and leaves the reader\'s own', () => {
+    const { view, elements } = mounted()
+    const element = elements[SCH]
+    // the viewer's trees: the canvas and the list beside it in the schematic app's
+    const app = element.attachShadow({ mode: 'open' }).appendChild(document.createElement('kc-schematic-app'))
+    const list = document.createElement('kc-sch-selection-menu')
+    list.hidden = true
+    app.attachShadow({ mode: 'open' }).append(element.canvas, list)
+    // a click on a label with namesakes on other sheets opens it
+    element.canvas.addEventListener('click', () => { list.hidden = false })
+    element.under = { sourceContext: SCH, itemType: 'global-label', net: 'AMP_FAULT' }
+    rightClick(element, 300, 250)
+    expect([texts(menuOf(view)), list.hidden]).toEqual([['net AMP_FAULT', 'Show in hw/board.kicad_pcb'], true])
+    element.canvas.dispatchEvent(new MouseEvent('click', { button: 0 }))
+    rightClick(element, 300, 250)
+    expect(list.hidden).toBe(false)
   })
 
   it('an item opens its member and selects the same part or net there, once the page hands it down', () => {
@@ -482,10 +506,12 @@ describe('the right-click menu', () => {
   it('stays inside the view area wherever it opens, a phone\'s too', () => {
     expect(menuPlace(100, 100, 2, { width: 800, height: 600 })).toEqual({ left: 100, top: 100, width: 220 })
     expect(menuPlace(700, 580, 2, { width: 800, height: 600 })).toEqual({ left: 480, top: 580 - menuHeight(2), width: 220 })
-    for (const x of [0, 120, 195, 300, 389]) {
-      for (const y of [0, 350, 699]) {
-        const { left, top, width } = menuPlace(x, y, 2, { width: 390, height: 700 })
-        expect([left >= 8, left + width <= 382, top >= 8, top + menuHeight(2) <= 692]).toEqual([true, true, true, true])
+    for (const rows of [1, 2, 3]) {
+      for (const x of [0, 120, 195, 300, 389]) {
+        for (const y of [0, 350, 699]) {
+          const { left, top, width } = menuPlace(x, y, rows, { width: 390, height: 700 })
+          expect([left >= 8, left + width <= 382, top >= 8, top + menuHeight(rows) <= 692]).toEqual([true, true, true, true])
+        }
       }
     }
     // an area narrower than the menu narrows it
@@ -506,60 +532,53 @@ describe('the right-click menu', () => {
   })
 })
 
-describe('the selected part\'s datasheet', () => {
+describe('a part\'s datasheet', () => {
   const tpa = { id: 'hw__ds__tpa3250.pdf', name: 'TPA3250', type: 'pdf', file: 'hw/ds/tpa3250.pdf', bytes: 9, hidden: true }
   const docs = [...DOCS, tpa]
+  const SHEETS = new Map([['U501', '${KIPRJMOD}/ds/tpa3250.pdf'], ['C1', '../ds/ne555.pdf'], ['#PWR01', 'ds/ne555.pdf']])
   /** The design with its parts' `Datasheet` values read, `doc` on screen. */
-  const withSheets = (doc = docs[0]) => {
-    const one = mounted(doc, docs)
-    one.view.setState({ ready: true, datasheets: new Map([
-      ['U501', '${KIPRJMOD}/ds/tpa3250.pdf'], ['U502', 'https://www.ti.com/lit/ds/tpa3250.pdf'], ['C1', '../ds/ne555.pdf']]) })
+  const withSheets = (doc = docs[0], documents = docs) => {
+    const one = mounted(doc, documents)
+    one.view.setState({ ready: true, datasheets: SHEETS })
     return one
   }
-  const chipOf = (view) => collect(view.render(), (el) => (el.props['data-datasheet'] ? el : undefined))[0]
-  const onScreen = (view, doc) => {
-    view.props = { ...view.props, doc }
-    return chipOf(view)
+  /** The menu's lines for a right click on `detail` in `context`, on screen. */
+  const offered = ({ view, elements }, context, detail) => {
+    view.props = { ...view.props, doc: view.members()[context] }
+    elements[context].under = { sourceContext: context, ...detail }
+    rightClick(elements[context], 300, 250)
+    return menuOf(view) ? texts(menuOf(view)) : null
   }
 
-  it('is one chip at the bottom left of every view, naming the document, wherever the part was selected', () => {
-    const { view, elements } = withSheets()
-    expect(chipOf(view)).toBeUndefined()
-    const selections = [
-      () => click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'U501' }),
-      () => click(elements[PCB], { sourceContext: PCB, itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' }),
-      () => view3d(view).three.props.onSelect('U501'),
-    ]
-    for (const select of selections) {
-      view.setState({ selected: null })
-      select()
-      for (const doc of docs.slice(0, 3)) {
-        const chip = onScreen(view, doc)
-        expect(chip.props['data-datasheet']).toBe(tpa.id)
-        expect(texts(chip)).toEqual(['Datasheet · TPA3250'])
-        expect(chip.props.style).toMatchObject({ position: 'absolute', left: '10px', bottom: '10px',
-          display: 'flex', background: 'var(--float-bg)', color: 'var(--text)', cursor: 'pointer' })
-        // beside the board's panel (200px, 10px in from the right) it stops short of it
-        expect(chip.props.style.maxWidth).toBe(doc.type === 'board' ? 'calc(100% - 230px)' : 'calc(100% - 20px)')
-      }
-    }
+  it('is the last item of a part\'s menu, in every view, when its field names a document of the build', () => {
+    const one = withSheets()
+    const sheet = 'Open datasheet · TPA3250'
+    expect(offered(one, SCH, { itemType: 'symbol', reference: 'U501' }))
+      .toEqual(['U501', 'Show in hw/board.kicad_pcb', 'Show in hw/board.glb', sheet])
+    expect(offered(one, PCB, { itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' }))
+      .toEqual(['U501', 'Show in hw/board.kicad_sch', 'Show in hw/board.glb', sheet])
+    // in the menu's own rows, and nothing drawn for it anywhere else
+    expect(itemsOf(one.view).map((item) => item.props['data-show'])).toEqual([SCH, BOARD3D, 'datasheet'])
+    expect(itemsOf(one.view)[2].props.style).toEqual(itemsOf(one.view)[0].props.style)
+    expect(collect(one.view.render(), (el) => el.props['data-datasheet'])).toEqual([])
+    one.view.props = { ...one.view.props, doc: docs[2] }
+    view3d(one.view).three.props.onMenu('U501', 300, 250)
+    expect(texts(menuOf(one.view)).at(-1)).toBe(sheet)
+    // a path from the schematic's directory; no document, a net, a power symbol: no item
+    expect([
+      offered(one, PCB, { itemType: 'footprint', reference: 'C1' }), offered(one, PCB, { itemType: 'footprint', reference: 'R104' }),
+      offered(one, PCB, { itemType: 'track', net: 'GND' }), offered(one, SCH, { itemType: 'symbol', reference: '#PWR01' }),
+    ].map((items) => items && items.at(-1))).toEqual(['Open datasheet · ds/ne555.pdf', 'Show in hw/board.glb', 'Show in hw/board.kicad_sch', null])
   })
 
-  it('opens the document as a row does, and goes with a click on nothing or a part with no link', () => {
-    const { view, elements } = withSheets(docs[1])
-    click(elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U501' })
-    chipOf(view).props.onClick()
-    expect(view.props.onOpen).toHaveBeenCalledWith(tpa.id)
-    expect(view.props.doc).toBe(tpa)
+  it('opens the document as a row does, and is the whole menu of a part with no other member', () => {
+    const one = withSheets(docs[1])
+    offered(one, PCB, { itemType: 'footprint', reference: 'U501' })
+    itemsOf(one.view)[2].props.onClick()
+    expect([one.view.props.onOpen.mock.calls, one.view.props.doc, one.view.state.menu]).toEqual([[[tpa.id]], tpa, null])
 
-    const after = withSheets()
-    const pick = (reference) => {
-      click(after.elements[SCH], { sourceContext: SCH, itemType: reference ? 'symbol' : 'wire', reference })
-      const chip = chipOf(after.view)
-      return chip ? texts(chip)[0] : null
-    }
-    expect(['U501', undefined, 'U502', 'R104', 'C1'].map(pick))
-      .toEqual(['Datasheet · TPA3250', null, null, null, 'Datasheet · ds/ne555.pdf'])
-    expect(after.view.props.onOpen).not.toHaveBeenCalled()
+    const lone = withSheets(schematic(), [schematic(), pdf, tpa])
+    expect(offered(lone, SCH, { itemType: 'symbol', reference: 'U501' })).toEqual(['U501', 'Open datasheet · TPA3250'])
+    expect(offered(lone, SCH, { itemType: 'symbol', reference: 'R104' })).toBeNull()
   })
 })

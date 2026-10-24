@@ -252,7 +252,7 @@ describe('the page of a build with no model', () => {
     }
     expect(picked).toEqual([SCHEMATIC.id, BOARD.id, 'list.md'])
     // The open member is handed the build's documents and the door a row opens
-    // with, which a double click across the design's link uses for the other.
+    // with, which `Show in …` of the design's right-click menu uses for the other.
     const [view] = shown(tree)
     expect(view.props).toMatchObject({ doc: BOARD, documents: WITH_KICAD.documents })
     view.props.onOpen(SCHEMATIC.id)
@@ -322,13 +322,13 @@ describe('the shell', () => {
     expect(shell.render().props.active).toBe('report.pdf')
   })
 
-  it('holds only the open document, which a double click across a design moves', () => {
+  it('holds only the open document, which the right-click menu\'s Show in … moves across a design', () => {
     window.history.replaceState(null, '', BASE)
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false })
-    // the door a double click on the schematic opens the board through
+    // the door `Show in …` on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
     expect(window.location.search).toBe('?d=hw__board.kicad_pcb')

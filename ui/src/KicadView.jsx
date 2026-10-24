@@ -47,7 +47,8 @@
 //     (`onOpen` with its id, which moves the lit row of its list too) and, once
 //     the page has handed it down, asks its element to select the same thing —
 //     a part by its designator, a net by its name (`crossProbeRequest`); the 3D
-//     view is handed the part as `selected`.
+//     view is handed the part as `selected`. A power symbol (`#PWR`, `#FLG`)
+//     has no menu: it is on the schematic only.
 //
 // WHAT IS UNDER THE POINTER at a right click is the viewer's own answer to a
 // left click there. It selects on the left button only and has no hit test an
@@ -62,20 +63,19 @@
 // goes on Escape, a press anywhere else, the wheel, a resize, and when its view
 // leaves the screen.
 //
-// THE SELECTED PART'S DATASHEET is one chip at the bottom left of every view,
-// when the part's KiCad `Datasheet` field names a document of the build
-// (kicadsheets.js). A click opens it as a row of the page's list does
-// (`onOpen`): the document takes the view area and the design is left; the way
-// back is the list. The chip's right edge keeps clear of the board's panel
-// while the board is on screen, and the view area already ends above the
-// page's bar (`DOC_LAYER` in viewlist.jsx).
+// A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
+// when the part's KiCad `Datasheet` field names a document of the build, listed
+// or hidden (kicadsheets.js); a part with a datasheet and no other member to be
+// shown in gets a menu of that item alone. It opens the document as a row of
+// the page's list does (`onOpen`): the document takes the view area and the
+// design is left; the way back is the list.
 
 import React from 'react';
 
 import BoardView3D from './BoardView3D.jsx';
 import { addPinEntries } from './kicadpins.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
-import { chip, ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
+import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
 import { css, MONO, SANS } from './style.jsx';
 import { typingTarget } from './viewport/holdkey.js';
@@ -192,15 +192,28 @@ const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
 /**
  * The right-click menu for what view `from` reported selected (`detail`; the
  * 3D view's part as `{ reference }`): what it shows, and an item for every
- * other listed member that can show it, named after that document. Null when
- * it is neither a part nor a net, or no other member can show it.
+ * other listed member that can show it, named after that document, then for a
+ * part the document its datasheet names (`sheet`, or null). Null when there is
+ * no item, and for a designator KiCad starts with `#`: a power symbol or a
+ * power flag is drawn on the schematic only, never placed on the board.
  */
-export function menuFor(from, detail, members) {
+export function menuFor(from, detail, members, sheet = null) {
   const subject = crossProbeRequest(detail, null);
-  if (!subject) return null;
+  if (!subject || (subject.kind === 'designator' && subject.value.startsWith('#'))) return null;
   const items = SHOWS[subject.kind].filter((view) => view !== from && members[view])
     .map((view) => ({ view, id: members[view].id, label: `Show in ${members[view].name}` }));
+  if (sheet && subject.kind === 'designator') items.push({ id: sheet.id, label: `Open datasheet · ${sheet.name}` });
   return items.length ? { kind: subject.kind, value: subject.value, items } : null;
+}
+
+/** The viewer's own list of a label's namesakes (`kc-sch-selection-menu`),
+ *  beside `canvas` in the shadow tree of its schematic app, or null. */
+function labelList(canvas) {
+  for (let root = canvas.getRootNode(); root && root.querySelector; root = root.host ? root.host.getRootNode() : null) {
+    const list = root.querySelector('kc-sch-selection-menu');
+    if (list) return list;
+  }
+  return null;
 }
 
 /** The menu's box, fixed, so that where it fits is known before it is drawn:
@@ -235,11 +248,6 @@ export function selectedDatasheet(designator, datasheets, members, documents) {
 const SHELL = 'position:relative;height:100%;min-height:320px';
 const VIEWER = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
-// The board's panel is 200px wide, 10px in from the right (PcbPanel.jsx), and
-// may run the full height of the view: beside it the chip stops 10px short.
-const datasheetChip = (board) => `${chip(true, 'var(--float-bg)', 'var(--line)', 'var(--text)')};`
-  + 'position:absolute;left:10px;bottom:10px;box-sizing:border-box;cursor:pointer;user-select:none;'
-  + `max-width:calc(100% - ${board ? 230 : 20}px)`;
 // The menu as the build page's right-click menu is drawn (rowmenu.js), in a box
 // of a known size (`menuPlace`).
 const menuBox = ({ left, top, width }) => `position:absolute;left:${left}px;top:${top}px;width:${width}px;`
@@ -250,12 +258,6 @@ const MENU_NAME = `height:${MENU_HEAD}px;box-sizing:border-box;padding:7px 14px 
 const menuItem = (hover) => `height:${MENU_ROW}px;box-sizing:border-box;padding:8px 14px 0;${ELLIPSIS};`
   + `font:400 12px ${SANS};color:var(--text);cursor:pointer;user-select:none`
   + (hover ? ';background:var(--hover-bg)' : '');
-const DOC_ICON = (
-  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
-       strokeLinejoin="round" style={{ flex: 'none', color: 'var(--text-soft)' }}>
-    <path d="M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13 M6.5 8.5h4 M6.5 11h4" />
-  </svg>
-);
 
 /** One design: a view per member, the one on screen, and the links between
  *  them. */
@@ -394,7 +396,13 @@ export default class KicadView extends React.Component {
    *  for a left click: the point goes to the canvas the press landed on as the
    *  move and the click the viewer picks with, and the selection that click
    *  reports opens the menu (`picked`). Released anywhere else, the viewer
-   *  panned with it. */
+   *  panned with it.
+   *
+   *  The same click on a label or a sheet pin opens the schematic's own list
+   *  of the label's namesakes (`kc-sch-selection-menu`), which stays open
+   *  after our menu; a list that click opened is closed again, as the viewer
+   *  itself closes it (`hidden`). One the reader opened with the left button
+   *  is left as it is. */
   release(context, event) {
     const { pressed } = this;
     this.pressed = null;
@@ -403,16 +411,21 @@ export default class KicadView extends React.Component {
     const [canvas] = event.composedPath();
     if (!canvas || canvas.localName !== 'canvas') return;
     const at = { clientX: event.clientX, clientY: event.clientY };
+    const list = labelList(canvas);
+    const listShut = Boolean(list && list.hidden);
     this.pointing = { from: context, x: event.clientX, y: event.clientY };
     canvas.dispatchEvent(new MouseEvent('mousemove', at));
     canvas.dispatchEvent(new MouseEvent('click', { ...at, button: 0, detail: 1 }));
     this.pointing = null;
+    if (listShut && !list.hidden) list.hidden = true;
   }
 
   /** The menu for what `from` selected, at the page point `x`,`y`, in place of
    *  any other: none when there is nothing to offer. */
   openMenu(from, detail, x, y) {
-    const menu = menuFor(from, detail, this.members());
+    const members = this.members();
+    const sheet = selectedDatasheet(detail && detail.reference, this.state.datasheets, members, this.props.documents);
+    const menu = menuFor(from, detail, members, sheet);
     if (!menu) {
       this.closeMenu();
       return;
@@ -422,16 +435,17 @@ export default class KicadView extends React.Component {
     this.setState({ menu: { ...menu, from, ...box }, hover: -1 });
   }
 
-  /** An item of the menu: the page is asked to open its member, and the same
-   *  thing is selected there once the page has handed it down
-   *  (`componentDidUpdate`); the 3D view is handed the part. */
+  /** An item of the menu: the page is asked to open its document. A member
+   *  of the design selects the same thing once the page has handed it down
+   *  (`componentDidUpdate`); the 3D view is handed the part. A datasheet is
+   *  only opened. */
   choose(item) {
     const { menu } = this.state;
     this.closeMenu();
     if (!menu) return;
     if (item.view === BOARD3D) {
       if (menu.value !== this.state.selected) this.setState({ selected: menu.value });
-    } else {
+    } else if (item.view) {
       if (!this.elements[item.view]) return;
       this.probe = { to: item.view, request: { targetContext: item.view, kind: menu.kind, value: menu.value } };
     }
@@ -500,14 +514,11 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, datasheets, menu, hover } = this.state;
-    const { documents, onOpen } = this.props;
+    const { ready, error, selected, menu, hover } = this.state;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const note = side !== BOARD3D && (error || (!ready && 'Loading…'));
     const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
     const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
-    const sheet = selectedDatasheet(selected, datasheets, members, documents);
-    const label = sheet && `Datasheet · ${sheet.name}`;
     return (
       <div ref={this.setShell} style={css(SHELL)} onWheelCapture={this.closeMenu}>
         {drawnViews(members).map((context) => (
@@ -522,20 +533,14 @@ export default class KicadView extends React.Component {
                          onSelect={this.onSelect3D} onMenu={this.onMenu3D} />
           </div>
         )}
-        {sheet && (
-          <div data-datasheet={sheet.id} title={label} style={css(datasheetChip(side === PCB))}
-               onClick={() => onOpen && onOpen(sheet.id)}>
-            {DOC_ICON}
-            <span style={css(ELLIPSIS)}>{label}</span>
-          </div>
-        )}
         {note && <div style={css(NOTE)}>{note}</div>}
         {menu && menu.from === side && (
           <div data-menu={menu.from} ref={this.setMenu} style={css(menuBox(menu))}
                onContextMenu={(event) => event.preventDefault()}>
             <div style={css(MENU_NAME)}>{menu.kind === 'net' ? `net ${menu.value}` : menu.value}</div>
             {menu.items.map((item, index) => (
-              <div key={item.view} data-show={item.view} title={item.label} style={css(menuItem(index === hover))}
+              <div key={item.id} data-show={item.view || 'datasheet'} title={item.label}
+                   style={css(menuItem(index === hover))}
                    onMouseEnter={() => this.setState({ hover: index })}
                    onMouseLeave={() => this.setState({ hover: -1 })}
                    onClick={() => this.choose(item)}>{item.label}</div>

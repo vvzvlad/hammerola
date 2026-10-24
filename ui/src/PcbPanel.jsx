@@ -26,10 +26,11 @@
 // included, puts it out. Which part is selected across the views stays
 // KicadView's: the same click reaches both listeners, KicadView's first.
 //
-// A FOOTPRINT CLICKED WHILE A NET IS LIT is asked for again once the net is
-// out: the viewer outlines a clicked footprint itself, but draws nothing while
-// nets are lit (`outline_fp`), and the click reaches it before this panel puts
-// the net out. `mode: 'hover'` leaves the camera where it is.
+// A FOOTPRINT CLICKED WHILE A NET IS LIT puts the net out and is left without
+// a mark: the viewer outlines a clicked footprint only while no net is lit
+// (`outline_fp`), and the one way to have it drawn after, `requestCrossProbe`,
+// paints the cyan fill and frame of a part shown from another view and hides
+// the zone fills — the highlight a click on the bare board then has to clear.
 //
 // A LAYER PRESET PUTS THE ACTIVE LAYER OUT FIRST. The viewer clears the
 // layers' flags for a preset but keeps the active layer's name apart, and
@@ -119,7 +120,7 @@ export default class PcbPanel extends React.Component {
     this.state = { open: true, layers: [], zones: ZONE_OPACITY, net: null };
     this.element = null;
     this.read = () => this.readBack();
-    this.onSelect = (event) => this.picked(event.detail || {});
+    this.onSelect = (event) => this.light(selectedNet(event.detail));
     this.toggle = () => this.setState({ open: !this.state.open });
     this.onZones = (event) => this.change((element) => element.setPcbObjectOpacity('zones', Number(event.target.value)), false);
   }
@@ -170,28 +171,13 @@ export default class PcbPanel extends React.Component {
     this.readBack();
   }
 
-  /** A click on the board: its net lit, or what is lit put out, and a
-   *  footprint outlined that the lit net kept the viewer from outlining. */
-  picked(detail) {
-    const putOut = this.light(selectedNet(detail));
-    if (putOut && detail.itemType === 'footprint' && detail.reference) {
-      this.element.requestCrossProbe({ targetContext: 'PCB', kind: 'designator', value: detail.reference, mode: 'hover' });
-    }
-  }
-
-  /** Light `net`, or put out whatever is lit when it is null: true when a lit
-   *  net was put out. */
+  /** Light `net`, or put out whatever is lit when it is null. */
   light(net) {
     const { element } = this;
-    if (!element) return false;
-    let putOut = false;
+    if (!element) return;
     if (net) element.setHighlightedNets([net]);
-    else if (element.getHighlightedNets().length) {
-      element.setHighlightedNets([]);
-      putOut = true;
-    }
+    else if (element.getHighlightedNets().length) element.setHighlightedNets([]);
     this.readBack();
-    return putOut;
   }
 
   render() {
