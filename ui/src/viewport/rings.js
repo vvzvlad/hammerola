@@ -23,7 +23,8 @@
 // part shared with the section grip): a torus in the world plane its axis spans
 // is projected by the camera like everything else, and the angle under the
 // hand is where the pointer's ray meets that plane. The knob does not move by
-// itself while the part turns; `place` turns it by the angle swept so far.
+// itself while the part turns; `place` turns it by the angle the part has taken
+// so far, which goes in steps unless Shift is held (`stepped`).
 
 import { cameraBasis, ndcAt, ndcRay } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
@@ -128,6 +129,24 @@ const STEPS = 64;
 const HALF_TURN = Math.PI;
 
 const DEGREES_PER_RADIAN = 180 / Math.PI;
+
+/** The step a turn goes in unless Shift is held: thirty degrees, in radians. */
+const TURN_STEP = (30 * Math.PI) / 180;
+
+/**
+ * The angle the part takes for a sweep: the nearest multiple of `TURN_STEP`, or
+ * the sweep itself while Shift is held.
+ *
+ * Fixed angles by default and any angle on demand, as in Bambu Studio and
+ * OrcaSlicer, whose gizmo chooses between the two by where the cursor is
+ * (`GLGizmoRotate::on_dragging` in OrcaSlicer, `on_update` in Bambu Studio: 45
+ * degrees inside the ring, 5 on its scale, free elsewhere); here Shift chooses.
+ * Measured from the press, like the slicers' gizmo: a step is a step of this
+ * gesture, whatever the part stood at before it.
+ */
+function stepped(swept, free) {
+  return free ? swept : Math.round(swept / TURN_STEP) * TURN_STEP;
+}
 
 /** The raycast of a piece that is only looked at: nothing.
  *
@@ -303,8 +322,9 @@ export function createRings(vp) {
   const knobs = new Map();
 
   // The gesture in progress: the ring, the part centre and the angle at the
-  // press, the sweep since, the record being applied, and whether the pointer
-  // has travelled far enough to be a drag. Null between gestures.
+  // press, the sweep since and the angle the part took of it, the record being
+  // applied, and whether the pointer has travelled far enough to be a drag.
+  // Null between gestures.
   let drag = null;
 
   // Which axis the cursor is on, or -1. Written by `onMove` and read once a
@@ -495,10 +515,11 @@ export function createRings(vp) {
       ring.whole.visible = glow;
       ring.arc.visible = !glow;
       ring.face.color.setHex(glow ? AXES[k].lit : AXES[k].ink);
-      // The knob stays under the hand: `swept` is the angle travelled, so the
-      // knob sits at its resting place plus that.
+      // The knob sits at its resting place plus the angle the part took: on the
+      // step with the part (`stepped`), so the step is seen, and under the hand
+      // while Shift turns the part freely.
       ring.knob.rotation.z = DISC_AT
-        + (drag && drag.axis === k ? drag.swept : 0);
+        + (drag && drag.axis === k ? drag.taken : 0);
     });
     return true;
   }
@@ -515,6 +536,8 @@ export function createRings(vp) {
   const finish = () => {
     drag = null;
     watch.disarm();
+    removeEventListener("keydown", onKey, true);
+    removeEventListener("keyup", onKey, true);
     // The cursor goes back to answering the ray; every ending comes through
     // here.
     widget.grabbed(false);
@@ -563,8 +586,8 @@ export function createRings(vp) {
     }
     if (!g) return;
     // A click is not a one-pixel drag (`travelled` in drag.js). There is no
-    // click on a ring, so a twitch would turn the part a degree and file a
-    // node, opening the panel.
+    // click on a ring, so under Shift a twitch would turn the part a degree and
+    // file a node, opening the panel.
     if (!travelled(event, drag)) return;
     drag.moved = true;
     const theta = ringAngle(vp, g, drag.axis, drag.centre, event);
@@ -581,19 +604,33 @@ export function createRings(vp) {
       + 2 * HALF_TURN) % (2 * HALF_TURN) - HALF_TURN;
     drag.theta = theta;
     drag.swept += step;
-    // Whole degrees: the number reaches an agent in a sentence, and 31.7413
-    // degrees claims a precision no hand has. The row's field steps by fifteen
-    // (`STEP_DEG` in HammerolaViewer.jsx) for setting corner angles; the two
-    // tools are not on one grid.
-    const degrees = Math.round(drag.swept * DEGREES_PER_RADIAN);
+    turnTo(event.shiftKey);
+  }
+
+  /**
+   * Stand the part at the angle the hand has swept: on the step, or freely
+   * while Shift is held (`free`).
+   *
+   * Called by a move and by Shift going down or up with the hand still
+   * (`onKey`), so letting go of Shift and then of the button reports the step
+   * the reader saw, not the free angle of the last move.
+   */
+  function turnTo(free) {
+    // `swept` stays the hand's own angle, so the unwrapping in `onMove` keeps
+    // counting from the press; only what the part takes goes through `stepped`.
+    drag.taken = stepped(drag.swept, free);
+    // Whole degrees, which matters for the free turn under Shift: the number
+    // reaches an agent in a sentence, and 31.7413 degrees claims a precision no
+    // hand has.
+    const degrees = Math.round(drag.taken * DEGREES_PER_RADIAN);
     // A world turn about the grabbed axis, composed onto the part's current
     // pose. Adding to one of the three angles does not give that:
     // `quaternionOf` reads them as `Rz·Ry·Rx`, so from `(0, 0, 90)` thirty added
     // on x turns the part about world Y, while the rings are drawn on world
     // axes.
     //
-    // So the swept angle is whole degrees but the stored three generally are
-    // not: thirty about x on top of `(0, 0, 90)` reads back as `(0, -30, 90)`,
+    // So the gesture's angle is whole degrees but the stored three generally
+    // are not: thirty about x on top of `(0, 0, 90)` reads back as `(0, -30, 90)`,
     // as in any CAD tool. `turnedFrom` is the document's function for this sum
     // (with `tidy`), and the panel uses the same one (`turnNodes`), so preview
     // and document agree.
@@ -603,9 +640,10 @@ export function createRings(vp) {
     const turn = turnedFrom(d.base, gesture);
     if (turn[0] === d.last[0] && turn[1] === d.last[1]
         && turn[2] === d.last[2]) {
-      // The knob moved though the part did not (most events of a slow drag:
-      // `swept` is continuous, the part turns in whole degrees). The calls
-      // below render by themselves; this branch must ask for the frame.
+      // The part did not move (most events of a drag: `swept` is continuous,
+      // the part turns in steps, or in whole degrees under Shift), but under
+      // Shift the knob did. The calls below render by themselves; this branch
+      // must ask for the frame.
       widget.refresh();
       return;
     }
@@ -632,6 +670,14 @@ export function createRings(vp) {
 
   function onCancel() {
     stop();
+  }
+
+  /** Shift pressed or let go during a drag: the part changes between the step
+   *  and the free turn at once, not on the next move. Before the drag has
+   *  travelled there is nothing standing to change. */
+  function onKey(event) {
+    if (event.key !== "Shift" || !drag || !drag.moved) return;
+    turnTo(event.shiftKey);
   }
 
   /**
@@ -710,12 +756,17 @@ export function createRings(vp) {
       centre,
       theta,
       swept: 0,
+      taken: 0,
       startX: event.clientX,
       startY: event.clientY,
       turn: turnRecord(vp, sel.paths, sel.paths[0], sel.proposal),
       moved: false,
     };
     watch.arm();
+    // Shift alone switches the step on and off mid-drag (`onKey`); taken off
+    // in `finish` with the pointer listeners.
+    addEventListener("keydown", onKey, true);
+    addEventListener("keyup", onKey, true);
     // The ring lights because it is being turned, the only feedback for a
     // press with no hover before it (touch).
     widget.refresh();
