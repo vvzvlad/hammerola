@@ -45,6 +45,15 @@ describe('a part\'s datasheet', () => {
     expect(read(texts)).toEqual({ R1: 'ds/sheet.pdf', R2: 'ds/r2.pdf', R3: 'ds/r3.pdf', R4: 'ds/r4.pdf', R6: 'ds/sub.pdf' })
   })
 
+  it('leaves a web address under the board\'s value, as a library symbol brings one with it', () => {
+    const texts = {
+      'hw/a.kicad_sch': sheet(symbol('U1', 'https://www.ti.com/lit/ds/symlink/tpa3250.pdf'), symbol('U2', 'ds/u2.pdf')),
+      'hw/a.kicad_pcb': board(footprint('U1', '${KIPRJMOD}/ds/tpa3250.pdf'), footprint('U2', 'ds/other.pdf'),
+        footprint('U3', 'file://${KIPRJMOD}/ds/u3.pdf')),
+    }
+    expect(read(texts)).toEqual({ U1: '${KIPRJMOD}/ds/tpa3250.pdf', U2: 'ds/u2.pdf', U3: 'file://${KIPRJMOD}/ds/u3.pdf' })
+  })
+
   it('is none for text that does not parse, and nothing is thrown', () => {
     const texts = {
       'hw/broken.kicad_sch': '(kicad_sch (symbol (lib_id "Device:R")',

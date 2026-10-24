@@ -149,6 +149,8 @@ document its page hands down; a single click selects the same part in the other
 views, a double click opens the sibling with the same part or net selected;
 the board has a panel of its own over its canvas, `src/PcbPanel.jsx`: layers,
 presets, the opacity of the zone fills and the net of the last click;
+`src/kicadsheets.js` reads each part's `Datasheet` field, and the view shows a
+chip that opens the listed document it names;
 `src/kicadpins.js` gives each schematic the pin entries the viewer
 draws pins from. The viewer is the vendored `static/_v/ecad-viewer.js`, imported by
 URL when a design is opened, as `src/viewport/library.js` imports

@@ -6,8 +6,10 @@
 // KicadView already fetches for its viewers, with kicadpins.js's reader. Where
 // both name one the schematic's wins: it is where a part's fields are edited,
 // and the board holds what the last update from it carried over. A field left
-// empty names none — `""`, or `~`, which KiCad writes for an empty one — so a
-// board's value still counts under a schematic's empty one.
+// empty names none — `""`, or `~`, which KiCad writes for an empty one — and
+// neither does a web address, which is no file of the tree: so a board's value
+// still counts under a schematic's empty one, and under the link to a
+// manufacturer's site that a library symbol brings with it.
 //
 // A value names a document by its path in the tree: `file://` and
 // `${KIPRJMOD}/` (the project's directory, as KiCad expands it) dropped, `\`
@@ -53,7 +55,7 @@ function partsOf(root) {
   const parts = [];
   const take = (node, references) => {
     const value = property(node, 'Datasheet');
-    if (!EMPTY.has(value)) for (const reference of references) parts.push([reference, value]);
+    if (!EMPTY.has(value) && !isWeb(value)) for (const reference of references) parts.push([reference, value]);
   };
   if (head(root) === 'kicad_sch') {
     for (const symbol of children(root, 'symbol')) {
@@ -108,12 +110,22 @@ const WEB = /^[a-z][a-z0-9+.-]*:\/\//i;
 const FILE = 'file://';
 const PROJECT = '${KIPRJMOD}/';
 
-/** The path in the tree `value` names, resolved against the directory `base`,
- *  or null for a web address, an absolute path or one out of the tree. */
-export function datasheetPath(value, base) {
+/** `value` with `\` read as `/` and the spellings of the project's directory
+ *  (`file://`, `${KIPRJMOD}/`) dropped. */
+function unwrapped(value) {
   let path = value.replace(/\\/g, '/');
   if (path.startsWith(FILE)) path = path.slice(FILE.length);
   if (path.startsWith(PROJECT)) path = path.slice(PROJECT.length);
+  return path;
+}
+
+/** Is `value` a web address, which names no file of the tree? */
+const isWeb = (value) => WEB.test(unwrapped(value));
+
+/** The path in the tree `value` names, resolved against the directory `base`,
+ *  or null for a web address, an absolute path or one out of the tree. */
+export function datasheetPath(value, base) {
+  const path = unwrapped(value);
   if (WEB.test(path) || path.startsWith('/')) return null;
   const parts = [];
   for (const part of `${base}/${path}`.split('/')) {
