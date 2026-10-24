@@ -121,7 +121,20 @@ def test_an_unknown_view_key_is_said_out_loud(capsys):
     prepare([one_view(nestedok=[("a", "b")])])
     printed = capsys.readouterr().out
     assert "'nestedok'" in printed
-    assert "Known keys: id, interference_ok, name, nested_ok, parts" in printed
+    assert ("Known keys: absent_ok, id, interference_ok, name, nested_ok, "
+            "parts") in printed
+
+
+def test_absent_ok_is_read_into_key_and_reason():
+    prepared = prepare([one_view(absent_ok=[("jig", "  assembly jig  ")])],
+                       body="printable", jig="printable")
+    assert prepared[0]["absent_ok"] == {"jig": "assembly jig"}
+    assert prepare([one_view()])[0]["absent_ok"] == {}
+
+
+def test_absent_ok_without_a_reason_or_in_the_wrong_shape_is_refused():
+    for bad in ("jig", 5, ["jig"], [("jig",)], [("jig", "  ")], [("jig", 3)]):
+        assert "absent_ok" in refusal([one_view(absent_ok=bad)])
 
 
 # --------------------------------------------------------------------------

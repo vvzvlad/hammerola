@@ -60,8 +60,9 @@ def _product_bbox(prepared, catalogue):
     construction (see `parts.KIND_MOCK`), so including it would report changes
     to the scenery as size changes and mask a part moved inside the assembly.
 
-    `None` when the view holds only mocks. Defensive: `read_catalogue` and
-    `check_assembled_coverage` already refuse such a model before this runs.
+    `None` when the view holds only mocks: a catalogue with no printable, or
+    one whose printables the view declares absent. `collect_metrics` then
+    writes no `bbox_mm`.
     """
     shapes = [shape
               for node in _view_nodes(prepared, ASSEMBLED_VIEW_ID)

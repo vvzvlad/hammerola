@@ -14,8 +14,9 @@ CARD_SUFFIX = "_card.png"
 
 # The two view ids the build knows the meaning of; every other view is just a
 # tab. `print` is a bed: its parts may not overlap and must be printable.
-# `assembled` is the whole product: every printable must be in it, and it is
-# the only view interference is gated in.
+# `assembled` is the whole product: every printable must be in it unless the
+# view declares it absent (`absent_ok`, an assembly jig), and it is the only
+# view interference is gated in.
 #
 # Here rather than in views.py: `parts.py` reserves the stems these name
 # (`assembled.stl`, `print.stl`) against catalogue keys, and views imports

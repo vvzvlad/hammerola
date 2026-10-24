@@ -309,6 +309,28 @@ def test_a_printable_missing_from_the_assembled_view_is_refused():
             catalogue(body="printable", lid="printable"))
     assert "does not show printable" in str(exc.value)
     assert "'lid'" in str(exc.value)
+    # The way out for a part that is printed but not part of the product.
+    assert "absent_ok" in str(exc.value)
+
+
+def test_a_printable_declared_absent_need_not_be_shown(capsys):
+    """An assembly jig is printed but is not part of the product: the view
+    leaves it out by name, and the reason goes into the log."""
+    check_assembled_coverage(
+        [view("assembled", [node("body")], absent_ok={"jig": "assembly jig"}),
+         view("jigs", [node("jig")])],
+        catalogue(body="printable", jig="printable"))
+    assert "'jig' may be left out -- assembly jig" in capsys.readouterr().out
+
+
+def test_absent_ok_in_another_view_leaves_nothing_out():
+    """Only the assembled view's own list is read."""
+    with pytest.raises(BuildError) as exc:
+        check_assembled_coverage(
+            [view("assembled", [node("body")]),
+             view("jigs", [node("jig")], absent_ok={"jig": "assembly jig"})],
+            catalogue(body="printable", jig="printable"))
+    assert "'jig'" in str(exc.value)
 
 
 def test_hardware_and_mocks_need_not_be_in_the_assembled_view():
