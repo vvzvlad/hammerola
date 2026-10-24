@@ -20,6 +20,7 @@ vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { ret
 
 import BoardView3D from '../src/BoardView3D.jsx'
 import { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
+import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   BOARD3D, CROSSPROBE_EVENT, crossProbeRequest, designFiles, designKey, designMembers,
@@ -47,8 +48,9 @@ const DOCS = [schematic(), board(), model3d(), pdf, board('psu/psu.kicad_pcb', n
 const ofType = (tree, type) => collect(tree, (el) => (el.type === type ? el : undefined))
 
 /** A view with its elements attached, as React would attach them, under a
- *  page that answers `onOpen` by handing that document down, as both pages do. */
-function mounted(doc = DOCS[0], documents = DOCS) {
+ *  page that answers `onOpen` by handing that document down, as both pages do.
+ *  `viewer` false: plain elements, as when the viewer's module did not load. */
+function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
   const onOpen = vi.fn((id) => {
     const before = view.props
     view.props = { ...before, doc: documents.find((one) => one.id === id) }
@@ -62,9 +64,11 @@ function mounted(doc = DOCS[0], documents = DOCS) {
   const elements = {}
   for (const context of drawnViews(view.members())) {
     const element = document.createElement('ecad-viewer')
-    element.requestCrossProbe = vi.fn(() => true)
-    element.setActive = vi.fn()
-    element.clearSelection = vi.fn()
+    if (viewer) {
+      element.requestCrossProbe = vi.fn(() => true)
+      element.setActive = vi.fn()
+      element.clearSelection = vi.fn()
+    }
     view.refCallbacks[context](element)
     elements[context] = element
   }
@@ -154,6 +158,22 @@ describe('a KiCad design', () => {
     expect(view3d(new KicadView({ doc: DOCS[4], documents: DOCS, base: BASE })).box).toBeUndefined()
   })
 
+  it('draws its panel over the board once the files are in, shown with the board', () => {
+    const { view, elements } = mounted(DOCS[1])
+    const panel = () => ofType(view.render(), PcbPanel)[0]
+    expect(panel()).toBeUndefined()
+    view.setState({ ready: true })
+    expect(panel().props).toEqual({ element: elements[PCB], active: true })
+    view.props = { ...view.props, doc: DOCS[0] }
+    expect(panel().props.active).toBe(false)
+    view.setState({ error: 'hw/board.kicad_pcb did not load: HTTP 404' })
+    expect(panel()).toBeUndefined()
+    // no board in the design, no panel
+    const alone = mounted(schematic(), [schematic(), pdf])
+    alone.view.setState({ ready: true })
+    expect(ofType(alone.view.render(), PcbPanel)).toEqual([])
+  })
+
   it('tells each viewer whether it is the one on screen', () => {
     const { view, elements } = mounted(DOCS[1])
     view.activate()
@@ -220,6 +240,31 @@ describe('a click selects the same part in every view', () => {
     expect(elements[SCH].clearSelection).toHaveBeenCalledTimes(1)
     expect(elements[PCB].clearSelection).not.toHaveBeenCalled()
     expect(view3d(view).three.props.selected).toBeNull()
+  })
+
+  it('a view without the part puts out what it had selected', () => {
+    const { view, elements } = mounted()
+    // a power symbol has no footprint: the board answers false
+    elements[PCB].requestCrossProbe.mockReturnValue(false)
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: '#PWR0101' })
+    expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, '#PWR0101'))
+    expect(elements[PCB].clearSelection).toHaveBeenCalledTimes(1)
+    expect(view3d(view).three.props.selected).toBe('#PWR0101')
+    // a part it has stays selected
+    elements[PCB].requestCrossProbe.mockReturnValue(true)
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'C523' })
+    expect(elements[PCB].clearSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('throws nothing at elements the viewer never defined (its module did not load)', () => {
+    const { view } = mounted(DOCS[2], DOCS, false)
+    const three = () => view3d(view).three.props
+    expect(() => {
+      three().onSelect('L101')
+      three().onSelect(null)
+      three().onJump('L101')
+    }).not.toThrow()
+    expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
   })
 
   it('from the 3D model: both drawings select it, and a click on the bare board puts it out', () => {

@@ -29,7 +29,8 @@
 // panels (layers, objects, nets, properties), which `show-header="false"`
 // already keeps off screen, and its corner mark: Prism's logo, a single node the
 // viewer shares between all its elements on a page, so one element showed it
-// and the other an empty circle.
+// and the other an empty circle. The board gets a panel of ours instead
+// (PcbPanel.jsx), drawn over it once its files are loaded.
 //
 // THE VIEWS ARE LINKED HERE, not in the viewer, two ways:
 //   * a click that selects a part in one view selects it in the others too,
@@ -49,6 +50,7 @@ import React from 'react';
 
 import BoardView3D from './BoardView3D.jsx';
 import { addPinEntries } from './kicadpins.js';
+import PcbPanel from './PcbPanel.jsx';
 import { css, MONO } from './style.jsx';
 
 /** Where the hub serves the viewer; `parser.worker.js` is fetched beside it. */
@@ -223,13 +225,18 @@ export default class KicadView extends React.Component {
   }
 
   /** A click in `from` selected the part `designator`, or something that is
-   *  no part (null): the other views follow, none of them brought on screen. */
+   *  no part (null): the other views follow, none of them brought on screen.
+   *  A view without that part (a power symbol has no footprint, a fiducial no
+   *  symbol) answers false and drops what it had selected, as for no part.
+   *  The methods are checked because an element is a plain one when the
+   *  viewer's module failed to load. */
   select(from, designator) {
     for (const context of drawnViews(this.members())) {
       const element = this.elements[context];
       if (context === from || !element) continue;
-      if (designator) element.requestCrossProbe({ targetContext: context, kind: 'designator', value: designator });
-      else if (typeof element.clearSelection === 'function') element.clearSelection();
+      const found = Boolean(designator) && typeof element.requestCrossProbe === 'function'
+        && element.requestCrossProbe({ targetContext: context, kind: 'designator', value: designator }) !== false;
+      if (!found && typeof element.clearSelection === 'function') element.clearSelection();
     }
     if (designator !== this.state.selected) this.setState({ selected: designator });
   }
@@ -269,7 +276,7 @@ export default class KicadView extends React.Component {
     if (probe && probe.to === this.side()) {
       this.probe = null;
       const target = this.elements[probe.to];
-      if (target) target.requestCrossProbe(probe.request);
+      if (target && typeof target.requestCrossProbe === 'function') target.requestCrossProbe(probe.request);
     }
   }
 
@@ -300,6 +307,7 @@ export default class KicadView extends React.Component {
                        show-header="false" hide-chrome="true" data-view={context}
                        style={css(shown(context))} />
         ))}
+        {ready && !error && members[PCB] && <PcbPanel element={this.elements[PCB]} active={side === PCB} />}
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}

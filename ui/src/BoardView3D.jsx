@@ -47,7 +47,7 @@ const BOARD_MARGIN = 0.85;
 const PART_MARGIN = 2.5;
 const PART_LEAST = 1 / 10;
 /** How far a pointer may move between press and release and still click. */
-const CLICK_SLOP = 4;
+export const CLICK_SLOP = 4;
 
 /** One loaded model on its canvas: the WebGL half of the view. */
 class Stage {

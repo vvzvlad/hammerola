@@ -121,7 +121,6 @@ export function mergeByMaterial(THREE, mergeGeometries, node) {
     if (object === node || !object.isMesh || Array.isArray(object.material)) return;
     byMaterial.set(object.material, [...(byMaterial.get(object.material) || []), object]);
   });
-  const replaced = new Set();
   for (const [material, meshes] of byMaterial) {
     if (meshes.length < 2) continue;
     const local = new THREE.Matrix4();
@@ -129,14 +128,8 @@ export function mergeByMaterial(THREE, mergeGeometries, node) {
       .applyMatrix4(local.multiplyMatrices(inverse, mesh.matrixWorld))));
     if (!geometry) continue;
     node.add(new THREE.Mesh(geometry, material));
-    for (const mesh of meshes) {
-      mesh.removeFromParent();
-      replaced.add(mesh.geometry);
-    }
+    for (const mesh of meshes) mesh.removeFromParent();
   }
-  // The loader shares a geometry between primitives that read the same data.
-  node.traverse((object) => replaced.delete(object.geometry));
-  for (const geometry of replaced) geometry.dispose();
   prune(node);
 }
 
