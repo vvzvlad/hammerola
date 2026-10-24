@@ -144,6 +144,8 @@ function element(state = {}, viewer = fakeViewer()) {
   // would let a test assert the right thing about the wrong absence.
   vp.payload = null
   vp.overlayParts = []
+  // The three namespace, which `show()` keeps for the comment tool.
+  vp.three = null
   vp.overlay = { refresh: vi.fn() }
   // The comment arrows: a widget in the scene like the three below, handed the
   // pin list on every pass and carried across a scene the library disposes.
@@ -791,8 +793,11 @@ describe('show', () => {
    * the real pipeline run against `fakeViewer()` — the same fake `internals()`,
    * `reconcile()` and the whole section suite already drive. Only the two
    * methods `show()` itself calls are added on top of it.
+   *
+   * `THREE` is the namespace the library brings, absent unless a case asks
+   * where it goes: every widget it is handed to is a stub here.
    */
-  function rendering() {
+  function rendering(THREE = undefined) {
     const viewer = fakeViewer()
     viewer.render = vi.fn()
     viewer.resizeCadView = vi.fn()
@@ -810,6 +815,7 @@ describe('show', () => {
     loadViewerLibrary.mockImplementationOnce(async () => ({
       Viewer: function Viewer() { return viewer },
       Display: function Display() {},
+      THREE,
     }))
     const vp = element({ views, view: 'a' }, null)
     // What `connectedCallback` would have set. The box carries no
@@ -860,6 +866,20 @@ describe('show', () => {
     expect(vp.handle.attach).toHaveBeenCalledTimes(1)
     expect(vp.handle.attach.mock.invocationCallOrder[0])
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('keeps the three namespace the library brought, for the comment normal', async () => {
+    // The comment tool casts its ray at the picked part with `vp.three`
+    // (`meshNormalAt` in tools.js). Without it the tool falls back to the probe
+    // rings without a word, and a comment on a part a few pixels across stores
+    // no normal.
+    const THREE = { Raycaster: function Raycaster() {} }
+    const { vp } = rendering(THREE)
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(vp.three).toBe(THREE)
   })
 
   it('ends a drag of the section handle before it replaces the scene', async () => {

@@ -17,6 +17,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 // Only the two the branch ends in are replaced; everything else in the module
 // stays real, because measure.js imports from it too and a stubbed-out module
 // would fail to load rather than fail a test.
@@ -38,6 +40,7 @@ import { installTools } from '../src/viewport/tools.js'
 import { makeViewport, RECT, settled } from './component.js'
 import {
   fakeCapUnits, fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
+  realCamera,
 } from './fakes.js'
 
 const teardowns = []
@@ -237,6 +240,116 @@ describe('a comment tool click', () => {
     expect(placed(TOWARDS)).toEqual([
       { id: '/model/plate', name: 'plate', p: [1, 2, 3], n: TOWARDS },
     ])
+  })
+
+  // THE MESH'S OWN NORMAL, cast for with a real ray: a real three camera at the
+  // suite's pose (`realCamera`), so the middle of the canvas looks down -Z along
+  // x = y = 0. The probe rings stay mocked and answer nothing unless a case
+  // says so, which is what they answer on a part a few pixels across.
+  const MIDDLE = [400, 300]
+  const TILTED = [0, 0.6, 0.8]
+  // A triangle through (0, 0, 45) on the plane whose normal is TILTED, wound
+  // towards +Z, as flat xyz runs.
+  const SLOPE = [-1, -1, 45.75, 1, -1, 45.75, 0, 1, 44.25]
+  // Two pixels across, so every probe ring sample falls off it, in its mesh's
+  // own frame: flat on z = 0, its right edge through (0.025, 0, 0).
+  const TINY = [-0.05, -0.05, 0, 0.05, -0.05, 0, 0, 0.05, 0]
+  // Two pixels to the right of the middle: 0.1 along x, off TINY wherever it is
+  // stood, whose reach along x = 0 is 0.025.
+  const BESIDE = [MIDDLE[0] + 2, MIDDLE[1]]
+
+  /** A solid whose `front` mesh is these triangles, as the library hangs it:
+   *  flat xyz runs, or vertices and an `index` into them. */
+  function solid(positions, index = null) {
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    if (index) geometry.setIndex(index)
+    const group = new THREE.Group()
+    group.front = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial())
+    group.add(group.front)
+    return group
+  }
+
+  /** A solid tilted by its mesh and stood at z = 45 by its group, so its
+   *  normal is TILTED only through the world matrix. TINY becomes a latch
+   *  whose right edge passes through (0.025, 0, 45). */
+  function latch(positions = TINY, index = null) {
+    const part = solid(positions, index)
+    part.front.rotation.x = -Math.asin(0.6)
+    part.position.set(0, 0, 45)
+    return part
+  }
+
+  /** The `n` one comment click at `at` on the canvas sends, on `group`
+   *  picked at `point` under the name `id`. */
+  function sentOn(group, {
+    three = THREE, point = [0, 0, 45], at = MIDDLE, id = '/model/latch',
+  } = {}) {
+    const model = orthoCamera()
+    realCamera(THREE, model)
+    const vp = toolViewport({ tool: 'comment' },
+      fakeViewer({ camera: model, groups: { '/model/latch': group } }))
+    vp.three = three
+    pickEntity.mockReturnValue({ id, name: 'latch', point })
+    pointerDown(vp, at)
+    pointerUp(at)
+    return details(vp, EVENT_PLACE)[0].n
+  }
+
+  const isVector = (actual, expected, message) => {
+    expect(actual, message).toHaveLength(3)
+    expected.forEach((v, at) => expect(actual[at], message).toBeCloseTo(v, 6))
+  }
+
+  it('takes the face normal of a part too small for the probe rings', () => {
+    isVector(sentOn(latch()), TILTED)
+  })
+
+  it('takes the crossing nearest the picked point, not the nearest to the camera', () => {
+    // The ray does not honour the section's clip planes, so the face at z = 50
+    // can be one the cut removed; the picker, which does, saw z = 45.
+    const part = solid([-1, -1, 50, 1, -1, 50, 0, 1, 50, ...SLOPE])
+    isVector(sentOn(part, { point: [0, 0, 45] }), TILTED)
+  })
+
+  it('takes the normal of a small part for a click just beside it', () => {
+    // The picker takes a part from a few pixels round the click, so a click
+    // beside the latch picks it with the point on its edge, and the ray
+    // through the click misses it. On the edge, and a hair beyond it, where
+    // the ray along the view through the point misses too.
+    for (const x of [0.025, 0.0251]) {
+      isVector(sentOn(latch(), { at: BESIDE, point: [x, 0, 45] }), TILTED, `x = ${x}`)
+    }
+  })
+
+  it('walks an indexed mesh for the nearest triangle, in the mesh\'s own frame', () => {
+    // The library's meshes are indexed. Vertex 0 is in no triangle, so a walk
+    // that ignored the index would take one through it. The wall on x = 0.025
+    // at z = 44..46 of the mesh's frame is where the picked point's WORLD
+    // coordinates fall in that frame, so a walk that never took the point into
+    // it would take the wall.
+    const part = latch(
+      [0, 0, 5, ...TINY, 0.025, -1, 44, 0.025, 1, 44, 0.025, 0, 46],
+      [1, 2, 3, 4, 5, 6])
+    isVector(sentOn(part, { at: BESIDE, point: [0.0251, 0, 45] }), TILTED)
+  })
+
+  it('takes the face the view crosses at the picked point before the nearest triangle', () => {
+    // A point off the surface, here 0.2 in front of the slope: of the two, the
+    // reader sees the slope under it, while the wall on x = 0.1 is nearer. The
+    // click a unit to the left of the point misses both.
+    const part = solid([...SLOPE, 0.1, -1, 44.5, 0.1, 1, 44.5, 0.1, 0, 46.5])
+    isVector(sentOn(part, { at: [MIDDLE[0] - 20, MIDDLE[1]], point: [0, 0, 45.2] }), TILTED)
+  })
+
+  it('falls back to the probe rings without the namespace, the mesh or its triangles', () => {
+    faceNormalAt.mockReturnValue({ normal: TOWARDS, point: { x: 0, y: 0, z: 45 }, info: null })
+    expect(sentOn(solid(SLOPE), { three: null }), 'no namespace').toEqual(TOWARDS)
+    expect(sentOn(solid(SLOPE), { id: '/model/gone' }), 'no mesh').toEqual(TOWARDS)
+    const bare = new THREE.Group()
+    bare.front = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial())
+    bare.add(bare.front)
+    expect(sentOn(bare), 'no triangles').toEqual(TOWARDS)
   })
 })
 

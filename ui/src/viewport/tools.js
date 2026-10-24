@@ -21,7 +21,7 @@ import {
 import { cameraBasis, canvasXY, ndcAt } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { internals } from "./internals.js";
-import { dot3 } from "./math.js";
+import { dot3, finite3 } from "./math.js";
 import { measureDistance, measureEntity } from "./measure.js";
 import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
 import {
@@ -96,6 +96,38 @@ export function reportCut(vp) {
     offset: vp.state.cutOffset,
     range: sectionRange(vp.viewer),
   });
+}
+
+/**
+ * The normal, in the mesh's own frame, of the mesh's triangle nearest a point
+ * in the world; null for a mesh with no triangles. The walk honours the index,
+ * which the library's meshes carry, and the point is taken into the mesh's
+ * frame rather than every triangle out of it.
+ */
+function nearestTriangleNormal(three, mesh, point) {
+  const position = mesh.geometry.getAttribute("position");
+  if (!position) return null;
+  const index = mesh.geometry.index;
+  const count = index ? index.count : position.count;
+  const local = mesh.worldToLocal(point.clone());
+  const triangle = new three.Triangle();
+  const closest = new three.Vector3();
+  let best = null;
+  let nearest = Infinity;
+  for (let i = 0; i + 2 < count; i += 3) {
+    if (index) {
+      triangle.setFromAttributeAndIndices(
+        position, index.getX(i), index.getX(i + 1), index.getX(i + 2));
+    } else {
+      triangle.setFromAttributeAndIndices(position, i, i + 1, i + 2);
+    }
+    const d = triangle.closestPointToPoint(local, closest).distanceToSquared(local);
+    if (d < nearest) {
+      nearest = d;
+      best = triangle.getNormal(new three.Vector3());
+    }
+  }
+  return best;
 }
 
 export function installTools(vp) {
@@ -185,28 +217,92 @@ export function installTools(vp) {
   };
 
   /**
-   * The normal of the face under a comment's click, turned to the side the
-   * reader is looking from, or null where the face gives none.
+   * The exact normal of the face a comment was left on, in the world, taken
+   * from the picked solid's own mesh (`front`, as `partCentre` in parts.js
+   * reads it). Null without the three namespace (`vp.three`, kept by `show()`),
+   * the mesh, the click, the picked point or a triangle.
    *
-   * `faceNormalAt` takes it from a cross product, so its sign is whichever way
-   * the samples happened to wind; an arrow stood along the other sign would come
-   * out of the back of the face, inside the part. So the camera decides, as it
-   * does for the cut in `placeSectionPlane` (which wants the opposite side).
-   * Under the orthographic camera every pixel looks along the one view axis.
+   * Exact where `faceNormalAt` is not: that samples rings of pixels round the
+   * click and needs two of them on the same solid, so a part a few pixels
+   * across on screen gives it nothing.
    *
-   * Guarded like `seedCut`: a picker that throws costs the arrow its direction,
-   * not the comment its point.
+   * Three tries, each for a click the one before cannot place:
+   *   * a ray from the camera through the click;
+   *   * a ray along the view through the picked point. The picker takes a part
+   *     from a few pixels round the click (`pickEntity`, over the library's
+   *     half-resolution id buffer), so a click just outside a small part's
+   *     outline picks it with the point on its edge, and the first ray misses;
+   *   * the triangle nearest the picked point, for an edge point the second
+   *     ray only grazes.
+   *
+   * Of a ray's crossings, the one nearest the picked point wins, not the one
+   * nearest the camera: the ray does not honour the section's clip planes, so
+   * the first crossing can be geometry the cut has removed.
    */
-  const facingNormalAt = (g, x, y) => {
-    let found = null;
+  const meshNormalAt = (g, entity, event) => {
+    const three = vp.three;
+    const groups = g.nestedGroup && g.nestedGroup.groups;
+    const group = groups ? groups[entity.id] : null;
+    const mesh = group && group.front;
+    const ndc = ndcAt(g.canvas, event);
+    if (!three || !mesh || !ndc || !finite3(entity.point)) return null;
+    // As `partCentre` does: a moved part's matrix is composed by the next
+    // render, and the group is where the move is written.
+    group.updateMatrixWorld();
+    const picked = new three.Vector3(...entity.point);
+    const caster = new three.Raycaster();
+    /** The mesh-frame normal of the crossing nearest `picked` of the ray
+     *  through NDC (x, y), or null. */
+    const crossed = (x, y) => {
+      caster.setFromCamera(new three.Vector2(x, y), g.cam);
+      let best = null;
+      for (const hit of caster.intersectObject(mesh, false)) {
+        if (!hit.face) continue;
+        if (!best || hit.point.distanceTo(picked) < best.point.distanceTo(picked)) {
+          best = hit;
+        }
+      }
+      return best ? best.face.normal.clone() : null;
+    };
+    let local = crossed(ndc[0], ndc[1]);
+    if (!local) {
+      const seen = picked.clone().project(g.cam);
+      local = crossed(seen.x, seen.y);
+    }
+    if (!local) local = nearestTriangleNormal(three, mesh, picked);
+    if (!local) return null;
+    const n = local.transformDirection(mesh.matrixWorld);
+    return [n.x, n.y, n.z];
+  };
+
+  /**
+   * The normal of the face under a comment's click, turned to the side the
+   * reader is looking from, or null where the face gives none: the mesh's own
+   * (`meshNormalAt`), else the probe rings' (`faceNormalAt`).
+   *
+   * Either sign can point into the part: `faceNormalAt` takes it from a cross
+   * product, whose sign is whichever way the samples happened to wind, and a
+   * mesh may be wound inwards. An arrow stood along it would come out of the
+   * back of the face. So the camera decides, as it does for the cut in
+   * `placeSectionPlane` (which wants the opposite side). Under the orthographic
+   * camera every pixel looks along the one view axis.
+   *
+   * Guarded like `seedCut`: a picker or a ray that throws costs the arrow its
+   * direction, not the comment its point.
+   */
+  const facingNormalAt = (g, entity, event, x, y) => {
+    let n = null;
     try {
-      found = faceNormalAt(g.picker, x, y);
+      n = meshNormalAt(g, entity, event);
+      if (!n) {
+        const found = faceNormalAt(g.picker, x, y);
+        n = found ? found.normal : null;
+      }
     } catch (error) {
       console.warn("comment normal", error);
     }
-    const basis = found ? cameraBasis(vp.viewer, g) : null;
+    const basis = n ? cameraBasis(vp.viewer, g) : null;
     if (!basis) return null;
-    const n = found.normal;
     return dot3(n, basis.view) > 0 ? [-n[0], -n[1], -n[2]] : n;
   };
 
@@ -335,7 +431,7 @@ export function installTools(vp) {
       if (!entity) return;
       emit(vp, EVENT_PLACE, {
         id: entity.id, name: entity.name, p: entity.point,
-        n: facingNormalAt(g, x, y),
+        n: facingNormalAt(g, entity, event, x, y),
       });
       return;
     }
