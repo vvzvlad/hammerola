@@ -15,8 +15,8 @@
 //   board,
 //   board3d    a member of a KiCad design, drawn with the design's other
 //              listed members linked to it (KicadView.jsx); the build's
-//              `documents` say which those are, and a double click asks the
-//              page to open one (`onOpen`, with its id)
+//              `documents` say which those are, and its right-click menu
+//              asks the page to open one (`onOpen`, with its id)
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.

@@ -7,6 +7,8 @@
 // `ecad-viewer:view-state-change` at once, `clearSelection` reports
 // `ecad-viewer:highlight-change` only when it put a net out, and a part selected
 // from another view (`requestCrossProbe`) puts the nets out without a word. The
+// active layer's name is kept apart from the layers' flags: a preset clears the
+// flags and not the name, and `clearSelection` lights the named layer again. The
 // panel is the real class with `setState` merging in place, its tree read off
 // `render()`.
 
@@ -25,6 +27,7 @@ function boardElement() {
     layers: LAYERS.map((name) => ({ name, color: `var(--swatch-${name})`, visible: true, highlighted: false })),
     zones: 0.6,
     nets: [],
+    active: null,
   }
   const changed = () => element.dispatchEvent(new CustomEvent(VIEW_STATE_EVENT))
   const layer = (name) => board.layers.find((one) => one.name === name)
@@ -39,6 +42,7 @@ function boardElement() {
       changed()
     }),
     setPcbLayerHighlight: vi.fn((name) => {
+      board.active = name
       for (const one of board.layers) one.highlighted = one.name === name
       changed()
     }),
@@ -55,7 +59,9 @@ function boardElement() {
       board.nets = nets.map((net) => ({ ...net }))
       return { applied: nets, unresolved: [] }
     }),
+    requestCrossProbe: vi.fn(() => true),
     clearSelection: vi.fn(() => {
+      for (const one of board.layers) one.highlighted = one.name === board.active
       if (!board.nets.length) return
       board.nets = []
       element.dispatchEvent(new CustomEvent(HIGHLIGHT_EVENT))
@@ -173,6 +179,36 @@ describe('the board\'s panel', () => {
     select(element, { sourceContext: 'PCB', itemType: 'via', net: 'GND', netCode: 1 })
     element.clearSelection()
     expect(header(panel)).toEqual(['Layers'])
+  })
+
+  it('outlines a footprint clicked while a net is lit, which the viewer does not, and keeps the camera', () => {
+    const { panel, element } = mounted()
+    const footprint = { sourceContext: 'PCB', itemType: 'footprint', reference: 'U501' }
+    // nothing lit: the viewer outlined it itself
+    select(element, footprint)
+    expect(element.requestCrossProbe).not.toHaveBeenCalled()
+    select(element, { sourceContext: 'PCB', itemType: 'track', net: 'GND', netCode: 1 })
+    select(element, footprint)
+    expect(element.requestCrossProbe.mock.calls).toEqual([[{ targetContext: 'PCB', kind: 'designator', value: 'U501', mode: 'hover' }]])
+    // asked once the net is out, not before
+    expect(element.setHighlightedNets).toHaveBeenLastCalledWith([])
+    expect(element.setHighlightedNets.mock.invocationCallOrder.at(-1)).toBeLessThan(element.requestCrossProbe.mock.invocationCallOrder[0])
+    expect(header(panel)).toEqual(['Layers'])
+    // the bare board asks for no part
+    select(element, { sourceContext: 'PCB', itemType: 'via', net: 'GND', netCode: 1 })
+    select(element, { sourceContext: 'PCB', itemType: '' })
+    expect(element.requestCrossProbe).toHaveBeenCalledTimes(1)
+  })
+
+  it('puts the active layer out before a preset, so that a selection made elsewhere does not light it hidden', () => {
+    const { panel, element } = mounted()
+    pressName(panel, 'B.Cu')
+    press(panel, 'data-preset', 'front')
+    // KicadView's, for a wire selected in the schematic, read when the board is back
+    element.clearSelection()
+    panel.readBack()
+    expect(shown(panel)).toEqual(['F.Cu', 'F.SilkS'])
+    expect(panel.state.layers.filter((one) => one.highlighted)).toEqual([])
   })
 
   it('lights the net again after the layers change, which the viewer does not repaint', () => {

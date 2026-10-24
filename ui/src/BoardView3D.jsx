@@ -13,7 +13,8 @@
 //   selected  a designator or null: that part is lit and the camera moves to it;
 //             null puts it out. Never reported back through `onSelect`
 //   onSelect  a click: the designator of the part under the pointer, or null
-//   onJump    a double click on a part: its designator
+//   onMenu    a right click on a part, which selects it as a click does: its
+//             designator and the pointer's page point (`clientX`, `clientY`)
 //
 // Drawing is on demand — a frame when the camera, the size or the selection
 // changes, none while the view is hidden. Everything three holds is freed on
@@ -46,7 +47,8 @@ const BOARD_MARGIN = 0.85;
  *  board, so a 0402 still shows its neighbours. */
 const PART_MARGIN = 2.5;
 const PART_LEAST = 1 / 10;
-/** How far a pointer may move between press and release and still click. */
+/** How far a pointer may move between press and release and still click; the
+ *  controls orbit with a left drag and pan with a right one. */
 export const CLICK_SLOP = 4;
 
 /** One loaded model on its canvas: the WebGL half of the view. */
@@ -93,22 +95,22 @@ class Stage {
     this.controls.zoomToCursor = true;
     this.controls.addEventListener('change', () => this.request());
 
+    // A click with the left button or the right one: `[button, x, y]` of the
+    // press. The right one selects as the left does and opens the menu too.
     this.raycaster = new THREE.Raycaster();
     this.down = null;
     canvas.addEventListener('pointerdown', (event) => {
-      this.down = event.button === 0 ? [event.clientX, event.clientY] : null;
+      this.down = event.button === 0 || event.button === 2 ? [event.button, event.clientX, event.clientY] : null;
     });
     canvas.addEventListener('pointerup', (event) => {
       const down = this.down;
       this.down = null;
-      if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > CLICK_SLOP) return;
+      if (!down || event.button !== down[0]
+        || Math.hypot(event.clientX - down[1], event.clientY - down[2]) > CLICK_SLOP) return;
       const part = this.pick(event);
       this.select(part, false);
       this.handlers.onSelect(part);
-    });
-    canvas.addEventListener('dblclick', (event) => {
-      const part = this.pick(event);
-      if (part) this.handlers.onJump(part);
+      if (part && down[0] === 2) this.handlers.onMenu(part, event.clientX, event.clientY);
     });
 
     this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.resize()) : null;
@@ -266,7 +268,7 @@ export default class BoardView3D extends React.Component {
         }
         this.stage = new Stage(lib, this.host, gltf, {
           onSelect: (designator) => this.props.onSelect && this.props.onSelect(designator),
-          onJump: (designator) => this.props.onJump && this.props.onJump(designator),
+          onMenu: (designator, x, y) => this.props.onMenu && this.props.onMenu(designator, x, y),
         });
         this.stage.select(this.props.selected || null, true);
         this.stage.setActive(Boolean(this.props.active));

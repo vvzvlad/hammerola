@@ -5,8 +5,8 @@
 // `"kind": "documents"` (src/render.py).
 //
 // The document is drawn by DocumentView.jsx, which the model's page uses too.
-// The page holds only which document is open: a double click across a KiCad
-// design's link opens the other member through the same door a row does
+// The page holds only which document is open: `Show in …` of a KiCad design's
+// right-click menu opens the other member through the same door a row does
 // (`onPick`).
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
@@ -60,8 +60,8 @@ const BAR = `${BAR_LAYER}18`;
 
 /**
  * The whole page, from what the shell holds. Pure. `onPick(id)` opens a
- * document: what a row of the list does, and a double click across a KiCad
- * design's link; `viewsOpen` says the list is open, `onToggle` opens or shuts
+ * document: what a row of the list does, and `Show in …` of a KiCad design's
+ * right-click menu; `viewsOpen` says the list is open, `onToggle` opens or shuts
  * it and `onClose` shuts it, from a click anywhere else on the page.
  */
 export function DocPage({ meta, active, base, onPick, viewsOpen, onToggle, onClose }) {

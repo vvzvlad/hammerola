@@ -4,15 +4,17 @@
 //
 // Which member is on screen is the page's: a row each in its list of views
 // (viewlist.jsx), handed down as `doc`. A click that selects a part selects it
-// in the other views too, without asking the page for anything; a double click
-// that crosses to another member asks the page to open it (`onOpen`, with its
-// id) and selects there once the page has answered.
+// in the other views too, without asking the page for anything; a click on
+// nothing puts out everything. `Show in …` of the right-click menu asks the
+// page to open another member (`onOpen`, with its id) and selects there once
+// the page has answered.
 //
 // The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
 // and are checked in a browser; here the two elements are plain DOM elements
-// carrying the methods this component calls, a click or a double click is the
-// event the viewer dispatches for one, and the 3D view is a stand-in whose
-// props are read off the drawn tree.
+// carrying the methods this component calls, a click is the event the viewer
+// dispatches for one, and each holds a canvas whose click reports what the test
+// put under the pointer (`element.under`), as the viewer's own click does. The
+// 3D view is a stand-in whose props are read off the drawn tree.
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -23,8 +25,8 @@ import { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  BOARD3D, CROSSPROBE_EVENT, crossProbeRequest, designFiles, designKey, designMembers,
-  designSources, drawnViews, jumpTarget, PCB, SCH, SELECTION_EVENT,
+  BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawnViews,
+  menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -46,6 +48,9 @@ const pdf = { id: 'ds__ne555.pdf', name: 'ds/ne555.pdf', type: 'pdf', file: 'ds/
 const DOCS = [schematic(), board(), model3d(), pdf, board('psu/psu.kicad_pcb', null)]
 
 const ofType = (tree, type) => collect(tree, (el) => (el.type === type ? el : undefined))
+
+/** The view area, where the page puts it. */
+const AREA = { left: 0, top: 50, width: 800, height: 600 }
 
 /** A view with its elements attached, as React would attach them, under a
  *  page that answers `onOpen` by handing that document down, as both pages do.
@@ -69,14 +74,36 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.setActive = vi.fn()
       element.clearSelection = vi.fn()
     }
+    // The canvas the viewer draws on: a click reports what is under the
+    // pointer, after the move that put it there. `picks` is what it was handed.
+    const canvas = document.createElement('canvas')
+    element.append(canvas)
+    element.picks = []
+    canvas.addEventListener('mousemove', (event) => element.picks.push(['move', event.clientX, event.clientY]))
+    canvas.addEventListener('click', (event) => {
+      element.picks.push([`click ${event.button}`, event.clientX, event.clientY])
+      click(element, element.under)
+    })
     view.refCallbacks[context](element)
     elements[context] = element
   }
+  view.shell = { getBoundingClientRect: () => AREA }
   return { view, elements }
 }
 
-const doubleClick = (element, detail) => element.dispatchEvent(new CustomEvent(CROSSPROBE_EVENT, { detail }))
 const click = (element, detail) => element.dispatchEvent(new CustomEvent(SELECTION_EVENT, { detail }))
+/** A right press on a view's canvas and its release `moved` px further on, as
+ *  the browser reports them, out of the viewer's shadow tree. */
+function rightClick(element, x, y, moved = 0, button = 2) {
+  const canvas = element.querySelector('canvas')
+  const at = (type, dx) => new MouseEvent(type, { button, clientX: x + dx, clientY: y, bubbles: true, composed: true })
+  canvas.dispatchEvent(at('pointerdown', 0))
+  canvas.dispatchEvent(at('pointerup', moved))
+}
+/** The menu as drawn, and its items. */
+const menuOf = (view) => collect(view.render(), (el) => (el.props['data-menu'] ? el : undefined))[0]
+const itemsOf = (view) => collect(menuOf(view), (el) => (el.props['data-show'] ? el : undefined))
+const ESCAPE = () => new KeyboardEvent('keydown', { key: 'Escape' })
 
 /** The 3D view as drawn: its props, and the box that shows or hides it. */
 const view3d = (view) => {
@@ -201,23 +228,6 @@ describe('a KiCad design', () => {
   })
 })
 
-describe('where a double click jumps', () => {
-  it('schematic and board to each other, the 3D model to the board else the schematic, never to 3D', () => {
-    const jumps = {}
-    for (const listed of [[SCH], [PCB], [BOARD3D], [SCH, PCB], [SCH, BOARD3D], [PCB, BOARD3D], [SCH, PCB, BOARD3D]]) {
-      const members = Object.fromEntries(listed.map((view) => [view, {}]))
-      for (const from of listed) jumps[`${listed} ${from}`] = jumpTarget(from, members)
-    }
-    expect(jumps).toEqual({
-      'SCH SCH': null, 'PCB PCB': null, '3D 3D': null,
-      'SCH,PCB SCH': PCB, 'SCH,PCB PCB': SCH,
-      'SCH,3D SCH': null, 'SCH,3D 3D': SCH,
-      'PCB,3D PCB': null, 'PCB,3D 3D': PCB,
-      'SCH,PCB,3D SCH': PCB, 'SCH,PCB,3D PCB': SCH, 'SCH,PCB,3D 3D': PCB,
-    })
-  })
-})
-
 describe('a click selects the same part in every view', () => {
   it('from the schematic or the board: the others select it, nothing on screen changes', () => {
     const { view, elements } = mounted()
@@ -262,7 +272,9 @@ describe('a click selects the same part in every view', () => {
     expect(() => {
       three().onSelect('L101')
       three().onSelect(null)
-      three().onJump('L101')
+      view.key(ESCAPE())
+      three().onMenu('L101', 10, 60)
+      itemsOf(view)[1].props.onClick()
     }).not.toThrow()
     expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
   })
@@ -278,18 +290,24 @@ describe('a click selects the same part in every view', () => {
     expect(view.props.onOpen).not.toHaveBeenCalled()
   })
 
-  it('a double click on the 3D model opens the board, else the schematic, and selects the part there', () => {
-    const { view, elements } = mounted(DOCS[2])
-    view3d(view).three.props.onJump('L101')
-    expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
-    expect(elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith(designator(PCB, 'L101'))
-    expect(view3d(view).three.props.active).toBe(false)
+  it('a click on nothing, and Escape, put out what is lit in every view, the clicked one included', () => {
+    const { view, elements } = mounted(DOCS[1])
+    const cleared = () => [SCH, PCB].map((context) => elements[context].clearSelection.mock.calls.length)
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'U501' })
+    click(elements[PCB], { sourceContext: PCB, itemType: '' })
+    expect(cleared()).toEqual([1, 1])
+    expect(view3d(view).three.props.selected).toBeNull()
 
-    const docs = [schematic(), model3d()]
-    const bare = mounted(docs[1], docs)
-    view3d(bare.view).three.props.onJump('U501')
-    expect(bare.view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
-    expect(bare.elements[SCH].requestCrossProbe).toHaveBeenCalledWith(designator(SCH, 'U501'))
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'U501' })
+    // not while typing in a field of the page, and no other key
+    const field = document.body.appendChild(document.createElement('textarea'))
+    field.focus()
+    view.key(ESCAPE())
+    field.remove()
+    view.key(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect([cleared(), view.state.selected]).toEqual([[1, 1], 'U501'])
+    view.key(ESCAPE())
+    expect([cleared(), view.state.selected]).toEqual([[2, 2], null])
   })
 })
 
@@ -305,55 +323,186 @@ describe('the link between the schematic and the board', () => {
     expect(crossProbeRequest({ itemType: 'wire' }, PCB)).toBeNull()
   })
 
-  it('a double click on the schematic asks the page to open the board, then selects the part there', () => {
+})
+
+describe('the right-click menu', () => {
+  const C523 = { sourceContext: SCH, itemType: 'symbol', reference: 'C523' }
+
+  it('offers every other member that can show the part or the net, named after it', () => {
+    const offered = (from, detail, views) => {
+      const menu = menuFor(from, detail, Object.fromEntries(views.map((view) => [view, { id: `id-${view}`, name: view }])))
+      return menu && `${menu.kind} ${menu.value}: ${menu.items.map((item) => `${item.label} (${item.id})`).join(', ')}`
+    }
+    const all = [SCH, PCB, BOARD3D]
+    const pad = { itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' }
+    const track = { itemType: 'track', net: '+5V', netCode: 14 }
+    const label = { itemType: 'global-label', net: 'EFUSE_PGOOD' }
+    expect([
+      offered(SCH, C523, all), offered(PCB, pad, all), offered(BOARD3D, { reference: 'L101' }, all),
+      // a net: the drawings only, never the 3D model
+      offered(PCB, track, all), offered(SCH, label, all),
+      // no board, no 3D model
+      offered(SCH, C523, [SCH, BOARD3D]), offered(SCH, label, [SCH, BOARD3D]), offered(BOARD3D, { reference: 'L101' }, [SCH, BOARD3D]),
+      offered(PCB, pad, [SCH, PCB]), offered(PCB, track, [PCB, BOARD3D]),
+      // neither a part nor a net, a design of one
+      offered(SCH, { itemType: 'wire' }, all), offered(SCH, { itemType: '' }, all), offered(PCB, pad, [PCB]),
+    ]).toEqual([
+      'designator C523: Show in PCB (id-PCB), Show in 3D (id-3D)',
+      'designator U501: Show in SCH (id-SCH), Show in 3D (id-3D)',
+      'designator L101: Show in SCH (id-SCH), Show in PCB (id-PCB)',
+      'net +5V: Show in SCH (id-SCH)',
+      'net EFUSE_PGOOD: Show in PCB (id-PCB)',
+      'designator C523: Show in 3D (id-3D)', null, 'designator L101: Show in SCH (id-SCH)',
+      'designator U501: Show in SCH (id-SCH)', null,
+      null, null, null,
+    ])
+  })
+
+  it('asks the viewer what is under a right click as it picks for a left one, selects it, and opens there', () => {
     const { view, elements } = mounted()
-    doubleClick(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'C523' })
-    expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
-    // selected once the board is the member on screen, not before
-    expect(view.props.doc.id).toBe('hw__board.kicad_pcb')
+    elements[SCH].under = C523
+    rightClick(elements[SCH], 300, 250)
+    expect(elements[SCH].picks).toEqual([['move', 300, 250], ['click 0', 300, 250]])
+    // selected as a left click selects it
+    expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, 'C523'))
+    expect(view3d(view).three.props.selected).toBe('C523')
+    // at the pointer, in the view area, in the page's colours
+    expect(menuOf(view).props.style).toMatchObject({ position: 'absolute', left: '300px', top: '200px', width: '220px',
+      background: 'var(--card-bg)', border: '1px solid var(--line)' })
+    expect(texts(menuOf(view))).toEqual(['C523', 'Show in hw/board.kicad_pcb', 'Show in hw/board.glb'])
+    expect(itemsOf(view)[0].props.style.color).toBe('var(--text)')
+    expect(view.props.onOpen).not.toHaveBeenCalled()
+  })
+
+  it('opens nothing for a press the viewer panned with, another button, or a release off its canvas', () => {
+    const { view, elements } = mounted()
+    elements[SCH].under = C523
+    rightClick(elements[SCH], 300, 250, PAN_SLOP)
+    rightClick(elements[SCH], 300, 250, 0, 0)
+    elements[SCH].dispatchEvent(new MouseEvent('pointerdown', { button: 2, clientX: 9, clientY: 9 }))
+    elements[SCH].dispatchEvent(new MouseEvent('pointerup', { button: 2, clientX: 9, clientY: 9 }))
+    expect([elements[SCH].picks, menuOf(view)]).toEqual([[], undefined])
+    rightClick(elements[SCH], 300, 250, PAN_SLOP - 1)
+    expect(menuOf(view)).toBeDefined()
+  })
+
+  it('an item opens its member and selects the same part or net there, once the page hands it down', () => {
+    const { view, elements } = mounted()
+    elements[SCH].under = C523
+    rightClick(elements[SCH], 300, 250)
+    // the page answers later: nothing more is asked of the board until it does
+    const answer = view.props.onOpen
+    view.props.onOpen = vi.fn()
+    itemsOf(view)[0].props.onClick()
+    view.componentDidUpdate()
+    expect([view.props.onOpen.mock.calls, elements[PCB].requestCrossProbe.mock.calls.length, menuOf(view)])
+      .toEqual([[['hw__board.kicad_pcb']], 1, undefined])
+    view.props.onOpen = answer
+    answer('hw__board.kicad_pcb')
+    expect(elements[PCB].requestCrossProbe).toHaveBeenCalledTimes(2)
+    expect(elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith(designator(PCB, 'C523'))
     expect(elements[PCB].setActive).toHaveBeenLastCalledWith(true)
-    expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(
-      { targetContext: PCB, kind: 'designator', value: 'C523' })
-    expect(elements[SCH].requestCrossProbe).not.toHaveBeenCalled()
+
+    // a part on the board, shown in the 3D model
+    elements[PCB].under = { sourceContext: PCB, itemType: 'footprint', reference: 'U501' }
+    rightClick(elements[PCB], 100, 100)
+    expect(texts(menuOf(view))).toEqual(['U501', 'Show in hw/board.kicad_sch', 'Show in hw/board.glb'])
+    itemsOf(view)[1].props.onClick()
+    expect([view.props.doc.id, view3d(view).three.props]).toMatchObject(['hw__board.glb', { active: true, selected: 'U501' }])
+
+    // a track's net, shown in the schematic only
+    view.props = { ...view.props, doc: DOCS[1] }
+    elements[PCB].under = { sourceContext: PCB, itemType: 'track', net: 'GND', netCode: 1 }
+    rightClick(elements[PCB], 100, 100)
+    expect(texts(menuOf(view))).toEqual(['net GND', 'Show in hw/board.kicad_sch'])
+    itemsOf(view)[0].props.onClick()
+    expect(view.props.onOpen).toHaveBeenLastCalledWith('hw__board.kicad_sch')
+    expect(elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: SCH, kind: 'net', value: 'GND' })
   })
 
-  it('a double click on a track asks for the schematic, and selects its net there', () => {
-    const { view, elements } = mounted(DOCS[1])
-    doubleClick(elements[PCB], { sourceContext: PCB, itemType: 'net', net: 'GND' })
+  it('from the 3D model offers both drawings, and opens nothing for a design without them', () => {
+    const { view, elements } = mounted(DOCS[2])
+    view3d(view).three.props.onSelect('L101')
+    view3d(view).three.props.onMenu('L101', 700, 640)
+    // no room right of or below the pointer: left of and above it
+    expect(menuOf(view).props.style).toMatchObject({ left: '480px', top: `${590 - menuHeight(2)}px` })
+    itemsOf(view)[0].props.onClick()
     expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
-    expect(elements[SCH].requestCrossProbe).toHaveBeenCalledWith(
-      { targetContext: SCH, kind: 'net', value: 'GND' })
+    expect(elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(designator(SCH, 'L101'))
+
+    const lone = mounted(model3d(), [model3d()])
+    view3d(lone.view).three.props.onMenu('L101', 10, 60)
+    expect(menuOf(lone.view)).toBeUndefined()
   })
 
-  it('selects nothing while the page has not opened the other member', () => {
-    const view = new KicadView({ doc: DOCS[0], documents: DOCS, base: BASE, onOpen: vi.fn() })
-    view.setState = (patch, done) => {
-      Object.assign(view.state, patch)
-      if (done) done()
+  it('goes on Escape, a press elsewhere, the wheel, a resize and its view leaving the screen; one at a time', () => {
+    const { view, elements } = mounted()
+    // in the page, where a press on a view reaches the document
+    document.body.append(...Object.values(elements))
+    view.listen(true)
+    elements[SCH].under = C523
+    const opened = (x = 300) => {
+      rightClick(elements[SCH], x, 250)
+      return menuOf(view)
     }
-    const elements = {}
-    for (const context of [SCH, PCB]) {
-      elements[context] = document.createElement('ecad-viewer')
-      elements[context].requestCrossProbe = vi.fn(() => true)
-      elements[context].setActive = vi.fn()
-      view.refCallbacks[context](elements[context])
+    // the right press of a second right click puts the first menu out
+    opened()
+    expect(opened(500).props.style.left).toBe('500px')
+    expect(collect(view.render(), (el) => el.props['data-menu'])).toEqual([SCH])
+    // Escape closes it and leaves the part selected
+    window.dispatchEvent(ESCAPE())
+    expect([menuOf(view), view.state.selected, elements[SCH].clearSelection.mock.calls.length]).toEqual([undefined, 'C523', 0])
+    // a press on the menu keeps it, a press anywhere else does not
+    opened()
+    view.setMenu(document.body.appendChild(document.createElement('div')))
+    view.menuNode.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    expect(menuOf(view)).toBeDefined()
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    expect(menuOf(view)).toBeUndefined()
+    opened()
+    view.render().props.onWheelCapture()
+    expect(menuOf(view)).toBeUndefined()
+    opened()
+    window.dispatchEvent(new Event('resize'))
+    expect(menuOf(view)).toBeUndefined()
+    // the page shows another member
+    opened()
+    view.props = { ...view.props, doc: DOCS[1] }
+    expect(menuOf(view)).toBeUndefined()
+    view.componentDidUpdate()
+    expect(view.state.menu).toBeNull()
+    view.componentWillUnmount()
+    view.props = { ...view.props, doc: DOCS[0] }
+    opened()
+    window.dispatchEvent(new Event('resize'))
+    expect(menuOf(view)).toBeDefined()
+    for (const node of [view.menuNode, ...Object.values(elements)]) node.remove()
+  })
+
+  it('stays inside the view area wherever it opens, a phone\'s too', () => {
+    expect(menuPlace(100, 100, 2, { width: 800, height: 600 })).toEqual({ left: 100, top: 100, width: 220 })
+    expect(menuPlace(700, 580, 2, { width: 800, height: 600 })).toEqual({ left: 480, top: 580 - menuHeight(2), width: 220 })
+    for (const x of [0, 120, 195, 300, 389]) {
+      for (const y of [0, 350, 699]) {
+        const { left, top, width } = menuPlace(x, y, 2, { width: 390, height: 700 })
+        expect([left >= 8, left + width <= 382, top >= 8, top + menuHeight(2) <= 692]).toEqual([true, true, true, true])
+      }
     }
-    doubleClick(elements[SCH], { reference: 'R1' })
-    view.componentDidUpdate(view.props)
-    expect(elements[PCB].requestCrossProbe).not.toHaveBeenCalled()
+    // an area narrower than the menu narrows it
+    expect(menuPlace(10, 10, 1, { width: 200, height: 300 }).width).toBe(184)
   })
 
   it('does nothing without a sibling, or once an element is detached', () => {
     const lone = mounted(schematic(), [schematic(), pdf])
-    expect(drawnViews(lone.view.members())).toEqual([SCH])
-    doubleClick(lone.elements[SCH], { reference: 'R1' })
-    expect(lone.view.props.onOpen).not.toHaveBeenCalled()
+    lone.elements[SCH].under = C523
+    rightClick(lone.elements[SCH], 300, 250)
+    expect(menuOf(lone.view)).toBeUndefined()
 
     const { view, elements } = mounted()
     view.refCallbacks[SCH](null)
-    doubleClick(elements[SCH], { reference: 'R1' })
-    expect(view.props.onOpen).not.toHaveBeenCalled()
-    expect(elements[PCB].requestCrossProbe).not.toHaveBeenCalled()
+    elements[SCH].under = C523
+    rightClick(elements[SCH], 300, 250)
+    expect([elements[SCH].picks, menuOf(view)]).toEqual([[], undefined])
   })
 })
 

@@ -90,8 +90,8 @@ export function chromeView(s, props, deps) {
   // that does not list `s.doc` shows its model.
   const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
   const docOpen = documents.find((d) => d.id === s.doc) || null;
-  // Opening a document: what its row does, and what a double click across a
-  // KiCad design's link does with the other member's id.
+  // Opening a document: what its row does, and what `Show in …` of a KiCad
+  // design's right-click menu does with the other member's id.
   const openDoc = (id) => setState({ doc: id, viewsOpen: false });
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc);
@@ -442,8 +442,8 @@ export function chromeView(s, props, deps) {
     })),
     // The documents below the views (viewlist.jsx): a row each but for a
     // hidden one. Choosing one lays it over the model (`docOpen`), which stays
-    // mounted underneath with its camera, cut and hidden parts; a double click
-    // across a KiCad design's link opens the other member the same way
+    // mounted underneath with its camera, cut and hidden parts; `Show in …` of
+    // a KiCad design's right-click menu opens the other member the same way
     // (`onDocOpen`). Like a view, the choice does not move the address; `?d=`
     // in it opens one on arrival (`load`), a hidden one too.
     docRows,

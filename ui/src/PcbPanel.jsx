@@ -24,7 +24,17 @@
 // viewer's own highlight (`setHighlightedNets`, which dims everything else)
 // and names it in its header. A click on anything with no net, the bare board
 // included, puts it out. Which part is selected across the views stays
-// KicadView's: the same click reaches both listeners.
+// KicadView's: the same click reaches both listeners, KicadView's first.
+//
+// A FOOTPRINT CLICKED WHILE A NET IS LIT is asked for again once the net is
+// out: the viewer outlines a clicked footprint itself, but draws nothing while
+// nets are lit (`outline_fp`), and the click reaches it before this panel puts
+// the net out. `mode: 'hover'` leaves the camera where it is.
+//
+// A LAYER PRESET PUTS THE ACTIVE LAYER OUT FIRST. The viewer clears the
+// layers' flags for a preset but keeps the active layer's name apart, and
+// `clearSelection` (KicadView's, on a selection made elsewhere) lights that
+// layer again: hidden, it dims every layer drawn and takes the clicks.
 
 import React from 'react';
 
@@ -109,7 +119,7 @@ export default class PcbPanel extends React.Component {
     this.state = { open: true, layers: [], zones: ZONE_OPACITY, net: null };
     this.element = null;
     this.read = () => this.readBack();
-    this.onSelect = (event) => this.light(selectedNet(event.detail));
+    this.onSelect = (event) => this.picked(event.detail || {});
     this.toggle = () => this.setState({ open: !this.state.open });
     this.onZones = (event) => this.change((element) => element.setPcbObjectOpacity('zones', Number(event.target.value)), false);
   }
@@ -160,13 +170,28 @@ export default class PcbPanel extends React.Component {
     this.readBack();
   }
 
-  /** Light `net`, or put out whatever is lit when it is null. */
+  /** A click on the board: its net lit, or what is lit put out, and a
+   *  footprint outlined that the lit net kept the viewer from outlining. */
+  picked(detail) {
+    const putOut = this.light(selectedNet(detail));
+    if (putOut && detail.itemType === 'footprint' && detail.reference) {
+      this.element.requestCrossProbe({ targetContext: 'PCB', kind: 'designator', value: detail.reference, mode: 'hover' });
+    }
+  }
+
+  /** Light `net`, or put out whatever is lit when it is null: true when a lit
+   *  net was put out. */
   light(net) {
     const { element } = this;
-    if (!element) return;
+    if (!element) return false;
+    let putOut = false;
     if (net) element.setHighlightedNets([net]);
-    else if (element.getHighlightedNets().length) element.setHighlightedNets([]);
+    else if (element.getHighlightedNets().length) {
+      element.setHighlightedNets([]);
+      putOut = true;
+    }
     this.readBack();
+    return putOut;
   }
 
   render() {
@@ -184,7 +209,10 @@ export default class PcbPanel extends React.Component {
             <div style={css(PRESET_ROW)}>
               {PRESETS.map(([preset, label]) => (
                 <div key={preset} data-preset={preset} style={css(presetPill)}
-                     onClick={() => this.change((element) => element.applyPcbLayerPreset(preset))}>{label}</div>
+                     onClick={() => this.change((element) => {
+                       element.setPcbLayerHighlight(null);
+                       element.applyPcbLayerPreset(preset);
+                     })}>{label}</div>
               ))}
             </div>
             <label title="How strongly the copper zone fills are drawn" style={css(ZONES)}>

@@ -36,15 +36,31 @@
 //   * a click that selects a part in one view selects it in the others too,
 //     hidden as they are, and changes nothing on screen: an element reports it
 //     as `ecad-viewer:selection`, the 3D view through `onSelect`; a click on
-//     anything that is not a part (a wire, a track, the bare board) puts the
-//     part out in the others. Nets are not carried across this way;
-//   * a double click JUMPS: an element reports `ecad-viewer:crossprobe`, the 3D
-//     view `onJump`, and this component asks the page to open another member
-//     (`jumpTarget`; `onOpen` with its id, which moves the lit row of its list
-//     too) and, once the page has handed that member down, asks its element to
-//     select the same thing — a part by its designator, or a net by its name
-//     (`crossProbeRequest`). Nothing jumps TO the 3D view: one opens it from the
-//     list, where the part is already lit.
+//     anything that is not a part (a wire, a track) puts the part out in the
+//     others. A click on nothing at all, and Escape, put out what is lit in
+//     EVERY view, the clicked one included: the viewer itself leaves a part lit
+//     through a click on the bare board. Nets are not carried across this way;
+//   * the RIGHT BUTTON on a part, or in the schematic and the board on what has
+//     a net (a track, a via, a zone, a label), opens a menu at the pointer:
+//     `Show in <name>` for every other listed member that can show it, a net
+//     not the 3D model (`menuFor`). An item asks the page to open that member
+//     (`onOpen` with its id, which moves the lit row of its list too) and, once
+//     the page has handed it down, asks its element to select the same thing —
+//     a part by its designator, a net by its name (`crossProbeRequest`); the 3D
+//     view is handed the part as `selected`.
+//
+// WHAT IS UNDER THE POINTER at a right click is the viewer's own answer to a
+// left click there. It selects on the left button only and has no hit test an
+// element offers, so the right click's position is handed to the canvas it
+// landed on as the pointer move and the click the viewer picks with — neither
+// bubbles, so nothing else on the page sees them — and the selection that
+// click reports is what the menu is for. The thing is selected too, as a right
+// click in KiCad selects it. A right press the viewer panned with (it pans from
+// `PAN_SLOP` on) is no click. The 3D view picks with its own raycast.
+//
+// THE MENU is one at a time, inside the view area, in the page's colours; it
+// goes on Escape, a press anywhere else, the wheel, a resize, and when its view
+// leaves the screen.
 //
 // THE SELECTED PART'S DATASHEET is one chip at the bottom left of every view,
 // when the part's KiCad `Datasheet` field names a document of the build
@@ -59,15 +75,17 @@ import React from 'react';
 import BoardView3D from './BoardView3D.jsx';
 import { addPinEntries } from './kicadpins.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
-import { chip, ELLIPSIS } from './panelstyle.js';
+import { chip, ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
-import { css, MONO } from './style.jsx';
+import { css, MONO, SANS } from './style.jsx';
+import { typingTarget } from './viewport/holdkey.js';
 
 /** Where the hub serves the viewer; `parser.worker.js` is fetched beside it. */
 export const ECAD_VIEWER_URL = '/_v/ecad-viewer.js';
 
-/** The event an element reports a double click with. */
-export const CROSSPROBE_EVENT = 'ecad-viewer:crossprobe';
+/** How far a press may move before the viewer pans with it (`ag` in
+ *  ecad-viewer.js): a right press released nearer than this is a click. */
+export const PAN_SLOP = 3;
 
 /** The event an element reports a click's selection with
  *  (`EcadSemanticSelectionEvent`): a symbol, a pin, a footprint or a pad carries
@@ -130,12 +148,6 @@ export function loadEcadViewer() {
 /** The views of a design the viewer draws, in the order they are mounted. */
 export const drawnViews = (members) => DRAWN.filter((view) => members[view]);
 
-/** Where a double click in `from` jumps, the first of these that is listed:
- *  the schematic and the board to each other, the 3D model to the board, else
- *  the schematic. Null when none is. */
-const JUMPS = { [SCH]: [PCB], [PCB]: [SCH], [BOARD3D]: [PCB, SCH] };
-export const jumpTarget = (from, members) => (JUMPS[from] || []).find((view) => members[view]) || null;
-
 /** Where a file of the build is served from. */
 const fileUrl = (base, file) => `${base}${file.split('/').map(encodeURIComponent).join('/')}`;
 
@@ -163,14 +175,54 @@ export function designSources(members, texts) {
 }
 
 /**
- * What the other view is asked to select for a double click one reported, or
- * null: a part by its designator (a symbol, a pin, a footprint), else a net by
- * its name (a label, a pad, a track).
+ * What another view is asked to select for what a view reported selected, or
+ * null: a part by its designator (a symbol, a pin, a footprint, a pad), else a
+ * net by its name (a label, a track, a via, a zone).
  */
 export function crossProbeRequest(detail, targetContext) {
   if (detail && detail.reference) return { targetContext, kind: 'designator', value: detail.reference };
   if (detail && detail.net) return { targetContext, kind: 'net', value: detail.net };
   return null;
+}
+
+/** The views that can show a part and a net, in the order a menu lists them:
+ *  the 3D model has parts and no nets. */
+const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
+
+/**
+ * The right-click menu for what view `from` reported selected (`detail`; the
+ * 3D view's part as `{ reference }`): what it shows, and an item for every
+ * other listed member that can show it, named after that document. Null when
+ * it is neither a part nor a net, or no other member can show it.
+ */
+export function menuFor(from, detail, members) {
+  const subject = crossProbeRequest(detail, null);
+  if (!subject) return null;
+  const items = SHOWS[subject.kind].filter((view) => view !== from && members[view])
+    .map((view) => ({ view, id: members[view].id, label: `Show in ${members[view].name}` }));
+  return items.length ? { kind: subject.kind, value: subject.value, items } : null;
+}
+
+/** The menu's box, fixed, so that where it fits is known before it is drawn:
+ *  a head line, a row per item, 2px and 6px of padding and a 1px border. */
+const MENU_WIDTH = 220;
+const MENU_HEAD = 27;
+const MENU_ROW = 30;
+/** How far the menu keeps from the view area's edges. */
+const MENU_MARGIN = 8;
+export const menuHeight = (rows) => MENU_HEAD + rows * MENU_ROW + 10;
+
+/**
+ * Where a menu opened at `x`,`y` of an area `area` wide and high goes: right of
+ * and below the pointer where that fits, else left of or above it, and never
+ * past the area's edges; narrower than its width where the area is.
+ */
+export function menuPlace(x, y, rows, area) {
+  const width = Math.max(0, Math.min(MENU_WIDTH, area.width - 2 * MENU_MARGIN));
+  const height = menuHeight(rows);
+  const fit = (at, size, room) => Math.max(MENU_MARGIN,
+    Math.min(at + size + MENU_MARGIN <= room ? at : at - size, room - size - MENU_MARGIN));
+  return { left: fit(x, width, area.width), top: fit(y, height, area.height), width };
 }
 
 /** The document the datasheet of part `designator` names (kicadsheets.js), or
@@ -188,6 +240,16 @@ const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px $
 const datasheetChip = (board) => `${chip(true, 'var(--float-bg)', 'var(--line)', 'var(--text)')};`
   + 'position:absolute;left:10px;bottom:10px;box-sizing:border-box;cursor:pointer;user-select:none;'
   + `max-width:calc(100% - ${board ? 230 : 20}px)`;
+// The menu as the build page's right-click menu is drawn (rowmenu.js), in a box
+// of a known size (`menuPlace`).
+const menuBox = ({ left, top, width }) => `position:absolute;left:${left}px;top:${top}px;width:${width}px;`
+  + 'z-index:1;box-sizing:border-box;padding:2px 0 6px;background:var(--card-bg);border:1px solid var(--line);'
+  + `border-radius:9px;box-shadow:${POP_SHADOW_HIGH}`;
+const MENU_NAME = `height:${MENU_HEAD}px;box-sizing:border-box;padding:7px 14px 0;${ELLIPSIS};`
+  + `font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`;
+const menuItem = (hover) => `height:${MENU_ROW}px;box-sizing:border-box;padding:8px 14px 0;${ELLIPSIS};`
+  + `font:400 12px ${SANS};color:var(--text);cursor:pointer;user-select:none`
+  + (hover ? ';background:var(--hover-bg)' : '');
 const DOC_ICON = (
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
        strokeLinejoin="round" style={{ flex: 'none', color: 'var(--text-soft)' }}>
@@ -202,24 +264,51 @@ export default class KicadView extends React.Component {
     super(props);
     // `selected`: the designator of the part selected in the design, which the
     // 3D view is handed; the elements are told directly. `datasheets`: each
-    // part's `Datasheet` value, once the files are in.
-    this.state = { ready: false, error: '', selected: null, datasheets: new Map() };
+    // part's `Datasheet` value, once the files are in. `menu`: the right-click
+    // menu open (`menuFor`, with the view it is of and its box), `hover` the
+    // index of the item under the pointer.
+    this.state = { ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1 };
     // A selection waiting for the page to hand down the member it is on:
     // `{ to, request }`, or null.
     this.probe = null;
+    // A right press on a drawn view until it is released, `{ context, x, y }`;
+    // and while the viewer is asked what is under it, the point its menu opens
+    // at, `{ from, x, y }`.
+    this.pressed = null;
+    this.pointing = null;
     this.elements = {};
+    this.shell = null;
+    this.menuNode = null;
     // One ref callback per view, made once, so React does not detach and
     // reattach the listeners on every render.
     this.refCallbacks = { [SCH]: this.attach(SCH), [PCB]: this.attach(PCB) };
+    this.setShell = (node) => {
+      this.shell = node;
+    };
+    this.setMenu = (node) => {
+      this.menuNode = node;
+    };
     this.onSelect3D = (designator) => this.select(BOARD3D, designator);
-    this.onJump3D = (designator) => this.relay(BOARD3D, { reference: designator });
+    this.onMenu3D = (designator, x, y) => this.openMenu(BOARD3D, { reference: designator }, x, y);
+    this.closeMenu = () => {
+      if (this.state.menu) this.setState({ menu: null, hover: -1 });
+    };
+    // A press anywhere but on the menu closes it: a press on a view too, which
+    // a right press must, so that a menu is open one at a time.
+    this.onPress = (event) => {
+      if (this.state.menu && !(this.menuNode && event.composedPath().includes(this.menuNode))) this.closeMenu();
+    };
+    this.onKey = (event) => this.key(event);
   }
 
   /** The ref callback of one view's element: holds it and listens to it. */
   attach(context) {
     const listeners = {
-      [CROSSPROBE_EVENT]: (event) => this.relay(context, event.detail),
-      [SELECTION_EVENT]: (event) => this.select(context, (event.detail && event.detail.reference) || null),
+      [SELECTION_EVENT]: (event) => this.picked(context, event.detail),
+      pointerdown: (event) => {
+        this.pressed = event.button === 2 ? { context, x: event.clientX, y: event.clientY } : null;
+      },
+      pointerup: (event) => this.release(context, event),
     };
     return (element) => {
       const old = this.elements[context];
@@ -229,6 +318,15 @@ export default class KicadView extends React.Component {
       }
       this.elements[context] = element || undefined;
     };
+  }
+
+  /** The page-wide listeners, on or off: Escape, and what closes the menu
+   *  from outside the view area. */
+  listen(on) {
+    const method = on ? 'addEventListener' : 'removeEventListener';
+    window[method]('keydown', this.onKey);
+    window[method]('resize', this.closeMenu);
+    document[method]('pointerdown', this.onPress, true);
   }
 
   /** The design's listed members, by view. */
@@ -241,16 +339,18 @@ export default class KicadView extends React.Component {
     return viewOf(this.props.doc);
   }
 
-  /** A double click in `from`: the page is asked to open the member it jumps
-   *  to, and the same thing is selected there once it is on screen
-   *  (`componentDidUpdate`). */
-  relay(from, detail) {
-    const members = this.members();
-    const to = jumpTarget(from, members);
-    const request = to && crossProbeRequest(detail, to);
-    if (!request || !this.elements[to]) return;
-    this.probe = { to, request };
-    if (this.props.onOpen) this.props.onOpen(members[to].id);
+  /** What a click in the drawn view `from` selected, as its element reports
+   *  it. A click on nothing at all (an empty `itemType`) puts out what is lit
+   *  in every view (`clear`), else the other views follow (`select`). A right
+   *  click being answered (`release`) opens its menu on it. */
+  picked(from, detail) {
+    if (detail && detail.itemType === '') this.clear();
+    else this.select(from, (detail && detail.reference) || null);
+    const at = this.pointing;
+    if (at && at.from === from) {
+      this.pointing = null;
+      this.openMenu(from, detail, at.x, at.y);
+    }
   }
 
   /** A click in `from` selected the part `designator`, or something that is
@@ -270,7 +370,76 @@ export default class KicadView extends React.Component {
     if (designator !== this.state.selected) this.setState({ selected: designator });
   }
 
+  /** Nothing selected anywhere: every view puts out what it has lit, the one
+   *  on screen included — the viewer keeps a part it was asked to light from
+   *  another view lit through a click on the bare board. */
+  clear() {
+    for (const context of drawnViews(this.members())) {
+      const element = this.elements[context];
+      if (element && typeof element.clearSelection === 'function') element.clearSelection();
+    }
+    if (this.state.selected !== null) this.setState({ selected: null });
+  }
+
+  /** Escape closes the menu, or else puts out what is lit everywhere. Not
+   *  while typing: the page may have a field open over the design. */
+  key(event) {
+    if (event.key !== 'Escape' || event.defaultPrevented || typingTarget()) return;
+    if (this.state.menu) this.closeMenu();
+    else this.clear();
+  }
+
+  /** A right press released on a drawn view. Released where it was pressed it
+   *  is a click on what is under the pointer, which the viewer is asked for as
+   *  for a left click: the point goes to the canvas the press landed on as the
+   *  move and the click the viewer picks with, and the selection that click
+   *  reports opens the menu (`picked`). Released anywhere else, the viewer
+   *  panned with it. */
+  release(context, event) {
+    const { pressed } = this;
+    this.pressed = null;
+    if (event.button !== 2 || !pressed || pressed.context !== context
+      || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) >= PAN_SLOP) return;
+    const [canvas] = event.composedPath();
+    if (!canvas || canvas.localName !== 'canvas') return;
+    const at = { clientX: event.clientX, clientY: event.clientY };
+    this.pointing = { from: context, x: event.clientX, y: event.clientY };
+    canvas.dispatchEvent(new MouseEvent('mousemove', at));
+    canvas.dispatchEvent(new MouseEvent('click', { ...at, button: 0, detail: 1 }));
+    this.pointing = null;
+  }
+
+  /** The menu for what `from` selected, at the page point `x`,`y`, in place of
+   *  any other: none when there is nothing to offer. */
+  openMenu(from, detail, x, y) {
+    const menu = menuFor(from, detail, this.members());
+    if (!menu) {
+      this.closeMenu();
+      return;
+    }
+    const area = this.shell ? this.shell.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+    const box = menuPlace(x - area.left, y - area.top, menu.items.length, area);
+    this.setState({ menu: { ...menu, from, ...box }, hover: -1 });
+  }
+
+  /** An item of the menu: the page is asked to open its member, and the same
+   *  thing is selected there once the page has handed it down
+   *  (`componentDidUpdate`); the 3D view is handed the part. */
+  choose(item) {
+    const { menu } = this.state;
+    this.closeMenu();
+    if (!menu) return;
+    if (item.view === BOARD3D) {
+      if (menu.value !== this.state.selected) this.setState({ selected: menu.value });
+    } else {
+      if (!this.elements[item.view]) return;
+      this.probe = { to: item.view, request: { targetContext: item.view, kind: menu.kind, value: menu.value } };
+    }
+    if (this.props.onOpen) this.props.onOpen(item.id);
+  }
+
   componentDidMount() {
+    this.listen(true);
     const { base } = this.props;
     const members = this.members();
     const views = drawnViews(members);
@@ -305,6 +474,8 @@ export default class KicadView extends React.Component {
 
   componentDidUpdate() {
     this.activate();
+    // The menu goes with its view off the screen.
+    if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
     const { probe } = this;
     if (probe && probe.to === this.side()) {
       this.probe = null;
@@ -315,6 +486,7 @@ export default class KicadView extends React.Component {
 
   componentWillUnmount() {
     this._gone = true;
+    this.listen(false);
   }
 
   /** Tell each element whether it is the one on screen. */
@@ -328,7 +500,7 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, datasheets } = this.state;
+    const { ready, error, selected, datasheets, menu, hover } = this.state;
     const { documents, onOpen } = this.props;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const note = side !== BOARD3D && (error || (!ready && 'Loading…'));
@@ -337,7 +509,7 @@ export default class KicadView extends React.Component {
     const sheet = selectedDatasheet(selected, datasheets, members, documents);
     const label = sheet && `Datasheet · ${sheet.name}`;
     return (
-      <div style={css(SHELL)}>
+      <div ref={this.setShell} style={css(SHELL)} onWheelCapture={this.closeMenu}>
         {drawnViews(members).map((context) => (
           <ecad-viewer key={context} ref={this.refCallbacks[context]} source-mode="host"
                        show-header="false" hide-chrome="true" data-view={context}
@@ -347,7 +519,7 @@ export default class KicadView extends React.Component {
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}
-                         onSelect={this.onSelect3D} onJump={this.onJump3D} />
+                         onSelect={this.onSelect3D} onMenu={this.onMenu3D} />
           </div>
         )}
         {sheet && (
@@ -358,6 +530,18 @@ export default class KicadView extends React.Component {
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}
+        {menu && menu.from === side && (
+          <div data-menu={menu.from} ref={this.setMenu} style={css(menuBox(menu))}
+               onContextMenu={(event) => event.preventDefault()}>
+            <div style={css(MENU_NAME)}>{menu.kind === 'net' ? `net ${menu.value}` : menu.value}</div>
+            {menu.items.map((item, index) => (
+              <div key={item.view} data-show={item.view} title={item.label} style={css(menuItem(index === hover))}
+                   onMouseEnter={() => this.setState({ hover: index })}
+                   onMouseLeave={() => this.setState({ hover: -1 })}
+                   onClick={() => this.choose(item)}>{item.label}</div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

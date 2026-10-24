@@ -1,11 +1,11 @@
 // The 3D view of a board (ui/src/BoardView3D.jsx): when it fetches the model,
 // what it does with a model that arrives too late, when it draws, and what
-// counts as a click.
+// counts as a click and a right click.
 //
 // No GPU here. `loadThree` hands over three itself with the two parts that need
 // one replaced — a renderer whose canvas is a plain one, and orbit controls that
-// only hold a target — and a loader whose model is a small scene built in the
-// test: a board layer and one part, `C1`. What the view does to a model
+// only hold a target and turn the camera to it — and a loader whose model is a
+// small scene built in the test: a board layer and one part, `C1`. What the view does to a model
 // (board3d.js) runs for real and is tested in board3d.test.js. `fetch` and the
 // animation frames are driven by hand.
 
@@ -32,14 +32,18 @@ class Renderer {
 }
 
 class Controls {
-  constructor() {
+  constructor(camera) {
+    this.camera = camera
     this.target = new THREE.Vector3()
     this.enabled = true
   }
 
   addEventListener() {}
 
-  update() {}
+  update() {
+    this.camera.lookAt(this.target)
+    this.camera.updateMatrixWorld()
+  }
 
   dispose() {}
 }
@@ -79,7 +83,7 @@ function fetching() {
 
 /** The view, mounted with its holder, and a way to hand it new props. */
 function mounted(props) {
-  const view = new BoardView3D({ url: '/b/board.glb', active: false, selected: null, onSelect: vi.fn(), onJump: vi.fn(), ...props })
+  const view = new BoardView3D({ url: '/b/board.glb', active: false, selected: null, onSelect: vi.fn(), onMenu: vi.fn(), ...props })
   view.setState = (patch) => Object.assign(view.state, patch)
   const host = document.createElement('div')
   host.style.color = 'rgb(0, 102, 204)'
@@ -104,8 +108,8 @@ async function loaded() {
   return { view, update, canvas }
 }
 
-const pointer = (canvas, type, clientX, clientY) => canvas.dispatchEvent(
-  new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true }))
+const pointer = (canvas, type, clientX, clientY, button = 0) => canvas.dispatchEvent(
+  new MouseEvent(type, { clientX, clientY, button, bubbles: true }))
 
 beforeEach(() => {
   renderers = []
@@ -180,5 +184,31 @@ describe('the 3D view of a board', () => {
     pointer(canvas, 'pointerdown', 100, 100)
     pointer(canvas, 'pointerup', 100 + CLICK_SLOP, 100)
     expect(view.props.onSelect).toHaveBeenCalledTimes(1)
+  })
+
+  it('takes a right click on a part for a click that also asks for the menu there', async () => {
+    // the part lifted off the board, where a pointer on its centre picks it
+    model.children[0].children[1].position.y = 3
+    const { view, canvas } = await loaded()
+    const at = view.stage.parts.get('C1')[0].getWorldPosition(new THREE.Vector3()).project(view.stage.camera)
+    const [x, y] = [(at.x + 1) * 100, (1 - at.y) * 100]
+    const click = (button, ux = x, uy = y, downButton = button) => {
+      pointer(canvas, 'pointerdown', ux, uy, downButton)
+      pointer(canvas, 'pointerup', ux, uy, button)
+    }
+    // a right drag pans; a press of one button released with the other is no click
+    pointer(canvas, 'pointerdown', x, y, 2)
+    pointer(canvas, 'pointerup', x + CLICK_SLOP + 1, y, 2)
+    click(2, x, y, 0)
+    expect(view.props.onSelect).not.toHaveBeenCalled()
+    click(2)
+    expect(view.props.onSelect.mock.calls).toEqual([['C1']])
+    expect(view.props.onMenu.mock.calls).toEqual([['C1', x, y]])
+    expect(view.stage.selected).toBe('C1')
+    // the left button only selects; a right click off the part puts it out and asks for nothing
+    click(0)
+    click(2, 1, 1)
+    expect(view.props.onSelect.mock.calls).toEqual([['C1'], ['C1'], [null]])
+    expect(view.props.onMenu).toHaveBeenCalledTimes(1)
   })
 })
