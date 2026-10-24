@@ -38,8 +38,9 @@ the working copy goes while a part is still moving.
 
 **Geometry that fails the gate is not published.** Every printable has to be a
 valid solid with positive volume, export a watertight mesh and come out as one
-body. The `assembled` view is required, it has to show every printable, and no
-two parts in it may occupy the same space unless the view says why — with one
+body. The `assembled` view is required, it has to show every printable unless
+it lists one in `absent_ok` with a reason (an assembly jig is printed but is not
+part of the product), and no two parts in it may occupy the same space unless the view says why — with one
 standing exemption that is not a declaration: a `mock` is scenery, so a pair
 holding one is never measured at all, while `hardware` is asked like anything
 else. The `print` view is the bed: printables only, each of them the way up the

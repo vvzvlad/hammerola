@@ -249,6 +249,10 @@ def check_assembled_coverage(prepared, catalogue):
 
     A reference at alpha 0 is not drawn, so it does not count. It is warned
     about where the alpha is read (prepare_views).
+
+    A printable the view lists in `absent_ok` (a printed part that is not part
+    of the product, such as an assembly jig) is not asked for; its reason is
+    printed (`views.absent_parts`).
     """
     view = _view(prepared, ASSEMBLED_VIEW_ID)
     if view is None:
@@ -256,17 +260,27 @@ def check_assembled_coverage(prepared, catalogue):
         # one).
         raise BuildError(f"there is no {ASSEMBLED_VIEW_ID!r} view to judge")
 
+    left_out = view["absent_ok"]
+    for key, reason in sorted(left_out.items()):
+        # Printed whether or not the part is shown after all, as interference_ok
+        # is, so the log holds every declaration.
+        print(f"  {ASSEMBLED_VIEW_ID}: {key!r} may be left out -- {reason}")
+
     shown = {node["key"] for node in view["nodes"]
              if node["alpha"] > INVISIBLE_ALPHA}
-    missing = [key for key in printable_keys(catalogue) if key not in shown]
+    missing = [key for key in printable_keys(catalogue)
+               if key not in shown and key not in left_out]
     if missing:
         raise BuildError(
             f"view {ASSEMBLED_VIEW_ID!r} does not show printable(s) "
             f"{', '.join(repr(k) for k in missing)}. The assembled view is "
             "what the design is judged by and the only place the build counts "
-            "parts from, so every printed part is in it -- add the key to its "
-            '"parts". Hardware and mocks alongside are fine; printables are '
-            "what must be there."
+            "parts from, so every printed part of the product is in it -- add "
+            'the key to its "parts". A printed part that is not part of the '
+            "product, such as an assembly jig, is left out by name and reason "
+            'instead: "absent_ok": [("<key>", "assembly jig")] in this view. '
+            "Hardware and mocks alongside are fine; printables are what must "
+            "be there."
         )
 
     for node in view["nodes"]:

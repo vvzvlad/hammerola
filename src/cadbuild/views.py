@@ -58,7 +58,8 @@ from .parts import KIND_MOCK, catalogue_colors
 
 # Every key a view dict is read for. Anything else is reported as unknown, so a
 # misspelt exemption (`nestedok`) is not silently ignored.
-VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok"})
+VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok",
+                       "absent_ok"})
 # ...and every key one REFERENCE is read for. Only `part` is required.
 REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed"})
 # ...and a GROUP is exactly these two, both required.
@@ -82,6 +83,7 @@ def prepare_views(views, catalogue):
         {"id", "label", "file",
          "nested_ok":       {frozenset((key, key)), ...},
          "interference_ok": {frozenset((key, key)): "reason"},
+         "absent_ok":       {key: "reason"},
          "tree":            groups and leaf indices, for the export,
          "nodes":           [{"key", "shape", "mesh", "color", "alpha", "at",
                               "deformed", "label"}, ...]}
@@ -132,8 +134,9 @@ def prepare_views(views, catalogue):
         if filename in RESERVED_NAMES:
             raise BuildError(f"view {vid!r} would overwrite {filename}, which the hub owns")
 
-        # Both exemption lists are validated here, for every view that carries
-        # one, not only in the view whose gate reads them.
+        # Every exemption list (nested_ok, interference_ok, absent_ok) is
+        # validated here, for every view that carries one, not only in the view
+        # whose gate reads them.
         #
         # Only an absent key means "nothing declared"; not `view.get(...) or ()`,
         # which would silently accept a present but unusable `nested_ok: ""`.
@@ -172,6 +175,8 @@ def prepare_views(views, catalogue):
                 "declaration takes no check off, and whatever it was written "
                 "for was never going to be reported."
             )
+        declared = view.get("absent_ok")
+        absent_ok = absent_parts(() if declared is None else declared, vid)
 
         unknown_keys = sorted(set(view) - VIEW_KEYS)
         if unknown_keys:
@@ -190,6 +195,7 @@ def prepare_views(views, catalogue):
             "file": filename,
             "nested_ok": nested_ok,
             "interference_ok": interference_ok,
+            "absent_ok": absent_ok,
             "tree": tree,
             "nodes": nodes,
         })
@@ -688,6 +694,50 @@ def interference_pairs(declared, keys, vid):
         pair = frozenset((first, second))
         _check_pair_keys(pair, keys, vid, "interference_ok")
         allowed[pair] = reason
+    return allowed
+
+
+def absent_parts(declared, vid):
+    """The printables this view leaves out on purpose -> `{key: reason}`.
+
+    The assembled view has to show every printable
+    (`gate.check_assembled_coverage`): a part modelled and exported but missing
+    from the picture is a mistake nothing else catches. A printed part that is
+    not part of the product -- an assembly jig -- is left out on purpose, and
+    the view says so:
+
+        "absent_ok": [("drill_jig", "assembly jig, not part of the product")]
+
+    The reason is required and printed in the build log, as interference_ok's
+    is: it is what tells a part left out on purpose from a forgotten one. Only
+    the assembled view's list is read.
+    """
+    if isinstance(declared, str) or not hasattr(declared, "__iter__"):
+        raise BuildError(
+            f"view {vid!r}: absent_ok must be a list of (part, reason) pairs, "
+            f"got {declared!r}. Write it as "
+            '[("drill_jig", "assembly jig, not part of the product")].'
+        )
+    allowed = {}
+    for index, item in enumerate(declared):
+        # Once: `item` may be a generator, and a second pass over it is empty.
+        items = (None if isinstance(item, str) or not hasattr(item, "__iter__")
+                 else list(item))
+        if (items is None or len(items) != 2
+                or not all(isinstance(x, str) for x in items)):
+            raise BuildError(
+                f"view {vid!r}: absent_ok[{index}] is {item!r}, not a "
+                "(part, reason) pair of strings."
+            )
+        key, reason = items[0], items[1].strip()
+        if not reason:
+            raise BuildError(
+                f"view {vid!r}: absent_ok[{index}] leaves {key!r} out and "
+                "gives no reason. The reason is what tells a part left out on "
+                "purpose from a forgotten one, and it is printed in the build "
+                "log."
+            )
+        allowed[key] = reason
     return allowed
 
 

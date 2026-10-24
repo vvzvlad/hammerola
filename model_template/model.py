@@ -504,9 +504,11 @@ def views():
 
       * `assembled` is the product, and every printable has to be visible in it
         -- a part missing from this view reads as a design without that part.
-        Parts may not share space there -- a `mock` excepted, which is never
-        asked -- so an overlap that is the JOINT is declared with the reason it
-        happens, by catalogue key.
+        A printed part that is not part of the product, such as an assembly
+        jig, is left out by name and reason instead:
+        `"absent_ok": [("jig", "assembly jig")]`. Parts may not share space
+        there -- a `mock` excepted, which is never asked -- so an overlap that
+        is the JOINT is declared with the reason it happens, by catalogue key.
       * `print` is the bed: only printables go on it, `at` may move them and
         turn them about Z, and they may not stand inside one another. A pair
         that really is nested on purpose goes in that view's

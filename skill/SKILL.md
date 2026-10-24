@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 29
+version: 30
 ---
 
 # hammerola
@@ -521,8 +521,11 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
   One part may be referenced any number of times — five pins, five references.
 * **Two view ids carry the gates.** **`assembled` is required**: the product is
   judged by it, parts are counted from it alone, and **every `printable` key
-  must be in it** (alpha 0 does not count). Nothing in it may overlap anything
-  unless declared: `"interference_ok": [("nozzle", "seat", "threaded joint")]`,
+  must be in it** (alpha 0 does not count). A printed part that is not part of
+  the product — an assembly jig — is left out by name and reason instead:
+  `"absent_ok": [("drill_jig", "assembly jig, not part of the product")]`,
+  the reason logged; show it in a view of its own. Nothing in `assembled` may
+  overlap anything unless declared: `"interference_ok": [("nozzle", "seat", "threaded joint")]`,
   the reason required and logged. A `mock` is never asked; **`hardware` is** —
   a screw biting into its printed hole is a declared overlap.
 
