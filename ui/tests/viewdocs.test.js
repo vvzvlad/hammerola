@@ -261,6 +261,11 @@ describe('the documents in the list of views', () => {
     expect(shownDocs(c)[0].props.doc.file).toBe('ds/ne555.pdf')
   })
 
+  it('give a page whose only document is hidden and open the menu, naming it', () => {
+    const v = component({ meta: meta([DATASHEET]), doc: DATASHEET.id }).computed()
+    expect([v.docRows, v.viewMenu, v.viewLabel]).toEqual([[], true, 'ds/ne555.pdf'])
+  })
+
   it('open the member a double click crosses to, light its row and keep the one view of the design', () => {
     const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
     const lit = () => c.computed().docRows.map((t) => t.rowStyle.includes(LIT))

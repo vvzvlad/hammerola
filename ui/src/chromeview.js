@@ -451,7 +451,9 @@ export function chromeView(s, props, deps) {
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
     // for what the strip does to the toolbar when it is too long for it. A
     // build with rows of documents always gets the menu: they are rows of it.
-    viewMenu: views.length > VIEW_TABS_MAX || docRows.length > 0,
+    // So does a page with a hidden document open, which has no row: the strip
+    // would light the model's view over a document and name neither.
+    viewMenu: views.length > VIEW_TABS_MAX || docRows.length > 0 || !!docOpen,
     // What that button says: the document over the model, else the view on
     // screen. Empty where none matches — `s.view` is null until the first view
     // lands, and a switcher captioned `undefined` is worse than a bare one.
