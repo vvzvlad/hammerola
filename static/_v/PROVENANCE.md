@@ -13,6 +13,25 @@ imports the second by a relative path, which is why both are here under their ow
 names. They are the READABLE builds and not npm's `.min` twins: the Makefile says
 what that choice is for.
 
+`GLTFLoader.js`, `OrbitControls.js`, `BufferGeometryUtils.js` and
+`SkeletonUtils.js` are three r184's own add-ons (`examples/jsm/loaders/`,
+`controls/`, `utils/` of the same npm package), for the 3D view of a board
+(`ui/src/BoardView3D.jsx`). Unlike the two above they are NOT byte-for-byte: a
+bare `from 'three'` needs an import map, which the hub's CSP drops, so each file's
+`from 'three'` is `from './three.module.js'`, and the loader's two
+`../utils/…` imports are `./…`. Nothing else is changed. sha256 of npm's file,
+then of ours:
+
+| File | npm | here |
+| --- | --- | --- |
+| `GLTFLoader.js` | `97642d720f16cc9a0c9844934198e4d0c023bea8e89576d0f7545d03b2d103d2` | `d7f4b3a86e622f5ae040ab32349a96714e8d6b360bc706c697f17e5a6d9464d7` |
+| `OrbitControls.js` | `faabb4e8dfd9235ee4a9fd7c9a3d75f90f1689dbd4944bd6fd32117dacec5f93` | `3f40137b0620b375637d6bce55dc830d86d79cb80b4d93aaf1b8ca6c5cb4741a` |
+| `BufferGeometryUtils.js` | `d700b4c4584b9ff53a04692624d2363019f6d1df2978a207389168c6ae647a65` | `b3f9636affbbd893311f20c8d0d03c7bf3b345eff7fb723180d333a625e85a01` |
+| `SkeletonUtils.js` | `b1632a703206c3d830de9fcbe515696770d04b71a15ee6b50afa6d2c3298c86f` | `eedd768765d6553f8082953ab3882e2c86dacc2eb7d180a312d1d52e86bb35c5` |
+
+To move them: copy the four from the same three version as the two above and
+repeat the two rewrites.
+
 ## Where the source came from
 
 `viewer/` is `bernhard-42/three-cad-viewer` at tag **v5.0.7**, commit

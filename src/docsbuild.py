@@ -3,20 +3,25 @@
 A project lists them in its `project.json`, in tab order:
 
     "documents": ["docs/cut-list.md", {"file": "ref/terr-raspil.svg", "title": "Saw plan"},
-                  "hw/board.kicad_pro"]
+                  {"file": "hw/board.kicad_sch", "title": "Board, schematic"},
+                  "hw/board.kicad_pcb", "hw/board.glb",
+                  {"file": "ref/ne555.pdf", "hidden": true}]
 
 Each is a path in the pushed tree, of a type the page can show
-(`render.DOCUMENT_TYPES`: markdown, PDF, pictures, HTML, SVG, a KiCad design),
-and it is published under the same path, so a link between two of them works as
-it does in the tree. Nothing is found by extension: a file is a document because
-the list says so. An entry is the path alone, or an object with the path as
-`file` and a `title`, the caption the page shows in place of the path.
+(`render.DOCUMENT_TYPES`: markdown, PDF, pictures, HTML, SVG, a KiCad
+schematic, a KiCad board, the 3D model of a board), and it is published under
+the same path, so a link between two of them works as it does in the tree.
+Nothing is found by extension: a file is a document because the list says so.
+An entry is the path alone, or an object with the path as `file`, a `title`,
+the caption the page shows in place of the path, and `hidden`, which keeps the
+document out of the page's list while it is still published and opened by its
+address.
 
-A KiCad design is listed by its `.kicad_pro` alone, and the hub finds the rest
-(`_kicad_design`): the root schematic and the board beside it under the
-project's stem, and the sheets each schematic names. All of them are published
-under their own paths, and the document's `kicad` in meta.json says which is
-which. A schematic or a board listed on its own is refused.
+A KiCad schematic brings the sheets it names, found as KiCad finds them
+(`_kicad_schematic`), and a schematic or a board brings the project with its
+path minus the extension (`<stem>.kicad_pro`) when the tree has one. They are
+published under their own paths, and the document's `kicad` in meta.json names
+them. A project listed on its own is refused: it is not a view of anything.
 
 What the tree holds decides the build (`jobs._build_and_publish`):
 
@@ -48,14 +53,17 @@ from hammerola.buildnames import unservable_path_reason
 from hammerola.projectslug import slug_from_title
 from src.buildproc import STATUS_OK, BuildOutcome
 from src.errors import PublishError
-from src.render import (DOCUMENT_TYPES, DOCUMENTS_KIND, GENERATED_FILES,
-                        KICAD_BOARD, KICAD_SCHEMATIC, KICAD_SUFFIXES,
-                        MAX_KICAD_SHEETS, document_id, document_type,
-                        project_title)
+from src.render import (BOARD_TYPE, DOCUMENT_TYPES, DOCUMENTS_KIND,
+                        GENERATED_FILES, KICAD_BOARD, KICAD_PROJECT,
+                        KICAD_SCHEMATIC, MAX_KICAD_SHEETS, SCHEMATIC_TYPE,
+                        document_id, document_type, project_title)
 from src.store import BUILD_META_FILE
 
 PROJECT_FILE = "project.json"
 DOCUMENTS_FIELD = "documents"
+
+# The keys an entry written as an object may hold.
+ENTRY_KEYS = ("file", "title", "hidden")
 
 # The two spellings `import model` resolves in a pushed tree: the module, or a
 # package. A `model/` directory is a package to the import even without an
@@ -68,10 +76,7 @@ MODEL_PACKAGE = "model"
 # (`app._serve_project`), so a document under it would never be served.
 COMPARE_SEGMENT = "compare"
 
-KICAD_TYPE = "kicad"
-KICAD_PROJECT = ".kicad_pro"
-
-# How many levels below its root schematic a sheet may sit.
+# How many levels below the listed schematic a sheet may sit.
 MAX_KICAD_DEPTH = 8
 
 # A sheet inside a schematic, as KiCad writes it: `(property "Sheetfile"
@@ -87,14 +92,15 @@ ESCAPED = re.compile(r"\\(.)")
 class Document:
     """One listed document, and every file it is published as.
 
-    `files` starts with `path`; a KiCad design adds its schematics and board,
-    which `kicad` names for meta.json.
+    `files` starts with `path`; a KiCad schematic adds its sheets and a
+    schematic or a board its project, which `kicad` names for meta.json.
     """
 
     path: str
     files: tuple
     kicad: dict | None = None
     title: str | None = None
+    hidden: bool = False
 
 
 def _project(sources: Path) -> dict:
@@ -134,12 +140,13 @@ def declared_documents(sources) -> tuple:
             422, f"`{DOCUMENTS_FIELD}` in {PROJECT_FILE} has to be a list of "
                  f"paths in the tree, such as [\"docs/cut-list.md\"], each "
                  f"path optionally written as "
-                 f"{{\"file\": \"docs/cut-list.md\", \"title\": \"Cut list\"}}")
+                 f"{{\"file\": \"docs/cut-list.md\", \"title\": \"Cut list\"}}, "
+                 f"with \"hidden\": true to keep it out of the page's list")
     problems = []
     found = []
     seen: dict[str, str] = {}
     for item in listed:
-        path, title, reason = _entry(item)
+        path, title, hidden, reason = _entry(item)
         if reason is None:
             reason = _unpublishable(sources, path)
         if reason is None and path in seen.values():
@@ -149,16 +156,16 @@ def declared_documents(sources) -> tuple:
                       f"{seen[document_id(path)]!r} already has, so one "
                       f"address would name both")
         design = None
-        if reason is None and document_type(path) == KICAD_TYPE:
-            design, reason = _kicad_design(sources, path)
+        if reason is None and document_type(path) == SCHEMATIC_TYPE:
+            design, reason = _kicad_schematic(sources, path)
+        elif reason is None and document_type(path) == BOARD_TYPE:
+            design = {"project": _kicad_project(sources, path)}
         if reason is not None:
             problems.append(f"  {path!r}, which {reason}")
             continue
         seen[document_id(path)] = path
-        parts = () if design is None else (
-            *design["schematics"],
-            *([design["pcb"]] if design["pcb"] else []))
-        found.append(Document(path, (path, *parts), design, title))
+        found.append(Document(path, (path, *_besides(design)), design, title,
+                              hidden))
     if problems:
         raise PublishError(
             422, f"{PROJECT_FILE} lists documents the hub cannot publish:\n"
@@ -167,28 +174,31 @@ def declared_documents(sources) -> tuple:
 
 
 def _entry(item) -> tuple:
-    """(path, title, why not) of one entry of `documents`.
+    """(path, title, hidden, why not) of one entry of `documents`.
 
-    An entry is a path, or an object holding the path as `file` and the caption
-    as `title`; `title` is held to the rule a project's title is. A refused
-    object comes back whole in place of the path, to be named by the caller.
+    An entry is a path, or an object holding the path as `file`, the caption
+    as `title` and `hidden`, true or false; `title` is held to the rule a
+    project's title is. A refused object comes back whole in place of the
+    path, to be named by the caller.
     """
     if isinstance(item, str):
-        return item, None, None
-    path, title = item.get("file"), item.get("title")
-    unknown = sorted(set(item) - {"file", "title"})
+        return item, None, False, None
+    path, title, hidden = item.get("file"), item.get("title"), item.get("hidden", False)
+    unknown = sorted(set(item) - set(ENTRY_KEYS))
     if not isinstance(path, str):
-        return item, None, "has no `file`, the path of the document"
+        return item, None, False, "has no `file`, the path of the document"
     if unknown:
-        return path, None, (f"has keys the hub does not read: "
-                            f"{', '.join(unknown)}; an entry holds `file` and "
-                            f"`title`")
+        return path, None, False, (
+            f"has keys the hub does not read: {', '.join(unknown)}; an entry "
+            f"holds {', '.join(f'`{key}`' for key in ENTRY_KEYS)}")
+    if not isinstance(hidden, bool):
+        return path, None, False, "has a `hidden` that is not true or false"
     if "title" in item:
         try:
             title = project_title(title)
         except ValueError as err:
-            return path, None, f"has a title the page cannot show: {err}"
-    return path, title, None
+            return path, None, False, f"has a title the page cannot show: {err}"
+    return path, title, hidden, None
 
 
 def _unpublishable(sources: Path, path: str) -> str | None:
@@ -196,10 +206,12 @@ def _unpublishable(sources: Path, path: str) -> str | None:
     reason = unservable_path_reason(path)
     if reason is not None:
         return reason
-    if Path(path).suffix.lower() in KICAD_SUFFIXES and (
-            document_type(path) != KICAD_TYPE):
-        return (f"is a part of a KiCad design: list its `{KICAD_PROJECT}`, "
-                f"which brings its schematics and its board with it")
+    if Path(path).suffix.lower() == KICAD_PROJECT:
+        stem = path[:-len(KICAD_PROJECT)]
+        return (f"is a KiCad project and not a view of anything: list the "
+                f"schematic {stem + KICAD_SCHEMATIC!r} or the board "
+                f"{stem + KICAD_BOARD!r} instead, and each brings the "
+                f"project with it")
     if document_type(path) is None:
         return (f"is none of the types the page shows: "
                 f"{', '.join(DOCUMENT_TYPES)}")
@@ -223,24 +235,18 @@ def _not_in_tree(sources: Path, path: str) -> str | None:
     return None
 
 
-def _kicad_design(sources: Path, project: str) -> tuple:
-    """The files of the design `project` (its `.kicad_pro`) names.
+def _kicad_schematic(sources: Path, root: str) -> tuple:
+    """The files the listed schematic `root` is published with.
 
-    -> ({"schematics": [root, ...], "pcb": path or None}, None), or
+    -> ({"schematics": [root, ...], "project": path or None}, None), or
     (None, why) as the tail of "…, which".
 
-    The root schematic and the board sit beside the project under its stem;
-    the board may be missing, the root may not. Every other schematic is found
-    the way KiCad finds it: named by a sheet of a schematic already found,
-    relative to that schematic's directory. A schematic found once is not read
-    again, so a hierarchy that loops ends; one past `MAX_KICAD_SHEETS` files or
-    `MAX_KICAD_DEPTH` levels below the root refuses the design.
+    Every other schematic is found the way KiCad finds it: named by a sheet of
+    a schematic already found, relative to that schematic's directory. A
+    schematic found once is not read again, so a hierarchy that loops ends; one
+    past `MAX_KICAD_SHEETS` files or `MAX_KICAD_DEPTH` levels below the root
+    refuses it. The project is `_kicad_project`'s.
     """
-    stem = project[:-len(KICAD_PROJECT)]
-    root = stem + KICAD_SCHEMATIC
-    reason = _not_in_tree(sources, root)
-    if reason is not None:
-        return None, f"needs its root schematic {root!r}, which {reason}"
     schematics = [root]
 
     def visit(sheet: str, depth: int) -> str | None:
@@ -270,9 +276,26 @@ def _kicad_design(sources: Path, project: str) -> tuple:
     reason = visit(root, 0)
     if reason is not None:
         return None, reason
-    board = stem + KICAD_BOARD
     return {"schematics": schematics,
-            "pcb": board if _not_in_tree(sources, board) is None else None}, None
+            "project": _kicad_project(sources, root)}, None
+
+
+def _kicad_project(sources: Path, path: str) -> str | None:
+    """The KiCad project a schematic or a board at `path` is published with:
+    the `.kicad_pro` with its path minus the extension, or None when the tree
+    holds none to publish. Read by the page's viewer, never shown on its own."""
+    project = path[:-len(Path(path).suffix)] + KICAD_PROJECT
+    return project if _not_in_tree(sources, project) is None else None
+
+
+def _besides(design) -> tuple:
+    """The files a KiCad document is published with besides its own: its
+    sheets and its project, from its `kicad`; () for any other document."""
+    if design is None:
+        return ()
+    sheets = design.get("schematics", [])[1:]
+    project = [] if design["project"] is None else [design["project"]]
+    return (*sheets, *project)
 
 
 def _names(data: dict, pid: str) -> tuple:
@@ -310,11 +333,16 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
         entry = {"name": doc.title or doc.path, "type": shown_as,
                  "file": doc.path}
         what = shown_as
+        if doc.hidden:
+            entry["hidden"] = True
         if doc.kicad is not None:
             entry["kicad"] = doc.kicad
-            sheets = len(doc.kicad["schematics"])
-            what = (f"{shown_as}, {sheets} sheet{'' if sheets == 1 else 's'}"
-                    + (", board" if doc.kicad["pcb"] else ", no board"))
+            if "schematics" in doc.kicad:
+                sheets = len(doc.kicad["schematics"])
+                what += f", {sheets} sheet{'' if sheets == 1 else 's'}"
+            what += ", project" if doc.kicad["project"] else ", no project"
+        if doc.hidden:
+            what += ", hidden"
         entries.append(entry)
         lines.append(f"  {doc.path}  {what}  {size / 1e3:.1f} kB")
     return entries, lines

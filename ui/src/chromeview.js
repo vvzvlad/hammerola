@@ -18,7 +18,7 @@
  * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
  * come from ui/src/panelstyle.js.
  */
-import { DOC_QUERY } from './DocumentView.jsx';
+import { DOC_QUERY, docViewKey } from './DocumentView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -28,7 +28,7 @@ import {
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
 import { MONO, SANS } from './style.jsx';
-import { BAR_LAYER, DOC_LAYER, documentRows, menuRow, openLabel } from './viewlist.jsx';
+import { BAR_LAYER, DOC_LAYER, documentRows, menuRow } from './viewlist.jsx';
 
 export function chromeView(s, props, deps) {
   const {
@@ -90,6 +90,11 @@ export function chromeView(s, props, deps) {
   // that does not list `s.doc` shows its model.
   const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
   const docOpen = documents.find((d) => d.id === s.doc) || null;
+  // Opening a document: what its row does, and what a double click across a
+  // KiCad design's link does with the other member's id.
+  const openDoc = (id) => setState({ doc: id, viewsOpen: false });
+  // A document listed `hidden` has no row (viewlist.jsx).
+  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc);
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -435,24 +440,22 @@ export function chromeView(s, props, deps) {
       // while a document is open is a request to see the model.
       onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
     })),
-    // The documents below the views (viewlist.jsx): a row each, two
-    // for a KiCad design, its schematic and its board. Choosing one lays it
-    // over the model (`docOpen`), which stays mounted underneath with its
-    // camera, cut and hidden parts; `docSide` is the KiCad side on screen,
-    // which a double click across the link also moves (`onDocSide`). Like a
-    // view, the choice does not move the address; `?d=` in it opens one on
-    // arrival (`load`), on its schematic.
-    docRows: documentRows(documents, docOpen ? docOpen.id : null, s.docSide,
-      (id, side) => setState({ doc: id, docSide: side, viewsOpen: false })),
-    onDocSide: (side) => setState({ docSide: side }),
+    // The documents below the views (viewlist.jsx): a row each but for a
+    // hidden one. Choosing one lays it over the model (`docOpen`), which stays
+    // mounted underneath with its camera, cut and hidden parts; a double click
+    // across a KiCad design's link opens the other member the same way
+    // (`onDocOpen`). Like a view, the choice does not move the address; `?d=`
+    // in it opens one on arrival (`load`), a hidden one too.
+    docRows,
+    onDocOpen: openDoc,
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`
     // for what the strip does to the toolbar when it is too long for it. A
-    // build with documents always gets the menu: they are rows of it.
-    viewMenu: views.length > VIEW_TABS_MAX || documents.length > 0,
+    // build with rows of documents always gets the menu: they are rows of it.
+    viewMenu: views.length > VIEW_TABS_MAX || docRows.length > 0,
     // What that button says: the document over the model, else the view on
     // screen. Empty where none matches — `s.view` is null until the first view
     // lands, and a switcher captioned `undefined` is worse than a bare one.
-    viewLabel: docOpen ? openLabel(docOpen, s.docSide) : shownView ? shownView.name : '',
+    viewLabel: docOpen ? docOpen.name : shownView ? shownView.name : '',
     // The document laid over the model, or null. Over the WHOLE of the model's
     // area, down to its bottom edge, so nothing drawn for the model shows
     // beside it (the view cube, the "drag — orbit" hint). The layers, while
@@ -467,8 +470,9 @@ export function chromeView(s, props, deps) {
     docOpen,
     // A NEW ELEMENT FOR ANOTHER REVISION: a markdown document is fetched once,
     // when its view mounts, so a revision switch with the same document open
-    // must mount a new one rather than keep the old revision's text.
-    docKey: docOpen ? `${buildKey(meta)}:${docOpen.id}` : '',
+    // must mount a new one rather than keep the old revision's text. Within
+    // one revision the members of a KiCad design share one (`docViewKey`).
+    docKey: docOpen ? `${buildKey(meta)}:${docViewKey(docOpen)}` : '',
     bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (docOpen ? '17' : '13'),
     docLayerStyle: DOC_LAYER,

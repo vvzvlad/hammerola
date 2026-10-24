@@ -208,12 +208,18 @@ describe('one document, as both pages draw it', () => {
   })
 })
 
-// A KiCad design among them: two rows of the list, its schematic and its board.
-const KICAD = {
-  id: 'hw__board.kicad_pro', name: 'Схема и плата', type: 'kicad', file: 'hw/board.kicad_pro',
-  bytes: 4_612_345, kicad: { schematics: ['hw/board.kicad_sch'], pcb: 'hw/board.kicad_pcb' },
+// A KiCad design among them, its schematic and its board two documents, each
+// with its own title; and a datasheet listed hidden, first in the list.
+const SCHEMATIC = {
+  id: 'hw__board.kicad_sch', name: 'Схема', type: 'schematic', file: 'hw/board.kicad_sch',
+  bytes: 4_612_345, kicad: { schematics: ['hw/board.kicad_sch'], project: 'hw/board.kicad_pro' },
 }
-const WITH_KICAD = { ...META, documents: [KICAD, ...META.documents.slice(0, 1)] }
+const BOARD = {
+  id: 'hw__board.kicad_pcb', name: 'Плата', type: 'board', file: 'hw/board.kicad_pcb',
+  bytes: 812_000, kicad: { project: 'hw/board.kicad_pro' },
+}
+const DATASHEET = { ...doc('ds/ne555.pdf', 'pdf'), hidden: true }
+const WITH_KICAD = { ...META, documents: [DATASHEET, SCHEMATIC, BOARD, ...META.documents.slice(0, 1)] }
 
 describe('the page of a build with no model', () => {
   const page = (active, extra = {}) => DocPage({ meta: META, active, base: BASE, onPick: () => {}, ...extra })
@@ -235,18 +241,25 @@ describe('the page of a build with no model', () => {
       .toHaveLength(1)
   })
 
-  it('gives a KiCad design two rows, and opens it on the side the page holds', () => {
+  it('gives a schematic and a board a row each by their titles, and a hidden document none', () => {
     const picked = []
-    const tree = DocPage({ meta: WITH_KICAD, active: KICAD.id, side: 'PCB', base: BASE,
-      onPick: (id, side) => picked.push([id, side]), viewsOpen: true })
-    expect(rows(tree).map(([label]) => label)).toEqual(
-      ['Схема и плата · Schematic', 'Схема и плата · PCB', 'list.md'])
-    expect(texts(tree)).toContain('Схема и плата · PCB')
-    expect(shown(tree)[0].props.side).toBe('PCB')
+    const tree = DocPage({ meta: WITH_KICAD, active: BOARD.id, base: BASE,
+      onPick: (id) => picked.push(id), viewsOpen: true })
+    expect(rows(tree)).toEqual([['Схема', '1 sheet'], ['Плата', 'board'], ['list.md', docHint(META.documents[0])]])
+    expect(texts(tree)).toContain('Плата')
     for (const row of collect(tree, (el) => (el.props.onClick && texts(el).length === 2 ? el : undefined))) {
       row.props.onClick({ stopPropagation() {} })
     }
-    expect(picked).toEqual([[KICAD.id, 'SCH'], [KICAD.id, 'PCB'], ['list.md', null]])
+    expect(picked).toEqual([SCHEMATIC.id, BOARD.id, 'list.md'])
+    // The open member is handed the build's documents and the door a row opens
+    // with, which a double click across the design's link uses for the other.
+    const [view] = shown(tree)
+    expect(view.props).toMatchObject({ doc: BOARD, documents: WITH_KICAD.documents })
+    view.props.onOpen(SCHEMATIC.id)
+    expect(picked.at(-1)).toBe(SCHEMATIC.id)
+    // One instance for the design, whichever member is open.
+    const schematicView = shown(DocPage({ meta: WITH_KICAD, active: SCHEMATIC.id, base: BASE, onPick: () => {} }))[0]
+    expect(schematicView.key).toBe(view.key)
   })
 
   it('names the project and the revision in the header', () => {
@@ -269,6 +282,18 @@ describe('the page of a build with no model', () => {
     expect(pickDocument(META.documents, null).id).toBe('list.md')
     expect(pickDocument(META.documents, 'gone.md').id).toBe('list.md')
     expect(pickDocument(META.documents, 'report.pdf').id).toBe('report.pdf')
+  })
+
+  it('opens the first document with a row by default, and a hidden one only by its id', () => {
+    expect(pickDocument(WITH_KICAD.documents, null).id).toBe(SCHEMATIC.id)
+    expect(pickDocument(WITH_KICAD.documents, DATASHEET.id).id).toBe(DATASHEET.id)
+    expect(docQuery('?d=ds__ne555.pdf', SCHEMATIC.id, WITH_KICAD.documents)).toBe('')
+    expect(docQuery('', DATASHEET.id, WITH_KICAD.documents)).toBe('?d=ds__ne555.pdf')
+    // On screen with no row lit, named on the button.
+    const tree = DocPage({ meta: WITH_KICAD, active: DATASHEET.id, base: BASE, onPick: () => {}, viewsOpen: true })
+    expect(shown(tree)[0].props.doc.id).toBe(DATASHEET.id)
+    expect(rows(tree).map(([label]) => label)).not.toContain('ds/ne555.pdf')
+    expect(texts(tree)).toContain('ds/ne555.pdf')
   })
 
   it('says ?d= only for a document other than the first, and keeps the rest', () => {
@@ -297,19 +322,25 @@ describe('the shell', () => {
     expect(shell.render().props.active).toBe('report.pdf')
   })
 
-  it('opens the first document on its schematic, and keeps the side out of the address', () => {
+  it('holds only the open document, which a double click across a design moves', () => {
     window.history.replaceState(null, '', BASE)
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
-    expect([shell.state.active, shell.state.side]).toEqual([KICAD.id, 'SCH'])
-    shell.pick(KICAD.id, 'PCB')
-    expect([shell.state.active, shell.state.side]).toEqual([KICAD.id, 'PCB'])
+    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false })
+    // the door a double click on the schematic opens the board through
+    shell.render().props.onPick(BOARD.id)
+    expect(shell.state.active).toBe(BOARD.id)
+    expect(window.location.search).toBe('?d=hw__board.kicad_pcb')
+    shell.render().props.onPick(SCHEMATIC.id)
     expect(window.location.search).toBe('')
-    expect(shell.render().props.side).toBe('PCB')
-    // a double click that crosses to the schematic moves the page with it
-    shell.render().props.onSide('SCH')
-    expect(shell.state.side).toBe('SCH')
+  })
+
+  it('opens a hidden document the address names', () => {
+    window.history.replaceState(null, '', `${BASE}?d=ds__ne555.pdf`)
+    rereadPage(BASE)
+    shell = new DocShell({ meta: WITH_KICAD })
+    expect(shell.state.active).toBe(DATASHEET.id)
   })
 
   it('opens the list on its button and shuts it on a click elsewhere', () => {

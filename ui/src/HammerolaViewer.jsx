@@ -995,10 +995,8 @@ export default class HammerolaViewer extends React.Component {
       // what stops the button looking like it still works.
       swapping: false,
       // -- what the reader is doing
-      // `doc`: the document laid over the model, or null (`docOpen`);
-      // `docSide`: the side of a KiCad design on screen, `SCH` or `PCB`, null
-      // for its schematic.
-      view: null, doc: null, docSide: null, tool: null, held: false, sel: null, selName: '',
+      // `doc`: the document laid over the model, or null (`docOpen`).
+      view: null, doc: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
@@ -5811,8 +5809,8 @@ export default class HammerolaViewer extends React.Component {
                 documents page uses (DocumentView.jsx). */}
             {v.docOpen && (
               <div style={css(v.docLayerStyle)}>
-                <DocumentView key={v.docKey} doc={v.docOpen} base={PAGE.base}
-                              side={this.state.docSide} onSide={v.onDocSide} />
+                <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
+                              base={PAGE.base} onOpen={v.onDocOpen} />
               </div>
             )}
 
