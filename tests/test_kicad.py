@@ -280,6 +280,17 @@ def test_the_page_loads_the_viewer_from_files_the_image_ships():
         assert f"/app/static/_v/{name}" in REQUIRED_PATHS, name
 
 
+def test_the_3d_view_loads_three_from_files_the_image_ships():
+    """BoardView3D.jsx imports three and its add-ons by URL (board3d.js), so a
+    renamed file is a 404 in the browser that no build notices."""
+    source = (ROOT / "ui" / "src" / "board3d.js").read_text(encoding="utf-8")
+    names = re.findall(r"export const \w+_URL = '/_v/([^'/]+)';", source)
+    assert len(names) == 4, names
+    for name in names:
+        assert (ROOT / "static" / "_v" / name).is_file(), name
+        assert f"/app/static/_v/{name}" in REQUIRED_PATHS, name
+
+
 def test_the_page_and_the_hub_name_the_types_of_a_design_alike():
     """KicadView.jsx groups a design's members by their `type`; a type renamed
     on one side only would leave that member out of its design."""

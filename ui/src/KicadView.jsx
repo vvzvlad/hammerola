@@ -1,6 +1,7 @@
 // One KiCad design, as the documents of a build it is made of: its schematic
-// and its board, each in an `<ecad-viewer>` of its own. DocumentView.jsx draws
-// a document of type `schematic`, `board` or `board3d` with this.
+// and its board, each in an `<ecad-viewer>` of its own, and the board's 3D
+// model in BoardView3D.jsx. DocumentView.jsx draws a document of type
+// `schematic`, `board` or `board3d` with this.
 //
 // A DESIGN is the listed schematic, board and 3D model with one path minus the
 // extension (`designKey`): `hw/board.kicad_sch`, `hw/board.kicad_pcb` and
@@ -8,8 +9,8 @@
 // page's list of views (viewlist.jsx); WHICH ONE IS ON SCREEN IS THE PAGE'S,
 // the document it hands down as `doc`. The page keys this component by the
 // design (`docViewKey` in DocumentView.jsx), so moving between two members of
-// one design keeps this instance and both its viewers. A schematic or a board
-// with no listed sibling is a design of one.
+// one design keeps this instance and all its views. A member with no listed
+// sibling is a design of one.
 //
 // The viewer is the vendored `ecad-viewer.js` (static/_v/PROVENANCE.md),
 // fetched by URL only when a design is opened: nothing of it is in this bundle.
@@ -19,10 +20,10 @@
 // `Sheetfile` resolves against them as KiCad resolves it. A schematic is handed
 // over with the pin entries the viewer needs to draw pins (kicadpins.js).
 //
-// BOTH ELEMENTS STAY MOUNTED. The one not on screen is hidden with `visibility`,
-// not `display`, so it keeps its size, its camera and its selection, and is
-// told it is inactive (`setActive`), which stops its drawing until it is back.
-// The 3D model is not drawn yet: on screen it is a note over both, hidden.
+// EVERY MEMBER'S VIEW STAYS MOUNTED. The ones not on screen are hidden with
+// `visibility`, not `display`, so each keeps its size, its camera and its
+// selection, and is told it is inactive (`setActive`, `active`), which stops its
+// drawing until it is back.
 //
 // `hide-chrome` leaves each element its canvas alone. It drops the viewer's own
 // panels (layers, objects, nets, properties), which `show-header="false"`
@@ -30,15 +31,23 @@
 // viewer shares between all its elements on a page, so one element showed it
 // and the other an empty circle.
 //
-// THE TWO ARE LINKED HERE, not in the viewer: a double click in one reports
-// `ecad-viewer:crossprobe`, and this component asks the page to open the
-// other member (`onOpen` with its id, which moves the lit row of its list too)
-// and, once the page has handed that member down, asks its element to select
-// the same thing — a part by its designator, or a net by its name
-// (`crossProbeRequest`).
+// THE VIEWS ARE LINKED HERE, not in the viewer, two ways:
+//   * a click that selects a part in one view selects it in the others too,
+//     hidden as they are, and changes nothing on screen: an element reports it
+//     as `ecad-viewer:selection`, the 3D view through `onSelect`; a click on
+//     anything that is not a part (a wire, a track, the bare board) puts the
+//     part out in the others. Nets are not carried across this way;
+//   * a double click JUMPS: an element reports `ecad-viewer:crossprobe`, the 3D
+//     view `onJump`, and this component asks the page to open another member
+//     (`jumpTarget`; `onOpen` with its id, which moves the lit row of its list
+//     too) and, once the page has handed that member down, asks its element to
+//     select the same thing — a part by its designator, or a net by its name
+//     (`crossProbeRequest`). Nothing jumps TO the 3D view: one opens it from the
+//     list, where the part is already lit.
 
 import React from 'react';
 
+import BoardView3D from './BoardView3D.jsx';
 import { addPinEntries } from './kicadpins.js';
 import { css, MONO } from './style.jsx';
 
@@ -47,6 +56,11 @@ export const ECAD_VIEWER_URL = '/_v/ecad-viewer.js';
 
 /** The event an element reports a double click with. */
 export const CROSSPROBE_EVENT = 'ecad-viewer:crossprobe';
+
+/** The event an element reports a click's selection with
+ *  (`EcadSemanticSelectionEvent`): a symbol, a pin, a footprint or a pad carries
+ *  its part's `reference`, anything else none, an empty click `itemType: ''`. */
+export const SELECTION_EVENT = 'ecad-viewer:selection';
 
 /** The views of a design: the two by the names the viewer gives them
  *  (`targetContext`), and the 3D model of the board. */
@@ -104,6 +118,15 @@ export function loadEcadViewer() {
 /** The views of a design the viewer draws, in the order they are mounted. */
 export const drawnViews = (members) => DRAWN.filter((view) => members[view]);
 
+/** Where a double click in `from` jumps, the first of these that is listed:
+ *  the schematic and the board to each other, the 3D model to the board, else
+ *  the schematic. Null when none is. */
+const JUMPS = { [SCH]: [PCB], [PCB]: [SCH], [BOARD3D]: [PCB, SCH] };
+export const jumpTarget = (from, members) => (JUMPS[from] || []).find((view) => members[view]) || null;
+
+/** Where a file of the build is served from. */
+const fileUrl = (base, file) => `${base}${file.split('/').map(encodeURIComponent).join('/')}`;
+
 const project = (doc) => (doc.kicad.project ? [doc.kicad.project] : []);
 
 /** What each drawn view is handed, as paths: the project first when there is one. */
@@ -142,32 +165,38 @@ const SHELL = 'position:relative;height:100%;min-height:320px';
 const VIEWER = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
 
-/** What stands on screen for the 3D model of a board until it is drawn. */
-export const BOARD3D_NOTE = 'The 3D model of the board is not drawn here yet.';
-
-/** One design: a viewer per drawn member, the one on screen, and the link
- *  between them. */
+/** One design: a view per member, the one on screen, and the links between
+ *  them. */
 export default class KicadView extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { ready: false, error: '' };
+    // `selected`: the designator of the part selected in the design, which the
+    // 3D view is handed; the elements are told directly.
+    this.state = { ready: false, error: '', selected: null };
     // A selection waiting for the page to hand down the member it is on:
     // `{ to, request }`, or null.
     this.probe = null;
     this.elements = {};
     // One ref callback per view, made once, so React does not detach and
-    // reattach the listener on every render.
+    // reattach the listeners on every render.
     this.refCallbacks = { [SCH]: this.attach(SCH), [PCB]: this.attach(PCB) };
+    this.onSelect3D = (designator) => this.select(BOARD3D, designator);
+    this.onJump3D = (designator) => this.relay(BOARD3D, { reference: designator });
   }
 
   /** The ref callback of one view's element: holds it and listens to it. */
   attach(context) {
-    const listener = (event) => this.relay(context, event.detail);
+    const listeners = {
+      [CROSSPROBE_EVENT]: (event) => this.relay(context, event.detail),
+      [SELECTION_EVENT]: (event) => this.select(context, (event.detail && event.detail.reference) || null),
+    };
     return (element) => {
       const old = this.elements[context];
-      if (old) old.removeEventListener(CROSSPROBE_EVENT, listener);
+      for (const [type, listener] of Object.entries(listeners)) {
+        if (old) old.removeEventListener(type, listener);
+        if (element) element.addEventListener(type, listener);
+      }
       this.elements[context] = element || undefined;
-      if (element) element.addEventListener(CROSSPROBE_EVENT, listener);
     };
   }
 
@@ -181,16 +210,28 @@ export default class KicadView extends React.Component {
     return viewOf(this.props.doc);
   }
 
-  /** A double click in `from`: the page is asked to open the other member,
-   *  and the same thing is selected there once it is on screen
+  /** A double click in `from`: the page is asked to open the member it jumps
+   *  to, and the same thing is selected there once it is on screen
    *  (`componentDidUpdate`). */
   relay(from, detail) {
-    const to = from === SCH ? PCB : SCH;
-    const sibling = this.members()[to];
-    const request = crossProbeRequest(detail, to);
-    if (!sibling || !this.elements[to] || !request) return;
+    const members = this.members();
+    const to = jumpTarget(from, members);
+    const request = to && crossProbeRequest(detail, to);
+    if (!request || !this.elements[to]) return;
     this.probe = { to, request };
-    if (this.props.onOpen) this.props.onOpen(sibling.id);
+    if (this.props.onOpen) this.props.onOpen(members[to].id);
+  }
+
+  /** A click in `from` selected the part `designator`, or something that is
+   *  no part (null): the other views follow, none of them brought on screen. */
+  select(from, designator) {
+    for (const context of drawnViews(this.members())) {
+      const element = this.elements[context];
+      if (context === from || !element) continue;
+      if (designator) element.requestCrossProbe({ targetContext: context, kind: 'designator', value: designator });
+      else if (typeof element.clearSelection === 'function') element.clearSelection();
+    }
+    if (designator !== this.state.selected) this.setState({ selected: designator });
   }
 
   componentDidMount() {
@@ -202,7 +243,7 @@ export default class KicadView extends React.Component {
       return;
     }
     const files = designFiles(members);
-    const fetched = files.map((file) => fetch(`${base}${file.split('/').map(encodeURIComponent).join('/')}`)
+    const fetched = files.map((file) => fetch(fileUrl(base, file))
       .then((response) => {
         if (!response.ok) throw new Error(`${file} did not load: HTTP ${response.status}`);
         return response.text();
@@ -246,15 +287,25 @@ export default class KicadView extends React.Component {
 
   render() {
     const side = this.side();
-    const { ready, error } = this.state;
-    const note = side === BOARD3D ? BOARD3D_NOTE : (error || (!ready && 'Loading…'));
+    const members = this.members();
+    const { ready, error, selected } = this.state;
+    // The 2D views' loading and failure, over them only: the 3D view says its own.
+    const note = side !== BOARD3D && (error || (!ready && 'Loading…'));
+    const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
+    const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
     return (
       <div style={css(SHELL)}>
-        {drawnViews(this.members()).map((context) => (
+        {drawnViews(members).map((context) => (
           <ecad-viewer key={context} ref={this.refCallbacks[context]} source-mode="host"
                        show-header="false" hide-chrome="true" data-view={context}
-                       style={css(`${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`)} />
+                       style={css(shown(context))} />
         ))}
+        {model && (
+          <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
+            <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}
+                         onSelect={this.onSelect3D} onJump={this.onJump3D} />
+          </div>
+        )}
         {note && <div style={css(NOTE)}>{note}</div>}
       </div>
     );

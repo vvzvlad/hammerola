@@ -1,24 +1,29 @@
 // KiCad documents: a schematic, a board and a board's 3D model are each a
 // document of their own, grouped into a design by their path minus the
-// extension; what each viewer is handed; and the link between the two.
+// extension; what each viewer is handed; and the links between them.
 //
 // Which member is on screen is the page's: a row each in its list of views
-// (viewlist.jsx), handed down as `doc`. A double click that crosses to the
-// other member asks the page to open it (`onOpen`, with its id) and selects
-// there once the page has answered.
+// (viewlist.jsx), handed down as `doc`. A click that selects a part selects it
+// in the other views too, without asking the page for anything; a double click
+// that crosses to another member asks the page to open it (`onOpen`, with its
+// id) and selects there once the page has answered.
 //
-// The viewer itself (static/_v/ecad-viewer.js) needs a GPU and is checked in a
-// browser; here its two elements are plain DOM elements carrying the two
-// methods this component calls, and a double click is the event the viewer
-// dispatches for one.
+// The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
+// and are checked in a browser; here the two elements are plain DOM elements
+// carrying the methods this component calls, a click or a double click is the
+// event the viewer dispatches for one, and the 3D view is a stand-in whose
+// props are read off the drawn tree.
 
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
+
+import BoardView3D from '../src/BoardView3D.jsx'
 import { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  BOARD3D, BOARD3D_NOTE, CROSSPROBE_EVENT, crossProbeRequest, designFiles, designKey, designMembers,
-  designSources, drawnViews, PCB, SCH,
+  BOARD3D, CROSSPROBE_EVENT, crossProbeRequest, designFiles, designKey, designMembers,
+  designSources, drawnViews, jumpTarget, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -59,6 +64,7 @@ function mounted(doc = DOCS[0], documents = DOCS) {
     const element = document.createElement('ecad-viewer')
     element.requestCrossProbe = vi.fn(() => true)
     element.setActive = vi.fn()
+    element.clearSelection = vi.fn()
     view.refCallbacks[context](element)
     elements[context] = element
   }
@@ -66,6 +72,15 @@ function mounted(doc = DOCS[0], documents = DOCS) {
 }
 
 const doubleClick = (element, detail) => element.dispatchEvent(new CustomEvent(CROSSPROBE_EVENT, { detail }))
+const click = (element, detail) => element.dispatchEvent(new CustomEvent(SELECTION_EVENT, { detail }))
+
+/** The 3D view as drawn: its props, and the box that shows or hides it. */
+const view3d = (view) => {
+  const tree = view.render()
+  const [box] = collect(tree, (el) => (el.props['data-view'] === BOARD3D ? el : undefined))
+  return { box, three: box && ofType(box, BoardView3D)[0] }
+}
+const designator = (context, value) => ({ targetContext: context, kind: 'designator', value })
 
 describe('a KiCad design', () => {
   it('is its listed members with one path minus the extension, each a row of its own', () => {
@@ -115,11 +130,28 @@ describe('a KiCad design', () => {
       .toEqual([[PCB, 'visible']])
   })
 
-  it('shows a note for the board\'s 3D model over both viewers, hidden', () => {
-    const { view } = mounted(DOCS[2])
+  it('keeps the 3D model mounted as a third view, drawing only while it is on screen', () => {
+    const { view } = mounted(DOCS[1])
+    let { box, three } = view3d(view)
+    expect([box.props.style.visibility, box.props.style.height]).toEqual(['hidden', '100%'])
+    expect(three.props).toMatchObject({ url: `${BASE}hw/board.glb`, active: false, selected: null })
+
+    view.props = { ...view.props, doc: DOCS[2] }
+    ;({ box, three } = view3d(view))
+    expect(box.props.style.visibility).toBe('visible')
+    expect(three.props.active).toBe(true)
     const tree = view.render()
     expect(ofType(tree, 'ecad-viewer').map((v) => v.props.style.visibility)).toEqual(['hidden', 'hidden'])
-    expect(texts(tree)).toEqual([BOARD3D_NOTE])
+    // the 2D views still loading say so over themselves only
+    expect(view.state.ready).toBe(false)
+    expect(texts(tree)).toEqual([])
+  })
+
+  it('draws a 3D model with no sibling alone, and no 3D view where none is listed', () => {
+    const lone = new KicadView({ doc: model3d('case/lid view.glb'), documents: DOCS, base: BASE })
+    expect(ofType(lone.render(), 'ecad-viewer')).toEqual([])
+    expect(view3d(lone).three.props).toMatchObject({ url: `${BASE}case/lid%20view.glb`, active: true })
+    expect(view3d(new KicadView({ doc: DOCS[4], documents: DOCS, base: BASE })).box).toBeUndefined()
   })
 
   it('tells each viewer whether it is the one on screen', () => {
@@ -146,6 +178,73 @@ describe('a KiCad design', () => {
       + ' (symbol (lib_id "Device:R") (uuid "r1")))'
     const handed = designSources(members, { ...Object.fromEntries(designFiles(members).map((f) => [f, f])), 'hw/sub/power.kicad_sch': bare })
     expect(handed[SCH][2].content).toMatch(/\(lib_id "Device:R"\) \(uuid "r1"\) \(pin "1" \(uuid "[0-9a-f-]{36}"\)\)\)\)$/)
+  })
+})
+
+describe('where a double click jumps', () => {
+  it('schematic and board to each other, the 3D model to the board else the schematic, never to 3D', () => {
+    const jumps = {}
+    for (const listed of [[SCH], [PCB], [BOARD3D], [SCH, PCB], [SCH, BOARD3D], [PCB, BOARD3D], [SCH, PCB, BOARD3D]]) {
+      const members = Object.fromEntries(listed.map((view) => [view, {}]))
+      for (const from of listed) jumps[`${listed} ${from}`] = jumpTarget(from, members)
+    }
+    expect(jumps).toEqual({
+      'SCH SCH': null, 'PCB PCB': null, '3D 3D': null,
+      'SCH,PCB SCH': PCB, 'SCH,PCB PCB': SCH,
+      'SCH,3D SCH': null, 'SCH,3D 3D': SCH,
+      'PCB,3D PCB': null, 'PCB,3D 3D': PCB,
+      'SCH,PCB,3D SCH': PCB, 'SCH,PCB,3D PCB': SCH, 'SCH,PCB,3D 3D': PCB,
+    })
+  })
+})
+
+describe('a click selects the same part in every view', () => {
+  it('from the schematic or the board: the others select it, nothing on screen changes', () => {
+    const { view, elements } = mounted()
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'C523', uuid: 'u' })
+    expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, 'C523'))
+    expect(elements[SCH].requestCrossProbe).not.toHaveBeenCalled()
+    expect(view3d(view).three.props.selected).toBe('C523')
+    // a pad on the board stands for its part
+    click(elements[PCB], { sourceContext: PCB, itemType: 'pad', reference: 'R104', pin: '1', net: 'GND' })
+    expect(elements[SCH].requestCrossProbe).toHaveBeenCalledWith(designator(SCH, 'R104'))
+    expect(view3d(view).three.props.selected).toBe('R104')
+    expect(view.props.onOpen).not.toHaveBeenCalled()
+    expect(view.props.doc.id).toBe('hw__board.kicad_sch')
+  })
+
+  it('a click on what is no part puts the part out in the others', () => {
+    const { view, elements } = mounted()
+    click(elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U501' })
+    click(elements[PCB], { sourceContext: PCB, itemType: 'track', net: 'GND' })
+    expect(elements[SCH].clearSelection).toHaveBeenCalledTimes(1)
+    expect(elements[PCB].clearSelection).not.toHaveBeenCalled()
+    expect(view3d(view).three.props.selected).toBeNull()
+  })
+
+  it('from the 3D model: both drawings select it, and a click on the bare board puts it out', () => {
+    const { view, elements } = mounted(DOCS[2])
+    view3d(view).three.props.onSelect('L101')
+    expect(elements[SCH].requestCrossProbe).toHaveBeenCalledWith(designator(SCH, 'L101'))
+    expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, 'L101'))
+    expect(view3d(view).three.props.selected).toBe('L101')
+    view3d(view).three.props.onSelect(null)
+    expect([elements[SCH].clearSelection, elements[PCB].clearSelection].map((f) => f.mock.calls.length)).toEqual([1, 1])
+    expect(view.props.onOpen).not.toHaveBeenCalled()
+  })
+
+  it('a double click on the 3D model opens the board, else the schematic, and selects the part there', () => {
+    const { view, elements } = mounted(DOCS[2])
+    view3d(view).three.props.onJump('L101')
+    expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
+    expect(elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith(designator(PCB, 'L101'))
+    expect(view3d(view).three.props.active).toBe(false)
+
+    const docs = [schematic(), model3d()]
+    const bare = mounted(docs[1], docs)
+    view3d(bare.view).three.props.onJump('U501')
+    expect(bare.view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
+    expect(bare.elements[SCH].requestCrossProbe).toHaveBeenCalledWith(designator(SCH, 'U501'))
   })
 })
 
