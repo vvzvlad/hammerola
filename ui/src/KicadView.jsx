@@ -45,11 +45,21 @@
 //     select the same thing — a part by its designator, or a net by its name
 //     (`crossProbeRequest`). Nothing jumps TO the 3D view: one opens it from the
 //     list, where the part is already lit.
+//
+// THE SELECTED PART'S DATASHEET is one chip at the bottom left of every view,
+// when the part's KiCad `Datasheet` field names a document of the build
+// (kicadsheets.js). A click opens it as a row of the page's list does
+// (`onOpen`): the document takes the view area and the design is left; the way
+// back is the list. The chip's right edge keeps clear of the board's panel
+// while the board is on screen, and the view area already ends above the
+// page's bar (`DOC_LAYER` in viewlist.jsx).
 
 import React from 'react';
 
 import BoardView3D from './BoardView3D.jsx';
 import { addPinEntries } from './kicadpins.js';
+import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
+import { chip, ELLIPSIS } from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
 import { css, MONO } from './style.jsx';
 
@@ -163,9 +173,27 @@ export function crossProbeRequest(detail, targetContext) {
   return null;
 }
 
+/** The document the datasheet of part `designator` names (kicadsheets.js), or
+ *  null. `datasheets` is designator → `Datasheet` value. */
+export function selectedDatasheet(designator, datasheets, members, documents) {
+  const value = designator && datasheets.get(designator);
+  return value ? datasheetDocument(value, datasheetBase(Object.values(members)), documents) : null;
+}
+
 const SHELL = 'position:relative;height:100%;min-height:320px';
 const VIEWER = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
+// The board's panel is 200px wide, 10px in from the right (PcbPanel.jsx), and
+// may run the full height of the view: beside it the chip stops 10px short.
+const datasheetChip = (board) => `${chip(true, 'var(--float-bg)', 'var(--line)', 'var(--text)')};`
+  + 'position:absolute;left:10px;bottom:10px;box-sizing:border-box;cursor:pointer;user-select:none;'
+  + `max-width:calc(100% - ${board ? 230 : 20}px)`;
+const DOC_ICON = (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+       strokeLinejoin="round" style={{ flex: 'none', color: 'var(--text-soft)' }}>
+    <path d="M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13 M6.5 8.5h4 M6.5 11h4" />
+  </svg>
+);
 
 /** One design: a view per member, the one on screen, and the links between
  *  them. */
@@ -173,8 +201,9 @@ export default class KicadView extends React.Component {
   constructor(props) {
     super(props);
     // `selected`: the designator of the part selected in the design, which the
-    // 3D view is handed; the elements are told directly.
-    this.state = { ready: false, error: '', selected: null };
+    // 3D view is handed; the elements are told directly. `datasheets`: each
+    // part's `Datasheet` value, once the files are in.
+    this.state = { ready: false, error: '', selected: null, datasheets: new Map() };
     // A selection waiting for the page to hand down the member it is on:
     // `{ to, request }`, or null.
     this.probe = null;
@@ -258,10 +287,14 @@ export default class KicadView extends React.Component {
     Promise.all([loadEcadViewer(), ...fetched])
       .then(([, ...texts]) => {
         if (this._gone) return undefined;
-        const sources = designSources(members, Object.fromEntries(files.map((file, i) => [file, texts[i]])));
+        const byPath = Object.fromEntries(files.map((file, i) => [file, texts[i]]));
+        const sources = designSources(members, byPath);
         const revisionKey = `${base}${designKey(this.props.doc)}`;
-        return Promise.all(views.map((context) => this.elements[context]
+        const loaded = Promise.all(views.map((context) => this.elements[context]
           && this.elements[context].replaceSources({ revisionKey, sources: sources[context] })));
+        // Read once the viewers have their files, so that they need not wait for it.
+        this.setState({ datasheets: partDatasheets(byPath) });
+        return loaded;
       })
       .then(() => {
         if (!this._gone) this.setState({ ready: true });
@@ -295,11 +328,14 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected } = this.state;
+    const { ready, error, selected, datasheets } = this.state;
+    const { documents, onOpen } = this.props;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const note = side !== BOARD3D && (error || (!ready && 'Loading…'));
     const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
     const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
+    const sheet = selectedDatasheet(selected, datasheets, members, documents);
+    const label = sheet && `Datasheet · ${sheet.name}`;
     return (
       <div style={css(SHELL)}>
         {drawnViews(members).map((context) => (
@@ -312,6 +348,13 @@ export default class KicadView extends React.Component {
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}
                          onSelect={this.onSelect3D} onJump={this.onJump3D} />
+          </div>
+        )}
+        {sheet && (
+          <div data-datasheet={sheet.id} title={label} style={css(datasheetChip(side === PCB))}
+               onClick={() => onOpen && onOpen(sheet.id)}>
+            {DOC_ICON}
+            <span style={css(ELLIPSIS)}>{label}</span>
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}

@@ -74,9 +74,12 @@ export function parseSexpr(text) {
   return top[0];
 }
 
-const head = (node) => node.list[0] && node.list[0].atom;
-const children = (node, name) => node.list.slice(1).filter((child) => child.list && head(child) === name);
-const valueOf = (node) => (node && node.list[1] ? node.list[1].atom : undefined);
+/** The name a list starts with: `kicad_sch` of `(kicad_sch …)`. */
+export const head = (node) => node.list[0] && node.list[0].atom;
+/** The lists directly inside `node` that start with `name`. */
+export const children = (node, name) => node.list.slice(1).filter((child) => child.list && head(child) === name);
+/** The atom after a list's name: `"R1"` of `(reference "R1")`. */
+export const valueOf = (node) => (node && node.list[1] ? node.list[1].atom : undefined);
 
 function numberOf(node, name, fallback) {
   const found = Number(valueOf(children(node, name)[0]));

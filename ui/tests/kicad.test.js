@@ -356,3 +356,61 @@ describe('the link between the schematic and the board', () => {
     expect(elements[PCB].requestCrossProbe).not.toHaveBeenCalled()
   })
 })
+
+describe('the selected part\'s datasheet', () => {
+  const tpa = { id: 'hw__ds__tpa3250.pdf', name: 'TPA3250', type: 'pdf', file: 'hw/ds/tpa3250.pdf', bytes: 9, hidden: true }
+  const docs = [...DOCS, tpa]
+  /** The design with its parts' `Datasheet` values read, `doc` on screen. */
+  const withSheets = (doc = docs[0]) => {
+    const one = mounted(doc, docs)
+    one.view.setState({ ready: true, datasheets: new Map([
+      ['U501', '${KIPRJMOD}/ds/tpa3250.pdf'], ['U502', 'https://www.ti.com/lit/ds/tpa3250.pdf'], ['C1', '../ds/ne555.pdf']]) })
+    return one
+  }
+  const chipOf = (view) => collect(view.render(), (el) => (el.props['data-datasheet'] ? el : undefined))[0]
+  const onScreen = (view, doc) => {
+    view.props = { ...view.props, doc }
+    return chipOf(view)
+  }
+
+  it('is one chip at the bottom left of every view, naming the document, wherever the part was selected', () => {
+    const { view, elements } = withSheets()
+    expect(chipOf(view)).toBeUndefined()
+    const selections = [
+      () => click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'U501' }),
+      () => click(elements[PCB], { sourceContext: PCB, itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' }),
+      () => view3d(view).three.props.onSelect('U501'),
+    ]
+    for (const select of selections) {
+      view.setState({ selected: null })
+      select()
+      for (const doc of docs.slice(0, 3)) {
+        const chip = onScreen(view, doc)
+        expect(chip.props['data-datasheet']).toBe(tpa.id)
+        expect(texts(chip)).toEqual(['Datasheet · TPA3250'])
+        expect(chip.props.style).toMatchObject({ position: 'absolute', left: '10px', bottom: '10px',
+          display: 'flex', background: 'var(--float-bg)', color: 'var(--text)', cursor: 'pointer' })
+        // beside the board's panel (200px, 10px in from the right) it stops short of it
+        expect(chip.props.style.maxWidth).toBe(doc.type === 'board' ? 'calc(100% - 230px)' : 'calc(100% - 20px)')
+      }
+    }
+  })
+
+  it('opens the document as a row does, and goes with a click on nothing or a part with no link', () => {
+    const { view, elements } = withSheets(docs[1])
+    click(elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U501' })
+    chipOf(view).props.onClick()
+    expect(view.props.onOpen).toHaveBeenCalledWith(tpa.id)
+    expect(view.props.doc).toBe(tpa)
+
+    const after = withSheets()
+    const pick = (reference) => {
+      click(after.elements[SCH], { sourceContext: SCH, itemType: reference ? 'symbol' : 'wire', reference })
+      const chip = chipOf(after.view)
+      return chip ? texts(chip)[0] : null
+    }
+    expect(['U501', undefined, 'U502', 'R104', 'C1'].map(pick))
+      .toEqual(['Datasheet · TPA3250', null, null, null, 'Datasheet · ds/ne555.pdf'])
+    expect(after.view.props.onOpen).not.toHaveBeenCalled()
+  })
+})
