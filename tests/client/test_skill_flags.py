@@ -47,11 +47,12 @@ NOT_FOR_THE_AGENT = {
     "--yes",
 }
 
-# Flags of OTHER programs the document shows a command of: the `kicad-cli` line
-# that makes the 3D model of a board. They are the author's to type on his own
+# Flags of OTHER programs the document shows a command of: the `kicad-cli` lines
+# that make the 3D model and the Gerbers of a board. They are the author's to type on his own
 # machine, and no parser of ours has them (asserted below, so a name that comes
 # to mean one of ours is no longer excused).
 OTHER_PROGRAMS = {
+    "--board-plot-params", "--excellon-separate-th",
     "--include-pads", "--include-silkscreen", "--include-soldermask",
     "--include-tracks", "--include-zones", "--subst-models",
 }

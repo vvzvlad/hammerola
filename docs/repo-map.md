@@ -51,7 +51,7 @@
   because retention was its only reader
 - `src/docsbuild.py` — the documents a project publishes to be read (issue
   #122): the paths its `project.json` lists under `documents` (markdown, PDF,
-  pictures, HTML, SVG, and a KiCad schematic, board or 3D model — `render.DOCUMENT_TYPES`),
+  pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of Gerbers — `render.DOCUMENT_TYPES`),
   published under the same paths, an entry optionally `hidden` (no row in the
   list, still served and opened by `?d=`). A schematic, a board and a `.glb`
   are each a document with a row of their own (issue #123); for a schematic this
@@ -397,6 +397,15 @@
   is the part that needs no WebGL: which nodes are parts (a child of the scene
   root named by its designator), merging a part's meshes, lighting one part on
   copies of its materials, framing it
+- `ui/src/GerberView.jsx`, `ui/src/gerber.js` — a zip of Gerbers (document type
+  `gerbers`): `gerber.js` reads the zip in the browser (central directory,
+  `DecompressionStream('deflate-raw')`), tells each file's layer by its
+  `%TF.FileFunction` and orders and colours the layers, and loads the vendored
+  `wasm-gerber-renderer` (`static/_v/wasm_gerber_processor.js` and its `.wasm`,
+  `static/_v/PROVENANCE.md`) by URL on first use; `GerberView.jsx` draws the layers
+  on a canvas through its `GerberProcessor`, with pan, zoom, a layer panel
+  (Top/Bottom, an eye per layer) and a link that downloads the zip. The model
+  page's Downloads menu lists the same zip as GERBERS (`downloadsview.js`)
 - `ui/src/PcbPanel.jsx` — the board view's own panel over its canvas (the
   viewer's panels are hidden by `hide-chrome`): layer presets, a row per layer
   with an eye and an active-layer click, the zone fill opacity (dimmed to

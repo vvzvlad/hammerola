@@ -670,6 +670,8 @@ dionis_speaker: дорожка нижнего слоя видна сквозь �
 корнем проекта ссылки не дают. Поле берётся со схемы (размещённый символ, не
 `lib_symbols`), у детали без значения на схеме — с платы (`ui/src/kicadsheets.js`).
 
+**Герберы** (решение 2026-10-24, §4) — один `.zip` в `documents`, тип `gerbers` по расширению, открыт без ключа, как файлы KiCad. Страница распаковывает его сама (`DecompressionStream('deflate-raw')`, размеры берутся из центрального каталога) и слой каждого файла определяет по `%TF.FileFunction` внутри него (`ui/src/gerber.js`). Рисует вендорённый `wasm-gerber-renderer` 0.8.1 (MIT; `static/_v/wasm_gerber_processor.js` и `.wasm`, подгружаются по адресу при открытии вида; нужен `'wasm-unsafe-eval'`, он уже в политике страницы, а `/_v/*.wasm` отдаётся как `application/wasm`) через его `GerberProcessor`: документированный интерфейс библиотеки перечитывает все слои на каждом кадре. На виде (`ui/src/GerberView.jsx`) панель слоёв (Top/Bottom, глаз на каждом слое), перетаскивание, колесо, щипок, двойной клик возвращает плату в кадр, ссылка на скачивание zip; тот же zip в меню Downloads страницы модели — группа GERBERS после STL. Слой без единой фигуры (в zip владельца это `B_Paste.gbp`) библиотека рисовать отказывается, в панели такая строка бледная, без глаза. Вид платы герберы не заменяют: это вид того, что уйдёт на производство.
+
 Вьювер рисует выводы размещённого символа только по его собственным записям
 `(pin "N" (uuid …))` и графику каждого берёт из библиотечного символа по
 номеру; KiCad эти записи пишет, а konnect нет, и без них на схеме остаётся один
@@ -1208,7 +1210,7 @@ URL этого проекта навсегда. Правило: по выдан�
 Открыто только то, без чего не нарисовать модель и не показать картинку, и
 документы сборки — их страница сборки показывает по той же ссылке: `.json` и все
 расширения документов, `.md`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`,
-`.html`, `.htm`, `.svg`, `.kicad_sch`, `.kicad_pcb`, `.glb`, и файл-спутник схемы и
+`.html`, `.htm`, `.svg`, `.kicad_sch`, `.kicad_pcb`, `.glb`, `.zip` (герберы), и файл-спутник схемы и
 платы, `.kicad_pro` — без них вьювер не нарисует схему (решение 2026-10-23, §4)
 (`OPEN_SUFFIXES` в `src/app.py` из `render.DOCUMENT_TYPES` и
 `render.KICAD_SUFFIXES`). Всё остальное — STEP, STL, 3MF, STL вида
@@ -1389,7 +1391,7 @@ WebAssembly: `eval` и `new Function` обычного JS, инлайн-скри
 `text/markdown; charset=utf-8`, `.pdf` → `application/pdf`, `.png`/`.jpg`/`.jpeg`/
 `.gif`/`.webp` → свои `image/*`, `.html`/`.htm` → `text/html; charset=utf-8`, `.svg`
 → `image/svg+xml`, файлы KiCad `.kicad_pro`/`.kicad_sch`/`.kicad_pcb` →
-`text/plain; charset=utf-8`, `.glb` → `model/gltf-binary`. **Всё остальное** → `application/octet-stream` +
+`text/plain; charset=utf-8`, `.glb` → `model/gltf-binary`, `.zip` → `application/zip`. **Всё остальное** → `application/octet-stream` +
 `Content-Disposition: attachment`. Исключение — `meta.json`, который хаб перезаписывает
 сам после валидации, и `index.html`, который вообще не берётся из каталога сборки
 (см. выше). Ссылаться на них нельзя ниоткуда: `GENERATED_FILES` отвергается в

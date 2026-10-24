@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 31
+version: 32
 ---
 
 # hammerola
@@ -813,7 +813,7 @@ An entry is a path, or an object with the path as `file` and a `title`: the
 caption the page shows for it in place of the path (one line of text, as a
 project's title), and optionally `"hidden": true`. Each path is a file of the
 project, a `.md`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.html`, `.htm`,
-`.svg`, `.kicad_sch`, `.kicad_pcb` or `.glb`, and is published
+`.svg`, `.kicad_sch`, `.kicad_pcb`, `.glb` or `.zip`, and is published
 under the same path; nothing unlisted is. The build page lists them in its view menu, after
 the views, one row each: choosing one shows it over the model, choosing a view brings the
 model back, and `?d=<id>` in the address (the path with `/` written as `__`)
@@ -828,6 +828,17 @@ the build, because an image from another site is not loaded (the page allows
 the link without a key.
 A path that is not a file, has another extension, is listed twice or would
 overwrite what the model's build wrote refuses the push with a 422 naming it.
+
+Gerbers are ONE `.zip` listed like any document: the set that goes to the fab,
+`kicad-cli pcb export gerbers --board-plot-params` and `kicad-cli pcb export drill
+--excellon-separate-th`, zipped (the KiCad project's own fab zip will do). The page unzips
+it in the browser, tells each layer by the `%TF.FileFunction` inside the file and draws
+copper, mask, silkscreen, paste, outline and drills with a toggle per layer, the board seen
+from the top or from the bottom, and a link that downloads the zip; a model's build page
+also lists it under GERBERS in Downloads, beside the STL. It sits beside the board's view
+and does not replace it. Any listed `.zip` is read as a set of Gerbers, and the zip opens
+to the link without a key like the other documents, so whoever has the link has the
+whole fabrication set.
 
 A KiCad schematic, a board and the 3D model of a board are documents like any
 other, one entry and one row each, with any caption, as many as the project has:

@@ -9,7 +9,7 @@ A project lists them in its `project.json`, in tab order:
 
 Each is a path in the pushed tree, of a type the page can show
 (`render.DOCUMENT_TYPES`: markdown, PDF, pictures, HTML, SVG, a KiCad
-schematic, a KiCad board, the 3D model of a board), and it is published under
+schematic, a KiCad board, the 3D model of a board, a zip of Gerbers), and it is published under
 the same path, so a link between two of them works as it does in the tree.
 Nothing is found by extension: a file is a document because the list says so.
 An entry is the path alone, or an object with the path as `file`, a `title`,

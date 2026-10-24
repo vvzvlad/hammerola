@@ -153,7 +153,9 @@ presets, the opacity of the zone fills and the net of the last click;
 `src/kicadsheets.js` reads each part's `Datasheet` field, and the part's menu
 has an item that opens the listed document it names in a window over the view;
 `src/kicadpins.js` gives each schematic the pin entries the viewer
-draws pins from. The viewer is the vendored `static/_v/ecad-viewer.js`, imported by
+draws pins from. `src/GerberView.jsx` draws a listed `.zip` of Gerbers (`src/gerber.js`
+reads the zip and the layers; the renderer is the vendored `static/_v/wasm_gerber_processor.js`,
+imported by URL on first use), beside the board's own view. The viewer is the vendored `static/_v/ecad-viewer.js`, imported by
 URL when a design is opened, as `src/viewport/library.js` imports
 `three-cad-viewer`, so it is in neither the bundle nor the page until then.
 `src/viewport/` is the imperative half: one custom element (`<hmr-viewport>`)
