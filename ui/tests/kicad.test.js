@@ -7,7 +7,8 @@
 // in the other views too, without asking the page for anything; a click on
 // nothing puts out everything. `Show in …` of the right-click menu asks the
 // page to open another member (`onOpen`, with its id) and selects there once
-// the page has answered.
+// the page has answered; a part's datasheet opens in a window over the design
+// and asks the page for nothing.
 //
 // The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
 // and are checked in a browser; here the two elements are plain DOM elements
@@ -21,7 +22,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
 
 import BoardView3D from '../src/BoardView3D.jsx'
-import { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
+import DocumentView, { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
@@ -576,14 +577,76 @@ describe('a part\'s datasheet', () => {
     ].map((items) => items && items.at(-1))).toEqual(['Open datasheet · ds/ne555.pdf', 'Show in hw/board.glb', 'Show in hw/board.kicad_sch', null])
   })
 
-  it('opens the document as a row does, and is the whole menu of a part with no other member', () => {
-    const one = withSheets(docs[1])
-    offered(one, PCB, { itemType: 'footprint', reference: 'U501' })
-    itemsOf(one.view)[2].props.onClick()
-    expect([one.view.props.onOpen.mock.calls, one.view.props.doc, one.view.state.menu]).toEqual([[[tpa.id]], tpa, null])
-
+  it('is the whole menu of a part with no other member', () => {
     const lone = withSheets(schematic(), [schematic(), pdf, tpa])
     expect(offered(lone, SCH, { itemType: 'symbol', reference: 'U501' })).toEqual(['U501', 'Open datasheet · TPA3250'])
     expect(offered(lone, SCH, { itemType: 'symbol', reference: 'R104' })).toBeNull()
+  })
+
+  describe('opens in a window over the design', () => {
+    /** The window as drawn: the veil over the view area, the window on it, its
+     *  `×` and the document view it draws. */
+    const windowOf = (view) => {
+      const [veil] = collect(view.render(), (el) => (el.props['data-sheet'] ? el : undefined))
+      if (!veil) return undefined
+      const pick = (test) => collect(veil, (el) => (test(el) ? el : undefined))[0]
+      return { veil, window: pick((el) => el.props.role === 'dialog'), close: pick((el) => el.props.title === 'Close'),
+        body: ofType(veil, DocumentView)[0] }
+    }
+    /** The board on screen with U501 selected and its datasheet's window open. */
+    const opened = (one = withSheets(docs[1])) => {
+      offered(one, PCB, { itemType: 'footprint', reference: 'U501' })
+      itemsOf(one.view).at(-1).props.onClick()
+      return one
+    }
+    /** A click on `target`, as React hands it to the veil's `onClick`. */
+    const clickVeil = (shown, target) => shown.veil.props.onClick({ target, currentTarget: shown.veil })
+
+    it('drawn as the page draws a document, the page asked for nothing and the design left as it was', () => {
+      const { view, elements } = opened()
+      const shown = windowOf(view)
+      expect([view.props.onOpen.mock.calls, view.props.doc.id, view.state.menu, view.state.selected])
+        .toEqual([[], 'hw__board.kicad_pcb', null, 'U501'])
+      expect([elements[PCB].clearSelection.mock.calls, elements[SCH].clearSelection.mock.calls]).toEqual([[], []])
+      expect(shown.body.props).toMatchObject({ doc: tpa, base: BASE })
+      // the viewer's own keys (`[`, `]`) stand aside for an open dialog of the page
+      expect(shown.window.props).toMatchObject({ role: 'dialog', 'data-state': 'open' })
+      expect(texts(shown.veil)).toEqual(['TPA3250', '×'])
+      // over the view area, in the menu's colours
+      expect(shown.veil.props.style).toMatchObject({ position: 'absolute', inset: '0', padding: '12px' })
+      expect(shown.window.props.style).toMatchObject({ background: 'var(--card-bg)', border: '1px solid var(--line)' })
+    })
+
+    it('closes on its ×, and on a click on the veil beside it but not on one inside it', () => {
+      const one = opened()
+      const { view } = one
+      windowOf(view).close.props.onClick()
+      expect(windowOf(view)).toBeUndefined()
+      const shown = windowOf(opened(one).view)
+      clickVeil(shown, shown.body)
+      expect(windowOf(view)).toBeDefined()
+      clickVeil(shown, shown.veil)
+      expect([windowOf(view), view.state.selected]).toEqual([undefined, 'U501'])
+    })
+
+    it('Escape closes it alone and is taken, the part left selected; the next one puts the part out', () => {
+      const { view, elements } = opened()
+      view.listen(true)
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      window.dispatchEvent(escape)
+      expect([windowOf(view), escape.defaultPrevented, view.state.selected, elements[PCB].clearSelection.mock.calls])
+        .toEqual([undefined, true, 'U501', []])
+      window.dispatchEvent(ESCAPE())
+      expect([view.state.selected, elements[PCB].clearSelection.mock.calls.length]).toEqual([null, 1])
+      view.componentWillUnmount()
+    })
+
+    it('goes when its view leaves the screen', () => {
+      const { view } = opened()
+      view.props = { ...view.props, doc: docs[0] }
+      expect(windowOf(view)).toBeUndefined()
+      view.componentDidUpdate()
+      expect(view.state.sheet).toBeNull()
+    })
   })
 })

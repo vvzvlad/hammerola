@@ -1,5 +1,6 @@
 // The datasheet of each part of a KiCad design, and the document of the build
-// it names. KicadView.jsx offers it as the last item of the part's right-click menu.
+// it names. KicadView.jsx offers it as the last item of the part's right-click
+// menu and opens it in a window over the design, which stays as it was under it.
 //
 // THE LINK IS KICAD'S OWN `Datasheet` FIELD: a placed symbol carries one in the
 // schematic, a footprint one on the board. Both are read from the texts

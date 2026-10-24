@@ -405,7 +405,7 @@
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
-  matched to a listed document (`KicadView` offers it as an item of the part's menu)
+  matched to a listed document (`KicadView` offers it as an item of the part's menu and shows it in a window over the view)
 - `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
   entries the viewer draws a placed symbol's pins from, added from the sheet's
   `lib_symbols` to every symbol that has none (konnect writes none); text it

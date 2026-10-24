@@ -66,13 +66,17 @@
 // A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
 // when the part's KiCad `Datasheet` field names a document of the build, listed
 // or hidden (kicadsheets.js); a part with a datasheet and no other member to be
-// shown in gets a menu of that item alone. It opens the document as a row of
-// the page's list does (`onOpen`): the document takes the view area and the
-// design is left; the way back is the list.
+// shown in gets a menu of that item alone. It opens the document in a window
+// over the view area, drawn as the page draws a document (DocumentView.jsx),
+// and asks the page for nothing: the design under it keeps its view, its
+// selection and its camera, and closing the window is the way back. One window
+// at a time; it goes on its `×`, a click beside it and Escape — which then
+// closes the window only — and when its view leaves the screen.
 
 import React from 'react';
 
 import BoardView3D from './BoardView3D.jsx';
+import DocumentView from './DocumentView.jsx';
 import { addPinEntries } from './kicadpins.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
@@ -193,16 +197,19 @@ const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
  * The right-click menu for what view `from` reported selected (`detail`; the
  * 3D view's part as `{ reference }`): what it shows, and an item for every
  * other listed member that can show it, named after that document, then for a
- * part the document its datasheet names (`sheet`, or null). Null when there is
- * no item, and for a designator KiCad starts with `#`: a power symbol or a
- * power flag is drawn on the schematic only, never placed on the board.
+ * part the document its datasheet names (`sheet`, or null), which its item
+ * carries as `doc`. Null when there is no item, and for a designator KiCad
+ * starts with `#`: a power symbol or a power flag is drawn on the schematic
+ * only, never placed on the board.
  */
 export function menuFor(from, detail, members, sheet = null) {
   const subject = crossProbeRequest(detail, null);
   if (!subject || (subject.kind === 'designator' && subject.value.startsWith('#'))) return null;
   const items = SHOWS[subject.kind].filter((view) => view !== from && members[view])
     .map((view) => ({ view, id: members[view].id, label: `Show in ${members[view].name}` }));
-  if (sheet && subject.kind === 'designator') items.push({ id: sheet.id, label: `Open datasheet · ${sheet.name}` });
+  if (sheet && subject.kind === 'designator') {
+    items.push({ id: sheet.id, label: `Open datasheet · ${sheet.name}`, doc: sheet });
+  }
   return items.length ? { kind: subject.kind, value: subject.value, items } : null;
 }
 
@@ -258,6 +265,20 @@ const MENU_NAME = `height:${MENU_HEAD}px;box-sizing:border-box;padding:7px 14px 
 const menuItem = (hover) => `height:${MENU_ROW}px;box-sizing:border-box;padding:8px 14px 0;${ELLIPSIS};`
   + `font:400 12px ${SANS};color:var(--text);cursor:pointer;user-select:none`
   + (hover ? ';background:var(--hover-bg)' : '');
+// The datasheet's window, in the menu's colours: a veil over the whole view
+// area, which a click on closes, and the window 12px in from its edges, no
+// wider than a page of a datasheet needs.
+const SHEET_VEIL = 'position:absolute;inset:0;z-index:2;display:flex;justify-content:center;'
+  + 'padding:12px;box-sizing:border-box;background:var(--shadow)';
+const SHEET_WINDOW = 'display:flex;flex-direction:column;width:100%;max-width:1000px;height:100%;'
+  + 'box-sizing:border-box;overflow:hidden;background:var(--card-bg);border:1px solid var(--line);'
+  + `border-radius:9px;box-shadow:${POP_SHADOW_HIGH}`;
+const SHEET_HEAD = 'display:flex;align-items:center;gap:8px;height:38px;flex:none;box-sizing:border-box;'
+  + 'padding:0 5px 0 14px;border-bottom:1px solid var(--line-soft)';
+const SHEET_NAME = `flex:1;min-width:0;${ELLIPSIS};font:600 12px ${SANS};color:var(--text)`;
+const SHEET_CLOSE = 'width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;'
+  + `border-radius:6px;font:400 19px/1 ${SANS};color:var(--text-muted);cursor:pointer;user-select:none`;
+const SHEET_BODY = 'position:relative;flex:1;min-height:0;overflow:auto';
 
 /** One design: a view per member, the one on screen, and the links between
  *  them. */
@@ -268,8 +289,9 @@ export default class KicadView extends React.Component {
     // 3D view is handed; the elements are told directly. `datasheets`: each
     // part's `Datasheet` value, once the files are in. `menu`: the right-click
     // menu open (`menuFor`, with the view it is of and its box), `hover` the
-    // index of the item under the pointer.
-    this.state = { ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1 };
+    // index of the item under the pointer. `sheet`: the datasheet's window open,
+    // `{ doc, from }` with the view it was opened over.
+    this.state = { ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1, sheet: null };
     // A selection waiting for the page to hand down the member it is on:
     // `{ to, request }`, or null.
     this.probe = null;
@@ -294,6 +316,13 @@ export default class KicadView extends React.Component {
     this.onMenu3D = (designator, x, y) => this.openMenu(BOARD3D, { reference: designator }, x, y);
     this.closeMenu = () => {
       if (this.state.menu) this.setState({ menu: null, hover: -1 });
+    };
+    this.closeSheet = () => {
+      if (this.state.sheet) this.setState({ sheet: null });
+    };
+    // A click on the veil itself, not one that bubbled up from the window.
+    this.onVeil = (event) => {
+      if (event.target === event.currentTarget) this.closeSheet();
     };
     // A press anywhere but on the menu closes it: a press on a view too, which
     // a right press must, so that a menu is open one at a time.
@@ -383,12 +412,20 @@ export default class KicadView extends React.Component {
     if (this.state.selected !== null) this.setState({ selected: null });
   }
 
-  /** Escape closes the menu, or else puts out what is lit everywhere. Not
-   *  while typing: the page may have a field open over the design. */
+  /** Escape closes the datasheet's window, or the menu, or else puts out what
+   *  is lit everywhere: one thing per Escape, and one that closed the window is
+   *  taken, as the page takes one that closed something of its own. Not while
+   *  typing: the page may have a field open over the design. */
   key(event) {
     if (event.key !== 'Escape' || event.defaultPrevented || typingTarget()) return;
-    if (this.state.menu) this.closeMenu();
-    else this.clear();
+    if (this.state.sheet) {
+      event.preventDefault();
+      this.closeSheet();
+    } else if (this.state.menu) {
+      this.closeMenu();
+    } else {
+      this.clear();
+    }
   }
 
   /** A right press released on a drawn view. Released where it was pressed it
@@ -435,17 +472,21 @@ export default class KicadView extends React.Component {
     this.setState({ menu: { ...menu, from, ...box }, hover: -1 });
   }
 
-  /** An item of the menu: the page is asked to open its document. A member
-   *  of the design selects the same thing once the page has handed it down
-   *  (`componentDidUpdate`); the 3D view is handed the part. A datasheet is
-   *  only opened. */
+  /** An item of the menu. A datasheet opens in the window over the view
+   *  area, the page asked for nothing. A member of the design: the page is
+   *  asked to open it, and it selects the same thing once the page has handed
+   *  it down (`componentDidUpdate`); the 3D view is handed the part. */
   choose(item) {
     const { menu } = this.state;
     this.closeMenu();
     if (!menu) return;
+    if (item.doc) {
+      this.setState({ sheet: { doc: item.doc, from: menu.from } });
+      return;
+    }
     if (item.view === BOARD3D) {
       if (menu.value !== this.state.selected) this.setState({ selected: menu.value });
-    } else if (item.view) {
+    } else {
       if (!this.elements[item.view]) return;
       this.probe = { to: item.view, request: { targetContext: item.view, kind: menu.kind, value: menu.value } };
     }
@@ -488,8 +529,9 @@ export default class KicadView extends React.Component {
 
   componentDidUpdate() {
     this.activate();
-    // The menu goes with its view off the screen.
+    // The menu and the datasheet's window go with their view off the screen.
     if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
+    if (this.state.sheet && this.state.sheet.from !== this.side()) this.closeSheet();
     const { probe } = this;
     if (probe && probe.to === this.side()) {
       this.probe = null;
@@ -514,7 +556,7 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, menu, hover } = this.state;
+    const { ready, error, selected, menu, hover, sheet } = this.state;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const note = side !== BOARD3D && (error || (!ready && 'Loading…'));
     const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
@@ -545,6 +587,23 @@ export default class KicadView extends React.Component {
                    onMouseLeave={() => this.setState({ hover: -1 })}
                    onClick={() => this.choose(item)}>{item.label}</div>
             ))}
+          </div>
+        )}
+        {/* An open `[role="dialog"][data-state="open"]` on the page also keeps
+            the viewer's own keys (`[`, `]`: the schematic's sheets) off the
+            design under it. */}
+        {sheet && sheet.from === side && (
+          <div data-sheet={sheet.doc.id} style={css(SHEET_VEIL)} onClick={this.onVeil}>
+            <div role="dialog" aria-label={sheet.doc.name} data-state="open" style={css(SHEET_WINDOW)}>
+              <div style={css(SHEET_HEAD)}>
+                <div title={sheet.doc.name} style={css(SHEET_NAME)}>{sheet.doc.name}</div>
+                <div title="Close" style={css(SHEET_CLOSE)} onClick={this.closeSheet}>×</div>
+              </div>
+              <div style={css(SHEET_BODY)}>
+                <DocumentView key={sheet.doc.id} doc={sheet.doc} base={this.props.base}
+                              documents={this.props.documents} />
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 30
+version: 31
 ---
 
 # hammerola
@@ -856,7 +856,8 @@ listed entry of the design; choosing one opens it with the part or net selected
 there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
 `.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's right-click menu then has
-`Open datasheet · <caption>`, which opens the PDF. A web address in the field is not
+`Open datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape
+brings the design back as it was). A web address in the field is not
 a link. A missing sheet, a sheet outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
 the push with a 422 naming the file. The files open to the link without a key: whoever has it can
