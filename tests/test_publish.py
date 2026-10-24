@@ -521,18 +521,18 @@ def test_missing_meta_json_is_422(hub):
 # There are NINE and they are enumerated here once. A view names its own file,
 # its overview, its picture and the card cut of that picture; a part names what
 # it was exported to and its own picture; a document of a documents build names
-# its file, and a KiCad design among them its schematics and its board.
+# its file, and a KiCad schematic among them its sheets and its project.
 #
 # ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test: a pointer
 # that quietly stops being checked is a 404 under an immutable URL, and per-test
 # lists go stale one entry at a time.
 FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
                  "part files", "part preview", "document file",
-                 "kicad schematic", "kicad board")
+                 "kicad schematic", "kicad project")
 
-# The KiCad design the two KiCad pointers sit in: its project and its root
-# schematic ride along in every archive, as `PART_EXPORT` does.
-KICAD_MEMBERS = {"board.kicad_pro": b"{}\n", "board.kicad_sch": b"(kicad_sch)\n"}
+# The KiCad schematic the two KiCad pointers sit in rides along in every
+# archive, as `PART_EXPORT` does.
+KICAD_MEMBERS = {"board.kicad_sch": b"(kicad_sch)\n"}
 
 
 # The export the one-printable catalogue below declares when the case under
@@ -570,11 +570,12 @@ def _pointing_at(where, name):
     elif where == "document file":
         return {"kind": "documents", "documents": [
             {"id": "list", "name": "list", "type": "markdown", "file": name}]}
-    elif where in ("kicad schematic", "kicad board"):
-        design = ({"schematics": [name], "pcb": None} if where == "kicad schematic"
-                  else {"schematics": ["board.kicad_sch"], "pcb": name})
+    elif where in ("kicad schematic", "kicad project"):
+        design = ({"schematics": ["board.kicad_sch", name], "project": None}
+                  if where == "kicad schematic"
+                  else {"schematics": ["board.kicad_sch"], "project": name})
         return {"kind": "documents", "documents": [
-            {"name": "board", "type": "kicad", "file": "board.kicad_pro",
+            {"name": "board", "type": "schematic", "file": "board.kicad_sch",
              "kicad": design}]}
     else:
         raise AssertionError(f"no such file pointer: {where!r}")

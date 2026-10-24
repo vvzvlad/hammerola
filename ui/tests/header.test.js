@@ -598,6 +598,35 @@ describe('the Share window', () => {
     }
   })
 
+  it('takes an Escape that closed something, so a KiCad design under it keeps its selection', () => {
+    // KicadView puts its selection out on an Escape nobody took, and listens
+    // after the page.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = opened(REV)
+    Object.assign(c, { load: vi.fn(async () => {}), loadFeed: vi.fn(),
+                       loadProposal: vi.fn(), sync: vi.fn() })
+    c.componentDidMount()
+    const taken = () => {
+      const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    try {
+      const share = taken()
+      c.setState({ viewsOpen: true })
+      expect([share, taken(), taken(), c.state.viewsOpen]).toEqual([true, true, false, false])
+      // an armed tool is not on screen under an open document: closing it is no
+      // Escape the design under that document should miss
+      c.setState({ tool: 'measure', doc: 'readme' })
+      const underDocument = taken()
+      c.setState({ tool: 'measure', doc: null })
+      expect([underDocument, taken()]).toEqual([false, true])
+    } finally {
+      c.componentWillUnmount()
+      vi.restoreAllMocks()
+    }
+  })
+
   it('is the only way to a link: the header copies none', () => {
     // A copied address without the key, sent on, would lose its reader the
     // files without anybody noticing.

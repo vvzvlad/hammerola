@@ -264,23 +264,26 @@ def test_a_document_may_not_land_on_what_the_model_wrote(model_hub):
         record["error"])
 
 
-# A KiCad design is several files under one entry: the project, a root sheet
-# naming a second one, and the board.
+# A KiCad design: a schematic naming a second sheet, and a board, each listed
+# and each published with the project beside them.
 BOARD = {
     "hw/board.kicad_pro": b"{}\n",
     "hw/board.kicad_sch": b'(kicad_sch (sheet (property "Sheetfile" "power.kicad_sch")))\n',
     "hw/power.kicad_sch": b"(kicad_sch)\n",
     "hw/board.kicad_pcb": b"(kicad_pcb)\n",
 }
+DESIGN = ["hw/board.kicad_sch", "hw/board.kicad_pcb"]
 
 
 def test_a_kicad_design_beside_a_model_is_published_with_every_file(model_hub):
-    revision = published(model_hub, model_tree(["hw/board.kicad_pro"], **BOARD))
+    revision = published(model_hub, model_tree(DESIGN, **BOARD))
     meta = model_hub.get(f"/project/docs0001/{revision}/meta.json").json()
 
-    doc, = meta["documents"]
-    assert doc["kicad"] == {"schematics": ["hw/board.kicad_sch", "hw/power.kicad_sch"],
-                            "pcb": "hw/board.kicad_pcb"}
+    schematic, board = meta["documents"]
+    assert schematic["kicad"] == {
+        "schematics": ["hw/board.kicad_sch", "hw/power.kicad_sch"],
+        "project": "hw/board.kicad_pro"}
+    assert board["kicad"] == {"project": "hw/board.kicad_pro"}
     for name, data in BOARD.items():
         served = model_hub.get(f"/project/docs0001/{revision}/{name}")
         assert (served.status_code, served.content) == (200, data), name
@@ -294,8 +297,7 @@ def test_a_file_of_a_design_may_not_land_on_what_the_model_wrote(hub_factory):
         wrote.write_bytes(b"the model's own")
         return dataclasses.replace(outcome, files=(*outcome.files, "hw/board.kicad_sch"))
 
-    record = refused(hub_factory(build_runner=builder),
-                     model_tree(["hw/board.kicad_pro"], **BOARD))
+    record = refused(hub_factory(build_runner=builder), model_tree(DESIGN, **BOARD))
     assert record["code"] == 422
     assert "would overwrite what the model's build wrote: 'hw/board.kicad_sch'" in (
         record["error"])
@@ -361,8 +363,26 @@ def test_a_title_is_the_caption_of_its_document_and_the_path_stays_its_address(
         f"/project/docs0001/{revision}/drawing.svg").status_code == 200
 
 
+@pytest.mark.parametrize("tree", [documents_tree, model_tree])
+def test_a_hidden_document_is_published_and_served_and_says_it_is_hidden(
+        model_hub, tree):
+    """It has no row in the page's list (ui/src/viewlist.jsx), and is still a
+    file of the build that `?d=` and a link from another document open."""
+    listed = ["list.md", {"file": "docs/report.pdf", "hidden": True},
+              {"file": "drawing.svg", "title": "Схема", "hidden": False}]
+    revision = published(model_hub, tree(listed))
+    meta = model_hub.get(f"/project/docs0001/{revision}/meta.json").json()
+
+    assert [(d["file"], d.get("hidden")) for d in meta["documents"]] == [
+        ("list.md", None), ("docs/report.pdf", True), ("drawing.svg", None)]
+    served = model_hub.get(f"/project/docs0001/{revision}/docs/report.pdf")
+    assert (served.status_code, served.content) == (200, DOCUMENTS["docs/report.pdf"])
+
+
 @pytest.mark.parametrize("entry, named", [
     ({"title": "Список"}, "has no `file`, the path of the document"),
+    ({"file": "list.md", "hidden": "yes"},
+     "'list.md', which has a `hidden` that is not true or false"),
     ({"file": "list.md", "titel": "Список"},
      "'list.md', which has keys the hub does not read: titel"),
     ({"file": "list.md", "title": "   "},
@@ -472,6 +492,7 @@ def test_a_document_id_is_its_path_and_two_paths_never_share_one(tmp_path):
     (lambda doc: doc.update(type="image"), "extension makes it 'markdown'"),
     (lambda doc: doc.update(file="notes.txt"), "none of the types"),
     (lambda doc: doc.update(file="../list.md"), "has the segment '..'"),
+    (lambda doc: doc.update(hidden=1), "has a `hidden` that is not true or false"),
 ])
 def test_a_document_entry_that_lies_about_its_file_is_refused(
         tmp_path, change, message):

@@ -4,44 +4,49 @@
 // mounts it instead of HammerolaViewer when the build's meta.json says
 // `"kind": "documents"` (src/render.py).
 //
-// The document is drawn by DocumentView.jsx, which the model's page uses too. A
-// KiCad design is two rows of the list, its schematic and its board; the side
-// on screen is held here (`side`), and a double click across the design's link
-// moves it (`onSide`).
+// The document is drawn by DocumentView.jsx, which the model's page uses too.
+// The page holds only which document is open: `Show in …` of a KiCad design's
+// right-click menu opens the other member through the same door a row does
+// (`onPick`).
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
-// `?v=<id>`; the first document needs none, so a plain link opens on it, and a
-// KiCad design always opens on its schematic. Its id is its path with `/`
-// spelled `__` (`render.document_id`). Choosing a document REPLACES the address
-// rather than pushing one: it is not a place the reader went, and a copied link
-// still lands on what was showing.
+// `?v=<id>`; the default document — the first one not listed `hidden` — needs
+// none, so a plain link opens on it. A hidden document has no row and opens
+// by its `?d=`. Its id is its path with `/` spelled `__`
+// (`render.document_id`). Choosing a document REPLACES the address rather than
+// pushing one: it is not a place the reader went, and a copied link still
+// lands on what was showing.
 //
 // `DocPage` is the drawing and takes everything as props, so a test reads the
 // tree it returns without mounting anything (ui/tests/docshell.test.js).
 
 import React from 'react';
 
-import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
+import DocumentView, { DOC_QUERY, docViewKey } from './DocumentView.jsx';
 import { PAGE, shortId } from './hub.js';
-import { SCH } from './KicadView.jsx';
 import { HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { css, FONTS, Mark, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
-import { BAR_LAYER, DOC_LAYER, documentRows, FLOAT_BAR, openLabel, viewList } from './viewlist.jsx';
+import { BAR_LAYER, DOC_LAYER, documentRows, FLOAT_BAR, viewList } from './viewlist.jsx';
 
 /** What a build with no model says it is, in meta.json's `kind`. The hub
  *  spells it `render.DOCUMENTS_KIND` (tests/test_documents.py compares). */
 export const DOCUMENTS_KIND = 'documents';
 
-/** The document `wanted` names, or the first one. */
+/** The document a plain link opens: the first one with a row in the list,
+ *  else the first one, where every document is hidden. */
+export const defaultDocument = (documents) => documents.find((doc) => !doc.hidden) || documents[0];
+
+/** The document `wanted` names, hidden or not, or the default one. */
 export function pickDocument(documents, wanted) {
-  return documents.find((doc) => doc.id === wanted) || documents[0];
+  return documents.find((doc) => doc.id === wanted) || defaultDocument(documents);
 }
 
 /** The query an address needs so that opening it lands on document `id`.
- *  Other parameters are kept; `?d=` is dropped for the first document. */
+ *  Other parameters are kept; `?d=` is dropped for the default document. */
 export function docQuery(search, id, documents) {
   const params = new URLSearchParams(search);
-  if (documents[0] && documents[0].id === id) params.delete(DOC_QUERY);
+  const fallback = defaultDocument(documents);
+  if (fallback && fallback.id === id) params.delete(DOC_QUERY);
   else params.set(DOC_QUERY, id);
   const query = params.toString();
   return query ? `?${query}` : '';
@@ -54,13 +59,12 @@ const STAGE = 'position:relative;flex:1;min-height:0';
 const BAR = `${BAR_LAYER}18`;
 
 /**
- * The whole page, from what the shell holds. Pure. `side` is the KiCad side on
- * screen; `onPick(id, side)` is what a row of the list does, `onSide(side)`
- * what a double click across a design's link does; `viewsOpen` says the list is
- * open, `onToggle` opens or shuts it and `onClose` shuts it, from a click
- * anywhere else on the page.
+ * The whole page, from what the shell holds. Pure. `onPick(id)` opens a
+ * document: what a row of the list does, and `Show in …` of a KiCad design's
+ * right-click menu; `viewsOpen` says the list is open, `onToggle` opens or shuts
+ * it and `onClose` shuts it, from a click anywhere else on the page.
  */
-export function DocPage({ meta, active, side, base, onPick, onSide, viewsOpen, onToggle, onClose }) {
+export function DocPage({ meta, active, base, onPick, viewsOpen, onToggle, onClose }) {
   const doc = pickDocument(meta.documents, active);
   return (
     <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
@@ -77,12 +81,12 @@ export function DocPage({ meta, active, side, base, onPick, onSide, viewsOpen, o
       </div>
       <div style={css(STAGE)}>
         <div style={css(DOC_LAYER)}>
-          <DocumentView key={doc.id} doc={doc} base={base} side={side} onSide={onSide} />
+          <DocumentView key={docViewKey(doc)} doc={doc} documents={meta.documents} base={base} onOpen={onPick} />
         </div>
         <div style={css(BAR)}>
           <div style={css(FLOAT_BAR)}>
-            {viewList({ label: openLabel(doc, side), open: !!viewsOpen, onToggle, alone: true,
-              documents: documentRows(meta.documents, doc.id, side, onPick) })}
+            {viewList({ label: doc.name, open: !!viewsOpen, onToggle, alone: true,
+              documents: documentRows(meta.documents, doc.id, onPick) })}
           </div>
         </div>
       </div>
@@ -96,22 +100,21 @@ export default class DocShell extends React.Component {
   constructor(props) {
     super(props);
     const wanted = new URLSearchParams(window.location.search).get(DOC_QUERY);
-    this.state = { active: pickDocument(props.meta.documents, wanted).id, side: SCH, viewsOpen: false };
+    this.state = { active: pickDocument(props.meta.documents, wanted).id, viewsOpen: false };
   }
 
-  /** Document `id` on screen, a KiCad design on `side`; the list shuts. */
-  pick(id, side = null) {
+  /** Document `id` on screen; the list shuts. */
+  pick(id) {
     if (id !== this.state.active) {
       window.history.replaceState(window.history.state, '',
         window.location.pathname + docQuery(window.location.search, id, this.props.meta.documents));
     }
-    this.setState({ active: id, side: side || SCH, viewsOpen: false });
+    this.setState({ active: id, viewsOpen: false });
   }
 
   render() {
-    return <DocPage meta={this.props.meta} active={this.state.active} side={this.state.side}
-                    base={PAGE.base} onPick={(id, side) => this.pick(id, side)}
-                    onSide={(side) => this.setState({ side })}
+    return <DocPage meta={this.props.meta} active={this.state.active}
+                    base={PAGE.base} onPick={(id) => this.pick(id)}
                     viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();

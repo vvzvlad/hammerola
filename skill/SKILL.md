@@ -1,7 +1,7 @@
 ---
 name: hammerola
 description: Design a 3D-printable part in CadQuery and publish it to a hammerola hub, which builds it from code. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "3D print this", "publish the model", "hammerola".
-version: 27
+version: 29
 ---
 
 # hammerola
@@ -808,12 +808,16 @@ the page shows them:
 
 An entry is a path, or an object with the path as `file` and a `title`: the
 caption the page shows for it in place of the path (one line of text, as a
-project's title). Each path is a file of the project, a `.md`, `.pdf`, `.png`, `.jpg`,
-`.jpeg`, `.gif`, `.webp`, `.html`, `.htm`, `.svg` or `.kicad_pro`, and is published
+project's title), and optionally `"hidden": true`. Each path is a file of the
+project, a `.md`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.html`, `.htm`,
+`.svg`, `.kicad_sch`, `.kicad_pcb` or `.glb`, and is published
 under the same path; nothing unlisted is. The build page lists them in its view menu, after
-the views: choosing one shows it over the model, choosing a view brings the
+the views, one row each: choosing one shows it over the model, choosing a view brings the
 model back, and `?d=<id>` in the address (the path with `/` written as `__`)
-opens one on arrival. With no `model.py` the documents are the whole build,
+opens one on arrival. A hidden entry has no row: it is published and opens by its
+`?d=<id>` like any other, so a file can sit in the project and be shown without
+a menu entry of its own (twenty datasheets are twenty hidden entries, not twenty
+rows). With no `model.py` the documents are the whole build,
 chosen in the same menu at the bottom of the page. Markdown is drawn with its relative links resolved from its own
 directory, web links open in a new tab; a picture it shows must be a file of
 the build, because an image from another site is not loaded (the page allows
@@ -822,17 +826,37 @@ the link without a key.
 A path that is not a file, has another extension, is listed twice or would
 overwrite what the model's build wrote refuses the push with a 422 naming it.
 
-A KiCad design is listed by its `.kicad_pro` alone
-(`"documents": ["hw/board.kicad_pro"]`): the hub publishes with it the root
-schematic `board.kicad_sch` beside it, the board `board.kicad_pcb` if there is
-one, and every sheet the schematics name, wherever in the project they sit. It is
-two rows of the view menu, `<caption> · Schematic` and `<caption> · PCB` (the
-second only with a board), and a double click on a part or a net on one side
-switches the menu to the other with it selected there; `?d=` opens it on the
-schematic. Listing a `.kicad_sch` or `.kicad_pcb` on its
-own, a missing root schematic, a sheet outside the project or under a name the
+A KiCad schematic, a board and the 3D model of a board are documents like any
+other, one entry and one row each, with any caption, as many as the project has:
+
+```json
+"documents": [{"file": "hw/main.kicad_sch", "title": "Main schematic"},
+              {"file": "hw/main.kicad_pcb", "title": "Main board"},
+              {"file": "hw/main.glb", "title": "Main board, 3D"},
+              {"file": "ds/tpa3250.pdf", "title": "TPA3250", "hidden": true}]
+```
+
+A schematic is listed by its root sheet; the hub publishes with it every sheet
+the schematics name, wherever in the project they sit, and the `.kicad_pro` with
+the same path minus the extension if it is there (a `.kicad_pro` listed as a
+document is a 422). The `.glb` is made on your machine, not on the hub:
+`kicad-cli pcb export glb --subst-models --include-tracks --include-pads --include-zones
+--include-silkscreen --include-soldermask -o hw/main.glb hw/main.kicad_pcb` (about 41 MB
+for a 235-part board; without the tracks, pads and zones it is 10 MB, and the 3D view has
+no routing).
+Entries with the same path minus the extension are ONE design: `hw/main.kicad_sch`,
+`hw/main.kicad_pcb` and `hw/main.glb` above. Picking a part in one of them (a click)
+picks the same part, by its reference, in the others (a click on nothing or Escape
+clears it everywhere), and a right click on a part, or on a net in the schematic
+and the board, opens a menu `Show in <caption>` with one item for every other
+listed entry of the design; choosing one opens it with the part or net selected
+there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
+`"hidden": true`, and set the part's `Datasheet` field to its path relative to the
+`.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's right-click menu then has
+`Open datasheet · <caption>`, which opens the PDF. A web address in the field is not
+a link. A missing sheet, a sheet outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
-the push with a 422 naming the file. The design's files open to the link without a key: whoever has it can
+the push with a 422 naming the file. The files open to the link without a key: whoever has it can
 download the whole editable design.
 
 ## Fetching things back

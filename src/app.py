@@ -302,14 +302,16 @@ BUILD_CONTENT_TYPES = {
     ".svg": "image/svg+xml",
     # A KiCad design's files, which the page's viewer fetches and parses itself.
     **dict.fromkeys(render.KICAD_SUFFIXES, "text/plain; charset=utf-8"),
+    # The 3D model of a board (`render.DOCUMENT_TYPES`).
+    ".glb": "model/gltf-binary",
 }
 
 # What a build hands to anybody holding its address: the documents the page
 # draws the model from (meta.json and each view's tessellation), the pictures
 # the front page shows through `<img>`, which carries no token, and the
 # documents a build lists — those files ARE what its link with `?d=` shows,
-# each by the type its extension makes it, a KiCad design's schematics and
-# board with its `.kicad_pro` (decision of 2026-10-23, SPEC §4). Everything
+# each by the type its extension makes it, a KiCad schematic's sheets and the
+# project a schematic or a board brings (decision of 2026-10-23, SPEC §4). Everything
 # else — the STEP, STL and 3MF a part exports, the overview meshes, and any
 # format a later export adds — leaves only to EDIT_TOKEN or to a link carrying
 # the key of its address (`files_key`). A list of what is OPEN rather than of
