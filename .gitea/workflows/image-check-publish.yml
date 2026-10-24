@@ -133,6 +133,8 @@ jobs:
         # three-cad-viewer.esm.js is for ui/tests/hatch.test.js (the three.js shader chunk the
         # section hatch splices at); three.module.js and three.core.js are three's own source,
         # which the viewer bundle keeps external, read by the hatch, picking and outline tests.
+        # BufferGeometryUtils.js, GLTFLoader.js and SkeletonUtils.js (which GLTFLoader imports)
+        # are three's addons, read by ui/tests/board3d.test.js and ui/tests/board3dview.test.js.
         # Not all of static/_v: it also holds this project's own built bundle.
         # Add paths deliberately rather than switching to `.` plus exclusions: nothing
         # travels that is not named, so `.env`, `data/` and `.git/config` cannot leak in a
@@ -151,6 +153,7 @@ jobs:
           ./static/_v/tokens.css ./static/_v/site.css ./static/_v/favicon.svg \
           ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
           ./static/_v/three.module.js ./static/_v/three.core.js \
+          ./static/_v/BufferGeometryUtils.js ./static/_v/GLTFLoader.js ./static/_v/SkeletonUtils.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
           --memory=3g --memory-swap=3g \
           -e CI=true \
