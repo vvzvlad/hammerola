@@ -374,21 +374,23 @@ describe('the page of a build with no model', () => {
         words: texts(tree),
         downloads: ofType(tree, 'a').filter((a) => a.props.download).map((a) => [a.props.href, a.props.title]),
         copies: ofType(tree, CopyLink).map((c) => [c.props.href, c.props.bar]),
-        // the first tool after the bar's Download link, by their order in the tree
-        next: (() => {
-          const all = collect(tree, (el) => ((el.type === 'a' && el.props.download) || el.type === CopyLink
-            || (el.type === 'div' && ['Measure', 'Fit'].some((w) => texts(el).includes(w) && texts(el).length === 1))
-            ? el : undefined))
-          return all.map((el) => (el.type === 'a' ? 'Download' : el.type === CopyLink ? 'Copy link' : texts(el)[0]))
-        })(),
+        // the list's rows, the two controls and the first tools, in tree order
+        seq: collect(tree, (el) => {
+          if (el.type === 'a' && el.props.download) return 'Download'
+          if (el.type === CopyLink) return 'Copy link'
+          if (el.type === 'div' && el.props.onClick && texts(el).length === 2) return texts(el)[0]
+          if (el.type === 'div' && texts(el).length === 1 && ['Measure', 'Fit'].includes(texts(el)[0])) return texts(el)[0]
+          return undefined
+        }),
       }
     }
-    // icons with their words in their titles, after the list and before the first tool
+    // icons with their words in their titles, after the list's last row and before the first tool
     for (const [extra, first] of [[{}, 'Measure'], [{ narrow: true }, 'Fit']]) {
       const shown = drawn(extra)
       expect(shown.words).not.toContain('Download')
       expect([shown.downloads, shown.copies]).toEqual([[[href, 'Download']], [[href, true]]])
-      expect(shown.next.slice(0, 3)).toEqual(['Download', 'Copy link', first])
+      const at = shown.seq.indexOf('Download')
+      expect(shown.seq.slice(at - 1, at + 3)).toEqual(['page.html', 'Download', 'Copy link', first])
     }
   })
 

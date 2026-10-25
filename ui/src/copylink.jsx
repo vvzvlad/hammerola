@@ -13,12 +13,12 @@
 // Two looks, both an icon with the words in its title, which turns into a tick
 // or a cross for "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet
 // button of the bar like Fit and Frame, and otherwise a 12 px icon for the end
-// of a row. No words beside it: the bar over a document is full at the widths
-// it already fitted, and a word changing length would shift every control of
-// a bar that is centred. Either
-// is a SIBLING of the link it copies, never inside it — a control inside an
-// `<a>` is not valid markup — and its click neither follows a link nor reaches
-// the page's handler that closes a menu, so the menu stays up to say "Copied".
+// of a row. No words beside it: with words the bar over a document no longer
+// fits a window between 721 and about 900 px, and a word changing length would
+// shift every control of a bar that is centred. Either is a SIBLING of the link
+// it copies, never inside it — a control inside an `<a>` is not valid markup —
+// and its click neither follows a link nor reaches the page's handler that
+// closes a menu, so the menu stays up to say "Copied".
 
 import React from 'react';
 

@@ -97,7 +97,10 @@ export const DOC_HINT = `flex:none;white-space:nowrap;${FAINT_MONO}`;
 // containing block and stacking context its menus are built around, but a
 // backdrop filter over the WebGL canvas cost a third of the frame rate while
 // orbiting on a retina Mac (measured).
-export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
+// Never wider than its layer: where the controls do not fit, the view button
+// gives up its width first (`viewList`), its name cut by the ellipsis it
+// already carries.
+export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;max-width:calc(100% - 24px);background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
 // Its layer, centred on the bottom edge, the z-index appended by the page.
 export const BAR_LAYER = 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:';
 // A document, over the whole of the page's area down to its bottom edge, under
@@ -117,10 +120,13 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
  * BUTTON: the bar carries `contain:layout` and is therefore already a
  * containing block for it, so without the wrapper the card would be measured
  * from the bar's whole box and start at its left end rather than at the button.
+ * It is also what shrinks when the bar is short of room (`FLOAT_BAR`): a shrink
+ * far above the other controls' and no minimum width, so the name is cut before
+ * any other label wraps.
  */
 export function viewList({ label, open, onToggle, views = [], documents = [] }) {
   return (
-    <div style={css(RELATIVE)}>
+    <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
         <span style={css(ELLIPSIS)}>{label}</span>
         {CHEVRON}
@@ -225,7 +231,9 @@ export function toolBar(b, menus = {}) {
               §3.2), so without it the card would be measured from the bar's
               whole box and start at its left end rather than at the button. */}
           <div style={css(RELATIVE)}>
-            <div onClick={b.tProposal} style={css(b.proposalBtnStyle)}>
+            {/* The one label of two words: kept on one line, so that the
+                bar short of room cuts the view's name (`viewList`) instead. */}
+            <div onClick={b.tProposal} style={css(`${b.proposalBtnStyle};white-space:nowrap`)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
               Add primitive
             </div>

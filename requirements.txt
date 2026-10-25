@@ -74,7 +74,8 @@ loguru==0.7.2
 # THOSE 41 ARE PINNED TOO, IN requirements.lock, which is what these four lines no longer have
 # to carry alone. Until the lock existed they floated, so "a model rebuilt from the same source
 # a year from now produces the same geometry" was NOT what this file bought: a rebuild of an
-# unchanged commit could move numpy under the buffers and nothing anywhere would report it, and
+# unchanged commit could move nlopt and casadi under the placement of parts in an assembly and
+# nothing anywhere would report it, and
 # reproducibility honestly covered the kernel rather than the build. The lock states all 56 with
 # `==` and with the hashes of their files, `make lock` is the only thing that writes it, and the
 # Dockerfile installs it with `--require-hashes` — so the image's environment moves when
@@ -181,8 +182,9 @@ numpy==2.4.6
 Pillow==12.3.0
 
 # --- The picture of a DXF ----------------------------------------------------------------------
-# `src/docsbuild.py` (`_draw_dxf`) imports ezdxf to draw the SVG the page shows above a listed
+# `src/docsbuild.py` (`_draw_dxf`) imports ezdxf to draw the SVG the page shows of a listed
 # DXF. Without it every push whose project.json lists a `.dxf` without `"download": true` fails
-# with a 500 instead of being published. Already in the image (cadquery requires it); named here so that an upgrade up the
-# tree cannot take it away, and at the version the lock already resolves, so no byte moves.
+# with a 500 instead of being published. Already in the image (cadquery requires it); named
+# here so that an upgrade up the tree cannot take it away, and at the version the lock already
+# resolves, so no byte moves.
 ezdxf==1.4.4
