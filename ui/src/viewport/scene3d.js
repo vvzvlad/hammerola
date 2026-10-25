@@ -1,7 +1,8 @@
 // Scaffolding for widgets drawn as objects in the scene: a group that outlives
 // the scene it stands in, placement inside the library's render pass (so the
 // object is right in the frame that draws it), a scale making one geometry unit
-// one CSS pixel, presses taken off the canvas by raycast, and teardown.
+// one CSS pixel for the widgets that ask for it (`pixels`), presses taken off
+// the canvas by raycast, and teardown.
 //
 // The counterpart of layer.js (divs over the canvas). An object in the world
 // foreshortens with the model and keeps the plane's direction by itself; a flat
@@ -38,13 +39,23 @@
 import { ndcAt } from "./camera.js";
 import { internals } from "./internals.js";
 
-/** Where each widget is drawn relative to the model and to each other: after
- *  all of the model, bottom to top comment arrows, rings, grip, manipulator.
+/** Where each widget is drawn relative to the model and to each other: bottom
+ *  to top comment arrows, rings, grip, manipulator.
  *
- * Above the library's own: its edges and translucent faces are at 999
- * (viewer/src/scene/nestedgroup.ts:523), its highlight points and the section
- * contour (outline.js) at 1000. A handle must never be hidden by any of them,
- * and with no depth test it is drawn over the part it stands on.
+ * The three controls are above the library's own: its edges and translucent
+ * faces are at 999 (viewer/src/scene/nestedgroup.ts:523), its highlight points
+ * and the section contour (outline.js) at 1000. A control must never be hidden
+ * by any of them, and with no depth test it is drawn over the part it stands
+ * on. From 1000 up is also where the library's depth peeling draws its overlay
+ * pass, after the translucent layers are composited
+ * (`OVERLAY_RENDER_ORDER`, viewer/src/rendering/depth-peeling.ts), so a control
+ * stays over glass too.
+ *
+ * The comment arrows are the exception: depth-tested objects of the model, so
+ * they stay below that threshold and are drawn in the library's main pass, with
+ * the opaque model. Translucent parts are then laid over them as over any
+ * opaque part; at 1000 or above an arrow behind glass would be painted over the
+ * glass at full strength.
  *
  * Four bands because the band is also the press order: `joinPresses` gives a
  * contested press to the highest band that takes it, so the widget on top is
@@ -55,7 +66,7 @@ import { internals } from "./internals.js";
  * `renderOrder` down as `groupOrder` and sorts on it before each mesh's own, so
  * the bands need only be distinct; the tens are for readability.
  */
-export const PINS_ORDER = 1001;
+export const PINS_ORDER = 990;
 export const RINGS_ORDER = 1011;
 export const HANDLE_ORDER = 1021;
 export const GIZMO_ORDER = 1031;
@@ -171,21 +182,34 @@ export function joinPresses(vp, order, take) {
  * The callbacks, in the order they are first called:
  *
  *   `build(three, group)` fills the group once, on the first `attach` that has
- *     the namespace. Everything in it is measured in CSS pixels (see the scale).
+ *     the namespace. What its geometry is measured in is `pixels`, below.
  *   `wanted()` is whether there is anything to draw, asked on every frame, so
  *     a widget with nothing to stand on disappears by itself.
  *   `place(group, g, k)` positions and orients the group and returns false when
- *     it cannot. The scale is this module's and is overwritten every frame;
- *     `k` is that scale, world units per CSS pixel, for a widget whose children
- *     stand at world points of their own and so have to divide it out
- *     (pins.js).
+ *     it cannot. The group's scale is this module's and is overwritten every
+ *     frame; `k` is world units per CSS pixel, for both kinds of widget.
  *   `press(event, g, hit)` handles a press the raycast found on ours and
  *     returns whether the widget took it; `hit` is the intersection.
  *
+ * `pixels` (true unless the caller says otherwise) is which of the two kinds a
+ * widget is:
+ *
+ *   true — the group is scaled by `k`, so one geometry unit is one CSS pixel
+ *     and the widget is the same size on screen at every zoom (handle.js,
+ *     rings.js, gizmo.js).
+ *   false — the group's scale is left at 1, and `place` puts the children at
+ *     world points and sizes them in world units itself, so the widget is a
+ *     thing in the model and grows as the reader zooms in (pins.js). `k` is
+ *     still passed, for a widget that wants a screen-sized fallback.
+ *
  * `rank(object)` (optional) picks which intersection `hit` is when the ray
- * crosses several targets: lowest rank wins, ties to the nearest; without it,
- * the nearest. Nothing here has a depth test, so what is on top is decided by
- * `renderOrder`, which the ray knows nothing about (see `RANK` in gizmo.js).
+ * crosses several targets; without it, the nearest. How depends on `pixels`
+ * again. A pixel widget has no depth test, so what is on top is decided by
+ * `renderOrder`, which the ray knows nothing about (see `RANK` in gizmo.js):
+ * lowest rank wins, ties to the nearest. A world widget is depth-tested, so
+ * what is on top is the nearest: the nearest wins, and rank only decides
+ * between intersections at that same distance, which is where two of its
+ * pieces coincide.
  *
  * `handOver(event)` (optional) is called on every press the higher bands left,
  * before `wanted` and the ray, for a widget with gestures to end even on a miss
@@ -200,7 +224,7 @@ export function joinPresses(vp, order, take) {
  */
 export function createScene3D(vp,
                               { wanted, build, place, press, handOver, rank,
-                                cursor, order }) {
+                                cursor, order, pixels = true }) {
   // Null until the first `attach` brings the namespace; the group and the
   // module arrive together, so code checks the group.
   let three = null;
@@ -267,8 +291,9 @@ export function createScene3D(vp,
       return;
     }
     // Uniform, written after `place`: position and orientation compose with a
-    // uniform scale in any order.
-    group.scale.setScalar(k);
+    // uniform scale in any order. A widget measured in the world carries its
+    // own sizes, so its group is left at 1.
+    group.scale.setScalar(pixels ? k : 1);
     group.visible = true;
   }
 
@@ -291,11 +316,19 @@ export function createScene3D(vp,
     const hits = raycaster.intersectObject(group, true);
     if (!hits.length) return null;
     if (!rank) return hits[0];
+    // A world widget is depth-tested, so only the hits at the nearest distance
+    // are in the contest. "The same distance" within a millionth of it: two
+    // coincident pieces meet the ray at the same point, and the margin only
+    // absorbs rounding.
+    const near = hits[0].distance;
+    const contest = pixels
+      ? hits
+      : hits.filter((found) => found.distance - near <= near * 1e-6);
     // Lowest rank, ties by distance: three returns hits in distance order, so
     // keeping the first minimum is the tie-break.
-    let best = hits[0];
+    let best = contest[0];
     let mark = rank(best.object);
-    for (const found of hits) {
+    for (const found of contest) {
       const value = rank(found.object);
       if (value < mark) {
         best = found;

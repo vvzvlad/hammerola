@@ -608,10 +608,12 @@ describe('which screen is drawn', () => {
 
 // -- the block for an agent, on the door ------------------------------------
 //
-// Five lines somebody copies and hands to their agent: where the skill is, where
-// the client is, what this hub's address is, install the skill and follow it,
-// ask the owner for the token. What is pinned here is the properties that are
-// decisions rather than layout — it appears at every arrival at the door AND
+// Seven lines somebody copies and hands to their agent: where the client is,
+// what this hub's address is, the command that installs the client, the one
+// that writes the skill, the one that logs in and stores this address, read
+// the skill and follow it, ask the owner for the token. What is pinned here is
+// the properties that are decisions rather than layout — it appears at every
+// arrival at the door AND
 // ONLY ON A HUB WITH NOTHING PUBLISHED, every address in it is BUILT from the
 // browser's origin and the manifest's paths, it carries no token, and it never
 // claims to have copied itself when it has not.
@@ -623,7 +625,7 @@ describe('which screen is drawn', () => {
 // WHAT IS NOT HERE is what the manifest has to say for the paths to exist at
 // all: that lives in start.test.js, where hub.js is the real module.
 
-const HINT = { skill: '/start/skill.md', client: '/start/hammerola', empty: true }
+const HINT = { skill: '/start/skill.tar.gz', client: '/start/hammerola', empty: true }
 /** A hub reached at an address nothing in this repository could have written. */
 const AT = { origin: 'https://hub.example', ...HINT }
 /** The same hub, once something has been published on it. */
@@ -681,19 +683,47 @@ describe('the block for an agent', () => {
 
   it('builds every address out of the origin and the manifest paths', () => {
     // THE POINT OF THE WHOLE FILE-FULL: nothing in the bundle names a host, and
-    // nothing names the paths either — the origin is the browser's and the paths
-    // are the hub's own answer. Fed an address and paths no deployment uses,
-    // the block has to print exactly those.
+    // nothing names the path either — the origin is the browser's and the path
+    // is the hub's own answer. Fed an address and a path no deployment uses,
+    // the block has to print exactly those, in the command as well as in the
+    // line above it: a `curl` against a hardcoded path is the same bug moved
+    // somewhere nobody reads.
     const odd = {
       origin: 'https://elsewhere.example:8443',
-      skill: '/get/s.md',
+      skill: '/get/s.tar.gz',
       client: '/get/tool',
       empty: true,
     }
     const drawn = texts(drawnDoor({ start: odd }))
-    expect(drawn).toContain('Skill: https://elsewhere.example:8443/get/s.md')
     expect(drawn).toContain('Client: https://elsewhere.example:8443/get/tool')
     expect(drawn).toContain('Hub: https://elsewhere.example:8443')
+    expect(drawn.join('\n')).toContain('curl -fsSL https://elsewhere.example:8443/get/tool')
+    expect(drawn.join('\n')).toContain('hammerola login https://elsewhere.example:8443')
+  })
+
+  it('installs the skill with a command rather than asking for it to be installed', () => {
+    // The client never looks at the agent's skills directory by itself
+    // (`hammerola/skill.py`), so "install the skill" is work the reader has to
+    // work out. These commands are the whole of it.
+    const copied = agentBrief(AT).join('\n')
+    expect(copied).toContain(`curl -fsSL ${AT.origin}${AT.client} -o ~/.local/bin/hammerola`)
+    expect(copied).toContain('hammerola skill update')
+    // No address of the skill itself: it arrives through the client now, and a
+    // second way of getting it is a second way of getting a stale one.
+    expect(copied).not.toContain(HINT.skill)
+
+    // INSTALLING THE SKILL DOES NOT WAIT ON `login`, which asks for a password
+    // at the terminal an agent does not have: chained behind it, the skill
+    // would be installed only when a human happened to be watching. The skill
+    // is public, so the address travels with the command instead.
+    const lines = agentBrief(AT)
+    const skillLine = lines.find((line) => line.includes('skill update'))
+    expect(skillLine).toContain(`HUB_URL=${AT.origin}`)
+    expect(skillLine).not.toContain('login')
+    // And it comes FIRST: the two lines swapped would leave an agent at the
+    // password prompt with no skill installed, which is the whole of the bug.
+    expect(lines.findIndex((line) => line.includes('skill update')))
+      .toBeLessThan(lines.findIndex((line) => line.includes('hammerola login')))
   })
 
   it('calls the client what the rest of this repository calls it', () => {
@@ -726,11 +756,11 @@ describe('the block for an agent', () => {
   })
 
   it('says nothing this page cannot say', () => {
-    // Five lines, no explanation of what any of it is: the skill is the first
-    // address in it, and everything about hammerola is written there. A block
-    // that grew a second account of it would be a copy going stale on a page
-    // whose reader has not read the first one yet.
-    expect(agentBrief(AT)).toHaveLength(5)
+    // Seven lines, no explanation of what any of it is: two of them install the
+    // client and the skill, and everything about hammerola is written there. A
+    // block that grew a second account of it would be a copy going stale on a
+    // page whose reader has not read the first one yet.
+    expect(agentBrief(AT)).toHaveLength(7)
   })
 
   it('is handed no token to print, whatever the page is holding', () => {
@@ -754,14 +784,14 @@ describe('the block for an agent', () => {
   })
 })
 
-// -- the fifth line, which is the only one the two blocks differ in ----------
+// -- the last line, which is the only one the two blocks differ in ----------
 
-describe('the fifth line of the brief', () => {
+describe('the last line of the brief', () => {
   it('is the token, where a token was passed', () => {
-    // The four above it are the same four either way: what the list's copy is
+    // The six above it are the same six either way: what the list's copy is
     // is the door's copy with the last line answered instead of deferred.
     expect(agentBrief({ ...AT, token: 'sekrit' }))
-      .toEqual([...agentBrief(AT).slice(0, 4), 'Token: sekrit'])
+      .toEqual([...agentBrief(AT).slice(0, 6), 'Token: sekrit'])
   })
 
   it('is the sentence, where none was', () => {
@@ -777,7 +807,7 @@ describe('the fifth line of the brief', () => {
   it('puts it in that line and in no other', () => {
     // The token is one line's worth of the block. An address that carried it as
     // well would be a secret in a string somebody pastes into a browser bar,
-    // and it would still be there after the fifth line was cut.
+    // and it would still be there after the last line was cut.
     const lines = agentBrief({ ...AT, token: 'sekrit' })
     expect(lines.filter((line) => line.includes('sekrit'))).toEqual(['Token: sekrit'])
     expect(agentBrief(AT).join('\n')).not.toMatch(/sekrit/)

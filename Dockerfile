@@ -70,9 +70,10 @@ COPY src/ src/
 COPY hammerola/ hammerola/
 COPY templates/ templates/
 COPY static/ static/
-# Served by src/onboarding.py: the agent instructions at /start/skill.md and the starter
+# Served by src/onboarding.py: the agent instructions at /start/skill.tar.gz and the starter
 # model at /start/template.tar.gz. model_template/ is a real project the suite builds
-# (tests/test_template.py). `skill/SKILL.md` reaches the context despite the `*.md` line in
+# (tests/test_template.py). The instructions are a DIRECTORY — `skill/SKILL.md` and the
+# reference files beside it — and all of it reaches the context despite the `*.md` line in
 # .dockerignore, which is root-only. Check (g) in ci/smoke.py proves both arrived; without
 # them the image passes everything else and the routes 404.
 COPY skill/ skill/

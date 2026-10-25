@@ -18,7 +18,7 @@ import { hubOrigin, loadStart, startHint } from '../src/hub.js'
 /** The manifest as src/onboarding.py writes it. */
 const MANIFEST = {
   empty: true,
-  skill: '/start/skill.md',
+  skill: '/start/skill.tar.gz',
   client: '/start/hammerola',
   template: '/start/template.tar.gz',
 }
@@ -55,7 +55,7 @@ describe('reading the manifest', () => {
   it('offers the two paths and what the hub said about being empty', async () => {
     answering(served(MANIFEST))
     expect(await loadStart()).toEqual({
-      skill: '/start/skill.md',
+      skill: '/start/skill.tar.gz',
       client: '/start/hammerola',
       empty: true,
     })
@@ -106,7 +106,7 @@ describe('how empty is read', () => {
     // forty projects on it. The paths come through all the same — the list
     // prints them on such a hub, which is the whole of why the gate moved.
     expect(startHint({ ...MANIFEST, empty }).empty).toBe(false)
-    expect(startHint({ ...MANIFEST, empty }).skill).toBe('/start/skill.md')
+    expect(startHint({ ...MANIFEST, empty }).skill).toBe('/start/skill.tar.gz')
   })
 
   it('is nothing at all for a document that is not one', () => {
@@ -123,11 +123,12 @@ describe('which paths are usable', () => {
     ['a missing one', undefined],
     ['a number', 7],
     ['an empty string', ''],
-    ['a bare word', 'start/skill.md'],
-    ['an absolute address', 'https://elsewhere.example/start/skill.md'],
+    ['a bare word', 'start/skill.tar.gz'],
+    ['an absolute address', 'https://elsewhere.example/start/skill.tar.gz'],
   ])('refuses the whole block for %s', (_name, skill) => {
     // Half a block is the failure worth naming: the lines are one message, and
-    // one of them reading `Skill: undefined` is worse than no block.
+    // a manifest that got this field wrong is one to believe nothing in —
+    // including the client's path, which the block hands somebody to run.
     //
     // This is not a trust boundary: `/start` comes from the same hub as this
     // page and bundle, so the cases above are ordinary breakage (a broken image,

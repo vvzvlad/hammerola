@@ -28,9 +28,11 @@ import ast
 import json
 from urllib.parse import urlsplit
 
-from ci.smoke import (BUILD_MARK, BUILD_PROBE_SOURCE, BUILD_TARGETS, CAD_SENTINEL, START_MARK,
-                      START_ORIGIN, START_PROBE_SOURCE, START_ROUTES, parse_cad_verdicts,
-                      parse_marked_verdicts, parse_start_routes)
+from ci.smoke import (BUILD_MARK, BUILD_PROBE_SOURCE, BUILD_TARGETS, CAD_SENTINEL,
+                      EXPECTED_TARGETS, MANIFEST_URL, SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
+                      SKILL_VERSION_KEY, START_MARK, START_ORIGIN, START_PROBE_SOURCE,
+                      START_ROUTES, parse_cad_verdicts, parse_marked_verdicts,
+                      parse_start_routes)
 from src import onboarding
 from src.settings import Settings
 
@@ -129,9 +131,9 @@ def test_last_sentinel_wins():
 
 # -- check (h): the onboarding routes ---------------------------------------------------------
 def test_a_route_that_answered_parses_as_a_pass():
-    seen = parse_start_routes("{} ok /start/skill.md\n".format(START_MARK))
+    seen = parse_start_routes("{} ok /start/skill.tar.gz\n".format(START_MARK))
 
-    assert seen == {"/start/skill.md": None}
+    assert seen == {"/start/skill.tar.gz": None}
 
 
 def test_a_refused_route_keeps_its_whole_reason():
@@ -154,10 +156,10 @@ def test_unmarked_noise_is_dropped_rather_than_read_as_a_verdict():
     """
     output = (
         "DeprecationWarning: something in urllib\n"
-        "{} ok /start/skill.md\n"
+        "{} ok /start/skill.tar.gz\n"
         "Exception ignored in: <module 'threading'>\n".format(START_MARK))
 
-    assert parse_start_routes(output) == {"/start/skill.md": None}
+    assert parse_start_routes(output) == {"/start/skill.tar.gz": None}
 
 
 def test_a_route_the_probe_never_reported_is_simply_absent():
@@ -168,11 +170,11 @@ def test_a_route_the_probe_never_reported_is_simply_absent():
     missing route to either verdict would make check (h) print `ok` about a question it never
     asked — which is the gate's own worst failure, and the one no run on the runner shows.
     """
-    seen = parse_start_routes("{} ok /start/skill.md\n".format(START_MARK))
+    seen = parse_start_routes("{} ok /start/skill.tar.gz\n".format(START_MARK))
 
-    assert set(seen) == {"/start/skill.md"}
+    assert set(seen) == {"/start/skill.tar.gz"}
     for path in START_ROUTES:
-        if path != "/start/skill.md":
+        if path != "/start/skill.tar.gz":
             assert path not in seen
 
 
@@ -215,6 +217,39 @@ def test_the_gate_asks_for_the_routes_this_hub_really_serves():
     assert set(START_ROUTES) == {onboarding.SKILL_URL, onboarding.CLIENT_URL,
                                  onboarding.TEMPLATE_URL}
     assert onboarding.MANIFEST_URL not in START_ROUTES
+
+
+def test_the_gate_opens_the_skill_archive_by_the_hubs_own_names():
+    """The archive row asks four more strings of the hub, and each is a copy.
+
+    A drifted one fails the same expensive way as a renamed route: the gate
+    reports a healthy image's skill as broken (a wrong path or entry name) or,
+    worse, compares against a manifest key nobody writes, which is a verdict
+    about nothing. `/start` is fetched by the probe for this row and is still
+    not a ROUTE of the gate's — the row above says why.
+    """
+    assert SKILL_URL == onboarding.SKILL_URL
+    assert MANIFEST_URL == onboarding.MANIFEST_URL
+    assert SKILL_ENTRY == onboarding.SKILL_ENTRY
+    assert SKILL_VERSION_KEY == onboarding.SKILL_VERSION_KEY
+
+
+def test_the_onboarding_probe_reports_the_archive_row_the_gate_declares():
+    """The key crosses a process boundary as JSON, exactly as check (i)'s do.
+
+    A key renamed on one side only comes back as "the probe returned no verdict
+    for the skill archive" — a red gate over an image with nothing wrong.
+    """
+    assert '"{}"'.format(SKILL_ARCHIVE_KEY) not in START_PROBE_SOURCE, (
+        "the probe spells the key itself instead of reading it out of the "
+        "request, so the two can drift without anything saying so")
+    assert 'report(request["skill_key"]' in START_PROBE_SOURCE
+
+
+def test_the_gate_declares_a_row_for_every_route_plus_the_archive():
+    """(h)'s declared count is what catches a probe that quietly stops probing."""
+    declared = dict(EXPECTED_TARGETS)["(h) onboarding routes"]
+    assert declared == len(START_ROUTES) + 1
 
 
 def test_the_gate_asks_at_the_port_the_image_listens_on():
@@ -296,7 +331,7 @@ def test_a_failed_build_question_keeps_its_whole_reason():
 
 def test_another_probes_verdicts_are_not_read_as_this_one_s():
     """Both probes exec into containers whose output this gate reads with the same function."""
-    output = "{} ok /start/skill.md\n{} ok force\n".format(START_MARK, BUILD_MARK)
+    output = "{} ok /start/skill.tar.gz\n{} ok force\n".format(START_MARK, BUILD_MARK)
 
     assert parse_marked_verdicts(output, BUILD_MARK) == {"force": None}
-    assert parse_marked_verdicts(output, START_MARK) == {"/start/skill.md": None}
+    assert parse_marked_verdicts(output, START_MARK) == {"/start/skill.tar.gz": None}

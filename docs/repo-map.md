@@ -170,13 +170,13 @@
   and nothing removes it when the build fails the gate, so counting bare
   directories made a hub permanently non-empty the moment its first push failed
   — landing on exactly the reader the answer is for. ALL FIVE MANIFEST FIELDS
-  HAVE A READER: `hammerola create` follows `template`; `hammerola skill`
-  compares the copy installed on a laptop against `skill_version`, which is a
-  constant of the IMAGE and not a second statement about this deployment —
-  `empty` is still the only one of those; and the SIGN-IN PAGE reads `empty` —
-  the gate on everything below — and then follows `skill` and
-  `client` when it says this hub has nothing on it
-  (issue #48). That block — five lines a person copies and hands to their
+  HAVE A READER: `hammerola create` follows `template`; `hammerola skill update`
+  follows `skill` to the archive it unpacks, and `hammerola skill` compares the
+  copy installed on a laptop against `skill_version`, which is a constant of the
+  IMAGE and not a second statement about this deployment — `empty` is still the
+  only one of those; and the SIGN-IN PAGE reads `empty` — the gate on everything
+  below — and then follows `client` when it says this hub has nothing on it
+  (issue #48). That block — seven lines a person copies and hands to their
   agent — is what the route was built for and what collects on the argument for
   answering a question about the deployment anonymously. It is on the DOOR and
   not on the list, because the list is behind the very token somebody opening an
@@ -248,7 +248,7 @@
   all three templates; issue #35), the resolver's `site.css` and `favicon.svg`,
   and the KiCad viewer: `ecad-viewer.js` with the `parser.worker.js` it starts
   from beside itself, taken BUILT out of KiCAD-Prism's repository and never
-  rebuilt here — `ecad-viewer.js` carries two edits of ours, made in the
+  rebuilt here — `ecad-viewer.js` carries edits of ours, made in the
   minified file and written out to be re-applied (where from, the commits, the
   hashes, the edits and what the hub's CSP cuts out of it — `PROVENANCE.md`; its
   licence — `ecad-viewer-LICENSE.md`).
@@ -330,18 +330,31 @@
   from `templates/` next to it, both are copied to the root of the image by
   adjacent COPY lines, and two names that differ by a letter are how a COPY or an
   ignore rule ends up on the wrong one while each still resolves
-- `skill/SKILL.md` — instructions for an agent working in a MODEL's repository,
-  not in this one, served at `/start/skill.md` and installed into
-  `~/.claude/skills/hammerola/`. ITS FRONTMATTER IS READ BY THE HUB, AND READ
+- `skill/` — instructions for an agent working in a MODEL's repository, not in
+  this one: a short `SKILL.md` and the `references/*.md` it sends its reader to.
+  THE DIRECTORY is what is served, as one deterministic archive at
+  `/start/skill.tar.gz` (`onboarding.skill_bytes`, built like the template's),
+  and `hammerola skill update` unpacks it into `~/.claude/skills/hammerola/` and
+  REMOVES from the directories the archive writes into (the root and
+  `references/`) whatever the archive does not have — a reference withdrawn in
+  a later version would otherwise be found by `ls` and read as a rule that
+  still stands. Because it removes, it WRITES ONLY into a directory that does
+  not exist, is empty, or holds this skill's own entry document
+  (`skill.why_not_here`), and refuses anything else before the network: a
+  mistyped `--path` written into once would read as our installation to the
+  next run, which would then sweep somebody else's files. One version for the whole set, carried by the entry
+  document. ITS FRONTMATTER IS READ BY THE HUB, AND READ
   STRICTLY: editing that header is editing what the service serves, not
   cosmetics in a document written for agents. `onboarding.skill_version` lifts
   `version:` out of it and raises `ValueError` on a file with no frontmatter
   block or no such key, and `manifest()` calls it — so a header this cannot be
   read out of takes the whole `/start` document down to a 404, which is why
   `ci/smoke.py` deliberately holds `/start` out of `START_ROUTES` and leans on
-  check (g), which already requires `/app/skill/SKILL.md` by name. THE
-  STRICTNESS IS THE DECISION and not an oversight to be softened into a
-  default: a version that cannot be read has to be a REFUSAL rather than
+  check (g), which requires `/app/skill/SKILL.md` and one of the references by
+  name; the gate also opens the archive it serves and holds the version inside
+  it against the one the manifest states. THE STRICTNESS IS THE DECISION and
+  not an oversight to be softened into a default: a version that cannot be read
+  has to be a REFUSAL rather than
   "version unknown", because a default would make a shipped skill that lost its
   version indistinguishable from a fresh one — the exact silence the versioning
   exists to end. What it exists to say, and what nothing else

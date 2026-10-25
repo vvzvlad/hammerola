@@ -79,6 +79,12 @@ vi.mock('../src/viewport/hatch.js', () => ({
   setCutHatch: vi.fn(() => 0),
 }))
 
+// The same one question for the coplanar order: is it reached, on the scene
+// just rendered. What it does with that scene is coplanar.test.js's subject.
+vi.mock('../src/viewport/coplanar.js', () => ({
+  settleCoplanar: vi.fn(() => new Map()),
+}))
+
 // The library's own loader, replaced so `show()` can be driven as far as its
 // FAILURE path — which is the only part of it that runs without a GPU. Nothing
 // else here reaches it: every other test either stops before `show` or never
@@ -93,6 +99,7 @@ vi.mock('../src/viewport/library.js', () => ({
 import '../src/viewport/index.js'
 import { HmrViewport } from '../src/viewport/element.js'
 import { EVENT_CAMERA, EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
+import { settleCoplanar } from '../src/viewport/coplanar.js'
 import { safeHatch, setCutHatch } from '../src/viewport/hatch.js'
 import { loadViewerLibrary } from '../src/viewport/library.js'
 import {
@@ -864,6 +871,22 @@ describe('show', () => {
     // library builds the cap meshes in there and throws them away on `clear()`,
     // so the same call one line earlier would patch nothing and say nothing.
     expect(safeHatch.mock.invocationCallOrder[0])
+      .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('orders the coplanar parts of the scene it has just rendered', async () => {
+    // The offsets live on the materials `render()` builds, so a call before it
+    // would land on the outgoing scene's materials and change nothing on screen.
+    const { vp, viewer } = rendering()
+    viewer.nestedGroup = { groups: {} }
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types).toContain(EVENT_MODEL)
+    expect(settleCoplanar).toHaveBeenCalledTimes(1)
+    expect(settleCoplanar.mock.calls[0][0]).toBe(viewer.nestedGroup)
+    expect(settleCoplanar.mock.calls[0][1]).toBe(viewer.render.mock.calls[0][0])
+    expect(settleCoplanar.mock.invocationCallOrder[0])
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
   })
 

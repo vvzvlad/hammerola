@@ -29,7 +29,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
 import { VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
-import { DOC_LIST, VIEW_LIST, viewMenuStyle } from '../src/viewlist.jsx'
+import { viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -198,25 +198,19 @@ describe('the documents in the list of views', () => {
     }
   })
 
-  it('stay in sight under twelve views: those scroll, the documents do not', () => {
+  it('share one scroll with twelve views: the card is one list, not two', () => {
     const twelve = Array.from({ length: 12 }, (_, i) => ({ ...VIEWS[0], id: `v${i}`, name: `view ${i}` }))
     const c = component({ meta: { ...meta(), views: twelve }, view: 'v0', viewsOpen: true })
-    const v = c.computed()
     const tree = c.render()
     const [menu] = drawnAs(tree, viewMenuStyle(true))
-    const [views] = drawnAs(tree, VIEW_LIST)
-    const [docs] = drawnAs(tree, DOC_LIST)
-    // The card holds the scroll of the views and the documents, in that order,
-    // and scrolls none of them itself.
-    expect(menu.props.children.filter(Boolean)).toEqual([views, docs])
-    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'flex', flexDirection: 'column', maxHeight: '308px' })
-    expect(css(viewMenuStyle(true)).overflow).toBeUndefined()
-    expect(css(VIEW_LIST)).toMatchObject({ overflow: 'auto', minHeight: '0', flex: '1 1 auto' })
-    expect(texts(views)).toContain('view 11')
-    expect(texts(views)).not.toContain('docs/cut-list.md')
-    // The documents keep their height and scroll on their own past four rows.
-    expect(css(DOC_LIST)).toMatchObject({ flex: 'none', maxHeight: '132px', overflow: 'auto' })
-    expect(texts(docs)).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
+    // Every row is a child of the card itself, the views then the documents;
+    // there is no inner box that scrolls apart from the rest.
+    const rows = menu.props.children.flat().filter(Boolean)
+    expect(rows).toHaveLength(14)
+    expect(texts(rows.at(11))).toContain('view 11')
+    expect(texts(rows.slice(12))).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
+    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'block', maxHeight: '308px', overflow: 'auto' })
+    expect(collect(rows, (el) => el.props.style?.overflow)).toEqual([])
   })
 
   it('cover the model to its bottom edge, under the toolbar, and stop the text above the toolbar', () => {

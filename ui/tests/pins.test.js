@@ -15,14 +15,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 
+// The cut face's owner, which needs a standing section to answer; what it does
+// with one is tools.test.js's subject. Null, as with no cut, unless a case says.
+vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  capOwnerAt: vi.fn(() => null),
+}))
+
 import { EVENT_PIN } from '../src/viewport/events.js'
+import { capOwnerAt } from '../src/viewport/picking.js'
 import {
-  PIN_CASE_PX, PIN_HEAD_WIDTH_PX, PIN_PX,
+  PIN_CASE_PX, PIN_HEAD_WIDTH_PX, PIN_LENGTH_FRACTION, PIN_PX,
 } from '../src/viewport/options.js'
 import { createPins, pinDirection } from '../src/viewport/pins.js'
 import { PINS_ORDER, RINGS_ORDER } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
-import { fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
+import { fakeGroup, fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
 
 const widgets = []
 
@@ -42,17 +50,33 @@ afterEach(() => {
 /** World units per CSS pixel on this camera: 30 world units over 600 px. */
 const K = 30 / 600
 
+/** The bounding box the hub publishes with a view (`payload.bb`), which is what
+ *  an arrow's length is a fraction of. This one spans 60 x 0 x 80, so
+ *  `hypot(60, 0, 80) / 2` is a half-diagonal of 50 world units. */
+const BB = { xmin: -30, xmax: 30, ymin: 0, ymax: 0, zmin: 5, zmax: 85 }
+const BB_HALF = 50
+
+/** How long an arrow standing on that model is, in world units. */
+const LENGTH = PIN_LENGTH_FRACTION * BB_HALF
+
 /**
  * A viewport with a scene, and the arrows for `pins` standing in it, the way
  * `reconcile` and `show()` get them there: the list first, the scene after.
  *
+ * `payload` is the fetched view document the element keeps, the one place the
+ * model's own size is written down; the default is the box above.
+ *
  * The canvas is a real node because the press is read in a capture-phase
  * listener on the window that declines any target but the canvas.
+ *
+ * The library's GPU picker answers the background — no part under any pixel —
+ * until a test stands a part there (`picks`).
  */
-function scene(pins) {
+function scene(pins, payload = { bb: BB }) {
   const model = orthoCamera()
   realCamera(THREE, model)
   const viewer = fakeViewer({ camera: model, rect: RECT })
+  viewer.idPicker.pickAt = vi.fn(() => null)
   const canvas = document.createElement('div')
   canvas.getBoundingClientRect = () => ({ ...RECT })
   document.body.appendChild(canvas)
@@ -60,6 +84,7 @@ function scene(pins) {
   viewer.renderer.domElement = canvas
   viewer.scene = new THREE.Scene()
   const vp = fakeViewport(viewer)
+  vp.payload = payload
   vp.dispatchEvent = vi.fn()
   const arrows = createPins(vp)
   widgets.push(arrows)
@@ -69,15 +94,42 @@ function scene(pins) {
   return { model, viewer, vp, canvas, arrows, group }
 }
 
-/** Where a point of one arrow's own frame (CSS pixels, +Y from the tip along
+/** Where a point of one arrow's own frame (pin units, +Y from the tip along
  *  the body) is in the world after the last frame. */
 function world(group, node, local) {
   group.updateMatrixWorld(true)
   return node.localToWorld(new THREE.Vector3(...local)).toArray()
 }
 
+/** How long one arrow is IN THE WORLD after the last frame: how far its tail
+ *  stands from its tip, through every scale between it and the scene. */
+function length(group, node) {
+  const tip = world(group, node, [0, 0, 0])
+  const tail = world(group, node, [0, PIN_PX, 0])
+  return Math.hypot(tail[0] - tip[0], tail[1] - tip[1], tail[2] - tip[2])
+}
+
 function isPoint(actual, expected) {
   expected.forEach((v, at) => expect(actual[at]).toBeCloseTo(v, 9))
+}
+
+/**
+ * Stand the solid at `path` under every pixel, `opacity` on its face material,
+ * with the library's GPU picker answering `point` on it — in the shape
+ * `IdPicker.pickAt` answers (viewer/src/rendering/id-picking.ts): the registry's
+ * entry for a face inside the solid, and the world point off the position
+ * attachment.
+ */
+function picks(viewer, path, point, opacity) {
+  const solid = fakeGroup()
+  solid.front.material.opacity = opacity
+  viewer.nestedGroup.groups[path] = solid
+  viewer.idPicker.pickAt = vi.fn(() => ({
+    id: 7,
+    info: { id: 7, path: `${path}/faces/faces_0`, name: 'faces_0', topo: 'face',
+            subtype: 'solid', solidPath: path },
+    point: new THREE.Vector3(...point),
+  }))
 }
 
 /** A press on the canvas, with both refusals watched. */
@@ -142,32 +194,67 @@ describe('where an arrow stands', () => {
     }
   })
 
-  it('touches the point, its body out along the normal, PIN_PX pixels long', () => {
+  it('touches the point, its body out along the normal, as long as the model says', () => {
     const { group } = scene([
       { id: 'side', p: [1, 2, 45], n: [-2, 0, 0] },
       { id: 'old', p: [3, 4, 45], n: null },
     ])
     const [side, old] = group.children
     isPoint(world(group, side, [0, 0, 0]), [1, 2, 45])
-    isPoint(world(group, side, [0, PIN_PX, 0]), [1 - PIN_PX * K, 2, 45])
+    isPoint(world(group, side, [0, PIN_PX, 0]), [1 - LENGTH, 2, 45])
     isPoint(world(group, old, [0, 0, 0]), [3, 4, 45])
-    isPoint(world(group, old, [0, PIN_PX, 0]), [3, 4, 45 + PIN_PX * K])
+    isPoint(world(group, old, [0, PIN_PX, 0]), [3, 4, 45 + LENGTH])
   })
 
-  it('keeps the tip on the point when the zoom changes the pixel scale', () => {
-    // `scene3d.js` scales the one group by world units per pixel AFTER `place`,
-    // so an arrow standing at a world point of its own has to divide that scale
-    // out on every frame; one that did not would slide towards the origin as the
-    // reader zoomed in.
-    const { model, viewer, group } = scene([{ id: 'c1', p: [1, 2, 45], n: [0, 0, 1] }])
-    // The real camera is what `g.cam` answers with here (`realCamera`), and its
-    // frustum is what the scale is read off.
+  it('is as long as the model is big, and the zoom does not touch it', () => {
+    // The whole of "an object in the scene and not a sticker over the picture":
+    // the length is a fraction of the model's half-diagonal, so a bigger model
+    // carries a bigger arrow and zooming in grows the arrow on the screen along
+    // with the part it points into.
+    const near = scene([{ id: 'c1', p: [1, 2, 45], n: [0, 0, 1] }])
+    expect(length(near.group, near.group.children[0])).toBeCloseTo(LENGTH, 9)
+
+    // Twice the box across the diagonal, twice the arrow.
+    const big = scene([{ id: 'c1', p: [1, 2, 45], n: [0, 0, 1] }],
+                      { bb: { xmin: -60, xmax: 60, ymin: 0, ymax: 0, zmin: 5, zmax: 165 } })
+    expect(length(big.group, big.group.children[0])).toBeCloseTo(2 * LENGTH, 9)
+
+    // The camera is what a screen widget follows: at zoom 2 a pixel is half as
+    // many world units. The arrow does not move at all. The real camera is what
+    // `g.cam` answers with here (`realCamera`), and its frustum is what the
+    // pixel scale is read off.
+    near.model.zoom = 2
+    near.model.cam.zoom = 2
+    rendered(near.viewer)
+    const [node] = near.group.children
+    expect(length(near.group, node)).toBeCloseTo(LENGTH, 9)
+    isPoint(world(near.group, node, [0, 0, 0]), [1, 2, 45])
+  })
+
+  it('falls back to its old on-screen size where the view carries no box', () => {
+    // A view that answers with no usable box would otherwise leave an arrow of
+    // length zero; `PIN_PX * k` is exactly the size it had while it was
+    // measured in pixels.
+    for (const payload of [
+      null,
+      {},
+      { bb: { xmin: 0, xmax: 1, ymin: 0, ymax: 1 } },
+      { bb: { xmin: 0, xmax: 0, ymin: 0, ymax: 0, zmin: 0, zmax: 0 } },
+      { bb: { xmin: 0, xmax: Number.NaN, ymin: 0, ymax: 1, zmin: 0, zmax: 1 } },
+    ]) {
+      const { group } = scene([{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }], payload)
+      expect(length(group, group.children[0]), String(payload && payload.bb))
+        .toBeCloseTo(PIN_PX * K, 9)
+    }
+
+    // And it IS the screen size: at zoom 2 a pixel is half the world, so the
+    // fallback arrow is half as long.
+    const { model, viewer, group } = scene(
+      [{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }], null)
     model.zoom = 2
     model.cam.zoom = 2
     rendered(viewer)
-    const [node] = group.children
-    isPoint(world(group, node, [0, 0, 0]), [1, 2, 45])
-    isPoint(world(group, node, [0, PIN_PX, 0]), [1, 2, 45 + (PIN_PX * K) / 2])
+    expect(length(group, group.children[0])).toBeCloseTo((PIN_PX * K) / 2, 9)
   })
 
   it('follows the list: new comments get an arrow, gone ones lose theirs', () => {
@@ -212,10 +299,10 @@ describe('where an arrow stands', () => {
 
 describe('the open comment', () => {
   it('is darker and drawn over the others, in the bottom band of all', () => {
-    // Two comments on one part resolve to one anchor, so their arrows stand on
-    // each other; with no depth test the last drawn is on top, and the open one
-    // is drawn last. The band under the rings keeps every control standing over
-    // an arrow above it.
+    // Two comments on one part resolve to one anchor, so their arrows are the
+    // same shape at the same depth, where the depth test passes and the last
+    // drawn is on top; the open one is drawn last. The band under the rings
+    // keeps every control standing over an arrow above it.
     const { group } = scene([
       { id: 'a', p: [0, 0, 45] }, { id: 'b', p: [0, 0, 45], active: true },
     ])
@@ -238,6 +325,30 @@ describe('the open comment', () => {
     }
     expect(group.renderOrder).toBe(PINS_ORDER)
     expect(PINS_ORDER).toBeLessThan(RINGS_ORDER)
+  })
+})
+
+describe('what an arrow is made of', () => {
+  it('is depth-tested, and the casing shows only its far side', () => {
+    // Depth-tested, or the arrow is painted over the glass and over the wall it
+    // is standing inside — the sticker the owner refused. The casing is the
+    // arrow grown all round, so it ENCLOSES the ink: drawn whole it would cover
+    // the ink and the arrow would come out white, and back faces only leaves it
+    // showing as the white rim around the silhouette (SPEC §4).
+    const { group } = scene([{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }])
+    const [node] = group.children
+    const white = (mesh) => mesh.material.color.getHex() === 0xffffff
+    const casings = node.children.filter(white)
+    const inks = node.children.filter((mesh) => !white(mesh))
+    expect(casings).toHaveLength(2)
+    expect(inks).toHaveLength(2)
+    for (const mesh of [...casings, ...inks]) {
+      expect(mesh.material.depthTest).toBe(true)
+      expect(mesh.material.depthWrite).toBe(true)
+      expect(mesh.material.transparent).toBe(false)
+    }
+    for (const mesh of casings) expect(mesh.material.side).toBe(THREE.BackSide)
+    for (const mesh of inks) expect(mesh.material.side).not.toBe(THREE.BackSide)
   })
 })
 
@@ -277,5 +388,53 @@ describe('a press on an arrow', () => {
     ])
     press(canvas, ON_HEAD)
     expect(opened(vp)).toEqual([{ id: 'c2' }, { id: 'c1' }, { id: 'draft' }])
+  })
+
+  it('goes to the nearer arrow where two overlap, even with the open one behind', () => {
+    // Under the depth test the arrow on top is the nearer one, so that is the
+    // one the reader pressed; the open one wins only where the two coincide
+    // (above). The camera looks down -Z, so z = 50 is in front of z = 40.
+    const { vp, canvas } = scene([
+      { id: 'near', p: [0, 0, 50], n: [1, 0, 0] },
+      { id: 'far', p: [0, 0, 40], n: [1, 0, 0], active: true },
+    ])
+    press(canvas, ON_HEAD)
+    expect(opened(vp)).toEqual([{ id: 'near' }])
+  })
+
+  it('leaves the press to the model where an opaque part stands in front of the arrow', () => {
+    // The ray meets only arrows, so without asking the picker a click on a
+    // wall would open the comment standing behind it. Glass does not hide an
+    // arrow, which shows through it, and a part behind the arrow does not
+    // either. The arrow's head is at z = 45, 15 in front of the camera.
+    for (const [what, point, opacity, taken] of [
+      ['an opaque part in front', [0.3, 0, 50], 1, false],
+      ['a translucent part in front', [0.3, 0, 50], 0.5, true],
+      ['an opaque part behind', [0.3, 0, 40], 1, true],
+    ]) {
+      const { vp, viewer, canvas } = scene([{ id: 'c1', p: [0, 0, 45], n: [1, 0, 0] }])
+      picks(viewer, '/model/wall', point, opacity)
+      const event = press(canvas, ON_HEAD)
+      // At the canvas pixel of the press, as the tools pick (`canvasXY`).
+      expect(viewer.idPicker.pickAt, what).toHaveBeenCalledWith(...ON_HEAD, {})
+      expect(opened(vp), what).toEqual(taken ? [{ id: 'c1' }] : [])
+      expect(event.stopImmediatePropagation.mock.calls.length > 0, what).toBe(taken)
+    }
+  })
+
+  it('leaves the press to the model where a cut face stands in front of the arrow', () => {
+    // The picker reads through the stencil cap (it answers nothing here), and
+    // the cap is opaque: its owner's point on the cut plane is what hides the
+    // arrow at that pixel.
+    const { vp, viewer, canvas } = scene([{ id: 'c1', p: [0, 0, 45], n: [1, 0, 0] }])
+    viewer.nestedGroup.groups['/model/wall'] = fakeGroup()
+    capOwnerAt.mockImplementationOnce(() => ({
+      id: '/model/wall', name: 'wall', path: '/model/wall', topo: 'face', point: [0.3, 0, 50],
+    }))
+    const event = press(canvas, ON_HEAD)
+    expect(capOwnerAt).toHaveBeenCalledTimes(1)
+    expect(capOwnerAt.mock.calls[0][0]).toBe(vp)
+    expect(opened(vp)).toEqual([])
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled()
   })
 })

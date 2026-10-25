@@ -69,7 +69,9 @@
 // event or paints anything. A two-finger swipe of a touchpad moves the
 // drawing, a pinch — a wheel event with Control held — and Control and the
 // wheel zoom about the pointer, by the Gerbers' arithmetic (`wheelMove` in
-// gerber.js); a selected footprint is outlined, not filled over.
+// gerber.js); a selected footprint is outlined, not filled over, and the
+// board's copper pours stay on screen while it is selected; a highlighted
+// net dims the board and not the page around it.
 //
 // FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
 // view on screen. The element has no fit of its own, and its `exportImage`
