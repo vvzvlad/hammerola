@@ -32,7 +32,9 @@ opens one on arrival. A hidden entry has no row: it is published and opens by it
 a menu entry of its own (twenty datasheets are twenty hidden entries, not twenty
 rows). With no `model.py` the documents are the whole build,
 chosen in the same menu at the bottom of the page. Markdown is drawn with its relative links resolved from its own
-directory, web links open in a new tab; a picture it shows must be a file of
+directory, web links open in a new tab, and a link to another listed document
+(`[glass vendors](glass-vendors.md)`) opens that document on the page — so name a
+neighbouring document with a link rather than in backticks; a picture it shows must be a file of
 the build, because an image from another site is not loaded (the page allows
 `img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
 the link without a key, whatever its extension — that is how a revision is sent to

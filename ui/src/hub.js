@@ -116,6 +116,49 @@ export function rereadPage(pathname) {
 /** True on the two URLs whose content can be rewritten under the reader. */
 export const isPointerPage = () => POINTER_NAMES.includes(PAGE.slot);
 
+/** The query key the camera frame travels under in a model page's address. */
+export const CAMERA_QUERY = 'c';
+
+/**
+ * A camera frame `{position, quaternion, target, zoom}` as the value of `c=`:
+ * eleven numbers joined by commas — position x,y,z, quaternion x,y,z,w, target
+ * x,y,z, zoom — or null for anything that is not a whole frame.
+ *
+ * Rounded so the address stays short: position and target to 0.01 (model
+ * units, millimetres), the quaternion's unit-length components to 1e-5, the
+ * zoom to four significant digits, since it is a ratio that ranges over
+ * orders of magnitude.
+ */
+export function encodeCamera(frame) {
+  if (!frame) return null;
+  const fixed = (list, size, digits) => (Array.isArray(list) && list.length === size
+    ? list.map((v) => (Number.isFinite(v) ? Number(v.toFixed(digits)) : NaN))
+    : [NaN]);
+  const numbers = [
+    ...fixed(frame.position, 3, 2),
+    ...fixed(frame.quaternion, 4, 5),
+    ...fixed(frame.target, 3, 2),
+    Number.isFinite(frame.zoom) ? Number(frame.zoom.toPrecision(4)) : NaN,
+  ];
+  return numbers.length === 11 && numbers.every(Number.isFinite) ? numbers.join(',') : null;
+}
+
+/**
+ * The frame `encodeCamera` wrote, back from the text of `c=`: null unless the
+ * text is exactly eleven finite numbers, so a damaged link opens as if it
+ * carried no camera.
+ */
+export function decodeCamera(text) {
+  const parts = typeof text === 'string' ? text.split(',') : [];
+  if (parts.length !== 11) return null;
+  const n = parts.map((part) => (part.trim() === '' ? NaN : Number(part)));
+  if (!n.every(Number.isFinite)) return null;
+  return {
+    position: n.slice(0, 3), quaternion: n.slice(3, 7),
+    target: n.slice(7, 10), zoom: n[10],
+  };
+}
+
 async function getJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);

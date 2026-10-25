@@ -389,7 +389,8 @@
   `chromeview.js` builds the model page's values and `DocShell.docBar` its own
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
-  React elements, relative links resolved from the document's directory, short
+  React elements, relative links resolved from the document's directory, a link
+  to another listed document opening it on the page through `docLinks`, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
@@ -439,6 +440,12 @@
   the top left (Top/Bottom, an eye per layer) and a link that downloads the zip.
   The model page's Downloads menu lists the same zip as GERBERS
   (`downloadsview.js`)
+- `ui/src/loadbar.jsx` — what the document views (the 3D board, a KiCad
+  design's 2D views, the Gerbers, markdown) show while their file comes in:
+  `fetchBody` reads the answer chunk by chunk and counts each one on a `meter`,
+  which reaches the screen at most once per frame, and `loadBar` is the label
+  (`Loading… 2.1 / 40.7 MB`, then `Preparing…`) and the bar, filled against the
+  document's `bytes` in meta.json
 - `ui/src/PcbPanel.jsx` — the board view's own panel over the top left of its
   canvas, where the model's parts tree stands (the viewer's panels are hidden by
   `hide-chrome`): layer presets, a row per layer with an eye and an

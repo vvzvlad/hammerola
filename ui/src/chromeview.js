@@ -42,7 +42,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, viewQuery,
+    refreshBuilds, viewQuery, cameraQuery,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -110,10 +110,11 @@ export function chromeView(s, props, deps) {
   // revision without that view opens on its first one, as a fresh load with
   // an unknown `?v=` does. And on the document over it, when one is open: a
   // revision that does not list it opens on the model, as a fresh load with
-  // an unknown `?d=` does.
+  // an unknown `?d=` does. And from the camera's angle (`cameraQuery`), read
+  // as this window renders.
   const shareView = share ? viewQuery(s.view, views) : '';
-  const shareQuery = shareView + (share && docOpen
-    ? `${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}` : '');
+  const shareQuery = !share ? '' : cameraQuery(shareView + (docOpen
+    ? `${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}` : ''));
   const shareLink = !share ? ''
     : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareQuery}`
       + (shareFiles ? `${shareQuery ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
@@ -437,8 +438,16 @@ export function chromeView(s, props, deps) {
       // without touching a thing when the view asked for is the one already
       // on screen, and a menu left standing open on the row you just pressed
       // is a control that ignored you. And puts the model back: a view chosen
-      // while a document is open is a request to see the model.
-      onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
+      // while a document is open is a request to see the model. On the view
+      // already on screen, through `set`: `showView` sends nothing then, and
+      // the model the document held back (`sync`) is let go here. On another,
+      // `showView` sends it, and a second `hmr:state` before the model is
+      // drawn would start its load again.
+      onClick: () => {
+        (s.view === v.id ? set : setState)({ doc: null });
+        showView(v.id);
+        setState({ viewsOpen: false });
+      },
     })),
     // The documents below the views (viewlist.jsx): a row each but for a
     // hidden one. Choosing one lays it over the model (`docOpen`), which stays
