@@ -133,10 +133,16 @@ export function createPins(vp) {
       // the tip, and lifted so its point is `grow` beyond the origin.
       cone.rotateZ(Math.PI);
       cone.translate(0, headLength / 2 - grow, 0);
-      const length = PIN_PX - PIN_HEAD_PX + grow;
+      // The rod runs from `grow` short of the ink head's base (`PIN_HEAD_PX`)
+      // to `grow` past the tail (`PIN_PX`). The casing's rod has to start
+      // inside the ink's head: its end
+      // cap faces the tip, so seen from the tail it is a back face the
+      // casing draws, and level with the ink's base it would fight it for
+      // every pixel round the shaft.
+      const length = PIN_PX - PIN_HEAD_PX + 2 * grow;
       const rod = new three.CylinderGeometry(PIN_SHAFT_PX / 2 + grow,
                                              PIN_SHAFT_PX / 2 + grow, length, SIDES);
-      rod.translate(0, PIN_HEAD_PX + length / 2, 0);
+      rod.translate(0, (PIN_HEAD_PX + PIN_PX) / 2, 0);
       return [rod, cone];
     };
     [shaft, head] = shapes(0);
