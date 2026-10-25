@@ -14,7 +14,7 @@
 // ordinary document; a shadow root would leave the widget unstyled.
 
 import {
-  EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
+  EVENT_CAMERA, EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
 import { settleCoplanar } from "./coplanar.js";
 import { safeHatch, setCutHatch } from "./hatch.js";
@@ -797,6 +797,12 @@ export class HmrViewport extends HTMLElement {
       // its subscriber runs first, so this lands after it rather than fighting
       // it (see keepSectionCut).
       if (this.tab !== "clip") keepSectionCut(this);
+    }
+    // The library reports these four on every frame the camera moved and at the
+    // end of a render (its fit of the new scene); `setCamera` passes
+    // `notify: false`, so a frame the interface put on screen is not echoed.
+    if (changes.position || changes.quaternion || changes.target || changes.zoom) {
+      emit(this, EVENT_CAMERA);
     }
   }
 

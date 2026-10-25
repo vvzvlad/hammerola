@@ -12,6 +12,12 @@
 // a document keeps its path in the tree. Absolute addresses, `/…`, `#…` and
 // anything with a scheme are left as written. A link to `http:` or `https:`
 // opens in a new tab, `noopener`, so the reader keeps the document.
+//
+// A link that lands on ANOTHER DOCUMENT of the build opens that document on the
+// page, as its row in the list of views does, rather than the raw file. Which
+// address is a document is the holder's knowledge, so it hands in `links`
+// (`docLinks` in DocumentView.jsx): given a resolved href, the props the link
+// takes instead, or null.
 
 import MarkdownIt from 'markdown-it';
 import React from 'react';
@@ -31,7 +37,9 @@ const SHORT_CELL = 24;
 // What the browser's defaults leave unreadable or out of the palette. Every
 // colour is a role in static/_v/tokens.css.
 const TAG_STYLE = {
-  a: 'color:var(--accent-text)',
+  // A bare address has nowhere to break and in a table widens its column past
+  // the page; `anywhere` (not `break-word`) also lets the cell shrink to fit.
+  a: 'color:var(--accent-text);overflow-wrap:anywhere',
   code: `font-family:${MONO};font-size:.92em;background:var(--sunken-bg);border-radius:3px;padding:1px 4px`,
   pre: `font-family:${MONO};font-size:13px;background:var(--sunken-bg);border:1px solid var(--line-soft);border-radius:6px;padding:10px 12px;overflow:auto`,
   blockquote: 'margin:0 0 1em;padding:0 14px;border-left:3px solid var(--line-strong);color:var(--text-soft)',
@@ -65,13 +73,15 @@ function plain(tokens) {
     token.type === 'image' ? plain(token.children) : token.content || '')).join('');
 }
 
-function propsOf(token, base, key) {
+function propsOf(token, base, key, links) {
   const props = { key };
   const style = [TAG_STYLE[token.tag], token.attrGet('style')].filter(Boolean).join(';');
   if (style) props.style = css(style);
   if (token.tag === 'a') {
     props.href = resolveHref(token.attrGet('href'), base);
-    if (/^https?:/i.test(props.href || '')) {
+    const doc = links && props.href ? links(props.href) : null;
+    if (doc) Object.assign(props, doc);
+    else if (/^https?:/i.test(props.href || '')) {
       props.target = '_blank';
       props.rel = 'noopener noreferrer';
     }
@@ -82,10 +92,10 @@ function propsOf(token, base, key) {
 }
 
 /** One token that opens and closes nothing, as what it puts on the page. */
-function leaf(token, base, key) {
+function leaf(token, base, key, links) {
   switch (token.type) {
     case 'inline':
-      return elements(token.children, base, `${key}.`);
+      return elements(token.children, base, `${key}.`, links);
     case 'softbreak':
       return '\n';
     case 'hardbreak':
@@ -117,7 +127,7 @@ function leaf(token, base, key) {
  * A HIDDEN pair (the paragraph inside a tight list item) opens no element:
  * markdown-it's own renderer drops the tags and keeps what is between them.
  */
-function elements(tokens, base, prefix) {
+function elements(tokens, base, prefix, links) {
   const root = { children: [] };
   const stack = [root];
   (tokens || []).forEach((token, index) => {
@@ -132,7 +142,7 @@ function elements(tokens, base, prefix) {
       const parent = stack[stack.length - 1];
       if (top.token.hidden) parent.children.push(...top.children);
       else {
-        const props = propsOf(top.token, base, top.key);
+        const props = propsOf(top.token, base, top.key, links);
         if ((top.token.tag === 'td' || top.token.tag === 'th')
             && shown(top.children).length <= SHORT_CELL) {
           props.className = NOWRAP_CLASS;
@@ -141,7 +151,7 @@ function elements(tokens, base, prefix) {
       }
       return;
     }
-    const drawn = leaf(token, base, key);
+    const drawn = leaf(token, base, key, links);
     if (Array.isArray(drawn)) top.children.push(...drawn);
     else if (drawn !== null) top.children.push(drawn);
   });
@@ -149,8 +159,9 @@ function elements(tokens, base, prefix) {
 }
 
 /** The whole document, as an array of elements; `base` is the document's
- *  directory in the build (`docBase` in DocumentView.jsx). Short table cells
- *  carry `NOWRAP_CLASS`. */
-export function markdownElements(text, base) {
-  return elements(parser.parse(String(text || ''), {}), base, 'md');
+ *  directory in the build (`docBase` in DocumentView.jsx), `links` the lookup
+ *  that turns a link to another document into one that opens it (optional).
+ *  Short table cells carry `NOWRAP_CLASS`. */
+export function markdownElements(text, base, links) {
+  return elements(parser.parse(String(text || ''), {}), base, 'md', links || null);
 }
