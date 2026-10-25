@@ -8,9 +8,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// The KiCad viewer's module, imported by its address on the hub: a module of
+// nothing here, the schematic's element below carrying what it would define.
+vi.mock('/_v/ecad-viewer.js', () => ({}))
+
 import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
+import KicadView, { PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
@@ -462,6 +467,12 @@ describe('the shell', () => {
     shell = new DocShell({ meta: META })
     shell.setState = (patch) => Object.assign(shell.state, patch)
   }
+  /** The browser's own Back and Forward, which restore the entry tasks later. */
+  const go = async (delta) => {
+    const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
+    window.history.go(delta)
+    await popped
+  }
   afterEach(() => {
     window.history.replaceState(null, '', '/')
     rereadPage('/')
@@ -535,29 +546,70 @@ describe('the shell', () => {
   })
 
   it('makes each pick a step of history, and Back brings the one before, the default included', async () => {
-    // The browser's own Back and Forward, which restore the entry tasks later.
-    const go = async (delta) => {
-      const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
-      window.history.go(delta)
-      await popped
-    }
     mount('')
     shell.componentDidMount()
-    // a schematic's sheet stays with its entry: a pick opens one on its first
-    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: 'hw__a.kicad_sch', page: 'p' } }, '')
+    // a schematic's sheet (`s=`) goes with the document it is of: a pick
+    // opens a design on its root sheet; the rest of the address stays
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?x=1&s=amp`)
     const push = vi.spyOn(window.history, 'pushState')
     try {
       shell.pick('report.pdf')
       shell.pick('report.pdf')
       expect(push).toHaveBeenCalledTimes(1)
-      expect(window.history.state).toEqual({ hmr: 'latest' })
+      expect([window.location.search, window.history.state]).toEqual(['?x=1&d=report.pdf', { hmr: 'latest' }])
       await go(-1)
-      expect([window.location.search, shell.state.active]).toEqual(['', 'list.md'])
+      expect([window.location.search, shell.state.active]).toEqual(['?x=1&s=amp', 'list.md'])
       await go(1)
       expect(shell.state.active).toBe('report.pdf')
     } finally {
       shell.componentWillUnmount()
       push.mockRestore()
+    }
+  })
+
+  it('names the default schematic\'s sheet as `?s=` with no `?d=`: a link opens on it, each change is a step Back undoes', async () => {
+    const ROOT = 'hw/board.kicad_sch:/root'
+    const AMP = 'hw/board.kicad_sch:/root/amp'
+    const PSU = 'hw/board.kicad_sch:/root/psu'
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    window.history.replaceState(null, '', `${BASE}?s=amp`)
+    rereadPage(BASE)
+    shell = new DocShell({ meta: WITH_KICAD })
+    shell.setState = (patch) => Object.assign(shell.state, patch)
+    // The design as the page draws it, its schematic's element switching sheets
+    // as the viewer does, reporting the change inside `switchPage`.
+    const [shown] = collect(DocPage(shell.render().props), (el) => (el.type === DocumentView ? el : undefined))
+    const view = new KicadView(new DocumentView(shown.props).render().props)
+    view.setState = (patch, done) => {
+      Object.assign(view.state, patch)
+      if (done) done()
+    }
+    const sch = Object.assign(document.createElement('ecad-viewer'), {
+      page: ROOT,
+      replaceSources: async () => {},
+      getSchematicPages: () => [ROOT, AMP, PSU].map((projectPath, i) => ({
+        projectPath, name: projectPath.split('/').at(-1), parentProjectPath: i ? ROOT : null })),
+      getActiveSchematicPage: () => ({ projectPath: sch.page }),
+      switchPage: (to) => {
+        sch.page = to
+        sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
+        return true
+      },
+    })
+    view.refCallbacks[SCH](sch)
+    shell.componentDidMount()
+    view.componentDidMount()
+    try {
+      await vi.waitFor(() => expect(view.state.ready).toBe(true))
+      expect([sch.page, window.location.search]).toEqual([AMP, '?s=amp'])
+      sch.switchPage(PSU)
+      expect(window.location.search).toBe('?s=psu')
+      await go(-1)
+      expect([sch.page, window.location.search, shell.state.active]).toEqual([AMP, '?s=amp', SCHEMATIC.id])
+    } finally {
+      view.componentWillUnmount()
+      shell.componentWillUnmount()
+      vi.unstubAllGlobals()
     }
   })
 })
