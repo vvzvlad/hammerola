@@ -21,7 +21,7 @@ from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
 from src.cadbuild.views import (at_viewer_precision, interference_pairs,
                                 prepare_views, shaped_document)
 
-from fakes import Location, Mesh, catalogue, part, turned
+from fakes import Location, Mesh, Vector, catalogue, part, turned
 
 
 _UNSET = object()
@@ -694,6 +694,37 @@ def test_every_leaf_is_stamped_with_its_catalogue_key():
                        catalogue(body="printable", lid="printable"))
     doc = shaped_document(flat_document("body", "lid"), prepared[0])
     assert [leaf["key"] for leaf in doc["parts"]] == ["body", "lid"]
+
+
+def test_every_leaf_is_stamped_with_the_motion_the_view_applied_to_it():
+    """`at`, in the spelling of the tessellator's own `loc`: what places geometry
+    measured from the part's STEP file, which the `loc` cannot when the
+    catalogue's solid carries a location of its own. The identity where the
+    view gave none, and on a mesh, which `at` is refused on."""
+    moved = Location(10.0, -15.0, 2.0, rows=turned(90, "z").rows)
+    cat = catalogue(body="printable", lid="printable", scan=("mock", Mesh()))
+    prepared = prepare(
+        [one_view(parts=["body", {"part": "lid", "at": moved}, "scan"])], cat)
+
+    doc = shaped_document(flat_document("body", "lid"), prepared[0])
+
+    plain, placed, mesh = (leaf["at"] for leaf in doc["parts"])
+    identity = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    assert plain == identity and mesh == identity
+    # A quarter turn about Z is the unit quaternion (0, 0, sin 45, cos 45).
+    assert placed[0] == [10.0, -15.0, 2.0]
+    assert placed[1] == pytest.approx([0.0, 0.0, 0.5 ** 0.5, 0.5 ** 0.5])
+
+
+def test_a_vector_given_as_at_is_stamped_as_the_shift_it_is():
+    """`Shape.moved` takes a cq.Vector as a pure shift, so a view that places a
+    part with one builds; its `at` is that shift, with no turn."""
+    prepared = prepare([one_view(parts=[{"part": "body",
+                                          "at": Vector(4.0, 0.0, -2.0)}])])
+
+    doc = shaped_document(flat_document("body"), prepared[0])
+
+    assert doc["parts"][0]["at"] == [[4.0, 0.0, -2.0], [0.0, 0.0, 0.0, 1.0]]
 
 
 def test_repeated_keys_are_stamped_by_position_not_by_name():

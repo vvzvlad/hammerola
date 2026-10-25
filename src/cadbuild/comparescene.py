@@ -19,10 +19,13 @@ loses colliding paths (5 parts in, 3 tree leaves, 5 scene objects; the
 duplicate is drawn but cannot be hidden, recoloured or cut, and highlighting
 its path lights both).
 
-The difference is measured in the part's own coordinates: a build exports one
-STEP per printable from `catalogue[key]["shape"]`, unmoved, while its place in
-a view is the `loc` of the referencing leaf. So each difference piece is drawn
-with its leaf's loc, or it lands at the origin.
+The difference is measured in the frame of the part's STEP file: a build
+exports one per printable from `catalogue[key]["shape"]`, unmoved by any view,
+with whatever location that solid carries of its own baked into the geometry.
+A view moves the solid by its `at`, which the build records on the leaf
+(`views.shaped_document`); the leaf's `loc` is that motion composed with the
+solid's own location, so a piece drawn with it would have the own location
+applied twice. Each difference piece is drawn with its leaf's `at`.
 
 Refusals are `ValueError`, not `BuildError`: nothing here runs a model, so a
 document that cannot be merged is like one the hub cannot serve
@@ -326,8 +329,8 @@ def _revision(document, name, root_id, view_id):
     """The revision's whole document, re-rooted under the scene and toned down.
 
     Returns `(group, places)`: the node to hang under the scene root, and where
-    every part it shows stands -- key, leaf name, loc, and the toned leaf. One
-    walk, because a difference piece is drawn with the loc of the very leaf
+    every part it shows stands -- key, leaf name, `at`, and the toned leaf. One
+    walk, because a difference piece is drawn with the `at` of the very leaf
     recoloured here, and for a part the other revision lacks that leaf is the
     difference (`_whole`).
 
@@ -362,23 +365,29 @@ def _toned(node, name, parent_id, view_id, places):
 
     copy["color"] = SHELL_COLOR
     copy["alpha"] = SHELL_ALPHA
-    # The leaf goes on the place beside its loc: for a part only this revision
+    # The leaf goes on the place beside its `at`: for a part only this revision
     # has, it is the difference geometry itself. `_whole` copies it again
-    # before recolouring, so the shell stays neutral.
+    # before recolouring, so the shell stays neutral. `at` is read, not
+    # demanded: only a piece to place needs it (`_planned`).
     places.append({"key": _demanded(node, "key", copy["id"], view_id),
-                   "name": name, "loc": copy["loc"], "leaf": copy})
+                   "name": name, "at": node.get("at"), "leaf": copy})
     return copy
 
 
-def _demanded(node, field, where, view_id):
+def _demanded(node, field, where, view_id, why=None):
     """A field the scene cannot be built without, or the sentence saying so.
 
     Required rather than defaulted (as in `views.shaped_document`), because a
     missing one produces a wrong scene that looks fine:
 
       * no `name` -- every node under it shares one path;
-      * no `loc` -- the part and its difference stand at the origin;
-      * no `key` on a leaf -- that part silently loses its difference geometry.
+      * no `loc` -- the part stands at the origin;
+      * no `key` on a leaf -- that part silently loses its difference geometry;
+      * no `at` on a leaf whose part has pieces to draw -- nothing says where
+        those pieces stand.
+
+    `why` replaces the general sentence where the field is missing for a
+    reason of its own.
     """
     # Empty counts as missing: `""` collides like a missing name, and `[]` is
     # no place to stand.
@@ -386,9 +395,10 @@ def _demanded(node, field, where, view_id):
     if not value:
         raise ValueError(
             f"view {view_id!r}: the node {where!r} of the comparison scene "
-            f"carries no {field!r} ({value!r}). Every node of the two documents "
-            "merged here has to have one -- without it this draws a scene that "
-            "is wrong rather than one that fails.")
+            f"carries no {field!r} ({value!r}). " + (
+                why or "Every node of the two documents merged here has to "
+                "have one -- without it this draws a scene that is wrong "
+                "rather than one that fails."))
     return value
 
 
@@ -400,7 +410,12 @@ def _planned(places, diffs, common, side, group_name, color, view_id):
     the two keeps a leaf from getting two nodes on one path.
 
     Once per place, not per part: one catalogue entry may be referenced many
-    times, each with its own leaf and loc.
+    times, each with its own leaf and `at`.
+
+    Each piece is placed by its leaf's `at`, the motion the view applied to the
+    solid the STEP file was written from, and it is demanded here, where a
+    piece is placed, and nowhere else: a revision built before views recorded
+    it still compares while nothing in the view changed.
 
     A key in `diffs` this view does not show is skipped: a view shows a subset
     of the catalogue, while STEP files exist for every printable.
@@ -429,7 +444,11 @@ def _planned(places, diffs, common, side, group_name, color, view_id):
                 # of one part; a boolean routinely produces several.
                 "name": f"{place['name']} #{index}",
                 "key": place["key"],
-                "loc": place["loc"],
+                "at": _demanded(
+                    place, "at", place["leaf"]["id"], view_id,
+                    "The revision was built before views recorded where each "
+                    "part is placed, so the difference measured for this part "
+                    "cannot be placed in the scene."),
                 "shape": piece["shape"],
             })
     return planned
@@ -487,19 +506,20 @@ def _drawn(plan, view_id):
         placed = dict(leaf)
         if placed.get("loc") != IDENTITY_LOC:
             # A fused piece read from STEP comes back with an identity
-            # location, so the mesh is in the part's own coordinates, the
-            # frame the loc below moves. A piece with its own location would
-            # have it dropped here and be drawn with the wrong shape.
+            # location, so the mesh is in the STEP file's frame, the one the
+            # `at` below moves. A piece with its own location would have it
+            # dropped here and be drawn with the wrong shape.
             raise ValueError(
                 f"view {view_id!r}: the tessellator gave the difference piece "
                 f"{entry['name']!r} a location of its own ({placed.get('loc')!r}). "
-                "The pieces are drawn in the part's coordinates and placed with "
-                "the part's loc, so there is nowhere for a second one to go.")
+                "The pieces are drawn in the frame of the part's STEP file and "
+                "placed with the motion the view applied to the part, so there "
+                "is nowhere for a second one to go.")
         placed["name"] = entry["name"]
-        # The piece was measured in the part's own coordinates; its place in
-        # this view is the referencing leaf's loc. Without this every bright
-        # piece is drawn at the origin.
-        placed["loc"] = entry["loc"]
+        # The piece was measured in the STEP file's frame; its place in this
+        # view is the motion the view applied to that solid, the referencing
+        # leaf's `at`. Without it every bright piece is drawn at the origin.
+        placed["loc"] = entry["at"]
         # Set explicitly rather than trusted from the tessellation: these two
         # are what the scene is for.
         placed["color"] = entry["color"]
@@ -540,7 +560,7 @@ def _tessellate(plan):
 def _group(name, root_id, version, leaves):
     """One child of the scene root, with its leaves' ids rebuilt under it.
 
-    A group moves nothing (every leaf carries its part's loc); the identity is
+    A group moves nothing (every leaf carries its own loc); the identity is
     written out because the viewer reads `loc` off every node.
     """
     group_id = f"{root_id}/{name}"
