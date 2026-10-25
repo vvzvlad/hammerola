@@ -26,7 +26,7 @@ import React from 'react';
 
 import DocumentView, { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
 import { PAGE, shortId } from './hub.js';
-import { PAGE_KEY } from './KicadView.jsx';
+import { SHEET_QUERY } from './KicadView.jsx';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
@@ -99,10 +99,11 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
  * right-click menu; `viewsOpen` says the list is open, `onToggle` opens or shuts
  * it and `onClose` shuts it, from a click anywhere else on the page. `tools`
  * is what the open document's view told the bar it can do through `onTools`;
- * `narrow` and `viewer` are `docBar`'s.
+ * `narrow` and `viewer` are `docBar`'s. `addressDoc` reads which document an
+ * address names, for a schematic's sheet in it (KicadView.jsx).
  */
 export function DocPage({
-  meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools,
+  meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc,
 }) {
   const doc = pickDocument(meta.documents, active);
   return (
@@ -121,7 +122,7 @@ export function DocPage({
       <div style={css(STAGE)}>
         <div style={css(DOC_LAYER)}>
           <DocumentView key={docViewKey(doc)} doc={doc} documents={meta.documents} base={base} onOpen={onPick}
-                        onTools={onTools} />
+                        onTools={onTools} addressDoc={addressDoc} />
         </div>
         <div style={css(BAR)}>
           {toolBar(docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }))}
@@ -136,9 +137,14 @@ export function DocPage({
 export default class DocShell extends React.Component {
   constructor(props) {
     super(props);
-    const wanted = new URLSearchParams(window.location.search).get(DOC_QUERY);
+    // The document an address names, its `?d=` or the default one where it
+    // has none: what is open, and what a schematic's sheet in the address is
+    // read against (`addressDoc` in KicadView.jsx), which a bare `d=` would
+    // miss for a default schematic.
+    this.addressDoc = (search) => pickDocument(this.props.meta.documents,
+      new URLSearchParams(search).get(DOC_QUERY)).id;
     this.state = {
-      active: pickDocument(props.meta.documents, wanted).id, viewsOpen: false, tools: null,
+      active: this.addressDoc(window.location.search), viewsOpen: false, tools: null,
       // Read at once and kept current (`componentDidMount`), as the model's
       // page keeps its own.
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
@@ -150,11 +156,8 @@ export default class DocShell extends React.Component {
     this.mq = null;
     this.onNarrow = (event) => this.setState({ narrow: event.matches });
     // Back and Forward through the documents picked (`pick`): the entry's
-    // `?d=`, read as the constructor reads it, the default one where it has none.
-    this.onPop = () => this.setState({
-      active: pickDocument(this.props.meta.documents,
-        new URLSearchParams(window.location.search).get(DOC_QUERY)).id,
-    });
+    // document, read as the constructor reads it.
+    this.onPop = () => this.setState({ active: this.addressDoc(window.location.search) });
   }
 
   componentDidMount() {
@@ -171,14 +174,14 @@ export default class DocShell extends React.Component {
   /** Document `id` on screen, a step of history; the list shuts. */
   pick(id) {
     if (id !== this.state.active) {
-      // The schematic's sheet stays with the entry it was recorded in: a
-      // design picked after another document opens anew on its first sheet,
-      // while its schematic picked after its own board keeps the sheet it is
-      // on (`PAGE_KEY` in KicadView.jsx).
-      const state = { ...window.history.state };
-      delete state[PAGE_KEY];
-      window.history.pushState(state, '',
-        window.location.pathname + docQuery(window.location.search, id, this.props.meta.documents));
+      // The schematic's sheet (`SHEET_QUERY` in KicadView.jsx) is dropped: a
+      // design picked after another document opens on its root sheet, while
+      // its schematic picked after its own board, the element kept, writes
+      // back the sheet it is on.
+      const params = new URLSearchParams(window.location.search);
+      params.delete(SHEET_QUERY);
+      window.history.pushState(window.history.state, '',
+        window.location.pathname + docQuery(params.toString(), id, this.props.meta.documents));
     }
     this.setState({ active: id, viewsOpen: false });
   }
@@ -187,7 +190,7 @@ export default class DocShell extends React.Component {
     return <DocPage meta={this.props.meta} active={this.state.active}
                     base={PAGE.base} onPick={(id) => this.pick(id)}
                     narrow={this.state.narrow} viewer={this.viewer}
-                    tools={this.state.tools} onTools={this.onTools}
+                    tools={this.state.tools} onTools={this.onTools} addressDoc={this.addressDoc}
                     viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();

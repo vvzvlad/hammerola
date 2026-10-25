@@ -198,9 +198,11 @@ export function docLinks(base, documents, onOpen) {
  *  build's) and `onOpen` (the page's door for opening one by id) are for a
  *  member of a KiCad design and for a markdown link to another document,
  *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
- *  the file, `received` the bytes of a markdown text in so far. Pure but for
- *  that link's address, which is the page's current one (`docLinks`). */
-export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received) {
+ *  the file, `received` the bytes of a markdown text in so far, `addressDoc`
+ *  the page's reading of which document an address names, for a schematic's
+ *  sheet in it (KicadView.jsx). Pure but for that link's address, which is
+ *  the page's current one (`docLinks`). */
+export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
@@ -215,7 +217,8 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} onLoad={onReady} onError={onReady} />;
   }
   if (viewOf(doc)) {
-    return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady} />;
+    return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady}
+                      addressDoc={addressDoc} />;
   }
   if (doc.type === GERBERS_TYPE) {
     return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady} />;
@@ -275,8 +278,8 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady } = this.props;
+    const { doc, base, documents, onOpen, onTools, onReady, addressDoc } = this.props;
     const { text, error, received } = this.state;
-    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received);
+    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc);
   }
 }

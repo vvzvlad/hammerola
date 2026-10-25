@@ -124,7 +124,7 @@ import { chromeView } from './chromeview.js';
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
 import DocumentView, { DOC_QUERY, docExt, FILE_TYPE } from './DocumentView.jsx';
-import { PAGE_KEY } from './KicadView.jsx';
+import { SHEET_QUERY } from './KicadView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -4933,7 +4933,11 @@ export default class HammerolaViewer extends React.Component {
    * The query an address needs so that opening it lands on what the menu of
    * views has chosen: `viewQuery` for `view`, then `d=` naming document `doc`,
    * or with no document the frame on screen (`cameraQuery`). Never both: the
-   * frame describes the model, which a document covers.
+   * frame describes the model, which a document covers. The document the
+   * address already names keeps the schematic's sheet it names (`s=`,
+   * `SHEET_QUERY` in KicadView.jsx), which is the one on screen; another
+   * revision without that sheet opens on the root one, as a fresh load with
+   * an unknown `?s=` does.
    *
    * Every address this page writes whole is spelled here: the push that lands
    * a swap, the replace that calls one off, the moves onto and off a
@@ -4942,7 +4946,9 @@ export default class HammerolaViewer extends React.Component {
    */
   screenQuery(view, views, doc) {
     const query = this.viewQuery(view, views);
+    const sheet = doc && doc === this.entryDoc() && new URLSearchParams(location.search).get(SHEET_QUERY);
     return doc ? `${query}${query ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(doc)}`
+      + (sheet ? `&${SHEET_QUERY}=${encodeURIComponent(sheet)}` : '')
       : this.cameraQuery(query);
   }
 
@@ -4998,16 +5004,17 @@ export default class HammerolaViewer extends React.Component {
 
   /**
    * Rewrite `d=` in the address bar: the document now laid over the model, or
-   * none, so a copied address opens on what is on screen. `c=` goes with it,
-   * and with no document comes back as the frame on screen, as `screenQuery`
-   * spells an address. A replace like `writeCamera`, every other parameter
-   * kept as written: for the document the banner's build does not list
-   * (`takePending`), whose address does not move.
+   * none, so a copied address opens on what is on screen. `c=` and the
+   * schematic's sheet (`s=`) go with it, and with no document `c=` comes back
+   * as the frame on screen, as `screenQuery` spells an address. A replace
+   * like `writeCamera`, every other parameter kept as written: for the
+   * document the banner's build does not list (`takePending`), whose address
+   * does not move.
    */
   writeDoc(id) {
     const key = (pair) => pair.split('=')[0];
     const kept = location.search.slice(1).split('&')
-      .filter((pair) => pair && key(pair) !== DOC_QUERY && key(pair) !== CAMERA_QUERY);
+      .filter((pair) => pair && ![DOC_QUERY, CAMERA_QUERY, SHEET_QUERY].includes(key(pair)));
     const frame = id ? null : encodeCamera(this.frameCamera());
     if (id) kept.push(`${DOC_QUERY}=${encodeURIComponent(id)}`);
     else if (frame) kept.push(`${CAMERA_QUERY}=${frame}`);
@@ -5022,27 +5029,24 @@ export default class HammerolaViewer extends React.Component {
    * entry already names: the row already shown.
    *
    * The path and every other parameter stay as written (`files=` among them);
-   * `v=`, `d=` and `c=` are spelled anew by `screenQuery`. Another view gets
-   * no `c=`: the frame on screen is the view being left's, and `onModel`
-   * writes the new one's once it is drawn. The entry keeps the state object
-   * of the one it follows, the build not having moved, but for the
-   * schematic's sheet (`PAGE_KEY` in KicadView.jsx), which stays with the
-   * entry it was recorded in: a design chosen after another document opens
-   * anew on its first sheet, while its schematic chosen after its own board
-   * keeps the sheet it is on.
+   * `v=`, `d=` and `c=` are spelled anew by `screenQuery`, which keeps the
+   * schematic's sheet (`s=`, `SHEET_QUERY` in KicadView.jsx) only for the
+   * document already named: a design chosen after another document opens on
+   * its root sheet, while its schematic chosen after its own board, the
+   * element kept, writes back the sheet it is on. Another view gets no `c=`: the frame on screen is the view being
+   * left's, and `onModel` writes the new one's once it is drawn. The entry
+   * keeps the state object of the one it follows, the build not having moved.
    */
   pushChoice(view, doc) {
     const views = (this.state.meta && this.state.meta.views) || [];
     if (view === this.entryView(views) && doc === this.entryDoc()) return;
-    const mine = ['v', DOC_QUERY, CAMERA_QUERY];
+    const mine = ['v', DOC_QUERY, CAMERA_QUERY, SHEET_QUERY];
     const kept = location.search.slice(1).split('&')
       .filter((pair) => pair && !mine.includes(pair.split('=')[0]));
     const named = (!doc && view !== this.state.view ? this.viewQuery(view, views)
       : this.screenQuery(view, views, doc)).slice(1);
     if (named) kept.push(named);
-    const state = { ...history.state };
-    delete state[PAGE_KEY];
-    history.pushState(state, '', location.pathname
+    history.pushState(history.state, '', location.pathname
       + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
   }
 
