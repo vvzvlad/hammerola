@@ -534,6 +534,20 @@ describe('the Share window', () => {
       `${location.origin}/project/proj1/${REV}/?v=print&d=docs__cut-list.md&files=key-of-rev`)
   })
 
+  it('carries the camera on screen as `c=`, before the key', () => {
+    // The frame is read off the viewport as the window renders. Every other
+    // test here has no viewport (`host.current` is null), and no `c=` at all.
+    const c = opened(REV)
+    c.host = { current: { getCamera: () => ({
+      position: [10, -20, 30.5], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 1.5,
+    }) } }
+    expect(c.computed().shareLink)
+      .toBe(`${location.origin}/project/proj1/${REV}/?c=10,-20,30.5,0,0,0,1,1,2,3,1.5`)
+    c.computed().toggleShareFiles()
+    expect(c.computed().shareLink).toBe(
+      `${location.origin}/project/proj1/${REV}/?c=10,-20,30.5,0,0,0,1,1,2,3,1.5&files=key-of-rev`)
+  })
+
   it('cannot be ticked when builds.json came without the keys, and says why', () => {
     const c = opened(REV, null)
     const v = c.computed()

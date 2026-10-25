@@ -73,11 +73,12 @@ import React from 'react';
 
 import {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
-  PLACE, PIN, MODEL, ERROR, TOOL, VIEWPORT_TAG,
+  PLACE, PIN, MODEL, ERROR, TOOL, CAMERA, VIEWPORT_TAG,
 } from './events.js';
 import {
-  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, HUB_UNREACHABLE, JOB_DONE,
-  JOB_FAILED, anchorFor, askHub, compareBase, isPointerPage, buildKey,
+  PAGE, ASSEMBLED_VIEW_ID, CAMERA_QUERY, COMPARE_GROUPS, HUB_UNREACHABLE,
+  JOB_DONE, JOB_FAILED, anchorFor, askHub, compareBase, decodeCamera,
+  encodeCamera, isPointerPage, buildKey,
   countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
   loadJob, loadMeta, loadBuilds, pageFrom, placementIn, rereadPage, rowsByKey,
   shortId, startCompare, mb,
@@ -289,6 +290,11 @@ const NUDGE_QUIET_MS = 100;
 // tab has already been saved. `saveProposal` says what the guards around it are
 // for, and who calls it.
 const PROPOSAL_SAVE_MS = 800;
+
+// HOW LONG THE CAMERA HAS TO STAND STILL before the address is rewritten with
+// it (`writeCamera`). An orbit reports every frame, so the address is written
+// once the hand stops, not per frame.
+export const CAMERA_WRITE_MS = 400;
 
 // WHAT THE PROPOSAL'S BRANCH IS EXPANDED AND COLLAPSED UNDER, in the same
 // `expanded` map the parts tree keys by node id. It cannot collide with one of
@@ -977,6 +983,12 @@ export default class HammerolaViewer extends React.Component {
       slot: PAGE.slot,
       key: new URLSearchParams(location.search).get('files') || '',
     };
+    // The camera frame the ADDRESS carried when the page loaded (`?c=`), or
+    // null. Read here, before anything rewrites the address, and spent by the
+    // first model event (`onModel`); on a comparison link by the comparison
+    // scene's, or put on the own view when the comparison ends without one
+    // (`sceneNeverCame`).
+    this._linkCamera = decodeCamera(new URLSearchParams(location.search).get(CAMERA_QUERY));
     // The rest of this page's instance fields, declared in one place because
     // `componentWillUnmount` must know every one: it removes the listeners and
     // clears the timers, and a field it misses is a leaked listener or a timer
@@ -1005,6 +1017,7 @@ export default class HammerolaViewer extends React.Component {
     this._tt = undefined;           // the toast's own life
     this._proposalSave = undefined; // the debounce on writing the document to the hub
     this._cmpWaits = undefined;     // every gap between two polls of a comparison job
+    this._camWrite = undefined;     // the debounce on writing the camera into the address
     // -- what the model event and the stored proposal leave for each other
     this._refit = undefined;        // the next model event refits the camera
     this._modelSeen = undefined;    // a model event has landed at all
@@ -1388,6 +1401,8 @@ export default class HammerolaViewer extends React.Component {
         this.setState({ held: !!d.held });
         if (d.escape) this.set({ tool: null });
       },
+      // The camera moved. A method, for the reason `onModel` is one.
+      [CAMERA]: () => this.onCamera(),
     };
     Object.keys(this._h).forEach((k) => window.addEventListener(k, this._h[k]));
 
@@ -1520,6 +1535,8 @@ export default class HammerolaViewer extends React.Component {
     // And the proposal's save, for the same reason one step further out: it
     // would wake up and POST on behalf of a page nobody is looking at.
     clearTimeout(this._proposalSave);
+    // And the camera's write into the address of a page that is gone.
+    clearTimeout(this._camWrite);
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
@@ -1717,7 +1734,7 @@ export default class HammerolaViewer extends React.Component {
           this.state.compare ? this.state.cmpPair : null);
         if (location.pathname !== staying) {
           history.replaceState({ hmr: slot }, '',
-                               staying + this.viewQuery(this.state.view, views));
+                               staying + this.cameraQuery(this.viewQuery(this.state.view, views)));
           // The repaired address may be a comparison's, so `PAGE.cmp` has to
           // follow it; on a plain build URL this re-derives what was there.
           rereadPage(staying);
@@ -1846,7 +1863,7 @@ export default class HammerolaViewer extends React.Component {
     // constructor (null).
     const gone = this.leaveBuild(view === this.state.view, meta);
 
-    if (push) history.pushState({ hmr: slot }, '', path + query);
+    if (push) history.pushState({ hmr: slot }, '', path + this.cameraQuery(query));
     // In place, so every module that imported `PAGE` sees the new revision —
     // `loadMeta`, `loadBuilds`, `isPointerPage`, `sync`'s `base`, the comment
     // route, the download hrefs and the header's slot. Nothing re-derives it, so
@@ -1974,6 +1991,9 @@ export default class HammerolaViewer extends React.Component {
     // this is another build. Spent by the model event that lands the swap; see
     // `onModel`, which is where the argument for it is written out.
     this._refit = true;
+    // The comparison goes below, and with it a link's frame still waiting for
+    // that comparison's scene, as in `leaveCompare`.
+    this._linkCamera = null;
     // The toast goes: it sits for 2.6 s and says what the page was doing for the
     // build that has left, so it would otherwise stand over the new one saying
     // something that has stopped being true.
@@ -2590,6 +2610,33 @@ export default class HammerolaViewer extends React.Component {
       // a swap, and if a swap's view never renders the next live build takes
       // the flag, which is the same operation.
       if (!d.live || this._refit) this.captureHome();
+      // The frame the address was opened with (`c=`), put on screen by the
+      // page's first model event and by no later one. After `captureHome`, so
+      // `home` stays the library's own fit and Fit still goes back to it.
+      //
+      // On a page opened as a comparison the frame is the comparison scene's,
+      // and the build's own view renders first (`load` syncs it before
+      // `compareRevisions` has a scene to show), so only the scene spends it —
+      // unless the comparison has already ended without one (`sceneNeverCame`):
+      // without a token it is `locked` before any view has rendered.
+      const forScene = !PAGE.cmp || compared
+        || this.state.cmpStage === 'locked' || this.state.cmpStage === 'failed';
+      const opened = forScene ? this._linkCamera : null;
+      if (forScene) this._linkCamera = null;
+      const el = this.el();
+      if (opened && !d.live && el && typeof el.setCamera === 'function') el.setCamera(opened);
+      // A scene drawn afresh fitted the camera afresh, so the address is
+      // rewritten from the camera rather than left naming the frame of the
+      // scene that went — and with the view on screen, since a view tab moves
+      // no address (`showView`) and a frame under another view's `v=` would
+      // aim at the wrong layout. Here and not in the debounce: a timer firing
+      // during a `popstate` switch would rewrite `v=` before `switchBuild`
+      // reads the entry's own (`entryView`). A comparison's view is `cmpView`.
+      //
+      // A live one kept the reader's frame. On Back and Forward the restored
+      // entry carries its own older `c=`; the library's end-of-render camera
+      // report (`onCamera`) rewrites it to the frame that was kept.
+      if (!d.live) this.writeCamera(compared ? this.state.cmpView : this.state.view);
       this._refit = false;
       // The stored document is adopted here, in the callback, because only now
       // are both preconditions true: a view has rendered (`meta` is in) and the
@@ -2850,6 +2897,9 @@ export default class HammerolaViewer extends React.Component {
     // that keeps it honest.
     const back = this._cmpFrom;
     this._cmpFrom = null;
+    // A link's frame still waiting for the comparison scene is the closed
+    // panel's: the next view drawn afresh fits as usual.
+    this._linkCamera = null;
     if (back && back !== PAGE.slot) this.standOnPointer(back);
     else this.moveAddress(null);
     this.set({
@@ -2875,7 +2925,7 @@ export default class HammerolaViewer extends React.Component {
     const to = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
     const views = (this.state.meta && this.state.meta.views) || [];
     history.replaceState({ hmr: slot }, '',
-                         to + this.viewQuery(this.state.view, views));
+                         to + this.cameraQuery(this.viewQuery(this.state.view, views)));
     // IN PLACE, so `PAGE.slot` says what the bar says — which is what the watch
     // below, the chip and every relative fetch on this page are read off.
     rereadPage(to);
@@ -2937,7 +2987,7 @@ export default class HammerolaViewer extends React.Component {
     const to = this.addressOf(pair);
     if (location.pathname === to) return;
     const views = (this.state.meta && this.state.meta.views) || [];
-    const address = to + this.viewQuery(this.state.view, views);
+    const address = to + this.cameraQuery(this.viewQuery(this.state.view, views));
     const entry = { hmr: pageFrom(to).slot };
     if (to === this.addressOf(null)) history.replaceState(entry, '', address);
     else history.pushState(entry, '', address);
@@ -3008,7 +3058,7 @@ export default class HammerolaViewer extends React.Component {
   async runCompare(pair, view) {
     const [a, b] = pair;
     const token = this.state.token;
-    if (!token) { this.setState({ cmpStage: 'locked' }); return; }
+    if (!token) { this.setState({ cmpStage: 'locked' }, () => this.sceneNeverCame()); return; }
     this.setState({ cmpStage: 'starting' });
     try {
       let report = await loadCompareReport(PAGE.pid, a, b, view, token);
@@ -3034,8 +3084,25 @@ export default class HammerolaViewer extends React.Component {
       this.setState({
         cmpStage: 'failed',
         cmpError: String((error && error.message) || error),
-      });
+      }, () => this.sceneNeverCame());
     }
+  }
+
+  /**
+   * The comparison a cold link opened has ended without its scene — no token
+   * (`locked`) or a job that failed — so the link's frame, still waiting for
+   * that scene (`onModel`), goes on the build's own view instead: the same
+   * world coordinates, so a reader without the token still sees the angle that
+   * was shared. Before any model event has landed there is no view to put it
+   * on, and the first one takes it (`onModel` reads the stage).
+   */
+  sceneNeverCame() {
+    const opened = this._linkCamera;
+    if (!opened || !this._modelSeen) return;
+    this._linkCamera = null;
+    const el = this.el();
+    if (el && typeof el.setCamera === 'function') el.setCamera(opened);
+    this.writeCamera();
   }
 
   /** Is this still the comparison the reader is looking at? */
@@ -3817,6 +3884,8 @@ export default class HammerolaViewer extends React.Component {
       return;
     }
     el.setCamera(this.home);
+    // `setCamera` raises no camera event, so the address is told here.
+    this.writeCamera();
   }
 
   frameBlob() {
@@ -4763,6 +4832,52 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
+   * `query` with the frame on screen added as `c=`, so the address opens on
+   * the angle the reader is looking from. Unchanged while there is no frame to
+   * read. Wrapped round `viewQuery` by every address this page writes, and by
+   * the Share window's link.
+   */
+  cameraQuery(query) {
+    const frame = encodeCamera(this.frameCamera());
+    return frame ? `${query}${query ? '&' : '?'}${CAMERA_QUERY}=${frame}` : query;
+  }
+
+  /**
+   * The camera moved: the address follows once it has stood still for
+   * `CAMERA_WRITE_MS`. Only a timer per event, since one comes every frame of
+   * an orbit.
+   */
+  onCamera() {
+    clearTimeout(this._camWrite);
+    this._camWrite = setTimeout(() => this.writeCamera(), CAMERA_WRITE_MS);
+  }
+
+  /**
+   * Rewrite `c=` in the address bar with the frame on screen, keeping the path
+   * and every other parameter as written. Given a `view`, `v=` is rewritten
+   * too, as `viewQuery` spells it (none for the first view); without one it
+   * stays as it stands.
+   *
+   * A replace, never a push: moving the camera is not somewhere the reader
+   * went, and Back must not walk through every angle. The commas stay
+   * unescaped, which `URLSearchParams` would not leave them.
+   */
+  writeCamera(view) {
+    const frame = encodeCamera(this.frameCamera());
+    if (!frame) return;
+    const key = (pair) => pair.split('=')[0];
+    let kept = location.search.slice(1).split('&')
+      .filter((pair) => pair && key(pair) !== CAMERA_QUERY);
+    if (view !== undefined) {
+      const views = (this.state.meta && this.state.meta.views) || [];
+      const named = this.viewQuery(view, views).slice(1);
+      kept = [...(named ? [named] : []), ...kept.filter((pair) => key(pair) !== 'v')];
+    }
+    history.replaceState(history.state, '', `${location.pathname}?`
+      + `${[...kept, `${CAMERA_QUERY}=${frame}`].join('&')}${location.hash}`);
+  }
+
+  /**
    * Ask the viewport for this view again — the button on the failed-view panel.
    *
    * The only way back from a view that did not render: the viewport remembers
@@ -5074,6 +5189,7 @@ export default class HammerolaViewer extends React.Component {
       loadProposal: this.loadProposal.bind(this),
       refreshBuilds: this.refreshBuilds.bind(this),
       viewQuery: this.viewQuery.bind(this),
+      cameraQuery: this.cameraQuery.bind(this),
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
