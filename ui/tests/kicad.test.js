@@ -629,18 +629,26 @@ describe('the right-click menu', () => {
 })
 
 describe('a net across the schematic\'s sheets', () => {
-  // What names a net on the design's two sheets, as KiCad writes it.
+  // What names a net on the design's sheets, the root's two sheet symbols
+  // pointing at the other two with a pin each for their hierarchical label,
+  // and the board's nets, as KiCad writes them.
   const power = (reference, value, uuid) => `(symbol (lib_id "power:${value}") (at 0 0 0)`
     + ` (property "Reference" "${reference}" (at 0 0 0)) (property "Value" "${value}" (at 0 0 0)) (uuid "${uuid}"))`
   const global = (name, uuid) => `(global_label "${name}" (shape input) (at 0 0 0) (uuid "${uuid}"))`
+  const hierarchical = (name, uuid) => `(hierarchical_label "${name}" (shape input) (at 0 0 0) (uuid "${uuid}"))`
+  const sheetSymbol = (name) => `(sheet (at 0 0) (uuid "sheet-${name}") (property "Sheetname" "${name}")`
+    + ` (property "Sheetfile" "sub/${name}.kicad_sch") (pin "AMP_FAULT" input (at 0 0 0) (uuid "pin-fault-${name}")))`
   const NETS = netIndex({
-    'hw/board.kicad_sch': `(kicad_sch ${power('#PWR0101', '+12V', 'pwr-board')} ${global('AMP_CLIP_OTW', 'clip-board')})`,
+    'hw/board.kicad_sch': `(kicad_sch ${sheetSymbol('power')} ${sheetSymbol('dsp')}`
+      + ` ${power('#PWR0101', '+12V', 'pwr-board')} ${global('AMP_CLIP_OTW', 'clip-board')})`,
     'hw/sub/power.kicad_sch': `(kicad_sch ${global('AMP_CLIP_OTW', 'clip-power')} ${power('#PWR0201', '+12V', 'pwr-power')}`
-      + ` ${power('#PWR0202', '+12V', 'pwr-power-2')} ${power('#FLG0201', 'PWR_FLAG', 'flg-power')})`,
-    // the global net's name on a sheet only as labels of that sheet's own nets
-    'hw/sub/dsp.kicad_sch': '(kicad_sch (label "AMP_CLIP_OTW" (at 0 0 0) (uuid "clip-local"))'
-      + ' (hierarchical_label "AMP_CLIP_OTW" (shape input) (at 0 0 0) (uuid "clip-hier")))',
-  })
+      + ` ${power('#PWR0202', '+12V', 'pwr-power-2')} ${power('#FLG0201', 'PWR_FLAG', 'flg-power')}`
+      + ` ${hierarchical('AMP_FAULT', 'fault-power')})`,
+    // the global net's name on a sheet only as a local label, a net of that sheet's own
+    'hw/sub/dsp.kicad_sch': `(kicad_sch (label "AMP_CLIP_OTW" (at 0 0 0) (uuid "clip-local")) ${hierarchical('AMP_FAULT', 'fault-dsp')})`,
+    // the hierarchical net named after the second of its sheets
+    'hw/board.kicad_pcb': '(kicad_pcb (net 0 "") (net 1 "/dsp/AMP_FAULT") (net 2 "+12V"))',
+  }, 'hw/board.kicad_sch')
   /** The design with its sheets' nets read, `doc` on screen. */
   const withNets = (doc = DOCS[0]) => {
     const one = mounted(doc)
@@ -688,12 +696,40 @@ describe('a net across the schematic\'s sheets', () => {
     expect([longest > lines[1].length, menuOf(one.view).props.style.width]).toEqual([true, `${longest * 7 + 30}px`])
   })
 
-  it('a local or a hierarchical label is a net of its own sheet: no other sheet is offered', () => {
+  it('a local label is a net of its own sheet: no other sheet is offered', () => {
+    expect(offered(withNets(), { itemType: 'label', net: 'AMP_CLIP_OTW', uuid: 'clip-local' }))
+      .toEqual(['net AMP_CLIP_OTW', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb'])
+  })
+
+  it('a hierarchical label is one net with its namesakes and the root\'s pins: their sheets offered, the board asked by its name', () => {
     const one = withNets()
-    for (const [itemType, uuid] of [['label', 'clip-local'], ['hierarchical-label', 'clip-hier']]) {
-      expect(offered(one, { itemType, net: 'AMP_CLIP_OTW', uuid }))
-        .toEqual(['net AMP_CLIP_OTW', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb'])
-    }
+    expect(offered(one, { itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' })).toEqual(['net AMP_FAULT',
+      'Show net AMP_FAULT in hw/board.kicad_sch · board', 'Show net AMP_FAULT in hw/board.kicad_sch · dsp',
+      'Show net AMP_FAULT in hw/board.kicad_pcb'])
+    itemsOf(one.view)[1].props.onClick()
+    expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('AMP_FAULT', 'hw/sub/dsp.kicad_sch', 'fault-dsp'))
+    offered(one, { itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' })
+    itemsOf(one.view)[2].props.onClick()
+    expect(one.elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: '/dsp/AMP_FAULT' })
+  })
+
+  it('a sheet pin is the net of the hierarchical labels of its name: their sheets offered, the board asked by its name', () => {
+    const one = withNets()
+    expect(offered(one, { itemType: 'sheet-pin', net: 'AMP_FAULT', uuid: 'pin-fault-power' })).toEqual(['net AMP_FAULT',
+      'Show net AMP_FAULT in hw/board.kicad_sch · power', 'Show net AMP_FAULT in hw/board.kicad_sch · dsp',
+      'Show net AMP_FAULT in hw/board.kicad_pcb'])
+    itemsOf(one.view)[2].props.onClick()
+    expect(one.elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: '/dsp/AMP_FAULT' })
+  })
+
+  it('a track of a hierarchical net is shown on every sheet that carries it, the root through its pin', () => {
+    const one = withNets(DOCS[1])
+    expect(offered(one, { itemType: 'track', net: '/dsp/AMP_FAULT', netCode: 1 })).toEqual(['net /dsp/AMP_FAULT',
+      'Show net /dsp/AMP_FAULT in hw/board.kicad_sch · board', 'Show net /dsp/AMP_FAULT in hw/board.kicad_sch · power',
+      'Show net /dsp/AMP_FAULT in hw/board.kicad_sch · dsp'])
+    itemsOf(one.view)[0].props.onClick()
+    expect(one.elements[SCH].requestCrossProbe)
+      .toHaveBeenLastCalledWith(net('/dsp/AMP_FAULT', 'hw/board.kicad_sch', 'pin-fault-power'))
   })
 
   it('an item of another sheet asks the schematic on screen for it straight away, the page asked for nothing', () => {
@@ -711,6 +747,33 @@ describe('a net across the schematic\'s sheets', () => {
     itemsOf(one.view)[1].props.onClick()
     expect(one.view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
     expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('+12V', 'hw/sub/power.kicad_sch', 'pwr-power'))
+  })
+
+  describe('asks the board for a label\'s net by the board\'s name of it', () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('a local label\'s with its sheet\'s path in front, a global label\'s bare; the line shows the label\'s own', async () => {
+      // The root's sheet symbol `amp` points at the design's other file: the
+      // path is the sheet's name, not its file's.
+      const files = {
+        'hw/board.kicad_sch': '(kicad_sch (sheet (at 0 0) (uuid "sheet-amp") (property "Sheetname" "amp")'
+          + ' (property "Sheetfile" "sub/power.kicad_sch")))',
+        'hw/sub/power.kicad_sch': '(kicad_sch (label "OUT_C" (at 0 0 0) (uuid "out-c"))'
+          + ` ${global('AMP_FAULT', 'fault')})`,
+      }
+      vi.stubGlobal('fetch', vi.fn(async (url) => new Response(files[url.slice(BASE.length)] || `<${url}>`)))
+      const one = mounted()
+      one.view.componentDidMount()
+      await vi.waitFor(() => expect(one.view.state.ready).toBe(true))
+      for (const [detail, board] of [[{ itemType: 'label', net: 'OUT_C', uuid: 'out-c' }, '/amp/OUT_C'],
+        [{ itemType: 'global-label', net: 'AMP_FAULT', uuid: 'fault' }, 'AMP_FAULT']]) {
+        one.view.props.onOpen(DOCS[0].id)
+        expect(offered(one, detail)).toEqual([`net ${detail.net}`, `Show net ${detail.net} in hw/board.kicad_pcb`])
+        itemsOf(one.view)[0].props.onClick()
+        expect(one.elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: board })
+      }
+      one.view.componentWillUnmount()
+    })
   })
 })
 
