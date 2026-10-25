@@ -34,9 +34,9 @@ def test_the_target_still_names_six_tests():
 
     A seventh added or a sixth removed changes what the kernel-backed loop covers,
     and neither should happen without somebody reading this line. One of the six
-    checks that the pieces the revision diff is drawn from come out in the PART's
-    coordinates and are placed with the view leaf's own `loc`, which nothing else
-    in the suite would notice drifting.
+    checks that the pieces the revision diff is drawn from stand, in world
+    coordinates, on the part they were cut from -- placed with the view leaf's
+    `at`, not its `loc` -- which nothing else in the suite would notice drifting.
     """
     assert len(_declared_node_ids()) == 6
 

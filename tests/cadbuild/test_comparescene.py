@@ -14,9 +14,9 @@ back leaves with a DELIBERATELY WRONG colour and alpha, so a test that finds the
 right ones has watched `build_scene` set them rather than the tessellator.
 
 The last test is the one that has to agree with the kernel and with the
-tessellator: it fuses two real revisions of a part and checks that the bright
-geometry comes out in the part's own coordinates and is placed with the part's
-loc. It skips where the kernel is missing.
+tessellator: it builds two real revisions of a part that carries a location of
+its own, fuses them and checks that the bright geometry stands, in world
+coordinates, on the part it was cut from. It skips where the kernel is missing.
 """
 
 import json
@@ -38,11 +38,11 @@ _UNSET = object()
 
 
 def at(z):
-    """A leaf loc that is not the identity: the part stands z above the plate."""
+    """A leaf loc or `at` that is not the identity: z above the plate."""
     return [[0.0, 0.0, float(z)], [0.0, 0.0, 0.0, 1.0]]
 
 
-def leaf(name, key=None, loc=None):
+def leaf(name, key=None, loc=None, at=None):
     """A tessellated part, in the shape `export_views` publishes one."""
     return {"id": f"/Group/{name}", "type": "shapes", "subtype": "solid",
             "name": name, "key": name if key is None else key,
@@ -50,6 +50,7 @@ def leaf(name, key=None, loc=None):
             "color": "#c9a227", "alpha": 1.0, "material": None,
             "normalize_uvs": True, "texture": None,
             "loc": IDENTITY_LOC if loc is None else loc,
+            "at": IDENTITY_LOC if at is None else at,
             "renderback": False, "accuracy": None, "bb": None}
 
 
@@ -208,16 +209,37 @@ def test_the_scene_declares_one_payload_version(tessellator):
     assert "rev a: 3, rev b: 4" in str(exc.value)
 
 
-@pytest.mark.parametrize("field", ["name", "loc", "key"])
+@pytest.mark.parametrize("field", ["name", "loc", "key", "at"])
 def test_a_node_missing_what_the_merge_needs_is_refused(tessellator, field):
     """Defaulted instead, each of these draws a scene that is WRONG rather than
-    one that fails: one path for every part, a part at the origin, or a part
-    that quietly loses its difference geometry."""
+    one that fails: one path for every part, a part at the origin, a part that
+    quietly loses its difference geometry, or pieces with nothing to say where
+    they stand."""
     part = leaf("body")
     del part[field]
     with pytest.raises(ValueError) as exc:
-        scene(document(part), document(leaf("body")), {"body": measurement()})
-    assert field in str(exc.value) and "assembled" in str(exc.value)
+        scene(document(part), document(leaf("body")),
+              {"body": measurement(removed=["cut"])})
+    assert f"carries no {field!r}" in str(exc.value)
+    assert "assembled" in str(exc.value)
+
+
+def test_a_revision_built_before_at_was_recorded_compares_until_a_piece_needs_it(
+        tessellator):
+    """A build published before views recorded `at` has nothing to place a piece
+    by. A view in which nothing changed places none and still compares; one
+    with a piece to draw is refused, and the sentence says why."""
+    old = leaf("body")
+    del old["at"]
+
+    built = scene(document(old), document(old), {"body": measurement()})
+    assert children(built)["removed"]["parts"] == []
+
+    with pytest.raises(ValueError) as exc:
+        scene(document(old), document(old),
+              {"body": measurement(removed=["cut"])})
+    assert "built before views recorded where each part is placed" in str(
+        exc.value)
 
 
 # --------------------------------------------------------------------------
@@ -227,19 +249,22 @@ def test_a_node_missing_what_the_merge_needs_is_refused(tessellator, field):
 def test_the_difference_is_drawn_where_the_part_stands(tessellator):
     """THE correctness point of this module.
 
-    A part's STEP is exported in the part's OWN coordinates, so the pieces come
-    out in those coordinates too; the part's place in the view is the loc of the
-    leaf that references it. Without this the bright geometry lands at the
-    origin -- which looks like a scene rather than like a defect.
+    A part's STEP is exported from the catalogue's solid with any location of
+    its own baked in, so the pieces come out in that frame; the view moved the
+    solid by the leaf's `at`. The leaf's `loc` is `at` composed with the
+    solid's own location -- here the solid stands 5 up of its own -- so a piece
+    drawn with it has that location twice and floats off the part, which looks
+    like a scene rather than like a defect.
     """
-    built = scene(document(leaf("cap", loc=at(15))),
-                  document(leaf("cap", loc=at(17))),
+    built = scene(document(leaf("cap", loc=at(20), at=at(15))),
+                  document(leaf("cap", loc=at(22), at=at(17))),
                   {"cap": measurement(removed=["cut"], added=["put"])})
 
     removed = children(built)["removed"]["parts"]
     added = children(built)["added"]["parts"]
-    # Each side takes its loc from ITS OWN revision: what was removed was part
-    # of A and stands where A shows it, what was added is part of B.
+    # Each side takes its `at` from ITS OWN revision: what was removed was part
+    # of A and stands where A shows it, what was added is part of B. The
+    # leaves' own locs, at(20) and at(22), are what the pieces must NOT get.
     assert [piece["loc"] for piece in removed] == [at(15)]
     assert [piece["loc"] for piece in added] == [at(17)]
     assert [piece["shape"] for piece in removed] == [{"drawn": "cut"}]
@@ -250,8 +275,8 @@ def test_a_part_the_view_shows_twice_gets_its_difference_at_both_places(
         tessellator):
     """A view references the catalogue and may reference one entry many times
     (`pin` x5). A part that changed changed at every occurrence."""
-    both = document(leaf("pin", key="pin", loc=at(1)),
-                    leaf("pin(2)", key="pin", loc=at(9)))
+    both = document(leaf("pin", key="pin", loc=at(6), at=at(1)),
+                    leaf("pin(2)", key="pin", loc=at(14), at=at(9)))
     built = scene(both, both, {"pin": measurement(removed=["cut"])})
 
     removed = children(built)["removed"]["parts"]
@@ -506,7 +531,7 @@ def test_a_tessellation_that_does_not_line_up_with_the_plan_is_refused(
 
 def test_a_piece_that_arrives_with_a_location_of_its_own_is_refused(monkeypatch):
     """Measured: a piece of a fuse over two solids read out of STEP comes back
-    with an identity location, so the mesh is in the part's own coordinates.
+    with an identity location, so the mesh is in the STEP file's frame.
     One that arrived with a location would have it DROPPED here -- drawn in the
     right place with the wrong shape."""
     def moved(plan):
@@ -877,36 +902,61 @@ def test_the_report_and_the_scene_agree_on_which_parts_changed(tessellator):
 # --------------------------------------------------------------------------
 
 def test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed(tmp_path):
-    """The whole path, with a real fuse and a real tessellation behind it.
+    """The whole path, with a real fuse, a real view export and a real
+    tessellation behind it.
 
-    Everything above stands a fake in front of the tessellator, so nothing above
-    can catch the fact this rests on: the pieces of a fuse over two solids read
-    out of STEP come back in the PART'S own coordinates, and the loc that puts
-    them where the part stands is the view's. This asserts both halves -- the
-    mesh sits where the part's geometry sits, and the leaf carries the view's
-    loc -- so a change that started baking the placement into either one would
-    show up as the geometry being applied twice.
+    Everything above stands a fake in front of the tessellator and types the
+    view documents by hand, so nothing above can catch what this rests on. The
+    catalogue's solid carries a location of its OWN, as a part put on the bed
+    with `.val().moved(...)` does. Its STEP file has that location baked into
+    the geometry, so the pieces of the fuse come out already moved by it; the
+    leaf's `loc` is the view's `at` composed with it, because the tessellator
+    takes the solid's whole location off the shape it meshes. A piece drawn
+    with that `loc` gets the own location twice and floats away from the
+    surface it was cut from. So the assertion is on WORLD coordinates: the
+    removed piece, moved by the loc it is drawn with, is the groove's slab
+    moved by the solid's own location and then by `at`, worked out by hand.
 
     Skips where the kernel is missing.
     """
     cq = pytest.importorskip("cadquery", exc_type=ImportError,
                              reason="a real fuse and tessellation need the kernel")
+    import numpy as np
+    from ocp_tessellate.ocp_utils import loc_to_tq
+
     from src.cadbuild.shapediff import check, drop_slivers, measure
+    from src.cadbuild.views import export_views, prepare_views
+
+    # The solid's own location: a quarter turn about X, then 10 mm up.
+    own = cq.Location(cq.Vector(0, 0, 10), cq.Vector(1, 0, 0), 90)
+    # Where the view puts it: a quarter turn about Z, then a shift.
+    placement = cq.Location(cq.Vector(30, -15, 0), cq.Vector(0, 0, 1), 90)
 
     def grooved(width):
         # The groove grows on ONE side, so widening it removes a single piece.
         return (cq.Workplane("XY").box(20, 20, 10)
                 .faces(">Z").workplane()
-                .moveTo(width / 2, 0).rect(width, 20).cutBlind(-3))
+                .moveTo(width / 2, 0).rect(width, 20).cutBlind(-3)
+                ).val().moved(own)
 
-    def written_like_the_hub_writes_it(shape, path):
+    def built(width, out_dir):
+        """One revision's `body.step` and view document, as a build writes them."""
+        out_dir.mkdir()
+        body = grooved(width)
         # Through an assembly, because `printables.export_printables` exports
         # every `<part>.step` as `cq.Assembly(obj, name=name)`.
-        cq.Assembly(shape, name="part").export(str(path), exportType="STEP")
+        cq.Assembly(body, name="body").export(str(out_dir / "body.step"),
+                                              exportType="STEP")
+        catalogue = {"body": {"shape": body, "mesh": None, "kind": "printable",
+                              "color": None, "note": None}}
+        export_views(prepare_views(
+            [{"id": "assembled", "parts": [{"part": "body", "at": placement}]}],
+            catalogue), out_dir)
+        return out_dir / "body.step", json.loads(
+            (out_dir / "assembled.json").read_text(encoding="utf-8"))
 
-    narrow, wide = tmp_path / "a.step", tmp_path / "b.step"
-    written_like_the_hub_writes_it(grooved(4), narrow)
-    written_like_the_hub_writes_it(grooved(6), wide)
+    narrow, document_a = built(4, tmp_path / "a")
+    wide, document_b = built(6, tmp_path / "b")
 
     plain = measure(narrow, wide)
     assert set(plain["removed"][0]) == {"volume_mm3", "area_mm2"}, (
@@ -917,27 +967,37 @@ def test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed(tmp_path)
     assert check(kept) is None
     assert len(kept["removed"]) == 1 and kept["added"] == []
 
-    # The part stands 50 mm up in this view, which is the whole question: the
-    # STEP it was measured from knows nothing about that.
-    standing = at(50)
-    built = build_scene(document(leaf("body", loc=standing)),
-                        document(leaf("body", loc=standing)),
-                        {"body": kept}, view_id="assembled")
+    made = build_scene(document_a, document_b, {"body": kept},
+                       view_id="assembled")
 
-    piece = built["parts"][2]["parts"][0]
+    piece = made["parts"][2]["parts"][0]
     assert piece["id"] == "/cmp/removed/body #1"
-    assert piece["loc"] == standing
     assert piece["color"] == REMOVED_COLOR and piece["alpha"] == DIFFERENCE_ALPHA
 
-    # The mesh itself is in the part's coordinates: the groove spans x = 0..4 in
-    # the narrow revision and x = 0..6 in the wide one, so what the widening
-    # removed is the slab from x = 4 to x = 6, 3 mm deep into the top of a box
-    # that runs z = -5..5 -- and NOWHERE near the 50 mm the loc moves it by.
-    vertices = piece["shape"]["vertices"]
-    assert vertices, "the tessellation produced no geometry at all"
-    xs, zs = vertices[0::3], vertices[2::3]
-    assert (min(xs), max(xs)) == pytest.approx((4.0, 6.0))
-    assert (min(zs), max(zs)) == pytest.approx((2.0, 5.0))
+    # Where the browser draws the piece: its vertices turned by the loc's
+    # quaternion and then shifted by its translation, as three.js reads a loc.
+    vertices = np.asarray(piece["shape"]["vertices"]).reshape(-1, 3)
+    assert len(vertices), "the tessellation produced no geometry at all"
+    shift, turn = np.asarray(piece["loc"][0]), np.asarray(piece["loc"][1])
+    axis, w = turn[:3], turn[3]
+    world = (vertices + 2 * w * np.cross(axis, vertices)
+             + 2 * np.cross(axis, np.cross(axis, vertices)) + shift)
+
+    # Where the material really went. The groove spans x = 0..4 in the narrow
+    # revision and 0..6 in the wide one, 3 mm deep into the top of a box that
+    # runs z = -5..5: the widening removed x 4..6, y -10..10, z 2..5. The
+    # solid's own location turns that about X, (x, y, z) -> (x, -z, y), and
+    # lifts it 10: x 4..6, y -5..-2, z 0..20. The view turns it about Z,
+    # (x, y, z) -> (-y, x, z), and shifts it by (30, -15, 0): x 32..35,
+    # y -11..-9, z 0..20.
+    assert world.min(axis=0) == pytest.approx([32.0, -11.0, 0.0], abs=1e-4)
+    assert world.max(axis=0) == pytest.approx([35.0, -9.0, 20.0], abs=1e-4)
+
+    # The leaf's `at` is the view's motion in the tessellator's own spelling,
+    # and here it is not the leaf's `loc`, which is the case this is about.
+    shown = document_a["parts"][0]
+    assert shown["at"] == [list(part) for part in loc_to_tq(placement.wrapped)]
+    assert shown["at"] != shown["loc"]
 
     # And the whole thing is what the hub hands to a browser: plain JSON.
-    assert json.loads(json.dumps(built))["id"] == "/cmp"
+    assert json.loads(json.dumps(made))["id"] == "/cmp"
