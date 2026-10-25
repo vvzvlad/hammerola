@@ -187,6 +187,31 @@ function sameParts(a, b) {
   return a.every((part, at) => part === b[at] || same(part, b[at]));
 }
 
+/**
+ * A point and a normal through the world matrix of the part at `path` (out of
+ * its frame into the world), or through its inverse (`inverse`, the way back):
+ * `{p, n}`, or null without three (`vp.three`, kept by `show()`) or a mesh drawn
+ * at `path`. `n` is null when no normal is given.
+ *
+ * The matrix is the mesh's, `front`, after its group is recomposed, since a move
+ * writes the group and the matrix is composed by the next render (`partCentre`
+ * in parts.js). `transformDirection` takes the rotation alone, which turns a
+ * normal rightly: a placement is a turn and a shift, never a scale.
+ */
+function throughPart(vp, path, point, normal, inverse) {
+  const three = vp.three;
+  const g = internals(vp.viewer);
+  const group = g && g.nestedGroup && g.nestedGroup.groups
+    ? g.nestedGroup.groups[path] : null;
+  const front = group && group.front;
+  if (!three || !front || !front.matrixWorld) return null;
+  group.updateMatrixWorld();
+  const m = inverse ? front.matrixWorld.clone().invert() : front.matrixWorld;
+  const p = new three.Vector3(...point).applyMatrix4(m);
+  const n = normal ? new three.Vector3(...normal).transformDirection(m) : null;
+  return { p: [p.x, p.y, p.z], n: n ? [n.x, n.y, n.z] : null };
+}
+
 export class HmrViewport extends HTMLElement {
   connectedCallback() {
     if (this.booted) return;
@@ -977,38 +1002,26 @@ export class HmrViewport extends HTMLElement {
     return partTop(this.viewer, path);
   }
 
-  /** Where a point and a face normal taken in ANOTHER view of this build stand
-   * on the part at `path` in this one: `{p, n}`, or null when the scene draws no
-   * part there. `n` is null when no normal is given.
+  /** Where a point and a face normal given in the frame of the part at `path`,
+   * as a comment stores them, stand in this scene: `{p, n}` in the world, or
+   * null when the scene draws no part there. `n` is null when no normal is
+   * given.
    *
-   * A view moves a part and keeps its vertices, so the point is taken out of
-   * `from` (`{position, quaternion}`, where that view placed the part,
-   * `hub.placementIn`) and put back where this scene stands it:
-   * `M_here · M_from⁻¹`. The normal takes the rotation only.
-   *
-   * `M_here` is `front.matrixWorld`, recomposed first, as `partCentre` reads it,
-   * so a part the reader dragged takes its arrow along. It is the composed locs
-   * and nothing more: the library hangs the document's root group straight on
-   * the scene (`buildInitialGroup`, viewer/src/core/viewer.ts) and `front` at
-   * the identity in its part's group (`renderShape`,
-   * viewer/src/scene/nestedgroup.ts).
+   * The part's frame is its mesh's, `front`, whose vertices are the same in
+   * every view of a build: a view moves a part and keeps them. So a point in
+   * that frame is one place on the part wherever a view stands it, and a part
+   * the reader dragged takes its arrow along (`throughPart`). The exception is
+   * a part a view draws `deformed`: its mesh is the shape that view brought, so
+   * a point taken on it lands on the undeformed part elsewhere only roughly.
    */
-  carryPoint(path, from, point, normal) {
-    const three = this.three;
-    const g = internals(this.viewer);
-    const group = g && g.nestedGroup && g.nestedGroup.groups
-      ? g.nestedGroup.groups[path] : null;
-    const front = group && group.front;
-    if (!three || !front || !front.matrixWorld) return null;
-    group.updateMatrixWorld();
-    const source = new three.Matrix4().compose(
-      new three.Vector3(...from.position),
-      new three.Quaternion(...from.quaternion),
-      new three.Vector3(1, 1, 1));
-    const m = front.matrixWorld.clone().multiply(source.invert());
-    const p = new three.Vector3(...point).applyMatrix4(m);
-    const n = normal ? new three.Vector3(...normal).transformDirection(m) : null;
-    return { p: [p.x, p.y, p.z], n: n ? [n.x, n.y, n.z] : null };
+  fromPart(path, point, normal) {
+    return throughPart(this, path, point, normal, false);
+  }
+
+  /** A world point and face normal taken on the part at `path`, in that part's
+   * frame: `fromPart` inverted, with the part's matrix as it stands now. */
+  toPart(path, point, normal) {
+    return throughPart(this, path, point, normal, true);
   }
 
   /** This frame as a PNG blob, for the snapshot a comment carries. */

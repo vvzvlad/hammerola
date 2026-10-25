@@ -74,6 +74,15 @@ def test_the_face_a_comment_was_left_on_is_printed(hub, model, capsys):
     assert "at 1.0 2.0 3.5  facing 0.00 -1.00 0.00" in capsys.readouterr().out
 
 
+def test_a_point_in_the_parts_frame_says_so(hub, model, capsys):
+    leave_comment(hub, model, normal=[0.0, -1.0, 0.0], frame="part")
+    capsys.readouterr()
+
+    assert run(model, "comments") == 0
+    assert ("at 1.0 2.0 3.5 (part coords)  facing 0.00 -1.00 0.00"
+            in capsys.readouterr().out)
+
+
 def test_several_comments_are_all_listed(hub, model, capsys):
     first = leave_comment(hub, model, text="the first one")
     second = leave_comment(hub, model, text="the second one")

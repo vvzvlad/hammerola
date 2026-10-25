@@ -746,14 +746,18 @@ describe('the part a comment is opened against', () => {
     expect(c.state.composer.key).toBe('pin')
   })
 
-  it('keeps the face normal the point was placed with', () => {
+  it('keeps the point and face normal it was placed with, in that copy\'s frame', () => {
     // The direction the draft's arrow stands out along, and what `sendComment`
-    // posts as `normal`.
+    // posts as `point` and `normal`: taken into the frame of the solid clicked,
+    // the second copy and not the row's first.
     const c = mounted(THREE_PINS)
+    const toPart = vi.fn(() => ({ p: [7, 8, 9], n: [1, 0, 0] }))
+    c.host = { current: { toPart } }
     window.dispatchEvent(new CustomEvent(PLACE,
       { detail: { id: '/model/pin(2)', name: 'pin(2)', p: [1, 2, 3], n: [0, 0, 1] } }))
-    expect(c.state.composer.p).toEqual([1, 2, 3])
-    expect(c.state.composer.n).toEqual([0, 0, 1])
+    expect(toPart).toHaveBeenCalledWith('/model/pin(2)', [1, 2, 3], [0, 0, 1])
+    expect(c.state.composer.p).toEqual([7, 8, 9])
+    expect(c.state.composer.n).toEqual([1, 0, 0])
   })
 
   it('takes the keyboard for each point placed, over a standing draft too', () => {

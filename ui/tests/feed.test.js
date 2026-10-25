@@ -22,7 +22,7 @@
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { STATE } from '../src/events.js'
+import { PLACE, STATE } from '../src/events.js'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { indexTree } from '../src/hub.js'
 import { emptyProposal } from '../src/proposal.js'
@@ -219,9 +219,9 @@ describe('a comment that was just filed', () => {
     expect(sent.part).toBe('/model/plate')
   })
 
-  it('posts the face normal beside the point', async () => {
+  it('posts the face normal beside the point, both in the part\'s frame', async () => {
     // What the comment's arrow stands out along once the queue comes back; the
-    // hub keeps it next to `point`.
+    // hub keeps it next to `point`, and `frame` says whose coordinates they are.
     const fetching = answering({ status: 201 }, served([]))
     const c = page({
       composer: { part: 'plate(2)', partId: '/model/plate', key: 'plate',
@@ -233,6 +233,7 @@ describe('a comment that was just filed', () => {
     const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
     expect(sent.point).toEqual([1, 2, 3])
     expect(sent.normal).toEqual([0, -1, 0])
+    expect(sent.frame).toBe('part')
   })
 
   it('stamps the build on screen, not the one the slot holds when it lands', async () => {
@@ -608,9 +609,10 @@ describe('the rail', () => {
   })
 
   it('says a point left in another view of this build was left here', () => {
-    // The arrow stands on the face that was clicked, carried through the two
-    // views' placements, so the row says what it says for a point in this view.
-    const v = page({ feed: [record({ view: 'exploded', point: [1, 2, 3] })] }).computed()
+    // The point is in the part's frame, so the arrow stands on the face that was
+    // clicked in this view too, and the row says what it says for any point.
+    const v = page({ feed: [record({ view: 'exploded', point: [1, 2, 3], frame: 'part' })] })
+      .computed()
     expect(v.threads[0].says).toBe('left here, on this build')
     expect(v.threads[0].part).toBe('plate(2)')
   })
@@ -690,19 +692,24 @@ describe('the pins', () => {
   })
 
   it('keeps the draft\'s own pin beside the queue\'s, standing on its normal', () => {
+    // The draft holds its point in the frame of the solid it was placed on,
+    // and the viewport stands it where that solid is.
+    const fromPart = vi.fn((path, p, n) => ({ p: [p[0] + 10, p[1], p[2]], n }))
     const c = page({
       feed: [record({ point: [1, 2, 3] })],
       composer: { part: 'plate(2)', partId: '/model/plate', p: [4, 5, 6],
                   n: [1, 0, 0], text: '' },
       watch: true,
     })
+    c.host = { current: { fromPart } }
     const seen = listening()
 
     c.sync()
 
+    expect(fromPart).toHaveBeenCalledWith('/model/plate', [4, 5, 6], [1, 0, 0])
     expect(seen[0].pins.map((pin) => pin.id)).toEqual(['c1', 'draft'])
     expect(seen[0].pins[1]).toEqual(
-      { id: 'draft', p: [4, 5, 6], n: [1, 0, 0], active: true })
+      { id: 'draft', p: [14, 5, 6], n: [1, 0, 0], active: true })
   })
 
   it('draws no pin for a processed comment', () => {
@@ -727,139 +734,111 @@ describe('the pins', () => {
 // The owner's report: on the latest page, an arrow left from the `dev` page and
 // one left from another view both stood straight down at the part's centre. The
 // build is the same in all three places (`published` says so); only the view's
-// placement of the part differs, and the page carries the point through it.
+// placement of the part differs, and a point in the part's own frame is a place
+// on it under any placement.
 
 describe('the pins on the same build, wherever they were left', () => {
   const S = Math.SQRT1_2
-  // The part in its own frame: a box whose top, at its centre in x and y, is
-  // [1, 3, 1], one point on it, and the face normal there.
-  const BOX = [0, 0, -1, 2, 0, -1, 2, 6, -1, 0, 6, -1, 0, 0, 1, 2, 0, 1, 2, 6, 1, 0, 6, 1]
-  const TOP = [1, 3, 1]
-  const LOCAL = [2, 4, 1]
-  const LOCAL_N = [0, 0, 1]
   // The glass view lays the part flat — a quarter turn about -x, (x, y, z) to
-  // (x, z, -y), then a shift — so the comment left there stored these.
-  const GLASS_LOC = [[-672.5, -603.5, 495], [-S, 0, 0, S]]
-  const IN_GLASS = [2 - 672.5, 1 - 603.5, -4 + 495]
-  const IN_GLASS_N = [0, 1, 0]
-  const GLASS_DOC = {
-    id: '/model', loc: [[0, 0, 0], [0, 0, 0, 1]],
-    parts: [{ id: '/model/plate', loc: GLASS_LOC }],
-  }
+  // (x, z, -y), then a shift. The assembled view stands it elsewhere — a
+  // quarter turn about z, (x, y, z) to (-y, x, z), then another shift.
+  const GLASS = { position: [-672.5, -603.5, 495], quaternion: [-S, 0, 0, S] }
+  const ASSEMBLED = { position: [100, 20, 0], quaternion: [0, 0, S, S] }
+  // One spot of the part, on its +x face, as each view shows it: the point and
+  // the face normal there. In the part's own frame it is [2, 4, 0.5] facing +x.
+  const IN_GLASS = [2 - 672.5, 0.5 - 603.5, -4 + 495]
+  const IN_GLASS_N = [1, 0, 0]
+  const IN_ASSEMBLED = [-4 + 100, 2 + 20, 0.5]
+  const IN_ASSEMBLED_N = [0, 1, 0]
   const VIEWS = [
     { id: 'assembled', name: 'assembled', file: 'a.json', parts: ['plate'], gzip: 1000 },
     { id: 'glass', name: 'glass', file: 'g.json', parts: ['plate'], gzip: 1000 },
   ]
 
-  /** The latest page on the assembled view, where the part stands as modelled,
-   *  with a real viewport drawing it. */
-  function latest(feed, over = {}) {
+  /** The page on `view`, mounted with its real handlers, over a real viewport
+   *  drawing the part; `place` stands the part as a view does. */
+  function opened(view) {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const c = page({
-      feed, watch: true,
+      watch: true, view,
       meta: {
         project: 'fixture', title: 'Fixture', commit: REV, published: STAMP,
         built: '2026-08-27T18:00:00Z', parts: PARTS, views: VIEWS,
       },
-      view: 'assembled',
-      ...over,
     })
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(BOX, 3))
     const group = new THREE.Group()
-    group.front = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial())
+    group.front = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial())
     group.add(group.front)
-    group.updateMatrixWorld()
     const el = Object.create(HmrViewport.prototype)
     el.viewer = fakeViewer({ groups: { '/model/plate': group } })
     el.three = THREE
     c.host = { current: el }
-    return c
+    c.load = vi.fn(async () => {})
+    c.loadFeed = vi.fn()
+    c.loadProposal = vi.fn()
+    c.componentDidMount()
+    onTestFinished(() => {
+      c.componentWillUnmount()
+      warn.mockRestore()
+    })
+    const place = ({ position, quaternion }) => {
+      group.position.set(...position)
+      group.quaternion.set(...quaternion)
+      group.updateMatrixWorld()
+    }
+    return { c, place, group }
   }
-
-  // A from the `dev` page, B from the revision page on the glass view: the two
-  // comments of the report, each with the normal it was clicked with.
-  const fromSlot = record({ id: 'A', commit: 'dev', view: 'assembled',
-                            point: LOCAL, normal: LOCAL_N })
-  const fromGlass = record({ id: 'B', view: 'glass', point: IN_GLASS, normal: IN_GLASS_N })
 
   const near = (actual, expected) => {
     expect(actual).toHaveLength(3)
     expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 9))
   }
 
-  it('stands every arrow on the face it was clicked on', async () => {
-    const fetching = answering({ ok: true, status: 200, json: async () => GLASS_DOC })
-    const c = latest([fromSlot, fromGlass])
+  it('stands a comment left in one view on the same spot of the part in another', async () => {
+    // Left in the glass view: a click on that spot as the glass view shows it.
+    const { c, place } = opened('glass')
+    place(GLASS)
     const seen = listening()
+    window.dispatchEvent(new CustomEvent(PLACE, { detail: {
+      id: '/model/plate', name: 'plate(2)', p: IN_GLASS, n: IN_GLASS_N } }))
+    // The draft stands where the click was.
+    const [draft] = seen[seen.length - 1].pins
+    expect(draft.id).toBe('draft')
+    near(draft.p, IN_GLASS)
+    near(draft.n, IN_GLASS_N)
 
-    c.sync()
+    c.state.composer = { ...c.state.composer, text: 'too thin' }
+    const fetching = answering({ status: 201 }, served([]))
+    await c.sendComment()
+    const sent = JSON.parse(fetching.mock.calls[0][1].body.get('comment'))
+    expect(sent).toMatchObject({ view: 'glass', part: '/model/plate', frame: 'part' })
 
-    // The slot's comment is a place on this very view; the glass one waits for
-    // the glass document and stands on the top of the part's box until then.
-    expect(seen[0].pins).toEqual([
-      { id: 'A', p: LOCAL, n: LOCAL_N, active: false },
-      { id: 'B', p: TOP, n: null, active: false },
-    ])
+    // Read in the assembled view, which stands the part elsewhere, as the hub
+    // stored it.
+    place(ASSEMBLED)
+    c.set({ view: 'assembled', feed: [record({ ...sent, id: 'c1' })] })
+
+    const [pin] = seen[seen.length - 1].pins
+    expect(pin.id).toBe('c1')
+    near(pin.p, IN_ASSEMBLED)
+    near(pin.n, IN_ASSEMBLED_N)
+    // Out of the instance on screen, with no other view's file asked for.
     expect(fetching).toHaveBeenCalledTimes(1)
-    expect(fetching.mock.calls[0][0]).toBe(`/project/proj1/${REV}/g.json`)
-
-    await settled()
-
-    // The document landed and drew the page again.
-    expect(seen).toHaveLength(2)
-    const [a, b] = seen[1].pins
-    expect(a).toEqual({ id: 'A', p: LOCAL, n: LOCAL_N, active: false })
-    near(b.p, LOCAL)
-    near(b.n, LOCAL_N)
-
-    c.sync()
-    expect(fetching, 'the glass document is fetched once').toHaveBeenCalledTimes(1)
   })
 
-  it('carries nothing into a comparison, whose scene is neither view', async () => {
-    const fetching = answering({ ok: true, status: 200, json: async () => GLASS_DOC })
-    const c = latest([fromGlass], {
-      compare: true, cmpStage: 'ready', cmpView: 'assembled',
-      cmpPair: [REV, 'c'.repeat(64)],
+  it('stands it on top of the part in a comparison, whose first copy may be another revision', () => {
+    const { c, place, group } = opened('assembled')
+    // A body to stand on: the arrow goes to the top of the part's box.
+    group.front.geometry = new THREE.BoxGeometry(4, 8, 1)
+    place(ASSEMBLED)
+    const seen = listening()
+    c.set({
+      compare: true, cmpStage: 'ready', cmpView: 'assembled', cmpPair: [REV, 'c'.repeat(64)],
+      feed: [record({ view: 'glass', frame: 'part', point: [2, 4, 0.5], normal: [1, 0, 0] })],
     })
-    const seen = listening()
-
-    c.sync()
-    await settled()
-
-    expect(fetching).not.toHaveBeenCalled()
-    expect(seen[seen.length - 1].pins).toEqual([
-      { id: 'B', p: TOP, n: null, active: false },
-    ])
-  })
-
-  it('keeps the top of the part when the other view cannot be read', async () => {
-    const fetching = answering({ ok: false, status: 404, json: async () => ({}) })
-    const c = latest([fromGlass])
-    const seen = listening()
-
-    c.sync()
-    await settled()
-    c.sync()
-
-    expect(fetching, 'a failed view is not asked for again').toHaveBeenCalledTimes(1)
-    expect(seen[seen.length - 1].pins).toEqual([
-      { id: 'B', p: TOP, n: null, active: false },
-    ])
-  })
-
-  it('fetches the other view again for the next build', async () => {
-    const fetching = answering({ ok: true, status: 200, json: async () => GLASS_DOC })
-    const c = latest([fromGlass])
-    c.sync()
-    await settled()
-
-    const NEXT = '2026-08-28T09:00:00.000Z'
-    c.state.meta = { ...c.state.meta, published: NEXT }
-    c.state.feed = [record({ ...fromGlass, published: NEXT })]
-    c.sync()
-
-    expect(fetching).toHaveBeenCalledTimes(2)
+    const [pin] = seen[seen.length - 1].pins
+    expect(pin).toMatchObject({ id: 'c1', n: null })
+    near(pin.p, c.el().partPoint('/model/plate'))
   })
 })
 

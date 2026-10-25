@@ -73,6 +73,33 @@ def test_the_face_normal_is_stored_beside_the_point(hub):
     assert stored(without)["normal"] is None
 
 
+def test_the_frame_of_the_point_is_stored(hub):
+    """`frame: "part"`: the point and the normal are in the frame of the part
+    clicked, which every view of the build shares (SPEC 7A.1). A comment sent
+    without the field stores None.
+    """
+    pid, commit = _publish(hub)
+    framed = hub.post_comment(pid, commit, comment_payload(frame="part"))
+    without = hub.post_comment(pid, commit, comment_payload())
+    assert framed.status_code == 201 and without.status_code == 201
+
+    def stored(reply):
+        name = f"{reply.json()['id']}.json"
+        return json.loads((hub.comment_dir(pid) / name).read_text())
+
+    assert stored(framed)["frame"] == "part"
+    assert stored(without)["frame"] is None
+
+
+@pytest.mark.parametrize("frame", [None, "world", "", ["part"]])
+def test_a_frame_other_than_part_is_422(hub, frame):
+    """Absent or exactly "part": any other value names a frame nobody reads."""
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, comment_payload(frame=frame))
+    assert r.status_code == 422
+    assert not _records(hub)
+
+
 def test_the_catalogue_key_is_stored(hub):
     """The anchor that outlives one revision (SPEC 7A.1).
 

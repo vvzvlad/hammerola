@@ -80,8 +80,8 @@ import {
   JOB_DONE, JOB_FAILED, anchorFor, askHub, compareBase, decodeCamera,
   encodeCamera, isPointerPage, buildKey,
   countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
-  loadJob, loadMeta, loadBuilds, pageFrom, placementIn, rereadPage, rowsByKey,
-  shortId, startCompare, mb,
+  loadJob, loadMeta, loadBuilds, pageFrom, rereadPage, rowsByKey, shortId,
+  startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` come from here, not the viewport: the theme is the
 // whole interface's palette, per-reader state like the token, the notes and the
@@ -1028,8 +1028,6 @@ export default class HammerolaViewer extends React.Component {
     this._proposalSent = undefined; // the payload last written, so a save can be skipped
     // -- the download chain in flight, which `cancelDownloads` aborts
     this._dl = undefined;
-    // -- other views of the build on screen, read for the comments left there
-    this._viewDocs = undefined;
     // -- true once `sync` no longer holds the model back for a document, and
     // whether the last `sync` did
     this._modelFree = undefined;
@@ -1383,12 +1381,18 @@ export default class HammerolaViewer extends React.Component {
         // is what the reader can find in the tree. They stay distinct by the
         // pin on the model and by the posted `partId`, the copy's own path.
         const row = this.node(d.id);
+        // The point and the face normal at it, turned towards the reader (the
+        // direction the comment's arrow stands out along), in the frame of the
+        // solid clicked, as the comment stores them: taken out of the world now,
+        // through that solid's placement at the click.
+        const el = this.el();
+        const local = el && d.id && d.p && typeof el.toPart === 'function'
+          ? el.toPart(d.id, d.p, d.n || null) : null;
         this.openComposer({
           part: (row && row.name) || d.name || 'model',
-          partId: d.id || null, key: (row && row.key) || null, p: d.p || null,
-          // The face normal at that point, turned towards the reader: the
-          // direction the comment's arrow stands out along.
-          n: d.n || null,
+          partId: d.id || null, key: (row && row.key) || null,
+          p: local ? local.p : null,
+          n: local ? local.n : null,
           text: '', photo: null,
           meas: this.state.measure ? this.state.measure.full : null,
         });
@@ -3175,8 +3179,7 @@ export default class HammerolaViewer extends React.Component {
     const s = this.state;
     const meta = s.meta;
     // Where the queue hangs on the build on screen. `anchorFor` uses the stored
-    // coordinate only on the build it was taken on — as it stands in this view,
-    // or carried here from the view it was left in; on others it follows the
+    // coordinate only on the build it was taken on; on others it follows the
     // catalogue key to the row drawing the part, and `partPoint` asks the
     // viewport where that row is now. The other three answers (in the catalogue
     // but not this view, key names nothing, record predates the field) draw no
@@ -3189,12 +3192,8 @@ export default class HammerolaViewer extends React.Component {
       nodes: s.tree ? s.tree.nodes : null,
       parts: (meta && meta.parts) || {},
     };
-    const pair = this.comparePair();
-    // Another build's view documents go with it (`viewPlacement`).
-    if (this._viewDocs && this._viewDocs.published !== at.published) {
-      this._viewDocs = undefined;
-    }
     const pins = [];
+    const comparing = !!this.comparePair();
     s.feed.forEach((record) => {
       // A processed comment stays in the rail and draws no pin: the model shows
       // only what is still waiting.
@@ -3206,30 +3205,35 @@ export default class HammerolaViewer extends React.Component {
       // face that was clicked. Everywhere else `n` is null and the viewport
       // stands the arrow from above.
       let n = null;
-      if (anchor.state === 'point') {
+      const normal = finite3(record.normal) ? record.normal : null;
+      if (anchor.state === 'point' && !anchor.path) {
         p = anchor.point;
-        if (finite3(record.normal)) n = record.normal;
+        n = normal;
       }
-      // Carried through where the record's view placed the part, once that
-      // view's document is here (`viewPlacement`); until then, and wherever it
-      // cannot be, the top of the part. Not in a comparison, whose scene is
-      // neither view.
-      if (anchor.state === 'carried' && !pair && el
-          && typeof el.carryPoint === 'function') {
-        const from = this.viewPlacement(record.view, record.part);
-        const carried = from && el.carryPoint(anchor.path, from, anchor.point,
-                                              finite3(record.normal) ? record.normal : null);
-        if (carried) ({ p, n } = carried);
+      // A point in the frame of the part it was left on, put in the world
+      // through the instance this view draws (`fromPart`). Not in a comparison:
+      // its scene draws two revisions, and the key's first instance there is
+      // revision A's, which need not be the build the point was taken on — so
+      // the arrow stands on top of the part, as on any other build.
+      if (anchor.state === 'point' && anchor.path && el) {
+        if (comparing && typeof el.partPoint === 'function') {
+          p = el.partPoint(anchor.path);
+        } else if (!comparing && typeof el.fromPart === 'function') {
+          const placed = el.fromPart(anchor.path, anchor.point, normal);
+          if (placed) ({ p, n } = placed);
+        }
       }
-      if ((anchor.state === 'part' || (anchor.state === 'carried' && !p))
-          && el && typeof el.partPoint === 'function') {
+      if (anchor.state === 'part' && el && typeof el.partPoint === 'function') {
         p = el.partPoint(anchor.path);
       }
       if (p) pins.push({ id: record.id, p, n, active: s.activePin === record.id });
     });
-    if (s.composer && s.composer.p) {
-      pins.push({ id: 'draft', p: s.composer.p, n: s.composer.n || null,
-                  active: true });
+    // The draft's point is in the frame of the solid it was placed on, as the
+    // comment will store it (the `PLACE` handler), and stands where a posted
+    // one would.
+    if (s.composer && s.composer.p && el && typeof el.fromPart === 'function') {
+      const draft = el.fromPart(s.composer.partId, s.composer.p, s.composer.n || null);
+      if (draft) pins.push({ id: 'draft', p: draft.p, n: draft.n, active: true });
     }
     // Which document the viewport is pointed at — all that comparing changes
     // here. A comparison is an ordinary view document at its own address
@@ -3241,7 +3245,7 @@ export default class HammerolaViewer extends React.Component {
     // reader's hidden list rather than merging with it, since those ids name
     // solids of the build's tree, not this one; the reader's list returns when
     // the panel closes, because nothing here writes `s.hidden`.
-    //
+    const pair = this.comparePair();
     // ONE ENTRY, AND `view` IS ITS OWN ID rather than a second spelling of it:
     // the element picks the entry it fetches by matching the two, and a view tab
     // has to move BOTH — the id is what makes the load a reload with a fresh fit
@@ -3307,47 +3311,6 @@ export default class HammerolaViewer extends React.Component {
         ...(extra || {}),
       },
     }));
-  }
-
-  /**
-   * Where `path` stands in another view of the build on screen
-   * (`hub.placementIn`), or null: while that view's document is on the wire,
-   * when it could not be read, or when it does not draw the path.
-   *
-   * Kept per view for the build on screen only, by `published`, which names the
-   * geometry: the same view is fetched once whichever address serves the build
-   * (`dev` or its hash), and `sync` drops the documents of any other. The first
-   * ask starts the one fetch and its landing draws the page again, unless the
-   * build has changed meanwhile. A failure stays remembered as nothing, so the
-   * pin keeps the top of the part's box and the next frame does not ask again.
-   *
-   * No token header: a build's view files are public, and the viewport fetches
-   * this build's own views without one (`token: null` in `sync`, which `load`
-   * in viewport/element.js turns into no header).
-   */
-  viewPlacement(view, path) {
-    const meta = this.state.meta;
-    const published = (meta && meta.published) || null;
-    const entry = ((meta && meta.views) || []).find((v) => v && v.id === view);
-    if (!published || !entry || !entry.file) return null;
-    const cache = this._viewDocs
-      || (this._viewDocs = { published, docs: new Map() });
-    if (!cache.docs.has(view)) {
-      cache.docs.set(view, null);
-      fetch(PAGE.base + entry.file)
-        .then((response) => {
-          if (!response.ok) throw new Error(`${entry.file} -> HTTP ${response.status}`);
-          return response.json();
-        })
-        .then((doc) => {
-          if (this._gone || this._viewDocs !== cache) return;
-          cache.docs.set(view, doc);
-          this.sync();
-        })
-        .catch((error) => console.warn('view document', error));
-    }
-    const doc = cache.docs.get(view);
-    return doc ? placementIn(doc, path) : null;
   }
 
   set(patch, extra) { this.setState(patch, () => this.sync(extra)); }
@@ -4513,10 +4476,10 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ sending: true });
     try {
       // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
-      // `part`, `key`, `published`, `point`, `normal` and `camera` and DROPS
-      // everything else without saying so — so the measurement rides in the text,
-      // where the agent will actually read it, rather than in a field discarded on
-      // the way in.
+      // `part`, `key`, `published`, `point`, `normal`, `frame` and `camera` and
+      // DROPS everything else without saying so — so the measurement rides in the
+      // text, where the agent will actually read it, rather than in a field
+      // discarded on the way in.
       const extra = [];
       if (c.meas) extra.push(`measured: ${c.meas}`);
       // Where the hub holds a proposal, a pointer to it. The document is not
@@ -4547,6 +4510,9 @@ export default class HammerolaViewer extends React.Component {
         point: c.p || null,
         // Which way the comment's arrow stands out of the face at that point.
         normal: c.n || null,
+        // Both in the frame of the solid `part` names (the `PLACE` handler), so
+        // they are a place on it in every view of this build.
+        frame: 'part',
         camera: this.frameCamera(),
       }));
       // The two attachments, and the only place either is shrunk (shrink.js):
