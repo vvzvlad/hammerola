@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
 // The viewer's module, imported by its address on the hub: a module of nothing
@@ -34,7 +34,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
-  menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
+  menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
@@ -316,6 +316,151 @@ describe('what is on screen downloads first', () => {
     view.componentDidUpdate(view.props)
     expect(elements[SCH].requestCrossProbe.mock.calls).toEqual([[designator(SCH, 'C1')], [designator(SCH, 'C1')]])
     view.componentWillUnmount()
+  })
+})
+
+describe('the schematic\'s page', () => {
+  // Kept in the entry's `history.state`, the address unchanged. The element
+  // switches as the viewer does, reporting the change inside `switchPage`.
+  const SHEET = 'hw__board.kicad_sch'
+  const BOARD = 'hw__board.kicad_pcb'
+  const ROOT = 'hw/board.kicad_sch:/root'
+  const AMP = 'hw/board.kicad_sch:/root/amp'
+  // What the amp sheet draws: a part, and a net of `Show … · amp`.
+  const ON_AMP = ['U7', 'AMP_FAULT']
+  const FAULT = { targetContext: SCH, kind: 'net', value: 'AMP_FAULT', net: 'AMP_FAULT',
+    sheet: 'hw/sub/amp.kicad_sch', uuid: 'fault-amp' }
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    window.history.replaceState(null, '', '/')
+  })
+
+  /** The design opened on `doc`, its viewers ready, the schematic on `ROOT`;
+   *  `meanwhile` runs while its files are still coming in. */
+  const opened = async (doc = DOCS[0], meanwhile = () => {}) => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view, elements } = mounted(doc)
+    const sch = elements[SCH]
+    sch.page = ROOT
+    sch.replaceSources = vi.fn(async () => { sch.loaded = true })
+    sch.getActiveSchematicPage = () => ({ projectPath: sch.page, name: 'Root', page: '1' })
+    sch.show = (to) => {
+      sch.page = to
+      sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
+    }
+    // An element without its files switches nothing.
+    sch.switchPage = vi.fn((to) => {
+      if (!sch.loaded) return false
+      sch.show(to)
+      return true
+    })
+    sch.requestCrossProbe = vi.fn((request) => {
+      if (ON_AMP.includes(request.value)) sch.show(AMP)
+      return true
+    })
+    view.componentDidMount()
+    onTestFinished(() => view.componentWillUnmount())
+    meanwhile(view)
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    return { view, elements, sch }
+  }
+  /** The browser's own Back and Forward, which restore the entry tasks later. */
+  const go = async (delta) => {
+    const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
+    window.history.go(delta)
+    await popped
+  }
+
+  it('is a step of history on every change, the page left stamped on the entry it leaves', async () => {
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}`)
+    const { sch } = await opened()
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    // a double click on a sheet symbol, inside the viewer
+    sch.switchPage(AMP)
+    expect(replace.mock.calls).toEqual([[{ hmr: 'latest', kicadPage: { doc: SHEET, page: ROOT } }, '']])
+    expect(push.mock.calls).toEqual([[{ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '']])
+    expect(window.location.search).toBe(`?d=${SHEET}`)
+    // a report that moved no page, as for another change of the project
+    sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
+    expect(push).toHaveBeenCalledTimes(1)
+  })
+
+  it('is put back by Back and Forward, which push nothing', async () => {
+    const { sch } = await opened()
+    sch.switchPage(AMP)
+    sch.switchPage.mockClear()
+    const push = vi.spyOn(window.history, 'pushState')
+    await go(-1)
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([ROOT, [[ROOT]]])
+    await go(1)
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[ROOT], [AMP]]])
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('is left as it is by an entry without a record of this schematic', async () => {
+    const { sch } = await opened()
+    for (const state of [{ hmr: 'latest' }, { kicadPage: { doc: 'psu__psu.kicad_sch', page: AMP } }]) {
+      window.history.replaceState(state, '')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }
+    expect(sch.switchPage).not.toHaveBeenCalled()
+  })
+
+  it('is the entry\'s once the viewers are ready: a reload, or Back onto a design no longer open', async () => {
+    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '', `${BASE}?d=${SHEET}`)
+    const push = vi.spyOn(window.history, 'pushState')
+    // Back while the files are still coming in waits for them
+    const { sch } = await opened(DOCS[0], () => window.dispatchEvent(new PopStateEvent('popstate')))
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[AMP]]])
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('is recorded in the entry the browser is on, not pushed, where the reader did not move it there', async () => {
+    const recorded = (page) => ({ hmr: 'latest', kicadPage: { doc: SHEET, page } })
+    // a part clicked on the board, its symbol on another sheet of the hidden schematic
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
+    const board = await opened(DOCS[1])
+    const push = vi.spyOn(window.history, 'pushState')
+    click(board.elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
+    expect([board.sch.page, window.history.state]).toEqual([AMP, recorded(AMP)])
+    // any other move of the hidden schematic
+    board.sch.show(ROOT)
+    expect(window.history.state).toEqual(recorded(ROOT))
+    // a part selected in the 3D view while the files came in, selected in the
+    // schematic on screen once they are in
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}`)
+    const { sch } = await opened(DOCS[0], (view) => view.setState({ selected: 'U7' }))
+    expect([sch.page, window.history.state]).toEqual([AMP, recorded(AMP)])
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('moves with `Show … · <sheet>` from the board inside the one entry that opens the schematic', async () => {
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
+    const { view, sch } = await opened(DOCS[1])
+    // the page answering as the model's page does, with a step of its own (`pushChoice`)
+    const open = view.props.onOpen
+    view.props = { ...view.props, onOpen: (id) => {
+      window.history.pushState(window.history.state, '', `${BASE}?d=${id}`)
+      open(id)
+    } }
+    const push = vi.spyOn(window.history, 'pushState')
+    view.setState({ menu: { from: PCB } })
+    view.choose({ view: SCH, id: SHEET, label: 'Show net AMP_FAULT in hw/board.kicad_sch · amp', request: FAULT })
+    expect(push).toHaveBeenCalledTimes(1)
+    expect([sch.page, window.location.search, window.history.state.kicadPage])
+      .toEqual([AMP, `?d=${SHEET}`, { doc: SHEET, page: AMP }])
+    await go(-1)
+    expect(window.location.search).toBe(`?d=${BOARD}`)
+  })
+
+  it('is the reader\'s step on a `… · <sheet>` item of the schematic on screen', async () => {
+    const { view, sch } = await opened()
+    const push = vi.spyOn(window.history, 'pushState')
+    view.setState({ menu: { from: SCH } })
+    view.choose({ view: SCH, id: SHEET, label: 'Show net AMP_FAULT in hw/board.kicad_sch · amp', request: FAULT })
+    expect([sch.page, push.mock.calls]).toEqual([AMP, [[{ kicadPage: { doc: SHEET, page: AMP } }, '']]])
   })
 })
 

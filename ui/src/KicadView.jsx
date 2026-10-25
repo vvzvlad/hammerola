@@ -34,6 +34,17 @@
 // selection, and is told it is inactive (`setActive`, `active`), which stops its
 // drawing until it is back.
 //
+// A CHANGE OF THE SCHEMATIC'S PAGE IS A STEP OF THE BROWSER'S HISTORY, whatever
+// makes it: a double click on a sheet symbol, an item `… · <sheet>`, the
+// viewer's own `[`, `]` and Alt+Backspace. The element reports each one
+// (`PAGE_EVENT`); the page is named in the entry's `history.state`
+// (`PAGE_KEY`), not in the address, and Back and Forward put the page an entry
+// names back (`followPage`), opened whole as the viewer opens a page itself,
+// not at the camera it was left at. A page this component moves the
+// schematic to — a part selected in another view, `Show … · <sheet>` from the
+// board — and any move of the schematic while it is hidden is no step of the
+// reader's: it is recorded in the entry the browser is on (`paged`).
+//
 // `hide-chrome` leaves each element its canvas alone. It drops the viewer's own
 // panels (layers, objects, nets, properties), which `show-header="false"`
 // already keeps off screen, and its corner mark: Prism's logo, a single node the
@@ -146,6 +157,16 @@ export const PAN_SLOP = 3;
  *  (`EcadSemanticSelectionEvent`): a symbol, a pin, a footprint or a pad carries
  *  its part's `reference`, anything else none, an empty click `itemType: ''`. */
 export const SELECTION_EVENT = 'ecad-viewer:selection';
+
+/** The event an element reports a change of its view with: once, at once,
+ *  inside `switchPage` and every other change of the schematic's page, and
+ *  for other changes of its project too, so the page itself is compared. */
+export const PAGE_EVENT = 'ecad-viewer:view-state-change';
+
+/** The key of `history.state` an entry names the schematic's page under:
+ *  `{ doc, page }`, the schematic member's id and the page's `projectPath`
+ *  (`getActiveSchematicPage`). Merged into the state the page keeps there. */
+export const PAGE_KEY = 'kicadPage';
 
 /** The views of a design: the two by the names the viewer gives them
  *  (`targetContext`), and the 3D model of the board. */
@@ -459,6 +480,13 @@ export default class KicadView extends React.Component {
     // at, `{ from, x, y }`.
     this.pressed = null;
     this.pointing = null;
+    // The schematic's page on screen (its `projectPath`), and the one a history
+    // entry asked for while the element switches to it (`followPage`).
+    this.page = null;
+    this.pageFromHistory = null;
+    this.onPop = () => this.followPage();
+    // Set while the page itself probes an element (`pageProbe`).
+    this.probing = false;
     this.elements = {};
     this.shell = null;
     this.menuNode = null;
@@ -501,7 +529,8 @@ export default class KicadView extends React.Component {
     this.onKey = (event) => this.key(event);
   }
 
-  /** The ref callback of one view's element: holds it and listens to it. */
+  /** The ref callback of one view's element: holds it and listens to it, the
+   *  schematic's to its page changes too (`paged`). */
   attach(context) {
     const listeners = {
       [SELECTION_EVENT]: (event) => this.picked(context, event.detail),
@@ -509,6 +538,7 @@ export default class KicadView extends React.Component {
         this.pressed = event.button === 2 ? { context, x: event.clientX, y: event.clientY } : null;
       },
       pointerup: (event) => this.release(context, event),
+      ...(context === SCH ? { [PAGE_EVENT]: () => this.paged() } : {}),
     };
     return (element) => {
       const old = this.elements[context];
@@ -549,13 +579,84 @@ export default class KicadView extends React.Component {
     this.props.onTools(tools);
   }
 
-  /** The page-wide listeners, on or off: Escape, and what closes the menu
-   *  from outside the view area. */
+  /** The page-wide listeners, on or off: Escape, what closes the menu from
+   *  outside the view area, and Back and Forward (`followPage`). */
   listen(on) {
     const method = on ? 'addEventListener' : 'removeEventListener';
     window[method]('keydown', this.onKey);
     window[method]('resize', this.closeMenu);
+    window[method]('popstate', this.onPop);
     document[method]('pointerdown', this.onPress, true);
+  }
+
+  /** The `projectPath` of the schematic's page on screen, or null where the
+   *  element cannot say (its module did not load, it has no files yet). */
+  activePage() {
+    const element = this.elements[SCH];
+    const page = element && typeof element.getActiveSchematicPage === 'function'
+      && element.getActiveSchematicPage();
+    return (page && page.projectPath) || null;
+  }
+
+  /** The schematic's element reported a change of its view. A change of page
+   *  the reader made on the schematic on screen is a step of the browser's
+   *  history, the address unchanged: the entry being left is stamped with the
+   *  page it showed and an entry naming the new one is pushed, each the state
+   *  the page keeps there with the record merged in (`PAGE_KEY`). One the
+   *  reader did not make there — the schematic hidden behind another view, or
+   *  moved by a probe of the page's own (`pageProbe`): a part selected in
+   *  another view, `Show … · <sheet>` handed over from the board — is recorded
+   *  in the entry the browser is on, which is where the reader sees it from.
+   *  Not for the page an entry asked for (`followPage`), which the browser is
+   *  already on, nor for the first page the element shows, which is only
+   *  remembered. */
+  paged() {
+    const now = this.activePage();
+    if (!now || now === this.page) return;
+    const before = this.page;
+    this.page = now;
+    if (now === this.pageFromHistory) {
+      this.pageFromHistory = null;
+      return;
+    }
+    if (!before) return;
+    const doc = this.members()[SCH].id;
+    if (this.side() !== SCH || this.probing) {
+      window.history.replaceState({ ...window.history.state, [PAGE_KEY]: { doc, page: now } }, '');
+      return;
+    }
+    window.history.replaceState({ ...window.history.state, [PAGE_KEY]: { doc, page: before } }, '');
+    window.history.pushState({ ...window.history.state, [PAGE_KEY]: { doc, page: now } }, '');
+  }
+
+  /** `run` as a probe of the page's own, not the reader's: a page of the
+   *  schematic it moves to is recorded, not pushed (`paged`). The element
+   *  reports the change inside the call, so the flag spans it alone. */
+  pageProbe(run) {
+    this.probing = true;
+    try {
+      return run();
+    } finally {
+      this.probing = false;
+    }
+  }
+
+  /** The schematic put on the page the history entry names, where its record
+   *  is of this design's schematic and names another page than the one on
+   *  screen: on Back and Forward, and once the viewers are ready, for an entry
+   *  the design is opened under (a reload, a Back onto a design no longer on
+   *  the page). An entry with no such record leaves the page as it is. Not
+   *  before the viewers are ready: the element keeps a page asked for before
+   *  it has its files and shows it later, which would read as the reader's
+   *  own step. */
+  followPage() {
+    const record = window.history.state && window.history.state[PAGE_KEY];
+    const schematic = this.members()[SCH];
+    const element = this.elements[SCH];
+    if (!this.state.ready || !record || !schematic || record.doc !== schematic.id
+      || record.page === this.page || !element || typeof element.switchPage !== 'function') return;
+    this.pageFromHistory = record.page;
+    if (!element.switchPage(record.page)) this.pageFromHistory = null;
   }
 
   /** The design's listed members, by view. */
@@ -593,7 +694,8 @@ export default class KicadView extends React.Component {
       const element = this.elements[context];
       if (context === from || !element) continue;
       const found = Boolean(designator) && typeof element.requestCrossProbe === 'function'
-        && element.requestCrossProbe({ targetContext: context, kind: 'designator', value: designator }) !== false;
+        && this.pageProbe(() => element.requestCrossProbe(
+          { targetContext: context, kind: 'designator', value: designator })) !== false;
       if (!found && typeof element.clearSelection === 'function') element.clearSelection();
     }
     if (designator !== this.state.selected) this.setState({ selected: designator });
@@ -748,9 +850,17 @@ export default class KicadView extends React.Component {
         return loaded;
       })
       .then(() => {
-        // A part selected in the 3D view while the files came in is selected
-        // in the viewers now: they had nothing to select it in then.
-        if (!this._gone) this.setState({ ready: true }, () => this.select(BOARD3D, this.state.selected));
+        // The schematic goes to the page the history entry names, from the
+        // page it opened on. A part selected in the 3D view while the files
+        // came in is selected in the viewers now: they had nothing to select
+        // it in then.
+        if (!this._gone) {
+          this.setState({ ready: true }, () => {
+            this.page = this.activePage();
+            this.followPage();
+            this.select(BOARD3D, this.state.selected);
+          });
+        }
       }, (error) => {
         if (!this._gone) this.setState({ error: error.message || String(error) });
       });
@@ -774,7 +884,9 @@ export default class KicadView extends React.Component {
     if (probe && probe.to === this.side() && this.state.ready) {
       this.probe = null;
       const target = this.elements[probe.to];
-      if (target && typeof target.requestCrossProbe === 'function') target.requestCrossProbe(probe.request);
+      if (target && typeof target.requestCrossProbe === 'function') {
+        this.pageProbe(() => target.requestCrossProbe(probe.request));
+      }
     }
   }
 
