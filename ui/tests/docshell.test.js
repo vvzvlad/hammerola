@@ -197,6 +197,11 @@ describe('one document, as both pages draw it', () => {
     expect(a.props.style.overflowWrap).toBe('anywhere')
   })
 
+  it('lets the text of a markdown document be selected under the library body rule', () => {
+    const [article] = ofType(documentBody(cutList, BASE, 'text', ''), 'article')
+    expect(article.props.style.userSelect).toBe('text')
+  })
+
   it('carries the rule its short cells are styled by', () => {
     const styles = ofType(documentBody(cutList, BASE, '| a |\n|---|\n| 1 |', ''), 'style')
     expect(styles.map(text)).toEqual([`.${NOWRAP_CLASS}{white-space:nowrap}`])
