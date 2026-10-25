@@ -16,8 +16,8 @@
  * component, where the tests reach for it. `key` is `filesKeyFor`'s answer for
  * the build on screen; without one the hub refuses every part's file, so the
  * menu is not drawn at all (`dlShown`). The Gerbers' zip opens without a key
- * (a document, `app.OPEN_SUFFIXES`), and its own view links it for a reader
- * who has none (GerberView.jsx).
+ * (a document, `app.OPEN_SUFFIXES`), and a reader who has none downloads it,
+ * as every open document, from the bar (`docHref` in `toolBar`, viewlist.jsx).
  */
 import { PAGE } from './hub.js';
 import { MONO, SANS } from './style.jsx';

@@ -18,7 +18,7 @@ downloads the file instead of drawing it — a supplier's STEP, a CSV of
 measurements.
 
 A DXF, the one the glass shop cuts from, is such a file too, and the page
-shows a picture of it above its Download button: an SVG the hub draws of it
+shows a picture of it: an SVG the hub draws of it
 with ezdxf when the list is checked (`_draw_dxf`), published beside it at its
 path plus `.svg` (`render.dxf_preview`) and named by the entry's `preview` in
 meta.json. A DXF that ezdxf cannot read, or that holds nothing to draw,

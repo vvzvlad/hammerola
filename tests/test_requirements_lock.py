@@ -43,7 +43,7 @@ PINS_KEY_RE = re.compile(r'(?m)^\s*"([^"]+)":')
 # Every count requirements.txt states in prose, as the sentence that carries it.
 # EVERY number in these sentences is captured, including the ones that are only
 # repeating a total established elsewhere: an uncaptured `\d+` reads as though it
-# were checked and is not, and "Eleven of those 56" is exactly where the file's size
+# were checked and is not, and "Twelve of those 56" is exactly where the file's size
 # would go stale next. Spelled-out numbers are matched as words because that is
 # how the file writes them, and WORDS below is the whole vocabulary needed.
 COUNTS = {
@@ -69,7 +69,7 @@ WORDS = {"three": 3, "four": 4, "seven": 7, "ten": 10, "eleven": 11, "twelve": 1
 
 # The prose with its wrapping taken out. requirements.txt is a comment file wrapped
 # at ~99 columns, so a sentence routinely crosses a line break and picks up a `# `
-# on the far side — "Eleven of\n# those 56 are named here". Unwrapping is what lets the
+# on the far side — "Twelve of\n# those 56 are named here". Unwrapping is what lets the
 # patterns above be written as the sentences a reader sees.
 PROSE = re.sub(r"\s+", " ", re.sub(r"(?m)^#\s?", "", REQUIREMENTS))
 

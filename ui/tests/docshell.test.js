@@ -366,24 +366,30 @@ describe('the page of a build with no model', () => {
       .toEqual(['none', 'none'])
   })
 
-  it('downloads the open document from the bar, right after the list, and copies its link; icons alone when narrow', () => {
+  it('downloads the open document from the bar, right after the list, and copies its link, wide or narrow', () => {
     const href = `${BASE}report.pdf`
     const drawn = (extra) => {
       const tree = page('report.pdf', extra)
       return {
         words: texts(tree),
         downloads: ofType(tree, 'a').filter((a) => a.props.download).map((a) => [a.props.href, a.props.title]),
-        copies: ofType(tree, CopyLink).map((c) => [c.props.href, c.props.bar, c.props.narrow]),
+        copies: ofType(tree, CopyLink).map((c) => [c.props.href, c.props.bar]),
+        // the first tool after the bar's Download link, by their order in the tree
+        next: (() => {
+          const all = collect(tree, (el) => ((el.type === 'a' && el.props.download) || el.type === CopyLink
+            || (el.type === 'div' && ['Measure', 'Fit'].some((w) => texts(el).includes(w) && texts(el).length === 1))
+            ? el : undefined))
+          return all.map((el) => (el.type === 'a' ? 'Download' : el.type === CopyLink ? 'Copy link' : texts(el)[0]))
+        })(),
       }
     }
-    const wide = drawn({})
-    expect([wide.downloads, wide.copies]).toEqual([[[href, undefined]], [[href, true, false]]])
-    // after the list's last row, before the first tool
-    const at = wide.words.indexOf('Download')
-    expect(wide.words.slice(at - 2, at + 2)).toEqual(['page.html', docHint(META.documents[3]), 'Download', 'Measure'])
-    const narrow = drawn({ narrow: true })
-    expect(narrow.words).not.toContain('Download')
-    expect([narrow.downloads, narrow.copies]).toEqual([[[href, 'Download']], [[href, true, true]]])
+    // icons with their words in their titles, after the list and before the first tool
+    for (const [extra, first] of [[{}, 'Measure'], [{ narrow: true }, 'Fit']]) {
+      const shown = drawn(extra)
+      expect(shown.words).not.toContain('Download')
+      expect([shown.downloads, shown.copies]).toEqual([[[href, 'Download']], [[href, true]]])
+      expect(shown.next.slice(0, 3)).toEqual(['Download', 'Copy link', first])
+    }
   })
 
   it('gives a schematic and a board a row each by their titles, and a hidden document none', () => {

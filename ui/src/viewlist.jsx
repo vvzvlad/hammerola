@@ -150,7 +150,8 @@ export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
 /** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). */
 const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px';
 
-/** The open document's Download: a quiet button like Fit, on a link. */
+/** The open document's Download: a quiet button like Fit, on a link, its
+ *  word in its title as Copy link's is (copylink.jsx). */
 const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
 
 /**
@@ -163,8 +164,8 @@ const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
  *   the document `docHref`, the address the open document's file downloads
  *                from (`docUrl` in DocumentView.jsx), or null with none open:
  *                Download (a link that takes the file) and Copy link for it,
- *                drawn after the views, and with none open not at all; icons
- *                alone, the words in their titles, where `showTools` is false;
+ *                drawn after the views as icons, the words in their titles,
+ *                and with none open not at all;
  *   the tools    `showTools` (false on a narrow window, which keeps the views
  *                and Fit), and each tool's style and handler: `measureBtnStyle`
  *                and `tMeasure`, `commentBtnStyle` and `tComment`,
@@ -195,11 +196,10 @@ export function toolBar(b, menus = {}) {
           inside it (copylink.jsx). */}
       {b.docHref && (
         <>
-          <a href={b.docHref} download title={b.showTools ? undefined : 'Download'} style={css(DOWNLOAD_BTN)}>
+          <a href={b.docHref} download title="Download" style={css(DOWNLOAD_BTN)}>
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
-            {b.showTools && 'Download'}
           </a>
-          <CopyLink href={b.docHref} bar narrow={!b.showTools} />
+          <CopyLink href={b.docHref} bar />
         </>
       )}
       {/* Everything between the views and Fit belongs to a pointer and a

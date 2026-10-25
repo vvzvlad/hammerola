@@ -10,11 +10,12 @@
 // the page around it: the bar also stands on the page of a build with no model
 // (DocShell.jsx), which has no toast.
 //
-// Two looks. `bar`, a quiet button of the bar like Fit and Frame: a 13 px icon
-// then the words, which turn to "Copied" or "Could not copy"; on a narrow
-// window (`narrow`) the icon alone, the words in its title. Otherwise a 12 px
-// link icon for the end of a row, which has no room for a word, with the words
-// in its title. Either way the icon itself turns into a tick or a cross. Either
+// Two looks, both an icon with the words in its title, which turns into a tick
+// or a cross for "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet
+// button of the bar like Fit and Frame, and otherwise a 12 px icon for the end
+// of a row. No words beside it: the bar over a document is full at the widths
+// it already fitted, and a word changing length would shift every control of
+// a bar that is centred. Either
 // is a SIBLING of the link it copies, never inside it — a control inside an
 // `<a>` is not valid markup — and its click neither follows a link nor reaches
 // the page's handler that closes a menu, so the menu stays up to say "Copied".
@@ -58,8 +59,7 @@ const ICON_PATHS = {
 const BAR = `${QUIET_BTN};background:none`;
 
 /** The control. Props: `href`, the download link's own; `bar` for the bar's
- *  look and `narrow` for its icon alone; `style`, a css string laid over the
- *  look (the row's padding). */
+ *  look; `style`, a css string laid over the look (the row's padding). */
 export default class CopyLink extends React.Component {
   constructor(props) {
     super(props);
@@ -85,7 +85,7 @@ export default class CopyLink extends React.Component {
   };
 
   render() {
-    const { bar, narrow, style = '' } = this.props;
+    const { bar, style = '' } = this.props;
     const { said } = this.state;
     const words = said || 'Copy link';
     const icon = (size) => (
@@ -93,17 +93,9 @@ export default class CopyLink extends React.Component {
         <path d={ICON_PATHS[said]} />
       </svg>
     );
-    if (bar) {
-      return (
-        <button type="button" onClick={this.copy} title={narrow ? words : undefined} style={css(`${BAR};${style}`)}>
-          {icon(13)}
-          {!narrow && words}
-        </button>
-      );
-    }
     return (
-      <button type="button" onClick={this.copy} title={words} style={css(`${ICON};${style}`)}>
-        {icon(12)}
+      <button type="button" onClick={this.copy} title={words} style={css(bar ? `${BAR};${style}` : `${ICON};${style}`)}>
+        {icon(bar ? 13 : 12)}
       </button>
     );
   }

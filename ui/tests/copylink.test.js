@@ -44,9 +44,8 @@ describe('copy link', () => {
     clipboardOf(vi.fn(async () => { throw new DOMException('not focused') }))
     expect(await copyHref(HREF)).toBe(false)
 
-    // A row's icon, and the bar's on a narrow window, have no room for the
-    // words: they say them in their title.
-    for (const props of [{ href: HREF }, { href: HREF, bar: true, narrow: true }]) {
+    // Both looks are an icon that says the words in its title.
+    for (const props of [{ href: HREF }, { href: HREF, bar: true }]) {
       const view = control(props)
       await view.copy(click())
       expect([view.render().props.title, texts(view.render())]).toEqual(['Could not copy', []])
@@ -57,14 +56,14 @@ describe('copy link', () => {
     vi.useFakeTimers()
     clipboardOf(vi.fn(async () => {}))
     const view = control({ href: HREF, bar: true })
-    expect(texts(view.render())).toEqual(['Copy link'])
+    expect(view.render().props.title).toBe('Copy link')
     const event = click()
     await view.copy(event)
     // Neither the download nor the page's handler that closes a menu.
     expect(event.preventDefault).toHaveBeenCalled()
     expect(event.stopPropagation).toHaveBeenCalled()
-    expect(texts(view.render())).toEqual(['Copied'])
+    expect(view.render().props.title).toBe('Copied')
     vi.advanceTimersByTime(COPY_SAID_MS)
-    expect(texts(view.render())).toEqual(['Copy link'])
+    expect(view.render().props.title).toBe('Copy link')
   })
 })

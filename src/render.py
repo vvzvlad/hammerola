@@ -98,9 +98,9 @@ BOARD_TYPE = DOCUMENT_TYPES[".kicad_pcb"]
 # file instead of showing it, and the hub serves it to a plain link like every
 # other document (`app.OPEN_SUFFIXES`). A DXF not listed with `download` also
 # carries `preview`, the path of the SVG the hub drew of it (`dxf_preview`,
-# `docsbuild._draw_dxf`), which the page shows above the Download button; it
-# stays a plain file all the same, offered by the Downloads menu and handed
-# over as an attachment.
+# `docsbuild._draw_dxf`), which the page shows in place of the file; it stays
+# a plain file all the same, offered by the Downloads menu and the page's bar
+# and handed over as an attachment.
 #
 # DELIBERATELY NOT A KEY OF `DOCUMENT_TYPES`: that table answers "which
 # extension does the page draw, and how", and three places ask it that way —

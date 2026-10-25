@@ -523,8 +523,7 @@ export function chromeView(s, props, deps) {
     // on every page and over every view (`toolBar` in viewlist.jsx). The four
     // about the model — Measure, Comment, Add primitive, Settings — are out of
     // service under it, Fit and Frame are too unless its view can do them. The
-    // document's Download and Copy link (`docHref`) stay on a narrow window,
-    // as icons.
+    // document's Download and Copy link (`docHref`) stay on a narrow window.
     showTools: !narrow,
     // Both are out of service while the scene is a comparison's, and under a
     // document, which covers the model. That differs from `viewer`: that one
