@@ -22,6 +22,7 @@ import time
 import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
+from xml.etree import ElementTree
 
 import pytest
 from harness import (DEFAULT_EXPORTS, PNG_BYTES, good_build, meta_bytes,
@@ -320,8 +321,10 @@ def test_a_file_of_a_design_may_not_land_on_what_the_model_wrote(hub_factory):
 # -- a file the page does not draw ---------------------------------------------
 
 # The case this grew from: the DXF of a glass cut, written from the model's own
-# dimensions and sent to the shop. Nothing on the page can show it.
-DXF = b"0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n"
+# dimensions and sent to the shop. One line, 100 by 50, so there is something
+# to draw a picture of.
+DXF = (b"0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n100\n21\n50\n"
+       b"0\nENDSEC\n0\nEOF\n")
 CUT = {"cut/glass.dxf": DXF}
 
 
@@ -341,6 +344,24 @@ def test_a_file_of_any_extension_is_published_and_a_plain_link_takes_it(hub):
     # Open to everyone holding the address, so the shared year — not the
     # `private` one an answer that depended on a token would carry.
     assert reply.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+def test_a_dxf_is_shown_by_a_picture_the_hub_draws_unless_it_is_for_download(hub):
+    listed = ["cut/glass.dxf", {"file": "cut/door.dxf", "download": True}]
+    revision = published(hub, documents_tree(listed, **CUT, **{"cut/door.dxf": DXF}))
+    base = f"/project/docs0001/{revision}"
+    drawn, taken = hub.get(f"{base}/meta.json").json()["documents"]
+    # Still a plain file of its own size, which is what Download hands over.
+    assert (drawn["type"], drawn["preview"], drawn["bytes"]) == (
+        "file", "cut/glass.dxf.svg", len(DXF))
+    # The page shows it through `<img>`, which carries no token.
+    picture = hub.get(f"{base}/cut/glass.dxf.svg")
+    assert (picture.status_code, picture.headers["Content-Type"]) == (200, "image/svg+xml")
+    assert ElementTree.fromstring(picture.content).tag == "{http://www.w3.org/2000/svg}svg"
+    assert hub.get(f"{base}/cut/glass.dxf").headers["Content-Disposition"] == "attachment"
+    # `download` publishes the file and draws nothing of it.
+    assert (taken["type"], "preview" in taken) == ("file", False)
+    assert hub.get(f"{base}/cut/door.dxf.svg").status_code == 404
 
 
 def test_a_part_export_the_list_does_not_name_stays_closed(model_hub):
@@ -396,6 +417,17 @@ def test_a_design_listed_for_download_brings_none_of_its_files(model_hub):
     (LISTED + ["docs__report.pdf"],
      "'docs__report.pdf', which gets the id 'docs__report.pdf' that "
      "'docs/report.pdf' already has"),
+    # A DXF whose picture cannot be drawn: one ezdxf cannot read, and one with
+    # nothing in it to fit a page to.
+    (LISTED + ["junk.dxf"],
+     "'junk.dxf', which is a DXF the hub cannot draw a preview of ("),
+    (LISTED + ["empty.dxf"],
+     "'empty.dxf', which is a DXF the hub cannot draw a preview of (empty "
+     "bounding box); list it with \"download\": true to publish it as a "
+     "plain file"),
+    (LISTED + ["cut.dxf", "cut.dxf.svg"],
+     "'cut.dxf', which publishes its preview as 'cut.dxf.svg', and the "
+     "document 'cut.dxf.svg' publishes a file at that path"),
 ])
 def test_an_entry_the_hub_cannot_publish_refuses_the_push_before_any_build(
         hub_factory, listed, named):
@@ -407,7 +439,10 @@ def test_an_entry_the_hub_cannot_publish_refuses_the_push_before_any_build(
 
     hub = hub_factory(build_runner=builder)
     extra = {"index.html": b"<p>mine</p>",
-             "compare/x.md": b"# x\n", "docs__report.pdf": b"%PDF-1.4\n"}
+             "compare/x.md": b"# x\n", "docs__report.pdf": b"%PDF-1.4\n",
+             "junk.dxf": b"not a drawing\n",
+             "empty.dxf": b"0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n",
+             "cut.dxf": DXF, "cut.dxf.svg": DOCUMENTS["drawing.svg"]}
     for body in (documents_tree(listed, **extra), model_tree(listed, **extra)):
         record = refused(hub, body)
         assert record["code"] == 422
@@ -578,15 +613,19 @@ def test_a_document_id_is_its_path_and_two_paths_never_share_one(tmp_path):
     (lambda doc: doc.update(file="notes.txt"), "extension makes it 'file'"),
     (lambda doc: doc.update(file="../list.md"), "has the segment '..'"),
     (lambda doc: doc.update(hidden=1), "has a `hidden` that is not true or false"),
+    # A file the build declared, and not the one a DXF's picture is.
+    (lambda doc: doc.update(file="cut.dxf", type="file", preview="list.md"),
+     "names the preview 'list.md', and its preview is 'cut.dxf.svg'"),
 ])
 def test_a_document_entry_that_lies_about_its_file_is_refused(
         tmp_path, change, message):
-    (tmp_path / "list.md").write_text("# x\n", encoding="utf-8")
-    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    for name in ("list.md", "notes.txt", "cut.dxf"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
     doc = {"name": "list.md", "type": "markdown", "file": "list.md"}
     change(doc)
     raw = {"kind": "documents", "documents": [doc]}
-    files = {"list.md": "0" * 64, "notes.txt": "0" * 64, "../list.md": "0" * 64}
+    files = {"list.md": "0" * 64, "notes.txt": "0" * 64, "../list.md": "0" * 64,
+             "cut.dxf": "0" * 64}
     with pytest.raises(ValueError, match=re.escape(message)):
         render.build_meta(pid="docs0001", commit="abc", raw=raw,
                           staging=tmp_path, files=files, published="now")

@@ -14,8 +14,15 @@ extension: a file is a document because the list says so. The EXTENSION decides
 only how the page shows it (`render.DOCUMENT_TYPES`: markdown, PDF, pictures,
 HTML, SVG, a KiCad schematic, a KiCad board, the 3D model of a board, a zip of
 Gerbers); any other extension publishes as `render.FILE_TYPE`, a row that
-downloads the file instead of drawing it — the DXF the glass shop cuts from,
-a supplier's STEP, a CSV of measurements.
+downloads the file instead of drawing it — a supplier's STEP, a CSV of
+measurements.
+
+A DXF, the one the glass shop cuts from, is such a file too, and the page
+shows a picture of it above its Download button: an SVG the hub draws of it
+with ezdxf when the list is checked (`_draw_dxf`), published beside it at its
+path plus `.svg` (`render.dxf_preview`) and named by the entry's `preview` in
+meta.json. A DXF that ezdxf cannot read, or that holds nothing to draw,
+refuses the push; listed with `download` it is published with no picture.
 
 An entry is the path alone, or an object with the path as `file`, a `title`,
 the caption the page shows in place of the path, `hidden`, which keeps the
@@ -65,8 +72,8 @@ from src.errors import PublishError
 from src.render import (BOARD_TYPE, DOCUMENTS_KIND, FILE_TYPE,
                         GENERATED_FILES, KICAD_BOARD, KICAD_PROJECT,
                         KICAD_SCHEMATIC, MAX_KICAD_SHEETS, SCHEMATIC_TYPE,
-                        document_id, document_type, project_title,
-                        published_type)
+                        document_id, document_type, dxf_preview,
+                        project_title, published_type)
 from src.store import BUILD_META_FILE
 
 PROJECT_FILE = "project.json"
@@ -104,6 +111,9 @@ class Document:
 
     `files` starts with `path`; a KiCad schematic adds its sheets and a
     schematic or a board its project, which `kicad` names for meta.json.
+    A DXF has `preview`, the path its picture is published at, and `svg`, the
+    picture, drawn when the list is checked; it is written rather than copied
+    from the tree, so it is not one of `files`.
     `download` is the entry's own key and not a field of meta.json: what
     reaches the browser is the type `_copy` resolves from it.
     """
@@ -114,6 +124,8 @@ class Document:
     title: str | None = None
     hidden: bool = False
     download: bool = False
+    preview: str | None = None
+    svg: str | None = None
 
 
 def _project(sources: Path) -> dict:
@@ -141,7 +153,8 @@ def declared_documents(sources) -> tuple:
 
     A tuple of `Document`, () when it lists none. Raises PublishError(422)
     naming every entry that cannot be published, before a model's build is
-    spent on the push.
+    spent on the push. A DXF's picture is drawn here (`_draw_dxf`), so a DXF
+    that cannot be drawn is among them.
     """
     sources = Path(sources)
     listed = _project(sources).get(DOCUMENTS_FIELD)
@@ -181,12 +194,34 @@ def declared_documents(sources) -> tuple:
             design, reason = _kicad_schematic(sources, path)
         elif reason is None and drawn_as == BOARD_TYPE:
             design = {"project": _kicad_project(sources, path)}
+        # A DXF stays a plain file and brings a picture of itself; under
+        # `download` the page shows none, so none is drawn.
+        preview = (None if reason is not None or download
+                   else dxf_preview(path))
+        picture = None
+        if preview is not None:
+            picture, reason = _draw_dxf(sources / path)
         if reason is not None:
             problems.append(f"  {path!r}, which {reason}")
             continue
         seen[document_id(path)] = path
         found.append(Document(path, (path, *_besides(design)), design, title,
-                              hidden, download))
+                              hidden, download, preview, picture))
+    # A picture is published at a path of its own, so that path is held to
+    # what every published path is: one the file server answers, and nobody
+    # else's file.
+    owners = {name: doc.path for doc in found for name in doc.files}
+    for doc in found:
+        if doc.preview is None:
+            continue
+        where = f"  {doc.path!r}, which publishes its preview as {doc.preview!r}"
+        reason = unservable_path_reason(doc.preview)
+        if reason is not None:
+            problems.append(f"{where}, and that path {reason}")
+        elif doc.preview in owners:
+            problems.append(f"{where}, and the document "
+                            f"{owners[doc.preview]!r} publishes a file at "
+                            f"that path")
     if problems:
         raise PublishError(
             422, f"{PROJECT_FILE} lists documents the hub cannot publish:\n"
@@ -324,6 +359,38 @@ def _besides(design) -> tuple:
     return (*sheets, *project)
 
 
+def _draw_dxf(target: Path) -> tuple:
+    """The picture of the DXF at `target`: its model space as SVG, on white,
+    in the drawing's own colours, the page fitted to it with a 2 mm margin.
+
+    -> (svg text, None), or (None, why) as the tail of "…, which". ezdxf
+    refuses a file that is no DXF with an OSError, a broken one with a
+    DXFError, and one with nothing to draw with a ValueError (an empty
+    bounding box leaves no page to fit).
+    """
+    # Imported here rather than at the top: ezdxf brings numpy with it, and
+    # only a push that lists a DXF needs either in the hub's process.
+    import ezdxf
+    from ezdxf.addons.drawing import (Frontend, RenderContext, config,
+                                      layout, svg)
+    try:
+        drawing = ezdxf.readfile(target)
+        backend = svg.SVGBackend()
+        Frontend(RenderContext(drawing), backend, config=config.Configuration(
+            background_policy=config.BackgroundPolicy.WHITE),
+        ).draw_layout(drawing.modelspace())
+        text = backend.get_string(layout.Page(
+            0, 0, layout.Units.mm, margins=layout.Margins.all(2)))
+    except (OSError, ezdxf.DXFError, ValueError) as err:
+        # ezdxf names the file by its full path, which is the hub's staging
+        # directory and means nothing to the pusher: the file's name stays.
+        said = str(err).replace(str(target), target.name)
+        return None, (f"is a DXF the hub cannot draw a preview of ({said}); "
+                      f"list it with \"download\": true to publish it as a "
+                      f"plain file")
+    return text, None
+
+
 def _names(data: dict, pid: str) -> tuple:
     """(project, title), resolved the way a model's build resolves them.
 
@@ -338,12 +405,16 @@ def _names(data: dict, pid: str) -> tuple:
 
 
 def _files(documents) -> tuple:
-    """Every file the documents are published as, each once."""
-    return tuple(dict.fromkeys(name for doc in documents for name in doc.files))
+    """Every file the documents are published as, each once: their own and
+    the pictures drawn of them."""
+    return tuple(dict.fromkeys(
+        name for doc in documents
+        for name in (*doc.files, *([] if doc.preview is None else [doc.preview]))))
 
 
 def _copy(sources: Path, out_dir: Path, documents) -> tuple:
-    """Copy each document's files to their paths under `out_dir`.
+    """Copy each document's files to their paths under `out_dir`, and write
+    the picture of each DXF beside it.
 
     -> (meta.json entries, log lines).
     """
@@ -355,6 +426,9 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(sources / name, target)
             size += target.stat().st_size
+        # Beside the DXF, whose directory the copy above made.
+        if doc.preview is not None:
+            (out_dir / doc.preview).write_text(doc.svg, encoding="utf-8")
         # The type the browser reads, rebuilt and checked again by
         # `render._documents`: what the extension draws as, unless the entry
         # asked for the plain file every document may be published as.
@@ -364,6 +438,9 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
         what = shown_as
         if doc.hidden:
             entry["hidden"] = True
+        if doc.preview is not None:
+            entry["preview"] = doc.preview
+            what += ", preview"
         if doc.kicad is not None:
             entry["kicad"] = doc.kicad
             if "schematics" in doc.kicad:

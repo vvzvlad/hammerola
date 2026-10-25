@@ -179,6 +179,16 @@ describe('one document, as both pages draw it', () => {
     expect(link.props.download).toBe(true)
     expect(text(tree)).toContain('Glass, cut list')
     expect(text(tree)).toContain('dxf · 12.4 kB')
+    expect(ofType(tree, 'img')).toEqual([])
+  })
+
+  it('shows the picture the hub drew of a DXF above the link that takes it', () => {
+    const tree = documentBody({ ...cutPlan, preview: 'cut/glass.dxf.svg' }, BASE, null, '')
+    const [img] = ofType(tree, 'img')
+    expect(img.props.src).toBe(`${BASE}cut/glass.dxf.svg`)
+    expect(img.props.alt).toBe('Glass, cut list')
+    const [link] = ofType(tree, 'a')
+    expect([link.props.href, link.props.download]).toEqual([`${BASE}cut/glass.dxf`, true])
   })
 
   it('labels a document with its type and size', () => {

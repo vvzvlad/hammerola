@@ -518,21 +518,22 @@ def test_missing_meta_json_is_422(hub):
 
 
 # -- every place this document names a file ----------------------------------
-# There are NINE and they are enumerated here once. A view names its own file,
+# There are TEN and they are enumerated here once. A view names its own file,
 # its overview, its picture and the card cut of that picture; a part names what
 # it was exported to and its own picture; a document of a documents build names
-# its file, and a KiCad schematic among them its sheets and its project.
+# its file, a KiCad schematic among them its sheets and its project, and a DXF
+# the picture drawn of it.
 #
 # ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test: a pointer
 # that quietly stops being checked is a 404 under an immutable URL, and per-test
 # lists go stale one entry at a time.
 FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
                  "part files", "part preview", "document file",
-                 "kicad schematic", "kicad project")
+                 "kicad schematic", "kicad project", "document preview")
 
-# The KiCad schematic the two KiCad pointers sit in rides along in every
-# archive, as `PART_EXPORT` does.
-KICAD_MEMBERS = {"board.kicad_sch": b"(kicad_sch)\n"}
+# The KiCad schematic the two KiCad pointers sit in, and the DXF the preview
+# pointer sits in, ride along in every archive, as `PART_EXPORT` does.
+KICAD_MEMBERS = {"board.kicad_sch": b"(kicad_sch)\n", "cut.dxf": b"0\nEOF\n"}
 
 
 # The export the one-printable catalogue below declares when the case under
@@ -546,7 +547,7 @@ PART_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
 
 
 def _pointing_at(where, name):
-    """meta.json fields naming `name` in one of the nine places, and nowhere else.
+    """meta.json fields naming `name` in one of the ten places, and nowhere else.
 
     Returns kwargs for `meta_bytes`, so the document around the pointer is the
     ordinary one — a catalogue of one printable and a view that selects it. A
@@ -577,6 +578,9 @@ def _pointing_at(where, name):
         return {"kind": "documents", "documents": [
             {"name": "board", "type": "schematic", "file": "board.kicad_sch",
              "kicad": design}]}
+    elif where == "document preview":
+        return {"kind": "documents", "documents": [
+            {"name": "cut", "type": "file", "file": "cut.dxf", "preview": name}]}
     else:
         raise AssertionError(f"no such file pointer: {where!r}")
     return {"views": [view], "parts": {"lid": part}}
@@ -603,11 +607,11 @@ def _pointing_archive(fields, extra=None):
     return members
 
 
-def test_the_nine_file_pointers_are_the_nine_the_document_has():
+def test_the_ten_file_pointers_are_the_ten_the_document_has():
     """The list above, checked against the document rather than trusted.
 
-    `_pointing_at` refuses a name it does not know, so a tenth pointer added to
-    `build_meta` without a row here would be checked by nothing below and this
+    `_pointing_at` refuses a name it does not know, so an eleventh pointer added
+    to `build_meta` without a row here would be checked by nothing below and this
     would not notice — the list has to be compared against something. What it is
     compared against is the number of places `build_meta` calls the shared name
     rule, which is the one thing every pointer has in common.

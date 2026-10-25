@@ -96,7 +96,10 @@ BOARD_TYPE = DOCUMENT_TYPES[".kicad_pcb"]
 # read — the DXF a glass shop cuts from, a CSV of measurements, a supplier's
 # STEP the model does not build. The page gives it a row that downloads the
 # file instead of showing it, and the hub serves it to a plain link like every
-# other document (`app.OPEN_SUFFIXES`).
+# other document (`app.OPEN_SUFFIXES`). A DXF also carries `preview`, the path
+# of the SVG the hub drew of it (`dxf_preview`, `docsbuild._draw_dxf`), which
+# the page shows above the Download button; it stays a plain file all the same,
+# offered by the Downloads menu and handed over as an attachment.
 #
 # DELIBERATELY NOT A KEY OF `DOCUMENT_TYPES`: that table answers "which
 # extension does the page draw, and how", and three places ask it that way —
@@ -360,6 +363,13 @@ def published_type(name: str) -> str:
     return document_type(name) or FILE_TYPE
 
 
+def dxf_preview(name: str) -> str | None:
+    """Where the picture of the document at `name` is published if it is a
+    DXF, of any case: beside it, its path with `.svg` after it
+    (`cut/glass.dxf.svg`). None for any other document."""
+    return name + ".svg" if Path(name).suffix.lower() == ".dxf" else None
+
+
 # What stands for `/` in a document's id, which the page carries as `?d=<id>`.
 DOCUMENT_ID_SEPARATOR = "__"
 
@@ -398,10 +408,11 @@ def _check_declared_file(name, files: dict, where: str, *,
     """Every file this document points at, wherever it is pointed at from.
 
     Callers: a view's `file`, `overview`, `preview` and `card`, a catalogue
-    record's exported `files` and `preview`, and a document's `file`. They all
-    claim "this build wrote a file called that, and the hub will hand it back".
-    Each check below is a way a push could be accepted and then serve something
-    other than what was measured here, so they apply to every pointer together.
+    record's exported `files` and `preview`, and a document's `file` and a
+    DXF's `preview`. They all claim "this build wrote a file called that, and
+    the hub will hand it back". Each check below is a way a push could be
+    accepted and then serve something other than what was measured here, so
+    they apply to every pointer together.
 
     `path` is for a document, which keeps its place in the tree and so may sit
     in a subdirectory (`buildnames.unservable_path_reason`); every other
@@ -995,6 +1006,9 @@ def _documents(raw: dict, staging: Path, files: dict) -> list:
     also carries `kicad`, the files published with it (`_kicad`), and its
     `bytes` are the sum of all of them; a `FILE_TYPE` document carries no
     `kicad`, since what the page does not draw it does not draw from a design.
+    A `FILE_TYPE` DXF may carry `preview`, the picture drawn of it
+    (`dxf_preview`), and its `bytes` stay the DXF's own: they are what
+    Download hands over.
     """
     documents = raw.get("documents")
     if not isinstance(documents, list) or not documents:
@@ -1042,6 +1056,19 @@ def _documents(raw: dict, staging: Path, files: dict) -> list:
                 f"document {name!r} has a `hidden` that is not true or false")
         if hidden:
             one["hidden"] = True
+        # Held to the rule every pointer is, and to the one path a DXF's
+        # picture is published at. Any other entry has no picture, and a
+        # `preview` on it is dropped like every key not read here.
+        expected = dxf_preview(name) if shown_as == FILE_TYPE else None
+        if expected is not None and "preview" in entry:
+            preview = entry["preview"]
+            _check_declared_file(preview, files, f"document {name!r}'s preview",
+                                 path=True)
+            if preview != expected:
+                raise ValueError(
+                    f"document {name!r} names the preview {preview!r}, and "
+                    f"its preview is {expected!r}")
+            one["preview"] = preview
         if shown_as in (SCHEMATIC_TYPE, BOARD_TYPE):
             design = _kicad(entry.get("kicad"), name, shown_as, files)
             # The schematic itself is counted above; its sheets and the

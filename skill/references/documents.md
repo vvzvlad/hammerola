@@ -24,7 +24,12 @@ unlisted is. Its EXTENSION decides only how the page shows it: a `.md`, `.pdf`,
 for the glass shop, a supplier's STEP, a CSV of measurements, a firmware image —
 keeps its row in the menu and hands the file over instead of drawing it, and a
 model's build page also offers it in Downloads under its extension (DXF, CSV),
-beside the STL. The build page lists them in its view menu, after
+beside the STL. A `.dxf` is that kind of file too, with one addition: the hub
+draws a picture of it at publish time and the page shows that picture above the
+Download button. The picture is published as `<path>.svg` (`cut/glass.dxf.svg`),
+so nothing else may be listed at that path; a DXF the hub cannot read, or one
+with nothing drawn in it, refuses the push with a 422 naming it, and
+`"download": true` on its entry publishes it with no picture. The build page lists them in its view menu, after
 the views, one row each: choosing one shows it over the model, choosing a view brings the
 model back, and `?d=<id>` in the address (the path with `/` written as `__`)
 opens one on arrival. A hidden entry has no row: it is published and opens by its
