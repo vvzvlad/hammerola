@@ -376,7 +376,8 @@
   `chromeview.js` builds the model page's values and `DocShell.docBar` its own
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
-  React elements, relative links resolved from the document's directory, short
+  React elements, relative links resolved from the document's directory, a link
+  to another listed document opening it on the page through `docLinks`, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
