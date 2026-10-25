@@ -11,7 +11,7 @@ import { ON_ACCENT } from './panelstyle.js';
 import { MONO } from './style.jsx';
 
 export function feedView(s, deps) {
-  const { meta, catalogue, stop, node: nodeAt, set, writeDoc, resolveComment } = deps;
+  const { meta, catalogue, stop, node: nodeAt, set, pushChoice, resolveComment } = deps;
 
   // -- the project's comment queue, as `loadFeed` fetched it
   //
@@ -73,9 +73,11 @@ export function feedView(s, deps) {
       saysStyle: `margin-top:6px;font:400 10.5px/1.5 ${MONO};color:`
         + (anchor.state === 'orphan' ? 'var(--warn)' : 'var(--text-muted)'),
       // And the model comes back from under a document, so the pin it lights
-      // is in sight, and the address stops naming the document.
+      // is in sight: a step of history naming no document (`pushChoice`), so
+      // Back reopens the one it covered. Only over a document the build lists:
+      // under any other `d=` the model is already on screen.
       onOpen: stop(() => {
-        if (s.doc) writeDoc(null);
+        if (((meta && meta.documents) || []).some((d) => d.id === s.doc)) pushChoice(s.view, null);
         set({ activePin: record.id, doc: null });
       }),
       resolved,

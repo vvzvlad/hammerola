@@ -1799,28 +1799,38 @@ describe('a comparison entered in the page', () => {
     expect(window.location.search).toBe('?v=printables')
   })
 
-  it('carries the document open over the model', () => {
+  // The build's meta listing `notes.md`. A `doc` it does not list (an old
+  // link) leaves the model on screen, and the address names no document.
+  const listing = { ...page().state.meta,
+    documents: [{ id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }] }
+
+  it('carries the document open over the model, and not one the build does not list', () => {
     loadCompareReport.mockResolvedValue(REPORT)
-    const c = page({ cmp: [A, B], doc: 'notes.md' })
+    for (const [doc, query] of [['notes.md', '?d=notes.md'], ['gone.md', '']]) {
+      opened(`/project/proj1/${A}/`)
+      const c = page({ cmp: [A, B], doc, meta: listing })
 
-    c.computed().startCompare({ stopPropagation() {} })
+      c.computed().startCompare({ stopPropagation() {} })
 
-    expect(window.location.search).toBe('?d=notes.md')
+      expect(window.location.search, doc).toBe(query)
+    }
   })
 
   it('keeps the document in the address when the way out returns to the pointer', async () => {
     // `standOnPointer` writes `/latest/` afresh, query and all.
-    opened('/project/proj1/latest/')
     loadCompareReport.mockResolvedValue(REPORT)
-    const c = page({ builds: BUILDS, doc: 'notes.md' })
-    c.schedulePoll = vi.fn()
+    for (const [doc, query] of [['notes.md', '?d=notes.md'], ['gone.md', '']]) {
+      opened('/project/proj1/latest/')
+      const c = page({ builds: BUILDS, doc, meta: listing })
+      c.schedulePoll = vi.fn()
 
-    c.compareRevisions(['latest', B])
-    await settled()
-    c.computed().exitCompare({ stopPropagation() {} })
+      c.compareRevisions(['latest', B])
+      await settled()
+      c.computed().exitCompare({ stopPropagation() {} })
 
-    expect(`${window.location.pathname}${window.location.search}`)
-      .toBe('/project/proj1/latest/?d=notes.md')
+      expect(`${window.location.pathname}${window.location.search}`, doc)
+        .toBe(`/project/proj1/latest/${query}`)
+    }
   })
 
   it('pushes nothing when the address already names that comparison', () => {
@@ -2150,7 +2160,8 @@ describe('back and forward through a comparison', () => {
     // comparison, so the panel simply closed; this one names the pair already on
     // screen ON ANOTHER VIEW — an entry pushed by a comparison started from the
     // `printables` tab, come back to after the reader pressed `assembled` inside
-    // the panel (which moves the comparison and deliberately not the address).
+    // the panel (which moves the comparison and pushes an entry of its own,
+    // `pushChoice`, on the same path).
     // A comparison is computed per view, so the same pair on another view is a
     // different comparison: with the pair alone as the test of agreement, the
     // strip would light `printables` over the assembled comparison's scene and
@@ -2176,6 +2187,32 @@ describe('back and forward through a comparison', () => {
     expect(c.state.cmpPair).toEqual([A, B])
     expect(loadCompareReport)
       .toHaveBeenCalledWith('proj1', A, B, 'printables', 'sekrit')
+  })
+
+  it('moves the comparison onto the view a Back through the menu of views puts back', async () => {
+    // A view chosen inside the panel is an entry on the comparison's own path
+    // (`pushChoice`). Back moves no build: the entry's view is written bare
+    // (`followEntry`), and `syncCompare` moves the comparison onto it, pushing
+    // nothing.
+    opened(`/project/proj1/${A}/compare/${B}/`)
+    loadCompareReport.mockResolvedValue(REPORT)
+    const c = mounted({ compare: true, cmpPair: [A, B], cmpView: 'assembled',
+                        cmpStage: 'ready', cmpReport: REPORT })
+    c.computed().viewTabs[1].onClick()
+    await settled()
+    expect([window.location.search, c.state.cmpView]).toEqual(['?v=printables', 'printables'])
+    const push = vi.spyOn(history, 'pushState')
+
+    // The browser's own Back, which restores the entry tasks later.
+    const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
+    window.history.back()
+    await popped
+    await settled()
+
+    expect(push).not.toHaveBeenCalled()
+    expect(window.location.pathname).toBe(`/project/proj1/${A}/compare/${B}/`)
+    expect([c.state.view, c.state.cmpView]).toEqual(['assembled', 'assembled'])
+    expect(loadCompareReport).toHaveBeenLastCalledWith('proj1', A, B, 'assembled', 'sekrit')
   })
 
   it('asks for nothing when the entry only moved the build', async () => {

@@ -15,9 +15,9 @@
 // `?v=<id>`; the default document — the first one not listed `hidden` — needs
 // none, so a plain link opens on it. A hidden document has no row and opens
 // by its `?d=`. Its id is its path with `/` spelled `__`
-// (`render.document_id`). Choosing a document REPLACES the address rather than
-// pushing one: it is not a place the reader went, and a copied link still
-// lands on what was showing.
+// (`render.document_id`). Choosing a document is a step of the browser's
+// history, as a choice in the model page's menu of views is: Back returns to
+// the document chosen before, and a copied link lands on what was showing.
 //
 // `DocPage` is the drawing and takes everything as props, so a test reads the
 // tree it returns without mounting anything (ui/tests/docshell.test.js).
@@ -148,21 +148,29 @@ export default class DocShell extends React.Component {
     this.onTools = (tools) => this.setState({ tools });
     this.mq = null;
     this.onNarrow = (event) => this.setState({ narrow: event.matches });
+    // Back and Forward through the documents picked (`pick`): the entry's
+    // `?d=`, read as the constructor reads it, the default one where it has none.
+    this.onPop = () => this.setState({
+      active: pickDocument(this.props.meta.documents,
+        new URLSearchParams(window.location.search).get(DOC_QUERY)).id,
+    });
   }
 
   componentDidMount() {
     this.mq = window.matchMedia ? window.matchMedia(NARROW) : null;
     if (this.mq) this.mq.addEventListener('change', this.onNarrow);
+    window.addEventListener('popstate', this.onPop);
   }
 
   componentWillUnmount() {
     if (this.mq) this.mq.removeEventListener('change', this.onNarrow);
+    window.removeEventListener('popstate', this.onPop);
   }
 
-  /** Document `id` on screen; the list shuts. */
+  /** Document `id` on screen, a step of history; the list shuts. */
   pick(id) {
     if (id !== this.state.active) {
-      window.history.replaceState(window.history.state, '',
+      window.history.pushState(window.history.state, '',
         window.location.pathname + docQuery(window.location.search, id, this.props.meta.documents));
     }
     this.setState({ active: id, viewsOpen: false });

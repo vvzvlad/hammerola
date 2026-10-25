@@ -534,18 +534,29 @@ describe('the Share window', () => {
       `${location.origin}/project/proj1/${REV}/?v=print&d=docs__cut-list.md&files=key-of-rev`)
   })
 
-  it('carries the camera on screen as `c=`, before the key', () => {
+  it('carries the camera on screen as `c=` only with Current view ticked, before the key', () => {
     // The frame is read off the viewport as the window renders. Every other
     // test here has no viewport (`host.current` is null), and no `c=` at all.
     const c = opened(REV)
     c.host = { current: { getCamera: () => ({
       position: [10, -20, 30.5], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 1.5,
     }) } }
-    expect(c.computed().shareLink)
-      .toBe(`${location.origin}/project/proj1/${REV}/?c=10,-20,30.5,0,0,0,1,1,2,3,1.5`)
+    expect([c.computed().shareCameraMark, c.computed().shareLink])
+      .toEqual(['', `${location.origin}/project/proj1/${REV}/`])
+    const box = collect(c.render(), (el) => (
+      [].concat(el.props.children).includes('Current view') ? el : undefined))
+    expect(box).toHaveLength(1)
+    box[0].props.onClick()
+    expect(c.computed().shareCameraMark).toBe('✓')
     c.computed().toggleShareFiles()
     expect(c.computed().shareLink).toBe(
       `${location.origin}/project/proj1/${REV}/?c=10,-20,30.5,0,0,0,1,1,2,3,1.5&files=key-of-rev`)
+    // A document covers the model: no box, and no frame in its link.
+    c.state.meta.documents = [{ id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }]
+    c.state.doc = 'notes.md'
+    expect(texts(c.render())).not.toContain('Current view')
+    expect(c.computed().shareLink)
+      .toBe(`${location.origin}/project/proj1/${REV}/?d=notes.md&files=key-of-rev`)
   })
 
   it('cannot be ticked when builds.json came without the keys, and says why', () => {
