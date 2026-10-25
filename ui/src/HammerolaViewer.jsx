@@ -1694,7 +1694,14 @@ export default class HammerolaViewer extends React.Component {
     // The generation below is taken after this line: the gesture asks for what
     // is already on its way, so a bump here would kill the swap fetching it.
     const here = this._want || PAGE.slot;
-    if (slot === here) { this.setState({ revOpen: false }); return; }
+    if (slot === here) {
+      this.setState({ revOpen: false });
+      // A `popstate` between the build on screen and a comparison of it moves
+      // no build, so the document its entry names is put back here. With a swap
+      // still on its way to `slot`, that swap settles the document when it lands.
+      if (!push && slot === PAGE.slot) this.followEntryDoc();
+      return;
+    }
 
     // On screen but being left: this gesture asks to stay (reader on B, Back
     // starts a slow swap to A, Forward returns to B). Nothing to fetch, push or
@@ -1739,8 +1746,8 @@ export default class HammerolaViewer extends React.Component {
         const staying = this.addressOf(
           this.state.compare ? this.state.cmpPair : null);
         if (location.pathname !== staying) {
-          history.replaceState({ hmr: slot }, '',
-                               staying + this.cameraQuery(this.viewQuery(this.state.view, views)));
+          history.replaceState({ hmr: slot }, '', staying + this.cameraQuery(
+            this.withDoc(this.viewQuery(this.state.view, views), this.state.doc)));
           // The repaired address may be a comparison's, so `PAGE.cmp` has to
           // follow it; on a plain build URL this re-derives what was there.
           rereadPage(staying);
@@ -1761,6 +1768,8 @@ export default class HammerolaViewer extends React.Component {
         if (wanted !== this.state.view && views.some((v) => v.id === wanted)) {
           this.set({ view: wanted });
         }
+        // And the document over the model, which the entry names as `?d=`.
+        this.followEntryDoc();
       }
       return;
     }
@@ -1853,9 +1862,6 @@ export default class HammerolaViewer extends React.Component {
     // falls back to the first — exactly what a fresh load of that URL does with
     // a `?v=` naming a view the build does not have.
     const view = views.some((v) => v.id === wanted) ? wanted : views[0].id;
-    // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
-    // writes its address with.
-    const query = this.viewQuery(view, views);
 
     // Everything that described the build being left goes here; `takePending`
     // calls the same method. The plane is asked about the view actually landing
@@ -1867,9 +1873,18 @@ export default class HammerolaViewer extends React.Component {
     // `rereadPage` (writes only `PAGE`) nor `setState({ meta })` touches `tree`;
     // the tree's writers are `onModel` (replace), `onViewError` (clear) and the
     // constructor (null).
-    const gone = this.leaveBuild(view === this.state.view, meta);
+    //
+    // The document is chosen like the view: the reader's own on a row click,
+    // the entry's `?d=` on a `popstate`.
+    const gone = this.leaveBuild(view === this.state.view, meta,
+      push ? this.state.doc : this.entryDoc());
 
-    if (push) history.pushState({ hmr: slot }, '', path + this.cameraQuery(query));
+    // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
+    // writes its address with, the document included where it stayed.
+    if (push) {
+      history.pushState({ hmr: slot }, '', path + this.cameraQuery(
+        this.withDoc(this.viewQuery(view, views), gone.state.doc)));
+    }
     // In place, so every module that imported `PAGE` sees the new revision —
     // `loadMeta`, `loadBuilds`, `isPointerPage`, `sync`'s `base`, the comment
     // route, the download hrefs and the header's slot. Nothing re-derives it, so
@@ -1976,8 +1991,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * `keepView` is whether the view id landing on screen is the one that was on
    * it, the strongest question the plane can be asked here (`sectionAcross`).
-   * `next` is the meta.json of the build landing, asked whether it lists the
-   * document open over the model.
+   * `next` is the meta.json of the build landing, asked whether it lists
+   * `doc`: the document wanted over the model, by default the one open.
    *
    * Returned in two halves because the section is two things: fields on this
    * side and an instruction to the viewport, which holds its own cut. A caller
@@ -1991,7 +2006,7 @@ export default class HammerolaViewer extends React.Component {
    * A chain running across the banner resolves against the pointer as asked,
    * and cutting it would silently truncate a group download.
    */
-  leaveBuild(keepView, next) {
+  leaveBuild(keepView, next, doc = this.state.doc) {
     const sec = this.sectionAcross(keepView);
     // The frame Fit goes back to belongs to the build it was measured on, and
     // this is another build. Spent by the model event that lands the swap; see
@@ -2056,7 +2071,7 @@ export default class HammerolaViewer extends React.Component {
         // over the model again the moment the reader came back to a revision
         // that lists it.
         doc: next && Array.isArray(next.documents)
-          && next.documents.some((d) => d.id === this.state.doc) ? this.state.doc : null,
+          && next.documents.some((d) => d.id === doc) ? doc : null,
         // The comparison goes too: the panel stands where the tree stands and
         // the scene is the comparison's, so keeping it would change nothing the
         // reader sees. The picker's ticks (`cmp`) stay: they are the reader's
@@ -2930,8 +2945,8 @@ export default class HammerolaViewer extends React.Component {
   standOnPointer(slot) {
     const to = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
     const views = (this.state.meta && this.state.meta.views) || [];
-    history.replaceState({ hmr: slot }, '',
-                         to + this.cameraQuery(this.viewQuery(this.state.view, views)));
+    history.replaceState({ hmr: slot }, '', to + this.cameraQuery(
+      this.withDoc(this.viewQuery(this.state.view, views), this.state.doc)));
     // IN PLACE, so `PAGE.slot` says what the bar says — which is what the watch
     // below, the chip and every relative fetch on this page are read off.
     rereadPage(to);
@@ -2993,7 +3008,8 @@ export default class HammerolaViewer extends React.Component {
     const to = this.addressOf(pair);
     if (location.pathname === to) return;
     const views = (this.state.meta && this.state.meta.views) || [];
-    const address = to + this.cameraQuery(this.viewQuery(this.state.view, views));
+    const address = to + this.cameraQuery(
+      this.withDoc(this.viewQuery(this.state.view, views), this.state.doc));
     const entry = { hmr: pageFrom(to).slot };
     if (to === this.addressOf(null)) history.replaceState(entry, '', address);
     else history.pushState(entry, '', address);
@@ -4100,6 +4116,9 @@ export default class HammerolaViewer extends React.Component {
     // for a swap that did not happen. It must also precede the `setState` its
     // answer is spread into.
     const gone = this.leaveBuild(keep, next);
+    // The address does not move here, but a document the offered build does not
+    // list goes from it with the document itself.
+    if (gone.state.doc !== this.state.doc) this.writeDoc(gone.state.doc);
     this.setState({
       meta: next,
       view: keep ? this.state.view : next.views[0].id,
@@ -4851,6 +4870,25 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
+   * The document a history entry is asking for: its own `?d=`, or none. No
+   * fallback, unlike `entryView`: an address without `d=` shows the model.
+   */
+  entryDoc() {
+    return new URLSearchParams(location.search).get(DOC_QUERY);
+  }
+
+  /**
+   * Lay over the model the document the entry names, or close the one open:
+   * for a `popstate` that keeps the build, where `leaveBuild` does not run.
+   * The id is taken as a load takes it (`docOpen` looks it up). Through `set`,
+   * because closing a document releases a viewport held behind it (`sync`).
+   */
+  followEntryDoc() {
+    const doc = this.entryDoc();
+    if (doc !== this.state.doc) this.set({ doc });
+  }
+
+  /**
    * The query an address needs so that opening it lands on `view`.
    *
    * `load()` reads `?v=` on a fresh open, so an address this page writes must
@@ -4910,6 +4948,24 @@ export default class HammerolaViewer extends React.Component {
     }
     history.replaceState(history.state, '', `${location.pathname}?`
       + `${[...kept, `${CAMERA_QUERY}=${frame}`].join('&')}${location.hash}`);
+  }
+
+  /**
+   * Rewrite `d=` in the address bar: the document now laid over the model, or
+   * none, so a copied address opens on what the menu of views has chosen. A
+   * replace like `writeCamera`, every other parameter kept as written.
+   */
+  writeDoc(id) {
+    const kept = location.search.slice(1).split('&')
+      .filter((pair) => pair && pair.split('=')[0] !== DOC_QUERY);
+    if (id) kept.push(`${DOC_QUERY}=${encodeURIComponent(id)}`);
+    history.replaceState(history.state, '', location.pathname
+      + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
+  }
+
+  /** `query` with `d=` naming document `id`, when there is one. */
+  withDoc(query, id) {
+    return id ? `${query}${query ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(id)}` : query;
   }
 
   /**
@@ -5095,6 +5151,7 @@ export default class HammerolaViewer extends React.Component {
       meta, catalogue, stop,
       node: this.node.bind(this),
       set: this.set.bind(this),
+      writeDoc: this.writeDoc.bind(this),
       resolveComment: this.resolveComment.bind(this),
     });
 
@@ -5225,6 +5282,7 @@ export default class HammerolaViewer extends React.Component {
       refreshBuilds: this.refreshBuilds.bind(this),
       viewQuery: this.viewQuery.bind(this),
       cameraQuery: this.cameraQuery.bind(this),
+      writeDoc: this.writeDoc.bind(this),
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
