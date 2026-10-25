@@ -136,7 +136,7 @@ jobs:
         # BufferGeometryUtils.js, GLTFLoader.js and SkeletonUtils.js (which GLTFLoader imports)
         # are three's addons, read by ui/tests/board3d.test.js and ui/tests/board3dview.test.js.
         # ecad-viewer.js is the vendored KiCad viewer, read by ui/tests/kicad.test.js, which
-        # asserts the two edits of ours in it are still there (static/_v/PROVENANCE.md).
+        # asserts our edits to it are still there (static/_v/PROVENANCE.md).
         # Not all of static/_v: it also holds this project's own built bundle.
         # Add paths deliberately rather than switching to `.` plus exclusions: nothing
         # travels that is not named, so `.env`, `data/` and `.git/config` cannot leak in a

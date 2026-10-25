@@ -654,7 +654,7 @@ describe('a part\'s datasheet', () => {
   })
 })
 
-describe('our two edits to the vendored viewer', () => {
+describe('our edits to the vendored viewer', () => {
   // The wheel and the look of a selection are the viewer's own code now
   // (static/_v/PROVENANCE.md, "Our edits"), so nothing of ours runs for them
   // and no test here can exercise them — they are checked in a browser. What
@@ -664,10 +664,13 @@ describe('our two edits to the vendored viewer', () => {
   // as a regression.
   const bundle = readFileSync(resolve(process.cwd(), '../static/_v/ecad-viewer.js'), 'utf8')
 
-  it('leaves a selected footprint outlined, not filled over', () => {
+  it('leaves a selected footprint outlined, not filled over, and the copper pours where they were', () => {
     expect(bundle).toContain('paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;')
     // the fill was a pass over the selection mask in cyan at 55% — nowhere now
     expect(bundle).not.toContain('new w(0,.85,1,.55)')
+    // selecting a footprint hid every zone layer until the selection was cleared
+    expect(bundle).toContain('this.#l={kind:"fp",fp:t},this.painter.paint_footprint(t),this.draw()}')
+    expect(bundle).not.toContain('this.#e.set(n.name,n.visibility),n.visible=!1')
   })
 
   it('pans on a plain wheel and zooms about the pointer on Control, by the Gerbers\' numbers', () => {

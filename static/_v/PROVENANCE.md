@@ -114,7 +114,7 @@ out of the KiCAD-Prism repository,
 [`krishna-swaroop/KiCAD-Prism`](https://github.com/krishna-swaroop/KiCAD-Prism) at
 commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63`, `frontend/public/`, taken
 2026-10-23. `parser.worker.js` is byte for byte theirs; `ecad-viewer.js` carries
-two edits of ours, listed below. Prism builds them (`scripts/build-ecad-viewer.sh`)
+edits of ours, listed below. Prism builds them (`scripts/build-ecad-viewer.sh`)
 from its fork of ecad-viewer,
 [`krishna-swaroop/ecad-viewer`](https://github.com/krishna-swaroop/ecad-viewer) at
 commit `461a091952ef44b56610e3ccbac4ba3c94139c4a` (`adapterCommit` in the
@@ -128,7 +128,7 @@ Apache-2.0 and none of it is here.
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` as taken | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `21d75a50db07d13be0c5fe41c03919bf1de322223b1bb758e53493e3c8bcbaa5` |
+| `ecad-viewer.js` as committed | `04fda20f58b65929b8e75f5588387ff26f712f6cb8cbb3510d17b18b17c1330d` |
 | `parser.worker.js` | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -152,11 +152,11 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Two, both in `ecad-viewer.js`, both a replacement of one exact string by another
-— the file is minified, so they are written out here in full and re-applied by
-search and replace. `ui/tests/kicad.test.js` asserts that both are still in the
-file, because an upgrade that drops them breaks nothing loudly: the viewer
-simply goes back to its own behaviour.
+Three, all in `ecad-viewer.js`, each a replacement of one exact string by
+another — the file is minified, so they are written out here in full and
+re-applied by search and replace. `ui/tests/kicad.test.js` asserts that each is
+still in the file, because an upgrade that drops one breaks nothing loudly: the
+viewer simply goes back to its own behaviour.
 
 **1. A selected footprint is outlined, not filled over.** `BoardPainter.paint_footprint`
 painted the whole footprint into the selection mask in cyan at 55% before
@@ -192,8 +192,22 @@ deltas through unchanged makes the drawing follow the fingers; `#F(delta, point)
 multiplies the zoom by `exp(-delta · og)` and keeps the world point under
 `point` where it is. `Vp` (8 px to a line) is left declared and now unused.
 
+**3. Selecting a footprint leaves the copper pours as they were.** The board
+viewer's `highlight_fp`, which both a click on a footprint and
+`requestCrossProbe` go through, saved the visibility of every zone layer into
+its private map `#e` and hid them all, to be put back by `#a()` or
+`on_document_clicked` when the selection went — so a part arrived at from the
+schematic sat on a board with no pours. The hiding is dropped; `#e` now stays
+empty, and both restorers do nothing with an empty map:
+
+```text
+if(r&&(r.emphasized_nets=null),this.#l={kind:"fp",fp:t},!this.#e.size)for(let n of this.layers.zone_layers())this.#e.set(n.name,n.visibility),n.visible=!1;this.painter.paint_footprint(t),this.draw()}
+→
+r&&(r.emphasized_nets=null),this.#l={kind:"fp",fp:t},this.painter.paint_footprint(t),this.draw()}
+```
+
 To move it: take the same three things from a newer Prism commit — the two files
-and the manifest's commits — replace both files together, re-apply the two edits
+and the manifest's commits — replace both files together, re-apply the edits
 above, and update this section and the hashes in one commit.
 
 ## The Gerber renderer: `wasm_gerber_processor.js` and `wasm_gerber_processor_bg.wasm`

@@ -248,7 +248,7 @@
   all three templates; issue #35), the resolver's `site.css` and `favicon.svg`,
   and the KiCad viewer: `ecad-viewer.js` with the `parser.worker.js` it starts
   from beside itself, taken BUILT out of KiCAD-Prism's repository and never
-  rebuilt here — `ecad-viewer.js` carries two edits of ours, made in the
+  rebuilt here — `ecad-viewer.js` carries edits of ours, made in the
   minified file and written out to be re-applied (where from, the commits, the
   hashes, the edits and what the hub's CSP cuts out of it — `PROVENANCE.md`; its
   licence — `ecad-viewer-LICENSE.md`).
