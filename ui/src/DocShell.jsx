@@ -26,6 +26,7 @@ import React from 'react';
 
 import DocumentView, { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
 import { PAGE, shortId } from './hub.js';
+import { PAGE_KEY } from './KicadView.jsx';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
@@ -170,7 +171,13 @@ export default class DocShell extends React.Component {
   /** Document `id` on screen, a step of history; the list shuts. */
   pick(id) {
     if (id !== this.state.active) {
-      window.history.pushState(window.history.state, '',
+      // The schematic's sheet stays with the entry it was recorded in: a
+      // design picked after another document opens anew on its first sheet,
+      // while its schematic picked after its own board keeps the sheet it is
+      // on (`PAGE_KEY` in KicadView.jsx).
+      const state = { ...window.history.state };
+      delete state[PAGE_KEY];
+      window.history.pushState(state, '',
         window.location.pathname + docQuery(window.location.search, id, this.props.meta.documents));
     }
     this.setState({ active: id, viewsOpen: false });

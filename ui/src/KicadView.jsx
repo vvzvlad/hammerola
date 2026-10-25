@@ -40,7 +40,14 @@
 // (`PAGE_EVENT`); the page is named in the entry's `history.state`
 // (`PAGE_KEY`), not in the address, and Back and Forward put the page an entry
 // names back (`followPage`), opened whole as the viewer opens a page itself,
-// not at the camera it was left at. A page this component moves the
+// not at the camera it was left at. A design opened anew — by a reload, a
+// link, or the list of views after another document — starts on the viewer's
+// own first sheet: the entry the page loaded under forgets its record
+// (`forgetPageOnLoad`, from main.jsx), and a choice in the list carries none
+// into its entry (`pushChoice`, and `pick` in DocShell.jsx). Moving between the
+// board and the schematic of one design keeps the schematic's sheet: it is one
+// element, kept, and a part clicked on the board may have moved it there on
+// purpose. A page this component moves the
 // schematic to — a part selected in another view, `Show … · <sheet>` from the
 // board — and any move of the schematic while it is hidden is no step of the
 // reader's: it is recorded in the entry the browser is on (`paged`).
@@ -167,6 +174,19 @@ export const PAGE_EVENT = 'ecad-viewer:view-state-change';
  *  `{ doc, page }`, the schematic member's id and the page's `projectPath`
  *  (`getActiveSchematicPage`). Merged into the state the page keeps there. */
 export const PAGE_KEY = 'kicadPage';
+
+/** The schematic's page forgotten by the entry the document was loaded under,
+ *  once, before anything is drawn (main.jsx): a reload or a link opens a
+ *  design on the viewer's own first sheet. The entry's other fields stay, and
+ *  so do the records of the entries before it, so Back onto one still returns
+ *  to its sheet. */
+export function forgetPageOnLoad() {
+  const state = window.history.state;
+  if (!state || !(PAGE_KEY in state)) return;
+  const kept = { ...state };
+  delete kept[PAGE_KEY];
+  window.history.replaceState(kept, '');
+}
 
 /** The views of a design: the two by the names the viewer gives them
  *  (`targetContext`), and the 3D model of the board. */
@@ -644,8 +664,10 @@ export default class KicadView extends React.Component {
   /** The schematic put on the page the history entry names, where its record
    *  is of this design's schematic and names another page than the one on
    *  screen: on Back and Forward, and once the viewers are ready, for an entry
-   *  the design is opened under (a reload, a Back onto a design no longer on
-   *  the page). An entry with no such record leaves the page as it is. Not
+   *  the design is opened under (a Back onto a design no longer on the page,
+   *  which mounts it anew; a Back onto an entry from before a reload loads
+   *  nothing, and that entry keeps its record). An entry with no such record
+   *  leaves the page as it is. Not
    *  before the viewers are ready: the element keeps a page asked for before
    *  it has its files and shows it later, which would read as the reader's
    *  own step. */
