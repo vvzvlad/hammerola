@@ -26,10 +26,11 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer, {
   DOWNLOAD_GAP_MS, groupDownloads, menuAt, partRecord, sequentialDownload,
 } from '../src/HammerolaViewer.jsx'
+import CopyLink from '../src/copylink.jsx'
 import { filesKeyFor } from '../src/downloadsview.js'
 import { PAGE, indexTree, rereadPage } from '../src/hub.js'
 import { FILES_KEY, makeComponent } from './component.js'
-import { texts } from './eltree.js'
+import { collect, texts } from './eltree.js'
 
 /**
  * `meta.parts`: two printables and a bought screw, as the hub writes it.
@@ -745,6 +746,21 @@ describe('the row menu', () => {
       ['Isolate', 'Hide', 'Translucent', 'STEP', 'STL', '3MF', 'Copy name'])
     expect(fileRows(items).map((m) => m.hint))
       .toEqual(['plate.step', 'plate.stl', 'plate.3mf'])
+  })
+
+  it('ends every file row of both menus with Copy link, for that row\'s own address', () => {
+    // The header's six files and the plate's three, each a sibling of its link.
+    // Read row by row: an element whose own children are a download link and a
+    // Copy link, so a Copy link moved inside its `<a>` leaves no such row.
+    const tree = component({ node: '/model/plate' }).render()
+    const kids = (el) => [].concat(el.props.children).filter((k) => k && typeof k === 'object')
+    const rows = collect(tree, (el) => {
+      const link = kids(el).find((k) => k.type === 'a' && k.props.download)
+      const copy = kids(el).find((k) => k.type === CopyLink)
+      return link && copy ? [link.props.href, copy.props.href] : undefined
+    })
+    expect(rows).toHaveLength(9)
+    rows.forEach(([link, copy]) => expect(copy).toBe(link))
   })
 
   it('points those rows at the same URLs the header\'s menu does', () => {

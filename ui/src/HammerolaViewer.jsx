@@ -134,6 +134,8 @@ import { savePng, toolBar } from './viewlist.jsx';
 // because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
+// The Copy link at the end of each file row of both menus.
+import CopyLink from './copylink.jsx';
 import { feedView } from './feedview.js';
 import { comparePanel } from './compareview.js';
 // The rules this page and the front page both write: the popover recipe its
@@ -388,10 +390,10 @@ function snapsKept(steps, doc) {
 }
 
 // How many views fit as a strip of pills before the switcher becomes a menu.
-// The strip is a centred non-wrapping flex row in an `overflow:hidden` root, so
-// a too-wide row pushes the floating toolbar past both edges, clipping Fit and
-// the tools, and the names break onto several lines. Four pills plus the tools
-// is about what a laptop holds on one line.
+// The strip is what gives up its width when the toolbar is short of room
+// (`TAB_STRIP` in viewlist.jsx), so a too-wide row squeezes its pills until the
+// names are cut to an ellipsis. Four pills plus the tools is about what a laptop
+// holds on one line with the names whole.
 export const VIEW_TABS_MAX = 4;
 
 // How many steps Ctrl+Z can walk back through, of either kind. Capped because
@@ -5627,10 +5629,13 @@ export default class HammerolaViewer extends React.Component {
                       <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
                     </div>
                     {g.files.map((f) => (
-                      <a key={f.key} href={f.href} download style={css(f.style)}>
-                        <span style={css(FILL)}>{f.label}</span>
-                        <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
-                      </a>
+                      <div key={f.key} style={css(f.rowStyle)}>
+                        <a href={f.href} download style={css(f.style)}>
+                          <span style={css(FILL)}>{f.label}</span>
+                          <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
+                        </a>
+                        <CopyLink href={f.href} style={f.copyStyle} />
+                      </div>
                     ))}
                   </React.Fragment>
                 ))}
@@ -6291,18 +6296,26 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the tree row's context menu ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.menuStyle)}>
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
-            {/* A row that carries a file is an ANCHOR and not a div: the download
-                is the browser's to do, exactly as in the header's menu, so the
-                link is a real one and can be middle-clicked or saved as. */}
+            {/* A row that carries a file holds a real ANCHOR, not a div with a
+                handler: the download is the browser's to do, exactly as in the
+                header's menu, so the link can be middle-clicked or saved as. Its
+                file name shrinks to an ellipsis rather than run under Copy link,
+                and the row is keyed by its address, so a Copy link that says
+                "copied" never moves to the same format of another part. */}
             {v.menuItems.map((m) => {
               const inner = (
                 <>
                   <span style={css(FILL)}>{m.label}</span>
-                  <span style={css(FAINT_MONO)}>{m.hint}</span>
+                  <span style={css(m.href ? `${FAINT_MONO};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap` : FAINT_MONO)}>{m.hint}</span>
                 </>
               );
               return m.href
-                ? <a key={m.key} href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                ? (
+                  <div key={m.href} style={css(m.rowStyle)}>
+                    <a href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                    <CopyLink href={m.href} style={m.copyStyle} />
+                  </div>
+                )
                 : <div key={m.key} onClick={m.onClick} style={css(m.style)}>{inner}</div>;
             })}
           </div>

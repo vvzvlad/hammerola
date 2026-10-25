@@ -1,11 +1,10 @@
 // The view switcher in the floating toolbar: a strip of pills while the views
 // fit on one, a menu once they do not.
 //
-// The strip is a centred flex row that does not wrap, inside an
-// `overflow:hidden` root, so a row wider than the window pushes the toolbar past
-// both edges, clipping Fit and the tools, and long names break onto several
-// lines. `VIEW_TABS_MAX` is the line between the two shapes and is imported
-// rather than retyped.
+// The strip is what shrinks when the toolbar is short of room, so a row wider
+// than the window squeezes its pills until their names are cut to an ellipsis.
+// `VIEW_TABS_MAX` is the line between the two shapes and is imported rather
+// than retyped.
 //
 // One list behind both shapes: `viewTabs` carries a pill style and a row style
 // per view, and which shape is on screen depends only on how many views there
@@ -33,7 +32,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
 import { ELLIPSIS } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
-import { viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
+import { FLOAT_BAR, TAB_STRIP, viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -128,6 +127,30 @@ describe('how many views it takes to fold the strip into a menu', () => {
     expect(ELLIPSIS).toContain('text-overflow:ellipsis')
     // and the caption inside it is the one that is cut
     expect(drawnWith(component({ views: someViews(9) }), ELLIPSIS)).toHaveLength(1)
+  })
+
+  it('lets the views, and nothing else, give up width when the bar is short of room', () => {
+    // The bar never grows past its layer; the view button's wrapper, or the
+    // strip, takes the shrinking, and the one two-word label stays on one line,
+    // so the bar stays one line high instead of running off the window.
+    expect(css(FLOAT_BAR).maxWidth).toBe('calc(100% - 24px)')
+    const shrinks = (style) => [css(style).minWidth, css(style).flexShrink]
+    expect(shrinks(TAB_STRIP)).toEqual(['0', '100'])
+    const menu = component({ views: someViews(9) }).render()
+    const wrapper = collect(menu, (el) => (el.type === 'div' && el.props.style && el.props.style.flexShrink === '100' ? el : undefined))
+    expect(wrapper.map((el) => [el.props.style.minWidth, el.props.style.position])).toEqual([['0', 'relative']])
+    const strip = component({ views: someViews(2) })
+    strip.computed().viewTabs.forEach((t) => expect([css(t.style).minWidth, css(t.style).textOverflow]).toEqual(['0', 'ellipsis']))
+    const primitive = collect(menu, (el) => (el.type === 'div' && el.props.onClick && texts(el).join('') === 'Add primitive' ? el : undefined))
+    expect(primitive.map((el) => el.props.style.whiteSpace)).toEqual(['nowrap'])
+  })
+
+  it('names the view whole in a pill\'s tooltip, since a short bar cuts its caption', () => {
+    // In the strip there is no menu to read the names in, so the hover is the
+    // only place a cut name can be read at all.
+    const c = component({ views: someViews(2), view: 'v1' })
+    const titles = c.computed().viewTabs.flatMap((t) => drawnWith(c, t.style).map((el) => el.props.title))
+    expect(titles.map((title) => title.split(' · ')[0])).toEqual(['view number 0', 'view number 1'])
   })
 })
 

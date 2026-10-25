@@ -43,6 +43,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
+import { tab } from '../src/panelstyle.js'
 import { forgetTab, readTabs, rememberTab } from '../src/store.js'
 import { makeComponent } from './component.js'
 import { collect, links } from './eltree.js'
@@ -264,21 +265,20 @@ describe('which tab is drawn as the active one', () => {
     entry('beta', 'Beta', 800),
   ]
 
-  /**
-   * The pill this page draws the thing you are looking at with.
-   *
-   * Read off the VIEW switcher rather than written out here, and that is the
-   * assertion as much as the fixture: the strip is supposed to reuse the one
-   * pill helper, so a second visual language invented for one row shows up as
-   * these prefixes ceasing to match.
-   */
+  /** The view switcher's chosen pill, held to the shared helper in `activePids`. */
   const activePill = (c) => c.computed().viewTabs[0].style
 
   /** A tab's key is its pid — the strip is keyed by what it links at. */
   const pids = (c) => c.computed().tabs.map((t) => t.key)
 
+  // The chosen pill both strips start with: each adds its own layout after it
+  // (the views' strip its shrinking, this one its link's), so the shared part is
+  // the helper's own answer, and the view switcher is held to it too. A second
+  // visual language invented for one row shows up as these prefixes ceasing to
+  // match.
   const activePids = (c) => {
-    const pill = activePill(c)
+    const pill = tab(true)
+    expect(activePill(c).startsWith(pill)).toBe(true)
     return c.computed().tabs.filter((t) => t.style.startsWith(pill)).map((t) => t.key)
   }
 

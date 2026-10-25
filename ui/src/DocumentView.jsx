@@ -19,13 +19,16 @@
 //              `documents` say which those are, and its right-click menu
 //              asks the page to open one (`onOpen`, with its id)
 //   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
-//              layer by layer (GerberView.jsx), with a link that downloads it
+//              layer by layer (GerberView.jsx)
 //   file       anything else a build lists — a DXF for the glass shop, a CSV
-//              of measurements, a firmware image: its name, what it is and a
-//              link that downloads it, since the page draws nothing of it
+//              of measurements, a firmware image: its name and what it is,
+//              since the page draws nothing of it; a DXF has the picture the
+//              hub drew of it (`preview`) above them
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
-// serves it under the same path below the build's directory.
+// serves it under the same path below the build's directory. None of these
+// draws a link that downloads its file: the page's bar does, for whichever is
+// open (`docHref` in `toolBar`, viewlist.jsx).
 //
 // WHAT THE PAGE'S BAR CAN DO WITH IT (`onTools`). The bar at the bottom of both
 // pages (`toolBar` in viewlist.jsx) has Fit and Frame; a view that can bring
@@ -128,16 +131,21 @@ const PICTURE = 'display:block;max-width:100%;margin:24px auto;background:var(--
 const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
 
 // A file the page does not draw, in the middle of the sheet the drawn ones use:
-// its name, what it is and the link that takes it. It may be the only document
-// of a build and so the one the page opens with, which is why it fills the area
-// rather than sitting at the top of it.
+// its name and what it is. It may be the only document of a build and so the
+// one the page opens with, which is why it fills the area rather than sitting
+// at the top of it.
 const FILE_SHEET = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;'
   + 'box-sizing:border-box;padding:24px 28px;background:var(--paper-bg)';
 const FILE_CARD = 'display:flex;flex-direction:column;align-items:center;gap:8px;max-width:100%;text-align:center';
 const FILE_NAME = `font:500 14px ${SANS};color:var(--text);word-break:break-all`;
 const FILE_WHAT = `font:400 11.5px ${MONO};color:var(--text-muted)`;
-const FILE_LINK = 'margin-top:8px;padding:7px 14px;border:1px solid var(--line);border-radius:6px;'
-  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
+// A file with a picture of it (`preview`, a DXF) stacks the picture over the
+// same card: a column whose picture takes the height the card leaves —
+// `min-height:0` lets it shrink below the drawing's own size, so a tall one
+// cannot push the card off the sheet — and is drawn whole inside it.
+const PREVIEW_SHEET = 'display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;height:100%;'
+  + 'box-sizing:border-box;padding:24px 28px;background:var(--paper-bg)';
+const PREVIEW = 'flex:1;min-height:0;width:100%;object-fit:contain';
 
 // A table cell short enough to read as one value (`495.0 × 428.5`) keeps it on
 // one line (`docmd.js` marks it). A class and not an inline style, so that the
@@ -203,20 +211,23 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
     return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady} />;
   }
   if (doc.type === GERBERS_TYPE) {
-    return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} bytes={doc.bytes} onTools={onTools}
-                       onReady={onReady} />;
+    return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady} />;
   }
   // Before the frame: a browser handed a type it does not render downloads the
   // file from inside the frame, which leaves an empty page behind and no way
   // to ask for it again.
   if (doc.type === FILE_TYPE) {
+    const card = (
+      <div style={css(FILE_CARD)}>
+        <div style={css(FILE_NAME)}>{doc.name}</div>
+        <div style={css(FILE_WHAT)}>{docHint(doc)}</div>
+      </div>
+    );
+    if (!doc.preview) return <div style={css(FILE_SHEET)}>{card}</div>;
     return (
-      <div style={css(FILE_SHEET)}>
-        <div style={css(FILE_CARD)}>
-          <div style={css(FILE_NAME)}>{doc.name}</div>
-          <div style={css(FILE_WHAT)}>{docHint(doc)}</div>
-          <a href={docUrl(base, doc)} download style={css(FILE_LINK)}>Download</a>
-        </div>
+      <div style={css(PREVIEW_SHEET)}>
+        <img src={`${base}${encodePath(doc.preview)}`} alt={doc.name} style={css(PREVIEW)} />
+        {card}
       </div>
     );
   }

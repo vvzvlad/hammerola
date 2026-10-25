@@ -9,6 +9,10 @@
 // primitive, Fit, Frame and Settings, in that order, over the model, over a
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
+// While a document is on screen, of whatever type, Download and Copy link for
+// its file stand right after the views: the one place either page offers them,
+// since most documents are drawn by a view that has no such control of ours
+// (a PDF's frame, a picture, a page of text).
 //
 // Every listed document is one row, a KiCad schematic, board and 3D model as
 // much as a PDF, except one listed `hidden`: it has no row and is still opened
@@ -20,6 +24,7 @@
 
 import React from 'react';
 
+import CopyLink from './copylink.jsx';
 import { docHint } from './DocumentView.jsx';
 import { shortId } from './hub.js';
 import {
@@ -92,7 +97,10 @@ export const DOC_HINT = `flex:none;white-space:nowrap;${FAINT_MONO}`;
 // containing block and stacking context its menus are built around, but a
 // backdrop filter over the WebGL canvas cost a third of the frame rate while
 // orbiting on a retina Mac (measured).
-export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
+// Never wider than its layer: where the controls do not fit, the view button
+// (`viewList`) or the strip of views (`TAB_STRIP`) gives up its width first,
+// the names in it cut by an ellipsis.
+export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;max-width:calc(100% - 24px);background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
 // Its layer, centred on the bottom edge, the z-index appended by the page.
 export const BAR_LAYER = 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:';
 // A document, over the whole of the page's area down to its bottom edge, under
@@ -112,10 +120,13 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
  * BUTTON: the bar carries `contain:layout` and is therefore already a
  * containing block for it, so without the wrapper the card would be measured
  * from the bar's whole box and start at its left end rather than at the button.
+ * It is also what shrinks when the bar is short of room (`FLOAT_BAR`): a shrink
+ * far above the other controls' and no minimum width, so the name is cut before
+ * any other label wraps.
  */
 export function viewList({ label, open, onToggle, views = [], documents = [] }) {
   return (
-    <div style={css(RELATIVE)}>
+    <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
         <span style={css(ELLIPSIS)}>{label}</span>
         {CHEVRON}
@@ -142,8 +153,14 @@ export function viewList({ label, open, onToggle, views = [], documents = [] }) 
  *  screen cannot do them. */
 export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
 
-/** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). */
-const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px';
+/** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). Where the
+ *  bar is short of room it is the strip that shrinks, as the view button does
+ *  (`viewList`), its pills' names cut by their ellipsis. */
+export const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shrink:100;background:var(--chip-bg);border-radius:6px';
+
+/** The open document's Download: a quiet button like Fit, on a link, its
+ *  word in its title as Copy link's is (copylink.jsx). */
+const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
 
 /**
  * The bar, as elements: the same controls in the same places on both pages
@@ -152,6 +169,11 @@ const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);bo
  * DocShell.jsx):
  *   the views    `viewMenu` (a menu rather than a strip), `viewLabel`,
  *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`;
+ *   the document `docHref`, the address the open document's file downloads
+ *                from (`docUrl` in DocumentView.jsx), or null with none open:
+ *                Download (a link that takes the file) and Copy link for it,
+ *                drawn after the views as icons, the words in their titles,
+ *                and with none open not at all;
  *   the tools    `showTools` (false on a narrow window, which keeps the views
  *                and Fit), and each tool's style and handler: `measureBtnStyle`
  *                and `tMeasure`, `commentBtnStyle` and `tComment`,
@@ -167,16 +189,27 @@ export function toolBar(b, menus = {}) {
     <div style={css(FLOAT_BAR)}>
       {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
           `VIEW_TABS_MAX`. The menu holds the build's documents under the
-          views. */}
+          views. A pill's tooltip starts with the view's whole name: a short
+          bar cuts its caption, and the strip has no menu to read it in. */}
       {b.viewMenu ? (
         viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
           views: b.viewTabs, documents: b.docRows })
       ) : (
         <div style={css(TAB_STRIP)}>
           {b.viewTabs.map((t) => (
-            <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
+            <div key={t.key} onClick={t.onClick} title={`${t.label} · ${t.hint}`} style={css(t.style)}>{t.label}</div>
           ))}
         </div>
+      )}
+      {/* The open document's file. Copy link is a sibling of the link, never
+          inside it (copylink.jsx). */}
+      {b.docHref && (
+        <>
+          <a href={b.docHref} download title="Download" style={css(DOWNLOAD_BTN)}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
+          </a>
+          <CopyLink href={b.docHref} bar />
+        </>
       )}
       {/* Everything between the views and Fit belongs to a pointer and a
           canvas with room to aim in — see `showTools`. */}
@@ -201,7 +234,9 @@ export function toolBar(b, menus = {}) {
               §3.2), so without it the card would be measured from the bar's
               whole box and start at its left end rather than at the button. */}
           <div style={css(RELATIVE)}>
-            <div onClick={b.tProposal} style={css(b.proposalBtnStyle)}>
+            {/* The one label of two words: kept on one line, so that the
+                bar short of room cuts the view's name (`viewList`) instead. */}
+            <div onClick={b.tProposal} style={css(`${b.proposalBtnStyle};white-space:nowrap`)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
               Add primitive
             </div>

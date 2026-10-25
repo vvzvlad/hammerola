@@ -20,10 +20,9 @@
 //
 // THE PANEL, over the top left corner as on the board (PcbPanel.jsx): the
 // side the board is seen from, which mirrors it and restacks the layers and
-// shows that side's layers (`shownOn`); an eye per layer; and the link that
-// downloads the zip, under the list and kept when the list is folded. Until
-// the layers are drawn, and when they cannot be, the link is under the note:
-// a zip this page cannot read is still the fab's.
+// shows that side's layers (`shownOn`), and an eye per layer. The zip itself
+// is downloaded from the page's bar, as every document is (`docHref` in
+// `toolBar`, viewlist.jsx) — whether or not this page can read it.
 //
 // THE CANVAS: a drag with the left button or a finger pans, so does a wheel
 // (the two-finger swipe of a touchpad is one), a pinch or Control and the wheel
@@ -35,8 +34,7 @@
 // included: a page has few to give.
 //
 // Props:
-//   url      the zip, fetched on mount; also what the link downloads
-//   size     its size, said beside the link
+//   url      the zip, fetched on mount
 //   bytes    its size in bytes, what the bar under `Loading…` fills to
 //            (loadbar.jsx)
 //   onTools  told `{ fit, frame }` once the layers are drawn (DocumentView.jsx)
@@ -54,7 +52,7 @@ import {
   ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY,
   LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, layerRow, SLOT_24, SWATCH, TAB_ON,
 } from './panelstyle.js';
-import { css, MONO, SANS } from './style.jsx';
+import { css, MONO } from './style.jsx';
 
 // The canvas goes into HOLDER, which React renders empty and so never touches.
 const SHELL = 'position:relative;width:100%;height:100%;overflow:hidden;background:var(--gerber-bg)';
@@ -62,12 +60,6 @@ const HOLDER = 'position:absolute;top:0;left:0;width:100%;height:100%';
 const CANVAS = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab';
 const NOTE = `position:absolute;top:0;left:0;right:0;box-sizing:border-box;padding:24px 28px;`
   + `font:400 12.5px ${MONO};color:var(--text-muted)`;
-const LINK = `flex:none;display:flex;align-items:center;gap:6px;padding:7px 10px;border-top:1px solid var(--line-soft);`
-  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
-// The same link under the note, before there is a panel to hold it.
-const LINK_ALONE = `display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:10px;`
-  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
-const LINK_SIZE = `flex:none;font:400 10.5px ${MONO};color:var(--text-muted)`;
 
 /** The sides the board is seen from, as the panel names them. */
 const SIDES = [['top', 'Top'], ['bottom', 'Bottom']];
@@ -368,28 +360,13 @@ export default class GerberView extends React.Component {
   }
 
   render() {
-    const { url, size, bytes } = this.props;
+    const { bytes } = this.props;
     const { layers, failed, shown, side, open, error, received, got } = this.state;
     const note = error || (!layers && loadBar(received, bytes, got));
-    const name = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
-    const link = (
-      <a href={url} download title={`Download ${name}`} style={css(layers ? LINK : LINK_ALONE)}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flex: 'none' }}>
-          <path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" />
-        </svg>
-        <span style={css(`${FILL};min-width:0;${ELLIPSIS}`)}>{name}</span>
-        {size && <span style={css(LINK_SIZE)}>{size}</span>}
-      </a>
-    );
     return (
       <div style={css(SHELL)}>
         <div ref={this.setHost} style={css(HOLDER)} />
-        {note && (
-          <div style={css(NOTE)}>
-            <div>{note}</div>
-            {link}
-          </div>
-        )}
+        {note && <div style={css(NOTE)}>{note}</div>}
         {layers && (
           <div data-panel="gerbers" style={css(LAYER_PANEL)}>
             <div onClick={this.toggle} title={open ? 'Hide the layers' : 'Show the layers'} style={css(LAYER_PANEL_HEAD)}>
@@ -428,7 +405,6 @@ export default class GerberView extends React.Component {
                 </div>
               </div>
             )}
-            {link}
           </div>
         )}
       </div>

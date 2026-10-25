@@ -18,7 +18,7 @@
  * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
  * come from ui/src/panelstyle.js.
  */
-import { DOC_QUERY, docViewKey } from './DocumentView.jsx';
+import { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -428,7 +428,9 @@ export function chromeView(s, props, deps) {
       key: v.id,
       label: v.name,
       hint: `${viewPartCount(v)} parts · ${mb(v.gzip)}`,
-      style: tab(s.view === v.id),
+      // Cut by an ellipsis rather than widened by its name: when the bar is
+      // short of room the strip shrinks (`TAB_STRIP` in viewlist.jsx).
+      style: `${tab(s.view === v.id)};min-width:0;${ELLIPSIS}`,
       // The menu's own row, shaped like the tree menu's items (`mi`) rather
       // than like a pill: in a column it is the highlight that says which one
       // is on, and a pill's raised card in a list reads as a stray button.
@@ -479,6 +481,10 @@ export function chromeView(s, props, deps) {
     // last lines of a page and the end of a PDF's frame stop above the
     // buttons rather than under them.
     docOpen,
+    // Its file, which the bar's Download takes and its Copy link copies
+    // (`toolBar` in viewlist.jsx), from the address DocumentView draws it
+    // from; null over the model, which leaves the bar without the two.
+    docHref: docOpen ? docUrl(PAGE.base, docOpen) : null,
     // A NEW ELEMENT FOR ANOTHER REVISION: a markdown document is fetched once,
     // when its view mounts, so a revision switch with the same document open
     // must mount a new one rather than keep the old revision's text. Within
@@ -518,7 +524,8 @@ export function chromeView(s, props, deps) {
     // A document over the model takes none of them away: the bar is the same
     // on every page and over every view (`toolBar` in viewlist.jsx). The four
     // about the model — Measure, Comment, Add primitive, Settings — are out of
-    // service under it, Fit and Frame are too unless its view can do them.
+    // service under it, Fit and Frame are too unless its view can do them. The
+    // document's Download and Copy link (`docHref`) stay on a narrow window.
     showTools: !narrow,
     // Both are out of service while the scene is a comparison's, and under a
     // document, which covers the model. That differs from `viewer`: that one

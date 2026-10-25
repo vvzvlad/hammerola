@@ -61,19 +61,31 @@ export function rowMenu(s, deps) {
   // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
   // states something rather than doing it.
   //
+  // A row with `href` is two controls side by side, the link and its Copy link
+  // at the end (copylink.jsx), which may not sit inside the `<a>`: `rowStyle`
+  // holds both and the rule above them, `style` is the link's, filling the
+  // row, and `copyStyle` pads the Copy link.
+  //
   // A 'said' row gets no handler at all, so it is inert as it looks: the click
   // stops at the menu's wrapper (which stops propagation so a press on the
   // menu's padding does not close it through `rootClick`), and the menu closes
   // on the next click outside.
-  const mi = (label, hint, fn, tone, href) => ({
-    key: label, label, hint: hint || '', href: href || '',
-    style: `display:flex;align-items:center;gap:10px;padding:7px 14px;text-decoration:none;font:400 12px ${SANS};`
-      + (tone === 'said' ? 'cursor:default;color:var(--text-faint)' : 'cursor:pointer;color:var(--text)')
-      + (tone === 'top' || tone === 'said' ? ';border-top:1px solid var(--line-soft)' : ''),
-    onClick: tone === 'said'
-      ? undefined
-      : stop(() => { fn(); setState({ menu: null }); }),
-  });
+  const mi = (label, hint, fn, tone, href) => {
+    const rule = tone === 'top' || tone === 'said' ? ';border-top:1px solid var(--line-soft)' : '';
+    return {
+      key: label, label, hint: hint || '', href: href || '',
+      style: 'display:flex;align-items:center;gap:10px;'
+        + (href ? 'flex:1;min-width:0;padding:7px 4px 7px 14px;' : 'padding:7px 14px;')
+        + `text-decoration:none;font:400 12px ${SANS};`
+        + (tone === 'said' ? 'cursor:default;color:var(--text-faint)' : 'cursor:pointer;color:var(--text)')
+        + (href ? '' : rule),
+      rowStyle: href ? `display:flex;align-items:center${rule}` : '',
+      copyStyle: href ? 'padding:7px 14px 7px 4px' : '',
+      onClick: tone === 'said'
+        ? undefined
+        : stop(() => { fn(); setState({ menu: null }); }),
+    };
+  };
 
   /**
    * What arming the manipulator on `id` says.

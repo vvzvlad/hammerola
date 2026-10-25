@@ -16,8 +16,8 @@
  * component, where the tests reach for it. `key` is `filesKeyFor`'s answer for
  * the build on screen; without one the hub refuses every part's file, so the
  * menu is not drawn at all (`dlShown`). The Gerbers' zip opens without a key
- * (a document, `app.OPEN_SUFFIXES`), and its own view links it for a reader
- * who has none (GerberView.jsx).
+ * (a document, `app.OPEN_SUFFIXES`), and a reader who has none downloads it,
+ * as every open document, from the bar (`docHref` in `toolBar`, viewlist.jsx).
  */
 import { PAGE } from './hub.js';
 import { MONO, SANS } from './style.jsx';
@@ -55,13 +55,16 @@ export function filesKeyFor(builds, slot, fromAddress) {
 export function downloadsView(catalogue, deps) {
   const { groupDownloads, downloadAll, key, documents } = deps;
 
-  const dlRowStyle = `display:flex;align-items:center;gap:10px;padding:6px 14px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
+  // A row is two controls side by side: the link, filling it, and its Copy
+  // link at the end (copylink.jsx), which may not sit inside the `<a>`.
+  const dlRowStyle = 'display:flex;align-items:center';
+  const dlLinkStyle = `display:flex;flex:1;min-width:0;align-items:center;gap:10px;padding:6px 4px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
   const downloadGroups = groupDownloads(catalogue, documents).map((g) => ({
     key: g.ext,
     ext: g.ext,
     files: g.files.map((f) => ({
       key: f.file, label: f.label, file: f.file, href: fileHref(f.file, key),
-      style: dlRowStyle,
+      rowStyle: dlRowStyle, style: dlLinkStyle, copyStyle: 'padding:6px 14px 6px 4px',
     })),
     headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`,
     allStyle: `cursor:pointer;font:500 10.5px ${MONO};color:var(--accent-text);text-decoration:underline`,

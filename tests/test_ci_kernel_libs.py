@@ -20,9 +20,11 @@ TEST_DOCKERFILE = ROOT / "ci" / "Dockerfile.test"
 
 # The shipped image's own runtime tools, on its line and deliberately not in the
 # test one: `curl` is the healthcheck's, `gosu` the entrypoint's, and nothing in
-# the suite runs either. `git` is the other way round — the test image installs it
-# for tests/test_no_conflict_markers.py, and the shipped one has no use for it.
-RUNTIME_ONLY = {"curl", "gosu"}
+# the suite runs either; `fonts-dejavu-core` is the font the picture of a DXF draws
+# its text with, and no test looks at that text. `git` is the other way round — the
+# test image installs it for tests/test_no_conflict_markers.py, and the shipped one
+# has no use for it.
+RUNTIME_ONLY = {"curl", "gosu", "fonts-dejavu-core"}
 TEST_ONLY = {"git"}
 
 # `apt-get install -y --no-install-recommends` followed by the packages, a
