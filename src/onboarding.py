@@ -256,7 +256,8 @@ def skill_version() -> int:
     if found is None:
         raise ValueError(
             f"{SKILL_FILE} names no `version:` in its frontmatter. It is one "
-            f"integer, raised by hand whenever what the skill TEACHES changes; "
+            f"integer, raised by hand whenever any file of the skill changes "
+            f"(tests/test_onboarding.py holds it); "
             f"there is no default, because a missing version would read as the "
             f"first one")
     return int(found.group(1))
