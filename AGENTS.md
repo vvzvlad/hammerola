@@ -90,6 +90,9 @@ PR, `image-check-publish.yml` на push в `main`/`develop`) запускает 
 - Python always runs inside the local `.venv`, invoked as `$(PY) -m pip` /
   `-m pytest` — never `.venv/bin/pip` or `.venv/bin/pytest`.
 - Tests are required for new code; in CI `build` depends on `test`.
+- How the UI LOOKS (a colour, a border, a button or a bare label) gets no test: it is
+  checked by eye on a screenshot. The owner: «какой … тест … на цвет кнопки? … это …
+  внешний вид».
 - An assertion that has to stay true belongs in a TEST, not in a comment: "keep X
   and Y in step" is the specification for a test.
 - Module-level mutable state (singleton, cache, registry) gets an autouse fixture

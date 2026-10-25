@@ -126,7 +126,10 @@ export function docViewKey(doc) {
 }
 
 const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--paper-bg)';
-const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55';
+// `user-select:text` because the page links three-cad-viewer.css, whose
+// `body { user-select: none }` every element inherits: without it the text of
+// a markdown document cannot be selected or copied.
+const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55;user-select:text';
 const PICTURE = 'display:block;max-width:100%;margin:24px auto;background:var(--paper-bg)';
 const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
 

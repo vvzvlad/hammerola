@@ -12,7 +12,8 @@
 //
 // An icon with the words in its title, which turns into a tick or a cross for
 // "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet button like Fit
-// and Frame, followed by the words "Copy link" when `words` is set, and
+// and Frame (on the strip `DocFile` lays a bordered button's look over it),
+// followed by the words "Copy link" when `words` is set, and
 // otherwise a 12 px icon for the end of a row. The words stay "Copy link"
 // while the icon says how the copy went: a word changing length would change
 // the width `DocFile` measures to choose between words and icons. Either is a SIBLING of the link
