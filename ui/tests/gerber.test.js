@@ -206,14 +206,14 @@ describe('the drawing of a document', () => {
   it('draws a zip of Gerbers with the view, handing it the file and its size', () => {
     const doc = { id: 'fab__board.zip', name: 'Gerbers', type: 'gerbers', file: 'fab/board.zip', bytes: 776_479 }
     const [view] = collect(documentBody(doc, '/project/p1/abc/', null, ''), (el) => (el.type === GerberView ? el : undefined))
-    expect(view.props).toEqual({ url: '/project/p1/abc/fab/board.zip', size: '776.5 kB', bytes: 776_479 })
+    expect(view.props).toEqual({ url: '/project/p1/abc/fab/board.zip', bytes: 776_479 })
   })
 })
 
 describe('the panel', () => {
   /** The view as its mount leaves it: the layers listed top down, the top shown. */
   function mounted() {
-    const view = new GerberView({ url: '/project/p1/abc/fab/dionis_speaker_gerber.zip', size: '776.5 kB' })
+    const view = new GerberView({ url: '/project/p1/abc/fab/dionis_speaker_gerber.zip' })
     view.setState = (patch) => Object.assign(view.state, typeof patch === 'function' ? patch(view.state) : patch)
     Object.assign(view.state, {
       layers: stacked(LAYERS, 'top').reverse(),
@@ -236,7 +236,7 @@ describe('the panel', () => {
     expect([name.props.style.font, row.props.style.height]).toEqual([`400 12px ${MONO}`, '24px'])
   })
 
-  it('turns the board over, toggles a layer, and links the zip', () => {
+  it('turns the board over and toggles a layer, and leaves the zip\'s download to the bar', () => {
     const view = mounted()
     expect(collect(view.render(), (el) => el.props['data-layer'])).toHaveLength(15)
     expect(control(view, 'data-side', 'top').props.style.background).toBe('var(--card-bg)')
@@ -252,10 +252,8 @@ describe('the panel', () => {
     }
     expect(on(view)).toEqual(['PTH', 'NPTH', 'In1.Cu', 'B.Cu', 'B.Mask', 'B.Silkscreen'])
 
-    const [link] = collect(view.render(), (el) => (el.type === 'a' ? el : undefined))
-    expect([link.props.href, link.props.download]).toEqual(['/project/p1/abc/fab/dionis_speaker_gerber.zip', true])
-    expect(texts(link)).toEqual(['dionis_speaker_gerber.zip', '776.5 kB'])
-    expect(collect(view.render(), (el) => (el.type === CopyLink ? el.props.href : undefined))).toEqual([link.props.href])
+    expect([links(view.render()), collect(view.render(), (el) => (el.type === CopyLink ? el : undefined))])
+      .toEqual([[], []])
   })
 })
 
@@ -319,7 +317,7 @@ describe('the view on the page', () => {
 
   /** The view mounted on a holder WIDE x TALL. */
   function opened() {
-    const view = new GerberView({ url: ZIP_URL, size: '776.5 kB', bytes: 776_500, onTools: vi.fn(), onReady: vi.fn() })
+    const view = new GerberView({ url: ZIP_URL, bytes: 776_500, onTools: vi.fn(), onReady: vi.fn() })
     view.setState = (patch) => Object.assign(view.state, typeof patch === 'function' ? patch(view.state) : patch)
     const host = document.createElement('div')
     Object.defineProperty(host, 'clientWidth', { value: WIDE })
@@ -401,12 +399,9 @@ describe('the view on the page', () => {
     }
   })
 
-  it('says why a zip did not load, or holds nothing to draw, and links it all the same', async () => {
+  it('says why a zip did not load, or holds nothing to draw', async () => {
     const answer = fetching()
     const missing = opened()
-    const link = (view) => links(view.render()).map((a) => [a.props.href, a.props.download])
-    // While the zip loads there is no panel, and the link is under the note.
-    expect(link(missing.view)).toEqual([[ZIP_URL, true]])
     answer(null)
     await settle()
     expect(missing.view.state.error).toBe('The Gerbers did not load: HTTP 404')
@@ -418,7 +413,6 @@ describe('the view on the page', () => {
 
     for (const { view } of [missing, empty]) {
       expect(texts(view.render())).toContain(view.state.error)
-      expect(link(view)).toEqual([[ZIP_URL, true]])
       // a page holding its model back for the zip hears of it, in or not
       expect(view.props.onReady).toHaveBeenCalledTimes(1)
     }

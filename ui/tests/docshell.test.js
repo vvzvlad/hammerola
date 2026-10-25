@@ -215,29 +215,23 @@ describe('one document, as both pages draw it', () => {
     }
   })
 
-  it('hands over a file it cannot draw rather than putting it in a frame', () => {
+  it('names a file it cannot draw rather than putting it in a frame, and leaves its download to the bar', () => {
     // A frame fed a type the browser does not render downloads it from inside
     // itself and leaves an empty page with no way to ask again.
     const tree = documentBody(cutPlan, BASE, null, '')
     expect(ofType(tree, 'iframe')).toEqual([])
-    const [link] = ofType(tree, 'a')
-    expect(link.props.href).toBe(`${BASE}cut/glass.dxf`)
-    expect(link.props.download).toBe(true)
-    // Copy link beside it, a text button drawn like it, for the same address.
-    expect(ofType(tree, CopyLink).map((c) => [c.props.href, c.props.button]))
-      .toEqual([[link.props.href, true]])
+    expect([ofType(tree, 'a'), ofType(tree, CopyLink)]).toEqual([[], []])
     expect(text(tree)).toContain('Glass, cut list')
     expect(text(tree)).toContain('dxf · 12.4 kB')
     expect(ofType(tree, 'img')).toEqual([])
   })
 
-  it('shows the picture the hub drew of a DXF above the link that takes it', () => {
+  it('shows the picture the hub drew of a DXF above its name', () => {
     const tree = documentBody({ ...cutPlan, preview: 'cut/glass.dxf.svg' }, BASE, null, '')
     const [img] = ofType(tree, 'img')
     expect(img.props.src).toBe(`${BASE}cut/glass.dxf.svg`)
     expect(img.props.alt).toBe('Glass, cut list')
-    const [link] = ofType(tree, 'a')
-    expect([link.props.href, link.props.download]).toEqual([`${BASE}cut/glass.dxf`, true])
+    expect(text(tree)).toContain('Glass, cut list')
   })
 
   it('labels a document with its type and size', () => {
@@ -370,6 +364,26 @@ describe('the page of a build with no model', () => {
     // Comment and Add primitive are hidden from a reader without a token, as on the model's page
     expect([bar({ viewer: true }).commentBtnStyle, bar({ viewer: true }).proposalBtnStyle].map((st) => css(st).display))
       .toEqual(['none', 'none'])
+  })
+
+  it('downloads the open document from the bar, right after the list, and copies its link; icons alone when narrow', () => {
+    const href = `${BASE}report.pdf`
+    const drawn = (extra) => {
+      const tree = page('report.pdf', extra)
+      return {
+        words: texts(tree),
+        downloads: ofType(tree, 'a').filter((a) => a.props.download).map((a) => [a.props.href, a.props.title]),
+        copies: ofType(tree, CopyLink).map((c) => [c.props.href, c.props.bar, c.props.narrow]),
+      }
+    }
+    const wide = drawn({})
+    expect([wide.downloads, wide.copies]).toEqual([[[href, undefined]], [[href, true, false]]])
+    // after the list's last row, before the first tool
+    const at = wide.words.indexOf('Download')
+    expect(wide.words.slice(at - 2, at + 2)).toEqual(['page.html', docHint(META.documents[3]), 'Download', 'Measure'])
+    const narrow = drawn({ narrow: true })
+    expect(narrow.words).not.toContain('Download')
+    expect([narrow.downloads, narrow.copies]).toEqual([[[href, 'Download']], [[href, true, true]]])
   })
 
   it('gives a schematic and a board a row each by their titles, and a hidden document none', () => {

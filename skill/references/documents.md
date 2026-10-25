@@ -22,11 +22,11 @@ unlisted is. Its EXTENSION decides only how the page shows it: a `.md`, `.pdf`,
 `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.html`, `.htm`, `.svg`, `.kicad_sch`,
 `.kicad_pcb`, `.glb` or `.zip` is drawn; a file of any other extension — a DXF
 for the glass shop, a supplier's STEP, a CSV of measurements, a firmware image —
-keeps its row in the menu and hands the file over instead of drawing it, and a
+keeps its row in the menu and shows its name, extension and size instead of
+drawing it, and a
 model's build page also offers it in Downloads under its extension (DXF, CSV),
 beside the STL. A `.dxf` is that kind of file too, with one addition: the hub
-draws a picture of it at publish time and the page shows that picture above the
-Download button. The picture is published as `<path>.svg` (`cut/glass.dxf.svg`),
+draws a picture of it at publish time and the page shows that picture. The picture is published as `<path>.svg` (`cut/glass.dxf.svg`),
 so nothing else may be listed at that path; a DXF the hub cannot read, or one
 with nothing drawn in it, refuses the push with a 422 naming it, and
 `"download": true` on its entry publishes it with no picture. The build page lists them in its view menu, after
@@ -43,7 +43,8 @@ neighbouring document with a link rather than in backticks; a picture it shows m
 the build, because an image from another site is not loaded (the page allows
 `img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
 the link without a key, whatever its extension — that is how a revision is sent to
-a workshop as the complete set.
+a workshop as the complete set. Whatever document is open, the bar at the bottom of
+the page has Download and Copy link for its file.
 A path that is not a file, is listed twice or would
 overwrite what the model's build wrote refuses the push with a 422 naming it.
 

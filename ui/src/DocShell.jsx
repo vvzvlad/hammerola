@@ -24,7 +24,7 @@
 
 import React from 'react';
 
-import DocumentView, { DOC_QUERY, docViewKey } from './DocumentView.jsx';
+import DocumentView, { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
 import { PAGE, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { readToken } from './store.js';
@@ -63,17 +63,20 @@ const BAR = `${BAR_LAYER}18`;
 
 /**
  * What this page's bar draws (`toolBar` in viewlist.jsx): the model's page's
- * bar, the same controls in the same places. The four about a model are out of
+ * bar, the same controls in the same places. Download and Copy link for the
+ * open document's file (`docHref`, served under `base`) stand after the list,
+ * as they do over a document there. The four about a model are out of
  * service, as they are over a document there, and Comment and Add primitive
  * are hidden from a reader without a token (`viewer`), as they are there; Fit
  * and Frame act on the document when its view can do them (`tools`, `onTools`
  * in DocumentView.jsx) and are out of service when it cannot. A narrow window
- * keeps the list and Fit. Pure.
+ * keeps the list, the document's two as icons, and Fit. Pure.
  */
-export function docBar({ meta, doc, onPick, viewsOpen, onToggle, narrow, viewer, tools }) {
+export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }) {
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
     viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick),
+    docHref: docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),
     commentBtnStyle: btn(false, viewer, true),
@@ -119,7 +122,7 @@ export function DocPage({
                         onTools={onTools} />
         </div>
         <div style={css(BAR)}>
-          {toolBar(docBar({ meta, doc, onPick, viewsOpen, onToggle, narrow, viewer, tools }))}
+          {toolBar(docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }))}
         </div>
       </div>
     </div>

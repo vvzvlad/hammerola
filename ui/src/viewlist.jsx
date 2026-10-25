@@ -9,6 +9,10 @@
 // primitive, Fit, Frame and Settings, in that order, over the model, over a
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
+// While a document is on screen, of whatever type, Download and Copy link for
+// its file stand right after the views: the one place either page offers them,
+// since most documents are drawn by a view that has no such control of ours
+// (a PDF's frame, a picture, a page of text).
 //
 // Every listed document is one row, a KiCad schematic, board and 3D model as
 // much as a PDF, except one listed `hidden`: it has no row and is still opened
@@ -20,6 +24,7 @@
 
 import React from 'react';
 
+import CopyLink from './copylink.jsx';
 import { docHint } from './DocumentView.jsx';
 import { shortId } from './hub.js';
 import {
@@ -145,6 +150,9 @@ export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
 /** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). */
 const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px';
 
+/** The open document's Download: a quiet button like Fit, on a link. */
+const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
+
 /**
  * The bar, as elements: the same controls in the same places on both pages
  * and over every view. `b` holds the values — the model's page computes them
@@ -152,6 +160,11 @@ const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);bo
  * DocShell.jsx):
  *   the views    `viewMenu` (a menu rather than a strip), `viewLabel`,
  *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`;
+ *   the document `docHref`, the address the open document's file downloads
+ *                from (`docUrl` in DocumentView.jsx), or null with none open:
+ *                Download (a link that takes the file) and Copy link for it,
+ *                drawn after the views, and with none open not at all; icons
+ *                alone, the words in their titles, where `showTools` is false;
  *   the tools    `showTools` (false on a narrow window, which keeps the views
  *                and Fit), and each tool's style and handler: `measureBtnStyle`
  *                and `tMeasure`, `commentBtnStyle` and `tComment`,
@@ -177,6 +190,17 @@ export function toolBar(b, menus = {}) {
             <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
           ))}
         </div>
+      )}
+      {/* The open document's file. Copy link is a sibling of the link, never
+          inside it (copylink.jsx). */}
+      {b.docHref && (
+        <>
+          <a href={b.docHref} download title={b.showTools ? undefined : 'Download'} style={css(DOWNLOAD_BTN)}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
+            {b.showTools && 'Download'}
+          </a>
+          <CopyLink href={b.docHref} bar narrow={!b.showTools} />
+        </>
       )}
       {/* Everything between the views and Fit belongs to a pointer and a
           canvas with room to aim in — see `showTools`. */}

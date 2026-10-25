@@ -24,14 +24,15 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
   loadBuilds: vi.fn(),
 }))
 
+import CopyLink from '../src/copylink.jsx'
 import DocumentView from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
 import { STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
-import { viewMenuStyle } from '../src/viewlist.jsx'
+import { toolBar, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
-import { collect, texts } from './eltree.js'
+import { collect, links, texts } from './eltree.js'
 
 const DOCS = [
   { id: 'docs__cut-list.md', name: 'docs/cut-list.md', type: 'markdown',
@@ -148,6 +149,19 @@ describe('the documents in the list of views', () => {
     const tree = collect(c.render(), (el) => (
       el.props.style && el.props.style.zIndex === '10' ? el : undefined))
     expect(tree.map((el) => el.props.style.display)).toEqual(['none'])
+  })
+
+  it('put the open one\'s Download and Copy link in the bar, and over the model neither', () => {
+    // The bar as the page draws it (`toolBar(v, …)`), without the header's
+    // Downloads menu and its own Copy links.
+    const bar = (state) => {
+      const tree = toolBar(component(state).computed())
+      return [links(tree).filter((a) => a.props.download).map((a) => a.props.href),
+        collect(tree, (el) => (el.type === CopyLink ? el.props.href : undefined))]
+    }
+    const href = `${PAGE.base}ref/terr-raspil.svg`
+    expect(bar({ doc: 'ref__terr-raspil.svg' })).toEqual([[href], [href]])
+    expect(bar({})).toEqual([[], []])
   })
 
   it('drive Fit and Frame through the view of a document that can, and save the frame named after the build', async () => {

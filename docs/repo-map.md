@@ -383,8 +383,9 @@
   which document is open, what the open view can do with Fit and Frame
   (`docBar`, `onTools`) and whether the window is narrow
 - `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
-  views in it: `toolBar` (the views, Measure, Comment, Add primitive, Fit,
-  Frame, Settings, a tool that does not apply drawn out of service), the button
+  views in it: `toolBar` (the views, then Download and Copy link of the open
+  document, then Measure, Comment, Add primitive, Fit, Frame, Settings, a tool
+  that does not apply drawn out of service), the button
   and the card it opens upwards with the views and then the documents
   (`documentRows`: a row each but for a hidden one), the styles of the bar, the
   card and the document's layer, and `savePng` (Frame's file).
@@ -396,8 +397,8 @@
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
-  and size, and a link that downloads it, under the picture of a DXF when the
-  entry carries `preview`. DocShell draws it
+  and size, under the picture of a DXF when the entry carries `preview`; every
+  document is downloaded from the bar (`toolBar`). DocShell draws it
   under its list; the model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
@@ -440,8 +441,8 @@
   `wasm-gerber-renderer` (`static/_v/wasm_gerber_processor.js` and its `.wasm`,
   `static/_v/PROVENANCE.md`) by URL on first use; `GerberView.jsx` draws the layers
   on a canvas through its `GerberProcessor`, with pan, zoom, a layer panel at
-  the top left (Top/Bottom, an eye per layer) and a link that downloads the zip.
-  The model page's Downloads menu lists the same zip as GERBERS
+  the top left (Top/Bottom, an eye per layer); the zip is downloaded from the
+  bar, as every document is. The model page's Downloads menu lists the same zip as GERBERS
   (`downloadsview.js`)
 - `ui/src/loadbar.jsx` — what the document views (the 3D board, a KiCad
   design's 2D views, the Gerbers, markdown) show while their file comes in:
