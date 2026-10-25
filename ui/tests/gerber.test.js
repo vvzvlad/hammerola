@@ -205,7 +205,7 @@ describe('the drawing of a document', () => {
   it('draws a zip of Gerbers with the view, handing it the file and its size', () => {
     const doc = { id: 'fab__board.zip', name: 'Gerbers', type: 'gerbers', file: 'fab/board.zip', bytes: 776_479 }
     const [view] = collect(documentBody(doc, '/project/p1/abc/', null, ''), (el) => (el.type === GerberView ? el : undefined))
-    expect(view.props).toEqual({ url: '/project/p1/abc/fab/board.zip', size: '776.5 kB' })
+    expect(view.props).toEqual({ url: '/project/p1/abc/fab/board.zip', size: '776.5 kB', bytes: 776_479 })
   })
 })
 
@@ -310,16 +310,14 @@ describe('the view on the page', () => {
   function fetching() {
     const calls = []
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => {
-      calls.push((zip) => resolve(zip
-        ? { ok: true, status: 200, arrayBuffer: async () => zip.buffer }
-        : { ok: false, status: 404 }))
+      calls.push((zip) => resolve(zip ? new Response(zip) : new Response(null, { status: 404 })))
     })))
     return (zip) => calls.shift()(zip)
   }
 
   /** The view mounted on a holder WIDE x TALL. */
   function opened() {
-    const view = new GerberView({ url: ZIP_URL, size: '776.5 kB', onTools: vi.fn() })
+    const view = new GerberView({ url: ZIP_URL, size: '776.5 kB', bytes: 776_500, onTools: vi.fn(), onReady: vi.fn() })
     view.setState = (patch) => Object.assign(view.state, typeof patch === 'function' ? patch(view.state) : patch)
     const host = document.createElement('div')
     Object.defineProperty(host, 'clientWidth', { value: WIDE })
@@ -335,9 +333,13 @@ describe('the view on the page', () => {
     view.setHost(null)
   }
 
-  /** The fetch, the zip and the renderer all through. */
+  /** The fetch, the frame that paints its full bar, the zip and the renderer
+   *  all through. */
   const settle = async () => {
-    for (let turn = 0; turn < 4; turn += 1) await drained()
+    for (let turn = 0; turn < 4; turn += 1) {
+      await drained()
+      runFrames()
+    }
   }
 
   /** The view with the board's zip drawn once. */
@@ -415,6 +417,8 @@ describe('the view on the page', () => {
     for (const { view } of [missing, empty]) {
       expect(texts(view.render())).toContain(view.state.error)
       expect(link(view)).toEqual([[ZIP_URL, true]])
+      // a page holding its model back for the zip hears of it, in or not
+      expect(view.props.onReady).toHaveBeenCalledTimes(1)
     }
     expect(processors).toEqual([])
   })

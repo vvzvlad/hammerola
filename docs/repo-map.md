@@ -436,6 +436,12 @@
   the top left (Top/Bottom, an eye per layer) and a link that downloads the zip.
   The model page's Downloads menu lists the same zip as GERBERS
   (`downloadsview.js`)
+- `ui/src/loadbar.jsx` — what the document views (the 3D board, a KiCad
+  design's 2D views, the Gerbers, markdown) show while their file comes in:
+  `fetchBody` reads the answer chunk by chunk and counts each one on a `meter`,
+  which reaches the screen at most once per frame, and `loadBar` is the label
+  (`Loading… 2.1 / 40.7 MB`, then `Preparing…`) and the bar, filled against the
+  document's `bytes` in meta.json
 - `ui/src/PcbPanel.jsx` — the board view's own panel over the top left of its
   canvas, where the model's parts tree stands (the viewer's panels are hidden by
   `hide-chrome`): layer presets, a row per layer with an eye and an

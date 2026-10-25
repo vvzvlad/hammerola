@@ -20,9 +20,12 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
+// The viewer's module, imported by its address on the hub: a module of nothing
+// here, the elements below carrying what it would define.
+vi.mock('/_v/ecad-viewer.js', () => ({}))
 
 import BoardView3D from '../src/BoardView3D.jsx'
 import DocumentView, { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
@@ -65,7 +68,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
     view.props = { ...before, doc: documents.find((one) => one.id === id) }
     view.componentDidUpdate(before)
   })
-  const view = new KicadView({ doc, documents, base: BASE, onOpen, onTools: vi.fn() })
+  const view = new KicadView({ doc, documents, base: BASE, onOpen, onTools: vi.fn(), onReady: vi.fn() })
   view.setState = (patch, done) => {
     Object.assign(view.state, patch)
     if (done) done()
@@ -77,6 +80,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.requestCrossProbe = vi.fn(() => true)
       element.setActive = vi.fn()
       element.clearSelection = vi.fn()
+      element.replaceSources = vi.fn(async () => {})
     }
     // The canvas the viewer draws on: a click reports what is under the
     // pointer, after the move that put it there. `picks` is what it was handed,
@@ -234,6 +238,81 @@ describe('a KiCad design', () => {
       + ' (symbol (lib_id "Device:R") (uuid "r1")))'
     const handed = designSources(members, { ...Object.fromEntries(designFiles(members).map((f) => [f, f])), 'hw/sub/power.kicad_sch': bare })
     expect(handed[SCH][2].content).toMatch(/\(lib_id "Device:R"\) \(uuid "r1"\) \(pin "1" \(uuid "[0-9a-f-]{36}"\)\)\)\)$/)
+  })
+})
+
+describe('what is on screen downloads first', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const FILES = designFiles(designMembers(DOCS, DOCS[0])).map((file) => `${BASE}${file}`)
+  const asked = () => fetch.mock.calls.map(([url]) => url)
+
+  it('opened on the 3D view, fetches the 2D files once the board\'s model is in or failed, and tells the page then', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view } = mounted(DOCS[2])
+    view.componentDidMount()
+    expect(asked()).toEqual([])
+    view3d(view).three.props.onFetched()
+    expect(view.props.onReady).toHaveBeenCalledTimes(1)
+    expect(asked()).toEqual(FILES)
+    await vi.waitFor(() => expect(view.state.got).toBe(true))
+    expect(view.props.onReady).toHaveBeenCalledTimes(1)
+    view.componentWillUnmount()
+  })
+
+  it('opened on the schematic or the board, fetches them at once and tells the page when they are in', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view } = mounted(DOCS[1])
+    view.componentDidMount()
+    expect(asked()).toEqual(FILES)
+    expect(view.props.onReady).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(view.props.onReady).toHaveBeenCalledTimes(1))
+    view.componentWillUnmount()
+  })
+
+  it('opened on the 3D view and moved to the schematic before the model is in, fetches its files then, once', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view } = mounted(DOCS[2])
+    view.componentDidMount()
+    view.props.onOpen(DOCS[0].id)
+    expect(asked()).toEqual(FILES)
+    view3d(view).three.props.onFetched()
+    expect(asked()).toEqual(FILES)
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    expect(view.props.onReady).toHaveBeenCalledTimes(1)
+    view.componentWillUnmount()
+  })
+
+  it('selects in the drawn views, once they have their files, a part picked in the 3D view while they had none', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view, elements } = mounted(DOCS[2])
+    view.componentDidMount()
+    view3d(view).three.props.onSelect('C1')
+    // asked of viewers with nothing in them yet, which find nothing
+    for (const context of [SCH, PCB]) elements[context].requestCrossProbe.mockClear()
+    view3d(view).three.props.onFetched()
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    expect(elements[SCH].requestCrossProbe.mock.calls).toEqual([[designator(SCH, 'C1')]])
+    expect(elements[PCB].requestCrossProbe.mock.calls).toEqual([[designator(PCB, 'C1')]])
+    view.componentWillUnmount()
+  })
+
+  it('keeps `Show in …` from the 3D view for the schematic until it has its files', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view, elements } = mounted(DOCS[2])
+    view.componentDidMount()
+    // a right click in the 3D view selects the part, then opens its menu
+    view3d(view).three.props.onSelect('C1')
+    view3d(view).three.props.onMenu('C1', 100, 100)
+    elements[SCH].requestCrossProbe.mockClear()
+    itemsOf(view).find((item) => item.props['data-show'] === SCH).props.onClick()
+    expect(view.props.doc).toBe(DOCS[0])
+    expect(elements[SCH].requestCrossProbe).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    // React's update after the state that says so: the selection carried over,
+    // then the probe handed
+    view.componentDidUpdate(view.props)
+    expect(elements[SCH].requestCrossProbe.mock.calls).toEqual([[designator(SCH, 'C1')], [designator(SCH, 'C1')]])
+    view.componentWillUnmount()
   })
 })
 
@@ -421,6 +500,8 @@ describe('the right-click menu', () => {
 
   it('an item opens its member and selects the same part or net there, once the page hands it down', () => {
     const { view, elements } = mounted()
+    // drawn: the viewers have their files
+    view.setState({ ready: true })
     elements[SCH].under = C523
     rightClick(elements[SCH], 300, 250)
     // the page answers later: nothing more is asked of the board until it does

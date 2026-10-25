@@ -20,6 +20,15 @@
 // `Sheetfile` resolves against them as KiCad resolves it. A schematic is handed
 // over with the pin entries the viewer needs to draw pins (kicadpins.js).
 //
+// WHAT IS ON SCREEN DOWNLOADS FIRST. Opened on the 3D view, the design fetches
+// the schematic's and the board's files only once the board's `.glb` has come
+// in or failed to (`onFetched3D`), or the reader has moved to one of them, so
+// the two do not share the line; the page is told the view on screen has its
+// file(s) through `onReady` (DocumentView.jsx). While those files come in, the
+// 2D views' note is the bar of loadbar.jsx, filled to the schematic's and the
+// board's `bytes`, and a part selected in the 3D view, or asked for by `Show
+// in …`, is selected in them once they are drawn.
+//
 // EVERY MEMBER'S VIEW STAYS MOUNTED. The ones not on screen are hidden with
 // `visibility`, not `display`, so each keeps its size, its camera and its
 // selection, and is told it is inactive (`setActive`, `active`), which stops its
@@ -98,6 +107,7 @@ import BoardView3D from './BoardView3D.jsx';
 import DocumentView from './DocumentView.jsx';
 import { addPinEntries } from './kicadpins.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
+import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
 import { css, MONO, SANS } from './style.jsx';
@@ -326,9 +336,11 @@ export default class KicadView extends React.Component {
     // menu open (`menuFor`, with the view it is of and its box), `hover` the
     // index of the item under the pointer. `sheet`: the datasheet's window open,
     // `{ doc, from }` with the view it was opened over. `tools3d`: what the 3D
-    // view told the bar it can do, or null.
+    // view told the bar it can do, or null. `received`: the bytes of the 2D
+    // views' files in so far; `got`: all of them, the viewers being handed them.
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1, sheet: null, tools3d: null,
+      received: 0, got: false,
     };
     // What the bar can do with a drawn view on screen, one object for both, and
     // the last thing the page was told (`report`).
@@ -354,6 +366,16 @@ export default class KicadView extends React.Component {
     };
     this.setMenu = (node) => {
       this.menuNode = node;
+    };
+    // Set while the design's files wait for the board's model: opened on the
+    // 3D view, the `.glb` in or failed tells the page and lets them go, unless
+    // the reader moved to the schematic or the board first (`componentDidUpdate`).
+    this.after3D = false;
+    this.onFetched3D = () => {
+      if (!this.after3D) return;
+      this.after3D = false;
+      this.props.onReady();
+      this.fetchDesign(false);
     };
     this.onSelect3D = (designator) => this.select(BOARD3D, designator);
     this.onMenu3D = (designator, x, y) => this.openMenu(BOARD3D, { reference: designator }, x, y);
@@ -568,21 +590,38 @@ export default class KicadView extends React.Component {
   componentDidMount() {
     this.listen(true);
     this.report();
+    if (!drawnViews(this.members()).length) this.setState({ ready: true });
+    if (this.side() === BOARD3D) this.after3D = true;
+    else this.fetchDesign(true);
+  }
+
+  /** The 2D views' files fetched and handed to their elements; the page told
+   *  once they are in or one failed when `tell` is set — when they are what
+   *  is on screen. */
+  fetchDesign(tell) {
     const { base } = this.props;
     const members = this.members();
     const views = drawnViews(members);
-    if (!views.length) {
-      this.setState({ ready: true });
-      return;
-    }
+    if (!views.length) return;
     const files = designFiles(members);
-    const fetched = files.map((file) => fetch(fileUrl(base, file))
-      .then((response) => {
-        if (!response.ok) throw new Error(`${file} did not load: HTTP ${response.status}`);
-        return response.text();
-      }));
-    Promise.all([loadEcadViewer(), ...fetched])
-      .then(([, ...texts]) => {
+    const count = meter((received) => {
+      if (!this._gone) this.setState({ received });
+    });
+    const arrived = Promise.all(files.map((file) => fetchBody(fileUrl(base, file), count, true)
+      .catch((error) => {
+        throw new Error(`${file} did not load: ${error.message}`);
+      })));
+    arrived.then(() => {
+      if (this._gone) return;
+      this.setState({ got: true });
+      if (tell) this.props.onReady();
+    }, () => {
+      if (!this._gone && tell) this.props.onReady();
+    });
+    // The full bar is painted before the files are read and handed over.
+    Promise.all([loadEcadViewer(), arrived])
+      .then(([, texts]) => painted().then(() => texts))
+      .then((texts) => {
         if (this._gone) return undefined;
         const byPath = Object.fromEntries(files.map((file, i) => [file, texts[i]]));
         const sources = designSources(members, byPath);
@@ -594,7 +633,9 @@ export default class KicadView extends React.Component {
         return loaded;
       })
       .then(() => {
-        if (!this._gone) this.setState({ ready: true });
+        // A part selected in the 3D view while the files came in is selected
+        // in the viewers now: they had nothing to select it in then.
+        if (!this._gone) this.setState({ ready: true }, () => this.select(BOARD3D, this.state.selected));
       }, (error) => {
         if (!this._gone) this.setState({ error: error.message || String(error) });
       });
@@ -606,8 +647,16 @@ export default class KicadView extends React.Component {
     // The menu and the datasheet's window go with their view off the screen.
     if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
     if (this.state.sheet && this.state.sheet.from !== this.side()) this.closeSheet();
+    // Opened on the 3D view and moved off it before the `.glb` came in: the
+    // files of the view now on screen wait for nothing.
+    if (this.after3D && this.side() !== BOARD3D) {
+      this.after3D = false;
+      this.fetchDesign(true);
+    }
+    // Handed over once the viewer has its files: an empty one finds nothing
+    // and the probe would be spent on it.
     const { probe } = this;
-    if (probe && probe.to === this.side()) {
+    if (probe && probe.to === this.side() && this.state.ready) {
       this.probe = null;
       const target = this.elements[probe.to];
       if (target && typeof target.requestCrossProbe === 'function') target.requestCrossProbe(probe.request);
@@ -630,9 +679,10 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, menu, hover, sheet } = this.state;
+    const { ready, error, selected, menu, hover, sheet, received, got } = this.state;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
-    const note = side !== BOARD3D && (error || (!ready && 'Loading…'));
+    const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
+    const note = side !== BOARD3D && (error || (!ready && loadBar(received, total, got)));
     const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
     const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
     return (
@@ -645,8 +695,9 @@ export default class KicadView extends React.Component {
         {ready && !error && members[PCB] && <PcbPanel element={this.elements[PCB]} active={side === PCB} />}
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
-            <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}
-                         onSelect={this.onSelect3D} onMenu={this.onMenu3D} onTools={this.onTools3D} />
+            <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={side === BOARD3D}
+                         selected={selected} onSelect={this.onSelect3D} onMenu={this.onMenu3D}
+                         onTools={this.onTools3D} onFetched={this.onFetched3D} />
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}

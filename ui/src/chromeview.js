@@ -438,8 +438,16 @@ export function chromeView(s, props, deps) {
       // without touching a thing when the view asked for is the one already
       // on screen, and a menu left standing open on the row you just pressed
       // is a control that ignored you. And puts the model back: a view chosen
-      // while a document is open is a request to see the model.
-      onClick: () => { setState({ doc: null }); showView(v.id); setState({ viewsOpen: false }); },
+      // while a document is open is a request to see the model. On the view
+      // already on screen, through `set`: `showView` sends nothing then, and
+      // the model the document held back (`sync`) is let go here. On another,
+      // `showView` sends it, and a second `hmr:state` before the model is
+      // drawn would start its load again.
+      onClick: () => {
+        (s.view === v.id ? set : setState)({ doc: null });
+        showView(v.id);
+        setState({ viewsOpen: false });
+      },
     })),
     // The documents below the views (viewlist.jsx): a row each but for a
     // hidden one. Choosing one lays it over the model (`docOpen`), which stays

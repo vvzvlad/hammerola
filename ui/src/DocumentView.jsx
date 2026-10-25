@@ -39,6 +39,14 @@
 // document drawn where no bar is — the datasheet's window in KicadView.jsx —
 // tells nobody.
 //
+// WHEN IT HAS ITS FILE (`onReady`), the page is told: a markdown text in,
+// a picture or a frame loaded, a KiCad design's files for the view on screen
+// in (KicadView.jsx), a zip of Gerbers in; a failure tells it too, and a file
+// the page does not draw tells it at once. A model's page opened on this
+// document (`?d=`) holds the model back until then, so the two do not share
+// the line (HammerolaViewer.jsx, `sync`). While a file comes in, its view
+// draws the bar of loadbar.jsx.
+//
 // The parent keys this by `docViewKey`, so another document is another
 // instance and a fetch still running for the last one lands nowhere — except
 // another member of the same KiCad design, which keeps the instance and its
@@ -53,6 +61,7 @@ import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
 import { mb } from './hub.js';
 import KicadView, { designKey, viewOf } from './KicadView.jsx';
+import { fetchBody, loadBar, meter } from './loadbar.jsx';
 import { css, MONO, SANS } from './style.jsx';
 
 /** The query key that names a document in a build's address, on both pages:
@@ -173,12 +182,13 @@ export function docLinks(base, documents, onOpen) {
 /** One document as elements, from what its holder knows: `documents` (the
  *  build's) and `onOpen` (the page's door for opening one by id) are for a
  *  member of a KiCad design and for a markdown link to another document,
- *  `onTools` for a view the bar can drive. Pure but for that link's address,
- *  which is the page's current one (`docLinks`). */
-export function documentBody(doc, base, text, error, documents, onOpen, onTools) {
+ *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
+ *  the file, `received` the bytes of a markdown text in so far. Pure but for
+ *  that link's address, which is the page's current one (`docLinks`). */
+export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
-    if (text === null) return <div style={css(NOTE)}>Loading…</div>;
+    if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
     return (
       <article style={css(ARTICLE)}>
         <style>{DOC_CSS}</style>
@@ -187,10 +197,15 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools)
     );
   }
   if (doc.type === 'image') {
-    return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} />;
+    return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} onLoad={onReady} onError={onReady} />;
   }
-  if (viewOf(doc)) return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} />;
-  if (doc.type === GERBERS_TYPE) return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} onTools={onTools} />;
+  if (viewOf(doc)) {
+    return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady} />;
+  }
+  if (doc.type === GERBERS_TYPE) {
+    return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} bytes={doc.bytes} onTools={onTools}
+                       onReady={onReady} />;
+  }
   // Before the frame: a browser handed a type it does not render downloads the
   // file from inside the frame, which leaves an empty page behind and no way
   // to ask for it again.
@@ -205,30 +220,34 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools)
       </div>
     );
   }
-  return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
+  return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} onLoad={onReady} />;
 }
 
 /** One document, holding the text of a markdown one while it is fetched. */
 export default class DocumentView extends React.Component {
-  static defaultProps = { onTools: () => {} };
+  static defaultProps = { onTools: () => {}, onReady: () => {} };
 
   constructor(props) {
     super(props);
-    this.state = { text: null, error: '' };
+    this.state = { text: null, error: '', received: 0 };
   }
 
   componentDidMount() {
     const { doc, base } = this.props;
+    if (doc.type === FILE_TYPE) this.props.onReady();
     if (doc.type !== 'markdown') return;
-    fetch(docUrl(base, doc))
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      })
+    const count = meter((received) => {
+      if (!this._gone) this.setState({ received });
+    });
+    fetchBody(docUrl(base, doc), count, true)
       .then((text) => {
-        if (!this._gone) this.setState({ text });
+        if (this._gone) return;
+        this.setState({ text });
+        this.props.onReady();
       }, (error) => {
-        if (!this._gone) this.setState({ error: `${doc.file} did not load: ${error.message}` });
+        if (this._gone) return;
+        this.setState({ error: `${doc.file} did not load: ${error.message}` });
+        this.props.onReady();
       });
   }
 
@@ -238,7 +257,8 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools } = this.props;
-    return documentBody(doc, base, this.state.text, this.state.error, documents, onOpen, onTools);
+    const { doc, base, documents, onOpen, onTools, onReady } = this.props;
+    const { text, error, received } = this.state;
+    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received);
   }
 }
