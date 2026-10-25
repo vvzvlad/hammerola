@@ -498,12 +498,20 @@ describe('what a handle promises the rest of the scene', () => {
     // part it is a handle for — and WHICH of the four bands it takes is the
     // caller's to say, because being drawn over the others is a fact about the
     // set of widgets rather than about this scaffolding.
+    //
+    // The comment arrows are the one band BELOW 1000: they are depth-tested
+    // objects of the model, and from 1000 up the library's depth peeling draws
+    // them in its overlay pass, over the composited glass at full strength
+    // (`OVERLAY_RENDER_ORDER`). Still the lowest band, so every control keeps a
+    // press over an arrow.
     const s = stage({ order: GIZMO_ORDER })
     const group = drawn(s)
     expect(group.renderOrder).toBe(GIZMO_ORDER)
-    for (const band of [PINS_ORDER, RINGS_ORDER, HANDLE_ORDER, GIZMO_ORDER]) {
+    for (const band of [RINGS_ORDER, HANDLE_ORDER, GIZMO_ORDER]) {
       expect(band, `${band}`).toBeGreaterThan(1000)
     }
+    expect(PINS_ORDER).toBeLessThan(1000)
+    expect(PINS_ORDER).toBeLessThan(Math.min(RINGS_ORDER, HANDLE_ORDER, GIZMO_ORDER))
   })
 
   it('stays on layer 0, where the id-picker never looks', () => {

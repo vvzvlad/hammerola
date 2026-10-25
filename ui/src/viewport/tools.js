@@ -21,7 +21,7 @@ import {
 import { cameraBasis, canvasXY, ndcAt } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { internals } from "./internals.js";
-import { dot3, finite3 } from "./math.js";
+import { dot3, finite3, vec3 } from "./math.js";
 import { measureDistance, measureEntity } from "./measure.js";
 import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
 import {
@@ -301,6 +301,11 @@ export function installTools(vp) {
     } catch (error) {
       console.warn("comment normal", error);
     }
+    return towardsReader(g, n);
+  };
+
+  /** `n` turned to face the camera, or null without a normal or a camera. */
+  const towardsReader = (g, n) => {
     const basis = n ? cameraBasis(vp.viewer, g) : null;
     if (!basis) return null;
     return dot3(n, basis.view) > 0 ? [-n[0], -n[1], -n[2]] : n;
@@ -375,10 +380,11 @@ export function installTools(vp) {
    * Shared by the menu and the plain selection so a right click and a left
    * click on one pixel name the same part.
    *
-   * The other `pickEntity` callers (measure, comment, move) need a point on a
-   * real surface, which a synthetic cap quad is not, so they ask the picker
-   * directly. A selection is only an identity (`onPick` reads `id` and `name`)
-   * and a menu is about a part, so the cap answers both fully.
+   * Measure and move need a point on a real surface, which a synthetic cap
+   * quad is not, so they ask the picker directly; the comment tool asks the cap
+   * itself, for its point on the plane (`onUp`). A selection is only an
+   * identity (`onPick` reads `id` and `name`) and a menu is about a part, so
+   * the cap answers both fully.
    */
   function entityAt(g, event, x, y) {
     const ndc = ndcAt(g.canvas, event);
@@ -427,6 +433,24 @@ export function installTools(vp) {
       return;
     }
     if (p.tool === "comment") {
+      // A click on a cut face comments on the cut face: on the part it
+      // belongs to, at its point on the plane, with the arrow standing out
+      // along the plane's normal. The picker would answer the surface behind
+      // the cap, where the arrow, depth-tested, stays hidden by the cap the
+      // reader clicked.
+      const ndc = ndcAt(g.canvas, event);
+      const cap = ndc ? capOwnerAt(vp, g, ndc) : null;
+      if (cap) {
+        // The normal through `distanceToPoint`, the method `internals()`
+        // guarantees, whatever form `plane.normal` takes (`planePointAt`).
+        const d = (q) => g.plane.distanceToPoint(vec3(q));
+        const d0 = d([0, 0, 0]);
+        emit(vp, EVENT_PLACE, {
+          id: cap.id, name: cap.name, p: cap.point,
+          n: towardsReader(g, [d([1, 0, 0]) - d0, d([0, 1, 0]) - d0, d([0, 0, 1]) - d0]),
+        });
+        return;
+      }
       const entity = pickEntity(g, x, y);
       if (!entity) return;
       emit(vp, EVENT_PLACE, {

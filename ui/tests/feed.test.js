@@ -731,10 +731,10 @@ describe('the pins', () => {
 
 describe('the pins on the same build, wherever they were left', () => {
   const S = Math.SQRT1_2
-  // The part in its own frame: a box whose centre is [1, 3, 0], one point on
-  // it, and the face normal there.
+  // The part in its own frame: a box whose top, at its centre in x and y, is
+  // [1, 3, 1], one point on it, and the face normal there.
   const BOX = [0, 0, -1, 2, 0, -1, 2, 6, -1, 0, 6, -1, 0, 0, 1, 2, 0, 1, 2, 6, 1, 0, 6, 1]
-  const CENTRE = [1, 3, 0]
+  const TOP = [1, 3, 1]
   const LOCAL = [2, 4, 1]
   const LOCAL_N = [0, 0, 1]
   // The glass view lays the part flat — a quarter turn about -x, (x, y, z) to
@@ -795,10 +795,10 @@ describe('the pins on the same build, wherever they were left', () => {
     c.sync()
 
     // The slot's comment is a place on this very view; the glass one waits for
-    // the glass document and stands at the part's centre until then.
+    // the glass document and stands on the top of the part's box until then.
     expect(seen[0].pins).toEqual([
       { id: 'A', p: LOCAL, n: LOCAL_N, active: false },
-      { id: 'B', p: CENTRE, n: null, active: false },
+      { id: 'B', p: TOP, n: null, active: false },
     ])
     expect(fetching).toHaveBeenCalledTimes(1)
     expect(fetching.mock.calls[0][0]).toBe(`/project/proj1/${REV}/g.json`)
@@ -829,11 +829,11 @@ describe('the pins on the same build, wherever they were left', () => {
 
     expect(fetching).not.toHaveBeenCalled()
     expect(seen[seen.length - 1].pins).toEqual([
-      { id: 'B', p: CENTRE, n: null, active: false },
+      { id: 'B', p: TOP, n: null, active: false },
     ])
   })
 
-  it('keeps the part centre when the other view cannot be read', async () => {
+  it('keeps the top of the part when the other view cannot be read', async () => {
     const fetching = answering({ ok: false, status: 404, json: async () => ({}) })
     const c = latest([fromGlass])
     const seen = listening()
@@ -844,7 +844,7 @@ describe('the pins on the same build, wherever they were left', () => {
 
     expect(fetching, 'a failed view is not asked for again').toHaveBeenCalledTimes(1)
     expect(seen[seen.length - 1].pins).toEqual([
-      { id: 'B', p: CENTRE, n: null, active: false },
+      { id: 'B', p: TOP, n: null, active: false },
     ])
   })
 

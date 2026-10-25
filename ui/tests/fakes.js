@@ -813,6 +813,11 @@ export function fakeViewport(viewer, state = {}) {
       cut: false, cutOffset: 0, cutFlip: false, cutHatch: true, pins: [],
       ...state,
     },
+    // The fetched view document the element keeps (`this.payload = null` in
+    // `connectedCallback`), where the model's own bounding box is written down.
+    // Null is a viewport that has drawn nothing yet; a test that needs a model's
+    // size writes one.
+    payload: null,
     sectionSeed: null,
     zoomAnchor: null,
     moved: new Map(),
