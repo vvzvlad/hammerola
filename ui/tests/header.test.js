@@ -557,6 +557,18 @@ describe('the Share window', () => {
     expect(texts(c.render())).not.toContain('Current view')
     expect(c.computed().shareLink)
       .toBe(`${location.origin}/project/proj1/${REV}/?d=notes.md&files=key-of-rev`)
+    // A schematic on a sheet below its root: the sheet the address names.
+    c.state.meta.documents.push({ id: 'hw__a.kicad_sch', name: 'hw/a.kicad_sch', type: 'schematic', file: 'hw/a.kicad_sch',
+      bytes: 9, kicad: { schematics: ['hw/a.kicad_sch'], project: 'hw/a.kicad_pro' } })
+    c.state.doc = 'hw__a.kicad_sch'
+    const before = `${location.pathname}${location.search}`
+    window.history.replaceState(null, '', `${location.pathname}?d=hw__a.kicad_sch&s=amp`)
+    try {
+      expect(c.computed().shareLink)
+        .toBe(`${location.origin}/project/proj1/${REV}/?d=hw__a.kicad_sch&s=amp&files=key-of-rev`)
+    } finally {
+      window.history.replaceState(null, '', before)
+    }
   })
 
   it('cannot be ticked when builds.json came without the keys, and says why', () => {

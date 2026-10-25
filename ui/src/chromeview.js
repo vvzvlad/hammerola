@@ -19,6 +19,7 @@
  * come from ui/src/panelstyle.js.
  */
 import { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
+import { SHEET_QUERY } from './KicadView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -118,11 +119,14 @@ export function chromeView(s, props, deps) {
   // an unknown `?d=` does. With no document open and the Current view box
   // ticked, from the camera's angle too (`cameraQuery`), read as this window
   // renders; a document covers the model, so its link carries no frame and
-  // the window offers no box.
+  // the window offers no box. A schematic open on a sheet below its root
+  // carries the sheet the address names (`SHEET_QUERY` in KicadView.jsx).
   const shareCamera = !!(share && share.camera && !docOpen);
   const shareView = share ? viewQuery(s.view, views) : '';
+  const shareSheet = docOpen && new URLSearchParams(location.search).get(SHEET_QUERY);
   const shareQuery = !share ? '' : docOpen
     ? `${shareView}${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}`
+      + (shareSheet ? `&${SHEET_QUERY}=${encodeURIComponent(shareSheet)}` : '')
     : shareCamera ? cameraQuery(shareView) : shareView;
   const shareBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;'
     + `align-items:center;justify-content:center;font:600 10px ${MONO};`

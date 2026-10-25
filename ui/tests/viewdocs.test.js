@@ -250,10 +250,10 @@ describe('the documents in the list of views', () => {
   it('make each choice a step of history, with the frame only of the view it stays on, and the row shown none', () => {
     // Back returns to the choice before (`pushChoice`). The frame describes the
     // model on screen: a document's entry carries none, nor another view's,
-    // whose own frame `onModel` writes once it is drawn. The rest of the
-    // address stays, and the state of the entry but for a schematic's sheet,
-    // which a choice opens on its first one.
-    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: 'hw__a.kicad_sch', page: 'p' } }, '', '/?files=K')
+    // whose own frame `onModel` writes once it is drawn, nor a schematic's
+    // sheet (`s=`) another document's. The rest of the address stays, and so
+    // does the state of the entry.
+    window.history.replaceState({ hmr: 'latest' }, '', '/?d=hw__a.kicad_sch&files=K&s=amp')
     const c = component()
     c.host = { current: { getCamera: () => ({
       position: [10, -20, 30.5], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 1.5 }) } }
