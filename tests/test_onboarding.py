@@ -266,7 +266,8 @@ def _skill_digest() -> str:
 
 
 def test_any_change_to_any_file_of_the_skill_raises_its_version():
-    """A change to the skill that keeps its version never reaches a laptop.
+    """A change to the skill that keeps its version never reaches a laptop
+    that already has that version.
 
     `hammerola skill` compares versions only, so a copy installed at the same
     number reads as current however the files moved under it. Tests run before
