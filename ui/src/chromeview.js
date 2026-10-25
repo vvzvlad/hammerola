@@ -42,7 +42,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, viewQuery,
+    refreshBuilds, viewQuery, cameraQuery,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -110,10 +110,11 @@ export function chromeView(s, props, deps) {
   // revision without that view opens on its first one, as a fresh load with
   // an unknown `?v=` does. And on the document over it, when one is open: a
   // revision that does not list it opens on the model, as a fresh load with
-  // an unknown `?d=` does.
+  // an unknown `?d=` does. And from the camera's angle (`cameraQuery`), read
+  // as this window renders.
   const shareView = share ? viewQuery(s.view, views) : '';
-  const shareQuery = shareView + (share && docOpen
-    ? `${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}` : '');
+  const shareQuery = !share ? '' : cameraQuery(shareView + (docOpen
+    ? `${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}` : ''));
   const shareLink = !share ? ''
     : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareQuery}`
       + (shareFiles ? `${shareQuery ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
