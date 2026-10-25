@@ -2,8 +2,11 @@
 
 Builds CAD models from code and serves them in a browser. Push a model's source,
 get back a page: turn the part, hide what is in the way, cut a section through
-it, measure it, download it as STEP/STL/3MF. The name is from "pianola" — a
-mechanism that plays itself.
+it, measure it, download it as STEP/STL/3MF. What goes with the part publishes
+on the same page — a KiCad schematic and board with the board's Gerbers, a cut
+list, a PDF, the DXF a glass shop cuts from, or a file of any other kind — and a
+project with no model at all publishes those on their own. The name is from
+"pianola" — a mechanism that plays itself.
 
 <!-- Screenshots live in docs/images/ rather than in static/. static/ is the
      viewer payload that ships INSIDE the image, and its `hammerola*` names are
@@ -17,7 +20,9 @@ A model is a directory with a `model.py` in it. `hammerola commit` packs that
 directory and posts it; the hub unpacks it, **computes the geometry itself** —
 in a process of its own, with the CAD kernel that ships in its image — checks
 the result, exports STEP/STL/3MF and serves the whole thing at a URL. Nothing is
-built on the laptop, and no forge's CI is involved.
+built on the laptop, and no forge's CI is involved. A directory with no
+`model.py` that lists documents in its `project.json` is published the same way,
+except that nothing in it is executed: the documents are the whole build.
 
 Four things follow from that, and between them they are what the tool is for.
 
@@ -53,8 +58,12 @@ log.
 code is not.** A build's page and the geometry it is drawn from are anonymous:
 being given the link is what lets you look at the part. Its STEP/STL/3MF leave
 only with the one secret or with a link the owner's Share window made with the
-files included. The sources a revision was built from are kept too, but behind
-the secret, and so is the list of what exists on the hub at all.
+files included. Documents are the exception, on purpose: every file a project
+lists as one opens to the link alone, whatever its extension, because that link
+is how a revision goes to a workshop or a fab as the complete set — so whoever
+has it can download a listed KiCad design whole and edit it. The sources a
+revision was built from are kept too, but behind the secret, and so is the list
+of what exists on the hub at all.
 
 ![The same revision as it goes on the bed, and what it hands out](docs/images/print-view.png)
 
@@ -185,7 +194,7 @@ The rest of the commands answer questions about a project that is already there:
 hammerola status                 # latest, dev, and the revisions that exist
 hammerola log <revision>         # read a build log again
 hammerola source <revision>      # the code a revision was built from
-hammerola artifacts <revision>   # its STEP/STL/3MF
+hammerola artifacts <revision>   # its STEP/STL/3MF and its documents
 hammerola diff <rev> <rev>       # what moved, in geometry and in source
 hammerola comments               # notes left on this project's builds
 hammerola proposal               # the edit the viewer's reader proposed, as code
@@ -373,6 +382,78 @@ project. Four things about it are worth knowing before writing the second one:
 * **Dependencies come from the image and nowhere else.** Nothing is installed on
   a model's say-so, so `model.py` imports what the hub already has: `cadquery`,
   `checklib`, the standard library, and whatever the project ships beside it.
+
+## Documents: boards, drawings and any other file
+
+A part rarely travels alone: there is the board inside it, the cut list, the DXF
+for the glass shop, the datasheet of the amplifier. A project publishes those as
+DOCUMENTS — files of its tree that `project.json` lists, in the order the page
+shows them:
+
+```json
+"documents": ["docs/cut-list.md",
+              {"file": "hw/main.kicad_sch", "title": "Main schematic"},
+              {"file": "hw/main.kicad_pcb", "title": "Main board"},
+              {"file": "hw/main.glb", "title": "Main board, 3D"},
+              {"file": "fab/main-gerbers.zip", "title": "Gerbers"},
+              {"file": "cut/glass.dxf", "title": "Glass, cut list"},
+              {"file": "ds/tpa3250.pdf", "title": "TPA3250", "hidden": true}]
+```
+
+Nothing is picked up by extension: a file is a document because the list names
+it, and it is published under its own path, so a link between two of them works
+as it does in the tree. An entry is the path, or an object with the path as
+`file`, a `title` the page shows in its place, `"hidden": true` for a file that
+is published and opens by its address but has no row in the menu (twenty
+datasheets are twenty hidden entries, not twenty rows), and `"download": true`
+for a file to be taken rather than drawn. On a model's page the documents follow
+the views in the same menu: choosing one shows it over the model, choosing a
+view brings the model back, and `?d=<id>` in the address opens one on arrival.
+Whatever document is open, Download and Copy link for its file stand at the
+bottom left of the page. A project with no `model.py` — `hammerola create
+--no-template` starts one — is built out of its documents alone, and its page is
+the same menu with no model behind it.
+
+**The extension decides only how a document is shown.** Markdown is drawn, and
+a link in it to another listed document opens that document on the page; a PDF,
+a picture, HTML and SVG are shown as they are; `.kicad_sch`, `.kicad_pcb`,
+`.glb` and `.zip` are the board, below. A file of any other extension — a CSV of
+measurements, a supplier's STEP, a firmware image — is a plain file: choosing it
+shows its name, extension and size instead of drawing it, and on a model's
+build page the Downloads menu offers it under its extension, beside the STL. A
+`.dxf` is a plain file with a picture: the hub draws an SVG of it when the push
+is checked, publishes it at `<path>.svg`, and the page shows that picture above
+the file's name and size.
+
+**A KiCad board is up to three documents with one name.** A schematic, its board
+and the board's 3D model whose paths differ only by the extension are one
+design. The schematic is listed by its root sheet and brings every sheet it
+names, either of the two brings the `.kicad_pro` beside it, and the `.glb` is
+made on the laptop with
+`kicad-cli pcb export glb`, not on the hub. The views are linked: a part clicked
+in one is selected in the others, and a right click on a part or a net opens a
+menu that shows it in the other views — `Show C507 in Main board`, `Show net +12V
+in Main schematic`, an item per sheet for a net that spans several. The board
+view has its own panel of layers and lights the whole net of a clicked track or
+pad; the 3D view turns like the model does. A part whose `Datasheet` field names
+a PDF the project lists (`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above) gets
+`Open datasheet` in the same menu, which opens it in a window over the design.
+
+**The Gerbers are one zip**, drill files included — what goes to the fab. The
+page unzips it in the browser, tells each layer by its `%TF.FileFunction`
+attribute rather than by the file's name, and draws copper, mask, silkscreen,
+paste, outline and drills with a toggle per layer, from the top or from the
+bottom; a model's build page also lists the zip under GERBERS in Downloads. A
+`.zip` is read as Gerbers unless its entry says `"download": true`, which is how
+a zip of stand logs stays a plain file.
+
+**A wrong list refuses the push, whole.** A path that is not a file, a path
+listed twice, a file that would overwrite what the model's build wrote, a DXF
+the hub cannot draw, a missing sheet or one outside the project — each is a 422
+naming the entry, and nothing is skipped in silence. The complete rules, with
+the `kicad-cli` lines for the 3D model and the Gerbers, are written for the
+agent that lays a project out: `skill/references/documents.md` and
+`skill/references/boards.md`.
 
 ## Running a hub
 
