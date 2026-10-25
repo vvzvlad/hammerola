@@ -1,4 +1,4 @@
-// The board view's own panel, over the top right of the board's canvas: which
+// The board view's own panel, over the top left of the board's canvas: which
 // layers are drawn and which one is the active layer, how strongly the copper
 // zone fills are drawn, and the net of what was last clicked. KicadView.jsx
 // draws it over the PCB element and hands it that element (`element`) and
@@ -41,8 +41,8 @@ import React from 'react';
 
 import { SELECTION_EVENT } from './KicadView.jsx';
 import {
-  ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_EYE, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY, LAYER_PANEL_HEAD,
-  LAYER_PILL, LAYER_PILLS, layerRow, SWATCH,
+  ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY, LAYER_PANEL_HEAD,
+  LAYER_PILL, LAYER_PILLS, layerRow, SLOT_24, SWATCH,
 } from './panelstyle.js';
 import { css, MONO } from './style.jsx';
 
@@ -202,17 +202,17 @@ export default class PcbPanel extends React.Component {
             <div style={css(LAYER_LIST)}>
               {layers.map((layer) => (
                 <div key={layer.name} data-layer={layer.name} style={css(layerRow(layer.highlighted))}>
+                  <span data-eye={layer.name} title={layer.visible ? 'Hide this layer' : 'Show this layer'} style={css(SLOT_24)}
+                        onClick={() => this.change((element) => element.setPcbLayerVisibility(layer.name, !layer.visible))}>
+                    <span style={css(eyeOuter(layer.visible ? 'on' : 'off'))}>
+                      <span style={css(eyeDot(layer.visible ? 'on' : 'off'))} />
+                    </span>
+                  </span>
                   <span title={layer.highlighted ? 'The active layer, drawn over the others' : 'Draw this layer over the others'}
                         style={css(LAYER_NAME + (layer.visible ? '' : ';color:var(--text-faint)'))}
                         onClick={() => this.change((element) => element.setPcbLayerHighlight(layer.highlighted ? null : layer.name))}>
                     <span style={css(SWATCH + layer.color + (layer.visible ? '' : ';opacity:.35'))} />
                     <span style={css(ELLIPSIS)}>{layer.name}</span>
-                  </span>
-                  <span data-eye={layer.name} title={layer.visible ? 'Hide this layer' : 'Show this layer'} style={css(LAYER_EYE)}
-                        onClick={() => this.change((element) => element.setPcbLayerVisibility(layer.name, !layer.visible))}>
-                    <span style={css(eyeOuter(layer.visible ? 'on' : 'off'))}>
-                      <span style={css(eyeDot(layer.visible ? 'on' : 'off'))} />
-                    </span>
                   </span>
                 </div>
               ))}

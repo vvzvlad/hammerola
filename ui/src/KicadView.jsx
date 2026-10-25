@@ -63,6 +63,24 @@
 // goes on Escape, a press anywhere else, the wheel, a resize, and when its view
 // leaves the screen.
 //
+// THE WHEEL ON THE SCHEMATIC AND THE BOARD is the Gerbers' (`wheelMove` in
+// gerber.js): the two-finger swipe of a touchpad moves the drawing, a pinch —
+// a wheel event with Control held — and Control and the wheel zoom about the
+// pointer. The viewer zooms on every wheel event and reads no `deltaX`, and
+// the file is vendored byte for byte, so the event is taken on its way down to
+// the canvas (a capture listener on the element) before the viewer's own
+// handler sees it, and the view is moved through the element's `camera`
+// (`wheelCamera`).
+//
+// FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
+// view on screen. The element has no fit of its own, and its `exportImage`
+// walks every sheet of a schematic, reloading each; so a drawn view is driven
+// through the viewer's own drawing inside the element's open shadow tree
+// (`drawingOf`): Fit is the viewer's own reset (`zoom_fit_top_item`, what its
+// toolbar's reset button calls and what it opens a sheet with), Frame draws a
+// frame and reads the canvas in the same task. The 3D view says its own
+// (BoardView3D.jsx).
+//
 // A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
 // when the part's KiCad `Datasheet` field names a document of the build, listed
 // or hidden (kicadsheets.js); a part with a datasheet and no other member to be
@@ -77,6 +95,7 @@ import React from 'react';
 
 import BoardView3D from './BoardView3D.jsx';
 import DocumentView from './DocumentView.jsx';
+import { wheelMove } from './gerber.js';
 import { addPinEntries } from './kicadpins.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
@@ -245,6 +264,46 @@ export function menuPlace(x, y, rows, area) {
   return { left: fit(x, width, area.width), top: fit(y, height, area.height), width };
 }
 
+/** How far the viewer lets its camera zoom: `MinZoom` and `MaxZoom` of its
+ *  viewer class in ecad-viewer.js, which its own wheel and pinch keep to. */
+export const ZOOM_LIMITS = [0.5, 190];
+
+/**
+ * The element's `camera` (`{ x, y, zoom, rotation }`) after a wheel event:
+ * `move` is `wheelMove`'s, `at` the pointer on the canvas and `size` the
+ * canvas, CSS pixels. The viewer draws a point of its world at
+ * `size / 2 + zoom · (point − centre)` (its `Camera2`; nothing in it turns the
+ * camera), so a zoom puts the point under the pointer back under it and a move
+ * shifts the centre the other way by the move over the zoom.
+ */
+export function wheelCamera(camera, move, at, size) {
+  const zoom = Math.min(ZOOM_LIMITS[1], Math.max(ZOOM_LIMITS[0], camera.zoom * move.factor));
+  const across = at[0] - size[0] / 2;
+  const down = at[1] - size[1] / 2;
+  return {
+    ...camera,
+    x: camera.x + across / camera.zoom - (across + move.dx) / zoom,
+    y: camera.y + down / camera.zoom - (down + move.dy) / zoom,
+    zoom,
+  };
+}
+
+/** The viewer's own drawings, by tag: each holds its viewer (`viewer`) and its
+ *  canvas (`canvas`). */
+const DRAWINGS = new Set(['kc-schematic-viewer', 'kc-board-viewer']);
+
+/** The drawing inside `element`'s shadow trees, all of them open, or null. */
+export function drawingOf(element) {
+  const roots = element && element.shadowRoot ? [element.shadowRoot] : [];
+  while (roots.length) {
+    for (const node of roots.shift().querySelectorAll('*')) {
+      if (DRAWINGS.has(node.localName)) return node;
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }
+  }
+  return null;
+}
+
 /** The document the datasheet of part `designator` names (kicadsheets.js), or
  *  null. `datasheets` is designator → `Datasheet` value. */
 export function selectedDatasheet(designator, datasheets, members, documents) {
@@ -290,8 +349,16 @@ export default class KicadView extends React.Component {
     // part's `Datasheet` value, once the files are in. `menu`: the right-click
     // menu open (`menuFor`, with the view it is of and its box), `hover` the
     // index of the item under the pointer. `sheet`: the datasheet's window open,
-    // `{ doc, from }` with the view it was opened over.
-    this.state = { ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1, sheet: null };
+    // `{ doc, from }` with the view it was opened over. `tools3d`: what the 3D
+    // view told the bar it can do, or null.
+    this.state = {
+      ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1, sheet: null, tools3d: null,
+    };
+    // What the bar can do with a drawn view on screen, one object for both, and
+    // the last thing the page was told (`report`).
+    this.drawnTools = { fit: () => this.fitDrawn(), frame: () => this.frameDrawn() };
+    this.reported = undefined;
+    this.onTools3D = (tools) => this.setState({ tools3d: tools });
     // A selection waiting for the page to hand down the member it is on:
     // `{ to, request }`, or null.
     this.probe = null;
@@ -341,14 +408,62 @@ export default class KicadView extends React.Component {
       },
       pointerup: (event) => this.release(context, event),
     };
+    const wheel = (event) => this.wheel(event);
     return (element) => {
       const old = this.elements[context];
       for (const [type, listener] of Object.entries(listeners)) {
         if (old) old.removeEventListener(type, listener);
         if (element) element.addEventListener(type, listener);
       }
+      if (old) old.removeEventListener('wheel', wheel, true);
+      if (element) element.addEventListener('wheel', wheel, { capture: true, passive: false });
       this.elements[context] = element || undefined;
     };
+  }
+
+  /** A wheel event on its way down to a drawn view's canvas: taken there, so
+   *  the viewer's own handler never sees it, and the view moved as the
+   *  Gerbers' is. One that lands on anything else in the element (a menu of
+   *  the viewer's), or before the viewer has a camera, goes on as it was. */
+  wheel(event) {
+    const element = event.currentTarget;
+    const [canvas] = event.composedPath();
+    const { camera } = element;
+    if (!canvas || canvas.localName !== 'canvas' || !camera) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const box = canvas.getBoundingClientRect();
+    element.camera = wheelCamera(camera, wheelMove(event), [event.clientX - box.left, event.clientY - box.top],
+      [canvas.clientWidth, canvas.clientHeight]);
+  }
+
+  /** The bar's Fit on the drawn view on screen: the viewer's own reset. */
+  fitDrawn() {
+    drawingOf(this.elements[this.side()]).viewer.zoom_fit_top_item();
+  }
+
+  /** The bar's Frame on the drawn view on screen: a frame drawn now and the
+   *  canvas read in the same task, before the board's WebGL context, which
+   *  keeps no drawing buffer, has handed it to the screen. */
+  frameDrawn() {
+    const drawing = drawingOf(this.elements[this.side()]);
+    drawing.viewer.draw_now();
+    return new Promise((resolve) => drawing.canvas.toBlob(resolve, 'image/png'));
+  }
+
+  /** What the bar can do with the view on screen: a drawn one once its files
+   *  are in, the 3D model once it is loaded. */
+  toolsOnScreen() {
+    if (this.side() === BOARD3D) return this.state.tools3d;
+    return this.state.ready && !this.state.error ? this.drawnTools : null;
+  }
+
+  /** The page told what the bar can do (`onTools`), when that has changed. */
+  report() {
+    const tools = this.toolsOnScreen();
+    if (tools === this.reported) return;
+    this.reported = tools;
+    this.props.onTools(tools);
   }
 
   /** The page-wide listeners, on or off: Escape, and what closes the menu
@@ -495,6 +610,7 @@ export default class KicadView extends React.Component {
 
   componentDidMount() {
     this.listen(true);
+    this.report();
     const { base } = this.props;
     const members = this.members();
     const views = drawnViews(members);
@@ -529,6 +645,7 @@ export default class KicadView extends React.Component {
 
   componentDidUpdate() {
     this.activate();
+    this.report();
     // The menu and the datasheet's window go with their view off the screen.
     if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
     if (this.state.sheet && this.state.sheet.from !== this.side()) this.closeSheet();
@@ -572,7 +689,7 @@ export default class KicadView extends React.Component {
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}
-                         onSelect={this.onSelect3D} onMenu={this.onMenu3D} />
+                         onSelect={this.onSelect3D} onMenu={this.onMenu3D} onTools={this.onTools3D} />
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}

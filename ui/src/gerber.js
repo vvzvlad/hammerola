@@ -296,6 +296,30 @@ export function zoomAt(view, px, py, width, height, factor) {
 /** `view` moved by (`dx`, `dy`) CSS pixels. */
 export const panBy = (view, dx, dy) => ({ ...view, x: view.x + dx, y: view.y + dy });
 
+/** How much a pinch (a wheel event with Control held, which is how a touchpad
+ *  pinch arrives) zooms: the factor is `exp(-deltaY · ZOOM_RATE)`, a line counting
+ *  as 16 pixels, and one event moves `deltaY` by at most `ZOOM_STEP_MAX` so a
+ *  notch of a mouse wheel under Control is a step, not a leap. */
+const ZOOM_RATE = 0.01;
+const ZOOM_STEP_MAX = 40;
+const LINE_PX = 16;
+
+/**
+ * What a wheel event does to a flat drawing, the Gerbers and the KiCad
+ * schematic and board alike: with Control held (a pinch, or Control and the
+ * wheel) it zooms by `factor` about the pointer, else (the two-finger swipe
+ * of a touchpad is a wheel event) the drawing follows the fingers by
+ * (`dx`, `dy`) CSS pixels — a swipe up moves it up.
+ */
+export function wheelMove(event) {
+  const unit = event.deltaMode === 1 ? LINE_PX : 1;
+  if (event.ctrlKey) {
+    const delta = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX, event.deltaY * unit));
+    return { factor: Math.exp(-delta * ZOOM_RATE), dx: 0, dy: 0 };
+  }
+  return { factor: 1, dx: -event.deltaX * unit, dy: -event.deltaY * unit };
+}
+
 /** `view` with the board turned over about the canvas's vertical centre line. */
 export const turned = (view) => ({ ...view, x: -view.x });
 

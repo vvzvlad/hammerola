@@ -148,11 +148,10 @@ REQUIRED_PATHS = [
     # in ui/src/gerber.js), and the WebAssembly module it fetches from beside itself.
     "/app/static/_v/wasm_gerber_processor.js",
     "/app/static/_v/wasm_gerber_processor_bg.wasm",
-    # The board's 3D view (`ui/src/BoardView3D.jsx`) imports three's loader and controls by URL
-    # when a `.glb` is opened; the loader pulls the two helpers, and all four import three
-    # from beside themselves.
+    # The board's 3D view (`ui/src/BoardView3D.jsx`) imports three's loader by URL when a
+    # `.glb` is opened; the loader pulls the two helpers, and all three import three from
+    # beside themselves. Its camera is turned by the viewer bundle's own trackball above.
     "/app/static/_v/GLTFLoader.js",
-    "/app/static/_v/OrbitControls.js",
     "/app/static/_v/BufferGeometryUtils.js",
     "/app/static/_v/SkeletonUtils.js",
     # The palette, linked by every page. Missing, every page still answers 200 but every

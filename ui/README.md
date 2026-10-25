@@ -136,9 +136,11 @@ do (#104).
 `src/HammerolaEntry.jsx` is the front page and the project page.
 `src/DocShell.jsx` is the page of a build with no model
 (`"kind": "documents"`); `src/main.jsx` mounts it instead of `HammerolaViewer`.
-Both pages choose what is on screen in one list floating at the bottom,
-`src/viewlist.jsx`: the model's views and then the build's documents, a row
-each but for a hidden one. `src/DocumentView.jsx` draws
+Both pages draw one bar floating at the bottom, `src/viewlist.jsx`: the list of
+views (the model's views and then the build's documents, a row each but for a
+hidden one) and the tools beside it — Measure, Comment, Add primitive, Fit,
+Frame, Settings — the same everywhere, a tool that does not apply to what is on
+screen left in place and drawn out of service. `src/DocumentView.jsx` draws
 the chosen document for both pages: filling DocShell, and over the 3D area of
 the model's page. `src/docmd.js` turns a markdown document into React
 elements through markdown-it, with raw HTML off. `src/KicadView.jsx` draws
@@ -148,8 +150,9 @@ extension: an `<ecad-viewer>` each for the schematic and the board and
 document its page hands down; a single click selects the same part in the other
 views, a right click opens a menu `Show in …` that opens another view of the
 design with the same part or net selected;
-the board has a panel of its own over its canvas, `src/PcbPanel.jsx`: layers,
-presets, the opacity of the zone fills and the net of the last click;
+the board has a panel of its own over the top left of its canvas,
+`src/PcbPanel.jsx`: layers, presets, the opacity of the zone fills and the net
+of the last click;
 `src/kicadsheets.js` reads each part's `Datasheet` field, and the part's menu
 has an item that opens the listed document it names in a window over the view;
 `src/kicadpins.js` gives each schematic the pin entries the viewer

@@ -18,7 +18,7 @@
 // so the sheet under the canvas shows through. A plated hole's ring is the
 // plating, 20 µm; an unplated hole has none — both the package's own defaults.
 //
-// THE PANEL, over the top right corner as on the board (PcbPanel.jsx): the
+// THE PANEL, over the top left corner as on the board (PcbPanel.jsx): the
 // side the board is seen from, which mirrors it and restacks the layers and
 // shows that side's layers (`shownOn`); an eye per layer; and the link that
 // downloads the zip, under the list and kept when the list is folded. Until
@@ -27,25 +27,28 @@
 //
 // THE CANVAS: a drag with the left button or a finger pans, so does a wheel
 // (the two-finger swipe of a touchpad is one), a pinch or Control and the wheel
-// zoom about the pointer, two fingers on a touch screen pinch, a double click
-// fits the board again. Drawing is on demand, a frame when the view, the size
-// or the layers change. Everything the renderer holds
-// is freed on unmount, the WebGL context included: a page has few to give.
+// zoom about the pointer (`wheelMove` in gerber.js), two fingers on a touch
+// screen pinch, a double click and the bar's Fit fit the board again. Drawing
+// is on demand, a frame when the view, the size or the layers change; the
+// context keeps its drawing buffer, so the bar's Frame reads the canvas as it
+// stands. Everything the renderer holds is freed on unmount, the WebGL context
+// included: a page has few to give.
 //
 // Props:
-//   url   the zip, fetched on mount; also what the link downloads
-//   size  its size, said beside the link
+//   url      the zip, fetched on mount; also what the link downloads
+//   size     its size, said beside the link
+//   onTools  told `{ fit, frame }` once the layers are drawn (DocumentView.jsx)
 
 import React from 'react';
 
 import {
   fitView, HOLE_RING, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, swatch,
-  toProcessor, turned, zoomAt,
+  toProcessor, turned, wheelMove, zoomAt,
 } from './gerber.js';
 import { CHEVRON } from './PcbPanel.jsx';
 import {
-  ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_EYE, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY,
-  LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, layerRow, SWATCH, TAB_ON,
+  ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY,
+  LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, layerRow, SLOT_24, SWATCH, TAB_ON,
 } from './panelstyle.js';
 import { css, MONO, SANS } from './style.jsx';
 
@@ -64,13 +67,6 @@ const LINK_SIZE = `flex:none;font:400 10.5px ${MONO};color:var(--text-muted)`;
 
 /** The sides the board is seen from, as the panel names them. */
 const SIDES = [['top', 'Top'], ['bottom', 'Bottom']];
-
-/** How much a pinch (a wheel event with Control held, which is how a touchpad
- *  pinch arrives) zooms: the factor is `exp(-deltaY · ZOOM_RATE)`, a line counting
- *  as 16 pixels, and one event moves `deltaY` by at most `ZOOM_STEP_MAX` so a
- *  notch of a mouse wheel under Control is a step, not a leap. */
-const ZOOM_RATE = 0.01;
-const ZOOM_STEP_MAX = 40;
 
 /** The width of a plated hole's ring, mm: the package's default plating. */
 const PLATING_MM = 0.02;
@@ -210,18 +206,23 @@ class Stage {
     canvas.addEventListener('pointercancel', up);
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
-      const unit = event.deltaMode === 1 ? 16 : 1;
+      const move = wheelMove(event);
       if (event.ctrlKey) {
         const [px, py] = this.at(event);
-        const delta = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX, event.deltaY * unit));
-        this.view = zoomAt(this.view, px, py, this.width, this.height, Math.exp(-delta * ZOOM_RATE));
+        this.view = zoomAt(this.view, px, py, this.width, this.height, move.factor);
       } else {
-        // The board follows the fingers: a swipe up moves it up.
-        this.view = panBy(this.view, -event.deltaX * unit, -event.deltaY * unit);
+        this.view = panBy(this.view, move.dx, move.dy);
       }
       this.request();
     }, { passive: false });
     canvas.addEventListener('dblclick', () => this.fit());
+  }
+
+  /** What the canvas holds, as a PNG blob. Read as it stands: the context
+   *  keeps its drawing buffer. Not `frame`, which is the handle of the frame
+   *  asked for. */
+  snapshot() {
+    return new Promise((resolve) => this.canvas.toBlob(resolve, 'image/png'));
   }
 
   /** The layers drawn and the side they are seen from. */
@@ -299,6 +300,8 @@ export default class GerberView extends React.Component {
       this.host = element;
     };
     this.toggle = () => this.setState({ open: !this.state.open });
+    // What the page's bar does with this view (`onTools` in DocumentView.jsx).
+    this.tools = { fit: () => this.stage.fit(), frame: () => this.stage.snapshot() };
   }
 
   componentDidMount() {
@@ -317,6 +320,7 @@ export default class GerberView extends React.Component {
         this.stage.show(shown, 'top');
         // The panel lists the board from its top down, whichever side is shown.
         this.setState({ layers: stacked(layers, 'top').reverse(), failed: this.stage.failed, shown });
+        this.props.onTools(this.tools);
       })
       .catch((error) => {
         if (!this._gone) this.setState({ error: `The Gerbers did not load: ${(error && error.message) || error}` });
@@ -391,14 +395,14 @@ export default class GerberView extends React.Component {
                       <div key={layer.file} data-layer={layer.file} style={css(layerRow(false))}
                            title={broken ? `${layer.file}: ${broken}` : layer.file}
                            onClick={() => !broken && this.flip(layer.file)}>
-                        <span style={css(LAYER_NAME + (on ? '' : ';color:var(--text-faint)'))}>
-                          <span style={css(SWATCH + swatch(layer) + (on ? '' : ';opacity:.35'))} />
-                          <span style={css(ELLIPSIS)}>{layer.label}</span>
-                        </span>
-                        <span data-eye={layer.file} style={css(LAYER_EYE)}>
+                        <span data-eye={layer.file} style={css(SLOT_24)}>
                           <span style={css(eyeOuter(on ? 'on' : 'off'))}>
                             <span style={css(eyeDot(on ? 'on' : 'off'))} />
                           </span>
+                        </span>
+                        <span style={css(LAYER_NAME + (on ? '' : ';color:var(--text-faint)'))}>
+                          <span style={css(SWATCH + swatch(layer) + (on ? '' : ';opacity:.35'))} />
+                          <span style={css(ELLIPSIS)}>{layer.label}</span>
                         </span>
                       </div>
                     );

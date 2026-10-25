@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { SELECTION_EVENT } from '../src/KicadView.jsx'
 import PcbPanel, { HIGHLIGHT_EVENT, PRESETS, VIEW_STATE_EVENT, ZONE_OPACITY } from '../src/PcbPanel.jsx'
+import { MONO } from '../src/style.jsx'
 import { collect, texts } from './eltree.js'
 
 const LAYERS = ['F.Cu', 'In1.Cu', 'B.Cu', 'F.SilkS']
@@ -83,8 +84,9 @@ function mounted() {
 const control = (panel, attribute, value) => collect(panel.render(),
   (el) => (el.props[attribute] === value ? el : undefined))[0]
 const press = (panel, attribute, value) => control(panel, attribute, value).props.onClick()
-/** A click on a layer's name: the span that sets the active layer. */
-const pressName = (panel, name) => control(panel, 'data-layer', name).props.children[0].props.onClick()
+/** A click on a layer's name: the span that sets the active layer, which
+ *  follows the eye in the row (as a tree row's name follows its eye). */
+const pressName = (panel, name) => control(panel, 'data-layer', name).props.children[1].props.onClick()
 const header = (panel) => texts(panel.render().props.children[0])
 const select = (element, detail) => element.dispatchEvent(new CustomEvent(SELECTION_EVENT, { detail }))
 const shown = (panel) => panel.state.layers.filter((one) => one.visible).map((one) => one.name)
@@ -99,6 +101,18 @@ describe('the board\'s panel', () => {
     const [range] = collect(panel.render(), (el) => (el.props.type === 'range' ? el : undefined))
     expect(range.props.value).toBe(ZONE_OPACITY)
     expect(panel.render().props.style.visibility).toBe('visible')
+  })
+
+  it('stands where the model\'s parts tree stands, its rows read as the tree\'s: the eye first', () => {
+    const { panel } = mounted()
+    expect(panel.render().props.style).toMatchObject({
+      position: 'absolute', top: '10px', left: '12px', maxWidth: 'calc(100% - 24px)' })
+    expect(panel.render().props.style.right).toBeUndefined()
+    const row = control(panel, 'data-layer', 'F.Cu')
+    const [eye, name] = row.props.children
+    expect(eye.props['data-eye']).toBe('F.Cu')
+    expect(eye.props.style).toMatchObject({ width: '24px', flex: 'none' })
+    expect([name.props.style.font, row.props.style.height]).toEqual([`400 12px ${MONO}`, '24px'])
   })
 
   it('changes the board through the viewer, and shows what the viewer then holds', () => {

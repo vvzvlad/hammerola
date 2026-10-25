@@ -1,22 +1,30 @@
-// The list of views at the bottom of a page: the button that names what is on
-// screen, and the card of rows it opens upwards — the views a model declares,
-// then the build's documents. Both pages draw it with this, so it is one
-// list and one look: the model's page (HammerolaViewer.jsx, its values from
-// chromeview.js) and the page of a build with no model (DocShell.jsx), which
-// has documents only.
+// The bar at the bottom of a page, and the list of views in it: the button that
+// names what is on screen, and the card of rows it opens upwards — the views a
+// model declares, then the build's documents. Both pages draw it with this, so
+// it is one bar and one look: the model's page (HammerolaViewer.jsx, its values
+// from chromeview.js) and the page of a build with no model (DocShell.jsx),
+// which has documents only.
+//
+// THE BAR IS THE SAME EVERYWHERE (`toolBar`): the views, Measure, Comment, Add
+// primitive, Fit, Frame and Settings, in that order, over the model, over a
+// document and on the page of documents alike. A tool that does not apply to
+// what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
 //
 // Every listed document is one row, a KiCad schematic, board and 3D model as
 // much as a PDF, except one listed `hidden`: it has no row and is still opened
 // by its address (`?d=`) or by a link from another document.
 //
-// `viewList` is the drawing and takes everything as arguments, so a test reads
-// the tree it returns without mounting anything (ui/tests/viewmenu.test.js,
-// viewdocs.test.js, docshell.test.js).
+// `viewList` and `toolBar` are the drawing and take everything as arguments,
+// so a test reads the tree they return without mounting anything
+// (ui/tests/viewmenu.test.js, viewdocs.test.js, docshell.test.js).
 
 import React from 'react';
 
 import { docHint } from './DocumentView.jsx';
-import { ELLIPSIS, FAINT_MONO, FILL, INK, RELATIVE, TAB_OFF, TAB_ON } from './panelstyle.js';
+import { shortId } from './hub.js';
+import {
+  ELLIPSIS, FAINT_MONO, FILL, INK, OFF, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
+} from './panelstyle.js';
 import { css, SANS } from './style.jsx';
 
 /** One row of the list, a view's or a document's: the same shape for both, so
@@ -56,11 +64,9 @@ export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7p
  * No sheet on a narrow window: the bar has `contain:layout`, which makes it the
  * containing block for `fixed` as well as `absolute` descendants (CSS
  * Containment 1, §3.2), so `popSheet` would resolve against the bar. No clamp
- * either: the bar is centred on the bottom edge, so a button that is its only
- * control (`alone`: the page of a build with no model, a model's page with a
- * document open) has the card centred on it, and 260px fits any window of
- * 262px; where the button shares the bar with Fit the card starts at the
- * button's left edge, which fits a 320px window.
+ * either: the bar is centred on the bottom edge and the button never stands in
+ * it alone — on a narrow window Fit is beside it (`toolBar`) — so the card
+ * starts at the button's left edge, which fits a 320px window.
  *
  * No `z-index`: the bar is its own stacking context, so a value here only sorts
  * this menu against its siblings; the page raises the bar's layer instead
@@ -71,8 +77,7 @@ export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7p
  * column: the views scroll inside it (`VIEW_LIST`), and the documents stay
  * under them, outside that scroll (`DOC_LIST`).
  */
-export const viewMenuStyle = (open, alone = false) => 'position:absolute;'
-  + (alone ? 'left:50%;transform:translateX(-50%);' : 'left:0;')
+export const viewMenuStyle = (open) => 'position:absolute;left:0;'
   + 'bottom:38px;width:260px;max-height:308px;flex-direction:column;'
   + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
   + (open ? 'flex' : 'none');
@@ -105,22 +110,22 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
 /**
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`), the documents under the views.
- * `alone` says the button is the bar's only control. `onToggle` must stop the click: the pages shut their menus on a
- * click that reaches the root. Pure.
+ * `onToggle` must stop the click: the pages shut their menus on a click that
+ * reaches the root. Pure.
  *
  * The wrapper is `position:relative` so that the card is anchored to the
  * BUTTON: the bar carries `contain:layout` and is therefore already a
  * containing block for it, so without the wrapper the card would be measured
  * from the bar's whole box and start at its left end rather than at the button.
  */
-export function viewList({ label, open, onToggle, views = [], documents = [], alone = false }) {
+export function viewList({ label, open, onToggle, views = [], documents = [] }) {
   return (
     <div style={css(RELATIVE)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
         <span style={css(ELLIPSIS)}>{label}</span>
         {CHEVRON}
       </div>
-      <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, alone))}>
+      <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open))}>
         {views.length > 0 && (
           <div style={css(VIEW_LIST)}>
             {views.map((t) => (
@@ -144,4 +149,115 @@ export function viewList({ label, open, onToggle, views = [], documents = [], al
       </div>
     </div>
   );
+}
+
+/** Fit's and Frame's look: quiet, and out of service (`OFF`) where what is on
+ *  screen cannot do them. */
+export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
+
+/** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). */
+const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px';
+
+/**
+ * The bar, as elements: the same controls in the same places on both pages
+ * and over every view. `b` holds the values — the model's page computes them
+ * (chromeview.js), the page of documents builds them (`docBar` in
+ * DocShell.jsx):
+ *   the views    `viewMenu` (a menu rather than a strip), `viewLabel`,
+ *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`;
+ *   the tools    `showTools` (false on a narrow window, which keeps the views
+ *                and Fit), and each tool's style and handler: `measureBtnStyle`
+ *                and `tMeasure`, `commentBtnStyle` and `tComment`,
+ *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
+ *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
+ *                and `tSettings`. A tool out of service is drawn `OFF` and
+ *                takes no click, so its handler may be absent.
+ * `menus` are the cards `Add primitive` and Settings open (`proposal`,
+ * `settings`), which only the model's page has. Pure.
+ */
+export function toolBar(b, menus = {}) {
+  return (
+    <div style={css(FLOAT_BAR)}>
+      {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
+          `VIEW_TABS_MAX`. The menu holds the build's documents under the
+          views. */}
+      {b.viewMenu ? (
+        viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
+          views: b.viewTabs, documents: b.docRows })
+      ) : (
+        <div style={css(TAB_STRIP)}>
+          {b.viewTabs.map((t) => (
+            <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
+          ))}
+        </div>
+      )}
+      {/* Everything between the views and Fit belongs to a pointer and a
+          canvas with room to aim in — see `showTools`. */}
+      {b.showTools && (
+        <>
+          <div style={css(RULE)} />
+          <div onClick={b.tMeasure} style={css(b.measureBtnStyle)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
+            Measure
+          </div>
+          <div onClick={b.tComment} style={css(b.commentBtnStyle)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
+            Comment
+          </div>
+          {/* A box drawn in the air beside the model — which is what this
+              adds: a rough body in numbers, over the geometry rather than in
+              it.
+
+              THE WRAPPER IS `position:relative` FOR THE REASON THE VIEW
+              SWITCHER'S IS: the bar carries `contain:layout` and is therefore
+              already a containing block for the menu (CSS Containment 1,
+              §3.2), so without it the card would be measured from the bar's
+              whole box and start at its left end rather than at the button. */}
+          <div style={css(RELATIVE)}>
+            <div onClick={b.tProposal} style={css(b.proposalBtnStyle)}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
+              Add primitive
+            </div>
+            {menus.proposal}
+          </div>
+          <div style={css(RULE)} />
+        </>
+      )}
+      <div onClick={b.fitView} title="back to the frame this view opened in" style={css(b.fitBtnStyle)}>
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
+        Fit
+      </div>
+      {b.showTools && (
+        <>
+          <div onClick={b.grabFrame} title="save the current frame as a PNG" style={css(b.frameBtnStyle)}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
+            Frame
+          </div>
+          {/* The `Add primitive` card's wrapper, for its reason. */}
+          <div style={css(RELATIVE)}>
+            <div onClick={b.tSettings} style={css(b.settingsBtnStyle)}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="4.2" /><circle cx="8" cy="8" r="1.8" /><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" /></svg>
+              Settings
+            </div>
+            {menus.settings}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Frame on both pages: `blob`, a PNG of what is on screen, handed to the
+ * reader as a file named after the build, `<project>-<commit>.png`.
+ */
+export function savePng(blob, meta) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${meta.project}-${shortId(meta.commit)}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }

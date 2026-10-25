@@ -26,8 +26,8 @@ import DocumentView, { docHint, documentBody, docViewKey } from '../src/Document
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawnViews,
-  menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
+  BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
+  menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT, ZOOM_LIMITS,
 } from '../src/KicadView.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -62,7 +62,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
     view.props = { ...before, doc: documents.find((one) => one.id === id) }
     view.componentDidUpdate(before)
   })
-  const view = new KicadView({ doc, documents, base: BASE, onOpen })
+  const view = new KicadView({ doc, documents, base: BASE, onOpen, onTools: vi.fn() })
   view.setState = (patch, done) => {
     Object.assign(view.state, patch)
     if (done) done()
@@ -650,3 +650,128 @@ describe('a part\'s datasheet', () => {
     })
   })
 })
+
+describe('the wheel on the schematic and the board', () => {
+  /** The board on screen, its canvas 800 × 600 at (100, 50) of the page, the
+   *  camera the element holds 4 px a unit, and the viewer's own wheel handler
+   *  on its canvas. */
+  function wheeled() {
+    const { elements } = mounted(DOCS[1])
+    const element = elements[PCB]
+    const { canvas } = element
+    Object.defineProperty(canvas, 'clientWidth', { value: 800 })
+    Object.defineProperty(canvas, 'clientHeight', { value: 600 })
+    canvas.getBoundingClientRect = () => ({ left: 100, top: 50, width: 800, height: 600 })
+    element.camera = { x: 10, y: 20, zoom: 4, rotation: 0 }
+    const own = vi.fn()
+    canvas.addEventListener('wheel', own)
+    return { element, canvas, own }
+  }
+  const wheel = (target, init) => {
+    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, ...init })
+    target.dispatchEvent(event)
+    return event
+  }
+
+  it('moves the drawing with a two-finger swipe, the viewer\'s own handler never seeing it', () => {
+    const { element, canvas, own } = wheeled()
+    const swiped = wheel(canvas, { deltaX: -15, deltaY: 25, clientX: 300, clientY: 300 })
+    expect(own).not.toHaveBeenCalled()
+    expect(swiped.defaultPrevented).toBe(true)
+    // the drawing follows the fingers, 15 px right and 25 px up: the centre the other way, in units
+    expect(element.camera).toEqual({ x: 10 - 15 / 4, y: 20 + 25 / 4, zoom: 4, rotation: 0 })
+  })
+
+  it('zooms about the pointer with a pinch or Control and the wheel, within the viewer\'s limits', () => {
+    const { element, canvas, own } = wheeled()
+    // the pointer at (600, 100) of the canvas, (200, -200) from its centre
+    const at = { clientX: 700, clientY: 150 }
+    const under = (camera) => [camera.x + 200 / camera.zoom, camera.y - 200 / camera.zoom]
+    const before = under(element.camera)
+    const pinched = wheel(canvas, { ctrlKey: true, deltaY: -20, ...at })
+    expect(pinched.defaultPrevented).toBe(true)
+    expect(element.camera.zoom).toBeCloseTo(4 * Math.exp(0.2), 9)
+    under(element.camera).forEach((value, i) => expect(value).toBeCloseTo(before[i], 9))
+    for (let i = 0; i < 100; i += 1) wheel(canvas, { ctrlKey: true, deltaY: -3, deltaMode: 1, ...at })
+    expect(element.camera.zoom).toBe(ZOOM_LIMITS[1])
+    for (let i = 0; i < 100; i += 1) wheel(canvas, { ctrlKey: true, deltaY: 3, deltaMode: 1, ...at })
+    expect(element.camera.zoom).toBe(ZOOM_LIMITS[0])
+    expect(own).not.toHaveBeenCalled()
+  })
+
+  it('leaves a wheel over anything else in the element, or before the viewer has a camera, as it was', () => {
+    const { element, canvas, own } = wheeled()
+    const list = document.createElement('kc-sch-selection-menu')
+    element.append(list)
+    expect(wheel(list, { deltaY: 10 }).defaultPrevented).toBe(false)
+    element.camera = null
+    expect(wheel(canvas, { deltaY: 10 }).defaultPrevented).toBe(false)
+    expect(own).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('what the page\'s bar can do with the view on screen', () => {
+  /** The viewer's own drawing inside `element`, two open shadow trees down,
+   *  as the viewer builds it. */
+  function withDrawing(element, tag) {
+    const app = document.createElement('kc-viewer-app')
+    element.attachShadow({ mode: 'open' }).append(app)
+    const drawing = document.createElement(tag)
+    app.attachShadow({ mode: 'open' }).append(drawing)
+    drawing.canvas = document.createElement('canvas')
+    drawing.viewer = { zoom_fit_top_item: vi.fn(), draw_now: vi.fn() }
+    return drawing
+  }
+  const told = (view) => view.props.onTools.mock.calls.map(([tools]) => tools)
+  const show = (view, doc) => {
+    view.props = { ...view.props, doc }
+    view.componentDidUpdate()
+  }
+
+  it('is nothing until the files are in, then Fit and Frame for whichever drawing is on screen', async () => {
+    const { view, elements } = mounted(DOCS[0])
+    const drawings = { [SCH]: withDrawing(elements[SCH], 'kc-schematic-viewer'), [PCB]: withDrawing(elements[PCB], 'kc-board-viewer') }
+    view.componentDidUpdate()
+    expect(told(view)).toEqual([null])
+    view.setState({ ready: true })
+    view.componentDidUpdate()
+    const [, tools] = told(view)
+    expect(Object.keys(tools)).toEqual(['fit', 'frame'])
+    // the board on screen: the same tools, acting on it
+    show(view, DOCS[1])
+    expect(told(view)).toHaveLength(2)
+    tools.fit()
+    expect(drawings[PCB].viewer.zoom_fit_top_item).toHaveBeenCalledTimes(1)
+    expect(drawings[SCH].viewer.zoom_fit_top_item).not.toHaveBeenCalled()
+    const blob = new Blob(['png'], { type: 'image/png' })
+    drawings[PCB].canvas.toBlob = vi.fn((done, type) => {
+      expect([type, drawings[PCB].viewer.draw_now.mock.calls.length]).toEqual(['image/png', 1])
+      done(blob)
+    })
+    await expect(tools.frame()).resolves.toBe(blob)
+    // a design whose files did not load can do neither
+    view.setState({ error: 'hw/board.kicad_pcb did not load: HTTP 404' })
+    view.componentDidUpdate()
+    expect(told(view).at(-1)).toBeNull()
+  })
+
+  it('is what the 3D view says on the 3D model', () => {
+    const { view } = mounted(DOCS[0])
+    view.setState({ ready: true })
+    view.componentDidUpdate()
+    show(view, DOCS[2])
+    expect(told(view).at(-1)).toBeNull()
+    const three = { fit: vi.fn(), frame: vi.fn() }
+    view3d(view).three.props.onTools(three)
+    view.componentDidUpdate()
+    expect(told(view).at(-1)).toBe(three)
+    show(view, DOCS[1])
+    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame'])
+  })
+
+  it('finds the drawing only inside the element', () => {
+    expect(drawingOf(document.createElement('ecad-viewer'))).toBeNull()
+    expect(drawingOf(undefined)).toBeNull()
+  })
+})
+

@@ -23,6 +23,18 @@
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
 //
+// WHAT THE PAGE'S BAR CAN DO WITH IT (`onTools`). The bar at the bottom of both
+// pages (`toolBar` in viewlist.jsx) has Fit and Frame; a view that can bring
+// itself back to the frame it opened in and save what it draws as a PNG says so
+// by handing the page `{ fit, frame }` once it can — `fit()` moves the view,
+// `frame()` answers a promise of a PNG blob — and the page greys both while it
+// holds none. The Gerbers, the board and the schematic, and the board's 3D
+// model can; a markdown page, an image and a file in a frame cannot. The view
+// on screen of a KiCad design says it again for each member (KicadView.jsx);
+// this component says null as it goes, so the next document starts grey. A
+// document drawn where no bar is — the datasheet's window in KicadView.jsx —
+// tells nobody.
+//
 // The parent keys this by `docViewKey`, so another document is another
 // instance and a fetch still running for the last one lands nowhere — except
 // another member of the same KiCad design, which keeps the instance and its
@@ -92,8 +104,8 @@ const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`;
 
 /** One document as elements, from what its holder knows: `documents` (the
  *  build's) and `onOpen` (the page's door for opening one by id) are for a
- *  member of a KiCad design. Pure. */
-export function documentBody(doc, base, text, error, documents, onOpen) {
+ *  member of a KiCad design, `onTools` for a view the bar can drive. Pure. */
+export function documentBody(doc, base, text, error, documents, onOpen, onTools) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>Loading…</div>;
@@ -107,13 +119,15 @@ export function documentBody(doc, base, text, error, documents, onOpen) {
   if (doc.type === 'image') {
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} />;
   }
-  if (viewOf(doc)) return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} />;
-  if (doc.type === GERBERS_TYPE) return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} />;
+  if (viewOf(doc)) return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} />;
+  if (doc.type === GERBERS_TYPE) return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} onTools={onTools} />;
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
 }
 
 /** One document, holding the text of a markdown one while it is fetched. */
 export default class DocumentView extends React.Component {
+  static defaultProps = { onTools: () => {} };
+
   constructor(props) {
     super(props);
     this.state = { text: null, error: '' };
@@ -136,10 +150,11 @@ export default class DocumentView extends React.Component {
 
   componentWillUnmount() {
     this._gone = true;
+    this.props.onTools(null);
   }
 
   render() {
-    const { doc, base, documents, onOpen } = this.props;
-    return documentBody(doc, base, this.state.text, this.state.error, documents, onOpen);
+    const { doc, base, documents, onOpen, onTools } = this.props;
+    return documentBody(doc, base, this.state.text, this.state.error, documents, onOpen, onTools);
   }
 }
