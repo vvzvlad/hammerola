@@ -44,9 +44,10 @@ clears it everywhere), and a right click on a part, or on a net in the schematic
 and the board (a label, a power symbol, a track, a pad), opens a menu with an
 item for every other listed entry of the design, the part's
 (`Show C507 in <caption>`) apart from the net's (`Show net +12V in <caption>`),
-and for a net of global labels or power symbols one per other schematic sheet it
-is on, every sheet from the board (`… · <sheet>`); choosing one opens it with the
-part or net selected there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
+and for a net on several schematic sheets (global labels, power symbols,
+hierarchical labels of one name) one per other sheet it is on, every sheet from
+the board (`… · <sheet>`); choosing one opens it with the part or net selected
+there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
 `.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's right-click menu then has
 `Open datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape
