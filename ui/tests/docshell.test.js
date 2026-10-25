@@ -8,6 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
@@ -177,6 +178,9 @@ describe('one document, as both pages draw it', () => {
     const [link] = ofType(tree, 'a')
     expect(link.props.href).toBe(`${BASE}cut/glass.dxf`)
     expect(link.props.download).toBe(true)
+    // Copy link beside it, a text button drawn like it, for the same address.
+    expect(ofType(tree, CopyLink).map((c) => [c.props.href, c.props.button]))
+      .toEqual([[link.props.href, true]])
     expect(text(tree)).toContain('Glass, cut list')
     expect(text(tree)).toContain('dxf · 12.4 kB')
     expect(ofType(tree, 'img')).toEqual([])

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/gerber.js', async (importOriginal) => ({ ...(await importOriginal()), loadGerberRenderer: vi.fn() }))
 
+import CopyLink from '../src/copylink.jsx'
 import { documentBody } from '../src/DocumentView.jsx'
 import {
   fitView, layerOf, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, toProcessor, turned, zoomAt,
@@ -254,6 +255,7 @@ describe('the panel', () => {
     const [link] = collect(view.render(), (el) => (el.type === 'a' ? el : undefined))
     expect([link.props.href, link.props.download]).toEqual(['/project/p1/abc/fab/dionis_speaker_gerber.zip', true])
     expect(texts(link)).toEqual(['dionis_speaker_gerber.zip', '776.5 kB'])
+    expect(collect(view.render(), (el) => (el.type === CopyLink ? el.props.href : undefined))).toEqual([link.props.href])
   })
 })
 

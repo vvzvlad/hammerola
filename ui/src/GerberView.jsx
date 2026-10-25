@@ -21,7 +21,8 @@
 // THE PANEL, over the top left corner as on the board (PcbPanel.jsx): the
 // side the board is seen from, which mirrors it and restacks the layers and
 // shows that side's layers (`shownOn`); an eye per layer; and the link that
-// downloads the zip, under the list and kept when the list is folded. Until
+// downloads the zip, with Copy link at its end (copylink.jsx), under the list
+// and kept when the list is folded. Until
 // the layers are drawn, and when they cannot be, the link is under the note:
 // a zip this page cannot read is still the fab's.
 //
@@ -41,6 +42,7 @@
 
 import React from 'react';
 
+import CopyLink from './copylink.jsx';
 import {
   fitView, HOLE_RING, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, swatch,
   toProcessor, turned, wheelMove, zoomAt,
@@ -58,11 +60,13 @@ const HOLDER = 'position:absolute;top:0;left:0;width:100%;height:100%';
 const CANVAS = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab';
 const NOTE = `position:absolute;top:0;left:0;right:0;box-sizing:border-box;padding:24px 28px;`
   + `font:400 12.5px ${MONO};color:var(--text-muted)`;
-const LINK = `flex:none;display:flex;align-items:center;gap:6px;padding:7px 10px;border-top:1px solid var(--line-soft);`
-  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
-// The same link under the note, before there is a panel to hold it.
-const LINK_ALONE = `display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:10px;`
-  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
+// The link is a row of the panel: it fills the row, and Copy link ends it.
+const LINK_ROW = 'flex:none;display:flex;align-items:center;border-top:1px solid var(--line-soft)';
+const LINK_TEXT = `display:flex;align-items:center;gap:6px;min-width:0;text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
+const LINK = `${LINK_TEXT};flex:1;padding:7px 4px 7px 10px`;
+const LINK_COPY = 'padding:7px 10px 7px 4px';
+// The same two under the note, before there is a panel to hold them.
+const LINK_ALONE = 'display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:10px';
 const LINK_SIZE = `flex:none;font:400 10.5px ${MONO};color:var(--text-muted)`;
 
 /** The sides the board is seen from, as the panel names them. */
@@ -355,13 +359,16 @@ export default class GerberView extends React.Component {
     const note = error || (!layers && 'Loading…');
     const name = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
     const link = (
-      <a href={url} download title={`Download ${name}`} style={css(layers ? LINK : LINK_ALONE)}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flex: 'none' }}>
-          <path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" />
-        </svg>
-        <span style={css(`${FILL};min-width:0;${ELLIPSIS}`)}>{name}</span>
-        {size && <span style={css(LINK_SIZE)}>{size}</span>}
-      </a>
+      <div style={css(layers ? LINK_ROW : LINK_ALONE)}>
+        <a href={url} download title={`Download ${name}`} style={css(layers ? LINK : LINK_TEXT)}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flex: 'none' }}>
+            <path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" />
+          </svg>
+          <span style={css(`${FILL};min-width:0;${ELLIPSIS}`)}>{name}</span>
+          {size && <span style={css(LINK_SIZE)}>{size}</span>}
+        </a>
+        <CopyLink href={url} style={layers ? LINK_COPY : ''} />
+      </div>
     );
     return (
       <div style={css(SHELL)}>

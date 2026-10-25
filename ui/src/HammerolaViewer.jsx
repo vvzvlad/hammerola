@@ -133,6 +133,8 @@ import { savePng, toolBar } from './viewlist.jsx';
 // because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
+// The Copy link at the end of each file row of both menus.
+import CopyLink from './copylink.jsx';
 import { feedView } from './feedview.js';
 import { comparePanel } from './compareview.js';
 // The rules this page and the front page both write: the popover recipe its
@@ -5478,10 +5480,13 @@ export default class HammerolaViewer extends React.Component {
                       <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
                     </div>
                     {g.files.map((f) => (
-                      <a key={f.key} href={f.href} download style={css(f.style)}>
-                        <span style={css(FILL)}>{f.label}</span>
-                        <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
-                      </a>
+                      <div key={f.key} style={css(f.rowStyle)}>
+                        <a href={f.href} download style={css(f.style)}>
+                          <span style={css(FILL)}>{f.label}</span>
+                          <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
+                        </a>
+                        <CopyLink href={f.href} style={f.copyStyle} />
+                      </div>
                     ))}
                   </React.Fragment>
                 ))}
@@ -6152,7 +6157,12 @@ export default class HammerolaViewer extends React.Component {
                 </>
               );
               return m.href
-                ? <a key={m.key} href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                ? (
+                  <div key={m.key} style={css(m.rowStyle)}>
+                    <a href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                    <CopyLink href={m.href} style={m.copyStyle} />
+                  </div>
+                )
                 : <div key={m.key} onClick={m.onClick} style={css(m.style)}>{inner}</div>;
             })}
           </div>

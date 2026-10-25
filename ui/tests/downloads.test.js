@@ -26,10 +26,11 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer, {
   DOWNLOAD_GAP_MS, groupDownloads, menuAt, partRecord, sequentialDownload,
 } from '../src/HammerolaViewer.jsx'
+import CopyLink from '../src/copylink.jsx'
 import { filesKeyFor } from '../src/downloadsview.js'
 import { PAGE, indexTree, rereadPage } from '../src/hub.js'
 import { FILES_KEY, makeComponent } from './component.js'
-import { texts } from './eltree.js'
+import { collect, texts } from './eltree.js'
 
 /**
  * `meta.parts`: two printables and a bought screw, as the hub writes it.
@@ -745,6 +746,14 @@ describe('the row menu', () => {
       ['Isolate', 'Hide', 'Translucent', 'STEP', 'STL', '3MF', 'Copy name'])
     expect(fileRows(items).map((m) => m.hint))
       .toEqual(['plate.step', 'plate.stl', 'plate.3mf'])
+  })
+
+  it('ends every file row of both menus with Copy link, for that row\'s own address', () => {
+    // The header's six files and the plate's three, each a sibling of its link.
+    const tree = component({ node: '/model/plate' }).render()
+    const downloads = collect(tree, (el) => (el.type === 'a' && el.props.download ? el.props.href : undefined))
+    expect(downloads).toHaveLength(9)
+    expect(collect(tree, (el) => (el.type === CopyLink ? el.props.href : undefined))).toEqual(downloads)
   })
 
   it('points those rows at the same URLs the header\'s menu does', () => {

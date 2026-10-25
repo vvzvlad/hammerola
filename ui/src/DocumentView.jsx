@@ -20,9 +20,10 @@
 //   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
 //              layer by layer (GerberView.jsx), with a link that downloads it
 //   file       anything else a build lists — a DXF for the glass shop, a CSV
-//              of measurements, a firmware image: its name, what it is and a
-//              link that downloads it, since the page draws nothing of it; a
-//              DXF has the picture the hub drew of it (`preview`) above them
+//              of measurements, a firmware image: its name, what it is, a
+//              link that downloads it and Copy link beside it (copylink.jsx),
+//              since the page draws nothing of it; a DXF has the picture the
+//              hub drew of it (`preview`) above them
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
@@ -48,6 +49,7 @@
 
 import React from 'react';
 
+import CopyLink from './copylink.jsx';
 import { markdownElements, NOWRAP_CLASS } from './docmd.js';
 import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
@@ -127,7 +129,9 @@ const FILE_SHEET = 'display:flex;align-items:center;justify-content:center;width
 const FILE_CARD = 'display:flex;flex-direction:column;align-items:center;gap:8px;max-width:100%;text-align:center';
 const FILE_NAME = `font:500 14px ${SANS};color:var(--text);word-break:break-all`;
 const FILE_WHAT = `font:400 11.5px ${MONO};color:var(--text-muted)`;
-const FILE_LINK = 'margin-top:8px;padding:7px 14px;border:1px solid var(--line);border-radius:6px;'
+// Download and Copy link side by side, the second drawn like the first.
+const FILE_LINKS = 'display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:8px';
+const FILE_LINK = 'padding:7px 14px;border:1px solid var(--line);border-radius:6px;'
   + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
 // A file with a picture of it (`preview`, a DXF) stacks the picture over the
 // same card: a column whose picture takes the height the card leaves —
@@ -169,7 +173,10 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools)
       <div style={css(FILE_CARD)}>
         <div style={css(FILE_NAME)}>{doc.name}</div>
         <div style={css(FILE_WHAT)}>{docHint(doc)}</div>
-        <a href={docUrl(base, doc)} download style={css(FILE_LINK)}>Download</a>
+        <div style={css(FILE_LINKS)}>
+          <a href={docUrl(base, doc)} download style={css(FILE_LINK)}>Download</a>
+          <CopyLink href={docUrl(base, doc)} button style={FILE_LINK} />
+        </div>
       </div>
     );
     if (!doc.preview) return <div style={css(FILE_SHEET)}>{card}</div>;
