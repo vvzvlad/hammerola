@@ -19,6 +19,12 @@
 // much as a PDF, except one listed `hidden`: it has no row and is still opened
 // by its address (`?d=`) or by a link from another document.
 //
+// THE ROWS STAND IN GROUPS, each under a heading, as the Downloads menu's do:
+// the views first, then the documents a group per kind (`docGroup`), so the
+// five markdown notes of a project read as one block wherever the project
+// lists them. Headings only, no rule between the groups: the owner had the
+// rule between the views and the documents taken out (SPEC 4).
+//
 // `viewList` and `toolBar` are the drawing and take everything as arguments,
 // so a test reads the tree they return without mounting anything
 // (ui/tests/viewmenu.test.js, viewdocs.test.js, docshell.test.js).
@@ -26,29 +32,65 @@
 import React from 'react';
 
 import CopyLink from './copylink.jsx';
-import { docHint } from './DocumentView.jsx';
+import { docExt, docHint, docSize, FILE_TYPE } from './DocumentView.jsx';
 import { shortId } from './hub.js';
+import { viewOf } from './KicadView.jsx';
 import {
-  DIALOG_BTN, ELLIPSIS, FAINT_MONO, FILL, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
+  DIALOG_BTN, ELLIPSIS, FAINT_MONO, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
-import { css, SANS } from './style.jsx';
+import { css, MONO, SANS } from './style.jsx';
 
 /** One row of the list, a view's or a document's: the same shape for both, so
- *  the two halves read as one list. */
-export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px;font:400 12px ${SANS};cursor:pointer;`
+ *  the two halves read as one list. Set in from its group's heading
+ *  (`GROUP_HEAD`), as a file row of the Downloads menu is. */
+export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px 7px 22px;font:400 12px ${SANS};cursor:pointer;`
   + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
 
+/** A group's heading: the Downloads menu's (`headStyle` in downloadsview.js). */
+export const GROUP_HEAD = `padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`;
+
+/** The heading the model's views stand under. */
+export const VIEWS_GROUP = '3D VIEWS';
+
+/** The heading a document's row stands under: a member of a KiCad design under
+ *  KICAD — its schematic, board and the board's 3D model are one design the
+ *  page moves between (`Show in …`), not three kinds of file — a file the page
+ *  does not draw under its extension, as the Downloads menu groups it, any
+ *  other document under its type. */
+export function docGroup(doc) {
+  if (viewOf(doc)) return 'KICAD';
+  return (doc.type === FILE_TYPE ? docExt(doc) : doc.type).toUpperCase();
+}
+
+/** What a row says beside its name once the heading has said the type: a
+ *  KiCad member which one it is (`docHint`), any other document its size. */
+const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
+
 /**
- * The build's documents as rows, one per document not listed `hidden`: the
- * name (its `title`, else its path in the tree) and its hint (`docHint`).
- * `open` is the id of the document on screen, or null; `choose(id)` is what a
- * row does.
+ * The build's documents as rows, one per document not listed `hidden`, in the
+ * order the project lists them: the name (its `title`, else its path in the
+ * tree), its heading (`docGroup`) and its hint. `open` is the id of the
+ * document on screen, or null; `choose(id)` is what a row does.
  */
 export function documentRows(documents, open, choose) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
-    key: doc.id, label: doc.name, hint: docHint(doc), rowStyle: menuRow(open === doc.id),
+    key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
   }));
+}
+
+/**
+ * The menu's rows under their headings, as `[heading, rows]`: the views first,
+ * then a group per heading the documents carry, the groups in the order their
+ * first row is listed and the rows of each in theirs.
+ */
+export function menuGroups(views, documents) {
+  const groups = new Map(views.length ? [[VIEWS_GROUP, views]] : []);
+  for (const row of documents) {
+    if (!groups.has(row.group)) groups.set(row.group, []);
+    groups.get(row.group).push(row);
+  }
+  return [...groups];
 }
 
 /** The button. A view's name is the model's own sentence and can be any
@@ -72,24 +114,35 @@ export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7p
  * Containment 1, §3.2), so `popSheet` would resolve against the bar. No clamp
  * either: the bar is centred on the bottom edge and the button never stands in
  * it alone — on a narrow window Fit is beside it (`toolBar`) — so the card
- * starts at the button's left edge, which fits a 320px window.
+ * starts at the button's left edge. How far right that edge is depends on the
+ * bar's width: a bar that holds the tools (`wide`) starts far enough left for
+ * 360px on a 721px window, the narrowest that has them; the button and Fit
+ * alone keep the card to 260px, which fits a 320px window.
  *
  * No `z-index`: the bar is its own stacking context, so a value here only sorts
  * this menu against its siblings; the page raises the bar's layer instead
  * (`toolbarStyle` in chromeview.js).
  *
- * Height capped like the revision menu's list: a model may declare twenty
- * views, and under the root's `overflow:hidden` a taller menu is cut off. The
- * card itself scrolls, views and documents together: it is one list with one
- * scroll, not a list of views and a list of documents scrolling apart.
+ * Capped, and scrolling past the cap: the page's header lies over the bar's
+ * layer, so a card reaching under it would hide its first rows where no scroll
+ * brings them back. Beside the tools the cap is the window less 240px: the
+ * card's bottom edge stands 57px above the window's, and the header with its
+ * strip of tabs ends at 85px (98px at 721px, where the header wraps; measured),
+ * which leaves room for two more rows of tabs. `dvh`, not `vh`: on a tablet
+ * `vh` counts the browser's toolbar as hidden, and this page never scrolls it
+ * away. On a narrow window the header wraps again and every open project can
+ * add a row of tabs, so no length off the window holds; the card keeps
+ * 308px there. The card itself scrolls, views and documents together: it is
+ * one list with one scroll, not a list of views and a list of documents
+ * scrolling apart.
  */
-export const viewMenuStyle = (open) => 'position:absolute;left:0;'
-  + 'bottom:38px;width:260px;max-height:308px;overflow:auto;'
+export const viewMenuStyle = (open, wide = true) => 'position:absolute;left:0;bottom:38px;'
+  + (wide ? 'width:360px;max-height:calc(100dvh - 240px);' : 'width:260px;max-height:308px;') + 'overflow:auto;'
   + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
   + (open ? 'block' : 'none');
 
-// A document's name and its hint share a row of a narrow menu: the hint
-// (`pdf · 4.7 MB`) stays on one line and the name wraps.
+// A row's name and its hint share a row of a narrow menu: the hint (`4.7 MB`,
+// `37 parts · 4.8 MB`) stays on one line and the name wraps.
 export const DOC_LABEL = 'flex:1;min-width:0;overflow-wrap:anywhere';
 export const DOC_HINT = `flex:none;white-space:nowrap;${FAINT_MONO}`;
 
@@ -114,9 +167,10 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
 
 /**
  * The button and its card, as elements. `views` and `documents` are rows
- * (`{ key, label, hint, rowStyle, onClick }`), the documents under the views.
- * `onToggle` must stop the click: the pages shut their menus on a click that
- * reaches the root. Pure.
+ * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`),
+ * drawn in their groups (`menuGroups`), the documents under the views; `wide`
+ * is whether the bar holds the tools (`viewMenuStyle`). `onToggle` must stop
+ * the click: the pages shut their menus on a click that reaches the root. Pure.
  *
  * The wrapper is `position:relative` so that the card is anchored to the
  * BUTTON: the bar carries `contain:layout` and is therefore already a
@@ -126,26 +180,25 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
  * far above the other controls' and no minimum width, so the name is cut before
  * any other label wraps.
  */
-export function viewList({ label, open, onToggle, views = [], documents = [] }) {
+export function viewList({ label, open, onToggle, views = [], documents = [], wide = true }) {
   return (
     <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
         <span style={css(ELLIPSIS)}>{label}</span>
         {CHEVRON}
       </div>
-      <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open))}>
-        {views.map((t) => (
-          <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-            <span style={css(FILL)}>{t.label}</span>
-            <span style={css(FAINT_MONO)}>{t.hint}</span>
-          </div>
-        ))}
-        {documents.map((t) => (
-          <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-            <span style={css(DOC_LABEL)}>{t.label}</span>
-            <span style={css(DOC_HINT)}>{t.hint}</span>
-          </div>
-        ))}
+      <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, wide))}>
+        {/* One array per group, so that a view and a document sharing a key
+            are siblings of different arrays rather than of one. */}
+        {menuGroups(views, documents).map(([head, rows]) => [
+          <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
+          ...rows.map((t) => (
+            <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
+              <span style={css(DOC_LABEL)}>{t.label}</span>
+              <span style={css(DOC_HINT)}>{t.hint}</span>
+            </div>
+          )),
+        ])}
       </div>
     </div>
   );
@@ -286,7 +339,7 @@ function floatBar(b, menus) {
           bar cuts its caption, and the strip has no menu to read it in. */}
       {b.viewMenu ? (
         viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
-          views: b.viewTabs, documents: b.docRows })
+          views: b.viewTabs, documents: b.docRows, wide: b.showTools })
       ) : (
         <div style={css(TAB_STRIP)}>
           {b.viewTabs.map((t) => (

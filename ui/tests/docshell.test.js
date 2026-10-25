@@ -334,8 +334,10 @@ describe('the page of a build with no model', () => {
     const tree = page('list.md', { viewsOpen: true })
     expect(ofType(tree, 'button')).toEqual([])
     expect(collect(tree, (el) => (el.props.role === 'tablist' ? el : undefined))).toEqual([])
-    // a row per document, in the order meta.json lists them, with its type and size
-    expect(rows(tree)).toEqual(META.documents.map((d) => [d.name, docHint(d)]))
+    // a row per document, in the order meta.json lists them, each of another
+    // type and so under a heading of its own, with its size
+    expect(rows(tree)).toEqual(META.documents.map((d) => [d.name, '0.0 kB']))
+    expect(texts(tree)).toEqual(expect.arrayContaining(['MARKDOWN', 'IMAGE', 'PDF', 'HTML']))
     // the button names the document on screen
     expect(texts(tree)).toContain('list.md')
     // and stands in the model's bar, the card starting at its left edge
@@ -394,7 +396,7 @@ describe('the page of a build with no model', () => {
     const picked = []
     const tree = DocPage({ meta: WITH_KICAD, active: BOARD.id, base: BASE,
       onPick: (id) => picked.push(id), viewsOpen: true })
-    expect(rows(tree)).toEqual([['Схема', '1 sheet'], ['Плата', 'board'], ['list.md', docHint(META.documents[0])]])
+    expect(rows(tree)).toEqual([['Схема', '1 sheet'], ['Плата', 'board'], ['list.md', '0.0 kB']])
     expect(texts(tree)).toContain('Плата')
     for (const row of collect(tree, (el) => (el.props.onClick && texts(el).length === 2 ? el : undefined))) {
       row.props.onClick({ stopPropagation() {} })

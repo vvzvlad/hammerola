@@ -274,16 +274,17 @@ describe('the menu itself', () => {
     // come up over the button that opened it. No clamp is needed anyway: the
     // toolbar is centred on the bottom edge and narrow leaves this button and
     // Fit in it, so 260px from the button's left edge is inside the window.
-    const card = css(viewMenuStyle(true))
-    expect(drawnWith(component({ views: someViews(9), narrow: true }), viewMenuStyle(false))).toHaveLength(1)
+    const card = css(viewMenuStyle(true, false))
+    expect(drawnWith(component({ views: someViews(9), narrow: true }), viewMenuStyle(false, false))).toHaveLength(1)
     expect(card.position).toBe('absolute')
     expect(card.width).toBe('260px')
     expect(card.bottom).toBe('38px')
-    // A model may declare twenty views and the root is `overflow:hidden`, so a
-    // menu taller than the window would be cut off rather than scrolled: the
-    // card is capped and scrolls.
+    // A model may declare twenty views and the header lies over the bar, so a
+    // menu reaching under it would hide its first rows: the card is capped and
+    // scrolls, beside the tools off the window's height.
     expect(card.maxHeight).toBe('308px')
     expect(card.overflow).toBe('auto')
+    expect(css(viewMenuStyle(true))).toMatchObject({ width: '360px', maxHeight: 'calc(100dvh - 240px)' })
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {
