@@ -144,6 +144,14 @@ describe('how many views it takes to fold the strip into a menu', () => {
     const primitive = collect(menu, (el) => (el.type === 'div' && el.props.onClick && texts(el).join('') === 'Add primitive' ? el : undefined))
     expect(primitive.map((el) => el.props.style.whiteSpace)).toEqual(['nowrap'])
   })
+
+  it('names the view whole in a pill\'s tooltip, since a short bar cuts its caption', () => {
+    // In the strip there is no menu to read the names in, so the hover is the
+    // only place a cut name can be read at all.
+    const c = component({ views: someViews(2), view: 'v1' })
+    const titles = c.computed().viewTabs.flatMap((t) => drawnWith(c, t.style).map((el) => el.props.title))
+    expect(titles.map((title) => title.split(' · ')[0])).toEqual(['view number 0', 'view number 1'])
+  })
 })
 
 // -- opening and closing it ----------------------------------------------------

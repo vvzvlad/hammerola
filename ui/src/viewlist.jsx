@@ -189,14 +189,15 @@ export function toolBar(b, menus = {}) {
     <div style={css(FLOAT_BAR)}>
       {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
           `VIEW_TABS_MAX`. The menu holds the build's documents under the
-          views. */}
+          views. A pill's tooltip starts with the view's whole name: a short
+          bar cuts its caption, and the strip has no menu to read it in. */}
       {b.viewMenu ? (
         viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
           views: b.viewTabs, documents: b.docRows })
       ) : (
         <div style={css(TAB_STRIP)}>
           {b.viewTabs.map((t) => (
-            <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
+            <div key={t.key} onClick={t.onClick} title={`${t.label} · ${t.hint}`} style={css(t.style)}>{t.label}</div>
           ))}
         </div>
       )}
