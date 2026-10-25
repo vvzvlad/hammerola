@@ -673,6 +673,12 @@ describe('our edits to the vendored viewer', () => {
     expect(bundle).not.toContain('this.#e.set(n.name,n.visibility),n.visible=!1')
   })
 
+  it('dims the board under a highlighted net, not the page around it', () => {
+    // the veil was the outline's box grown by a quarter of its longer side plus 5 mm
+    expect(bundle).toContain('return n||(n=new Y(0,0,1,1)),n}')
+    expect(bundle).not.toContain('n.grow(Math.max(n.w,n.h)*.25+5)')
+  })
+
   it('pans on a plain wheel and zooms about the pointer on Control, by the Gerbers\' numbers', () => {
     // `#E` pans and `#F` zooms about a point; 16 px a line, the zoom delta
     // clamped to 40 px and the rate 0.01 a pixel (`og`, the viewer's own 0.005).

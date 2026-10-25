@@ -128,7 +128,7 @@ Apache-2.0 and none of it is here.
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` as taken | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `04fda20f58b65929b8e75f5588387ff26f712f6cb8cbb3510d17b18b17c1330d` |
+| `ecad-viewer.js` as committed | `564cb7d1db39e3762c3b8b8585a2bc7e488616ea02f04886269cb2ec8c0eeb0f` |
 | `parser.worker.js` | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -152,7 +152,7 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Three, all in `ecad-viewer.js`, each a replacement of one exact string by
+All in `ecad-viewer.js`, each a replacement of one exact string by
 another — the file is minified, so they are written out here in full and
 re-applied by search and replace. `ui/tests/kicad.test.js` asserts that each is
 still in the file, because an upgrade that drops one breaks nothing loudly: the
@@ -204,6 +204,20 @@ empty, and both restorers do nothing with an empty map:
 if(r&&(r.emphasized_nets=null),this.#l={kind:"fp",fp:t},!this.#e.size)for(let n of this.layers.zone_layers())this.#e.set(n.name,n.visibility),n.visible=!1;this.painter.paint_footprint(t),this.draw()}
 →
 r&&(r.emphasized_nets=null),this.#l={kind:"fp",fp:t},this.painter.paint_footprint(t),this.draw()}
+```
+
+**4. A highlighted net dims the board, not the page around it.** A click on a net
+(a track, a pad, a pour) has `BoardPainter.paint_highlight` lay a veil of the
+theme's background colour at 72% (`Ng`) over everything, the net then drawn
+above it. The veil's rectangle (`#n`) was the board outline's box grown on
+every side by a quarter of its longer side plus 5 mm, so the page around the
+board went dark with it — a slab far wider than the board. It is the outline's
+box itself now (the box of everything drawn, when there is no `Edge.Cuts`):
+
+```text
+return n||(n=new Y(0,0,1,1)),n.grow(Math.max(n.w,n.h)*.25+5)}
+→
+return n||(n=new Y(0,0,1,1)),n}
 ```
 
 To move it: take the same three things from a newer Prism commit — the two files
