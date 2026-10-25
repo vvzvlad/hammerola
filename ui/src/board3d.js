@@ -116,33 +116,78 @@ export const pickedPart = (hits, root) => (hits.length ? partOf(hits[0].object, 
  * meshes (it is still highlighted and picked as a whole); the node's transform
  * is untouched, each mesh's own one below it is baked into the vertices. A group
  * the geometry utility cannot merge (attributes that differ) is left as it was.
+ *
+ * It runs on the page's main thread over the whole board (42 330 meshes on
+ * dionis), so it is written for that count. A geometry no other mesh uses is
+ * moved into place where it is rather than copied first; one in `shared`
+ * (`sharedGeometries`: the loader hands one geometry to every primitive that
+ * names the same accessors, across parts) is copied, or the other users would
+ * move with it (on dionis 864 sets of accessors are named by more than one
+ * primitive; no mesh is drawn by two nodes, the loader's other way to share).
+ * A geometry is the unit of sharing because OCCT, which writes KiCad's export,
+ * names an accessor only in primitives with the same set (none of the 109 407
+ * on dionis is in two sets): one attribute shared between two different
+ * geometries would move with either. A group the utility then refuses is moved
+ * back. The merged
+ * meshes leave their parents in one pass per parent (`sweep`): three's `remove`
+ * searches the parent's children for each one, which over thousands of
+ * siblings is quadratic.
  */
-export function mergeByMaterial(THREE, mergeGeometries, node) {
+export function mergeByMaterial(THREE, mergeGeometries, node, shared) {
   node.updateWorldMatrix(true, true);
   const inverse = node.matrixWorld.clone().invert();
   const byMaterial = new Map();
   node.traverse((object) => {
     if (object === node || !object.isMesh || Array.isArray(object.material)) return;
-    byMaterial.set(object.material, [...(byMaterial.get(object.material) || []), object]);
+    const meshes = byMaterial.get(object.material);
+    if (meshes) meshes.push(object);
+    else byMaterial.set(object.material, [object]);
   });
+  const merged = new Set();
+  const local = new THREE.Matrix4();
   for (const [material, meshes] of byMaterial) {
     if (meshes.length < 2) continue;
-    const local = new THREE.Matrix4();
-    const geometry = mergeGeometries(meshes.map((mesh) => mesh.geometry.clone()
+    const geometry = mergeGeometries(meshes.map((mesh) => (shared.has(mesh.geometry) ? mesh.geometry.clone() : mesh.geometry)
       .applyMatrix4(local.multiplyMatrices(inverse, mesh.matrixWorld))));
-    if (!geometry) continue;
+    if (!geometry) {
+      for (const mesh of meshes) {
+        if (!shared.has(mesh.geometry)) mesh.geometry.applyMatrix4(local.multiplyMatrices(inverse, mesh.matrixWorld).invert());
+      }
+      continue;
+    }
     node.add(new THREE.Mesh(geometry, material));
-    for (const mesh of meshes) mesh.removeFromParent();
+    for (const mesh of meshes) merged.add(mesh);
   }
-  prune(node);
+  sweep(node, merged);
 }
 
-/** Drop the empty containers a merge left behind. */
-function prune(node) {
-  for (const child of [...node.children]) {
-    prune(child);
-    if (!child.children.length && (child.type === 'Object3D' || child.type === 'Group')) child.removeFromParent();
-  }
+/** The geometries more than one mesh under `root` draws. */
+export function sharedGeometries(root) {
+  const seen = new Set();
+  const shared = new Set();
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    if (seen.has(object.geometry)) shared.add(object.geometry);
+    seen.add(object.geometry);
+  });
+  return shared;
+}
+
+/** Take the `merged` meshes out from under `node`, and the empty containers
+ *  that leaves, rebuilding each list of children once. */
+function sweep(node, merged) {
+  node.children = node.children.filter((child) => {
+    if (merged.has(child)) {
+      child.parent = null;
+      return false;
+    }
+    sweep(child, merged);
+    if (!child.children.length && (child.type === 'Object3D' || child.type === 'Group')) {
+      child.parent = null;
+      return false;
+    }
+    return true;
+  });
 }
 
 /**
