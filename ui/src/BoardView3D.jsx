@@ -41,6 +41,7 @@ import React from 'react';
 
 import {
   disposeModel, exportRoot, frameBox, light, loadThree, mergeByMaterial, partsOf, pickedPart, plainColours,
+  sharedGeometries,
 } from './board3d.js';
 import { wheelMove } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
@@ -88,7 +89,8 @@ class Stage {
     this.model = gltf.scene;
     plainColours(this.model, gltf.parser);
     this.root = exportRoot(this.model);
-    for (const node of [...this.root.children]) mergeByMaterial(THREE, mergeGeometries, node);
+    const shared = sharedGeometries(this.root);
+    for (const node of [...this.root.children]) mergeByMaterial(THREE, mergeGeometries, node, shared);
     this.parts = partsOf(this.model);
     this.box = new THREE.Box3().setFromObject(this.model);
     this.radius = this.box.getBoundingSphere(new THREE.Sphere()).radius || 1;

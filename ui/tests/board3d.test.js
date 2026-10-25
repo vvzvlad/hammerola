@@ -12,7 +12,7 @@ import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
 import { GLTFLoader } from '../../static/_v/GLTFLoader.js'
 import {
   designatorOf, disposeModel, exportRoot, frameBox, light, loadThree, mergeByMaterial, partOf, partsOf,
-  pickedPart, plainColours,
+  pickedPart, plainColours, sharedGeometries,
 } from '../src/board3d.js'
 
 const vec3 = (count, offset) => ({ bufferView: offset, componentType: 5126, count, type: 'VEC3' })
@@ -132,7 +132,14 @@ describe('a KiCad export', () => {
     const root = exportRoot(scene)
     const before = root.children.map(worldPoints)
     const loaded = meshesOf([root]).length
-    for (const node of [...root.children]) mergeByMaterial(THREE, mergeGeometries, node)
+    // The loader hands one geometry to every primitive naming the same
+    // accessors, across parts: here two, one drawn by C523, L101 and the
+    // board, the other by C523 and L101, each moved into place only as a copy,
+    // or the others would move with it. (Both also name one normal accessor,
+    // which OCCT never writes; harmless here, as both are copied.)
+    const shared = sharedGeometries(root)
+    expect(shared.size).toBe(2)
+    for (const node of [...root.children]) mergeByMaterial(THREE, mergeGeometries, node, shared)
     expect(root.children.map(worldPoints)).toEqual(before)
     const [c523, l101, board] = root.children
     expect([loaded, meshesOf([root]).length]).toEqual([6, 4])
@@ -141,6 +148,50 @@ describe('a KiCad export', () => {
     expect(l101.children.map((child) => child.isMesh)).toEqual([true])
     expect(board.isMesh).toBe(true)
     expect(meshesOf([root]).map((mesh) => partOf(mesh, root))).toEqual(['C523', 'C523', 'L101', null])
+  })
+
+  it('moves a geometry no one else draws in place, copies a shared one, and leaves a group it cannot merge as it was', () => {
+    const material = new THREE.MeshStandardMaterial({ name: 'mat' })
+    const mesh = (geometry, x, y) => {
+      const out = new THREE.Mesh(geometry, material)
+      out.position.set(x, y, 0)
+      out.rotation.z = x / 7
+      return out
+    }
+    const both = new THREE.BoxGeometry(1, 2, 3)
+    const root = new THREE.Group()
+    // A: its own geometry and one B and C draw too; B: that one and its own;
+    // C: an indexed geometry beside one that is not, which the utility
+    // refuses, and the shared one, whose copy, not itself, is moved there
+    const a = new THREE.Group().add(mesh(new THREE.BoxGeometry(1, 1, 1), 5, 0), mesh(both, 0, 7))
+    const b = new THREE.Group().add(mesh(both, -3, 1), mesh(new THREE.SphereGeometry(1), 2, 2))
+    const c = new THREE.Group().add(mesh(new THREE.BoxGeometry(1, 1, 1), 5, 0),
+      mesh(new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), 0, 7), mesh(both, 2, -4))
+    root.add(a, b, c)
+    a.position.set(1, 2, 3)
+    /** Every coordinate of every vertex under `node` in the world, in the
+     *  order the meshes and their vertices come in, which a merge keeps. */
+    const points = (node) => {
+      node.updateWorldMatrix(true, true)
+      return meshesOf([node]).flatMap((one) => {
+        const position = one.geometry.attributes.position
+        return Array.from({ length: position.count }, (_, i) => new THREE.Vector3().fromBufferAttribute(position, i)
+          .applyMatrix4(one.matrixWorld).toArray()).flat()
+      })
+    }
+    /** How far apart the furthest pair of the same coordinate lie: moved and
+     *  moved back, or moved by a product of matrices, a vertex keeps float noise. */
+    const apart = (one, other) => (one.length === other.length
+      ? Math.max(...one.map((v, i) => Math.abs(v - other[i]))) : Infinity)
+    const before = [a, b, c].map(points)
+    const shared = sharedGeometries(root)
+    expect([shared.size, shared.has(both)]).toEqual([1, true])
+    const refused = vi.spyOn(console, 'error').mockImplementation(() => {})
+    for (const node of [a, b, c]) mergeByMaterial(THREE, mergeGeometries, node, shared)
+    expect(refused).toHaveBeenCalled()
+    refused.mockRestore()
+    expect([a, b, c].map((node) => meshesOf([node]).length)).toEqual([1, 1, 3])
+    expect([a, b, c].map((node, i) => apart(points(node), before[i]) < 1e-5)).toEqual([true, true, true])
   })
 
   it('takes a colour given with no metallic factor for no metal, and keeps a factor given', async () => {
