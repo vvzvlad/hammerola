@@ -111,8 +111,8 @@ class Document:
 
     `files` starts with `path`; a KiCad schematic adds its sheets and a
     schematic or a board its project, which `kicad` names for meta.json.
-    A DXF has `preview`, the path its picture is published at, and `svg`, the
-    picture, drawn when the list is checked; it is written rather than copied
+    A DXF not listed with `download` has `preview`, the path its picture is
+    published at, and `svg`, the picture, drawn when the list is checked; it is written rather than copied
     from the tree, so it is not one of `files`.
     `download` is the entry's own key and not a field of meta.json: what
     reaches the browser is the type `_copy` resolves from it.
@@ -207,19 +207,13 @@ def declared_documents(sources) -> tuple:
         seen[document_id(path)] = path
         found.append(Document(path, (path, *_besides(design)), design, title,
                               hidden, download, preview, picture))
-    # A picture is published at a path of its own, so that path is held to
-    # what every published path is: one the file server answers, and nobody
-    # else's file.
+    # A picture is published at a path of its own, which may not be another
+    # document's file.
     owners = {name: doc.path for doc in found for name in doc.files}
     for doc in found:
-        if doc.preview is None:
-            continue
-        where = f"  {doc.path!r}, which publishes its preview as {doc.preview!r}"
-        reason = unservable_path_reason(doc.preview)
-        if reason is not None:
-            problems.append(f"{where}, and that path {reason}")
-        elif doc.preview in owners:
-            problems.append(f"{where}, and the document "
+        if doc.preview is not None and doc.preview in owners:
+            problems.append(f"  {doc.path!r}, which publishes its preview as "
+                            f"{doc.preview!r}, and the document "
                             f"{owners[doc.preview]!r} publishes a file at "
                             f"that path")
     if problems:

@@ -55,7 +55,7 @@
   PDF, pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of
   Gerbers — `render.DOCUMENT_TYPES`); any other extension publishes as
   `render.FILE_TYPE`, a row that downloads the file (issue #125); a `.dxf`
-  among them also gets a picture, `<path>.svg`, drawn here with ezdxf when the
+  among them, unless listed with `download`, also gets a picture, `<path>.svg`, drawn here with ezdxf when the
   list is checked and named by the entry's `preview`, and
   `"download": true` asks for a plain file whatever the extension — how a zip of logs
   is told from a zip of Gerbers. An entry is optionally `hidden` (no row in the

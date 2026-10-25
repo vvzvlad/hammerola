@@ -65,7 +65,7 @@ COUNTS = {
 INHERITED_RE = re.compile(r"further up the tree \(([^)]*)\)")
 INHERITED_PIN_RE = re.compile(r"`([A-Za-z0-9][A-Za-z0-9._-]*)==([^`]+)`")
 
-WORDS = {"three": 3, "four": 4, "seven": 7, "ten": 10, "eleven": 11}
+WORDS = {"three": 3, "four": 4, "seven": 7, "ten": 10, "eleven": 11, "twelve": 12}
 
 # The prose with its wrapping taken out. requirements.txt is a comment file wrapped
 # at ~99 columns, so a sentence routinely crosses a line break and picks up a `# `
@@ -141,7 +141,7 @@ def test_the_dockerfile_installs_the_lock_and_requires_hashes():
     assert INSTALL_RE.search(DOCKERFILE), (
         "the Dockerfile has no `RUN pip install ... --require-hashes -r "
         "requirements.lock` line. The lock is the whole point of having a lock: "
-        "installing requirements.txt directly pins the eleven packages named "
+        "installing requirements.txt directly pins the twelve packages named "
         "there "
         "and lets the rest of the environment — numpy included — float again."
     )
@@ -186,7 +186,7 @@ def test_the_counts_requirements_txt_states_are_the_counts_that_exist():
 
     # The three inherited pins are counted from the names the sentence itself
     # gives, and each is then looked for in the lock at that version and checked
-    # NOT to be one of the eleven named here. Without this the split would only have
+    # NOT to be one of the twelve named here. Without this the split would only have
     # to add up, and moving a package from `inherited` to `transitive` in the same
     # breath would pass while saying something false about both.
     parenthesis = INHERITED_RE.search(PROSE)

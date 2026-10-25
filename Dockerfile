@@ -33,11 +33,15 @@ ENV PYTHONUNBUFFERED=1
 # pinned OCP or VTK wheels needs them, but every OpenCASCADE recipe installs them.
 # libglu1-mesa is deliberately not installed (no DT_NEEDED references libGLU.so.1);
 # ci/smoke.py imports cadquery inside the built image, so a wrong reading fails the gate.
+# fonts-dejavu-core is for the picture of a DXF (`docsbuild._draw_dxf`): ezdxf draws text
+# with the system's TrueType fonts, and python:3.11-slim has none, so every text in the
+# drawing would come out as an empty box.
 # One RUN with `--no-install-recommends` and the apt lists removed in the same layer; the X
 # libraries' recommends would pull in desktop packages.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
+        fonts-dejavu-core \
         gosu \
         libgl1 \
         libx11-6 \
