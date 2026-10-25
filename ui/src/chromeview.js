@@ -42,7 +42,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, viewQuery, cameraQuery,
+    refreshBuilds, viewQuery, cameraQuery, writeDoc,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -90,9 +90,13 @@ export function chromeView(s, props, deps) {
   // that does not list `s.doc` shows its model.
   const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
   const docOpen = documents.find((d) => d.id === s.doc) || null;
-  // Opening a document: what its row does, and what `Show in …` of a KiCad
-  // design's right-click menu does with the other member's id.
-  const openDoc = (id) => setState({ doc: id, viewsOpen: false });
+  // Opening a document: what its row does, what `Show in …` of a KiCad
+  // design's right-click menu does with the other member's id, and what a
+  // markdown link to another document does. The address says it as `?d=`.
+  const openDoc = (id) => {
+    setState({ doc: id, viewsOpen: false });
+    writeDoc(id);
+  };
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc);
 
@@ -447,6 +451,9 @@ export function chromeView(s, props, deps) {
       // drawn would start its load again.
       onClick: () => {
         (s.view === v.id ? set : setState)({ doc: null });
+        // The document goes from the address with it; `v=` follows the view
+        // once it is drawn (`onModel`).
+        if (docOpen) writeDoc(null);
         showView(v.id);
         setState({ viewsOpen: false });
       },
@@ -455,8 +462,8 @@ export function chromeView(s, props, deps) {
     // hidden one. Choosing one lays it over the model (`docOpen`), which stays
     // mounted underneath with its camera, cut and hidden parts; `Show in …` of
     // a KiCad design's right-click menu opens the other member the same way
-    // (`onDocOpen`). Like a view, the choice does not move the address; `?d=`
-    // in it opens one on arrival (`load`), a hidden one too.
+    // (`onDocOpen`). The choice is written into the address as `?d=`
+    // (`writeDoc`), which opens it on arrival (`load`), a hidden one too.
     docRows,
     onDocOpen: openDoc,
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`

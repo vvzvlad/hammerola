@@ -1799,6 +1799,30 @@ describe('a comparison entered in the page', () => {
     expect(window.location.search).toBe('?v=printables')
   })
 
+  it('carries the document open over the model', () => {
+    loadCompareReport.mockResolvedValue(REPORT)
+    const c = page({ cmp: [A, B], doc: 'notes.md' })
+
+    c.computed().startCompare({ stopPropagation() {} })
+
+    expect(window.location.search).toBe('?d=notes.md')
+  })
+
+  it('keeps the document in the address when the way out returns to the pointer', async () => {
+    // `standOnPointer` writes `/latest/` afresh, query and all.
+    opened('/project/proj1/latest/')
+    loadCompareReport.mockResolvedValue(REPORT)
+    const c = page({ builds: BUILDS, doc: 'notes.md' })
+    c.schedulePoll = vi.fn()
+
+    c.compareRevisions(['latest', B])
+    await settled()
+    c.computed().exitCompare({ stopPropagation() {} })
+
+    expect(`${window.location.pathname}${window.location.search}`)
+      .toBe('/project/proj1/latest/?d=notes.md')
+  })
+
   it('pushes nothing when the address already names that comparison', () => {
     // Three doors arrive here with the bar already right — a link opened cold,
     // Try again beside a failure, and a view tab pressed mid-comparison — and an
