@@ -152,6 +152,50 @@ describe('one document, as both pages draw it', () => {
     expect(ofType(tree, 'a')[0].props.href).toBe(`${BASE}docs/notes.md`)
   })
 
+  describe('a link to another document', () => {
+    afterEach(() => window.history.replaceState(null, '', '/'))
+
+    it('opens it on the page, not as the raw file', () => {
+      window.history.replaceState(null, '', `${BASE}?v=glass&files=k1`)
+      const vendors = doc('docs/glass-vendors.md', 'markdown')
+      const onOpen = vi.fn()
+      const tree = documentBody(cutList, BASE,
+        '[v](glass-vendors.md#top) [p](../report.pdf) [n](notes.md) [w](https://x.org/) [x](https://)', '',
+        [cutList, vendors, META.documents[2]], onOpen)
+      const [v, p, n, w, x] = ofType(tree, 'a')
+      // A half-typed address is drawn as written rather than taking the page down.
+      expect(x.props.href).toBe('https://')
+      // The page's own address with the other parameters kept, so a new tab or a
+      // copied link lands on the document too.
+      expect(v.props.href).toBe(`${BASE}?v=glass&files=k1&d=docs__glass-vendors.md`)
+      expect(p.props.href).toBe(`${BASE}?v=glass&files=k1&d=report.pdf`)
+      // A file the build does not list as a document stays the file.
+      expect(n.props.href).toBe(`${BASE}docs/notes.md`)
+      expect(n.props.onClick).toBeUndefined()
+      expect(w.props.target).toBe('_blank')
+      const click = (extra) => {
+        const event = { button: 0, preventDefault: vi.fn(), ...extra }
+        v.props.onClick(event)
+        return event
+      }
+      expect(click().preventDefault).toHaveBeenCalled()
+      expect(onOpen.mock.calls).toEqual([['docs__glass-vendors.md']])
+      // A modified or middle click is the browser's: a new tab.
+      for (const extra of [{ metaKey: true }, { ctrlKey: true }, { button: 1 }]) {
+        expect(click(extra).preventDefault).not.toHaveBeenCalled()
+      }
+      expect(onOpen).toHaveBeenCalledTimes(1)
+      // Without a door to open one, a link is a link to the file.
+      expect(ofType(documentBody(cutList, BASE, '[v](glass-vendors.md)', '', [vendors]), 'a')[0].props.href)
+        .toBe(`${BASE}docs/glass-vendors.md`)
+    })
+  })
+
+  it('lets a long bare address break, so it cannot push the page wider', () => {
+    const [a] = ofType(markdownElements('| a |\n|---|\n| <https://www.avito.ru/moskva/rezka_stekla_i_zerkal_1979990456> |', BASE), 'a')
+    expect(a.props.style.overflowWrap).toBe('anywhere')
+  })
+
   it('carries the rule its short cells are styled by', () => {
     const styles = ofType(documentBody(cutList, BASE, '| a |\n|---|\n| 1 |', ''), 'style')
     expect(styles.map(text)).toEqual([`.${NOWRAP_CLASS}{white-space:nowrap}`])
