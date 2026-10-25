@@ -414,8 +414,9 @@
   (`ecad-viewer:selection`), a click on nothing or Escape clears it in all of
   them, and a right click opens a menu with the part's items apart from its
   net's (`menuFor` says which views take which; a `#PWR` power symbol is its
-  net, and a net of global labels or power symbols has an item per sheet it is
-  on, the clicked one left out, read by `kicadnets.js`) whose choice asks the
+  net, and a net on several sheets — global labels, power symbols, hierarchical
+  labels of one name — has an item per sheet it is on, the clicked one left
+  out, read by `kicadnets.js`) whose choice asks the
   page to open the sibling (`onOpen`) and, once it is on screen, calls
   `requestCrossProbe` on its element with the designator, the net, or the net's
   sheet and occurrence; another sheet of the schematic on screen is asked for
@@ -461,9 +462,12 @@
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
   matched to a listed document (`KicadView` offers it as an item of the part's menu and shows it in a window over the view)
 - `ui/src/kicadnets.js` — where the sheets of a schematic name a net: each
-  sheet's global, local and hierarchical labels and power symbols (`#PWR`, the
-  net their `Value`), by sheet and by uuid (`KicadView` gives a net's menu an
-  item per sheet that global labels or power symbols of its name are on)
+  sheet's global, local and hierarchical labels, power symbols (`#PWR`, the
+  net their `Value`) and the sheet pins of its sheet symbols, by sheet and by
+  uuid, each with the name the board gives
+  its net (`/amp/OUT_C` for a local label on the sheet `amp`; hierarchical labels
+  of one name share the one the board has), which `KicadView` asks the board for
+  and gives a net's menu an item per other sheet with the same board name on
 - `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
   entries the viewer draws a placed symbol's pins from, added from the sheet's
   `lib_symbols` to every symbol that has none (konnect writes none); text it

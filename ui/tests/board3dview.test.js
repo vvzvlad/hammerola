@@ -93,10 +93,11 @@ function fetching() {
   return { fetch, answer: (ok) => calls.shift()(ok) }
 }
 
-/** An answer read, the frame that paints its full bar run, and the model
- *  read after it. */
+/** An answer read, the two frames that paint its full bar run, and the model
+ *  read after them. */
 async function arrived() {
   await drained()
+  runFrames()
   runFrames()
   await drained()
 }
@@ -188,7 +189,11 @@ describe('the 3D view of a board', () => {
     await drained()
     expect(texts(view.render())).toEqual(['Preparing…'])
     expect(view.props.onFetched).toHaveBeenCalledTimes(1)
-    // the model is read only after a frame has shown that
+    // the model is read only after the second frame, the first that is sure
+    // to show that (loadbar.jsx, `painted`)
+    await drained()
+    expect(renderers).toEqual([])
+    runFrames()
     await drained()
     expect(renderers).toEqual([])
     runFrames()

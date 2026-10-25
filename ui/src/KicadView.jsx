@@ -50,27 +50,35 @@
 //     EVERY view, the clicked one included: the viewer itself leaves a part lit
 //     through a click on the bare board. Nets are not carried across this way;
 //   * the RIGHT BUTTON on a part, or in the schematic and the board on what has
-//     a net (a track, a via, a zone, a label, a power symbol), opens a menu at
-//     the pointer (`menuFor`), headed with the part, the net, or both: a pad of
-//     the board is both, a pin of the schematic its part alone. The part has
+//     a net (a track, a via, a zone, a label, a power symbol, a sheet pin),
+//     opens a menu at the pointer (`menuFor`), headed with the part, the net,
+//     or both: a pad of the board is both, a pin of the schematic its part
+//     alone. The part has
 //     an item `Show <ref> in <name>` for every other listed member, the net
 //     `Show net <name> in <name>` for every other drawn one, never the 3D
 //     model. A power symbol (`#PWR`) is no part, being on the schematic only,
 //     but the net its `Value` names; a power flag (`#FLG`) is neither. A net
-//     that global labels or power symbols name, which KiCad joins across the
-//     whole design, has in place of the schematic's item one per sheet they
-//     are on, `… · <sheet>`, aimed at the first of them there: every sheet from
-//     the board, the other sheets from the schematic, none from a local or a
-//     hierarchical label, which names a net of its own sheet. Which sheets
-//     those are is read from the sheets' texts (kicadnets.js); a net no label
-//     of that kind names keeps the one item, and the viewer looks it up.
+//     the sheets name has in place of the schematic's item one per sheet it is
+//     on, `… · <sheet>`, aimed at its first occurrence there: every sheet from
+//     the board, the other sheets from the schematic. What is one net is read
+//     from the sheets' texts and the board's (kicadnets.js): the occurrences of
+//     one name on the board, `board` — global labels and power symbols of one
+//     name, which KiCad joins across the whole design, and hierarchical labels
+//     of one name with the sheet pins of that name, through which the sheet
+//     that draws a sheet symbol wires them together, so that net's items
+//     include that sheet. A local label's net is on its own sheet alone, so
+//     from the schematic it has no sheet item; a net no sheet names keeps the
+//     one item, and the viewer looks it up.
 //     An item of another member asks the page to open it (`onOpen` with its
 //     id, which moves the lit row of its list too) and, once the page has
 //     handed it down, asks its element to select the same thing — a part by
 //     its designator, a net by its name, and for a sheet's item on that sheet
 //     at that occurrence (`requestCrossProbe`); the 3D view is handed the part
-//     as `selected`. An item of another sheet of the schematic on screen asks
-//     its element straight away: the page shows what it showed.
+//     as `selected`. The board is asked for a net a sheet names by the board's
+//     name of it (`/amp/OUT_C` for a local label `OUT_C` on the sheet `amp`);
+//     the lines show the name clicked, a label's own or the one the board
+//     reported. An item of another sheet of the schematic on screen asks its
+//     element straight away: the page shows what it showed.
 //
 // WHAT IS UNDER THE POINTER at a right click is the viewer's own answer to a
 // left click there. It selects on the left button only and has no hit test an
@@ -247,22 +255,15 @@ export function crossProbeRequest(detail, targetContext, nets = NO_NETS) {
  *  the 3D model has parts and no nets. */
 const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
 
-/** The kinds of occurrence that join one net across the whole design. */
-const DESIGN_WIDE = new Set(['global', 'power']);
-
 /**
- * The first global label or power symbol named `name` on each sheet, in the
- * order of `nets`: the sheet of the occurrence `uuid` was reported for left
- * out, and none at all when that is a local or a hierarchical label.
+ * The first occurrence on each sheet of the net the board names `board`
+ * (kicadnets.js), in the order of `nets`: the sheet of `own`, the occurrence
+ * the menu is for, if any, left out.
  */
-function netSheets(nets, name, uuid) {
-  const own = nets.byUuid.get(uuid);
-  if (own && !DESIGN_WIDE.has(own.kind)) return [];
+function netSheets(nets, board, own) {
   const first = new Map();
   for (const one of nets.occurrences) {
-    if (one.name === name && DESIGN_WIDE.has(one.kind) && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) {
-      first.set(one.sheet, one);
-    }
+    if (one.board === board && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) first.set(one.sheet, one);
   }
   return [...first.values()];
 }
@@ -276,9 +277,12 @@ const sheetName = (path) => path.slice(path.lastIndexOf('/') + 1).replace(/\.kic
  * and the net it shows (`crossProbeRequest`), either null, and the items, each
  * carrying the request its view is asked (`request`). The part's first, an
  * item for every other listed member that can show it; then the net's, the
- * same but for the schematic where global labels or power symbols name the net
- * (`netSheets`), which has an item per sheet they are on instead, the request
- * carrying the sheet's path and the occurrence's uuid; last, for a part, the
+ * same but for the schematic where the sheets name the net (`netSheets`),
+ * which has an item per sheet it is on instead, the request carrying the
+ * sheet's path and the occurrence's uuid, and for the board, which is asked for
+ * the net by the board's name of it: the occurrence's `board` when the menu is
+ * for one, else the name reported, which a click on the board reports as the
+ * board names it. Every line shows the name reported. Last, for a part, the
  * document its datasheet names (`sheet`, or null), which its item carries as
  * `doc`. Null when there is no item.
  */
@@ -293,7 +297,9 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
     }
   }
   if (net) {
-    const sheets = netSheets(nets, net.value, detail.uuid);
+    const own = nets.byUuid.get(detail.uuid);
+    const board = own ? own.board : net.value;
+    const sheets = netSheets(nets, board, own);
     for (const view of SHOWS.net.filter((one) => members[one])) {
       const label = `Show net ${net.value} in ${members[view].name}`;
       if (view === SCH && sheets.length) {
@@ -301,7 +307,7 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
           offer(view, `${label} · ${sheetName(one.sheet)}`, { ...net, net: net.value, sheet: one.sheet, uuid: one.uuid });
         }
       } else if (view !== from) {
-        offer(view, label, net);
+        offer(view, label, view === PCB ? { ...net, value: board } : net);
       }
     }
   }
@@ -734,8 +740,11 @@ export default class KicadView extends React.Component {
         const revisionKey = `${base}${designKey(this.props.doc)}`;
         const loaded = Promise.all(views.map((context) => this.elements[context]
           && this.elements[context].replaceSources({ revisionKey, sources: sources[context] })));
-        // Read once the viewers have their files, so that they need not wait for it.
-        this.setState({ datasheets: partDatasheets(byPath), nets: netIndex(byPath) });
+        // Read once the viewers have their files, so that they need not wait for
+        // it. The root schematic is the schematic member's own file, the first
+        // of its `schematics`.
+        const root = members[SCH] && members[SCH].kicad.schematics[0];
+        this.setState({ datasheets: partDatasheets(byPath), nets: netIndex(byPath, root) });
         return loaded;
       })
       .then(() => {

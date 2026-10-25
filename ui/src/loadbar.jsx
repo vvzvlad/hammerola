@@ -57,12 +57,21 @@ export async function fetchBody(url, count, text = false) {
 /** Resolves once a frame has been painted. Awaited between the last byte and
  *  the heavy reading of a file: started in the task the last chunk lands in,
  *  the reading would hold the frame that paints the full bar and `Preparing…`
- *  until it is over. A hidden page paints no frames and calls no animation
- *  frame, so there it resolves at once: the reading goes on in the background
- *  and the view is ready when the reader comes back. */
+ *  until it is over.
+ *
+ *  TWO frames, not one: the `Preparing…` the caller has just asked React for
+ *  is put on the page by a task of React's own, which the browser may run
+ *  after the next frame rather than before it; that frame then still shows the
+ *  bar part-way, and the reading after it holds the page there. React's task
+ *  runs before the frame after, which is the one waited for; the timeout
+ *  starts the reading once that frame is out.
+ *
+ *  A hidden page paints no frames and calls no animation frame, so there it
+ *  resolves at once: the reading goes on in the background and the view is
+ *  ready when the reader comes back. */
 export const painted = () => new Promise((resolve) => {
   if (document.visibilityState === 'hidden') resolve();
-  else requestAnimationFrame(() => setTimeout(resolve, 0));
+  else requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)));
 });
 
 const TRACK = 'width:200px;max-width:100%;height:3px;margin-top:8px;border-radius:2px;overflow:hidden;'
