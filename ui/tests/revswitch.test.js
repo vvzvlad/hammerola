@@ -235,6 +235,28 @@ describe('picking a revision', () => {
     expect(seen[0].view).toBe('assembled')
   })
 
+  describe('with a document open', () => {
+    const doc = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+    const page = () => component({
+      doc: doc.id,
+      meta: { project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z', parts: PARTS, views: VIEWS, documents: [doc] },
+    })
+
+    it('keeps it in the pushed address when the target lists it', async () => {
+      const push = vi.spyOn(history, 'pushState')
+      loadMeta.mockResolvedValue({ ...build(), documents: [doc] })
+      await page().switchBuild('proj1', B)
+      expect(pushed(push)).toBe(`${path(B)}?d=notes.md`)
+    })
+
+    it('drops it from the pushed address when the target does not', async () => {
+      const push = vi.spyOn(history, 'pushState')
+      loadMeta.mockResolvedValue(build())
+      await page().switchBuild('proj1', B)
+      expect(pushed(push)).toBe(path(B))
+    })
+  })
+
   it('holds the new base back with the view while the document the page opened on is fetching', async () => {
     // A page opened on a document (`?d=`) gives the viewport no view until the
     // document has its file, and no base or key either: the element takes a
@@ -422,11 +444,11 @@ describe('the message on a picker row', () => {
 
 describe('popstate', () => {
   /** The component with its real listeners on the window. */
-  const mounted = () => {
+  const mounted = (over) => {
     // `readNotes` runs on mount and this runner has no `localStorage`; store.js
     // catches that and says so, which is one line of noise per test here.
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const c = component()
+    const c = component(over)
     // The first load is what `componentDidMount` does before the listeners go
     // up; it is not what this block is about, and it would reach a hub.
     c.load = vi.fn(async () => {})
@@ -544,6 +566,64 @@ describe('popstate', () => {
     await flush()
 
     expect(c.state.view).toBe('printables')
+  })
+
+  describe('and the document the entry names', () => {
+    // `?d=` is restored as `?v=` is: the entry's, never the one open, or the
+    // bar names one thing and the page shows another.
+    const doc = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+    const listing = {
+      meta: { project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z',
+              parts: PARTS, views: VIEWS, documents: [doc] },
+    }
+
+    it('opens it with the build the entry names', async () => {
+      const c = mounted(listing)
+      loadMeta.mockResolvedValue({ ...build(), documents: [doc] })
+
+      window.history.replaceState(null, '', `${path(B)}?d=notes.md`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+
+      expect(c.state.doc).toBe('notes.md')
+    })
+
+    it('closes the one open when the entry names none, though the build lists it', async () => {
+      const c = mounted({ ...listing, doc: doc.id })
+      loadMeta.mockResolvedValue({ ...build(), documents: [doc] })
+
+      window.history.replaceState(null, '', path(B))
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+
+      expect(c.state.doc).toBe(null)
+    })
+
+    it('opens it on the build already on screen', async () => {
+      // Back from a comparison of this build to the build: nothing to fetch.
+      const c = mounted(listing)
+
+      window.history.replaceState(null, '', `${path(A)}?d=notes.md`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+
+      expect(loadMeta).not.toHaveBeenCalled()
+      expect(c.state.doc).toBe('notes.md')
+    })
+
+    it('closes it while calling a swap off', async () => {
+      const c = mounted({ ...listing, doc: doc.id })
+      loadMeta.mockImplementation(() => new Promise(() => {}))
+
+      window.history.replaceState(null, '', `${path(B)}?d=notes.md`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+      window.history.replaceState(null, '', path(A))
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await flush()
+
+      expect(c.state.doc).toBe(null)
+    })
   })
 
   it('leaves the destination where the page really is, so that build is reachable',
@@ -809,6 +889,22 @@ describe('a second revision picked while the first is fetching', () => {
 
     expect(`${location.pathname}${location.search}`)
       .toBe(`${path(A)}?v=printables`)
+  })
+
+  it('takes the document open into the address it puts right', async () => {
+    // The entry Forward moved to names no document; the page stayed on A with
+    // one open, and the address says so.
+    const c = component({ doc: 'notes.md' })
+    const answers = held()
+
+    window.history.replaceState(null, '', path(B))
+    const live = c.switchBuild('proj1', B, { push: false })
+    c.setState({ revOpen: true })
+    await c.switchBuild('proj1', A)
+    answers[path(B)].resolve(build())
+    await live
+
+    expect(`${location.pathname}${location.search}`).toBe(`${path(A)}?d=notes.md`)
   })
 
   it('leaves the view tab alone, because a row click says nothing about views',
@@ -2125,6 +2221,18 @@ describe('taking the banner\'s build', () => {
       // stay hidden.
       expect(c.state.ghost).toEqual([])
     })
+
+  it('takes a document the offered build does not list out of the address', () => {
+    // The address stays on the pointer, but `?d=` would reopen a document this
+    // build does not have.
+    window.history.replaceState(null, '', `${path(A)}?d=notes.md`)
+    const c = offered({ doc: 'notes.md' })
+
+    c.takePending()
+
+    expect(c.state.doc).toBe(null)
+    expect(`${location.pathname}${location.search}`).toBe(path(A))
+  })
 })
 
 // -- the banner's own Switch, still waiting, when a revision is picked --------

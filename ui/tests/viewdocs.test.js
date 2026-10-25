@@ -4,7 +4,7 @@
 // the views in the toolbar's list, one row each, and choosing one lays it over
 // the model while the viewport stays mounted underneath. Choosing a view brings
 // the model back. `?d=` opens one on arrival, as `?v=` opens a view, and the
-// list does not move the address, as it does not for a view.
+// choice is written into the address as `?d=`, which choosing a view takes out.
 //
 // The arrangement of the rest of this directory: the real prototype with the
 // state spelled out (`component.js`), `computed()` read for values and `render()`
@@ -118,8 +118,8 @@ describe('the documents in the list of views', () => {
     c.computed().docRows[0].onClick()
     expect(c.state.doc).toBe('docs__cut-list.md')
     expect(c.state.viewsOpen).toBe(false)
-    // As a view, the choice does not move the address.
-    expect(window.location.search).toBe('')
+    // The address says what is on screen, so a copied link opens on it.
+    expect(window.location.search).toBe('?d=docs__cut-list.md')
 
     const v = c.computed()
     expect(v.docOpen.id).toBe('docs__cut-list.md')
@@ -189,6 +189,7 @@ describe('the documents in the list of views', () => {
   })
 
   it('give the model back when a view is chosen, the one on screen included', () => {
+    window.history.replaceState(null, '', '/?files=K&d=docs__cut-list.md')
     const c = component({ doc: 'docs__cut-list.md', viewsOpen: true })
     c.computed().viewTabs[0].onClick()
     expect(c.state.doc).toBeNull()
@@ -196,6 +197,8 @@ describe('the documents in the list of views', () => {
     expect(c.state.viewsOpen).toBe(false)
     expect(shownDocs(c)).toEqual([])
     expect(drawn(c)).toContain('Fit')
+    // And the address stops naming the document; the rest of it stays.
+    expect(window.location.search).toBe('?files=K')
 
     c.state.doc = 'docs__cut-list.md'
     c.computed().viewTabs[1].onClick()
@@ -273,9 +276,11 @@ describe('the documents in the list of views', () => {
       point: null, camera: null, text: 'too thin', status: 'open',
       created: '2026-08-27T18:20:00Z', resolved: null, note: null,
     }
+    window.history.replaceState(null, '', '/?d=docs__cut-list.md')
     const c = component({ doc: 'docs__cut-list.md', feed: [comment] })
     c.computed().threads[0].onOpen({ stopPropagation() {} })
     expect([c.state.activePin, c.state.doc]).toEqual(['c1', null])
+    expect(window.location.search).toBe('')
   })
 
   it('give each schematic and each board a row of its own, by its title, and a hidden one none', () => {
