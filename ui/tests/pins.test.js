@@ -25,7 +25,8 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 import { EVENT_PIN } from '../src/viewport/events.js'
 import { capOwnerAt } from '../src/viewport/picking.js'
 import {
-  PIN_CASE_PX, PIN_HEAD_WIDTH_PX, PIN_LENGTH_FRACTION, PIN_PX,
+  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_LENGTH_FRACTION, PIN_PX,
+  PIN_SHAFT_PX,
 } from '../src/viewport/options.js'
 import { createPins, pinDirection } from '../src/viewport/pins.js'
 import { PINS_ORDER, RINGS_ORDER } from '../src/viewport/scene3d.js'
@@ -349,6 +350,23 @@ describe('what an arrow is made of', () => {
     }
     for (const mesh of casings) expect(mesh.material.side).toBe(THREE.BackSide)
     for (const mesh of inks) expect(mesh.material.side).not.toBe(THREE.BackSide)
+  })
+
+  it('starts the casing round the shaft inside the head, not level with its base', () => {
+    // The casing's rod ends in a cap facing the tip: from the tail that is a
+    // back face, which the casing draws. Level with the base of the ink's head
+    // it would fight the base for every pixel round the shaft, white specks on
+    // red. Inside the head, the ink in front hides it.
+    const { group } = scene([{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }])
+    const [node] = group.children
+    const rod = node.children.find((mesh) => mesh.geometry.type === 'CylinderGeometry'
+      && mesh.material.color.getHex() === 0xffffff)
+    rod.geometry.computeBoundingBox()
+    const y = rod.geometry.boundingBox.min.y
+    expect(y).toBeCloseTo(PIN_HEAD_PX - PIN_CASE_PX, 9)
+    // ...and the cap there is narrower than the ink head at that height.
+    expect(PIN_SHAFT_PX / 2 + PIN_CASE_PX)
+      .toBeLessThan((PIN_HEAD_WIDTH_PX / 2) * y / PIN_HEAD_PX)
   })
 })
 
