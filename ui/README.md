@@ -148,13 +148,16 @@ a KiCad design, the listed schematic, board and 3D model with one path minus the
 extension: an `<ecad-viewer>` each for the schematic and the board and
 `src/BoardView3D.jsx` for the `.glb`, all mounted, the one on screen the open
 document its page hands down; a single click selects the same part in the other
-views, a right click opens a menu `Show in …` that opens another view of the
-design with the same part or net selected;
+views, a right click opens a menu that opens another view of the design, or
+another sheet of its schematic, with the same part or net selected, the part's
+items apart from the net's;
 the board has a panel of its own over the top left of its canvas,
 `src/PcbPanel.jsx`: layers, presets, the opacity of the zone fills and the net
 of the last click;
 `src/kicadsheets.js` reads each part's `Datasheet` field, and the part's menu
 has an item that opens the listed document it names in a window over the view;
+`src/kicadnets.js` reads where each sheet names a net, and a net's menu has an
+item per other sheet that global labels or power symbols of its name are on;
 `src/kicadpins.js` gives each schematic the pin entries the viewer
 draws pins from. `src/GerberView.jsx` draws a listed `.zip` of Gerbers (`src/gerber.js`
 reads the zip and the layers; the renderer is the vendored `static/_v/wasm_gerber_processor.js`,
