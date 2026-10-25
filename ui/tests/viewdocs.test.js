@@ -92,18 +92,33 @@ afterEach(() => {
 })
 
 describe('the documents in the list of views', () => {
-  it('follow the views, a row each, with their type and size where a view has its parts', () => {
+  it('follow the views, a row each under its type, with its size where a view has its parts', () => {
     const v = component().computed()
     // Two views would be a strip; the documents are rows of a list, so a build
     // listing any gets the list.
     expect(v.viewMenu).toBe(true)
     expect(v.viewTabs.map((t) => t.label)).toEqual(['closed', 'open'])
-    expect(v.docRows.map((t) => [t.label, t.hint])).toEqual([
-      ['docs/cut-list.md', 'markdown · 7.8 kB'],
-      ['ref/terr-raspil.svg', 'svg · 4.2 kB']])
+    expect(v.docRows.map((t) => [t.group, t.label, t.hint])).toEqual([
+      ['MARKDOWN', 'docs/cut-list.md', '7.8 kB'],
+      ['SVG', 'ref/terr-raspil.svg', '4.2 kB']])
     const shown = drawn(component())
     expect(shown.indexOf('open')).toBeLessThan(shown.indexOf('docs/cut-list.md'))
-    expect(shown).toContain('markdown · 7.8 kB')
+    expect(shown.slice(shown.indexOf('MARKDOWN'), shown.indexOf('4.2 kB') + 1)).toEqual(['MARKDOWN',
+      'docs/cut-list.md', '7.8 kB', 'SVG', 'ref/terr-raspil.svg', '4.2 kB'])
+  })
+
+  it('gather under one heading per type wherever the project lists them, a KiCad design under one', () => {
+    // The owner's "чтобы одинаковые типы группировались в группы": notes listed
+    // around the schematic, a board and two CSVs of a plain file.
+    const note = (name) => ({ ...DOCS[0], id: name, name, file: `${name}.md` })
+    const csv = (name) => ({ id: name, name, type: 'file', file: `fab/${name}.csv`, bytes: 4600 })
+    const listed = [note('note'), KICAD[0], note('wiring'), csv('BOM'), KICAD[1], note('stackup'), csv('CPL')]
+    const shown = drawn(component({ meta: meta(listed), viewsOpen: true }))
+    expect(shown.slice(shown.indexOf('3D VIEWS'), shown.lastIndexOf('4.6 kB') + 1)).toEqual(['3D VIEWS', 'closed', '1 parts · 0.0 MB',
+      'open', '1 parts · 0.0 MB',
+      'MARKDOWN', 'note', '7.8 kB', 'wiring', '7.8 kB', 'stackup', '7.8 kB',
+      'KICAD', 'Главная · схема', '1 sheet', 'Главная · плата', 'board',
+      'CSV', 'BOM', '4.6 kB', 'CPL', '4.6 kB'])
   })
 
   it('are not there for a build that lists none, which keeps its strip', () => {
@@ -261,7 +276,7 @@ describe('the documents in the list of views', () => {
     expect(css(viewMenuStyle(true)).transform).toBeUndefined()
     for (const over of [{ doc: 'docs__cut-list.md' }, {}, { doc: 'docs__cut-list.md', narrow: true }]) {
       const c = component({ viewsOpen: true, ...over })
-      expect(drawnAs(c.render(), viewMenuStyle(true))).toHaveLength(1)
+      expect(drawnAs(c.render(), viewMenuStyle(true, !over.narrow))).toHaveLength(1)
       expect(drawn(c)).toContain('Fit')
     }
   })
@@ -271,13 +286,13 @@ describe('the documents in the list of views', () => {
     const c = component({ meta: { ...meta(), views: twelve }, view: 'v0', viewsOpen: true })
     const tree = c.render()
     const [menu] = drawnAs(tree, viewMenuStyle(true))
-    // Every row is a child of the card itself, the views then the documents;
-    // there is no inner box that scrolls apart from the rest.
+    // Every row and heading is a child of the card itself, the views then the
+    // documents; there is no inner box that scrolls apart from the rest.
     const rows = menu.props.children.flat().filter(Boolean)
-    expect(rows).toHaveLength(14)
-    expect(texts(rows.at(11))).toContain('view 11')
-    expect(texts(rows.slice(12))).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
-    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'block', maxHeight: '308px', overflow: 'auto' })
+    expect(rows).toHaveLength(17)
+    expect(texts(rows.at(12))).toContain('view 11')
+    expect(texts(rows.slice(13))).toEqual(['MARKDOWN', 'docs/cut-list.md', '7.8 kB', 'SVG', 'ref/terr-raspil.svg', '4.2 kB'])
+    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'block', maxHeight: 'calc(100dvh - 240px)', overflow: 'auto' })
     expect(collect(rows, (el) => el.props.style?.overflow)).toEqual([])
   })
 
@@ -337,8 +352,8 @@ describe('the documents in the list of views', () => {
   it('give each schematic and each board a row of its own, by its title, and a hidden one none', () => {
     const rows = component({ meta: meta([...DOCS, ...KICAD, DATASHEET]) }).computed().docRows
     expect(rows.map((t) => [t.label, t.hint])).toEqual([
-      ['docs/cut-list.md', 'markdown · 7.8 kB'],
-      ['ref/terr-raspil.svg', 'svg · 4.2 kB'],
+      ['docs/cut-list.md', '7.8 kB'],
+      ['ref/terr-raspil.svg', '4.2 kB'],
       ['Главная · схема', '1 sheet'], ['Главная · плата', 'board'],
       ['БП · схема', '1 sheet'], ['БП · плата', 'board']])
     // Only hidden documents: no rows, so the views keep their strip.
