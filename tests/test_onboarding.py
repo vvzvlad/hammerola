@@ -251,7 +251,7 @@ def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
 # The skill as it stood at its current version: that version and the digest of
 # every file the hub packs into the archive (`skill_members`), the entry's
 # `version:` line left out so that raising it does not move the digest.
-SKILL_PIN = (34, "9563518c170b44ea0d1c118398f15e7429c382d634d3d8673af18cf5a8440e26")
+SKILL_PIN = (35, "217d66de5a5afc90f3bdafd86b6fc3a64071238c1dedaf7e25d89dcd44225dba")
 
 
 def _skill_digest() -> str:
