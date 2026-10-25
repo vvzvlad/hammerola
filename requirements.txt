@@ -71,17 +71,16 @@ loguru==0.7.2
 # (issue #10 «Сравнение двух ревизий»), is not among them: it is named below, with the
 # preview stack.
 #
-# THOSE 41 ARE PINNED TOO, IN requirements.lock, which is what these four lines no longer have
-# to carry alone. Until the lock existed they floated, so "a model rebuilt from the same source
-# a year from now produces the same geometry" was NOT what this file bought: a rebuild of an
-# unchanged commit could move nlopt and casadi under the placement of parts in an assembly and
-# nothing anywhere would report it, and
-# reproducibility honestly covered the kernel rather than the build. The lock states all 56 with
-# `==` and with the hashes of their files, `make lock` is the only thing that writes it, and the
-# Dockerfile installs it with `--require-hashes` — so the image's environment moves when
-# somebody regenerates the lock and commits the diff, and on no other occasion. The price is
-# accepted deliberately: nothing updates by itself any more, and every update is a manual bump
-# and a rebuild.
+# THOSE 41 ARE PINNED TOO, IN requirements.lock, which is what these four lines no longer have to
+# carry alone. Until the lock existed they floated, so "a model rebuilt from the same source a year
+# from now produces the same geometry" was NOT what this file bought: a rebuild of an unchanged
+# commit could move nlopt and casadi under the placement of parts in an assembly and nothing
+# anywhere would report it, and reproducibility honestly covered the kernel rather than the build.
+# The lock states all 56 with `==` and with the hashes of their files, `make lock` is the only
+# thing that writes it, and the Dockerfile installs it with `--require-hashes` — so the image's
+# environment moves when somebody regenerates the lock and commits the diff, and on no other
+# occasion. The price is accepted deliberately: nothing updates by itself any more, and every
+# update is a manual bump and a rebuild.
 #
 # IT IS THE IMAGE THAT IS LOCKED, NOT THIS FILE. `make install` and the CI test image
 # (ci/Dockerfile.test) install requirements-dev.txt, which pulls THIS file in and not the lock,

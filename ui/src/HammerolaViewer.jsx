@@ -390,10 +390,10 @@ function snapsKept(steps, doc) {
 }
 
 // How many views fit as a strip of pills before the switcher becomes a menu.
-// The strip is a centred non-wrapping flex row in an `overflow:hidden` root, so
-// a too-wide row pushes the floating toolbar past both edges, clipping Fit and
-// the tools, and the names break onto several lines. Four pills plus the tools
-// is about what a laptop holds on one line.
+// The strip is what gives up its width when the toolbar is short of room
+// (`TAB_STRIP` in viewlist.jsx), so a too-wide row squeezes its pills until the
+// names are cut to an ellipsis. Four pills plus the tools is about what a laptop
+// holds on one line with the names whole.
 export const VIEW_TABS_MAX = 4;
 
 // How many steps Ctrl+Z can walk back through, of either kind. Capped because

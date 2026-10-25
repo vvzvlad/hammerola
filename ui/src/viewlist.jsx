@@ -98,8 +98,8 @@ export const DOC_HINT = `flex:none;white-space:nowrap;${FAINT_MONO}`;
 // backdrop filter over the WebGL canvas cost a third of the frame rate while
 // orbiting on a retina Mac (measured).
 // Never wider than its layer: where the controls do not fit, the view button
-// gives up its width first (`viewList`), its name cut by the ellipsis it
-// already carries.
+// (`viewList`) or the strip of views (`TAB_STRIP`) gives up its width first,
+// the names in it cut by an ellipsis.
 export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;max-width:calc(100% - 24px);background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
 // Its layer, centred on the bottom edge, the z-index appended by the page.
 export const BAR_LAYER = 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:';
@@ -153,8 +153,10 @@ export function viewList({ label, open, onToggle, views = [], documents = [] }) 
  *  screen cannot do them. */
 export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
 
-/** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). */
-const TAB_STRIP = 'display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px';
+/** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). Where the
+ *  bar is short of room it is the strip that shrinks, as the view button does
+ *  (`viewList`), its pills' names cut by their ellipsis. */
+export const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shrink:100;background:var(--chip-bg);border-radius:6px';
 
 /** The open document's Download: a quiet button like Fit, on a link, its
  *  word in its title as Copy link's is (copylink.jsx). */

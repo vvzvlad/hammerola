@@ -43,6 +43,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
+import { tab } from '../src/panelstyle.js'
 import { forgetTab, readTabs, rememberTab } from '../src/store.js'
 import { makeComponent } from './component.js'
 import { collect, links } from './eltree.js'
@@ -277,8 +278,12 @@ describe('which tab is drawn as the active one', () => {
   /** A tab's key is its pid — the strip is keyed by what it links at. */
   const pids = (c) => c.computed().tabs.map((t) => t.key)
 
+  // The chosen pill both strips start with: each adds its own layout after it
+  // (the views' strip its shrinking, this one its link's), so the shared part is
+  // the helper's own answer, and the view switcher is held to it too.
   const activePids = (c) => {
-    const pill = activePill(c)
+    const pill = tab(true)
+    expect(activePill(c).startsWith(pill)).toBe(true)
     return c.computed().tabs.filter((t) => t.style.startsWith(pill)).map((t) => t.key)
   }
 

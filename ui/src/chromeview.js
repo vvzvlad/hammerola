@@ -428,7 +428,9 @@ export function chromeView(s, props, deps) {
       key: v.id,
       label: v.name,
       hint: `${viewPartCount(v)} parts · ${mb(v.gzip)}`,
-      style: tab(s.view === v.id),
+      // Cut by an ellipsis rather than widened by its name: when the bar is
+      // short of room the strip shrinks (`TAB_STRIP` in viewlist.jsx).
+      style: `${tab(s.view === v.id)};min-width:0;${ELLIPSIS}`,
       // The menu's own row, shaped like the tree menu's items (`mi`) rather
       // than like a pill: in a column it is the highlight that says which one
       // is on, and a pill's raised card in a list reads as a stray button.
