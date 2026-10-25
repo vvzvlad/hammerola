@@ -414,6 +414,8 @@ bottom left of the page. A project with no `model.py` — `hammerola create
 --no-template` starts one — is built out of its documents alone, and its page is
 the same menu with no model behind it.
 
+![A markdown document open on the build page, under the menu of views and documents](docs/images/documents-menu.png)
+
 **The extension decides only how a document is shown.** Markdown is drawn, and
 a link in it to another listed document opens that document on the page; a PDF,
 a picture, HTML and SVG are shown as they are; `.kicad_sch`, `.kicad_pcb`,
@@ -424,6 +426,8 @@ build page the Downloads menu offers it under its extension, beside the STL. A
 `.dxf` is a plain file with a picture: the hub draws an SVG of it when the push
 is checked, publishes it at `<path>.svg`, and the page shows that picture above
 the file's name and size.
+
+![A CSV listed as a document: its name, extension and size, with Download and Copy link](docs/images/plain-file.png)
 
 **A KiCad board is up to three documents with one name.** A schematic, its board
 and the board's 3D model whose paths differ only by the extension are one
@@ -439,6 +443,12 @@ pad; the 3D view turns like the model does. A part whose `Datasheet` field names
 a PDF the project lists (`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above) gets
 `Open datasheet` in the same menu, which opens it in a window over the design.
 
+![The board with its layer panel, a net lit and the right-click menu of a part](docs/images/kicad-board.png)
+
+![The schematic, opened from that menu with the same part selected](docs/images/kicad-schematic.png)
+
+![The 3D model of the board](docs/images/kicad-3d.png)
+
 **The Gerbers are one zip**, drill files included — what goes to the fab. The
 page unzips it in the browser, tells each layer by its `%TF.FileFunction`
 attribute rather than by the file's name, and draws copper, mask, silkscreen,
@@ -446,6 +456,8 @@ paste, outline and drills with a toggle per layer, from the top or from the
 bottom; a model's build page also lists the zip under GERBERS in Downloads. A
 `.zip` is read as Gerbers unless its entry says `"download": true`, which is how
 a zip of stand logs stays a plain file.
+
+![The Gerbers of the same board, seen from the top](docs/images/gerbers.png)
 
 **A wrong list refuses the push, whole.** A path that is not a file, a path
 listed twice, a file that would overwrite what the model's build wrote, a DXF
