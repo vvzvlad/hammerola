@@ -44,9 +44,10 @@ describe('copy link', () => {
     clipboardOf(vi.fn(async () => { throw new DOMException('not focused') }))
     expect(await copyHref(HREF)).toBe(false)
 
+    // A row's icon has no room for the words: it says them in its title.
     const view = control()
     await view.copy(click())
-    expect(texts(view.render())).toEqual(['Could not copy'])
+    expect(view.render().props.title).toBe('Could not copy')
   })
 
   it('says it copied for a moment, then is itself again, and its click goes nowhere else', async () => {

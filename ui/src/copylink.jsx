@@ -11,14 +11,16 @@
 // build with no model (DocShell.jsx), which has no toast.
 //
 // Two looks: `button`, a text button for a card, styled by the caller like the
-// link beside it; otherwise a 12 px link icon for the end of a row. Either is a
+// link beside it, which says it in words; otherwise a 12 px link icon for the
+// end of a row, which has no room for a word, so the icon itself turns into a
+// tick or a cross and the word goes to its title. Either is a
 // SIBLING of the link it copies, never inside it — a control inside an `<a>` is
 // not valid markup — and its click neither follows a link nor reaches the
 // page's handler that closes a menu, so the menu stays up to say "Copied".
 
 import React from 'react';
 
-import { css, SANS } from './style.jsx';
+import { css } from './style.jsx';
 
 /** How long the control says "Copied" or "Could not copy" before it is itself again, ms. */
 export const COPY_SAID_MS = 1500;
@@ -41,8 +43,15 @@ export function copyHref(href) {
     });
 }
 
-const ICON = 'flex:none;display:flex;align-items:center;margin:0;border:0;background:none;cursor:pointer;'
-  + `white-space:nowrap;font:500 10.5px ${SANS};color:var(--text-faint)`;
+const ICON = 'flex:none;display:flex;align-items:center;margin:0;padding:0;border:0;background:none;cursor:pointer;'
+  + 'color:var(--text-faint)';
+
+// The icon's drawing for each thing the control can say: the link, a tick, a cross.
+const ICON_PATHS = {
+  '': 'M6.5 9.5l3-3M7.2 4.6l1.1-1.1a2.8 2.8 0 0 1 4 4l-1.1 1.1M8.8 11.4l-1.1 1.1a2.8 2.8 0 0 1-4-4l1.1-1.1',
+  Copied: 'M3 8.5l3 3 7-7',
+  'Could not copy': 'M4 4l8 8M12 4l-8 8',
+};
 const BUTTON = 'background:none;cursor:pointer';
 
 /** The control. Props: `href`, the download link's own; `button` for the
@@ -79,12 +88,10 @@ export default class CopyLink extends React.Component {
       return <button type="button" onClick={this.copy} style={css(`${style};${BUTTON}`)}>{said || 'Copy link'}</button>;
     }
     return (
-      <button type="button" onClick={this.copy} title="Copy link" style={css(`${ICON};${style}`)}>
-        {said || (
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M6.5 9.5l3-3M7.2 4.6l1.1-1.1a2.8 2.8 0 0 1 4 4l-1.1 1.1M8.8 11.4l-1.1 1.1a2.8 2.8 0 0 1-4-4l1.1-1.1" />
-          </svg>
-        )}
+      <button type="button" onClick={this.copy} title={said || 'Copy link'} style={css(`${ICON};${style}`)}>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d={ICON_PATHS[said]} />
+        </svg>
       </button>
     );
   }

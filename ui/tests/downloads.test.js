@@ -750,10 +750,17 @@ describe('the row menu', () => {
 
   it('ends every file row of both menus with Copy link, for that row\'s own address', () => {
     // The header's six files and the plate's three, each a sibling of its link.
+    // Read row by row: an element whose own children are a download link and a
+    // Copy link, so a Copy link moved inside its `<a>` leaves no such row.
     const tree = component({ node: '/model/plate' }).render()
-    const downloads = collect(tree, (el) => (el.type === 'a' && el.props.download ? el.props.href : undefined))
-    expect(downloads).toHaveLength(9)
-    expect(collect(tree, (el) => (el.type === CopyLink ? el.props.href : undefined))).toEqual(downloads)
+    const kids = (el) => [].concat(el.props.children).filter((k) => k && typeof k === 'object')
+    const rows = collect(tree, (el) => {
+      const link = kids(el).find((k) => k.type === 'a' && k.props.download)
+      const copy = kids(el).find((k) => k.type === CopyLink)
+      return link && copy ? [link.props.href, copy.props.href] : undefined
+    })
+    expect(rows).toHaveLength(9)
+    rows.forEach(([link, copy]) => expect(copy).toBe(link))
   })
 
   it('points those rows at the same URLs the header\'s menu does', () => {

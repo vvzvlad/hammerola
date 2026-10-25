@@ -6146,19 +6146,22 @@ export default class HammerolaViewer extends React.Component {
           {/* ── the tree row's context menu ── */}
           <div onClick={(e) => e.stopPropagation()} style={css(v.menuStyle)}>
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
-            {/* A row that carries a file is an ANCHOR and not a div: the download
-                is the browser's to do, exactly as in the header's menu, so the
-                link is a real one and can be middle-clicked or saved as. */}
+            {/* A row that carries a file holds a real ANCHOR, not a div with a
+                handler: the download is the browser's to do, exactly as in the
+                header's menu, so the link can be middle-clicked or saved as. Its
+                file name shrinks to an ellipsis rather than run under Copy link,
+                and the row is keyed by its address, so a Copy link that says
+                "copied" never moves to the same format of another part. */}
             {v.menuItems.map((m) => {
               const inner = (
                 <>
                   <span style={css(FILL)}>{m.label}</span>
-                  <span style={css(FAINT_MONO)}>{m.hint}</span>
+                  <span style={css(m.href ? `${FAINT_MONO};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap` : FAINT_MONO)}>{m.hint}</span>
                 </>
               );
               return m.href
                 ? (
-                  <div key={m.key} style={css(m.rowStyle)}>
+                  <div key={m.href} style={css(m.rowStyle)}>
                     <a href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
                     <CopyLink href={m.href} style={m.copyStyle} />
                   </div>
