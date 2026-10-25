@@ -63,6 +63,23 @@
 // goes on Escape, a press anywhere else, the wheel, a resize, and when its view
 // leaves the screen.
 //
+// THE WHEEL ON THE SCHEMATIC AND THE BOARD, and HOW A SELECTION LOOKS there,
+// are the viewer's own doing: both are edits of ours to the vendored file
+// (static/_v/PROVENANCE.md, "Our edits"), so nothing on this side takes the
+// event or paints anything. A two-finger swipe of a touchpad moves the
+// drawing, a pinch — a wheel event with Control held — and Control and the
+// wheel zoom about the pointer, by the Gerbers' arithmetic (`wheelMove` in
+// gerber.js); a selected footprint is outlined, not filled over.
+//
+// FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
+// view on screen. The element has no fit of its own, and its `exportImage`
+// walks every sheet of a schematic, reloading each; so a drawn view is driven
+// through the viewer's own drawing inside the element's open shadow tree
+// (`drawingOf`): Fit is the viewer's own reset (`zoom_fit_top_item`, what its
+// toolbar's reset button calls and what it opens a sheet with), Frame draws a
+// frame and reads the canvas in the same task. The 3D view says its own
+// (BoardView3D.jsx).
+//
 // A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
 // when the part's KiCad `Datasheet` field names a document of the build, listed
 // or hidden (kicadsheets.js); a part with a datasheet and no other member to be
@@ -245,6 +262,22 @@ export function menuPlace(x, y, rows, area) {
   return { left: fit(x, width, area.width), top: fit(y, height, area.height), width };
 }
 
+/** The viewer's own drawings, by tag: each holds its viewer (`viewer`) and its
+ *  canvas (`canvas`). */
+const DRAWINGS = new Set(['kc-schematic-viewer', 'kc-board-viewer']);
+
+/** The drawing inside `element`'s shadow trees, all of them open, or null. */
+export function drawingOf(element) {
+  const roots = element && element.shadowRoot ? [element.shadowRoot] : [];
+  while (roots.length) {
+    for (const node of roots.shift().querySelectorAll('*')) {
+      if (DRAWINGS.has(node.localName)) return node;
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }
+  }
+  return null;
+}
+
 /** The document the datasheet of part `designator` names (kicadsheets.js), or
  *  null. `datasheets` is designator → `Datasheet` value. */
 export function selectedDatasheet(designator, datasheets, members, documents) {
@@ -290,8 +323,16 @@ export default class KicadView extends React.Component {
     // part's `Datasheet` value, once the files are in. `menu`: the right-click
     // menu open (`menuFor`, with the view it is of and its box), `hover` the
     // index of the item under the pointer. `sheet`: the datasheet's window open,
-    // `{ doc, from }` with the view it was opened over.
-    this.state = { ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1, sheet: null };
+    // `{ doc, from }` with the view it was opened over. `tools3d`: what the 3D
+    // view told the bar it can do, or null.
+    this.state = {
+      ready: false, error: '', selected: null, datasheets: new Map(), menu: null, hover: -1, sheet: null, tools3d: null,
+    };
+    // What the bar can do with a drawn view on screen, one object for both, and
+    // the last thing the page was told (`report`).
+    this.drawnTools = { fit: () => this.fitDrawn(), frame: () => this.frameDrawn() };
+    this.reported = undefined;
+    this.onTools3D = (tools) => this.setState({ tools3d: tools });
     // A selection waiting for the page to hand down the member it is on:
     // `{ to, request }`, or null.
     this.probe = null;
@@ -349,6 +390,35 @@ export default class KicadView extends React.Component {
       }
       this.elements[context] = element || undefined;
     };
+  }
+
+  /** The bar's Fit on the drawn view on screen: the viewer's own reset. */
+  fitDrawn() {
+    drawingOf(this.elements[this.side()]).viewer.zoom_fit_top_item();
+  }
+
+  /** The bar's Frame on the drawn view on screen: a frame drawn now and the
+   *  canvas read in the same task, before the board's WebGL context, which
+   *  keeps no drawing buffer, has handed it to the screen. */
+  frameDrawn() {
+    const drawing = drawingOf(this.elements[this.side()]);
+    drawing.viewer.draw_now();
+    return new Promise((resolve) => drawing.canvas.toBlob(resolve, 'image/png'));
+  }
+
+  /** What the bar can do with the view on screen: a drawn one once its files
+   *  are in, the 3D model once it is loaded. */
+  toolsOnScreen() {
+    if (this.side() === BOARD3D) return this.state.tools3d;
+    return this.state.ready && !this.state.error ? this.drawnTools : null;
+  }
+
+  /** The page told what the bar can do (`onTools`), when that has changed. */
+  report() {
+    const tools = this.toolsOnScreen();
+    if (tools === this.reported) return;
+    this.reported = tools;
+    this.props.onTools(tools);
   }
 
   /** The page-wide listeners, on or off: Escape, and what closes the menu
@@ -495,6 +565,7 @@ export default class KicadView extends React.Component {
 
   componentDidMount() {
     this.listen(true);
+    this.report();
     const { base } = this.props;
     const members = this.members();
     const views = drawnViews(members);
@@ -529,6 +600,7 @@ export default class KicadView extends React.Component {
 
   componentDidUpdate() {
     this.activate();
+    this.report();
     // The menu and the datasheet's window go with their view off the screen.
     if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
     if (this.state.sheet && this.state.sheet.from !== this.side()) this.closeSheet();
@@ -572,7 +644,7 @@ export default class KicadView extends React.Component {
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} active={side === BOARD3D} selected={selected}
-                         onSelect={this.onSelect3D} onMenu={this.onMenu3D} />
+                         onSelect={this.onSelect3D} onMenu={this.onMenu3D} onTools={this.onTools3D} />
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}

@@ -28,7 +28,7 @@ import {
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
 import { MONO, SANS } from './style.jsx';
-import { BAR_LAYER, DOC_LAYER, documentRows, menuRow } from './viewlist.jsx';
+import { BAR_LAYER, DOC_LAYER, documentRows, menuRow, quietBtn } from './viewlist.jsx';
 
 export function chromeView(s, props, deps) {
   const {
@@ -478,6 +478,7 @@ export function chromeView(s, props, deps) {
     bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (docOpen ? '17' : '13'),
     docLayerStyle: DOC_LAYER,
+    viewsOpen: !!s.viewsOpen,
     viewsToggle: stop(() => setState({
       viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
       // The other menus in this toolbar, which open upwards from buttons a few
@@ -505,24 +506,24 @@ export function chromeView(s, props, deps) {
     // Which popovers are clamped is asserted in `narrow.test.js`, not listed
     // here.
     //
-    // A document over the model takes them away too, with Fit and the parts
-    // tree (`showFit`): every one of them is about the model, and the list
-    // that brings the model back stays.
-    showTools: !narrow && !docOpen,
-    showFit: !docOpen,
-    // Both are out of service while the scene is a comparison's. That differs
-    // from `viewer`: that one is about who the reader is, this about what is
-    // under the cursor. `toolsOff()` documents why it is not `s.compare`. The
-    // buttons are the visible half; the handlers stop a tool armed before the
-    // panel opened.
+    // A document over the model takes none of them away: the bar is the same
+    // on every page and over every view (`toolBar` in viewlist.jsx). The four
+    // about the model — Measure, Comment, Add primitive, Settings — are out of
+    // service under it, Fit and Frame are too unless its view can do them.
+    showTools: !narrow,
+    // Both are out of service while the scene is a comparison's, and under a
+    // document, which covers the model. That differs from `viewer`: that one
+    // is about who the reader is, this about what is under the cursor.
+    // `toolsOff()` documents why it is not `s.compare`. The buttons are the
+    // visible half; the handlers stop a tool armed before the panel opened.
     //
     // Move is armed from the object's row menu (`menuItems`), where the reader
     // has already picked the object; its share of `toolsOff` is the `compared`
     // exclusion that row sits inside.
     tMeasure: setTool('measure'),
-    measureBtnStyle: btn(s.tool === 'measure', false, toolsOff()),
+    measureBtnStyle: btn(s.tool === 'measure', false, toolsOff() || !!docOpen),
     tComment: setTool('comment'),
-    commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff()),
+    commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff() || !!docOpen),
     // Not one of `s.tool`: the two buttons above arm a canvas gesture, this
     // one drops a menu of primitives and arms nothing. The bodies it adds can be
     // dragged with the Move tool (armed from any row menu), since a staged body
@@ -542,7 +543,8 @@ export function chromeView(s, props, deps) {
     // Not disabled by a comparison, unlike the other three: `toolsOff` guards
     // tasks filed in the build's terms against a `/cmp/…` scene, and a body
     // added here names no part — it is the reader's claim about a motor or a
-    // wall, true over either scene.
+    // wall, true over either scene. Out of service under a document, which
+    // covers the model it would be added beside.
     //
     // The branch's rows do write `sel`, though: under a comparison the path a
     // body is staged under is the comparison's, so those rows select by the
@@ -551,7 +553,7 @@ export function chromeView(s, props, deps) {
     tProposal: stop(() => setState({
       opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
       settingsOpen: false, tokenPop: false, menu: null })),
-    proposalBtnStyle: btn(s.opsOpen, viewer, false),
+    proposalBtnStyle: btn(s.opsOpen, viewer, !!docOpen),
     // The card, drawn like the view switcher's: upwards from the button, no
     // `z-index` (the toolbar is its own stacking context), and no sheet on a
     // narrow window (`showTools` hides the button there, and a `fixed` child of
@@ -570,11 +572,12 @@ export function chromeView(s, props, deps) {
     // SETTINGS, BUILT EXACTLY AS `Add primitive` IS — a flag of the page's, a
     // `stop()`ed toggle that shuts the other menus, a card measured upwards,
     // `rootClick`/Escape to dismiss — and SHOWN WITHOUT A TOKEN: what it holds
-    // is about this browser's screen rather than about the model.
+    // is about this browser's screen rather than about the model. Out of
+    // service under a document: the resolution it sets is the model's canvas'.
     tSettings: stop(() => setState({
       settingsOpen: !s.settingsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
       opsOpen: false, tokenPop: false, menu: null })),
-    settingsBtnStyle: btn(s.settingsOpen),
+    settingsBtnStyle: btn(s.settingsOpen, false, !!docOpen),
     // `right:0` AND NOT `left:0`: this is the last button in the bar, so a card
     // measured from its left edge would hang out past the toolbar's end rather
     // than open over it.
@@ -593,8 +596,16 @@ export function chromeView(s, props, deps) {
     retinaBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;'
       + (s.retina ? ON_ACCENT : BLANK_BOX),
     retinaMark: s.retina ? '✓' : '',
-    fitView: () => fitView(),
-    grabFrame: () => saveFrame(),
+    // FIT AND FRAME ACT ON WHAT IS ON SCREEN: the model, or the document over
+    // it through what its view told the page it can do (`docTools`, `onTools`
+    // in DocumentView.jsx). Over a document whose view cannot — a page of text,
+    // a picture, a PDF — both are out of service, and there is no handler to
+    // call: the button carries none, as the documents page's does not
+    // (`docBar` in DocShell.jsx).
+    fitView: docOpen ? (s.docTools ? () => s.docTools.fit() : undefined) : () => fitView(),
+    fitBtnStyle: quietBtn(!!docOpen && !s.docTools),
+    grabFrame: docOpen ? (s.docTools ? () => saveFrame(s.docTools.frame()) : undefined) : () => saveFrame(),
+    frameBtnStyle: quietBtn(!!docOpen && !s.docTools),
     // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
     // reader to click a model that will not answer: a tool armed before a
     // comparison opened stays armed and stops firing, and this line is the

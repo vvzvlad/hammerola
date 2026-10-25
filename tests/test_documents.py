@@ -317,11 +317,77 @@ def test_a_file_of_a_design_may_not_land_on_what_the_model_wrote(hub_factory):
         record["error"])
 
 
+# -- a file the page does not draw ---------------------------------------------
+
+# The case this grew from: the DXF of a glass cut, written from the model's own
+# dimensions and sent to the shop. Nothing on the page can show it.
+DXF = b"0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n"
+CUT = {"cut/glass.dxf": DXF}
+
+
+def test_a_file_of_any_extension_is_published_and_a_plain_link_takes_it(hub):
+    revision = published(hub, documents_tree(["list.md", "cut/glass.dxf"], **CUT))
+    meta = hub.get(f"/project/docs0001/{revision}/meta.json").json()
+    assert [(d["file"], d["type"]) for d in meta["documents"]] == [
+        ("list.md", "markdown"), ("cut/glass.dxf", "file")]
+
+    # No token and no `?files=`: the link the shop is sent.
+    reply = hub.get(f"/project/docs0001/{revision}/cut/glass.dxf")
+    assert (reply.status_code, reply.content) == (200, DXF)
+    # No table knows `.dxf`, so it arrives as bytes the browser saves rather
+    # than as something it tries to open in itself.
+    assert reply.headers["Content-Type"] == "application/octet-stream"
+    assert reply.headers["Content-Disposition"] == "attachment"
+    # Open to everyone holding the address, so the shared year — not the
+    # `private` one an answer that depended on a token would carry.
+    assert reply.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+def test_a_part_export_the_list_does_not_name_stays_closed(model_hub):
+    """What opens a file is this build's own list, not the extension's absence
+    from `OPEN_SUFFIXES`: a build may now list a `.dxf` and its `.stl` exports
+    are still the owner's to share."""
+    revision = published(model_hub, model_tree(LISTED + ["cut/glass.dxf"], **CUT))
+    base = f"/project/docs0001/{revision}"
+    assert model_hub.get(f"{base}/cut/glass.dxf").status_code == 200
+    closed = model_hub.get(f"{base}/lid.stl")
+    assert closed.status_code == 403
+    assert closed.json() == {
+        "error": "this link does not include the files of this build"}
+
+
+def test_download_tells_an_archive_from_a_board_s_gerbers(hub):
+    """One extension, two documents: the page unpacks a board's Gerbers and
+    draws them, and an archive of anything else is a file to be taken. The
+    flag is the only thing that says which this zip is."""
+    listed = ["fab/board_gerber.zip", {"file": "logs/stand.zip", "download": True}]
+    revision = published(hub, documents_tree(
+        listed, **{"logs/stand.zip": gerber_zip()}))
+    meta = hub.get(f"/project/docs0001/{revision}/meta.json").json()
+    assert [(d["file"], d["type"]) for d in meta["documents"]] == [
+        ("fab/board_gerber.zip", "gerbers"), ("logs/stand.zip", "file")]
+
+
+def test_a_design_listed_for_download_brings_none_of_its_files(model_hub):
+    """`download` says the page draws nothing of it, and the sheets and the
+    project of a KiCad design exist only to be drawn from."""
+    listed = [{"file": "hw/board.kicad_sch", "download": True}]
+    revision = published(model_hub, model_tree(listed, **BOARD))
+    meta = model_hub.get(f"/project/docs0001/{revision}/meta.json").json()
+
+    document, = meta["documents"]
+    assert document["type"] == "file"
+    assert "kicad" not in document
+    assert document["bytes"] == len(BOARD["hw/board.kicad_sch"])
+    for absent in ("hw/power.kicad_sch", "hw/board.kicad_pro"):
+        assert model_hub.get(
+            f"/project/docs0001/{revision}/{absent}").status_code == 404, absent
+
+
 # -- what a list may say -------------------------------------------------------
 
 @pytest.mark.parametrize("listed, named", [
     (LISTED + ["missing.md"], "'missing.md', which is not a file in the pushed tree"),
-    (LISTED + ["notes.txt"], "'notes.txt', which is none of the types"),
     (LISTED + ["index.html"], "'index.html', which is a name the hub writes"),
     (LISTED + ["../list.md"], "'../list.md', which has the segment '..'"),
     (LISTED + ["docs//report.pdf"], "which has an empty segment"),
@@ -340,7 +406,7 @@ def test_an_entry_the_hub_cannot_publish_refuses_the_push_before_any_build(
         return model_builder(*args, **kwargs)
 
     hub = hub_factory(build_runner=builder)
-    extra = {"notes.txt": b"x", "index.html": b"<p>mine</p>",
+    extra = {"index.html": b"<p>mine</p>",
              "compare/x.md": b"# x\n", "docs__report.pdf": b"%PDF-1.4\n"}
     for body in (documents_tree(listed, **extra), model_tree(listed, **extra)):
         record = refused(hub, body)
@@ -397,6 +463,8 @@ def test_a_hidden_document_is_published_and_served_and_says_it_is_hidden(
     ({"title": "Список"}, "has no `file`, the path of the document"),
     ({"file": "list.md", "hidden": "yes"},
      "'list.md', which has a `hidden` that is not true or false"),
+    ({"file": "list.md", "download": "yes"},
+     "'list.md', which has a `download` that is not true or false"),
     ({"file": "list.md", "titel": "Список"},
      "'list.md', which has keys the hub does not read: titel"),
     ({"file": "list.md", "title": "   "},
@@ -503,8 +571,11 @@ def test_a_document_id_is_its_path_and_two_paths_never_share_one(tmp_path):
 
 
 @pytest.mark.parametrize("change, message", [
-    (lambda doc: doc.update(type="image"), "extension makes it 'markdown'"),
-    (lambda doc: doc.update(file="notes.txt"), "none of the types"),
+    (lambda doc: doc.update(type="image"),
+     "extension makes it 'markdown' or 'file'"),
+    # An extension the page draws nothing of: a plain file is all it may be,
+    # and claiming a drawing would hand it to that drawing's renderer.
+    (lambda doc: doc.update(file="notes.txt"), "extension makes it 'file'"),
     (lambda doc: doc.update(file="../list.md"), "has the segment '..'"),
     (lambda doc: doc.update(hidden=1), "has a `hidden` that is not true or false"),
 ])
@@ -551,6 +622,16 @@ def test_the_page_and_the_hub_spell_the_kind_the_same_way():
     source = (ROOT / "ui" / "src" / "DocShell.jsx").read_text(encoding="utf-8")
     spelled = re.search(r"export const DOCUMENTS_KIND = '([^']+)'", source)
     assert spelled and spelled.group(1) == render.DOCUMENTS_KIND
+
+
+def test_the_page_and_the_hub_spell_the_plain_file_type_the_same_way():
+    # The page picks the download panel and the row's hint by this type, and
+    # offers the file in the downloads menu by it; renamed on one side only, a
+    # DXF goes to an iframe, which downloads it with no way to ask again, and
+    # leaves the menu.
+    source = (ROOT / "ui" / "src" / "DocumentView.jsx").read_text(encoding="utf-8")
+    spelled = re.search(r"export const FILE_TYPE = '([^']+)'", source)
+    assert spelled and spelled.group(1) == render.FILE_TYPE
 
 
 def test_the_page_and_the_hub_spell_the_gerbers_type_the_same_way():

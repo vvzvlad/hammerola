@@ -82,8 +82,10 @@ The line is not "pages public, API private". A BUILD can be LOOKED AT by
 anybody holding its address: its page, meta.json, the views and the pictures,
 anonymous and cached for a year, because a shared link must work without a
 secret, and so are the documents it lists, which are what its link with
-`?d=` shows. Its other FILES — everything outside `OPEN_SUFFIXES`, so the STEP,
-STL and 3MF — leave only to the token or to a link carrying the key of
+`?d=` shows — whatever their extension, since a document may be a file the
+page hands over rather than draws. Its other FILES — the ones this build does
+not list as a document and whose extension is outside `OPEN_SUFFIXES`, so the
+STEP, STL and 3MF — leave only to the token or to a link carrying the key of
 that address (`files_key`), which the owner's Share window adds or leaves out.
 THE ENUMERATION is not public at all: `/index.json` (what is on this hub) and
 `builds.json` (every revision of a project, and whether a draft exists) need
@@ -313,16 +315,25 @@ BUILD_CONTENT_TYPES = {
     ".zip": "application/zip",
 }
 
-# What a build hands to anybody holding its address: the documents the page
+# A build file opens to anybody holding the build's address for one of two
+# reasons, and this is the first of them: its EXTENSION. The documents the page
 # draws the model from (meta.json and each view's tessellation), the pictures
-# the front page shows through `<img>`, which carries no token, and the
-# documents a build lists — those files ARE what its link with `?d=` shows,
-# each by the type its extension makes it, a KiCad schematic's sheets and the
-# project a schematic or a board brings (decision of 2026-10-23, SPEC §4). Everything
-# else — the STEP, STL and 3MF a part exports, the overview meshes, and any
-# format a later export adds — leaves only to EDIT_TOKEN or to a link carrying
-# the key of its address (`files_key`). A list of what is OPEN rather than of
-# what is closed, so a new format starts closed.
+# the front page shows through `<img>`, which carries no token, every type a
+# document is DRAWN as, and the files of a KiCad design (decision of
+# 2026-10-23, SPEC §4).
+#
+# The second reason is the build's OWN LIST, asked by `_listed_document`: a
+# document may be a file of any extension (`render.FILE_TYPE`), so no table of
+# extensions can answer for one, and a link with `?d=` has to show it without a
+# key. That question is asked only of a request carrying neither the token nor
+# a key, and it is about THIS build's meta.json, so what one project lists
+# opens nothing in another.
+#
+# Everything else — the STEP, STL and 3MF a part exports, the overview meshes,
+# and any format a later export adds — leaves only to EDIT_TOKEN or to a link
+# carrying the key of its address (`files_key`). A list of what is OPEN rather
+# than of what is closed, so a new format starts closed, and a part's exports
+# stay closed however many files of their extension a project lists beside them.
 OPEN_SUFFIXES = {".json", *render.DOCUMENT_TYPES, *render.KICAD_SUFFIXES}
 
 # The body of the refusal of a closed file asked for without the token or the
@@ -891,6 +902,39 @@ class HubHandler(BaseHTTPRequestHandler):
         self._json(302, {"location": location}, CACHE_NONE,
                    {"Location": location}, with_body)
 
+    def _listed_document(self, build_dir: Path, name: str) -> bool:
+        """Does THIS build publish the file at `name` as a document?
+
+        The second half of the open/closed rule (`OPEN_SUFFIXES`), and the only
+        one that can answer for a document the page does not draw: such a file
+        has whatever extension its author gave it, so the question is not about
+        extensions at all. `documents` in meta.json is rebuilt by
+        `render._documents` from the push, and every `file` in it was checked
+        at publish time against the same path rule the request went through.
+
+        The cost is one `json.loads` of a file that is already PUBLIC —
+        anybody may fetch meta.json from this very address — so it hands an
+        attacker nothing he could not fetch himself, and it is paid only when
+        neither the token nor a key was presented.
+
+        A missing or unreadable meta.json answers "not open" rather than
+        raising: `data/` is writable by every build (SPEC §7.4), and a reader
+        who should get a 403 must not get a 500 instead.
+        """
+        try:
+            path = self.server.store.resolve_inside(
+                build_dir / BUILD_META_FILE)
+            meta = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            return False
+        documents = meta.get("documents") if isinstance(meta, dict) else None
+        if not isinstance(documents, list):
+            return False
+        for entry in documents:
+            if isinstance(entry, dict) and entry.get("file") == name:
+                return True
+        return False
+
     def _serve_project(self, rest: list[str], trailing_slash: bool,
                        with_body: bool, query: str = ""):
         """Everything under /project/.
@@ -956,21 +1000,29 @@ class HubHandler(BaseHTTPRequestHandler):
         # Generated, never read from the build directory.
         if name == "index.html":
             return self._serve_build_page(build_dir, with_body)
-        # A closed file leaves only to the token or to the key of THIS address,
-        # checked before the volume is touched. Its year is `private` on a
-        # revision: the answer depends on what was presented, the token or the
-        # key, and a shared cache must not hand it to somebody who presented
-        # nothing. The pointers stay `no-cache`.
+        # A file whose extension does not open it leaves to the token, to the
+        # key of THIS address, or because this build lists it as a document.
+        # The first two are checked before the volume is touched, and their
+        # year is `private` on a revision: the answer depends on what was
+        # presented, and a shared cache must not hand it to somebody who
+        # presented nothing. The pointers stay `no-cache`.
+        #
+        # The third costs a read of meta.json, so it is asked last — of a
+        # request that presented nothing, which is the only one that needs it.
+        # A file open because it is a document keeps the PUBLIC year: it is
+        # open to every reader of this address, exactly like a document whose
+        # extension opens it, so there is nothing for a shared cache to leak.
         if Path(name).suffix.lower() not in OPEN_SUFFIXES:
-            if not (self._authorized()
+            if (self._authorized()
                     or self._presents_files_key(pid, second, query)):
+                if second not in POINTER_NAMES:
+                    cache = CACHE_IMMUTABLE_PRIVATE
+            elif not self._listed_document(build_dir, name):
                 logger.warning(
                     f"refused: no token and no files key from "
                     f"{self.address_string()} for {self.path.split('?', 1)[0]}")
                 return self._error(TOKEN_REFUSED_STATUS, FILES_REFUSED_ERROR,
                                    with_body=with_body)
-            if second not in POINTER_NAMES:
-                cache = CACHE_IMMUTABLE_PRIVATE
         # meta.json is written by the hub after validation; everything else in
         # a build directory arrived in the tarball and is served under the
         # narrow uploaded-file content-type whitelist.

@@ -15,6 +15,20 @@
 //   onSelect  a click: the designator of the part under the pointer, or null
 //   onMenu    a right click on a part, which selects it as a click does: its
 //             designator and the pointer's page point (`clientX`, `clientY`)
+//   onTools   told `{ fit, frame }` once the model is drawn: what the page's
+//             bar does with this view (DocumentView.jsx)
+//
+// THE BOARD IS DRIVEN AS THE MODEL IS. The camera is turned by the model's own
+// trackball (`CADTrackballControls`, board3d.js) at the model's speeds: a left
+// drag turns it without tumbling it, a right drag pans, a middle drag zooms.
+// The WHEEL is the model page's second layer (ui/src/viewport/wheel.js and
+// zoom.js), which is written for that page's orthographic camera and so could
+// not simply be reached for: a two-finger swipe moves the board under the
+// fingers, a pinch — a wheel event with Control held — and Control and the
+// wheel zoom about the pointer, by the arithmetic the Gerbers' view uses
+// (`wheelMove` in gerber.js). The trackball's own wheel zooms to the centre off
+// `deltaY` alone, so the event is taken on its way down, on the holder, before
+// the canvas it listens on (`Stage.wheel`).
 //
 // Drawing is on demand — a frame when the camera, the size or the selection
 // changes, none while the view is hidden. Everything three holds is freed on
@@ -25,6 +39,7 @@ import React from 'react';
 import {
   disposeModel, exportRoot, frameBox, light, loadThree, mergeByMaterial, partsOf, pickedPart, plainColours,
 } from './board3d.js';
+import { wheelMove } from './gerber.js';
 import { css, MONO } from './style.jsx';
 
 // The page's 3D canvas colour behind a transparent canvas, so the view follows
@@ -48,13 +63,17 @@ const BOARD_MARGIN = 0.85;
 const PART_MARGIN = 2.5;
 const PART_LEAST = 1 / 10;
 /** How far a pointer may move between press and release and still click; the
- *  controls orbit with a left drag and pan with a right one. */
+ *  controls turn with a left drag and pan with a right one. */
 export const CLICK_SLOP = 4;
+/** The trackball's speeds as the model's page has them: the library's
+ *  defaults, 1.0 each, times its factors for a trackball (`SPEED_FACTORS` in
+ *  viewer/src/camera/controls.ts, multiplied in by `_applySpeedFactors`). */
+export const TRACKBALL_SPEEDS = { rotateSpeed: 1.0, zoomSpeed: 2.0, panSpeed: 0.22 };
 
 /** One loaded model on its canvas: the WebGL half of the view. */
 class Stage {
   constructor(lib, host, gltf, handlers) {
-    const { THREE, OrbitControls, mergeGeometries } = lib;
+    const { THREE, TrackballControls, mergeGeometries } = lib;
     this.THREE = THREE;
     this.host = host;
     this.handlers = handlers;
@@ -91,9 +110,19 @@ class Stage {
     canvas.setAttribute('style', CANVAS);
     host.append(canvas);
 
-    this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.zoomToCursor = true;
+    // The model's trackball, with the model's speeds. It moves the camera from
+    // its own pointer handlers and says `change` each time, so it needs no
+    // frame of its own.
+    this.controls = new TrackballControls(this.camera, canvas);
+    Object.assign(this.controls, TRACKBALL_SPEEDS);
     this.controls.addEventListener('change', () => this.request());
+
+    // THE WHEEL IS OURS, and it is taken here rather than on the canvas: the
+    // trackball listens on the canvas itself, and two listeners on one element
+    // run in the order they were added, so only an ancestor's capture listener
+    // can be sure of coming first.
+    this.onWheel = (event) => this.wheel(event);
+    host.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
 
     // A click with the left button or the right one: `[button, x, y]` of the
     // press. The right one selects as the left does and opens the menu too.
@@ -116,7 +145,7 @@ class Stage {
     this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.resize()) : null;
     if (this.observer) this.observer.observe(host);
     this.resize();
-    this.look(this.box, new THREE.Vector3(...FIRST_VIEW), BOARD_MARGIN, 0);
+    this.fit();
   }
 
   /** Whether the view is on screen: a frame is drawn only while it is. */
@@ -160,15 +189,82 @@ class Stage {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    // The trackball measures a drag against the canvas's box, which it keeps.
+    this.controls.handleResize();
     this.request();
   }
 
-  /** The camera onto `box`, along `direction`, with `margin` and at least `least`. */
+  /** The camera onto `box`, along `direction`, with `margin` and at least `least`.
+   *  Turned to it here: the trackball sets the camera's turn itself and leaves
+   *  it as it was on `update`. `lookAt` builds the turn from `camera.up`, so
+   *  this also takes a roll a trackball drag has wound in — which is why the
+   *  part framing of a selection arrives upright too. */
   look(box, direction, margin, least) {
     const { target, position } = frameBox(this.THREE, box, direction, FOV, this.camera.aspect, margin, least);
     this.controls.target.copy(target);
     this.camera.position.copy(position);
+    this.camera.lookAt(target);
     this.controls.update();
+    this.request();
+  }
+
+  /** The board as it was first seen: the bar's Fit. Upright again too, as a
+   *  drag on the trackball may have rolled it. */
+  fit() {
+    this.camera.up.set(0, 1, 0);
+    this.look(this.box, new this.THREE.Vector3(...FIRST_VIEW), BOARD_MARGIN, 0);
+  }
+
+  /** The frame on screen as a PNG blob: drawn now and read in the same task,
+   *  before the context, which keeps no drawing buffer, hands it to the screen.
+   *  Not `frame`, which is the handle of the frame asked for. */
+  snapshot() {
+    this.draw();
+    return new Promise((resolve) => this.renderer.domElement.toBlob(resolve, 'image/png'));
+  }
+
+  /**
+   * A wheel event over the view, taken before the trackball's own handler: a
+   * two-finger swipe moves the board under the fingers, a pinch or Control and
+   * the wheel zoom about the pointer (`wheelMove` says by how much).
+   *
+   * The camera is PERSPECTIVE, so a CSS pixel is worth `2·tan(FOV/2)·distance /
+   * height` of world at the distance the camera is looking, and that plane is
+   * also where the point under the pointer is taken: its offset from the target
+   * is the camera's screen axes times the pointer's place in the frame. Moving
+   * the camera and the target together by `(1 − scale)` of that offset while
+   * the eye shrinks by `scale` leaves the point under the pointer exactly where
+   * it was — the orthographic page's law (viewport/zoom.js), with the depth it
+   * is exact at being the target's.
+   */
+  wheel(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const box = this.renderer.domElement.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const { camera, controls } = this;
+    const eye = camera.position.clone().sub(controls.target);
+    const halfUp = eye.length() * Math.tan((FOV / 2) * (Math.PI / 180));
+    const right = new this.THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new this.THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    const move = wheelMove(event);
+    if (event.ctrlKey) {
+      const across = ((event.clientX - box.left) / box.width) * 2 - 1;
+      const down = ((event.clientY - box.top) / box.height) * 2 - 1;
+      const off = right.multiplyScalar(across * halfUp * camera.aspect)
+        .add(up.multiplyScalar(-down * halfUp));
+      const scale = 1 / move.factor;
+      controls.target.add(off.multiplyScalar(1 - scale));
+      camera.position.copy(controls.target).add(eye.multiplyScalar(scale));
+    } else {
+      // The board follows the fingers, so the camera and what it looks at go
+      // the other way, both by the same vector: a swipe pans, it does not turn.
+      const perPixel = (2 * halfUp) / box.height;
+      const moved = right.multiplyScalar(-move.dx * perPixel).add(up.multiplyScalar(move.dy * perPixel));
+      camera.position.add(moved);
+      controls.target.add(moved);
+    }
+    camera.updateMatrixWorld();
     this.request();
   }
 
@@ -205,6 +301,7 @@ class Stage {
   dispose() {
     if (this.frame) cancelAnimationFrame(this.frame);
     if (this.observer) this.observer.disconnect();
+    this.host.removeEventListener('wheel', this.onWheel, true);
     this.controls.dispose();
     disposeModel(this.model);
     this.renderer.dispose();
@@ -223,6 +320,8 @@ export default class BoardView3D extends React.Component {
     this.setHost = (element) => {
       this.host = element;
     };
+    // What the page's bar does with this view (`onTools`).
+    this.tools = { fit: () => this.stage.fit(), frame: () => this.stage.snapshot() };
   }
 
   componentDidMount() {
@@ -273,6 +372,7 @@ export default class BoardView3D extends React.Component {
         this.stage.select(this.props.selected || null, true);
         this.stage.setActive(Boolean(this.props.active));
         this.setState({ loading: false });
+        this.props.onTools(this.tools);
       })
       .catch((error) => {
         this.loading = false;

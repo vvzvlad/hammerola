@@ -184,3 +184,10 @@ export type { SubscribeOptions } from "./core/types.js";
 // with three external its contents are not in this file to begin with.
 // ---------------------------------------------------------------------------
 export * as THREE from "three";
+
+// HAMMEROLA'S PATCH: the model's own trackball, for the 3D view of a board
+// (ui/src/BoardView3D.jsx), so that a board turns, pans and zooms under the
+// same hand as a model. Exported from here rather than taken from three's
+// addons because this subclass is the library's (non-tumbling, the axis
+// restricted under Ctrl/Meta), and it carries the one three instance with it.
+export { CADTrackballControls } from "./camera/controls/CADTrackballControls.js";

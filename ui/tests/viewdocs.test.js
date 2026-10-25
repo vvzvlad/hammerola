@@ -59,6 +59,12 @@ const VIEWS = [
   { id: 'open', name: 'open', file: 'open.json', parts: ['lid'], gzip: 1000 },
 ]
 
+// The bar's tools, in the order it draws them, and the styles they are drawn
+// with.
+const TOOLS = ['Measure', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
+const TOOL_STYLES = ['measureBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle', 'frameBtnStyle',
+  'settingsBtnStyle']
+
 const meta = (documents = DOCS) => ({
   project: 'terrarium', title: 'Terrarium (terrarium)', commit: 'abc1234',
   built: '', parts: { lid: { kind: 'printable' } }, views: VIEWS,
@@ -126,20 +132,46 @@ describe('the documents in the list of views', () => {
     expect(viewports(c)).toHaveLength(1)
   })
 
-  it('take the tools about the model and the parts tree away while one is open', () => {
-    const closed = drawn(component())
-    for (const word of ['Measure', 'Fit', 'Frame', 'Settings']) expect(closed).toContain(word)
-
-    const c = component({ doc: 'ref__terr-raspil.svg' })
-    const v = c.computed()
-    expect([v.showTools, v.showFit]).toEqual([false, false])
-    const open = drawn(c)
-    for (const word of ['Measure', 'Fit', 'Frame', 'Settings']) expect(open).not.toContain(word)
+  it('keep the whole bar over one, its tools out of service, and take the parts tree away', () => {
+    // The same controls in the same places over the model and over a document.
+    const model = component({ token: 'secret' })
+    const c = component({ token: 'secret', doc: 'ref__terr-raspil.svg' })
+    for (const page of [model, c]) expect(drawn(page).filter((word) => TOOLS.includes(word))).toEqual(TOOLS)
+    // Over a picture every one of them is grey and takes no click; over the
+    // model none is.
+    for (const key of TOOL_STYLES) {
+      expect(css(c.computed()[key]), key).toMatchObject({ color: 'var(--text-faint)', cursor: 'default', pointerEvents: 'none' })
+      expect(css(model.computed()[key]).pointerEvents, key).toBeUndefined()
+    }
     // The list that brings the model back stays, captioned with the document.
-    expect(open).toContain('ref/terr-raspil.svg')
+    expect(drawn(c)).toContain('ref/terr-raspil.svg')
     const tree = collect(c.render(), (el) => (
       el.props.style && el.props.style.zIndex === '10' ? el : undefined))
     expect(tree.map((el) => el.props.style.display)).toEqual(['none'])
+  })
+
+  it('drive Fit and Frame through the view of a document that can, and save the frame named after the build', async () => {
+    const gerbers = { id: 'fab__board.zip', name: 'fab/board.zip', type: 'gerbers', file: 'fab/board.zip', bytes: 9 }
+    const c = component({ meta: meta([...DOCS, gerbers]), doc: gerbers.id })
+    const live = () => ['fitBtnStyle', 'frameBtnStyle'].map((key) => css(c.computed()[key]).pointerEvents !== 'none')
+    expect(live()).toEqual([false, false])
+    // the view says what it can do once it has drawn the zip
+    const blob = new Blob(['png'], { type: 'image/png' })
+    const tools = { fit: vi.fn(), frame: vi.fn(async () => blob) }
+    shownDocs(c)[0].props.onTools(tools)
+    expect(live()).toEqual([true, true])
+    c.computed().fitView()
+    expect(tools.fit).toHaveBeenCalledTimes(1)
+    const saved = []
+    // jsdom has neither; the page hands the blob over by an object URL.
+    Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:frame'), revokeObjectURL: vi.fn() })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function click() { saved.push(this.download) })
+    await c.computed().grabFrame()
+    expect(saved).toEqual(['terrarium-abc1234.png'])
+    // a view that goes takes them with it
+    shownDocs(c)[0].props.onTools(null)
+    expect(live()).toEqual([false, false])
+    vi.restoreAllMocks()
   })
 
   it('give the model back when a view is chosen, the one on screen included', () => {
@@ -156,16 +188,14 @@ describe('the documents in the list of views', () => {
     expect([c.state.doc, c.state.view]).toEqual([null, 'open'])
   })
 
-  it('centre the card on the button while it is the bar\'s only control, and start it at the button otherwise', () => {
-    // With a document open the tools go and the bar holds the button alone, in
-    // the middle of the window; with the model on screen Fit stands beside it.
-    expect(css(viewMenuStyle(true, true))).toMatchObject({ left: '50%', transform: 'translateX(-50%)' })
-    expect(css(viewMenuStyle(true, false)).left).toBe('0')
-    const open = component({ doc: 'docs__cut-list.md', viewsOpen: true })
-    expect(drawnAs(open.render(), viewMenuStyle(true, true))).toHaveLength(1)
-    expect(drawnAs(open.render(), viewMenuStyle(true, false))).toHaveLength(0)
-    const model = component({ viewsOpen: true })
-    expect(drawnAs(model.render(), viewMenuStyle(true, false))).toHaveLength(1)
+  it('start the card at the button, whatever is on screen: the button never stands in the bar alone', () => {
+    expect(css(viewMenuStyle(true))).toMatchObject({ left: '0' })
+    expect(css(viewMenuStyle(true)).transform).toBeUndefined()
+    for (const over of [{ doc: 'docs__cut-list.md' }, {}, { doc: 'docs__cut-list.md', narrow: true }]) {
+      const c = component({ viewsOpen: true, ...over })
+      expect(drawnAs(c.render(), viewMenuStyle(true))).toHaveLength(1)
+      expect(drawn(c)).toContain('Fit')
+    }
   })
 
   it('stay in sight under twelve views: those scroll, the documents do not', () => {

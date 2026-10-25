@@ -13,23 +13,24 @@ imports the second by a relative path, which is why both are here under their ow
 names. They are the READABLE builds and not npm's `.min` twins: the Makefile says
 what that choice is for.
 
-`GLTFLoader.js`, `OrbitControls.js`, `BufferGeometryUtils.js` and
-`SkeletonUtils.js` are three r184's own add-ons (`examples/jsm/loaders/`,
-`controls/`, `utils/` of the same npm package), for the 3D view of a board
-(`ui/src/BoardView3D.jsx`). Unlike the two above they are NOT byte-for-byte: a
-bare `from 'three'` needs an import map, which the hub's CSP drops, so each file's
-`from 'three'` is `from './three.module.js'`, and the loader's two
-`../utils/…` imports are `./…`. Nothing else is changed. sha256 of npm's file,
-then of ours:
+`GLTFLoader.js`, `BufferGeometryUtils.js` and `SkeletonUtils.js` are three
+r184's own add-ons (`examples/jsm/loaders/` and `utils/` of the same npm
+package), for the 3D view of a board (`ui/src/BoardView3D.jsx`): it loads the
+`.glb` with the loader, which imports the other two. Its camera is turned by
+the library's own `CADTrackballControls`, out of the bundle above, so three's
+`OrbitControls.js` is not here. Unlike the two above they are NOT
+byte-for-byte: a bare `from 'three'` needs an import map, which the hub's CSP
+drops, so each file's `from 'three'` is `from './three.module.js'`, and the
+loader's two `../utils/…` imports are `./…`. Nothing else is changed. sha256 of
+npm's file, then of ours:
 
 | File | npm | here |
 | --- | --- | --- |
 | `GLTFLoader.js` | `97642d720f16cc9a0c9844934198e4d0c023bea8e89576d0f7545d03b2d103d2` | `d7f4b3a86e622f5ae040ab32349a96714e8d6b360bc706c697f17e5a6d9464d7` |
-| `OrbitControls.js` | `faabb4e8dfd9235ee4a9fd7c9a3d75f90f1689dbd4944bd6fd32117dacec5f93` | `3f40137b0620b375637d6bce55dc830d86d79cb80b4d93aaf1b8ca6c5cb4741a` |
 | `BufferGeometryUtils.js` | `d700b4c4584b9ff53a04692624d2363019f6d1df2978a207389168c6ae647a65` | `b3f9636affbbd893311f20c8d0d03c7bf3b345eff7fb723180d333a625e85a01` |
 | `SkeletonUtils.js` | `b1632a703206c3d830de9fcbe515696770d04b71a15ee6b50afa6d2c3298c86f` | `eedd768765d6553f8082953ab3882e2c86dacc2eb7d180a312d1d52e86bb35c5` |
 
-To move them: copy the four from the same three version as the two above and
+To move them: copy the three from the same three version as the two above and
 repeat the two rewrites.
 
 ## Where the source came from
@@ -45,7 +46,8 @@ Six files, all of them but `package.json` carrying the reason in a comment of
 their own:
 
 * `viewer/src/index.ts` re-exports three's namespace, so the page can name the
-  very classes the library renders with;
+  very classes the library renders with, and the library's `CADTrackballControls`,
+  so the 3D view of a board (`ui/src/BoardView3D.jsx`) turns under the model's hand;
 * `viewer/src/core/viewer.ts` gains an `onBeforeRender` hook — the twin of the
   library's own `onAfterRender`, called at the top of `update()` — because this
   viewer renders ON DEMAND and a widget of ours standing in its scene has to be
@@ -110,8 +112,9 @@ re-check that a real project's build renders.
 Unlike the files above these are **not built here**. They are the built viewer
 out of the KiCAD-Prism repository,
 [`krishna-swaroop/KiCAD-Prism`](https://github.com/krishna-swaroop/KiCAD-Prism) at
-commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63`, `frontend/public/`, copied
-byte for byte, taken 2026-10-23. Prism builds them (`scripts/build-ecad-viewer.sh`)
+commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63`, `frontend/public/`, taken
+2026-10-23. `parser.worker.js` is byte for byte theirs; `ecad-viewer.js` carries
+two edits of ours, listed below. Prism builds them (`scripts/build-ecad-viewer.sh`)
 from its fork of ecad-viewer,
 [`krishna-swaroop/ecad-viewer`](https://github.com/krishna-swaroop/ecad-viewer) at
 commit `461a091952ef44b56610e3ccbac4ba3c94139c4a` (`adapterCommit` in the
@@ -124,11 +127,13 @@ Apache-2.0 and none of it is here.
 
 | File | sha256 |
 | --- | --- |
-| `ecad-viewer.js` | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
+| `ecad-viewer.js` as taken | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
+| `ecad-viewer.js` as committed | `21d75a50db07d13be0c5fe41c03919bf1de322223b1bb758e53493e3c8bcbaa5` |
 | `parser.worker.js` | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
-The first two equal the hashes Prism's manifest records for them. The manifest
+The first and the third equal the hashes Prism's manifest records for them —
+the second is that file with our edits in it. The manifest
 names a third artefact, `ecad-renderer.js`, which is not here: Prism's library
 panel draws symbols and footprints with it, and `ecad-viewer.js` never imports
 it. Neither are `3d-viewer.js` (the viewer's own 3D tab) and `glyph-full.js` (CJK
@@ -145,9 +150,51 @@ by side under these names. It needs two things of the hub's CSP (SPEC §7.4):
 in it, and `blob:` in `img-src` for the icons of its panels, an SVG sprite it
 builds into a `blob:` URL.
 
+### Our edits
+
+Two, both in `ecad-viewer.js`, both a replacement of one exact string by another
+— the file is minified, so they are written out here in full and re-applied by
+search and replace. `ui/tests/kicad.test.js` asserts that both are still in the
+file, because an upgrade that drops them breaks nothing loudly: the viewer
+simply goes back to its own behaviour.
+
+**1. A selected footprint is outlined, not filled over.** `BoardPainter.paint_footprint`
+painted the whole footprint into the selection mask in cyan at 55% before
+drawing its bounding box, so a part selected here or arrived at from the
+schematic (`requestCrossProbe`) was covered by a solid patch. The box alone
+says as much. The mask pass is dropped, the box kept:
+
+```text
+paint_footprint(t){this.clear_interactive();let r=this.layers.selection_mask;r.color=new w(0,.85,1,.55),this.gfx.start_layer(r.name),this.paint_item(r,t),r.graphics=this.gfx.end_layer(),r.graphics.composite_operation="source-over";let n=this.layers.selection_fg;
+→
+paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;
+```
+
+**2. The wheel is the touchpad's, as everywhere else on the site.** `MoveAndZoom`'s
+wheel handler zoomed on every wheel event off `deltaY` and never read `deltaX`,
+so a two-finger swipe zoomed instead of moving the drawing. It now pans on a
+plain wheel and zooms about the pointer with Control held (which is how a
+touchpad pinch arrives), by the arithmetic of `wheelMove` in `ui/src/gerber.js`:
+16 px to a line, the zoom delta clamped to 40 px, the rate 0.01 a pixel —
+written as `.01/og` because `#F` scales by the viewer's own `og`, 0.005. The
+viewer's ±24 px clamp on the wheel delta, which it spent on the zoom, and its
+swap of the axes under Shift, which only cancelled that zoom, are gone with it;
+the Gerbers have neither, and Shift and the wheel now pan like the wheel alone:
+
+```text
+let t=e.deltaX,r=e.deltaY;t==0&&e.shiftKey&&([t,r]=[r,t]),e.deltaMode===WheelEvent.DOM_DELTA_LINE?(t*=Vp,r*=Vp):e.deltaMode===WheelEvent.DOM_DELTA_PAGE&&(t*=Sc,r*=Sc),t=Math.sign(t)*Math.min(Sc,Math.abs(t)),r=Math.sign(r)*Math.min(Sc,Math.abs(r)),this.#e=this.target.getBoundingClientRect(),this.#F(r,this.#K(e)),this.#X(e)}
+→
+let t=e.deltaMode===WheelEvent.DOM_DELTA_LINE?16:e.deltaMode===WheelEvent.DOM_DELTA_PAGE?Sc:1;this.#e=this.target.getBoundingClientRect(),e.ctrlKey?this.#F(Math.max(-40,Math.min(40,e.deltaY*t))*(.01/og),this.#K(e)):this.#E(e.deltaX*t,e.deltaY*t),this.#X(e)}
+```
+
+`#E(dx, dy)` moves the camera's centre by `(dx, dy) / zoom`, so passing the
+deltas through unchanged makes the drawing follow the fingers; `#F(delta, point)`
+multiplies the zoom by `exp(-delta · og)` and keeps the world point under
+`point` where it is. `Vp` (8 px to a line) is left declared and now unused.
+
 To move it: take the same three things from a newer Prism commit — the two files
-and the manifest's commits — replace both files together, and update this
-section and the hashes in one commit.
+and the manifest's commits — replace both files together, re-apply the two edits
+above, and update this section and the hashes in one commit.
 
 ## The Gerber renderer: `wasm_gerber_processor.js` and `wasm_gerber_processor_bg.wasm`
 

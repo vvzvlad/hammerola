@@ -26,7 +26,7 @@ else sits beside it and is read at the moment it applies — the files are in
 | Writing or fixing `checks()`; a build that is slow or killed | `references/checks.md` |
 | Writing `model.py`: the contract, the record types, CadQuery's traps | `references/model-py.md` |
 | Putting a dimension on the drawing: shrinkage, minimum walls, orientation, fasteners | `references/printing.md` |
-| A file published beside the model: document, drawing, PDF, picture, report | `references/documents.md` |
+| A file published beside the model: document, drawing, PDF, picture, report, or any file to hand over (DXF, STEP, CSV) | `references/documents.md` |
 | A KiCad schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
 | Starting a project, fetching a revision back, removing one, setting up a machine | `references/cli.md` |
 

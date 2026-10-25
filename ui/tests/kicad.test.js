@@ -17,6 +17,9 @@
 // put under the pointer (`element.under`), as the viewer's own click does. The
 // 3D view is a stand-in whose props are read off the drawn tree.
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
@@ -26,7 +29,7 @@ import DocumentView, { docHint, documentBody, docViewKey } from '../src/Document
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawnViews,
+  BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
   menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { collect, texts } from './eltree.js'
@@ -62,7 +65,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
     view.props = { ...before, doc: documents.find((one) => one.id === id) }
     view.componentDidUpdate(before)
   })
-  const view = new KicadView({ doc, documents, base: BASE, onOpen })
+  const view = new KicadView({ doc, documents, base: BASE, onOpen, onTools: vi.fn() })
   view.setState = (patch, done) => {
     Object.assign(view.state, patch)
     if (done) done()
@@ -650,3 +653,94 @@ describe('a part\'s datasheet', () => {
     })
   })
 })
+
+describe('our two edits to the vendored viewer', () => {
+  // The wheel and the look of a selection are the viewer's own code now
+  // (static/_v/PROVENANCE.md, "Our edits"), so nothing of ours runs for them
+  // and no test here can exercise them — they are checked in a browser. What
+  // CAN be checked, and is what an upgrade loses silently, is that the edits
+  // are still in the file: the viewer upstream zooms on every wheel and fills
+  // a selected footprint, and both read as "the viewer does that" rather than
+  // as a regression.
+  const bundle = readFileSync(resolve(process.cwd(), '../static/_v/ecad-viewer.js'), 'utf8')
+
+  it('leaves a selected footprint outlined, not filled over', () => {
+    expect(bundle).toContain('paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;')
+    // the fill was a pass over the selection mask in cyan at 55% — nowhere now
+    expect(bundle).not.toContain('new w(0,.85,1,.55)')
+  })
+
+  it('pans on a plain wheel and zooms about the pointer on Control, by the Gerbers\' numbers', () => {
+    // `#E` pans and `#F` zooms about a point; 16 px a line, the zoom delta
+    // clamped to 40 px and the rate 0.01 a pixel (`og`, the viewer's own 0.005).
+    expect(bundle).toContain(
+      'e.ctrlKey?this.#F(Math.max(-40,Math.min(40,e.deltaY*t))*(.01/og),this.#K(e)):this.#E(e.deltaX*t,e.deltaY*t)')
+    expect(bundle).toContain('let t=e.deltaMode===WheelEvent.DOM_DELTA_LINE?16:')
+  })
+})
+
+describe('what the page\'s bar can do with the view on screen', () => {
+  /** The viewer's own drawing inside `element`, two open shadow trees down,
+   *  as the viewer builds it. */
+  function withDrawing(element, tag) {
+    const app = document.createElement('kc-viewer-app')
+    element.attachShadow({ mode: 'open' }).append(app)
+    const drawing = document.createElement(tag)
+    app.attachShadow({ mode: 'open' }).append(drawing)
+    drawing.canvas = document.createElement('canvas')
+    drawing.viewer = { zoom_fit_top_item: vi.fn(), draw_now: vi.fn() }
+    return drawing
+  }
+  const told = (view) => view.props.onTools.mock.calls.map(([tools]) => tools)
+  const show = (view, doc) => {
+    view.props = { ...view.props, doc }
+    view.componentDidUpdate()
+  }
+
+  it('is nothing until the files are in, then Fit and Frame for whichever drawing is on screen', async () => {
+    const { view, elements } = mounted(DOCS[0])
+    const drawings = { [SCH]: withDrawing(elements[SCH], 'kc-schematic-viewer'), [PCB]: withDrawing(elements[PCB], 'kc-board-viewer') }
+    view.componentDidUpdate()
+    expect(told(view)).toEqual([null])
+    view.setState({ ready: true })
+    view.componentDidUpdate()
+    const [, tools] = told(view)
+    expect(Object.keys(tools)).toEqual(['fit', 'frame'])
+    // the board on screen: the same tools, acting on it
+    show(view, DOCS[1])
+    expect(told(view)).toHaveLength(2)
+    tools.fit()
+    expect(drawings[PCB].viewer.zoom_fit_top_item).toHaveBeenCalledTimes(1)
+    expect(drawings[SCH].viewer.zoom_fit_top_item).not.toHaveBeenCalled()
+    const blob = new Blob(['png'], { type: 'image/png' })
+    drawings[PCB].canvas.toBlob = vi.fn((done, type) => {
+      expect([type, drawings[PCB].viewer.draw_now.mock.calls.length]).toEqual(['image/png', 1])
+      done(blob)
+    })
+    await expect(tools.frame()).resolves.toBe(blob)
+    // a design whose files did not load can do neither
+    view.setState({ error: 'hw/board.kicad_pcb did not load: HTTP 404' })
+    view.componentDidUpdate()
+    expect(told(view).at(-1)).toBeNull()
+  })
+
+  it('is what the 3D view says on the 3D model', () => {
+    const { view } = mounted(DOCS[0])
+    view.setState({ ready: true })
+    view.componentDidUpdate()
+    show(view, DOCS[2])
+    expect(told(view).at(-1)).toBeNull()
+    const three = { fit: vi.fn(), frame: vi.fn() }
+    view3d(view).three.props.onTools(three)
+    view.componentDidUpdate()
+    expect(told(view).at(-1)).toBe(three)
+    show(view, DOCS[1])
+    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame'])
+  })
+
+  it('finds the drawing only inside the element', () => {
+    expect(drawingOf(document.createElement('ecad-viewer'))).toBeNull()
+    expect(drawingOf(undefined)).toBeNull()
+  })
+})
+

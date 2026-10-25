@@ -14,7 +14,8 @@ it in the browser, tells each layer by the `%TF.FileFunction` inside the file an
 copper, mask, silkscreen, paste, outline and drills with a toggle per layer, the board seen
 from the top or from the bottom, and a link that downloads the zip; a model's build page
 also lists it under GERBERS in Downloads, beside the STL. It sits beside the board's view
-and does not replace it. Any listed `.zip` is read as a set of Gerbers, and the zip opens
+and does not replace it. A listed `.zip` is read as a set of Gerbers unless its entry
+says `"download": true`, and the zip opens
 to the link without a key like the other documents, so whoever has the link has the
 whole fabrication set.
 

@@ -50,9 +50,13 @@
   Creation order used to be stored that way; it is now stored nowhere at all,
   because retention was its only reader
 - `src/docsbuild.py` — the documents a project publishes to be read (issue
-  #122): the paths its `project.json` lists under `documents` (markdown, PDF,
-  pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of Gerbers — `render.DOCUMENT_TYPES`),
-  published under the same paths, an entry optionally `hidden` (no row in the
+  #122): the paths its `project.json` lists under `documents`, published under
+  the same paths. The extension decides only how the page shows one (markdown,
+  PDF, pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of
+  Gerbers — `render.DOCUMENT_TYPES`); any other extension publishes as
+  `render.FILE_TYPE`, a row that downloads the file (issue #125), and
+  `"download": true` asks for that whatever the extension — how a zip of logs
+  is told from a zip of Gerbers. An entry is optionally `hidden` (no row in the
   list, still served and opened by `?d=`). A schematic, a board and a `.glb`
   are each a document with a row of their own (issue #123); for a schematic this
   module finds every sheet it names by `Sheetfile` (`Sheet file` in KiCad 6),
@@ -244,8 +248,10 @@
   all three templates; issue #35), the resolver's `site.css` and `favicon.svg`,
   and the KiCad viewer: `ecad-viewer.js` with the `parser.worker.js` it starts
   from beside itself, taken BUILT out of KiCAD-Prism's repository and never
-  rebuilt here (where from, the commits, the hashes and what the hub's CSP cuts
-  out of it — `PROVENANCE.md`; its licence — `ecad-viewer-LICENSE.md`).
+  rebuilt here — `ecad-viewer.js` carries two edits of ours, made in the
+  minified file and written out to be re-applied (where from, the commits, the
+  hashes, the edits and what the hub's CSP cuts out of it — `PROVENANCE.md`; its
+  licence — `ecad-viewer-LICENSE.md`).
   A separate tree with its own `COPY` line in the Dockerfile and its own smoke
   check (g), which names `tokens.css` because its absence looks like nothing —
   every page still answers 200 and every `var(--…)` in it resolves to nothing.
@@ -369,20 +375,25 @@
   what keeps them in step; `ui/README.md` has the layout and the pins
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
-  `HammerolaViewer.jsx`. A header, the document, and the list of
-  `ui/src/viewlist.jsx` floating at the bottom with the documents in it;
-  `?d=<id>` picks the document, and a row rewrites it. It holds only the id of
-  the open document
-- `ui/src/viewlist.jsx` — the list of views both pages choose from: the
-  button at the bottom, the card it opens upwards with the views and then
-  the documents (`documentRows`: a row each but for a hidden one), and the
-  styles of the bar, the card and the document's layer. `chromeview.js` builds the model page's rows and DocShell
-  its own; `viewList` draws them on both
+  `HammerolaViewer.jsx`. A header, the document, and the model page's bar
+  (`toolBar` in `ui/src/viewlist.jsx`) floating at the bottom with the documents
+  in its list; `?d=<id>` picks the document, and a row rewrites it. It holds
+  which document is open, what the open view can do with Fit and Frame
+  (`docBar`, `onTools`) and whether the window is narrow
+- `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
+  views in it: `toolBar` (the views, Measure, Comment, Add primitive, Fit,
+  Frame, Settings, a tool that does not apply drawn out of service), the button
+  and the card it opens upwards with the views and then the documents
+  (`documentRows`: a row each but for a hidden one), the styles of the bar, the
+  card and the document's layer, and `savePng` (Frame's file).
+  `chromeview.js` builds the model page's values and `DocShell.docBar` its own
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
   React elements, relative links resolved from the document's directory, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
-  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`. DocShell draws it
+  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
+  draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
+  and size, and a link that downloads it. DocShell draws it
   under its list; the model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
@@ -402,10 +413,14 @@
   designator or the net. The viewer cannot be asked what is under a point, so a
   right click replays its own left click there and builds the menu from the
   selection it reports. The viewer is `static/_v/ecad-viewer.js`,
-  imported by URL on first use (`loadEcadViewer`)
-- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three,
-  `GLTFLoader.js` and `OrbitControls.js` imported by URL from `static/_v/` (three's
-  own add-ons, `static/_v/PROVENANCE.md`) on first use, the `.glb` of
+  imported by URL on first use (`loadEcadViewer`); the wheel over it and the
+  look of a selected footprint are its own code, both edited by us
+  (`static/_v/PROVENANCE.md`, "Our edits")
+- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three
+  and `GLTFLoader.js` imported by URL from `static/_v/` (three's own add-ons,
+  `static/_v/PROVENANCE.md`) and the camera turned by the model's own trackball,
+  `CADTrackballControls` out of `static/_v/three-cad-viewer.esm.js` at the
+  model's speeds, all on first use; the `.glb` of
   `kicad-cli pcb export glb` drawn on demand and only while on screen. `board3d.js`
   is the part that needs no WebGL: which nodes are parts (a child of the scene
   root named by its designator), merging a part's meshes, lighting one part on
@@ -416,12 +431,14 @@
   `%TF.FileFunction` and orders and colours the layers, and loads the vendored
   `wasm-gerber-renderer` (`static/_v/wasm_gerber_processor.js` and its `.wasm`,
   `static/_v/PROVENANCE.md`) by URL on first use; `GerberView.jsx` draws the layers
-  on a canvas through its `GerberProcessor`, with pan, zoom, a layer panel
-  (Top/Bottom, an eye per layer) and a link that downloads the zip. The model
-  page's Downloads menu lists the same zip as GERBERS (`downloadsview.js`)
-- `ui/src/PcbPanel.jsx` — the board view's own panel over its canvas (the
-  viewer's panels are hidden by `hide-chrome`): layer presets, a row per layer
-  with an eye and an active-layer click, the zone fill opacity (dimmed to
+  on a canvas through its `GerberProcessor`, with pan, zoom, a layer panel at
+  the top left (Top/Bottom, an eye per layer) and a link that downloads the zip.
+  The model page's Downloads menu lists the same zip as GERBERS
+  (`downloadsview.js`)
+- `ui/src/PcbPanel.jsx` — the board view's own panel over the top left of its
+  canvas, where the model's parts tree stands (the viewer's panels are hidden by
+  `hide-chrome`): layer presets, a row per layer with an eye and an
+  active-layer click, the zone fill opacity (dimmed to
   `ZONE_OPACITY` on open), and the net of the last click, lit whole through the
   viewer's own highlight. The viewer owns the state; the panel re-reads it
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:

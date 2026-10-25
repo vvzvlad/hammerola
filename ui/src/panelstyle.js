@@ -85,14 +85,20 @@ export const tab = (active) => `padding:5px 13px;border-radius:5px;font:500 12px
   + (active ? TAB_ON : TAB_OFF);
 
 /**
+ * A CONTROL OUT OF SERVICE: it stays where the reader left it, grey, and
+ * refuses the click (`pointer-events:none` is the half that does). Appended
+ * last, so its `color` and `cursor` beat the resting pair before it (`css`
+ * keeps the last spelling of a property). `btn`'s `off`, and the bar's quiet
+ * buttons (`quietBtn` in viewlist.jsx).
+ */
+export const OFF = 'color:var(--text-faint);cursor:default;pointer-events:none';
+
+/**
  * A HEADER BUTTON. `off` is a third state, beside resting and active, and it is
  * not `hide`: the button stays where the reader left it and stops working, as a
- * control out of service for now should (see `bannerSwitchStyle`). Last in the
- * string, so its `color` and `cursor` beat the resting pair above (`css` keeps
- * the last spelling of a property), and `pointer-events:none` is the half that
- * actually refuses the click.
+ * control out of service for now should (see `bannerSwitchStyle`).
  */
-export const btn = (active, hide, off) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '') + (off ? ';color:var(--text-faint);cursor:default;pointer-events:none' : '');
+export const btn = (active, hide, off) => `display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:6px;font:500 12px ${SANS};cursor:pointer;border:1px solid ` + (active ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'transparent;color:var(--text-soft)') + (hide ? ';display:none' : '') + (off ? `;${OFF}` : '');
 
 /* A card floating over the model — the new-build banner, the measurement. */
 export const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px var(--shadow-soft)`;
@@ -199,11 +205,14 @@ export const WARN_BODY = `font:400 11.5px/1.5 ${SANS};color:var(--text-soft);mar
 
 /* -- the layer panel over a board ------------------------------------------ *
  *
- * The card in the top right corner of a board's canvas with a row per layer:
- * the KiCad board's (PcbPanel.jsx) and the Gerbers' (GerberView.jsx). The
- * board's panel adds `visibility` to the card, because it stays mounted while
- * the board is hidden. */
-export const LAYER_PANEL = 'position:absolute;top:10px;right:10px;width:200px;max-width:calc(100% - 20px);max-height:calc(100% - 20px);'
+ * The card in the top left corner of a board's canvas with a row per layer:
+ * the KiCad board's (PcbPanel.jsx) and the Gerbers' (GerberView.jsx). Where the
+ * model's parts tree stands on the model's page, as far from the corner, and
+ * its rows read as the tree's: the eye first in the tree's slot (`SLOT_24`),
+ * then the colour and the name in the tree's type. The board's panel adds
+ * `visibility` to the card, because it stays mounted while the board is
+ * hidden. */
+export const LAYER_PANEL = 'position:absolute;top:10px;left:12px;width:200px;max-width:calc(100% - 24px);max-height:calc(100% - 20px);'
   + 'box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;'
   + `background:var(--float-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft);font:400 11.5px ${SANS};color:var(--text)`;
 export const LAYER_PANEL_HEAD = `flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;user-select:none;font:600 11.5px ${SANS}`;
@@ -212,7 +221,8 @@ export const LAYER_PANEL_BODY = 'flex:1 1 auto;min-height:0;display:flex;flex-di
 export const LAYER_PILLS = `flex:none;margin:8px 10px 0;${SEGMENTED}`;
 export const LAYER_PILL = `flex:1 1 auto;padding:3px 6px;text-align:center;border-radius:4px;font:500 11px ${SANS};color:var(--text-soft);cursor:pointer;user-select:none`;
 export const LAYER_LIST = 'flex:1 1 auto;min-height:0;overflow:auto;padding:2px 0 6px';
-export const layerRow = (active) => 'display:flex;align-items:center;gap:6px;padding:3px 10px;'
+/* A tree row's height, gap and padding (`rowStyle` in HammerolaViewer.jsx), the
+   width of the card. */
+export const layerRow = (active) => 'display:flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;'
   + (active ? 'background:var(--accent-bg);color:var(--accent-text)' : '');
-export const LAYER_NAME = `${FILL};min-width:0;display:flex;align-items:center;cursor:pointer;user-select:none`;
-export const LAYER_EYE = 'flex:none;display:flex;padding:3px 0 3px 4px;cursor:pointer';
+export const LAYER_NAME = `${FILL};min-width:0;display:flex;align-items:center;font:400 12px ${MONO};cursor:pointer;user-select:none`;

@@ -302,6 +302,24 @@ describe('groupDownloads', () => {
     expect(groupDownloads(null, GERBER_DOCUMENTS).map((g) => g.ext)).toEqual(['GERBERS'])
   })
 
+  it('offers a document the page cannot draw under the extension of its file', () => {
+    // A DXF for the glass shop is a file of the build the way an STL is, and
+    // the menu is where files are taken from. The group is the FILE's
+    // extension: every such document carries the one type `file`, so that
+    // word would be the only heading they ever got.
+    const plain = [
+      { id: 'cut__glass.dxf', name: 'Glass, cut list', type: 'file', file: 'cut/glass.dxf', bytes: 9 },
+      { id: 'bom.csv', name: 'bom.csv', type: 'file', file: 'bom.csv', bytes: 9 },
+      { id: 'ref__spare.stl', name: 'Bought bracket', type: 'file', file: 'ref/spare.stl', bytes: 9 },
+    ]
+    const groups = groupDownloads(PARTS, [...GERBER_DOCUMENTS, ...plain])
+    // Ordered by the one rule: the printer's formats, then alphabetically.
+    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP', 'CSV', 'DXF', 'GERBERS'])
+    expect(groups[4].files).toEqual([{ label: 'Glass, cut list', file: 'cut/glass.dxf' }])
+    // A listed file of a format the parts already export joins that group.
+    expect(groups[0].files.map((f) => f.label)).toEqual(['Bought bracket', 'plate', 'post'])
+  })
+
   it('answers an absent, empty or unusable catalogue with no groups at all', () => {
     expect(groupDownloads({})).toEqual([])
     expect(groupDownloads(undefined)).toEqual([])

@@ -8,8 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import DocShell, { DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
-import DocumentView, { docBase, docHint, documentBody, docUrl } from '../src/DocumentView.jsx'
+import DocShell, { docBar, DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
+import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
@@ -140,6 +140,8 @@ describe('markdown', () => {
 
 describe('one document, as both pages draw it', () => {
   const cutList = doc('docs/cut-list.md', 'markdown', 7765)
+  // A document of a type the page draws nothing of, which it hands over.
+  const cutPlan = { ...doc('cut/glass.dxf', FILE_TYPE, 12_400), name: 'Glass, cut list' }
 
   it('serves a document at its path and resolves its links from its directory', () => {
     expect(docUrl(BASE, cutList)).toBe(`${BASE}docs/cut-list.md`)
@@ -167,10 +169,26 @@ describe('one document, as both pages draw it', () => {
     }
   })
 
+  it('hands over a file it cannot draw rather than putting it in a frame', () => {
+    // A frame fed a type the browser does not render downloads it from inside
+    // itself and leaves an empty page with no way to ask again.
+    const tree = documentBody(cutPlan, BASE, null, '')
+    expect(ofType(tree, 'iframe')).toEqual([])
+    const [link] = ofType(tree, 'a')
+    expect(link.props.href).toBe(`${BASE}cut/glass.dxf`)
+    expect(link.props.download).toBe(true)
+    expect(text(tree)).toContain('Glass, cut list')
+    expect(text(tree)).toContain('dxf · 12.4 kB')
+  })
+
   it('labels a document with its type and size', () => {
     expect(docHint(cutList)).toBe('markdown · 7.8 kB')
     // From a megabyte, as a view's size is written.
     expect(docHint({ ...cutList, type: 'pdf', bytes: 4_700_000 })).toBe('pdf · 4.7 MB')
+    // A file the page does not draw says WHICH file it is: `file` is the type
+    // of every one of them, so the word would label them all alike.
+    expect(docHint(cutPlan)).toBe('dxf · 12.4 kB')
+    expect(docHint({ ...cutPlan, file: 'LICENSE' })).toBe('file · 12.4 kB')
   })
 
   describe('the holder', () => {
@@ -180,7 +198,7 @@ describe('one document, as both pages draw it', () => {
     afterEach(() => vi.unstubAllGlobals())
 
     const mounted = (one) => {
-      const view = new DocumentView({ doc: one, base: BASE })
+      const view = new DocumentView({ doc: one, base: BASE, onTools: vi.fn() })
       view.setState = (patch) => Object.assign(view.state, patch)
       view.componentDidMount()
       return view
@@ -204,6 +222,17 @@ describe('one document, as both pages draw it', () => {
       // Past every step of the fetch chain.
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(view.state.text).toBeNull()
+    })
+
+    it('tells the page\'s bar, as it goes, that it can do nothing more', () => {
+      const view = mounted(META.documents[2])
+      expect(view.props.onTools).not.toHaveBeenCalled()
+      view.componentWillUnmount()
+      expect(view.props.onTools.mock.calls).toEqual([[null]])
+      // and hands the door to the views that can drive the bar
+      const zip = doc('fab/board.zip', 'gerbers')
+      const onTools = () => {}
+      expect(documentBody(zip, BASE, null, '', [], undefined, onTools).props.onTools).toBe(onTools)
     })
   })
 })
@@ -236,9 +265,37 @@ describe('the page of a build with no model', () => {
     expect(rows(tree)).toEqual(META.documents.map((d) => [d.name, docHint(d)]))
     // the button names the document on screen
     expect(texts(tree)).toContain('list.md')
-    // and is the bar's only control, so the card is centred on it
-    expect(collect(tree, (el) => (el.props.style === css(viewMenuStyle(true, true)) ? el : undefined)))
+    // and stands in the model's bar, the card starting at its left edge
+    expect(collect(tree, (el) => (el.props.style === css(viewMenuStyle(true)) ? el : undefined)))
       .toHaveLength(1)
+  })
+
+  it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can', async () => {
+    const TOOLS = ['Measure', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
+    const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word))
+    expect(drawn({})).toEqual(TOOLS)
+    // a narrow window keeps the list and Fit, as the model's page does
+    expect(drawn({ narrow: true })).toEqual(['Fit'])
+    const bar = (extra) => docBar({ meta: META, doc: META.documents[0], onPick: () => {}, ...extra })
+    const off = (values, key) => css(values[key]).pointerEvents === 'none'
+    const KEYS = ['measureBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle', 'frameBtnStyle', 'settingsBtnStyle']
+    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true])
+    const blob = new Blob(['png'], { type: 'image/png' })
+    const tools = { fit: vi.fn(), frame: vi.fn(async () => blob) }
+    const live = bar({ tools })
+    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, false, false, true])
+    live.fitView()
+    expect(tools.fit).toHaveBeenCalledTimes(1)
+    const saved = []
+    // jsdom has neither; the page hands the blob over by an object URL.
+    Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:frame'), revokeObjectURL: vi.fn() })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function click() { saved.push(this.download) })
+    await live.grabFrame()
+    expect(saved).toEqual(['shopping-abc1234.png'])
+    vi.restoreAllMocks()
+    // Comment and Add primitive are hidden from a reader without a token, as on the model's page
+    expect([bar({ viewer: true }).commentBtnStyle, bar({ viewer: true }).proposalBtnStyle].map((st) => css(st).display))
+      .toEqual(['none', 'none'])
   })
 
   it('gives a schematic and a board a row each by their titles, and a hidden document none', () => {
@@ -327,7 +384,7 @@ describe('the shell', () => {
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
-    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false })
+    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false })
     // the door `Show in …` on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
@@ -341,6 +398,26 @@ describe('the shell', () => {
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD })
     expect(shell.state.active).toBe(DATASHEET.id)
+  })
+
+  it('holds what the open document\'s view can do, and whether the window is narrow', () => {
+    const listeners = new Set()
+    const query = { matches: true, addEventListener: (type, fn) => listeners.add(fn), removeEventListener: (type, fn) => listeners.delete(fn) }
+    Object.defineProperty(window, 'matchMedia', { value: () => query, configurable: true, writable: true })
+    try {
+      mount('')
+      expect(shell.render().props.narrow).toBe(true)
+      shell.componentDidMount()
+      listeners.forEach((fn) => fn({ matches: false }))
+      expect(shell.render().props.narrow).toBe(false)
+      const tools = { fit() {}, frame() {} }
+      shell.render().props.onTools(tools)
+      expect(shell.render().props.tools).toBe(tools)
+      shell.componentWillUnmount()
+      expect(listeners.size).toBe(0)
+    } finally {
+      delete window.matchMedia
+    }
   })
 
   it('opens the list on its button and shuts it on a click elsewhere', () => {

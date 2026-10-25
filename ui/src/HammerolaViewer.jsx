@@ -120,10 +120,12 @@ import { rowMenu } from './rowmenu.js';
 import { chromeView } from './chromeview.js';
 // And one of the build's documents, laid over the model when it is chosen in
 // the view list; drawn as the documents page draws it.
-import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
+// `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
+// document the page cannot draw under the extension it is named by.
+import DocumentView, { DOC_QUERY, docExt, FILE_TYPE } from './DocumentView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
-import { FLOAT_BAR, viewList } from './viewlist.jsx';
+import { savePng, toolBar } from './viewlist.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -139,8 +141,8 @@ import { comparePanel } from './compareview.js';
 import {
   ACCENT_BTN, BLANK_BOX, CARD, DIALOG_BTN, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN,
   HEADER_RULE, HEAD_MONO, HEAD_SANS, IDLE, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK,
-  META_MONO, ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, QUIET_BTN, RELATIVE, ROW,
-  ROW_LABELLED, RULE, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TITLE, TOOL_SQUARE,
+  META_MONO, ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, RELATIVE, ROW,
+  ROW_LABELLED, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TITLE, TOOL_SQUARE,
   WARN_BODY, WARN_CAPS, WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover,
 } from './panelstyle.js';
 import {
@@ -509,9 +511,12 @@ const GERBERS_GROUP = 'GERBERS';
  * `__proto__` is reachable and an object literal would silently store nothing
  * under it.
  *
- * The board's Gerbers are the one document here: `documents` is
- * `meta.documents`, and every zip it lists (`GERBERS_TYPE`) is a row
- * of one GERBERS group, named by its title, ordered like any other format.
+ * Two kinds of document reach this menu, both out of `meta.documents`. Every
+ * zip of Gerbers (`GERBERS_TYPE`) is a row of one GERBERS group, named by its
+ * title. Every document the page cannot draw (`FILE_TYPE`) is a row under its
+ * own extension in capitals — DXF, CSV — so a cut list for the glass shop is
+ * taken the way an STL is, and lands beside a part's exports when it shares
+ * their extension. Both are ordered like any other format.
  */
 export function groupDownloads(parts, documents) {
   const groups = new Map();
@@ -523,10 +528,17 @@ export function groupDownloads(parts, documents) {
         groups.get(group).push({ label: key, file });
       });
     });
-  const gerbers = (Array.isArray(documents) ? documents : [])
-    .filter((doc) => doc && doc.type === GERBERS_TYPE && typeof doc.file === 'string' && doc.file)
+  const listed = (Array.isArray(documents) ? documents : [])
+    .filter((doc) => doc && typeof doc.file === 'string' && doc.file);
+  const gerbers = listed
+    .filter((doc) => doc.type === GERBERS_TYPE)
     .map((doc) => ({ label: String(doc.name || doc.file), file: doc.file }));
   if (gerbers.length) groups.set(GERBERS_GROUP, [...(groups.get(GERBERS_GROUP) || []), ...gerbers]);
+  listed.filter((doc) => doc.type === FILE_TYPE).forEach((doc) => {
+    const group = docExt(doc).toUpperCase();
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push({ label: String(doc.name || doc.file), file: doc.file });
+  });
   const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   const rank = (ext) => {
     const at = PRINT_FIRST.indexOf(ext);
@@ -1013,7 +1025,9 @@ export default class HammerolaViewer extends React.Component {
       swapping: false,
       // -- what the reader is doing
       // `doc`: the document laid over the model, or null (`docOpen`).
-      view: null, doc: null, tool: null, held: false, sel: null, selName: '',
+      // `docTools`: what the bar's Fit and Frame do with it, `{ fit, frame }`
+      // once its view says it can (`onTools` in DocumentView.jsx), else null.
+      view: null, doc: null, docTools: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
@@ -1418,8 +1432,9 @@ export default class HammerolaViewer extends React.Component {
       const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
                      viewsOpen: false, opsOpen: false, settingsOpen: false,
                      notePop: null, tokenPop: false, tool: null, share: null };
-      // An armed tool is not on screen under an open document (`showTools`), so
-      // it does not count as something this Escape closed.
+      // An armed tool is not on screen under an open document — the document
+      // covers the model and the tool's button is out of service — so it does
+      // not count as something this Escape closed.
       const seen = (key) => this.state[key] && !(key === 'tool' && this.state.doc);
       if (Object.keys(shut).some(seen)) e.preventDefault();
       this.set(shut);
@@ -3824,18 +3839,13 @@ export default class HammerolaViewer extends React.Component {
     }
   }
 
-  async saveFrame() {
-    const blob = await this.frameBlob();
-    if (!blob) { this.toast('The viewport has no frame to save yet'); return; }
+  /** Frame: the model's frame, or `frame`, a promise of the open document's
+   *  (`docTools`), saved as a PNG named after the build (`savePng`). */
+  async saveFrame(frame = this.frameBlob()) {
     try {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${this.state.meta.project}-${shortId(this.state.meta.commit)}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      const blob = await frame;
+      if (!blob) { this.toast('The viewport has no frame to save yet'); return; }
+      savePng(blob, this.state.meta);
     } catch (error) {
       console.warn('frame', error);
       this.toast('Could not save the frame');
@@ -5914,7 +5924,8 @@ export default class HammerolaViewer extends React.Component {
             {v.docOpen && (
               <div style={css(v.docLayerStyle)}>
                 <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
-                              base={PAGE.base} onOpen={v.onDocOpen} />
+                              base={PAGE.base} onOpen={v.onDocOpen}
+                              onTools={(tools) => this.setState({ docTools: tools })} />
               </div>
             )}
 
@@ -5923,96 +5934,33 @@ export default class HammerolaViewer extends React.Component {
                 toolbar, so it is the toolbar that has to rise above the
                 overlays sharing the model with it. */}
             <div style={css(v.toolbarStyle)}>
-              {/* the bar (`FLOAT_BAR` in viewlist.jsx says why it is drawn so) */}
-              <div style={css(FLOAT_BAR)}>
-                {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
-                    `VIEW_TABS_MAX`. The menu, with the build's documents under
-                    the views, is the one the documents page draws too
-                    (viewlist.jsx). */}
-                {v.viewMenu ? (
-                  viewList({ label: v.viewLabel, open: !!this.state.viewsOpen, onToggle: v.viewsToggle,
-                    views: v.viewTabs, documents: v.docRows, alone: !!v.docOpen })
-                ) : (
-                  <div style={css('display:flex;gap:2px;padding:2px;background:var(--chip-bg);border-radius:6px')}>
-                    {v.viewTabs.map((t) => (
-                      <div key={t.key} onClick={t.onClick} title={t.hint} style={css(t.style)}>{t.label}</div>
+              {/* the bar, the one both pages draw (`toolBar` in viewlist.jsx),
+                  with the two cards only this page's buttons open */}
+              {toolBar(v, {
+                // THE OPS THE DOCUMENT KNOWS, one row each, read off the same
+                // table that gives each of them its size fields (`proposalOps`
+                // in ui/src/proposalview.js). The click is stopped on the card
+                // so that pressing inside it does not reach `rootClick` and
+                // shut it under the press.
+                proposal: (
+                  <div onClick={(e) => e.stopPropagation()} style={css(v.proposalMenuStyle)}>
+                    {v.proposalOps.map((op) => (
+                      <div key={op.key} onClick={op.onClick} style={css(v.proposalOpStyle)}>{op.label}</div>
                     ))}
                   </div>
-                )}
-                {/* Everything between the tabs and Fit belongs to a pointer and
-                    a canvas with room to aim in — see `showTools`. */}
-                {v.showTools && (
-                  <>
-                    <div style={css(RULE)} />
-                    <div onClick={v.tMeasure} style={css(v.measureBtnStyle)}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
-                      Measure
+                ),
+                // The `Add primitive` card's pattern, stopped click included —
+                // see `settingsMenuStyle` for why this one hangs off the right
+                // edge instead.
+                settings: (
+                  <div onClick={(e) => e.stopPropagation()} style={css(v.settingsMenuStyle)}>
+                    <div onClick={v.toggleRetina} style={css(v.settingsRowStyle)}>
+                      <span style={css(v.retinaBox)}>{v.retinaMark}</span>
+                      <span>Retina resolution</span>
                     </div>
-                    <div onClick={v.tComment} style={css(v.commentBtnStyle)}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
-                      Comment
-                    </div>
-                    {/* A box drawn in the air beside the model — which is what
-                        this adds: a rough body in numbers, over the geometry
-                        rather than in it.
-
-                        THE WRAPPER IS `position:relative` FOR THE REASON THE
-                        VIEW SWITCHER'S IS: the toolbar carries
-                        `contain:layout` and is therefore already a containing
-                        block for the menu (CSS Containment 1, §3.2), so
-                        without it the card would be measured from the toolbar's
-                        whole box and start at its left end rather than at the
-                        button. */}
-                    <div style={css(RELATIVE)}>
-                      <div onClick={v.tProposal} style={css(v.proposalBtnStyle)}>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
-                        Add primitive
-                      </div>
-                      {/* THE OPS THE DOCUMENT KNOWS, one row each, read off the
-                          same table that gives each of them its size fields
-                          (`proposalOps` in ui/src/proposalview.js). The click
-                          is stopped on the card so that pressing inside it
-                          does not reach `rootClick` and shut it under the
-                          press. */}
-                      <div onClick={(e) => e.stopPropagation()} style={css(v.proposalMenuStyle)}>
-                        {v.proposalOps.map((op) => (
-                          <div key={op.key} onClick={op.onClick} style={css(v.proposalOpStyle)}>{op.label}</div>
-                        ))}
-                      </div>
-                    </div>
-                    <div style={css(RULE)} />
-                  </>
-                )}
-                {v.showFit && (
-                  <div onClick={v.fitView} title="back to the frame this view opened in" style={css(QUIET_BTN)}>
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
-                    Fit
                   </div>
-                )}
-                {v.showTools && (
-                  <>
-                    <div onClick={v.grabFrame} title="save the current frame as a PNG" style={css(QUIET_BTN)}>
-                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
-                      Frame
-                    </div>
-                    {/* The `Add primitive` card's pattern, wrapper and stopped
-                        click included — see `settingsMenuStyle` for why this
-                        one hangs off the right edge instead. */}
-                    <div style={css(RELATIVE)}>
-                      <div onClick={v.tSettings} style={css(v.settingsBtnStyle)}>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="4.2" /><circle cx="8" cy="8" r="1.8" /><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" /></svg>
-                        Settings
-                      </div>
-                      <div onClick={(e) => e.stopPropagation()} style={css(v.settingsMenuStyle)}>
-                        <div onClick={v.toggleRetina} style={css(v.settingsRowStyle)}>
-                          <span style={css(v.retinaBox)}>{v.retinaMark}</span>
-                          <span>Retina resolution</span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
+                ),
+              })}
             </div>
 
             {/* a newer build landed — offered, not substituted */}

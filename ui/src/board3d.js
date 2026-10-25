@@ -28,28 +28,32 @@
 // from beside themselves (static/_v/PROVENANCE.md), so all of them share the one
 // instance the page imports here.
 
-/** Where the hub serves three and the add-ons this view uses. */
+/** Where the hub serves three and the add-ons this view uses. The camera is
+ *  turned by the model's own trackball, `CADTrackballControls`, which the
+ *  model's library exports (viewer/src/index.ts): the same URL as the
+ *  model page's (`VIEWER_MODULE_URL` in viewport/library.js), so on that page
+ *  the browser hands this import the module already loaded. */
 export const THREE_URL = '/_v/three.module.js';
 export const GLTF_LOADER_URL = '/_v/GLTFLoader.js';
-export const ORBIT_CONTROLS_URL = '/_v/OrbitControls.js';
+export const TRACKBALL_URL = '/_v/three-cad-viewer.esm.js';
 export const GEOMETRY_UTILS_URL = '/_v/BufferGeometryUtils.js';
 
 let pending = null;
 
 /**
- * `{ THREE, GLTFLoader, OrbitControls, mergeGeometries }`, fetched once per page.
- * A rejected import is dropped, so opening the 3D view again tries again
- * (`loadViewerLibrary` says why).
+ * `{ THREE, GLTFLoader, TrackballControls, mergeGeometries }`, fetched once
+ * per page. A rejected import is dropped, so opening the 3D view again tries
+ * again (`loadViewerLibrary` says why).
  */
 export function loadThree() {
   if (!pending) {
     pending = Promise.all([
       import(/* @vite-ignore */ THREE_URL),
       import(/* @vite-ignore */ GLTF_LOADER_URL),
-      import(/* @vite-ignore */ ORBIT_CONTROLS_URL),
+      import(/* @vite-ignore */ TRACKBALL_URL),
       import(/* @vite-ignore */ GEOMETRY_UTILS_URL),
-    ]).then(([THREE, loader, controls, utils]) => ({
-      THREE, GLTFLoader: loader.GLTFLoader, OrbitControls: controls.OrbitControls,
+    ]).then(([THREE, loader, library, utils]) => ({
+      THREE, GLTFLoader: loader.GLTFLoader, TrackballControls: library.CADTrackballControls,
       mergeGeometries: utils.mergeGeometries,
     }), (error) => {
       pending = null;

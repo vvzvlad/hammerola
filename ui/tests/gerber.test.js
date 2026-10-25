@@ -20,6 +20,7 @@ import {
   fitView, layerOf, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, toProcessor, turned, zoomAt,
 } from '../src/gerber.js'
 import GerberView from '../src/GerberView.jsx'
+import { MONO } from '../src/style.jsx'
 import { drained, runFrames, stubFrames } from './component.js'
 import { collect, links, texts } from './eltree.js'
 
@@ -222,6 +223,18 @@ describe('the panel', () => {
   const control = (view, attribute, value) => collect(view.render(), (el) => (el.props[attribute] === value ? el : undefined))[0]
   const on = (view) => labels(view.state.layers.filter((layer) => view.state.shown[layer.file]))
 
+  it('stands where the model\'s parts tree stands, its rows read as the tree\'s: the eye first', () => {
+    const view = mounted()
+    const [panel] = collect(view.render(), (el) => (el.props['data-panel'] ? el : undefined))
+    expect(panel.props.style).toMatchObject({ position: 'absolute', top: '10px', left: '12px', maxWidth: 'calc(100% - 24px)' })
+    expect(panel.props.style.right).toBeUndefined()
+    const [row] = collect(view.render(), (el) => (el.props['data-layer'] ? el : undefined))
+    const [eye, name] = row.props.children
+    expect(eye.props['data-eye']).toBe(row.props['data-layer'])
+    expect(eye.props.style).toMatchObject({ width: '24px', flex: 'none' })
+    expect([name.props.style.font, row.props.style.height]).toEqual([`400 12px ${MONO}`, '24px'])
+  })
+
   it('turns the board over, toggles a layer, and links the zip', () => {
     const view = mounted()
     expect(collect(view.render(), (el) => el.props['data-layer'])).toHaveLength(15)
@@ -306,7 +319,7 @@ describe('the view on the page', () => {
 
   /** The view mounted on a holder WIDE x TALL. */
   function opened() {
-    const view = new GerberView({ url: ZIP_URL, size: '776.5 kB' })
+    const view = new GerberView({ url: ZIP_URL, size: '776.5 kB', onTools: vi.fn() })
     view.setState = (patch) => Object.assign(view.state, typeof patch === 'function' ? patch(view.state) : patch)
     const host = document.createElement('div')
     Object.defineProperty(host, 'clientWidth', { value: WIDE })
@@ -471,5 +484,30 @@ describe('the view on the page', () => {
     pointer(canvas, 'pointermove', { x: 210, y: 195 })
     runFrames()
     close(pixelOf(last(processor), spot), [210, 195])
+  })
+
+  it('tells the bar it can fit and frame once the board is drawn, and does both on the canvas', async () => {
+    const answer = fetching()
+    const { view, host } = opened()
+    expect(view.props.onTools).not.toHaveBeenCalled()
+    answer(BOARD_ZIP)
+    await settle()
+    runFrames()
+    const [[tools]] = view.props.onTools.mock.calls
+    const processor = processors[0]
+    const fitted = last(processor)
+    const canvas = host.querySelector('canvas')
+    canvas.setPointerCapture = () => {}
+    pointer(canvas, 'pointerdown', { x: 100, y: 100 })
+    pointer(canvas, 'pointermove', { x: 160, y: 140 })
+    runFrames()
+    expect(last(processor)).not.toEqual(fitted)
+    tools.fit()
+    runFrames()
+    expect(last(processor)).toEqual(fitted)
+    // the context keeps its drawing buffer: the canvas is read as it stands
+    const blob = new Blob(['png'], { type: 'image/png' })
+    canvas.toBlob = vi.fn((done, type) => done(type === 'image/png' ? blob : null))
+    await expect(tools.frame()).resolves.toBe(blob)
   })
 })
