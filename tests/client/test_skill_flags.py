@@ -98,7 +98,7 @@ def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
 
     # BOTH SIDES ARE NON-EMPTY AND OVERLAP, asserted before they are compared:
     # a parser read through a renamed argparse internal, or a document moved out
-    # from under `SKILL_FILE`, would otherwise make one of the two sets empty and
+    # from under `skill/`, would otherwise make one of the two sets empty and
     # pass this whole file in silence.
     assert {"--force", "--title"} <= declared & mentioned, (
         f"the pairing is comparing against nothing: the parser offered "

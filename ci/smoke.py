@@ -24,9 +24,9 @@ carries the code, starts on its own and is packaged as this repo says.
 * (g) the templates, viewer assets and other required files are IN the image; without them
       the image still starts and `/health` still answers.
 * (h) the three `/start` files are served by this image, and the skill archive holds the
-      document an agent reads at the version `/start` advertises. All three are assembled per
-      request (the client zipapp from `hammerola/`, the template tarball from
-      `model_template/`, the skill from `skill/`), so (g) cannot cover them by path.
+      document an agent reads. All three are assembled per request (the client zipapp from
+      `hammerola/`, the template tarball from `model_template/`, the skill from `skill/`), so
+      (g) cannot cover them by path.
 * (i) the build wrapper (`python -s -m src.buildproc.wrapper`, spawned by the hub for every
       push) resolves from /app as the `app` account and its rlimits really go on. The suite
       runs it on a checkout and strips ceilings the workstation refuses
@@ -284,25 +284,20 @@ print(json.dumps(verdicts))
 # must carry every module reachable from `hammerola/cli.py` (`onboarding._refuse_unimportable`),
 # and src/app.py answers a refused assembly with a logged 404. The suite builds these archives
 # from the checkout, where every file is present, so only this check sees a missing one.
-# `/start` itself is not listed as a route: the only file it opens is `/app/skill/SKILL.md`,
-# which check (g) requires by name. The probe does fetch it, for the question below.
+# `/start` itself is not listed as a route: the files it opens are the skill's, which the
+# archive route below opens too, and check (g) requires two of them by name.
 SKILL_URL = "/start/skill.tar.gz"
 START_ROUTES = [SKILL_URL, "/start/hammerola", "/start/template.tar.gz"]
 
 # ...and the one question about what is INSIDE an archive, reported under this key beside the
 # routes. The skill is a directory (`src/onboarding.skill_bytes`): an image whose `COPY` or
 # `.dockerignore` dropped `skill/` serves an archive that unpacks to nothing, which answers 200
-# with a body and passes the row above. So the probe opens it, finds the entry document, and
-# holds its version against the one the manifest states — the number `hammerola skill` compares
-# a laptop's copy against, and the only check anywhere that the two agree in the ARTEFACT.
-# These four are the gate's own literals, like every path above; tests/test_smoke_parsing.py
-# compares them with `src/onboarding.py`'s.
-MANIFEST_URL = "/start"
+# with a body and passes the row above. So the probe opens it and finds the entry document.
+# The entry's name is the gate's own literal, like every path above; tests/test_smoke_parsing.py
+# compares it with `src/onboarding.py`'s.
 SKILL_ENTRY = "SKILL.md"
-SKILL_VERSION_KEY = "skill_version"
 SKILL_ARCHIVE_KEY = "skill-archive"
-SKILL_ARCHIVE_TARGET = ("{} carries {}, and its version is the one {} states".format(
-    SKILL_URL, SKILL_ENTRY, MANIFEST_URL))
+SKILL_ARCHIVE_TARGET = "{} carries {}".format(SKILL_URL, SKILL_ENTRY)
 
 # Where the hub listens inside its own container (`src/settings.py` defaults: 0.0.0.0:8000).
 # 127.0.0.1 is the CONTAINER's loopback, reached by `docker exec`.
@@ -318,9 +313,9 @@ START_WAIT = 10
 # Per-request timeout inside the container, and how much of each body is read (only "not
 # empty" is asked of a route; the skill archive is read whole, see the probe). These must fit
 # inside START_EXEC_TIMEOUT: the deadline is shared by every request, so the ceiling is the
-# wait once plus one read per request — five of them, the three routes plus the manifest and
-# the archive the question above opens — 10 + 5 x 5 = 35 s against 45 (measured before the
-# archive question: 20.6 s against a socket that never answers). A probe killed by the outer
+# wait once plus one read per request — four of them, the three routes plus the archive the
+# question above opens — 10 + 4 x 5 = 30 s against 45 (measured before the archive question:
+# 20.6 s against a socket that never answers). A probe killed by the outer
 # bound reports nothing, so raise START_EXEC_TIMEOUT together with these.
 START_READ = 5
 START_READ_BYTES = 4096
@@ -331,7 +326,6 @@ START_READ_BYTES = 4096
 START_PROBE_SOURCE = r"""
 import io
 import json
-import re
 import sys
 import tarfile
 import time
@@ -394,49 +388,22 @@ def fetch(path):
             path, type(error).__name__, error)
 
 
-# The archive's own account of its version against the manifest's. -> a reason, or None.
+# Whether the skill archive holds its entry document. -> a reason, or None.
 def skill_archive():
-    document, problem = fetch(request["manifest"])
-    if problem is not None:
-        return problem
-    try:
-        stated = json.loads(document).get(request["version_key"])
-    except ValueError as error:
-        return "the manifest at {} is not JSON: {}".format(request["manifest"], error)
-    # `bool` is an `int`, and the manifest carries one (`empty`).
-    if isinstance(stated, bool) or not isinstance(stated, int):
-        return "the manifest states {!r} as the skill's version".format(stated)
-
     body, problem = fetch(request["skill"])
     if problem is not None:
         return problem
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as tar:
-            handle = None
             for info in tar.getmembers():
                 if info.name == request["entry"] and info.isfile():
-                    handle = tar.extractfile(info)
-                    break
-            if handle is None:
-                return "{} holds no {}, it holds {}".format(
-                    request["skill"], request["entry"],
-                    sorted(info.name for info in tar.getmembers()) or "nothing")
-            text = handle.read().decode("utf-8")
+                    return None
+            return "{} holds no {}, it holds {}".format(
+                request["skill"], request["entry"],
+                sorted(info.name for info in tar.getmembers()) or "nothing")
     except Exception as error:
         return "{} could not be opened as a .tar.gz: {}: {}".format(
             request["skill"], type(error).__name__, error)
-
-    block = re.match(r"\A---\n(.*?)\n---\n", text, re.DOTALL)
-    if block is None:
-        return "the {} in that archive has no frontmatter block".format(request["entry"])
-    found = re.search(r"^version:[ \t]*(\d+)[ \t]*$", block.group(1), re.MULTILINE)
-    if found is None:
-        return "the {} in that archive names no version in its frontmatter".format(
-            request["entry"])
-    if int(found.group(1)) == stated:
-        return None
-    return "the archive carries version {} and the manifest states {}".format(
-        found.group(1), stated)
 
 
 report(request["skill_key"], skill_archive())
@@ -706,8 +673,8 @@ GUARD_TIMEOUT = 90
 START_TIMEOUT = 60
 EXEC_TIMEOUT = 30
 LOGS_TIMEOUT = 15
-# The onboarding probe gets half as much again: it makes five requests (the three routes, the
-# manifest and the skill archive it opens), and its own worst case is 35 s (see START_READ).
+# The onboarding probe gets half as much again: it makes four requests (the three routes and
+# the skill archive it opens), and its own worst case is 30 s (see START_READ).
 # Its own bound rather than a wider EXEC_TIMEOUT, which every other exec would spend too.
 START_EXEC_TIMEOUT = 45
 # The CAD probe gets three times the bound: the first `import cadquery` in a fresh image reads
@@ -1470,8 +1437,6 @@ def check_start_routes(name):
         "skill": SKILL_URL,
         "skill_key": SKILL_ARCHIVE_KEY,
         "entry": SKILL_ENTRY,
-        "manifest": MANIFEST_URL,
-        "version_key": SKILL_VERSION_KEY,
     })
 
     # The archive row is answered by the same probe, so it shares every way the probe can fail.
@@ -1526,9 +1491,7 @@ def check_start_routes(name):
             "{}.\n"
             "  The skill is a DIRECTORY built into an archive per request, so an image that "
             "lost `skill/` or part of it still serves something at that route. What this row "
-            "says is that the archive holds the document an agent reads and that it is the "
-            "version /start advertises — the number `hammerola skill` compares a laptop's copy "
-            "against, which is silent in both directions when it is wrong".format(
+            "says is that the archive holds the document an agent reads".format(
                 seen[SKILL_ARCHIVE_KEY]))))
     return rows
 

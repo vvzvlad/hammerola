@@ -51,6 +51,12 @@ ENTRIES = {
         "`/start/skill.md`, so a client older than this one cannot install or "
         "update it at all.",
     ),
+    "0.4.0": (
+        "`hammerola skill` compares a digest of the installed skill's files "
+        "with the `skill_digest` the hub states, and prints the first 12 hex "
+        "digits of each where it printed version numbers; the skill's "
+        "`SKILL.md` carries no `version:` any more.",
+    ),
 }
 
 

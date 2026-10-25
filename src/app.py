@@ -676,18 +676,17 @@ class HubHandler(BaseHTTPRequestHandler):
         missing from the image, cf. `ci/smoke.py` REQUIRED_PATHS), ValueError
         (`onboarding._refuse_unservable` or `_refuse_unimportable`) and
         ImportError (a client module missing from the image, met by the
-        template builder). The manifest reads the skill's version and is held
-        to the same rule.
+        template builder). The manifest reads the skill's files for their
+        digest and is held to the same rule.
         """
         if not rest:
-            # The manifest reads `SKILL.md`'s version, so it can fail the
-            # same way: a logged 404.
+            # The manifest reads every file of the skill for its digest, so it
+            # can fail the same way: a logged 404.
             try:
                 document = onboarding.manifest(empty=self.server.store.empty())
-            except (OSError, ValueError) as error:
-                logger.error(f"cannot serve /start: {error}. The image's "
-                             f"skill file is missing or carries no version "
-                             f"in its frontmatter.")
+            except OSError as error:
+                logger.error(f"cannot serve /start: {error}. A file of the "
+                             f"image's skill cannot be read.")
                 return self._error(404, "not found", with_body=with_body)
             return self._json(200, document, CACHE_NONE,
                               with_body=with_body)

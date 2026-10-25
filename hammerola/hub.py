@@ -69,8 +69,8 @@ browser fetches):
 The one route asked for with NO token, because it is read before login:
 
     GET  /start                           `{"empty", "skill", "client",
-                                          "template", "skill_version"}` — three
-                                          relative paths, the version of the
+                                          "template", "skill_digest"}` — three
+                                          relative paths, the digest of the
                                           skill this hub ships, and whether it
                                           has anything on it. `create` follows
                                           the `template` one; `skill` follows
@@ -883,8 +883,9 @@ class Hub:
 
         `create`, `skill` and `update` work against a hub the machine is not
         logged in to. The reply is `{"empty", "skill", "client", "template",
-        "skill_version", "client_version"}`: three relative paths, two versions
-        and one boolean about the hub (see `src/onboarding.py`).
+        "skill_digest", "client_version"}`: three relative paths, the skill's
+        digest, the client's version and one boolean about the hub (see
+        `src/onboarding.py`).
         """
         code, raw = self._call(START_PATH)
         if code == 401:

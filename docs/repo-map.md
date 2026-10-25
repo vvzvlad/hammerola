@@ -174,7 +174,7 @@
   — landing on exactly the reader the answer is for. ALL FIVE MANIFEST FIELDS
   HAVE A READER: `hammerola create` follows `template`; `hammerola skill update`
   follows `skill` to the archive it unpacks, and `hammerola skill` compares the
-  copy installed on a laptop against `skill_version`, which is a constant of the
+  copy installed on a laptop against `skill_digest`, which is a constant of the
   IMAGE and not a second statement about this deployment — `empty` is still the
   only one of those; and the SIGN-IN PAGE reads `empty` — the gate on everything
   below — and then follows `client` when it says this hub has nothing on it
@@ -344,22 +344,18 @@
   not exist, is empty, or holds this skill's own entry document
   (`skill.why_not_here`), and refuses anything else before the network: a
   mistyped `--path` written into once would read as our installation to the
-  next run, which would then sweep somebody else's files. One version for the whole set, carried by the entry
-  document. ITS FRONTMATTER IS READ BY THE HUB, AND READ
-  STRICTLY: editing that header is editing what the service serves, not
-  cosmetics in a document written for agents. `onboarding.skill_version` lifts
-  `version:` out of it and raises `ValueError` on a file with no frontmatter
-  block or no such key, and `manifest()` calls it — so a header this cannot be
-  read out of takes the whole `/start` document down to a 404, which is why
-  `ci/smoke.py` deliberately holds `/start` out of `START_ROUTES` and leans on
-  check (g), which requires `/app/skill/SKILL.md` and one of the references by
-  name; the gate also opens the archive it serves and holds the version inside
-  it against the one the manifest states. THE STRICTNESS IS THE DECISION and
-  not an oversight to be softened into a default: a version that cannot be read
-  has to be a REFUSAL rather than
-  "version unknown", because a default would make a shipped skill that lost its
-  version indistinguishable from a fresh one — the exact silence the versioning
-  exists to end. What it exists to say, and what nothing else
+  next run, which would then sweep somebody else's files. WHETHER A LAPTOP'S
+  COPY IS CURRENT IS DECIDED BY A DIGEST OF ITS FILES, never by a number
+  somebody raises: `hammerola/skill.tree_digest`, which the hub imports for the
+  manifest's `skill_digest` (`onboarding.skill_digest`), so any change to any
+  file of the skill changes it. Hidden files are left out on both sides — the
+  hub refuses to serve one, and Finder drops `.DS_Store` into the installed
+  directory. `manifest()` reads every file of the skill for it, so an unreadable
+  one takes the whole `/start` document down to a 404; `ci/smoke.py` holds
+  `/start` out of `START_ROUTES` because the archive route opens the same
+  files, leans on check (g), which requires `/app/skill/SKILL.md` and one of
+  the references by name, and opens the archive it serves to find the entry
+  document in it. What the skill exists to say, and what nothing else
   says anywhere: `build` fills the draft slot and leaves the project off the
   front page, `commit` is what makes a version exist, and finished work is
   committed. The rest is the model contract (pointing at `model_template/` as the

@@ -29,8 +29,8 @@ import json
 from urllib.parse import urlsplit
 
 from ci.smoke import (BUILD_MARK, BUILD_PROBE_SOURCE, BUILD_TARGETS, CAD_SENTINEL,
-                      EXPECTED_TARGETS, MANIFEST_URL, SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
-                      SKILL_VERSION_KEY, START_MARK, START_ORIGIN, START_PROBE_SOURCE,
+                      EXPECTED_TARGETS, SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
+                      START_MARK, START_ORIGIN, START_PROBE_SOURCE,
                       START_ROUTES, parse_cad_verdicts, parse_marked_verdicts,
                       parse_start_routes)
 from src import onboarding
@@ -210,9 +210,9 @@ def test_the_gate_asks_for_the_routes_this_hub_really_serves():
 
     Compared as a SET: the order the gate asks in is its own business, and pinning it here
     would fail a reordering that changes nothing. `/start` itself is deliberately absent from
-    the gate's list — the manifest opens no file and cannot fail the way the three below can —
-    so it is asserted absent rather than left to be re-added by whoever reads this as an
-    oversight.
+    the gate's list — the files the manifest opens are the skill's, which the archive route
+    opens too — so it is asserted absent rather than left to be re-added by whoever reads this
+    as an oversight.
     """
     assert set(START_ROUTES) == {onboarding.SKILL_URL, onboarding.CLIENT_URL,
                                  onboarding.TEMPLATE_URL}
@@ -220,18 +220,13 @@ def test_the_gate_asks_for_the_routes_this_hub_really_serves():
 
 
 def test_the_gate_opens_the_skill_archive_by_the_hubs_own_names():
-    """The archive row asks four more strings of the hub, and each is a copy.
+    """The archive row asks two more strings of the hub, and each is a copy.
 
     A drifted one fails the same expensive way as a renamed route: the gate
-    reports a healthy image's skill as broken (a wrong path or entry name) or,
-    worse, compares against a manifest key nobody writes, which is a verdict
-    about nothing. `/start` is fetched by the probe for this row and is still
-    not a ROUTE of the gate's — the row above says why.
+    reports a healthy image's skill as broken (a wrong path or entry name).
     """
     assert SKILL_URL == onboarding.SKILL_URL
-    assert MANIFEST_URL == onboarding.MANIFEST_URL
     assert SKILL_ENTRY == onboarding.SKILL_ENTRY
-    assert SKILL_VERSION_KEY == onboarding.SKILL_VERSION_KEY
 
 
 def test_the_onboarding_probe_reports_the_archive_row_the_gate_declares():

@@ -34,4 +34,4 @@ them; `hammerola/metricsdiff.py` is shared with the build instead of duplicated.
 # out of the served archive by an older client before it replaces itself
 # (`update._member_value`), and imported by the hub for its manifest
 # (`src/onboarding.py`).
-VERSION = "0.3.0"
+VERSION = "0.4.0"
