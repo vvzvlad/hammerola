@@ -32,7 +32,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
 import { ELLIPSIS } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
-import { FLOAT_BAR, TAB_STRIP, viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
+import { FILE_SIDE, FILE_SPACER, FLOAT_BAR, TAB_STRIP, viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -134,6 +134,14 @@ describe('how many views it takes to fold the strip into a menu', () => {
     // strip, takes the shrinking, and the one two-word label stays on one line,
     // so the bar stays one line high instead of running off the window.
     expect(css(FLOAT_BAR).maxWidth).toBe('calc(100% - 24px)')
+    // Beside the open document's buttons, the strip's two sides take equal
+    // shares of what the bar leaves; the left one never less than its buttons,
+    // the bar shrinking instead.
+    expect([css(FLOAT_BAR).minWidth, css(FILE_SIDE).flex, css(FILE_SPACER).flex]).toEqual(['0', '1 1 0', '1 1 0'])
+    expect(css(FILE_SIDE).minWidth).toBeUndefined()
+    // a side's share starts from its padding: the same sum on both, or the bar is off centre
+    const pad = (style) => css(style).padding.split(' ').map(parseFloat)
+    expect([pad(FILE_SIDE)[1] + pad(FILE_SIDE)[3], pad(FILE_SPACER)[1] + pad(FILE_SPACER)[3]]).toEqual([20, 20])
     const shrinks = (style) => [css(style).minWidth, css(style).flexShrink]
     expect(shrinks(TAB_STRIP)).toEqual(['0', '100'])
     const menu = component({ views: someViews(9) }).render()

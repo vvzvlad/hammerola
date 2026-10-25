@@ -1,7 +1,7 @@
 // "Copy link" beside every link that downloads a file of the build: the rows
 // of the header's Downloads menu (downloadsview.js), a part's files in its
-// right-click menu (rowmenu.js), and the open document's Download in the bar
-// at the bottom of both pages (`toolBar` in viewlist.jsx). What it copies is
+// right-click menu (rowmenu.js), and the open document's Download at the left
+// end of the bottom strip of both pages (`DocFile` in viewlist.jsx). What it copies is
 // the whole address of that very link, the key to the files included when the
 // link carries one (`fileHref`), so whoever it is pasted to downloads what this
 // page would.
@@ -10,12 +10,12 @@
 // the page around it: the bar also stands on the page of a build with no model
 // (DocShell.jsx), which has no toast.
 //
-// Two looks, both an icon with the words in its title, which turns into a tick
-// or a cross for "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet
-// button of the bar like Fit and Frame, and otherwise a 12 px icon for the end
-// of a row. No words beside it: with words the bar over a document no longer
-// fits a window between 721 and about 900 px, and a word changing length would
-// shift every control of a bar that is centred. Either is a SIBLING of the link
+// An icon with the words in its title, which turns into a tick or a cross for
+// "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet button like Fit
+// and Frame, followed by the words "Copy link" when `words` is set, and
+// otherwise a 12 px icon for the end of a row. The words stay "Copy link"
+// while the icon says how the copy went: a word changing length would change
+// the width `DocFile` measures to choose between words and icons. Either is a SIBLING of the link
 // it copies, never inside it — a control inside an `<a>` is not valid markup —
 // and its click neither follows a link nor reaches the page's handler that
 // closes a menu, so the menu stays up to say "Copied".
@@ -59,7 +59,8 @@ const ICON_PATHS = {
 const BAR = `${QUIET_BTN};background:none`;
 
 /** The control. Props: `href`, the download link's own; `bar` for the bar's
- *  look; `style`, a css string laid over the look (the row's padding). */
+ *  look, and `words` with it for the word after the icon; `style`, a css
+ *  string laid over the look (the row's padding). */
 export default class CopyLink extends React.Component {
   constructor(props) {
     super(props);
@@ -85,7 +86,7 @@ export default class CopyLink extends React.Component {
   };
 
   render() {
-    const { bar, style = '' } = this.props;
+    const { bar, words: spelt, style = '' } = this.props;
     const { said } = this.state;
     const words = said || 'Copy link';
     const icon = (size) => (
@@ -96,6 +97,7 @@ export default class CopyLink extends React.Component {
     return (
       <button type="button" onClick={this.copy} title={words} style={css(bar ? `${BAR};${style}` : `${ICON};${style}`)}>
         {icon(bar ? 13 : 12)}
+        {bar && spelt && 'Copy link'}
       </button>
     );
   }

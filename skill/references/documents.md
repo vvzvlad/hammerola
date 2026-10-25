@@ -43,8 +43,8 @@ neighbouring document with a link rather than in backticks; a picture it shows m
 the build, because an image from another site is not loaded (the page allows
 `img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
 the link without a key, whatever its extension — that is how a revision is sent to
-a workshop as the complete set. Whatever document is open, the bar at the bottom of
-the page has Download and Copy link for its file.
+a workshop as the complete set. Whatever document is open, Download and Copy link
+for its file stand at the bottom left of the page.
 A path that is not a file, is listed twice or would
 overwrite what the model's build wrote refuses the push with a 422 naming it.
 

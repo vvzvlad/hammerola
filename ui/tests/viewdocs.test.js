@@ -30,7 +30,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
 import { STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
-import { toolBar, viewMenuStyle } from '../src/viewlist.jsx'
+import { DocFile, toolBar, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, links, texts } from './eltree.js'
 
@@ -151,17 +151,43 @@ describe('the documents in the list of views', () => {
     expect(tree.map((el) => el.props.style.display)).toEqual(['none'])
   })
 
-  it('put the open one\'s Download and Copy link in the bar, and over the model neither', () => {
-    // The bar as the page draws it (`toolBar(v, …)`), without the header's
-    // Downloads menu and its own Copy links.
-    const bar = (state) => {
+  it('put the open one\'s Download and Copy link beside the bar, and over the model neither', () => {
+    // The strip as the page draws it (`toolBar(v, …)`), without the header's
+    // Downloads menu and its own Copy links: the file's buttons in it, none in
+    // the bar itself.
+    const strip = (state) => {
       const tree = toolBar(component(state).computed())
-      return [links(tree).filter((a) => a.props.download).map((a) => a.props.href),
-        collect(tree, (el) => (el.type === CopyLink ? el.props.href : undefined))]
+      return [collect(tree, (el) => (el.type === DocFile ? el.props.href : undefined)),
+        links(tree).length + collect(tree, (el) => (el.type === CopyLink ? el : undefined)).length]
     }
     const href = `${PAGE.base}ref/terr-raspil.svg`
-    expect(bar({ doc: 'ref__terr-raspil.svg' })).toEqual([[href], [href]])
-    expect(bar({})).toEqual([[], []])
+    expect(strip({ doc: 'ref__terr-raspil.svg' })).toEqual([[href], 0])
+    expect(strip({})).toEqual([[], 0])
+  })
+
+  it('spell Download and Copy link where the words fit beside the centred bar, and draw icons where not', () => {
+    // The owner's "ну вот если не поместятся, то тогда преврати их в иконки".
+    const href = `${PAGE.base}ref/terr-raspil.svg`
+    const file = new DocFile({ href })
+    file.setState = (patch) => Object.assign(file.state, patch)
+    // a strip `strip` px wide, the bar `bar` px wide in its middle, the row of buttons `row` px wide
+    const fit = (strip, bar, row) => {
+      file.side = { current: { parentElement: { clientWidth: strip }, nextElementSibling: { offsetWidth: bar } } }
+      file.row = { current: { offsetWidth: row } }
+      file.fit()
+      const drawn = file.render()
+      const [a] = links(drawn)
+      const [copy] = collect(drawn, (el) => (el.type === CopyLink ? el : undefined))
+      return [texts(a), a.props.href, a.props.title, copy.props.href, !!copy.props.words]
+    }
+    const WORDS = 180 // the row of the two buttons with their words
+    expect(fit(1440, 700, WORDS)).toEqual([['Download'], href, 'Download', href, true])
+    // 150 px each side of the bar: short of the words and the side's padding
+    expect(fit(1000, 700, WORDS)).toEqual([[], href, 'Download', href, false])
+    // the icons alone would fit in those 150 px, and the words still do not
+    expect(fit(1000, 700, 60)[0]).toEqual([])
+    // the window widens: the words come back, by the width they were measured at
+    expect(fit(1440, 700, 60)[0]).toEqual(['Download'])
   })
 
   it('drive Fit and Frame through the view of a document that can, and save the frame named after the build', async () => {

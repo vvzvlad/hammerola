@@ -15,7 +15,7 @@ import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
 import { css } from '../src/style.jsx'
-import { viewMenuStyle } from '../src/viewlist.jsx'
+import { DocFile, FILE_SPACER, FLOAT_BAR, viewMenuStyle } from '../src/viewlist.jsx'
 
 const BASE = '/project/docs0001/abc123/'
 
@@ -366,31 +366,22 @@ describe('the page of a build with no model', () => {
       .toEqual(['none', 'none'])
   })
 
-  it('downloads the open document from the bar, right after the list, and copies its link, wide or narrow', () => {
+  it('downloads the open document and copies its link outside the bar, at the left of its strip, wide or narrow', () => {
+    // The owner's "Download и Copy link в левой части нижней полосы, вне плашки".
     const href = `${BASE}report.pdf`
-    const drawn = (extra) => {
+    for (const extra of [{}, { narrow: true }]) {
       const tree = page('report.pdf', extra)
-      return {
-        words: texts(tree),
-        downloads: ofType(tree, 'a').filter((a) => a.props.download).map((a) => [a.props.href, a.props.title]),
-        copies: ofType(tree, CopyLink).map((c) => [c.props.href, c.props.bar]),
-        // the list's rows, the two controls and the first tools, in tree order
-        seq: collect(tree, (el) => {
-          if (el.type === 'a' && el.props.download) return 'Download'
-          if (el.type === CopyLink) return 'Copy link'
-          if (el.type === 'div' && el.props.onClick && texts(el).length === 2) return texts(el)[0]
-          if (el.type === 'div' && texts(el).length === 1 && ['Measure', 'Fit'].includes(texts(el)[0])) return texts(el)[0]
-          return undefined
-        }),
-      }
-    }
-    // icons with their words in their titles, after the list's last row and before the first tool
-    for (const [extra, first] of [[{}, 'Measure'], [{ narrow: true }, 'Fit']]) {
-      const shown = drawn(extra)
-      expect(shown.words).not.toContain('Download')
-      expect([shown.downloads, shown.copies]).toEqual([[[href, 'Download']], [[href, true]]])
-      const at = shown.seq.indexOf('Download')
-      expect(shown.seq.slice(at - 1, at + 3)).toEqual(['page.html', 'Download', 'Copy link', first])
+      // the strip's layer, in order: the file's buttons, the bar, the spacer that keeps the bar centred
+      const strip = collect(tree, (el) => {
+        if (el.type === DocFile) return ['file', el.props.href]
+        if (el.props.style === css(FLOAT_BAR)) return ['bar']
+        if (el.props.style === css(FILE_SPACER)) return ['spacer']
+        return undefined
+      })
+      expect(strip).toEqual([['file', href], ['bar'], ['spacer']])
+      // and nothing in the bar downloads or copies
+      const bar = collect(tree, (el) => (el.props.style === css(FLOAT_BAR) ? el : undefined))[0]
+      expect([ofType(bar, 'a'), ofType(bar, CopyLink)]).toEqual([[], []])
     }
   })
 

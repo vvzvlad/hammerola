@@ -10,9 +10,10 @@
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
 // While a document is on screen, of whatever type, Download and Copy link for
-// its file stand right after the views: the one place either page offers them,
-// since most documents are drawn by a view that has no such control of ours
-// (a PDF's frame, a picture, a page of text).
+// its file stand at the left end of the bottom strip, outside the bar (`DocFile`):
+// the one place either page offers them, since most documents are drawn by a
+// view that has no such control of ours (a PDF's frame, a picture, a page of
+// text).
 //
 // Every listed document is one row, a KiCad schematic, board and 3D model as
 // much as a PDF, except one listed `hidden`: it has no row and is still opened
@@ -97,10 +98,11 @@ export const DOC_HINT = `flex:none;white-space:nowrap;${FAINT_MONO}`;
 // containing block and stacking context its menus are built around, but a
 // backdrop filter over the WebGL canvas cost a third of the frame rate while
 // orbiting on a retina Mac (measured).
-// Never wider than its layer: where the controls do not fit, the view button
-// (`viewList`) or the strip of views (`TAB_STRIP`) gives up its width first,
-// the names in it cut by an ellipsis.
-export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;max-width:calc(100% - 24px);background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
+// Never wider than its layer, and narrower still beside `DocFile` where the
+// strip is short of room (`min-width:0` lets the layer shrink it): where the
+// controls do not fit, the view button (`viewList`) or the strip of views
+// (`TAB_STRIP`) gives up its width first, the names in it cut by an ellipsis.
+export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;min-width:0;max-width:calc(100% - 24px);background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
 // Its layer, centred on the bottom edge, the z-index appended by the page.
 export const BAR_LAYER = 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:';
 // A document, over the whole of the page's area down to its bottom edge, under
@@ -158,9 +160,82 @@ export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
  *  (`viewList`), its pills' names cut by their ellipsis. */
 export const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shrink:100;background:var(--chip-bg);border-radius:6px';
 
-/** The open document's Download: a quiet button like Fit, on a link, its
- *  word in its title as Copy link's is (copylink.jsx). */
-const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
+// The open document's file, on the strip to the left of the bar.
+//
+// The strip's two sides share what the bar leaves, so the bar stays centred:
+// `FILE_SIDE` holds the buttons at the left edge and cannot get narrower than
+// they are, `FILE_SPACER` balances it on the right. Where the buttons do not
+// fit beside the centred bar, the side keeps its width and the bar moves right
+// and shrinks, so the two never overlap.
+// Its padding: from the strip's left edge, and from the bar.
+const FILE_SIDE_PAD = [12, 8];
+export const FILE_SIDE = `flex:1 1 0;display:flex;align-items:center;padding:0 ${FILE_SIDE_PAD[1]}px 0 ${FILE_SIDE_PAD[0]}px`;
+// The same padding, mirrored: a side's share of the strip starts from its
+// padding, so unequal padding would set the bar off centre by half the difference.
+export const FILE_SPACER = `flex:1 1 0;padding:0 ${FILE_SIDE_PAD[0]}px 0 ${FILE_SIDE_PAD[1]}px`;
+// One line, so that the width `DocFile` measures is the words' whole width.
+const FILE_ROW = 'display:flex;align-items:center;gap:4px;white-space:nowrap';
+// A quiet button like Fit, the strip under it taking no clicks (`BAR_LAYER`).
+const FILE_BTN = `${quietBtn(false)};text-decoration:none;pointer-events:auto`;
+const DOWNLOAD_ICON = <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>;
+
+/**
+ * Download and Copy link for `href`, the open document's file, in words while
+ * the words fit between the strip's left edge and the centred bar, as icons
+ * with the words in their titles when they do not. Mounted as the bar's
+ * previous sibling in its layer (`toolBar`): it watches the layer and the bar
+ * and measures the words while they are shown. Copy link is a sibling of the
+ * link, never inside it (copylink.jsx).
+ */
+export class DocFile extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { icons: false };
+    this.side = React.createRef();
+    this.row = React.createRef();
+  }
+
+  componentDidMount() {
+    const side = this.side.current;
+    this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.fit()) : null;
+    if (this.observer) {
+      this.observer.observe(side.parentElement);
+      this.observer.observe(side.nextElementSibling);
+    }
+    this.fit();
+  }
+
+  componentWillUnmount() {
+    if (this.observer) this.observer.disconnect();
+  }
+
+  /** Words where they fit beside the bar centred in the layer, icons where not.
+   *  The words' width is taken while they are on screen and kept for the
+   *  icons' turn: the labels never change. */
+  fit() {
+    const side = this.side.current;
+    if (!this.state.icons) this.wordsWidth = this.row.current.offsetWidth;
+    const room = (side.parentElement.clientWidth - side.nextElementSibling.offsetWidth) / 2;
+    const icons = room < this.wordsWidth + FILE_SIDE_PAD[0] + FILE_SIDE_PAD[1];
+    if (icons !== this.state.icons) this.setState({ icons });
+  }
+
+  render() {
+    const { href } = this.props;
+    const { icons } = this.state;
+    return (
+      <div ref={this.side} style={css(FILE_SIDE)}>
+        <div ref={this.row} style={css(FILE_ROW)}>
+          <a href={href} download title="Download" style={css(FILE_BTN)}>
+            {DOWNLOAD_ICON}
+            {!icons && 'Download'}
+          </a>
+          <CopyLink href={href} bar words={!icons} style="pointer-events:auto" />
+        </div>
+      </div>
+    );
+  }
+}
 
 /**
  * The bar, as elements: the same controls in the same places on both pages
@@ -172,8 +247,8 @@ const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
  *   the document `docHref`, the address the open document's file downloads
  *                from (`docUrl` in DocumentView.jsx), or null with none open:
  *                Download (a link that takes the file) and Copy link for it,
- *                drawn after the views as icons, the words in their titles,
- *                and with none open not at all;
+ *                drawn outside the bar at the left end of the strip
+ *                (`DocFile`), and with none open not at all;
  *   the tools    `showTools` (false on a narrow window, which keeps the views
  *                and Fit), and each tool's style and handler: `measureBtnStyle`
  *                and `tMeasure`, `commentBtnStyle` and `tComment`,
@@ -182,9 +257,23 @@ const DOWNLOAD_BTN = `${quietBtn(false)};text-decoration:none`;
  *                and `tSettings`. A tool out of service is drawn `OFF` and
  *                takes no click, so its handler may be absent.
  * `menus` are the cards `Add primitive` and Settings open (`proposal`,
- * `settings`), which only the model's page has. Pure.
+ * `settings`), which only the model's page has. Pure. What it returns goes
+ * straight into the layer (`BAR_LAYER`): the bar alone, or with a document
+ * open `DocFile`, the bar and `FILE_SPACER`, in that order.
  */
 export function toolBar(b, menus = {}) {
+  const bar = floatBar(b, menus);
+  if (!b.docHref) return bar;
+  return (
+    <>
+      <DocFile href={b.docHref} />
+      {bar}
+      <div style={css(FILE_SPACER)} />
+    </>
+  );
+}
+
+function floatBar(b, menus) {
   return (
     <div style={css(FLOAT_BAR)}>
       {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
@@ -200,16 +289,6 @@ export function toolBar(b, menus = {}) {
             <div key={t.key} onClick={t.onClick} title={`${t.label} · ${t.hint}`} style={css(t.style)}>{t.label}</div>
           ))}
         </div>
-      )}
-      {/* The open document's file. Copy link is a sibling of the link, never
-          inside it (copylink.jsx). */}
-      {b.docHref && (
-        <>
-          <a href={b.docHref} download title="Download" style={css(DOWNLOAD_BTN)}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
-          </a>
-          <CopyLink href={b.docHref} bar />
-        </>
       )}
       {/* Everything between the views and Fit belongs to a pointer and a
           canvas with room to aim in — see `showTools`. */}
