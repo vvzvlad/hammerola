@@ -29,7 +29,7 @@ import CopyLink from './copylink.jsx';
 import { docHint } from './DocumentView.jsx';
 import { shortId } from './hub.js';
 import {
-  ELLIPSIS, FAINT_MONO, FILL, INK, OFF, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
+  DIALOG_BTN, ELLIPSIS, FAINT_MONO, FILL, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
 import { css, SANS } from './style.jsx';
 
@@ -174,9 +174,13 @@ export const FILE_SIDE = `flex:1 1 0;display:flex;align-items:center;padding:0 $
 // padding, so unequal padding would set the bar off centre by half the difference.
 export const FILE_SPACER = `flex:1 1 0;padding:0 ${FILE_SIDE_PAD[0]}px 0 ${FILE_SIDE_PAD[1]}px`;
 // One line, so that the width `DocFile` measures is the words' whole width.
-const FILE_ROW = 'display:flex;align-items:center;gap:4px;white-space:nowrap';
-// A quiet button like Fit, the strip under it taking no clicks (`BAR_LAYER`).
-const FILE_BTN = `${quietBtn(false)};text-decoration:none;pointer-events:auto`;
+const FILE_ROW = 'display:flex;align-items:center;gap:8px;white-space:nowrap';
+// Buttons as the Share dialog's are (HammerolaViewer.jsx): Download filled with
+// the accent like its Copy, Copy link edged on the card like its Close. The
+// strip under them takes no clicks (`BAR_LAYER`), so each takes its own.
+const FILE_BTN = `${DIALOG_BTN}gap:6px;user-select:none;font:600 12px ${SANS};text-decoration:none;pointer-events:auto;`;
+export const FILE_DOWNLOAD = `${FILE_BTN}${ON_ACCENT_EDGE}`;
+export const FILE_COPY = `${FILE_BTN}border:1px solid var(--line);background:var(--card-bg);color:var(--text)`;
 const DOWNLOAD_ICON = <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>;
 
 /**
@@ -226,11 +230,11 @@ export class DocFile extends React.Component {
     return (
       <div ref={this.side} style={css(FILE_SIDE)}>
         <div ref={this.row} style={css(FILE_ROW)}>
-          <a href={href} download title="Download" style={css(FILE_BTN)}>
+          <a href={href} download title="Download" style={css(FILE_DOWNLOAD)}>
             {DOWNLOAD_ICON}
             {!icons && 'Download'}
           </a>
-          <CopyLink href={href} bar words={!icons} style="pointer-events:auto" />
+          <CopyLink href={href} bar words={!icons} style={FILE_COPY} />
         </div>
       </div>
     );
