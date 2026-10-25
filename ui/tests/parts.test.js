@@ -26,7 +26,7 @@ import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
   anglesOf, applyGhost, applyHidden, applySelected, grabbable, movePart,
-  movableGroup, partCentre, quaternionOf, reconcileMoves, restageMoves,
+  movableGroup, partCentre, partTop, quaternionOf, reconcileMoves, restageMoves,
   statesOf, treeFromShapes, turned,
 } from '../src/viewport/parts.js'
 import { HmrViewport } from '../src/viewport/element.js'
@@ -937,6 +937,27 @@ describe('partCentre', () => {
       states: statesFor([PIN]), groups: { [PIN]: fakeGroup() } })
     expect(partCentre(viewer, PIN)).toBeNull()
     expect(partCentre(null, PIN)).toBeNull()
+  })
+})
+
+describe('partTop', () => {
+  it('answers the centre in x and y and the highest z of the box the matrix turns', () => {
+    // Where an arrow anchored on a PART stands, coming down from above: at the
+    // centre a depth-tested arrow would be inside the part. The part is turned
+    // a quarter about +X and moved, so its local y (0..6) becomes world z
+    // (-3..3) and its local top (z = 1) becomes a side: the top is found from
+    // the eight corners carried into the world, not from the local box's top.
+    //
+    // Column-major: +X stays +X, +Y goes to +Z, +Z goes to -Y, then (5, 0, -3).
+    const turned = { elements: [1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 5, 0, -3, 1] }
+    const solid = fakeShapeSolid(
+      PIN, { positions: BOX_POSITIONS, index: BOX_INDEX, matrix: turned })
+    const viewer = fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: solid } })
+    expect(partTop(viewer, PIN)).toEqual([6, 0, 3])
+    // And it is what the element hands a part-anchored comment's arrow.
+    expect(HmrViewport.prototype.partPoint.call({ viewer }, PIN)).toEqual([6, 0, 3])
+    // The centre stays where it was, for the gizmo, the rings and the pivot.
+    expect(partCentre(viewer, PIN)).toEqual([6, 0, 0])
   })
 })
 

@@ -509,7 +509,7 @@ describe('with a section cut standing', () => {
    *  +z face. `standing` is the renderer's clipping flag: switched off, the
    *  plane and the seed stay exactly where they are and nothing is cut — the
    *  state `suspendSectionCut` leaves behind. */
-  function plateScene({ standing = true } = {}) {
+  function plateScene({ standing = true, tool = null } = {}) {
     const camera = orthoCamera({
       eye: [0, 0, 80], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
     })
@@ -520,7 +520,7 @@ describe('with a section cut standing', () => {
       camera, groups: { '/model/plate': solid },
       capUnits: fakeCapUnits([solid]), rect: RECT,
     })
-    const vp = toolViewport({ tool: null }, viewer)
+    const vp = toolViewport({ tool }, viewer)
     expect(placeSectionPlane(vp, internals(viewer), [0, 0, 1], [1, 1, 1]))
       .toBe(true)
     viewer.setLocalClipping(standing)
@@ -618,6 +618,32 @@ describe('with a section cut standing', () => {
     const [px, py, pz] = pick.point
     expect(internals(vp.viewer).plane.distanceToPoint({ x: px, y: py, z: pz }))
       .toBeCloseTo(0, 6)
+  })
+
+  it('places a comment on the cut face, not on what lies behind', () => {
+    // The comment's arrow is depth-tested, so one placed on the surface the
+    // picker reads through to would stand hidden behind the cap the reader
+    // clicked. On the cap it stands on the cut plane, out along the plane's
+    // normal turned to the reader (the camera looks down -Z).
+    const { vp } = plateScene({ tool: 'comment' })
+    pickEntity.mockReturnValue({
+      id: '/model/spacer', name: 'spacer', point: [1, 1, 0],
+    })
+    const at = clientOver(vp, 1, 1)
+
+    pointerDown(vp, at)
+    pointerUp(at)
+
+    const [place] = details(vp, EVENT_PLACE)
+    expect({ id: place.id, name: place.name })
+      .toEqual({ id: '/model/plate', name: 'plate' })
+    expect(pickEntity).not.toHaveBeenCalled()
+    const [px, py, pz] = place.p
+    expect(px).toBeCloseTo(1, 6)
+    expect(py).toBeCloseTo(1, 6)
+    expect(internals(vp.viewer).plane.distanceToPoint({ x: px, y: py, z: pz }))
+      .toBeCloseTo(0, 6)
+    expect(place.n.map((c) => c + 0)).toEqual([0, 0, 1])
   })
 
   it('still deselects on empty space while a cut stands', () => {

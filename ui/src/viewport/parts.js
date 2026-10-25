@@ -430,6 +430,64 @@ export function partCentre(viewer, path) {
 }
 
 /**
+ * The top of one part's world-space box, as `[x, y, z]`, or `null`: the box's
+ * centre in x and y, and its highest z.
+ *
+ * Where a comment's arrow goes when the comment is anchored on the part rather
+ * than on a point (`partPoint` in element.js). Such an arrow has no normal and
+ * stands from above, along the viewer's up axis (`UP` in pins.js, `up: "Z"` in
+ * options.js), so from here it stands on or above the part, never inside its
+ * box: on a part tilted off the axes the box is taller than the part, and the
+ * tip hangs a little over it. From the centre it would be inside any part more
+ * than twice its length tall, and the depth test would hide it there.
+ *
+ * The world box is the box of the eight corners of the geometry's local box,
+ * each carried through `matrixWorld`: on a turned part the local box's top face
+ * need not be the top in the world. Read as `partCentre` reads it: the group's
+ * matrix recomposed first, and a box asked of the geometry if it has none yet.
+ */
+export function partTop(viewer, path) {
+  const g = internals(viewer);
+  const group = g && g.nestedGroup && g.nestedGroup.groups
+    ? g.nestedGroup.groups[path] : null;
+  const front = group && group.front;
+  const geometry = front && front.geometry;
+  if (!geometry || !front.matrixWorld || !front.matrixWorld.elements) return null;
+  if (typeof group.updateMatrixWorld === "function") group.updateMatrixWorld();
+  try {
+    if (!geometry.boundingBox
+        && typeof geometry.computeBoundingBox === "function") {
+      geometry.computeBoundingBox();
+    }
+  } catch (error) {
+    console.warn("part top", error);
+    return null;
+  }
+  const box = geometry.boundingBox;
+  if (!box || !box.min || !box.max) return null;
+  const e = front.matrixWorld.elements;
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (const x of [box.min.x, box.max.x]) {
+    for (const y of [box.min.y, box.max.y]) {
+      for (const z of [box.min.z, box.max.z]) {
+        const corner = [
+          e[0] * x + e[4] * y + e[8] * z + e[12],
+          e[1] * x + e[5] * y + e[9] * z + e[13],
+          e[2] * x + e[6] * y + e[10] * z + e[14],
+        ];
+        for (let i = 0; i < 3; i += 1) {
+          lo[i] = Math.min(lo[i], corner[i]);
+          hi[i] = Math.max(hi[i], corner[i]);
+        }
+      }
+    }
+  }
+  const top = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, hi[2]];
+  return finite3(top) ? top : null;
+}
+
+/**
  * The cut contour, rebuilt for solids that have just moved under a standing
  * plane. Every move in this file ends with it (`movePart`, `nudgePart`,
  * `reconcileMoves`).
