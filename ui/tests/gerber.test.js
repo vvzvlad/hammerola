@@ -333,8 +333,8 @@ describe('the view on the page', () => {
     view.setHost(null)
   }
 
-  /** The fetch, the frame that paints its full bar, the zip and the renderer
-   *  all through. */
+  /** The fetch, the two frames that paint its full bar, the zip and the
+   *  renderer all through. */
   const settle = async () => {
     for (let turn = 0; turn < 4; turn += 1) {
       await drained()

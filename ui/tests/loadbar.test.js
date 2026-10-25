@@ -47,13 +47,18 @@ describe('the bar under Loading…', () => {
     expect(onBytes.mock.calls).toEqual([[5], [6]])
   })
 
-  it('waits for a painted frame before the reading, except on a hidden page, which paints none', async () => {
+  it('waits for the second painted frame before the reading, except on a hidden page, which paints none', async () => {
     const done = vi.fn()
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
     painted().then(done)
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await tick()
+    expect(done).not.toHaveBeenCalled()
+    // The first frame may come before React has put `Preparing…` on the page.
+    runFrames()
+    await tick()
     expect(done).not.toHaveBeenCalled()
     runFrames()
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await tick()
     expect(done).toHaveBeenCalled()
     // A background tab calls no animation frame at all: without this the file
     // would sit unread until the reader came back.
