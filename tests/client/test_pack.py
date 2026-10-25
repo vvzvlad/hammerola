@@ -190,13 +190,19 @@ def test_the_old_publishers_output_is_refused_rather_than_dropped(tmp_path):
 
 
 def test_two_runs_over_an_unchanged_tree_produce_the_same_bytes(tmp_path):
-    """Ownership and mtime are scrubbed, and the member order is sorted.
+    """Ownership and mtime are scrubbed, the member order is sorted, and the
+    gzip header carries no clock.
 
     Not something the hub cares about — it hashes file CONTENTS — but it is what
     makes "did anything change" answerable locally by comparing two archives.
+    Comparing two packs alone catches a stamped header only when they straddle
+    a second, so the header is read directly as well.
     """
     root = make_model(tmp_path / "demo")
-    assert pack(root).body == pack(root).body
+    first = pack(root).body
+    # Bytes 4..8 of a gzip member are MTIME; zero means "no timestamp".
+    assert first[4:8] == b"\x00\x00\x00\x00"
+    assert pack(root).body == first
 
 
 def test_the_archive_carries_nothing_about_the_machine(tmp_path):

@@ -18,6 +18,7 @@ itself is deliberate (SPEC §7.1).
 """
 
 import fnmatch
+import gzip
 import io
 import tarfile
 from dataclasses import dataclass
@@ -260,13 +261,17 @@ def _shown_text(text: str) -> str:
 def pack(root: Path) -> Packed:
     """Collect the tree and gzip it. Raises PackError, never writes to disk.
 
-    In memory: the body is held for the POST anyway.
+    In memory: the body is held for the POST anyway. Compressed through
+    `gzip.GzipFile(mtime=0)` rather than `tarfile.open("w:gz")`, which stamps
+    the current second into the gzip header, so two packs of one tree would
+    differ whenever they straddle a second.
     """
     members = collect(Path(root))
 
     buffer = io.BytesIO()
     try:
-        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as compressed, \
+                tarfile.open(fileobj=compressed, mode="w") as tar:
             for member, path in members:
                 tar.add(str(path), arcname=member, recursive=False,
                         filter=_scrub)
