@@ -4,24 +4,33 @@ A project lists them in its `project.json`, in tab order:
 
     "documents": ["docs/cut-list.md", {"file": "ref/terr-raspil.svg", "title": "Saw plan"},
                   {"file": "hw/board.kicad_sch", "title": "Board, schematic"},
-                  "hw/board.kicad_pcb", "hw/board.glb",
+                  "hw/board.kicad_pcb", "hw/board.glb", "cut/glass.dxf",
+                  {"file": "logs/stand.zip", "download": true},
                   {"file": "ref/ne555.pdf", "hidden": true}]
 
-Each is a path in the pushed tree, of a type the page can show
-(`render.DOCUMENT_TYPES`: markdown, PDF, pictures, HTML, SVG, a KiCad
-schematic, a KiCad board, the 3D model of a board, a zip of Gerbers), and it is published under
-the same path, so a link between two of them works as it does in the tree.
-Nothing is found by extension: a file is a document because the list says so.
+Each is a path in the pushed tree, published under the same path, so a link
+between two of them works as it does in the tree. Nothing is found by
+extension: a file is a document because the list says so. The EXTENSION decides
+only how the page shows it (`render.DOCUMENT_TYPES`: markdown, PDF, pictures,
+HTML, SVG, a KiCad schematic, a KiCad board, the 3D model of a board, a zip of
+Gerbers); any other extension publishes as `render.FILE_TYPE`, a row that
+downloads the file instead of drawing it — the DXF the glass shop cuts from,
+a supplier's STEP, a CSV of measurements.
+
 An entry is the path alone, or an object with the path as `file`, a `title`,
-the caption the page shows in place of the path, and `hidden`, which keeps the
+the caption the page shows in place of the path, `hidden`, which keeps the
 document out of the page's list while it is still published and opened by its
-address.
+address, and `download`, which publishes it as a plain file whatever its
+extension. `download` is what tells a zip of logs from a board's Gerbers, which
+share the one extension the page unpacks.
 
 A KiCad schematic brings the sheets it names, found as KiCad finds them
 (`_kicad_schematic`), and a schematic or a board brings the project with its
 path minus the extension (`<stem>.kicad_pro`) when the tree has one. They are
 published under their own paths, and the document's `kicad` in meta.json names
-them. A project listed on its own is refused: it is not a view of anything.
+them. Under `download` they bring nothing: a file to be taken is not a design
+to be drawn from. A project listed on its own is refused: it is not a view of
+anything.
 
 What the tree holds decides the build (`jobs._build_and_publish`):
 
@@ -53,17 +62,18 @@ from hammerola.buildnames import unservable_path_reason
 from hammerola.projectslug import slug_from_title
 from src.buildproc import STATUS_OK, BuildOutcome
 from src.errors import PublishError
-from src.render import (BOARD_TYPE, DOCUMENT_TYPES, DOCUMENTS_KIND,
+from src.render import (BOARD_TYPE, DOCUMENTS_KIND, FILE_TYPE,
                         GENERATED_FILES, KICAD_BOARD, KICAD_PROJECT,
                         KICAD_SCHEMATIC, MAX_KICAD_SHEETS, SCHEMATIC_TYPE,
-                        document_id, document_type, project_title)
+                        document_id, document_type, project_title,
+                        published_type)
 from src.store import BUILD_META_FILE
 
 PROJECT_FILE = "project.json"
 DOCUMENTS_FIELD = "documents"
 
 # The keys an entry written as an object may hold.
-ENTRY_KEYS = ("file", "title", "hidden")
+ENTRY_KEYS = ("file", "title", "hidden", "download")
 
 # The two spellings `import model` resolves in a pushed tree: the module, or a
 # package. A `model/` directory is a package to the import even without an
@@ -94,6 +104,8 @@ class Document:
 
     `files` starts with `path`; a KiCad schematic adds its sheets and a
     schematic or a board its project, which `kicad` names for meta.json.
+    `download` is the entry's own key and not a field of meta.json: what
+    reaches the browser is the type `_copy` resolves from it.
     """
 
     path: str
@@ -101,6 +113,7 @@ class Document:
     kicad: dict | None = None
     title: str | None = None
     hidden: bool = False
+    download: bool = False
 
 
 def _project(sources: Path) -> dict:
@@ -141,12 +154,13 @@ def declared_documents(sources) -> tuple:
                  f"paths in the tree, such as [\"docs/cut-list.md\"], each "
                  f"path optionally written as "
                  f"{{\"file\": \"docs/cut-list.md\", \"title\": \"Cut list\"}}, "
-                 f"with \"hidden\": true to keep it out of the page's list")
+                 f"with \"hidden\": true to keep it out of the page's list "
+                 f"and \"download\": true to publish it as a plain file")
     problems = []
     found = []
     seen: dict[str, str] = {}
     for item in listed:
-        path, title, hidden, reason = _entry(item)
+        path, title, hidden, download, reason = _entry(item)
         if reason is None:
             reason = _unpublishable(sources, path)
         if reason is None and path in seen.values():
@@ -156,16 +170,23 @@ def declared_documents(sources) -> tuple:
                       f"{seen[document_id(path)]!r} already has, so one "
                       f"address would name both")
         design = None
-        if reason is None and document_type(path) == SCHEMATIC_TYPE:
+        # A design brings its other files because the page draws it FROM them;
+        # under `download` the page draws nothing, so the sheets and the
+        # project have no reader and are not published. Asked only of an entry
+        # still standing: a refused one may carry the whole object in place of
+        # the path (`_entry`), which is not a name to take an extension from.
+        drawn_as = (None if reason is not None or download
+                    else document_type(path))
+        if reason is None and drawn_as == SCHEMATIC_TYPE:
             design, reason = _kicad_schematic(sources, path)
-        elif reason is None and document_type(path) == BOARD_TYPE:
+        elif reason is None and drawn_as == BOARD_TYPE:
             design = {"project": _kicad_project(sources, path)}
         if reason is not None:
             problems.append(f"  {path!r}, which {reason}")
             continue
         seen[document_id(path)] = path
         found.append(Document(path, (path, *_besides(design)), design, title,
-                              hidden))
+                              hidden, download))
     if problems:
         raise PublishError(
             422, f"{PROJECT_FILE} lists documents the hub cannot publish:\n"
@@ -174,31 +195,39 @@ def declared_documents(sources) -> tuple:
 
 
 def _entry(item) -> tuple:
-    """(path, title, hidden, why not) of one entry of `documents`.
+    """(path, title, hidden, download, why not) of one entry of `documents`.
 
     An entry is a path, or an object holding the path as `file`, the caption
-    as `title` and `hidden`, true or false; `title` is held to the rule a
-    project's title is. A refused object comes back whole in place of the
-    path, to be named by the caller.
+    as `title`, and `hidden` and `download`, each true or false; `title` is
+    held to the rule a project's title is. A refused object comes back whole
+    in place of the path, to be named by the caller.
     """
     if isinstance(item, str):
-        return item, None, False, None
-    path, title, hidden = item.get("file"), item.get("title"), item.get("hidden", False)
+        return item, None, False, False, None
+    path, title = item.get("file"), item.get("title")
+    flags = {key: item.get(key, False) for key in ("hidden", "download")}
     unknown = sorted(set(item) - set(ENTRY_KEYS))
     if not isinstance(path, str):
-        return item, None, False, "has no `file`, the path of the document"
+        return (item, None, False, False,
+                "has no `file`, the path of the document")
     if unknown:
-        return path, None, False, (
+        return path, None, False, False, (
             f"has keys the hub does not read: {', '.join(unknown)}; an entry "
             f"holds {', '.join(f'`{key}`' for key in ENTRY_KEYS)}")
-    if not isinstance(hidden, bool):
-        return path, None, False, "has a `hidden` that is not true or false"
+    # One rule for the two flags: each is written true or false, and nothing
+    # else is read as either — `"hidden": "yes"` is a push that means to hide
+    # a document and does not.
+    for key, value in flags.items():
+        if not isinstance(value, bool):
+            return (path, None, False, False,
+                    f"has a `{key}` that is not true or false")
     if "title" in item:
         try:
             title = project_title(title)
         except ValueError as err:
-            return path, None, False, f"has a title the page cannot show: {err}"
-    return path, title, hidden, None
+            return (path, None, False, False,
+                    f"has a title the page cannot show: {err}")
+    return path, title, flags["hidden"], flags["download"], None
 
 
 def _unpublishable(sources: Path, path: str) -> str | None:
@@ -212,9 +241,6 @@ def _unpublishable(sources: Path, path: str) -> str | None:
                 f"schematic {stem + KICAD_SCHEMATIC!r} or the board "
                 f"{stem + KICAD_BOARD!r} instead, and each brings the "
                 f"project with it")
-    if document_type(path) is None:
-        return (f"is none of the types the page shows: "
-                f"{', '.join(DOCUMENT_TYPES)}")
     return _not_in_tree(sources, path)
 
 
@@ -329,7 +355,10 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(sources / name, target)
             size += target.stat().st_size
-        shown_as = document_type(doc.path)
+        # The type the browser reads, rebuilt and checked again by
+        # `render._documents`: what the extension draws as, unless the entry
+        # asked for the plain file every document may be published as.
+        shown_as = FILE_TYPE if doc.download else published_type(doc.path)
         entry = {"name": doc.title or doc.path, "type": shown_as,
                  "file": doc.path}
         what = shown_as

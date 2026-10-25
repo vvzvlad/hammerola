@@ -120,7 +120,9 @@ import { rowMenu } from './rowmenu.js';
 import { chromeView } from './chromeview.js';
 // And one of the build's documents, laid over the model when it is chosen in
 // the view list; drawn as the documents page draws it.
-import DocumentView, { DOC_QUERY } from './DocumentView.jsx';
+// `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
+// document the page cannot draw under the extension it is named by.
+import DocumentView, { DOC_QUERY, docExt, FILE_TYPE } from './DocumentView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -509,9 +511,12 @@ const GERBERS_GROUP = 'GERBERS';
  * `__proto__` is reachable and an object literal would silently store nothing
  * under it.
  *
- * The board's Gerbers are the one document here: `documents` is
- * `meta.documents`, and every zip it lists (`GERBERS_TYPE`) is a row
- * of one GERBERS group, named by its title, ordered like any other format.
+ * Two kinds of document reach this menu, both out of `meta.documents`. Every
+ * zip of Gerbers (`GERBERS_TYPE`) is a row of one GERBERS group, named by its
+ * title. Every document the page cannot draw (`FILE_TYPE`) is a row under its
+ * own extension in capitals — DXF, CSV — so a cut list for the glass shop is
+ * taken the way an STL is, and lands beside a part's exports when it shares
+ * their extension. Both are ordered like any other format.
  */
 export function groupDownloads(parts, documents) {
   const groups = new Map();
@@ -523,10 +528,17 @@ export function groupDownloads(parts, documents) {
         groups.get(group).push({ label: key, file });
       });
     });
-  const gerbers = (Array.isArray(documents) ? documents : [])
-    .filter((doc) => doc && doc.type === GERBERS_TYPE && typeof doc.file === 'string' && doc.file)
+  const listed = (Array.isArray(documents) ? documents : [])
+    .filter((doc) => doc && typeof doc.file === 'string' && doc.file);
+  const gerbers = listed
+    .filter((doc) => doc.type === GERBERS_TYPE)
     .map((doc) => ({ label: String(doc.name || doc.file), file: doc.file }));
   if (gerbers.length) groups.set(GERBERS_GROUP, [...(groups.get(GERBERS_GROUP) || []), ...gerbers]);
+  listed.filter((doc) => doc.type === FILE_TYPE).forEach((doc) => {
+    const group = docExt(doc).toUpperCase();
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push({ label: String(doc.name || doc.file), file: doc.file });
+  });
   const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   const rank = (ext) => {
     const at = PRINT_FIRST.indexOf(ext);

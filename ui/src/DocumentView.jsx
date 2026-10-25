@@ -19,6 +19,9 @@
 //              asks the page to open one (`onOpen`, with its id)
 //   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
 //              layer by layer (GerberView.jsx), with a link that downloads it
+//   file       anything else a build lists — a DXF for the glass shop, a CSV
+//              of measurements, a firmware image: its name, what it is and a
+//              link that downloads it, since the page draws nothing of it
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory.
@@ -49,11 +52,15 @@ import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
 import { mb } from './hub.js';
 import KicadView, { designKey, viewOf } from './KicadView.jsx';
-import { css, MONO } from './style.jsx';
+import { css, MONO, SANS } from './style.jsx';
 
 /** The query key that names a document in a build's address, on both pages:
  *  the document on screen of a build with no model, the document over a model. */
 export const DOC_QUERY = 'd';
+
+/** A document the page does not draw, whatever its extension (`FILE_TYPE` in
+ *  src/render.py, held to this spelling by tests/test_documents.py). */
+export const FILE_TYPE = 'file';
 
 const encodePath = (path) => path.split('/').map(encodeURIComponent).join('/');
 
@@ -69,9 +76,22 @@ export function docBase(base, doc) {
 /** A file's size as a reader reads it: megabytes from one, else kilobytes. */
 export const docSize = (bytes) => (bytes >= 1e6 ? mb(bytes) : `${(bytes / 1e3).toFixed(1)} kB`);
 
+/** What a file the page does not draw is called by: its extension, lower case
+ *  and without the dot (`dxf`), else its type, for a name that carries none.
+ *  Asked of a `FILE_TYPE` document only — the rest are named by what the page
+ *  makes of them, which is what their type says. */
+export function docExt(doc) {
+  const dot = doc.file.lastIndexOf('.');
+  const ext = dot > doc.file.lastIndexOf('/') + 1 ? doc.file.slice(dot + 1).toLowerCase() : '';
+  // A name may end in the dot (`data.`), which the hub's name rule allows: an
+  // empty hint and an empty heading in the menu are worse than the type.
+  return ext || doc.type;
+}
+
 /** What a document is labelled with beside its name: a KiCad schematic its
  *  sheet count, a board and its 3D model what they are, any other its type and
- *  size. */
+ *  size. A plain file says its extension in place of the word `file`, which
+ *  would be the same word on every such row. */
 export function docHint(doc) {
   if (doc.type === 'schematic') {
     const sheets = doc.kicad.schematics.length;
@@ -79,7 +99,7 @@ export function docHint(doc) {
   }
   if (doc.type === 'board') return 'board';
   if (doc.type === 'board3d') return '3D';
-  return [doc.type, docSize(doc.bytes)].join(' · ');
+  return [doc.type === FILE_TYPE ? docExt(doc) : doc.type, docSize(doc.bytes)].join(' · ');
 }
 
 /** What a page keys the drawing of `doc` by: a member of a KiCad design by the
@@ -96,6 +116,18 @@ const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--pa
 const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55';
 const PICTURE = 'display:block;max-width:100%;margin:24px auto;background:var(--paper-bg)';
 const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
+
+// A file the page does not draw, in the middle of the sheet the drawn ones use:
+// its name, what it is and the link that takes it. It may be the only document
+// of a build and so the one the page opens with, which is why it fills the area
+// rather than sitting at the top of it.
+const FILE_SHEET = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;'
+  + 'box-sizing:border-box;padding:24px 28px;background:var(--paper-bg)';
+const FILE_CARD = 'display:flex;flex-direction:column;align-items:center;gap:8px;max-width:100%;text-align:center';
+const FILE_NAME = `font:500 14px ${SANS};color:var(--text);word-break:break-all`;
+const FILE_WHAT = `font:400 11.5px ${MONO};color:var(--text-muted)`;
+const FILE_LINK = 'margin-top:8px;padding:7px 14px;border:1px solid var(--line);border-radius:6px;'
+  + `text-decoration:none;font:500 11.5px ${SANS};color:var(--accent-text)`;
 
 // A table cell short enough to read as one value (`495.0 × 428.5`) keeps it on
 // one line (`docmd.js` marks it). A class and not an inline style, so that the
@@ -121,6 +153,20 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools)
   }
   if (viewOf(doc)) return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} />;
   if (doc.type === GERBERS_TYPE) return <GerberView url={docUrl(base, doc)} size={docSize(doc.bytes)} onTools={onTools} />;
+  // Before the frame: a browser handed a type it does not render downloads the
+  // file from inside the frame, which leaves an empty page behind and no way
+  // to ask for it again.
+  if (doc.type === FILE_TYPE) {
+    return (
+      <div style={css(FILE_SHEET)}>
+        <div style={css(FILE_CARD)}>
+          <div style={css(FILE_NAME)}>{doc.name}</div>
+          <div style={css(FILE_WHAT)}>{docHint(doc)}</div>
+          <a href={docUrl(base, doc)} download style={css(FILE_LINK)}>Download</a>
+        </div>
+      </div>
+    );
+  }
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} />;
 }
 

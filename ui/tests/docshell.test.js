@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DocShell, { docBar, DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
-import DocumentView, { docBase, docHint, documentBody, docUrl } from '../src/DocumentView.jsx'
+import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
@@ -140,6 +140,8 @@ describe('markdown', () => {
 
 describe('one document, as both pages draw it', () => {
   const cutList = doc('docs/cut-list.md', 'markdown', 7765)
+  // A document of a type the page draws nothing of, which it hands over.
+  const cutPlan = { ...doc('cut/glass.dxf', FILE_TYPE, 12_400), name: 'Glass, cut list' }
 
   it('serves a document at its path and resolves its links from its directory', () => {
     expect(docUrl(BASE, cutList)).toBe(`${BASE}docs/cut-list.md`)
@@ -167,10 +169,26 @@ describe('one document, as both pages draw it', () => {
     }
   })
 
+  it('hands over a file it cannot draw rather than putting it in a frame', () => {
+    // A frame fed a type the browser does not render downloads it from inside
+    // itself and leaves an empty page with no way to ask again.
+    const tree = documentBody(cutPlan, BASE, null, '')
+    expect(ofType(tree, 'iframe')).toEqual([])
+    const [link] = ofType(tree, 'a')
+    expect(link.props.href).toBe(`${BASE}cut/glass.dxf`)
+    expect(link.props.download).toBe(true)
+    expect(text(tree)).toContain('Glass, cut list')
+    expect(text(tree)).toContain('dxf · 12.4 kB')
+  })
+
   it('labels a document with its type and size', () => {
     expect(docHint(cutList)).toBe('markdown · 7.8 kB')
     // From a megabyte, as a view's size is written.
     expect(docHint({ ...cutList, type: 'pdf', bytes: 4_700_000 })).toBe('pdf · 4.7 MB')
+    // A file the page does not draw says WHICH file it is: `file` is the type
+    // of every one of them, so the word would label them all alike.
+    expect(docHint(cutPlan)).toBe('dxf · 12.4 kB')
+    expect(docHint({ ...cutPlan, file: 'LICENSE' })).toBe('file · 12.4 kB')
   })
 
   describe('the holder', () => {
