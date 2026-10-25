@@ -25,7 +25,7 @@ minutes cannot be reached by a hub whose builder copies a directory.
 from datetime import datetime
 
 import pytest
-from harness import failing_builder
+from harness import failing_builder, skill_files
 
 from hammerola import cli
 from hammerola.cli import main
@@ -201,6 +201,25 @@ def test_a_build_over_the_threshold_is_told_where_to_go(capsys):
     # A WARNING AND NOT A REFUSAL — a slow build publishes, and the line has to
     # say so where somebody skimming a red-looking terminal will see it.
     assert "published" in out
+
+
+def test_the_warning_points_at_a_file_and_a_heading_that_exist(capsys):
+    """The pointer is checked against the skill, like every other pair.
+
+    The line sends the reader to a named document and a named section of it, and
+    both are literals here. The skill is being recut as it grows — a renamed
+    file or a reworded heading would leave the client directing somebody to
+    something that is not there, and nothing else would notice.
+    """
+    cli._print_duration(record(SLOW_BUILD_SECONDS + 1))
+    out = printed(capsys)
+    files = skill_files()
+    assert "references/checks.md" in out
+    assert "references/checks.md" in files, (
+        f"the slow-build warning sends the reader to references/checks.md, and "
+        f"the skill ships {sorted(files)}")
+    assert "Keeping checks fast enough to run" in out
+    assert "Keeping checks fast enough to run" in files["references/checks.md"]
 
 
 def test_a_build_at_the_threshold_is_not_warned_about(capsys):

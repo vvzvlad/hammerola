@@ -23,9 +23,10 @@ carries the code, starts on its own and is packaged as this repo says.
       a broken preview stack only degrades builds to a warning, so neither shows anywhere else.
 * (g) the templates, viewer assets and other required files are IN the image; without them
       the image still starts and `/health` still answers.
-* (h) the three `/start` files are served by this image. Two of them are assembled per
+* (h) the three `/start` files are served by this image, and the skill archive holds the
+      document an agent reads at the version `/start` advertises. All three are assembled per
       request (the client zipapp from `hammerola/`, the template tarball from
-      `model_template/`), so (g) cannot cover them by path.
+      `model_template/`, the skill from `skill/`), so (g) cannot cover them by path.
 * (i) the build wrapper (`python -s -m src.buildproc.wrapper`, spawned by the hub for every
       push) resolves from /app as the `app` account and its rlimits really go on. The suite
       runs it on a checkout and strips ceilings the workstation refuses
@@ -170,6 +171,10 @@ REQUIRED_PATHS = [
     # SKILL.md also survives `.dockerignore`'s root-only `*.md` rule; widening it to
     # `**/*.md` would fail this row.
     "/app/skill/SKILL.md",
+    # ...and one of the references SKILL.md sends its reader to, which that same widened rule
+    # would take while leaving the row above green: the skill is served as the whole directory
+    # and an agent that followed the name would find nothing. Keep in step with skill/.
+    "/app/skill/references/brief.md",
     "/app/model_template/model.py",
     # Hidden, so easy for a COPY or an ignore rule to drop silently, and the template would
     # then be served without it.
@@ -280,10 +285,25 @@ print(json.dumps(verdicts))
 # must carry every module reachable from `hammerola/cli.py` (`onboarding._refuse_unimportable`),
 # and src/app.py answers a refused assembly with a logged 404. The suite builds these archives
 # from the checkout, where every file is present, so only this check sees a missing one.
-# `/start` itself is not listed: the only file it opens is `/app/skill/SKILL.md`, which check
-# (g) requires by name, and a fourth route would not fit the probe's time budget
-# (10 + 3 x 5 = 25 s against an EXEC_TIMEOUT of 30).
-START_ROUTES = ["/start/skill.md", "/start/hammerola", "/start/template.tar.gz"]
+# `/start` itself is not listed as a route: the only file it opens is `/app/skill/SKILL.md`,
+# which check (g) requires by name. The probe does fetch it, for the question below.
+SKILL_URL = "/start/skill.tar.gz"
+START_ROUTES = [SKILL_URL, "/start/hammerola", "/start/template.tar.gz"]
+
+# ...and the one question about what is INSIDE an archive, reported under this key beside the
+# routes. The skill is a directory (`src/onboarding.skill_bytes`): an image whose `COPY` or
+# `.dockerignore` dropped `skill/` serves an archive that unpacks to nothing, which answers 200
+# with a body and passes the row above. So the probe opens it, finds the entry document, and
+# holds its version against the one the manifest states — the number `hammerola skill` compares
+# a laptop's copy against, and the only check anywhere that the two agree in the ARTEFACT.
+# These four are the gate's own literals, like every path above; tests/test_smoke_parsing.py
+# compares them with `src/onboarding.py`'s.
+MANIFEST_URL = "/start"
+SKILL_ENTRY = "SKILL.md"
+SKILL_VERSION_KEY = "skill_version"
+SKILL_ARCHIVE_KEY = "skill-archive"
+SKILL_ARCHIVE_TARGET = ("{} carries {}, and its version is the one {} states".format(
+    SKILL_URL, SKILL_ENTRY, MANIFEST_URL))
 
 # Where the hub listens inside its own container (`src/settings.py` defaults: 0.0.0.0:8000).
 # 127.0.0.1 is the CONTAINER's loopback, reached by `docker exec`.
@@ -297,10 +317,12 @@ START_MARK = "start-route"
 # it binds the socket, so "refused" may mean "not bound yet".
 START_WAIT = 10
 # Per-request timeout inside the container, and how much of each body is read (only "not
-# empty" is asked). These must fit inside EXEC_TIMEOUT: the deadline is shared by all routes,
-# so the ceiling is the wait once plus one read per route, 10 + 3 x 5 = 25 s against 30
-# (measured: 20.6 s against a socket that never answers). A probe killed by the outer bound
-# reports nothing, so raise EXEC_TIMEOUT together with these.
+# empty" is asked of a route; the skill archive is read whole, see the probe). These must fit
+# inside START_EXEC_TIMEOUT: the deadline is shared by every request, so the ceiling is the
+# wait once plus one read per request — five of them, the three routes plus the manifest and
+# the archive the question above opens — 10 + 5 x 5 = 35 s against 45 (measured before the
+# archive question: 20.6 s against a socket that never answers). A probe killed by the outer
+# bound reports nothing, so raise START_EXEC_TIMEOUT together with these.
 START_READ = 5
 START_READ_BYTES = 4096
 
@@ -308,8 +330,11 @@ START_READ_BYTES = 4096
 # production runs. Stdlib only; one JSON argument like the CAD probe. Every reason is collapsed
 # to one line, since the parser reads one verdict per line.
 START_PROBE_SOURCE = r"""
+import io
 import json
+import re
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -353,6 +378,69 @@ for path in request["routes"]:
         else:
             report(path, None)
         break
+
+
+# The whole body of one more request, or a reason. No retry: the routes above did the waiting.
+# Comments rather than docstrings in this probe: its source is a triple-quoted string in
+# ci/smoke.py, and a docstring inside it would end that string at its first line.
+def fetch(path):
+    try:
+        with urllib.request.urlopen(request["origin"] + path,
+                                    timeout=request["read"]) as reply:
+            if reply.status != 200:
+                return None, "the hub answered {} for {}".format(reply.status, path)
+            return reply.read(), None
+    except Exception as error:
+        return None, "{} could not be fetched: {}: {}".format(
+            path, type(error).__name__, error)
+
+
+# The archive's own account of its version against the manifest's. -> a reason, or None.
+def skill_archive():
+    document, problem = fetch(request["manifest"])
+    if problem is not None:
+        return problem
+    try:
+        stated = json.loads(document).get(request["version_key"])
+    except ValueError as error:
+        return "the manifest at {} is not JSON: {}".format(request["manifest"], error)
+    # `bool` is an `int`, and the manifest carries one (`empty`).
+    if isinstance(stated, bool) or not isinstance(stated, int):
+        return "the manifest states {!r} as the skill's version".format(stated)
+
+    body, problem = fetch(request["skill"])
+    if problem is not None:
+        return problem
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as tar:
+            handle = None
+            for info in tar.getmembers():
+                if info.name == request["entry"] and info.isfile():
+                    handle = tar.extractfile(info)
+                    break
+            if handle is None:
+                return "{} holds no {}, it holds {}".format(
+                    request["skill"], request["entry"],
+                    sorted(info.name for info in tar.getmembers()) or "nothing")
+            text = handle.read().decode("utf-8")
+    except Exception as error:
+        return "{} could not be opened as a .tar.gz: {}: {}".format(
+            request["skill"], type(error).__name__, error)
+
+    block = re.match(r"\A---\n(.*?)\n---\n", text, re.DOTALL)
+    if block is None:
+        return "the {} in that archive has no frontmatter block".format(request["entry"])
+    found = re.search(r"^version:[ \t]*(\d+)[ \t]*$", block.group(1), re.MULTILINE)
+    if found is None:
+        return "the {} in that archive names no version in its frontmatter".format(
+            request["entry"])
+    if int(found.group(1)) == stated:
+        return None
+    return "the archive carries version {} and the manifest states {}".format(
+        found.group(1), stated)
+
+
+report(request["skill_key"], skill_archive())
 """
 
 # --- check (i): the build wrapper, and the ceilings it puts on ------------------------------
@@ -562,7 +650,8 @@ EXPECTED_TARGETS = (
     ("(e) startup", 2),
     ("(f) CAD kernel", len(CAD_IMPORTS) + len(PINS)),
     ("(g) required paths", len(REQUIRED_PATHS)),
-    ("(h) onboarding routes", len(START_ROUTES)),
+    # One row per route, plus the one about what is inside the skill archive.
+    ("(h) onboarding routes", len(START_ROUTES) + 1),
     ("(i) build ceilings", len(BUILD_TARGETS)),
 )
 
@@ -604,10 +693,10 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 30 (inspect cmd state)
 #  + 90 (exec: CAD kernel probe)
 #  + 30 (exec: required-path sweep)
-#  + 30 (exec: /start routes, into the -cmd container)
+#  + 45 (exec: /start routes and the skill archive, into the -cmd container)
 #  + 30 (exec: build wrapper and its ceilings)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 795 s, a little over 13 minutes. Both workflows allow 14 (840 s); the remaining 45 s is
+#  = 810 s, over 13 minutes. Both workflows allow 14 (840 s); the remaining 30 s is
 # what a further exec would spend, so adding one means raising `timeout-minutes` in both
 # workflows. tests/test_workflow_steps.py reads this line.
 # Three of the `rm`s are pre-run cleanups: a re-run from the Gitea UI keeps the same run id,
@@ -618,6 +707,10 @@ GUARD_TIMEOUT = 90
 START_TIMEOUT = 60
 EXEC_TIMEOUT = 30
 LOGS_TIMEOUT = 15
+# The onboarding probe gets half as much again: it makes five requests (the three routes, the
+# manifest and the skill archive it opens), and its own worst case is 35 s (see START_READ).
+# Its own bound rather than a wider EXEC_TIMEOUT, which every other exec would spend too.
+START_EXEC_TIMEOUT = 45
 # The CAD probe gets three times the bound: the first `import cadquery` in a fresh image reads
 # ~222 MB of OpenCASCADE and VTK off a cold overlay.
 CAD_TIMEOUT = 90
@@ -1353,8 +1446,9 @@ def parse_start_routes(output):
 def check_start_routes(name):
     """(h) The `/start` routes answer, asked of the container running the image's own command.
 
-    The only check that makes a request; two of the three files are assembled from
-    `hammerola/` and `model_template/` per request, so this is the only way to check them.
+    The only check that makes a request; all three files are assembled from `hammerola/`,
+    `model_template/` and `skill/` per request, so this is the only way to check them. The last
+    row is about the CONTENTS of one of them (SKILL_ARCHIVE_TARGET).
 
     No `blocked` parameter: it execs into check (e)'s container, and if that container is gone
     `docker exec` fails every row on its own.
@@ -1372,10 +1466,20 @@ def check_start_routes(name):
         "wait": START_WAIT,
         "read": START_READ,
         "bytes": START_READ_BYTES,
+        # The archive question. The route's own path is passed again rather than indexed out
+        # of `routes`, so the order of that list stays its own business.
+        "skill": SKILL_URL,
+        "skill_key": SKILL_ARCHIVE_KEY,
+        "entry": SKILL_ENTRY,
+        "manifest": MANIFEST_URL,
+        "version_key": SKILL_VERSION_KEY,
     })
 
+    # The archive row is answered by the same probe, so it shares every way the probe can fail.
+    targets.append(SKILL_ARCHIVE_TARGET)
+
     status, output = docker(
-        ["exec", name, "python", "-c", START_PROBE_SOURCE, request], EXEC_TIMEOUT)
+        ["exec", name, "python", "-c", START_PROBE_SOURCE, request], START_EXEC_TIMEOUT)
     if status is None:
         return [(target, "not attempted: " + output) for target in targets]
     if status != 0:
@@ -1411,6 +1515,22 @@ def check_start_routes(name):
                 "and nowhere else: check (g) names three onboarding paths and cannot see the "
                 "rest, and the suite builds these archives from the checkout, where they are "
                 "all present".format(seen[path]))))
+
+    if SKILL_ARCHIVE_KEY not in seen:
+        rows.append((SKILL_ARCHIVE_TARGET, (
+            "the probe returned no verdict for the skill archive. Full container output:\n"
+            "{}".format(excerpt(output)))))
+    elif seen[SKILL_ARCHIVE_KEY] is None:
+        rows.append((SKILL_ARCHIVE_TARGET, None))
+    else:
+        rows.append((SKILL_ARCHIVE_TARGET, (
+            "{}.\n"
+            "  The skill is a DIRECTORY built into an archive per request, so an image that "
+            "lost `skill/` or part of it still serves something at that route. What this row "
+            "says is that the archive holds the document an agent reads and that it is the "
+            "version /start advertises — the number `hammerola skill` compares a laptop's copy "
+            "against, which is silent in both directions when it is wrong".format(
+                seen[SKILL_ARCHIVE_KEY]))))
     return rows
 
 

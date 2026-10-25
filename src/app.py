@@ -13,7 +13,8 @@ Routing (SPEC 3, 7.4):
     GET  /start                               how to start: three paths, two
                                               versions, and whether this hub
                                               is empty
-    GET  /start/skill.md                      the agent instructions
+    GET  /start/skill.tar.gz                  the agent instructions, as the
+                                              directory they are read from
     GET  /start/hammerola                     the client, as one file
     GET  /start/template.tar.gz               a model directory that builds
     GET  /favicon.ico                         the site icon, as SVG bytes
@@ -682,7 +683,8 @@ class HubHandler(BaseHTTPRequestHandler):
         if len(rest) != 1:
             return self._error(404, "not found", with_body=with_body)
         builders = {
-            onboarding.SKILL_NAME: (onboarding.skill_bytes, MARKDOWN_TYPE, {}),
+            onboarding.SKILL_NAME: (onboarding.skill_bytes, GZIP_TYPE,
+                                    {"Content-Disposition": "attachment"}),
             # An attachment: a zip with a shebang.
             onboarding.CLIENT_NAME: (onboarding.client_bytes, OCTET_TYPE,
                                      {"Content-Disposition": "attachment"}),

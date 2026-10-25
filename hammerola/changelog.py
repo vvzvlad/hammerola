@@ -41,6 +41,16 @@ ENTRIES = {
         "`hammerola login` notices such a proxy, asks its login and password, "
         "and stores this setting.",
     ),
+    "0.3.0": (
+        "`hammerola skill update` installs the skill as a DIRECTORY — "
+        "`~/.claude/skills/hammerola/`, an entry `SKILL.md` and the "
+        "`references/` it points at — takes `--path DIR` where it took a file, "
+        "and removes from an installation of its own the files the new version "
+        "no longer ships.",
+        "The hub serves the skill at `/start/skill.tar.gz` and no longer at "
+        "`/start/skill.md`, so a client older than this one cannot install or "
+        "update it at all.",
+    ),
 }
 
 

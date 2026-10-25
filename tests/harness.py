@@ -33,6 +33,7 @@ from types import SimpleNamespace
 
 import httpx
 
+from src import onboarding
 from src.app import create_server
 from src.buildproc import STATUS_CRASHED, STATUS_FAILED, STATUS_OK, BuildOutcome
 from src.jobs import STATE_DONE, STATE_FAILED
@@ -474,6 +475,47 @@ def stop_hub(hub):
     hub.server.shutdown()
     hub.server.server_close()
     hub._thread.join(timeout=5)
+
+
+# -- the skill, which is a DIRECTORY -----------------------------------------
+# The hub serves `skill/` as one archive (`onboarding.skill_bytes`), so a test
+# pinning a sentence of the instructions has to look in every document of the
+# set: a rule that moved from the entry document into `references/` is the same
+# rule and must go on being pinned, while a pin aimed at one file would stop
+# finding it. Reading the set is these three functions' whole job; which file a
+# sentence is in is the author's business and no test's.
+
+
+def skill_files() -> dict:
+    """The skill as this checkout has it: `{member path: text}`."""
+    return {name: path.read_text(encoding="utf-8")
+            for name, path in onboarding.skill_members()}
+
+
+def served_skill_files(hub) -> dict:
+    """The skill the hub SERVES, unpacked: `{member path: text}`.
+
+    Over HTTP, because what a pin of this kind is about is the document an
+    agent installs — not the file beside the test.
+    """
+    reply = hub.get(onboarding.SKILL_URL)
+    assert reply.status_code == 200, (
+        f"the hub did not serve the skill: HTTP {reply.status_code}")
+    with tarfile.open(fileobj=io.BytesIO(reply.content), mode="r:gz") as tar:
+        return {info.name: tar.extractfile(info).read().decode("utf-8")
+                for info in tar.getmembers() if info.isfile()}
+
+
+def one_text(files: dict) -> str:
+    """Every document of a skill as one string, entry document first.
+
+    For a pin that is about what the skill SAYS rather than about where it says
+    it. Joined with a blank line, so a pattern anchored to a line start still
+    matches the first line of each file.
+    """
+    ordered = sorted(files,
+                     key=lambda name: (name != onboarding.SKILL_ENTRY, name))
+    return "\n\n".join(files[name] for name in ordered)
 
 
 # -- archive building -------------------------------------------------------
