@@ -50,9 +50,13 @@
   Creation order used to be stored that way; it is now stored nowhere at all,
   because retention was its only reader
 - `src/docsbuild.py` — the documents a project publishes to be read (issue
-  #122): the paths its `project.json` lists under `documents` (markdown, PDF,
-  pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of Gerbers — `render.DOCUMENT_TYPES`),
-  published under the same paths, an entry optionally `hidden` (no row in the
+  #122): the paths its `project.json` lists under `documents`, published under
+  the same paths. The extension decides only how the page shows one (markdown,
+  PDF, pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of
+  Gerbers — `render.DOCUMENT_TYPES`); any other extension publishes as
+  `render.FILE_TYPE`, a row that downloads the file (issue #125), and
+  `"download": true` asks for that whatever the extension — how a zip of logs
+  is told from a zip of Gerbers. An entry is optionally `hidden` (no row in the
   list, still served and opened by `?d=`). A schematic, a board and a `.glb`
   are each a document with a row of their own (issue #123); for a schematic this
   module finds every sheet it names by `Sheetfile` (`Sheet file` in KiCad 6),
@@ -372,7 +376,9 @@
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
   React elements, relative links resolved from the document's directory, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
-  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`. DocShell draws it
+  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
+  draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
+  and size, and a link that downloads it. DocShell draws it
   under its list; the model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
