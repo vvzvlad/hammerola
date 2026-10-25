@@ -17,6 +17,9 @@
 // put under the pointer (`element.under`), as the viewer's own click does. The
 // 3D view is a stand-in whose props are read off the drawn tree.
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
@@ -27,7 +30,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
-  menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT, ZOOM_LIMITS,
+  menuFor, menuHeight, menuPlace, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { collect, texts } from './eltree.js'
 
@@ -651,62 +654,28 @@ describe('a part\'s datasheet', () => {
   })
 })
 
-describe('the wheel on the schematic and the board', () => {
-  /** The board on screen, its canvas 800 × 600 at (100, 50) of the page, the
-   *  camera the element holds 4 px a unit, and the viewer's own wheel handler
-   *  on its canvas. */
-  function wheeled() {
-    const { elements } = mounted(DOCS[1])
-    const element = elements[PCB]
-    const { canvas } = element
-    Object.defineProperty(canvas, 'clientWidth', { value: 800 })
-    Object.defineProperty(canvas, 'clientHeight', { value: 600 })
-    canvas.getBoundingClientRect = () => ({ left: 100, top: 50, width: 800, height: 600 })
-    element.camera = { x: 10, y: 20, zoom: 4, rotation: 0 }
-    const own = vi.fn()
-    canvas.addEventListener('wheel', own)
-    return { element, canvas, own }
-  }
-  const wheel = (target, init) => {
-    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, ...init })
-    target.dispatchEvent(event)
-    return event
-  }
+describe('our two edits to the vendored viewer', () => {
+  // The wheel and the look of a selection are the viewer's own code now
+  // (static/_v/PROVENANCE.md, "Our edits"), so nothing of ours runs for them
+  // and no test here can exercise them — they are checked in a browser. What
+  // CAN be checked, and is what an upgrade loses silently, is that the edits
+  // are still in the file: the viewer upstream zooms on every wheel and fills
+  // a selected footprint, and both read as "the viewer does that" rather than
+  // as a regression.
+  const bundle = readFileSync(resolve(process.cwd(), '../static/_v/ecad-viewer.js'), 'utf8')
 
-  it('moves the drawing with a two-finger swipe, the viewer\'s own handler never seeing it', () => {
-    const { element, canvas, own } = wheeled()
-    const swiped = wheel(canvas, { deltaX: -15, deltaY: 25, clientX: 300, clientY: 300 })
-    expect(own).not.toHaveBeenCalled()
-    expect(swiped.defaultPrevented).toBe(true)
-    // the drawing follows the fingers, 15 px right and 25 px up: the centre the other way, in units
-    expect(element.camera).toEqual({ x: 10 - 15 / 4, y: 20 + 25 / 4, zoom: 4, rotation: 0 })
+  it('leaves a selected footprint outlined, not filled over', () => {
+    expect(bundle).toContain('paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;')
+    // the fill was a pass over the selection mask in cyan at 55% — nowhere now
+    expect(bundle).not.toContain('new w(0,.85,1,.55)')
   })
 
-  it('zooms about the pointer with a pinch or Control and the wheel, within the viewer\'s limits', () => {
-    const { element, canvas, own } = wheeled()
-    // the pointer at (600, 100) of the canvas, (200, -200) from its centre
-    const at = { clientX: 700, clientY: 150 }
-    const under = (camera) => [camera.x + 200 / camera.zoom, camera.y - 200 / camera.zoom]
-    const before = under(element.camera)
-    const pinched = wheel(canvas, { ctrlKey: true, deltaY: -20, ...at })
-    expect(pinched.defaultPrevented).toBe(true)
-    expect(element.camera.zoom).toBeCloseTo(4 * Math.exp(0.2), 9)
-    under(element.camera).forEach((value, i) => expect(value).toBeCloseTo(before[i], 9))
-    for (let i = 0; i < 100; i += 1) wheel(canvas, { ctrlKey: true, deltaY: -3, deltaMode: 1, ...at })
-    expect(element.camera.zoom).toBe(ZOOM_LIMITS[1])
-    for (let i = 0; i < 100; i += 1) wheel(canvas, { ctrlKey: true, deltaY: 3, deltaMode: 1, ...at })
-    expect(element.camera.zoom).toBe(ZOOM_LIMITS[0])
-    expect(own).not.toHaveBeenCalled()
-  })
-
-  it('leaves a wheel over anything else in the element, or before the viewer has a camera, as it was', () => {
-    const { element, canvas, own } = wheeled()
-    const list = document.createElement('kc-sch-selection-menu')
-    element.append(list)
-    expect(wheel(list, { deltaY: 10 }).defaultPrevented).toBe(false)
-    element.camera = null
-    expect(wheel(canvas, { deltaY: 10 }).defaultPrevented).toBe(false)
-    expect(own).toHaveBeenCalledTimes(1)
+  it('pans on a plain wheel and zooms about the pointer on Control, by the Gerbers\' numbers', () => {
+    // `#E` pans and `#F` zooms about a point; 16 px a line, the zoom delta
+    // clamped to 40 px and the rate 0.01 a pixel (`og`, the viewer's own 0.005).
+    expect(bundle).toContain(
+      'e.ctrlKey?this.#F(Math.max(-40,Math.min(40,e.deltaY*t))*(.01/og),this.#K(e)):this.#E(e.deltaX*t,e.deltaY*t)')
+    expect(bundle).toContain('let t=e.deltaMode===WheelEvent.DOM_DELTA_LINE?16:')
   })
 })
 

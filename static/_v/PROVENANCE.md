@@ -112,8 +112,9 @@ re-check that a real project's build renders.
 Unlike the files above these are **not built here**. They are the built viewer
 out of the KiCAD-Prism repository,
 [`krishna-swaroop/KiCAD-Prism`](https://github.com/krishna-swaroop/KiCAD-Prism) at
-commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63`, `frontend/public/`, copied
-byte for byte, taken 2026-10-23. Prism builds them (`scripts/build-ecad-viewer.sh`)
+commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63`, `frontend/public/`, taken
+2026-10-23. `parser.worker.js` is byte for byte theirs; `ecad-viewer.js` carries
+two edits of ours, listed below. Prism builds them (`scripts/build-ecad-viewer.sh`)
 from its fork of ecad-viewer,
 [`krishna-swaroop/ecad-viewer`](https://github.com/krishna-swaroop/ecad-viewer) at
 commit `461a091952ef44b56610e3ccbac4ba3c94139c4a` (`adapterCommit` in the
@@ -126,11 +127,13 @@ Apache-2.0 and none of it is here.
 
 | File | sha256 |
 | --- | --- |
-| `ecad-viewer.js` | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
+| `ecad-viewer.js` as taken | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
+| `ecad-viewer.js` as committed | `21d75a50db07d13be0c5fe41c03919bf1de322223b1bb758e53493e3c8bcbaa5` |
 | `parser.worker.js` | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
-The first two equal the hashes Prism's manifest records for them. The manifest
+The first and the third equal the hashes Prism's manifest records for them —
+the second is that file with our edits in it. The manifest
 names a third artefact, `ecad-renderer.js`, which is not here: Prism's library
 panel draws symbols and footprints with it, and `ecad-viewer.js` never imports
 it. Neither are `3d-viewer.js` (the viewer's own 3D tab) and `glyph-full.js` (CJK
@@ -147,9 +150,51 @@ by side under these names. It needs two things of the hub's CSP (SPEC §7.4):
 in it, and `blob:` in `img-src` for the icons of its panels, an SVG sprite it
 builds into a `blob:` URL.
 
+### Our edits
+
+Two, both in `ecad-viewer.js`, both a replacement of one exact string by another
+— the file is minified, so they are written out here in full and re-applied by
+search and replace. `ui/tests/kicad.test.js` asserts that both are still in the
+file, because an upgrade that drops them breaks nothing loudly: the viewer
+simply goes back to its own behaviour.
+
+**1. A selected footprint is outlined, not filled over.** `BoardPainter.paint_footprint`
+painted the whole footprint into the selection mask in cyan at 55% before
+drawing its bounding box, so a part selected here or arrived at from the
+schematic (`requestCrossProbe`) was covered by a solid patch. The box alone
+says as much. The mask pass is dropped, the box kept:
+
+```text
+paint_footprint(t){this.clear_interactive();let r=this.layers.selection_mask;r.color=new w(0,.85,1,.55),this.gfx.start_layer(r.name),this.paint_item(r,t),r.graphics=this.gfx.end_layer(),r.graphics.composite_operation="source-over";let n=this.layers.selection_fg;
+→
+paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;
+```
+
+**2. The wheel is the touchpad's, as everywhere else on the site.** `MoveAndZoom`'s
+wheel handler zoomed on every wheel event off `deltaY` and never read `deltaX`,
+so a two-finger swipe zoomed instead of moving the drawing. It now pans on a
+plain wheel and zooms about the pointer with Control held (which is how a
+touchpad pinch arrives), by the arithmetic of `wheelMove` in `ui/src/gerber.js`:
+16 px to a line, the zoom delta clamped to 40 px, the rate 0.01 a pixel —
+written as `.01/og` because `#F` scales by the viewer's own `og`, 0.005. The
+viewer's ±24 px clamp on the wheel delta, which it spent on the zoom, and its
+swap of the axes under Shift, which only cancelled that zoom, are gone with it;
+the Gerbers have neither, and Shift and the wheel now pan like the wheel alone:
+
+```text
+let t=e.deltaX,r=e.deltaY;t==0&&e.shiftKey&&([t,r]=[r,t]),e.deltaMode===WheelEvent.DOM_DELTA_LINE?(t*=Vp,r*=Vp):e.deltaMode===WheelEvent.DOM_DELTA_PAGE&&(t*=Sc,r*=Sc),t=Math.sign(t)*Math.min(Sc,Math.abs(t)),r=Math.sign(r)*Math.min(Sc,Math.abs(r)),this.#e=this.target.getBoundingClientRect(),this.#F(r,this.#K(e)),this.#X(e)}
+→
+let t=e.deltaMode===WheelEvent.DOM_DELTA_LINE?16:e.deltaMode===WheelEvent.DOM_DELTA_PAGE?Sc:1;this.#e=this.target.getBoundingClientRect(),e.ctrlKey?this.#F(Math.max(-40,Math.min(40,e.deltaY*t))*(.01/og),this.#K(e)):this.#E(e.deltaX*t,e.deltaY*t),this.#X(e)}
+```
+
+`#E(dx, dy)` moves the camera's centre by `(dx, dy) / zoom`, so passing the
+deltas through unchanged makes the drawing follow the fingers; `#F(delta, point)`
+multiplies the zoom by `exp(-delta · og)` and keeps the world point under
+`point` where it is. `Vp` (8 px to a line) is left declared and now unused.
+
 To move it: take the same three things from a newer Prism commit — the two files
-and the manifest's commits — replace both files together, and update this
-section and the hashes in one commit.
+and the manifest's commits — replace both files together, re-apply the two edits
+above, and update this section and the hashes in one commit.
 
 ## The Gerber renderer: `wasm_gerber_processor.js` and `wasm_gerber_processor_bg.wasm`
 

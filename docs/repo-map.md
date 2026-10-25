@@ -244,8 +244,10 @@
   all three templates; issue #35), the resolver's `site.css` and `favicon.svg`,
   and the KiCad viewer: `ecad-viewer.js` with the `parser.worker.js` it starts
   from beside itself, taken BUILT out of KiCAD-Prism's repository and never
-  rebuilt here (where from, the commits, the hashes and what the hub's CSP cuts
-  out of it — `PROVENANCE.md`; its licence — `ecad-viewer-LICENSE.md`).
+  rebuilt here — `ecad-viewer.js` carries two edits of ours, made in the
+  minified file and written out to be re-applied (where from, the commits, the
+  hashes, the edits and what the hub's CSP cuts out of it — `PROVENANCE.md`; its
+  licence — `ecad-viewer-LICENSE.md`).
   A separate tree with its own `COPY` line in the Dockerfile and its own smoke
   check (g), which names `tokens.css` because its absence looks like nothing —
   every page still answers 200 and every `var(--…)` in it resolves to nothing.
@@ -392,7 +394,9 @@
   designator or the net. The viewer cannot be asked what is under a point, so a
   right click replays its own left click there and builds the menu from the
   selection it reports. The viewer is `static/_v/ecad-viewer.js`,
-  imported by URL on first use (`loadEcadViewer`)
+  imported by URL on first use (`loadEcadViewer`); the wheel over it and the
+  look of a selected footprint are its own code, both edited by us
+  (`static/_v/PROVENANCE.md`, "Our edits")
 - `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three
   and `GLTFLoader.js` imported by URL from `static/_v/` (three's own add-ons,
   `static/_v/PROVENANCE.md`) and the camera turned by the model's own trackball,
