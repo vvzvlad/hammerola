@@ -3,8 +3,8 @@
 // The files a project.json lists to be read ride on the model's own page: below
 // the views in the toolbar's list, one row each, and choosing one lays it over
 // the model while the viewport stays mounted underneath. Choosing a view brings
-// the model back. `?d=` opens one on arrival, as `?v=` opens a view, and the
-// choice is written into the address as `?d=`, which choosing a view takes out.
+// the model back. `?d=` opens one on arrival, as `?v=` opens a view, and each
+// choice is a step of history whose address names it as `?d=` or `?v=`.
 //
 // The arrangement of the rest of this directory: the real prototype with the
 // state spelled out (`component.js`), `computed()` read for values and `render()`
@@ -230,6 +230,30 @@ describe('the documents in the list of views', () => {
     c.state.doc = 'docs__cut-list.md'
     c.computed().viewTabs[1].onClick()
     expect([c.state.doc, c.state.view]).toEqual([null, 'open'])
+  })
+
+  it('make each choice a step of history, with the frame only of the view it stays on, and the row shown none', () => {
+    // Back returns to the choice before (`pushChoice`). The frame describes the
+    // model on screen: a document's entry carries none, nor another view's,
+    // whose own frame `onModel` writes once it is drawn. The rest of the
+    // address stays.
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    const c = component()
+    c.host = { current: { getCamera: () => ({
+      position: [10, -20, 30.5], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 1.5 }) } }
+    const push = vi.spyOn(window.history, 'pushState')
+    onTestFinished(() => push.mockRestore())
+    const entries = () => [push.mock.calls.length, window.location.search]
+    c.computed().docRows[0].onClick()
+    expect(entries()).toEqual([1, '?files=K&d=docs__cut-list.md'])
+    expect(window.history.state).toEqual({ hmr: 'latest' })
+    c.computed().docRows[0].onClick()
+    c.computed().viewTabs[0].onClick()
+    expect(entries()).toEqual([2, '?files=K&c=10,-20,30.5,0,0,0,1,1,2,3,1.5'])
+    c.computed().viewTabs[1].onClick()
+    expect(entries()).toEqual([3, '?files=K&v=open'])
+    c.computed().viewTabs[1].onClick()
+    expect(push).toHaveBeenCalledTimes(3)
   })
 
   it('start the card at the button, whatever is on screen: the button never stands in the bar alone', () => {

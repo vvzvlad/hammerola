@@ -42,7 +42,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, viewQuery, cameraQuery, writeDoc,
+    refreshBuilds, viewQuery, cameraQuery, pushChoice,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -92,10 +92,11 @@ export function chromeView(s, props, deps) {
   const docOpen = documents.find((d) => d.id === s.doc) || null;
   // Opening a document: what its row does, what `Show in …` of a KiCad
   // design's right-click menu does with the other member's id, and what a
-  // markdown link to another document does. The address says it as `?d=`.
+  // markdown link to another document does. A step of history whose address
+  // says it as `?d=` (`pushChoice`).
   const openDoc = (id) => {
     setState({ doc: id, viewsOpen: false });
-    writeDoc(id);
+    pushChoice(s.view, id);
   };
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc);
@@ -114,11 +115,18 @@ export function chromeView(s, props, deps) {
   // revision without that view opens on its first one, as a fresh load with
   // an unknown `?v=` does. And on the document over it, when one is open: a
   // revision that does not list it opens on the model, as a fresh load with
-  // an unknown `?d=` does. And from the camera's angle (`cameraQuery`), read
-  // as this window renders.
+  // an unknown `?d=` does. With no document open and the Current view box
+  // ticked, from the camera's angle too (`cameraQuery`), read as this window
+  // renders; a document covers the model, so its link carries no frame and
+  // the window offers no box.
+  const shareCamera = !!(share && share.camera && !docOpen);
   const shareView = share ? viewQuery(s.view, views) : '';
-  const shareQuery = !share ? '' : cameraQuery(shareView + (docOpen
-    ? `${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}` : ''));
+  const shareQuery = !share ? '' : docOpen
+    ? `${shareView}${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}`
+    : shareCamera ? cameraQuery(shareView) : shareView;
+  const shareBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;'
+    + `align-items:center;justify-content:center;font:600 10px ${MONO};`
+    + (on ? ON_ACCENT : BLANK_BOX);
   const shareLink = !share ? ''
     : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareQuery}`
       + (shareFiles ? `${shareQuery ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
@@ -191,13 +199,14 @@ export function chromeView(s, props, deps) {
     // the overlay, Close and Escape close it, and a click on the card stops
     // there. The row says which address: `latest` gives a link that follows
     // every new build, a revision a link to exactly that one. Ticked, the link
-    // carries that address's key and its reader may download the files.
+    // carries that address's key and its reader may download the files. The
+    // second box, Current view, adds the frame on screen as `c=`; it is off
+    // whenever the window opens and absent while a document is open.
     shareOpen: !!share,
     shareHead: !share ? '' : share.id === 'latest' ? 'Share latest' : `Share ${shortId(share.id)}`,
     shareFilesRowStyle: `display:flex;align-items:center;gap:8px;font:400 12px ${SANS};`
       + (shareKey ? 'cursor:pointer;color:var(--text)' : 'cursor:default;color:var(--text-faint)'),
-    shareFilesBox: `width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};`
-      + (shareFiles ? ON_ACCENT : BLANK_BOX),
+    shareFilesBox: shareBox(shareFiles),
     shareFilesMark: shareFiles ? '✓' : '',
     // Untickable when builds.json came without the keys (the hub could not
     // read its own file, and logged it): a link offering files it cannot open
@@ -205,6 +214,11 @@ export function chromeView(s, props, deps) {
     shareFilesHint: share && !shareKey ? 'This hub did not send the download keys' : '',
     toggleShareFiles: !shareKey ? undefined
       : () => setState({ share: { ...share, files: !share.files } }),
+    shareCameraShown: !!share && !docOpen,
+    shareCameraRowStyle: `display:flex;align-items:center;gap:8px;font:400 12px ${SANS};cursor:pointer;color:var(--text)`,
+    shareCameraBox: shareBox(shareCamera),
+    shareCameraMark: shareCamera ? '✓' : '',
+    toggleShareCamera: () => setState({ share: { ...share, camera: !share.camera } }),
     shareLink,
     // `writeText` refuses through its promise (no focus, no permission), and
     // `navigator.clipboard` is missing altogether outside https — both have to
@@ -451,9 +465,10 @@ export function chromeView(s, props, deps) {
       // drawn would start its load again.
       onClick: () => {
         (s.view === v.id ? set : setState)({ doc: null });
-        // The document goes from the address with it; `v=` follows the view
-        // once it is drawn (`onModel`).
-        if (docOpen) writeDoc(null);
+        // A step of history whose address names the view and no document
+        // (`pushChoice`); the frame follows the view once it is drawn
+        // (`onModel`).
+        pushChoice(v.id, null);
         showView(v.id);
         setState({ viewsOpen: false });
       },
@@ -462,8 +477,8 @@ export function chromeView(s, props, deps) {
     // hidden one. Choosing one lays it over the model (`docOpen`), which stays
     // mounted underneath with its camera, cut and hidden parts; `Show in …` of
     // a KiCad design's right-click menu opens the other member the same way
-    // (`onDocOpen`). The choice is written into the address as `?d=`
-    // (`writeDoc`), which opens it on arrival (`load`), a hidden one too.
+    // (`onDocOpen`). The choice is a step of history whose address names it as
+    // `?d=` (`pushChoice`), which opens it on arrival (`load`), a hidden one too.
     docRows,
     onDocOpen: openDoc,
     // PAST THE THRESHOLD THE STRIP BECOMES ONE BUTTON — see `VIEW_TABS_MAX`

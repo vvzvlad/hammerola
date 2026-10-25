@@ -3848,8 +3848,9 @@ describe('the stored proposal', () => {
       // The build alone does not settle it: `published` is the same across a
       // build's views, while each view is a separate tree, so `/model/plate`
       // there is a different part. `onModel` drops moves on a view switch
-      // (`dropMoves`), but a tab does not move the address, so a reload must not
-      // re-apply moves stored for another view.
+      // (`dropMoves`), but a reload can open on another view than the one the
+      // moves were made in (Back to an earlier choice, a link naming another
+      // `v=`), so it must not re-apply moves stored for another view.
       answering(ok(stored({ doc: withMove(), published: STAMP,
                             view: ANOTHER_VIEW })))
       const { c, el } = panel({ stored: null })

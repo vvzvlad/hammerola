@@ -221,8 +221,8 @@ describe('an address that carries c=', () => {
 
 describe('the address bar', () => {
   it('names the view on screen and its frame after a view tab, keeping the rest', () => {
-    // A view tab moves no address (`showView`), so the scene it draws is what
-    // writes the `v=` beside the frame fitted to it.
+    // `showView` moves no address, so the scene it draws is what writes the
+    // `v=` beside the frame fitted to it.
     window.history.replaceState({ hmr: 'kept' }, '', `${HOME}?d=docs__a.md&files=K&c=${STALE}`)
     const el = viewport(FRAME)
     const c = page(el, { state: { meta: META, view: 'assembled' } })
@@ -236,6 +236,24 @@ describe('the address bar', () => {
     c.onModel({ tree: TREE, view: 'assembled', live: false })
     expect(location.search)
       .toBe('?d=docs__a.md&files=K&c=12.35,-7.89,100,0.12346,-0.65432,0.5,0.54322,1.23,0,-4,2')
+  })
+
+  it('names no frame while a document is open, and the frame again once it closes', () => {
+    window.history.replaceState(null, '', `${HOME}?d=docs__a.md&files=K&c=${STALE}`)
+    const listing = { ...META, documents: [
+      { id: 'docs__a.md', name: 'docs/a.md', type: 'markdown', file: 'docs/a.md', bytes: 9 }] }
+    const c = page(viewport(FRAME), { state: { meta: listing, view: 'assembled', doc: 'docs__a.md' } })
+    c.writeCamera('print')
+    expect(location.search).toBe(`?d=docs__a.md&files=K&c=${STALE}`)
+    // A `d=` this build does not list (an old link) leaves the model on screen.
+    c.setState({ meta: META })
+    c.writeCamera()
+    expect(location.search).toBe(`?d=docs__a.md&files=K&c=${TEXT}`)
+    // `writeDoc` spells the address as `screenQuery` does: `d=` or `c=`.
+    c.writeDoc('docs__a.md')
+    expect(location.search).toBe('?files=K&d=docs__a.md')
+    c.writeDoc(null)
+    expect(location.search).toBe(`?files=K&c=${TEXT}`)
   })
 
   it('follows Fit to the frame it went back to', () => {

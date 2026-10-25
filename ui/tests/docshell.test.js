@@ -526,4 +526,28 @@ describe('the shell', () => {
     expect(window.location.search).toBe('?d=page.html')
     expect(shell.state.active).toBe('page.html')
   })
+
+  it('makes each pick a step of history, and Back brings the one before, the default included', async () => {
+    // The browser's own Back and Forward, which restore the entry tasks later.
+    const go = async (delta) => {
+      const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
+      window.history.go(delta)
+      await popped
+    }
+    mount('')
+    shell.componentDidMount()
+    const push = vi.spyOn(window.history, 'pushState')
+    try {
+      shell.pick('report.pdf')
+      shell.pick('report.pdf')
+      expect(push).toHaveBeenCalledTimes(1)
+      await go(-1)
+      expect([window.location.search, shell.state.active]).toEqual(['', 'list.md'])
+      await go(1)
+      expect(shell.state.active).toBe('report.pdf')
+    } finally {
+      shell.componentWillUnmount()
+      push.mockRestore()
+    }
+  })
 })

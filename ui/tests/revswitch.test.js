@@ -299,11 +299,12 @@ describe('picking a revision', () => {
 
   it('carries the reader\'s own tab across, not the one the address still names',
     async () => {
-      // A `?v=` in the bar is the view the ENTRY was pushed with, and the reader
-      // has moved on from it: a view tab writes state and not the address, so a
-      // row click that read the query would quietly put the page back on a tab
-      // they had left. `popstate` is the one caller that wants the entry's view,
-      // and it says so by not pushing.
+      // A `?v=` in the bar is the view the ENTRY was written with, and the view
+      // on screen can differ from it (the banner's build falling back to its
+      // first view rewrites no entry), so a row click that read the query
+      // would quietly put the page back on a tab the reader is not on.
+      // `popstate` is the one caller that wants the entry's view, and it says
+      // so by not pushing.
       const c = component({ view: 'printables' })
       const push = vi.spyOn(history, 'pushState')
       loadMeta.mockResolvedValue(build())
@@ -457,6 +458,14 @@ describe('popstate', () => {
     return c
   }
 
+  /** The browser's own Back and Forward, which restore the entry tasks later. */
+  const go = async (delta) => {
+    const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
+    window.history.go(delta)
+    await popped
+    await flush()
+  }
+
   it('switches back the same way, and does not push again', async () => {
     // The entries this page pushes must be honoured: Back that moved the address
     // bar and left the previous revision on screen would be wrong.
@@ -493,6 +502,21 @@ describe('popstate', () => {
     const c = mounted()
     window.dispatchEvent(new PopStateEvent('popstate'))
     await flush()
+    expect(loadMeta).not.toHaveBeenCalled()
+  })
+
+  it('walks back and forward through the views chosen on the build on screen', async () => {
+    // Each choice in the menu of views is an entry (`pushChoice`), and Back
+    // puts the one before on screen without fetching a build. The entry the
+    // page stood on has no `?v=`: `viewQuery` writes none for the first view,
+    // so it names that view, not the one showing.
+    const c = mounted()
+    c.computed().viewTabs[1].onClick()
+    expect(location.search).toBe('?v=printables')
+    await go(-1)
+    expect([location.search, c.state.view]).toEqual(['', 'assembled'])
+    await go(1)
+    expect(c.state.view).toBe('printables')
     expect(loadMeta).not.toHaveBeenCalled()
   })
 
@@ -609,6 +633,23 @@ describe('popstate', () => {
 
       expect(loadMeta).not.toHaveBeenCalled()
       expect(c.state.doc).toBe('notes.md')
+    })
+
+    it('opens it again on Back after a comment from the rail took it away', async () => {
+      // Opening a comment over a document is a step of history of its own
+      // (`pushChoice`), so the entry the document was chosen in stays to go
+      // back to.
+      const comment = { id: 'c1', pid: 'proj1', commit: A, view: 'assembled', part: null, key: null,
+        point: null, camera: null, text: 'too thin', status: 'open',
+        created: '2026-08-27T18:20:00Z', resolved: null, note: null }
+      const c = mounted({ ...listing, feed: [comment] })
+      c.computed().docRows[0].onClick()
+      expect(location.search).toBe('?d=notes.md')
+      c.computed().threads[0].onOpen({ stopPropagation() {} })
+      expect([location.search, c.state.doc, c.state.activePin]).toEqual(['', null, 'c1'])
+      await go(-1)
+      expect(c.state.doc).toBe('notes.md')
+      expect(loadMeta).not.toHaveBeenCalled()
     })
 
     it('closes it while calling a swap off', async () => {
@@ -893,18 +934,22 @@ describe('a second revision picked while the first is fetching', () => {
 
   it('takes the document open into the address it puts right', async () => {
     // The entry Forward moved to names no document; the page stayed on A with
-    // one open, and the address says so.
-    const c = component({ doc: 'notes.md' })
-    const answers = held()
+    // one open, and the address says so. A `doc` the build does not list (an
+    // old link) leaves the model on screen, and the address names none.
+    const notes = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+    for (const [doc, query] of [['notes.md', '?d=notes.md'], ['gone.md', '']]) {
+      const c = component({ doc, meta: { ...component().state.meta, documents: [notes] } })
+      const answers = held()
 
-    window.history.replaceState(null, '', path(B))
-    const live = c.switchBuild('proj1', B, { push: false })
-    c.setState({ revOpen: true })
-    await c.switchBuild('proj1', A)
-    answers[path(B)].resolve(build())
-    await live
+      window.history.replaceState(null, '', path(B))
+      const live = c.switchBuild('proj1', B, { push: false })
+      c.setState({ revOpen: true })
+      await c.switchBuild('proj1', A)
+      answers[path(B)].resolve(build())
+      await live
 
-    expect(`${location.pathname}${location.search}`).toBe(`${path(A)}?d=notes.md`)
+      expect(`${location.pathname}${location.search}`, doc).toBe(`${path(A)}${query}`)
+    }
   })
 
   it('leaves the view tab alone, because a row click says nothing about views',

@@ -1063,7 +1063,8 @@ export default class HammerolaViewer extends React.Component {
       settingsOpen: false,
       // The Share window: `{id, files}` while it is open, where `id` is
       // `latest` or the full commit of the row it was opened from and `files`
-      // is its one checkbox; null while it is closed.
+      // is its first checkbox; `camera`, the Current view box, is absent until
+      // ticked; null while it is closed.
       share: null,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison: five fields answering five questions.
@@ -1615,9 +1616,8 @@ export default class HammerolaViewer extends React.Component {
                     // this page uses). A comparison started on a non-default tab is sent as
                     // `…/compare/<b>/?v=<tab>`; on the first view `viewQuery` drops the query.
                     //
-                    // A tab pressed later does not move the address, as on a build page: the
-                    // query is written where the page navigates, and `showView` is not a
-                    // navigation.
+                    // A tab pressed later writes its own `v=` as on a build page: a step of
+                    // history on the comparison's path (`pushChoice`), not a navigation.
                     //
                     // Through `commitOf` for the ticks too: the Compare button asks with them,
                     // so an address whose `<a>` is `latest` must tick the commit it resolves to.
@@ -1696,10 +1696,11 @@ export default class HammerolaViewer extends React.Component {
     const here = this._want || PAGE.slot;
     if (slot === here) {
       this.setState({ revOpen: false });
-      // A `popstate` between the build on screen and a comparison of it moves
-      // no build, so the document its entry names is put back here. With a swap
-      // still on its way to `slot`, that swap settles the document when it lands.
-      if (!push && slot === PAGE.slot) this.followEntryDoc();
+      // A `popstate` through the choices made in the menu of views, or between
+      // the build on screen and a comparison of it, moves no build, so the view
+      // and the document its entry names are put back here. With a swap still on
+      // its way to `slot`, that swap settles both when it lands.
+      if (!push && slot === PAGE.slot) this.followEntry();
       return;
     }
 
@@ -1746,30 +1747,18 @@ export default class HammerolaViewer extends React.Component {
         const staying = this.addressOf(
           this.state.compare ? this.state.cmpPair : null);
         if (location.pathname !== staying) {
-          history.replaceState({ hmr: slot }, '', staying + this.cameraQuery(
-            this.withDoc(this.viewQuery(this.state.view, views), this.state.doc)));
+          history.replaceState({ hmr: slot }, '', staying
+            + this.screenQuery(this.state.view, views, this.shownDoc()));
           // The repaired address may be a comparison's, so `PAGE.cmp` has to
           // follow it; on a plain build URL this re-derives what was there.
           rereadPage(staying);
         }
       } else {
-        // The view may still be out of step: an entry carries its own `?v=`,
-        // and Back onto a different tab of the build on screen is a real change.
-        //
-        // Written here, not through `showView`: during a comparison `showView`
-        // restarts it, `compareRevisions` moves the address and `moveAddress`
-        // pushes, so a `popstate` would end in a `pushState`, burying the entry
-        // and losing Forward. A `popstate` never pushes.
-        //
-        // The panel is not this branch's to restore: `_pop` calls `syncCompare`
-        // right after on the entry itself, which opens or closes the comparison
-        // the entry names.
-        const wanted = this.entryView();
-        if (wanted !== this.state.view && views.some((v) => v.id === wanted)) {
-          this.set({ view: wanted });
-        }
-        // And the document over the model, which the entry names as `?d=`.
-        this.followEntryDoc();
+        // The view and the document may still be out of step: an entry carries
+        // its own `?v=` and `?d=`, and Back onto another of them on the build on
+        // screen is a real change. `followEntry` says how they are put back
+        // without a `popstate` ending in a push.
+        this.followEntry();
       }
       return;
     }
@@ -1857,7 +1846,7 @@ export default class HammerolaViewer extends React.Component {
     // reading the current tab there would leave the address bar saying one view
     // while the page showed another, which is the whole failure this entry is
     // about, spelled with the Back button.
-    const wanted = push ? this.state.view : this.entryView();
+    const wanted = push ? this.state.view : this.entryView(views);
     // It survives when the target declares one with the same id, and otherwise
     // falls back to the first — exactly what a fresh load of that URL does with
     // a `?v=` naming a view the build does not have.
@@ -1882,8 +1871,7 @@ export default class HammerolaViewer extends React.Component {
     // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
     // writes its address with, the document included where it stayed.
     if (push) {
-      history.pushState({ hmr: slot }, '', path + this.cameraQuery(
-        this.withDoc(this.viewQuery(view, views), gone.state.doc)));
+      history.pushState({ hmr: slot }, '', path + this.screenQuery(view, views, gone.state.doc));
     }
     // In place, so every module that imported `PAGE` sees the new revision —
     // `loadMeta`, `loadBuilds`, `isPointerPage`, `sync`'s `base`, the comment
@@ -2648,9 +2636,11 @@ export default class HammerolaViewer extends React.Component {
       if (opened && !d.live && el && typeof el.setCamera === 'function') el.setCamera(opened);
       // A scene drawn afresh fitted the camera afresh, so the address is
       // rewritten from the camera rather than left naming the frame of the
-      // scene that went — and with the view on screen, since a view tab moves
-      // no address (`showView`) and a frame under another view's `v=` would
-      // aim at the wrong layout. Here and not in the debounce: a timer firing
+      // scene that went — and with the view on screen, since `showView` moves
+      // no address (the banner's build can land on another view without one)
+      // and a frame under another view's `v=` would aim at the wrong layout.
+      // Nothing is written under an open document (`writeCamera`), whose
+      // address names no frame. Here and not in the debounce: a timer firing
       // during a `popstate` switch would rewrite `v=` before `switchBuild`
       // reads the entry's own (`entryView`). A comparison's view is `cmpView`.
       //
@@ -2945,8 +2935,8 @@ export default class HammerolaViewer extends React.Component {
   standOnPointer(slot) {
     const to = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
     const views = (this.state.meta && this.state.meta.views) || [];
-    history.replaceState({ hmr: slot }, '', to + this.cameraQuery(
-      this.withDoc(this.viewQuery(this.state.view, views), this.state.doc)));
+    history.replaceState({ hmr: slot }, '', to
+      + this.screenQuery(this.state.view, views, this.shownDoc()));
     // IN PLACE, so `PAGE.slot` says what the bar says — which is what the watch
     // below, the chip and every relative fetch on this page are read off.
     rereadPage(to);
@@ -3008,8 +2998,7 @@ export default class HammerolaViewer extends React.Component {
     const to = this.addressOf(pair);
     if (location.pathname === to) return;
     const views = (this.state.meta && this.state.meta.views) || [];
-    const address = to + this.cameraQuery(
-      this.withDoc(this.viewQuery(this.state.view, views), this.state.doc));
+    const address = to + this.screenQuery(this.state.view, views, this.shownDoc());
     const entry = { hmr: pageFrom(to).slot };
     if (to === this.addressOf(null)) history.replaceState(entry, '', address);
     else history.pushState(entry, '', address);
@@ -4859,14 +4848,20 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * The view a history entry is asking for: its own `?v=`, or the one showing.
+   * The view a history entry is asking for among `views`: its own `?v=`,
+   * resolved as `load()` resolves it — absent, or naming a view the build does
+   * not have, it is the first. `viewQuery` drops `v=` for the first view, so an
+   * entry without one is asking for that view. With no views to resolve
+   * against (no meta yet), the view showing.
    *
-   * Shared by both paths through `switchBuild` (opening another build, and
-   * calling a swap off). The fallback is the current view because `?v=` is
-   * dropped for the build's first view, so an entry without one says nothing.
+   * Read by `switchBuild` opening the build a `popstate` names, by
+   * `followEntry` on the build on screen, and by `pushChoice` to tell the
+   * choice the entry already names.
    */
-  entryView() {
-    return new URLSearchParams(location.search).get('v') || this.state.view;
+  entryView(views) {
+    const wanted = new URLSearchParams(location.search).get('v');
+    const named = views.find((v) => v.id === wanted) || views[0];
+    return named ? named.id : this.state.view;
   }
 
   /**
@@ -4878,14 +4873,32 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * Lay over the model the document the entry names, or close the one open:
-   * for a `popstate` that keeps the build, where `leaveBuild` does not run.
-   * The id is taken as a load takes it (`docOpen` looks it up). Through `set`,
-   * because closing a document releases a viewport held behind it (`sync`).
+   * Put back the view and the document a history entry names, for a
+   * `popstate` that keeps the build, where `leaveBuild` does not run: Back
+   * through choices made in the menu of views (`pushChoice`), between the
+   * build and a comparison of it, or onto the build a swap was leaving.
+   *
+   * The view is written bare, not through `showView`: during a comparison
+   * `showView` restarts it, `compareRevisions` moves the address and
+   * `moveAddress` pushes, so a `popstate` would end in a `pushState`, burying
+   * the entry and losing Forward. A `popstate` never pushes. The panel is not
+   * this method's to restore: `_pop` calls `syncCompare` right after on the
+   * entry itself, which opens or closes the comparison the entry names and
+   * moves one up onto the view put back here.
+   *
+   * The document id is taken as a load takes it (`docOpen` looks it up).
+   * Through `set`, because closing a document releases a viewport held behind
+   * it (`sync`), and one `set` for both, because a second `hmr:state` before
+   * the model is drawn would start its load again.
    */
-  followEntryDoc() {
+  followEntry() {
+    const views = (this.state.meta && this.state.meta.views) || [];
+    const patch = {};
+    const view = this.entryView(views);
+    if (view !== this.state.view) patch.view = view;
     const doc = this.entryDoc();
-    if (doc !== this.state.doc) this.set({ doc });
+    if (doc !== this.state.doc) patch.doc = doc;
+    if (Object.keys(patch).length) this.set(patch);
   }
 
   /**
@@ -4896,8 +4909,8 @@ export default class HammerolaViewer extends React.Component {
    * on, or a copied link would show a different view. Dropped for the build's
    * first view, which the path already implies.
    *
-   * Shared by both places that write an address: the push that lands a swap
-   * and the replace that calls one off.
+   * Read through `screenQuery` by every address this page writes whole, by
+   * `writeCamera`, and by the Share window's link.
    */
   viewQuery(view, views) {
     const first = views[0] && views[0].id;
@@ -4907,12 +4920,41 @@ export default class HammerolaViewer extends React.Component {
   /**
    * `query` with the frame on screen added as `c=`, so the address opens on
    * the angle the reader is looking from. Unchanged while there is no frame to
-   * read. Wrapped round `viewQuery` by every address this page writes, and by
-   * the Share window's link.
+   * read. Wrapped round `viewQuery` by `screenQuery` with no document open, and
+   * by the Share window's link with its Current view box ticked.
    */
   cameraQuery(query) {
     const frame = encodeCamera(this.frameCamera());
     return frame ? `${query}${query ? '&' : '?'}${CAMERA_QUERY}=${frame}` : query;
+  }
+
+  /**
+   * The query an address needs so that opening it lands on what the menu of
+   * views has chosen: `viewQuery` for `view`, then `d=` naming document `doc`,
+   * or with no document the frame on screen (`cameraQuery`). Never both: the
+   * frame describes the model, which a document covers.
+   *
+   * Every address this page writes whole is spelled here: the push that lands
+   * a swap, the replace that calls one off, the moves onto and off a
+   * comparison, and a choice in the menu of views (`pushChoice`, which leaves
+   * another view's frame to `onModel`).
+   */
+  screenQuery(view, views, doc) {
+    const query = this.viewQuery(view, views);
+    return doc ? `${query}${query ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(doc)}`
+      : this.cameraQuery(query);
+  }
+
+  /**
+   * The document laid over the model: `state.doc` when this build lists it,
+   * else null. An old link or a pointer whose newer build dropped the file can
+   * leave `state.doc` naming a document that is not there, and then the model
+   * is on screen (`docOpen` in chromeview.js reads it the same way).
+   */
+  shownDoc() {
+    const meta = this.state.meta;
+    const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
+    return documents.some((d) => d.id === this.state.doc) ? this.state.doc : null;
   }
 
   /**
@@ -4929,13 +4971,16 @@ export default class HammerolaViewer extends React.Component {
    * Rewrite `c=` in the address bar with the frame on screen, keeping the path
    * and every other parameter as written. Given a `view`, `v=` is rewritten
    * too, as `viewQuery` spells it (none for the first view); without one it
-   * stays as it stands.
+   * stays as it stands. Nothing is written while a document is open
+   * (`shownDoc`): the frame describes the model, which the document covers
+   * (`screenQuery`).
    *
    * A replace, never a push: moving the camera is not somewhere the reader
    * went, and Back must not walk through every angle. The commas stay
    * unescaped, which `URLSearchParams` would not leave them.
    */
   writeCamera(view) {
+    if (this.shownDoc()) return;
     const frame = encodeCamera(this.frameCamera());
     if (!frame) return;
     const key = (pair) => pair.split('=')[0];
@@ -4952,20 +4997,46 @@ export default class HammerolaViewer extends React.Component {
 
   /**
    * Rewrite `d=` in the address bar: the document now laid over the model, or
-   * none, so a copied address opens on what the menu of views has chosen. A
-   * replace like `writeCamera`, every other parameter kept as written.
+   * none, so a copied address opens on what is on screen. `c=` goes with it,
+   * and with no document comes back as the frame on screen, as `screenQuery`
+   * spells an address. A replace like `writeCamera`, every other parameter
+   * kept as written: for the document the banner's build does not list
+   * (`takePending`), whose address does not move.
    */
   writeDoc(id) {
+    const key = (pair) => pair.split('=')[0];
     const kept = location.search.slice(1).split('&')
-      .filter((pair) => pair && pair.split('=')[0] !== DOC_QUERY);
+      .filter((pair) => pair && key(pair) !== DOC_QUERY && key(pair) !== CAMERA_QUERY);
+    const frame = id ? null : encodeCamera(this.frameCamera());
     if (id) kept.push(`${DOC_QUERY}=${encodeURIComponent(id)}`);
+    else if (frame) kept.push(`${CAMERA_QUERY}=${frame}`);
     history.replaceState(history.state, '', location.pathname
       + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
   }
 
-  /** `query` with `d=` naming document `id`, when there is one. */
-  withDoc(query, id) {
-    return id ? `${query}${query ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(id)}` : query;
+  /**
+   * A choice in the menu of views — `view` with no document, or document
+   * `doc` over it — made a step of the browser's history, so Back returns to
+   * the choice before it (`followEntry`). Nothing is pushed for the choice the
+   * entry already names: the row already shown.
+   *
+   * The path and every other parameter stay as written (`files=` among them);
+   * `v=`, `d=` and `c=` are spelled anew by `screenQuery`. Another view gets
+   * no `c=`: the frame on screen is the view being left's, and `onModel`
+   * writes the new one's once it is drawn. The entry keeps the state object
+   * of the one it follows: the build has not moved.
+   */
+  pushChoice(view, doc) {
+    const views = (this.state.meta && this.state.meta.views) || [];
+    if (view === this.entryView(views) && doc === this.entryDoc()) return;
+    const mine = ['v', DOC_QUERY, CAMERA_QUERY];
+    const kept = location.search.slice(1).split('&')
+      .filter((pair) => pair && !mine.includes(pair.split('=')[0]));
+    const named = (!doc && view !== this.state.view ? this.viewQuery(view, views)
+      : this.screenQuery(view, views, doc)).slice(1);
+    if (named) kept.push(named);
+    history.pushState(history.state, '', location.pathname
+      + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
   }
 
   /**
@@ -5151,7 +5222,7 @@ export default class HammerolaViewer extends React.Component {
       meta, catalogue, stop,
       node: this.node.bind(this),
       set: this.set.bind(this),
-      writeDoc: this.writeDoc.bind(this),
+      pushChoice: this.pushChoice.bind(this),
       resolveComment: this.resolveComment.bind(this),
     });
 
@@ -5282,7 +5353,7 @@ export default class HammerolaViewer extends React.Component {
       refreshBuilds: this.refreshBuilds.bind(this),
       viewQuery: this.viewQuery.bind(this),
       cameraQuery: this.cameraQuery.bind(this),
-      writeDoc: this.writeDoc.bind(this),
+      pushChoice: this.pushChoice.bind(this),
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
@@ -6423,6 +6494,12 @@ export default class HammerolaViewer extends React.Component {
               </div>
               {v.shareFilesHint && (
                 <div style={css(`font:400 11px/1.5 ${SANS};color:var(--text-muted)`)}>{v.shareFilesHint}</div>
+              )}
+              {v.shareCameraShown && (
+                <div onClick={v.toggleShareCamera} style={css(v.shareCameraRowStyle)}>
+                  <span style={css(v.shareCameraBox)}>{v.shareCameraMark}</span>
+                  Current view
+                </div>
               )}
               <div style={css(`padding:8px 10px;border-radius:6px;${SUNKEN};font:400 11.5px/1.5 ${MONO};color:var(--text);overflow-wrap:anywhere;user-select:all`)}>
                 {v.shareLink}
