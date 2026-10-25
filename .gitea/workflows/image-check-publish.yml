@@ -283,7 +283,7 @@ jobs:
       # The gate holds no credential and reaches no external service, which is what lets
       # the identical step run on pull requests in tests.yml.
       # The timeout is set against ci/smoke.py's own worst case, which the script documents and
-      # sums from its individual per-call bounds: 795 s, if every docker call runs out its
+      # sums from its individual per-call bounds: 810 s, if every docker call runs out its
       # budget (in practice a few seconds). If the timeout kills the script, its own cleanup
       # does not run and the `if: always()` step below catches that. Raise this number
       # whenever that sum grows past it, in BOTH workflows.

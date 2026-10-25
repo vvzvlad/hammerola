@@ -1,4 +1,4 @@
-"""Every flag the parser accepts is a flag `skill/SKILL.md` teaches.
+"""Every flag the parser accepts is a flag the skill teaches.
 
 The skill goes stale without going red: it goes on naming a flag that was
 renamed or dropped, and the agent reading it gets a refusal whose cause is a
@@ -19,15 +19,17 @@ long spelling beside its short one, so covering the long form covers all of them
 — and that is asserted below rather than believed, because it is the premise the
 scope stands on.
 
-Both halves are read off the parser and off the shipped file rather than written
-out here, so a flag added tomorrow is covered without anybody remembering this
-file.
+Both halves are read off the parser and off the shipped documents rather than
+written out here, so a flag added tomorrow is covered without anybody
+remembering this file. The skill is a DIRECTORY, and the whole set is read: a
+verb documented in `references/cli.md` is documented, and a pairing that looked
+only at the entry document would report every one of those flags as untaught.
 """
 
 import argparse
 import re
 
-from src import onboarding
+from harness import one_text, skill_files
 from hammerola.cli import build_parser
 
 # Every `--flag` spelling in the document, which is also every shape a mention
@@ -40,7 +42,7 @@ MENTIONED = re.compile(r"--[a-z][a-z0-9-]*")
 # against the parser below, so a name that leaves `build_parser` cannot go on
 # sitting here as an excuse for a flag nobody has.
 NOT_FOR_THE_AGENT = {
-    # `rm` and `proposal rm` ask for the project id at a prompt, and SKILL.md
+    # `rm` and `proposal rm` ask for the project id at a prompt, and the skill
     # says in both places that the decision belongs to the owner and not to the
     # agent. `--yes` is precisely the bypass of that prompt, so teaching it
     # would hand over the one refusal those two sections are built around.
@@ -92,8 +94,7 @@ def _shorthand_only(parser) -> set:
 
 def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
     declared = _long_options(build_parser())
-    mentioned = set(MENTIONED.findall(
-        onboarding.SKILL_FILE.read_text(encoding="utf-8"))) - OTHER_PROGRAMS
+    mentioned = set(MENTIONED.findall(one_text(skill_files()))) - OTHER_PROGRAMS
 
     # BOTH SIDES ARE NON-EMPTY AND OVERLAP, asserted before they are compared:
     # a parser read through a renamed argparse internal, or a document moved out
@@ -103,8 +104,8 @@ def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
         f"the pairing is comparing against nothing: the parser offered "
         f"{len(declared)} long flags and the skill mentioned {len(mentioned)}. "
         f"Either `build_parser` no longer declares its flags through "
-        f"`add_argument`, or `onboarding.SKILL_FILE` is not the document any "
-        f"more")
+        f"`add_argument`, or `onboarding.skill_members()` no longer reaches "
+        f"the documents")
     assert not OTHER_PROGRAMS & declared, (
         f"{sorted(OTHER_PROGRAMS & declared)} is excused as another program's "
         f"flag and the parser has it, so the document has to teach it")
@@ -115,7 +116,7 @@ def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
     untaught = sorted(declared - mentioned - NOT_FOR_THE_AGENT)
     invented = sorted(mentioned - declared)
     assert not untaught and not invented, (
-        f"skill/SKILL.md does not teach {untaught}, which the parser accepts — "
+        f"the skill does not teach {untaught}, which the parser accepts — "
         f"an agent reading the file never learns those exist — and it names "
         f"{invented}, which the parser refuses, so a reader who types one gets "
         f"argparse's usage instead of the command. Document the flag where the "

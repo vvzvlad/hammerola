@@ -16,11 +16,12 @@ configured and fail on anybody else's machine — or, far worse, push at a real
 hub. `HAMMEROLA_ENV_FILE` points every test at a path that does not exist, so
 the only settings in play are the ones a test sets for itself.
 
-The third is HOME itself. `skill update` writes over
-`~/.claude/skills/hammerola/SKILL.md` without asking — that is the verb — and
-on the machine running this suite that path is very likely the developer's own
-working copy. So the home the client can reach is a directory under
-`tmp_path`, and a test that forgets `--path` writes somewhere harmless.
+The third is HOME itself. `skill update` writes the whole of
+`~/.claude/skills/hammerola/` without asking, and removes what the hub's copy
+does not have — that is the verb — and on the machine running this suite that
+directory is very likely the developer's own working copy. So the home the
+client can reach is a directory under `tmp_path`, and a test that forgets
+`--path` writes somewhere harmless.
 
 The helpers live in `modeldir.py`, not here: see its docstring.
 """

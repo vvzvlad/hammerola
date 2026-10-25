@@ -249,8 +249,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="the agent instructions: which version is installed here, and "
              "which the hub serves")
     instructions.add_argument(
-        "--path", default=None, metavar="FILE",
-        help=f"the installed skill file (default: {skill.DEFAULT_PATH})")
+        "--path", default=None, metavar="DIR",
+        help=f"the directory the skill is installed in (default: "
+             f"{skill.DEFAULT_PATH})")
     # A sub-subcommand rather than an `--update` flag, as with
     # `comments resolve`. Optional: `hammerola skill` alone still asks.
     skill_commands = instructions.add_subparsers(dest="skill_command")
@@ -258,11 +259,14 @@ def build_parser() -> argparse.ArgumentParser:
         "update", help="write the hub's copy over the installed skill")
     # SUPPRESS, not None: a subparser copies every key of its namespace onto
     # the parent's, defaults included, so `default=None` would make
-    # `skill --path FILE update` silently drop FILE. With SUPPRESS the attribute
+    # `skill --path DIR update` silently drop DIR. With SUPPRESS the attribute
     # exists only when the flag is given, so both orders mean the same.
     refresh.add_argument(
-        "--path", default=argparse.SUPPRESS, metavar="FILE",
-        help=f"the file to write (default: {skill.DEFAULT_PATH})")
+        "--path", default=argparse.SUPPRESS, metavar="DIR",
+        help=f"the directory to install into: a new or empty one, or an "
+             f"earlier install of this skill, from which files the new "
+             f"version no longer ships are removed "
+             f"(default: {skill.DEFAULT_PATH})")
 
     # No `--path`: `update` always writes the file it is running from
     # (`update._target`).
@@ -490,8 +494,8 @@ def _print_duration(record: dict) -> None:
               f"`@cache` on the\n"
               f"  builders, and do not filter pairs by hand in front of "
               f"`pairwise_interference`.\n"
-              f"  The skill's \"Keeping checks fast enough to run\" has all "
-              f"three.")
+              f"  \"Keeping checks fast enough to run\", in the skill's\n"
+              f"  references/checks.md, has all three.")
 
 
 def _whole_seconds(value):
