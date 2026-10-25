@@ -34,7 +34,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
-  menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
+  forgetPageOnLoad, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
@@ -408,13 +408,26 @@ describe('the schematic\'s page', () => {
     expect(sch.switchPage).not.toHaveBeenCalled()
   })
 
-  it('is the entry\'s once the viewers are ready: a reload, or Back onto a design no longer open', async () => {
+  it('is the entry\'s once the viewers are ready: Back onto a design no longer open, after a reload too', async () => {
+    // The browser restores the entry, and the page mounts the design after the
+    // `popstate`; Back while the files are still coming in waits for them.
     window.history.replaceState({ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '', `${BASE}?d=${SHEET}`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
     const push = vi.spyOn(window.history, 'pushState')
-    // Back while the files are still coming in waits for them
     const { sch } = await opened(DOCS[0], () => window.dispatchEvent(new PopStateEvent('popstate')))
     expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[AMP]]])
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it('is forgotten by the entry the document loaded under, its other fields kept', () => {
+    // main.jsx calls this before drawing: a reload or a link opens on the first sheet.
+    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '', `${BASE}?d=${SHEET}`)
+    forgetPageOnLoad()
+    expect([window.history.state, window.location.search]).toEqual([{ hmr: 'latest' }, `?d=${SHEET}`])
+    // an entry without one is not written at all
+    const replace = vi.spyOn(window.history, 'replaceState')
+    forgetPageOnLoad()
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('is recorded in the entry the browser is on, not pushed, where the reader did not move it there', async () => {

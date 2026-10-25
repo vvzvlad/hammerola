@@ -13,6 +13,7 @@ import DocShell, { DOCUMENTS_KIND } from './DocShell.jsx'
 import HammerolaEntry from './HammerolaEntry.jsx'
 import HammerolaViewer from './HammerolaViewer.jsx'
 import { loadMeta } from './hub.js'
+import { forgetPageOnLoad } from './KicadView.jsx'
 
 // Registers `<hmr-viewport>`: `customElements.define` runs at module scope in
 // viewport/index.js, so this side-effect import is the registration — do not
@@ -31,6 +32,9 @@ import './viewport/index.js'
 // to HammerolaViewer, which has the error screen for it.
 const build = document.getElementById('hmr_root')
 if (build) {
+  // The entry the page loaded under forgets the schematic's sheet before
+  // anything is drawn: a reload or a link opens a design on its first sheet.
+  forgetPageOnLoad()
   const root = createRoot(build)
   loadMeta().then(
     (meta) => root.render(meta && meta.kind === DOCUMENTS_KIND

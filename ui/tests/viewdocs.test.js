@@ -251,8 +251,9 @@ describe('the documents in the list of views', () => {
     // Back returns to the choice before (`pushChoice`). The frame describes the
     // model on screen: a document's entry carries none, nor another view's,
     // whose own frame `onModel` writes once it is drawn. The rest of the
-    // address stays.
-    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    // address stays, and the state of the entry but for a schematic's sheet,
+    // which a choice opens on its first one.
+    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: 'hw__a.kicad_sch', page: 'p' } }, '', '/?files=K')
     const c = component()
     c.host = { current: { getCamera: () => ({
       position: [10, -20, 30.5], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 1.5 }) } }

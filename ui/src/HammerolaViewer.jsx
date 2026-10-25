@@ -124,6 +124,7 @@ import { chromeView } from './chromeview.js';
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
 import DocumentView, { DOC_QUERY, docExt, FILE_TYPE } from './DocumentView.jsx';
+import { PAGE_KEY } from './KicadView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -5024,7 +5025,11 @@ export default class HammerolaViewer extends React.Component {
    * `v=`, `d=` and `c=` are spelled anew by `screenQuery`. Another view gets
    * no `c=`: the frame on screen is the view being left's, and `onModel`
    * writes the new one's once it is drawn. The entry keeps the state object
-   * of the one it follows: the build has not moved.
+   * of the one it follows, the build not having moved, but for the
+   * schematic's sheet (`PAGE_KEY` in KicadView.jsx), which stays with the
+   * entry it was recorded in: a design chosen after another document opens
+   * anew on its first sheet, while its schematic chosen after its own board
+   * keeps the sheet it is on.
    */
   pushChoice(view, doc) {
     const views = (this.state.meta && this.state.meta.views) || [];
@@ -5035,7 +5040,9 @@ export default class HammerolaViewer extends React.Component {
     const named = (!doc && view !== this.state.view ? this.viewQuery(view, views)
       : this.screenQuery(view, views, doc)).slice(1);
     if (named) kept.push(named);
-    history.pushState(history.state, '', location.pathname
+    const state = { ...history.state };
+    delete state[PAGE_KEY];
+    history.pushState(state, '', location.pathname
       + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
   }
 

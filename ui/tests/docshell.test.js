@@ -543,11 +543,14 @@ describe('the shell', () => {
     }
     mount('')
     shell.componentDidMount()
+    // a schematic's sheet stays with its entry: a pick opens one on its first
+    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: 'hw__a.kicad_sch', page: 'p' } }, '')
     const push = vi.spyOn(window.history, 'pushState')
     try {
       shell.pick('report.pdf')
       shell.pick('report.pdf')
       expect(push).toHaveBeenCalledTimes(1)
+      expect(window.history.state).toEqual({ hmr: 'latest' })
       await go(-1)
       expect([window.location.search, shell.state.active]).toEqual(['', 'list.md'])
       await go(1)
