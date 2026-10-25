@@ -97,14 +97,18 @@ export function docExt(doc) {
   const dot = doc.file.lastIndexOf('.');
   const ext = dot > doc.file.lastIndexOf('/') + 1 ? doc.file.slice(dot + 1).toLowerCase() : '';
   // A name may end in the dot (`data.`), which the hub's name rule allows: an
-  // empty hint and an empty heading in the menu are worse than the type.
+  // empty caption on the file's card and an empty heading in the menus are
+  // worse than the type.
   return ext || doc.type;
 }
 
 /** What a document is labelled with beside its name: a KiCad schematic its
  *  sheet count, a board and its 3D model what they are, any other its type and
  *  size. A plain file says its extension in place of the word `file`, which
- *  would be the same word on every such row. */
+ *  would be the same word on every such file. The caption on the card of a
+ *  file the page does not draw; in the list of views only a KiCad member's row
+ *  carries it, the others standing under their type (`docGroup` in
+ *  viewlist.jsx). */
 export function docHint(doc) {
   if (doc.type === 'schematic') {
     const sheets = doc.kicad.schematics.length;

@@ -136,10 +136,11 @@ describe('a KiCad design', () => {
       [SCH]: 'hw__board.kicad_sch', [PCB]: 'hw__board.kicad_pcb', [BOARD3D]: 'hw__board.glb' })
     // a design of one: the other design's board has no sibling
     expect(Object.keys(designMembers(DOCS, DOCS[4]))).toEqual([PCB])
-    // a row per document, the hint saying what each member is
-    expect(documentRows(DOCS, null, () => {}).map((row) => [row.label, row.hint])).toEqual([
-      ['hw/board.kicad_sch', '2 sheets'], ['hw/board.kicad_pcb', 'board'], ['hw/board.glb', '3D'],
-      ['ds/ne555.pdf', 'pdf · 0.0 kB'], ['psu/psu.kicad_pcb', 'board']])
+    // a row per document, every member under one heading and the hint saying
+    // which member it is
+    expect(documentRows(DOCS, null, () => {}).map((row) => [row.group, row.label, row.hint])).toEqual([
+      ['KICAD', 'hw/board.kicad_sch', '2 sheets'], ['KICAD', 'hw/board.kicad_pcb', 'board'],
+      ['KICAD', 'hw/board.glb', '3D'], ['PDF', 'ds/ne555.pdf', '0.0 kB'], ['KICAD', 'psu/psu.kicad_pcb', 'board']])
     expect(docHint({ ...schematic(), kicad: { schematics: ['a.kicad_sch'], project: null } })).toBe('1 sheet')
   })
 
