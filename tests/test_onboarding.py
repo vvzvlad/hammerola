@@ -25,6 +25,7 @@ asks for `onboarding_cache_sandbox`, which clears the caches before and after.
 """
 
 import ast
+import hashlib
 import io
 import json
 import re
@@ -245,6 +246,44 @@ def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
     assert found, ("the skill this hub serves names no version in its "
                    "frontmatter")
     assert int(found.group(1)) == hub.get("/start").json()["skill_version"]
+
+
+# The skill as it stood at its current version: that version and the digest of
+# every file the hub packs into the archive (`skill_members`), the entry's
+# `version:` line left out so that raising it does not move the digest.
+SKILL_PIN = (36, "6b2c57dec903a907cc30b86962a23fd0311db295f8beabaa1e1e954af68c73e1")
+
+
+def _skill_digest() -> str:
+    digest = hashlib.sha256()
+    for name, path in onboarding.skill_members():
+        data = path.read_bytes()
+        if name == onboarding.SKILL_ENTRY:
+            data = re.sub(rb"^version:[ \t]*\d+[ \t]*\n", b"", data, count=1,
+                          flags=re.MULTILINE)
+        digest.update(name.encode() + b"\0" + data + b"\0")
+    return digest.hexdigest()
+
+
+def test_any_change_to_any_file_of_the_skill_raises_its_version():
+    """A change to the skill that keeps its version never reaches a laptop
+    that already has that version.
+
+    `hammerola skill` compares versions only, so a copy installed at the same
+    number reads as current however the files moved under it. Tests run before
+    the image is built in both workflows, so this stops the deploy too.
+    """
+    pinned_version, pinned_digest = SKILL_PIN
+    version, digest = onboarding.skill_version(), _skill_digest()
+    if version == pinned_version:
+        assert digest == pinned_digest, (
+            f"skill/ changed and its version did not: raise `version:` in "
+            f"skill/SKILL.md to {version + 1} and set SKILL_PIN in this file to "
+            f"({version + 1}, {digest!r})")
+    else:
+        assert (version, digest) == SKILL_PIN, (
+            f"the skill is at version {version}: set SKILL_PIN in this file to "
+            f"({version}, {digest!r})")
 
 
 def test_a_skill_with_no_version_is_refused_rather_than_read_as_the_first(
