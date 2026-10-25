@@ -16,6 +16,7 @@
 import {
   EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
+import { settleCoplanar } from "./coplanar.js";
 import { safeHatch, setCutHatch } from "./hatch.js";
 import { installHoldKey } from "./holdkey.js";
 import { installIdleClock, captureLive, restoreLive, cameraState, isBusy, snapshot }
@@ -663,6 +664,10 @@ export class HmrViewport extends HTMLElement {
       // A scene rendered with `cutHatch` off comes up patched but hatching
       // nothing, so the toggle stays a uniform write.
       safeHatch(g, this.state.cutHatch);
+      // Parts flush in one plane are given a fixed winner here: `render()` has
+      // just built fresh materials, and the offset lives on them. Guarded
+      // inside, like the hatch.
+      settleCoplanar(this.viewer.nestedGroup, scene);
       this.view = named;
       // What is on screen, remembered beside the view for `restage()`. Set only
       // after the render succeeded: a refused document would otherwise be handed
