@@ -11,7 +11,7 @@
 // for what was drawn (`eltree.js`). The two hub fetches `load()` makes are
 // mocked, as ui/tests/tabs.test.js does.
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const { PAGE } = vi.hoisted(() => ({
   PAGE: { pid: 'proj1', slot: 'latest', base: '/project/proj1/latest/' },
@@ -27,10 +27,10 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import DocumentView from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
-import { VIEWPORT_TAG } from '../src/events.js'
+import { STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
-import { DOC_LIST, VIEW_LIST, viewMenuStyle } from '../src/viewlist.jsx'
-import { makeComponent } from './component.js'
+import { viewMenuStyle } from '../src/viewlist.jsx'
+import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
 const DOCS = [
@@ -198,25 +198,19 @@ describe('the documents in the list of views', () => {
     }
   })
 
-  it('stay in sight under twelve views: those scroll, the documents do not', () => {
+  it('share one scroll with twelve views: the card is one list, not two', () => {
     const twelve = Array.from({ length: 12 }, (_, i) => ({ ...VIEWS[0], id: `v${i}`, name: `view ${i}` }))
     const c = component({ meta: { ...meta(), views: twelve }, view: 'v0', viewsOpen: true })
-    const v = c.computed()
     const tree = c.render()
     const [menu] = drawnAs(tree, viewMenuStyle(true))
-    const [views] = drawnAs(tree, VIEW_LIST)
-    const [docs] = drawnAs(tree, DOC_LIST)
-    // The card holds the scroll of the views and the documents, in that order,
-    // and scrolls none of them itself.
-    expect(menu.props.children.filter(Boolean)).toEqual([views, docs])
-    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'flex', flexDirection: 'column', maxHeight: '308px' })
-    expect(css(viewMenuStyle(true)).overflow).toBeUndefined()
-    expect(css(VIEW_LIST)).toMatchObject({ overflow: 'auto', minHeight: '0', flex: '1 1 auto' })
-    expect(texts(views)).toContain('view 11')
-    expect(texts(views)).not.toContain('docs/cut-list.md')
-    // The documents keep their height and scroll on their own past four rows.
-    expect(css(DOC_LIST)).toMatchObject({ flex: 'none', maxHeight: '132px', overflow: 'auto' })
-    expect(texts(docs)).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
+    // Every row is a child of the card itself, the views then the documents;
+    // there is no inner box that scrolls apart from the rest.
+    const rows = menu.props.children.flat().filter(Boolean)
+    expect(rows).toHaveLength(14)
+    expect(texts(rows.at(11))).toContain('view 11')
+    expect(texts(rows.slice(12))).toEqual(['docs/cut-list.md', 'markdown · 7.8 kB', 'ref/terr-raspil.svg', 'svg · 4.2 kB'])
+    expect(css(viewMenuStyle(true))).toMatchObject({ display: 'block', maxHeight: '308px', overflow: 'auto' })
+    expect(collect(rows, (el) => el.props.style?.overflow)).toEqual([])
   })
 
   it('cover the model to its bottom edge, under the toolbar, and stop the text above the toolbar', () => {
@@ -377,5 +371,62 @@ describe('?d= on arrival', () => {
     const c = await arrive('?v=open')
     expect(c.state.doc).toBeNull()
     expect(c.computed().docOpen).toBeNull()
+  })
+})
+
+describe('the model under a document opened on arrival', () => {
+  // What the viewport is told to show, one entry per `hmr:state`: the page
+  // with the real `setState` contract, so a `set()` reaches `sync()`.
+  const arriving = async (search = '?v=open&d=docs__cut-list.md', documents = DOCS, setState = replaceState) => {
+    const seen = []
+    const listen = (event) => seen.push(event.detail.view)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+    window.history.replaceState(null, '', `/${search}`)
+    const c = makeComponent(HammerolaViewer, {
+      state: { meta: meta(documents), view: null, rail: null, menu: { id: null, x: 0, y: 0 } },
+      setState, schedulePoll: vi.fn(),
+    })
+    loadMeta.mockResolvedValue(meta(documents))
+    loadBuilds.mockResolvedValue(null)
+    await c.load()
+    return { c, seen }
+  }
+
+  it('waits for the document to have its file, and once given is never taken back', async () => {
+    const { c, seen } = await arriving()
+    expect(seen).toEqual([null])
+    shownDocs(c)[0].props.onReady()
+    expect(seen).toEqual([null, 'open'])
+    // back to the model on another view: one `hmr:state`, that view's
+    c.computed().viewTabs[0].onClick()
+    expect(seen).toEqual([null, 'open', 'closed'])
+    // another document over it, and that one fetching
+    c.computed().docRows[1].onClick()
+    c.sync()
+    shownDocs(c)[0].props.onReady()
+    expect(seen).toEqual([null, 'open', 'closed', 'closed'])
+  })
+
+  it('hands the view over once when the document has its file before the page\'s first word to the viewport', async () => {
+    // React mounts the document, whose `componentDidMount` tells the page, and
+    // only then runs the callback of the `setState` that put it there.
+    const callbacks = []
+    const later = (c) => vi.fn((patch, done) => {
+      c.state = { ...c.state, ...patch }
+      if (done) callbacks.push(done)
+    })
+    const plain = { id: 'cut__glass.dxf', name: 'cut/glass.dxf', type: 'file', file: 'cut/glass.dxf', bytes: 9 }
+    const { c, seen } = await arriving('?v=open&d=cut__glass.dxf', [...DOCS, plain], later)
+    shownDocs(c)[0].props.onReady()
+    callbacks.forEach((done) => done())
+    expect(seen).toEqual(['open'])
+  })
+
+  it('comes in when the document is closed before it has its file', async () => {
+    const { c, seen } = await arriving()
+    // the view on screen, chosen again: nothing to switch, the document goes
+    c.computed().viewTabs[1].onClick()
+    expect(seen).toEqual([null, 'open'])
   })
 })

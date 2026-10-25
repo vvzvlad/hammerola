@@ -41,9 +41,12 @@ Entries with the same path minus the extension are ONE design: `hw/main.kicad_sc
 `hw/main.kicad_pcb` and `hw/main.glb` above. Picking a part in one of them (a click)
 picks the same part, by its reference, in the others (a click on nothing or Escape
 clears it everywhere), and a right click on a part, or on a net in the schematic
-and the board, opens a menu `Show in <caption>` with one item for every other
-listed entry of the design; choosing one opens it with the part or net selected
-there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
+and the board (a label, a power symbol, a track, a pad), opens a menu with an
+item for every other listed entry of the design, the part's
+(`Show C507 in <caption>`) apart from the net's (`Show net +12V in <caption>`),
+and for a net of global labels or power symbols one per other schematic sheet it
+is on, every sheet from the board (`… · <sheet>`); choosing one opens it with the
+part or net selected there. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
 `.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's right-click menu then has
 `Open datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape

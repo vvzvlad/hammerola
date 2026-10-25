@@ -38,7 +38,10 @@
 // Props:
 //   url      the zip, fetched on mount; also what the link downloads
 //   size     its size, said beside the link
+//   bytes    its size in bytes, what the bar under `Loading…` fills to
+//            (loadbar.jsx)
 //   onTools  told `{ fit, frame }` once the layers are drawn (DocumentView.jsx)
+//   onReady  told once the zip has come in or failed to (DocumentView.jsx)
 
 import React from 'react';
 
@@ -47,6 +50,7 @@ import {
   fitView, HOLE_RING, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, swatch,
   toProcessor, turned, wheelMove, zoomAt,
 } from './gerber.js';
+import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { CHEVRON } from './PcbPanel.jsx';
 import {
   ELLIPSIS, eyeDot, eyeOuter, FILL, LAYER_LIST, LAYER_NAME, LAYER_PANEL, LAYER_PANEL_BODY,
@@ -297,7 +301,11 @@ const shownFrom = (layers, side) => Object.fromEntries(layers.map((layer) => [la
 export default class GerberView extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { layers: null, failed: {}, shown: {}, side: 'top', open: true, error: '' };
+    // `received`: the bytes of the zip in so far; `got`: all of them, the
+    // layers being read.
+    this.state = {
+      layers: null, failed: {}, shown: {}, side: 'top', open: true, error: '', received: 0, got: false,
+    };
     this.host = null;
     this.stage = null;
     this.setHost = (element) => {
@@ -310,10 +318,20 @@ export default class GerberView extends React.Component {
 
   componentDidMount() {
     const { url } = this.props;
-    const zip = fetch(url).then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.arrayBuffer();
-    }).then(readZip);
+    const count = meter((received) => {
+      if (!this._gone) this.setState({ received });
+    });
+    // The full bar is painted before the zip is read.
+    const zip = fetchBody(url, count).then((buffer) => {
+      if (!this._gone) {
+        this.setState({ got: true });
+        this.props.onReady();
+      }
+      return painted().then(() => readZip(buffer));
+    }, (error) => {
+      if (!this._gone) this.props.onReady();
+      throw error;
+    });
     Promise.all([loadGerberRenderer(), zip])
       .then(([lib, files]) => {
         if (this._gone || !this.host) return;
@@ -354,9 +372,9 @@ export default class GerberView extends React.Component {
   }
 
   render() {
-    const { url, size } = this.props;
-    const { layers, failed, shown, side, open, error } = this.state;
-    const note = error || (!layers && 'Loading…');
+    const { url, size, bytes } = this.props;
+    const { layers, failed, shown, side, open, error, received, got } = this.state;
+    const note = error || (!layers && loadBar(received, bytes, got));
     const name = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
     const link = (
       <div style={css(layers ? LINK_ROW : LINK_ALONE)}>

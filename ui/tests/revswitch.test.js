@@ -235,6 +235,32 @@ describe('picking a revision', () => {
     expect(seen[0].view).toBe('assembled')
   })
 
+  it('holds the new base back with the view while the document the page opened on is fetching', async () => {
+    // A page opened on a document (`?d=`) gives the viewport no view until the
+    // document has its file, and no base or key either: the element takes a
+    // change of those for a new build and loads its first view, hold or not.
+    const doc = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+    const c = component({
+      view: 'printables', doc: doc.id,
+      meta: { project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z', parts: PARTS, views: VIEWS, documents: [doc] },
+    })
+    delete c.sync
+    loadMeta.mockResolvedValue({ ...build(), documents: [doc] })
+    const seen = []
+    const listen = (event) => seen.push(event.detail)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+
+    c.sync()
+    await c.switchBuild('proj1', B)
+    expect(seen.map((one) => [one.view, 'base' in one, 'buildKey' in one]))
+      .toEqual([[null, false, false], [null, false, false]])
+
+    c.docReady()
+    expect(seen).toHaveLength(3)
+    expect(seen[2]).toMatchObject({ view: 'printables', base: path(B), buildKey: B })
+  })
+
   it('keeps ?v= when the target declares that view', async () => {
     // `load()` reads `?v=` on a fresh open, so the pushed URL has to carry it —
     // otherwise the address in the bar, copied and sent, shows a different view

@@ -391,7 +391,8 @@
   `chromeview.js` builds the model page's values and `DocShell.docBar` its own
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
-  React elements, relative links resolved from the document's directory, short
+  React elements, relative links resolved from the document's directory, a link
+  to another listed document opening it on the page through `docLinks`, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
@@ -410,10 +411,14 @@
   element its own (`designSources`), and it is where the views are LINKED: a
   single click selecting a part in one view selects it in the others
   (`ecad-viewer:selection`), a click on nothing or Escape clears it in all of
-  them, and a right click opens the menu `Show in …` (`menuFor` says which views
-  take a part or a net) whose choice asks the page to open the sibling (`onOpen`)
-  and, once it is on screen, calls `requestCrossProbe` on its element with the
-  designator or the net. The viewer cannot be asked what is under a point, so a
+  them, and a right click opens a menu with the part's items apart from its
+  net's (`menuFor` says which views take which; a `#PWR` power symbol is its
+  net, and a net of global labels or power symbols has an item per sheet it is
+  on, the clicked one left out, read by `kicadnets.js`) whose choice asks the
+  page to open the sibling (`onOpen`) and, once it is on screen, calls
+  `requestCrossProbe` on its element with the designator, the net, or the net's
+  sheet and occurrence; another sheet of the schematic on screen is asked for
+  straight away. The viewer cannot be asked what is under a point, so a
   right click replays its own left click there and builds the menu from the
   selection it reports. The viewer is `static/_v/ecad-viewer.js`,
   imported by URL on first use (`loadEcadViewer`); the wheel over it and the
@@ -438,6 +443,12 @@
   the top left (Top/Bottom, an eye per layer) and a link that downloads the zip.
   The model page's Downloads menu lists the same zip as GERBERS
   (`downloadsview.js`)
+- `ui/src/loadbar.jsx` — what the document views (the 3D board, a KiCad
+  design's 2D views, the Gerbers, markdown) show while their file comes in:
+  `fetchBody` reads the answer chunk by chunk and counts each one on a `meter`,
+  which reaches the screen at most once per frame, and `loadBar` is the label
+  (`Loading… 2.1 / 40.7 MB`, then `Preparing…`) and the bar, filled against the
+  document's `bytes` in meta.json
 - `ui/src/PcbPanel.jsx` — the board view's own panel over the top left of its
   canvas, where the model's parts tree stands (the viewer's panels are hidden by
   `hide-chrome`): layer presets, a row per layer with an eye and an
@@ -448,6 +459,10 @@
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
   matched to a listed document (`KicadView` offers it as an item of the part's menu and shows it in a window over the view)
+- `ui/src/kicadnets.js` — where the sheets of a schematic name a net: each
+  sheet's global, local and hierarchical labels and power symbols (`#PWR`, the
+  net their `Value`), by sheet and by uuid (`KicadView` gives a net's menu an
+  item per sheet that global labels or power symbols of its name are on)
 - `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
   entries the viewer draws a placed symbol's pins from, added from the sheet's
   `lib_symbols` to every symbol that has none (konnect writes none); text it

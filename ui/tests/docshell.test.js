@@ -153,13 +153,58 @@ describe('one document, as both pages draw it', () => {
     expect(ofType(tree, 'a')[0].props.href).toBe(`${BASE}docs/notes.md`)
   })
 
+  describe('a link to another document', () => {
+    afterEach(() => window.history.replaceState(null, '', '/'))
+
+    it('opens it on the page, not as the raw file', () => {
+      window.history.replaceState(null, '', `${BASE}?v=glass&files=k1`)
+      const vendors = doc('docs/glass-vendors.md', 'markdown')
+      const onOpen = vi.fn()
+      const tree = documentBody(cutList, BASE,
+        '[v](glass-vendors.md#top) [p](../report.pdf) [n](notes.md) [w](https://x.org/) [x](https://)', '',
+        [cutList, vendors, META.documents[2]], onOpen)
+      const [v, p, n, w, x] = ofType(tree, 'a')
+      // A half-typed address is drawn as written rather than taking the page down.
+      expect(x.props.href).toBe('https://')
+      // The page's own address with the other parameters kept, so a new tab or a
+      // copied link lands on the document too.
+      expect(v.props.href).toBe(`${BASE}?v=glass&files=k1&d=docs__glass-vendors.md`)
+      expect(p.props.href).toBe(`${BASE}?v=glass&files=k1&d=report.pdf`)
+      // A file the build does not list as a document stays the file.
+      expect(n.props.href).toBe(`${BASE}docs/notes.md`)
+      expect(n.props.onClick).toBeUndefined()
+      expect(w.props.target).toBe('_blank')
+      const click = (extra) => {
+        const event = { button: 0, preventDefault: vi.fn(), ...extra }
+        v.props.onClick(event)
+        return event
+      }
+      expect(click().preventDefault).toHaveBeenCalled()
+      expect(onOpen.mock.calls).toEqual([['docs__glass-vendors.md']])
+      // A modified or middle click is the browser's: a new tab.
+      for (const extra of [{ metaKey: true }, { ctrlKey: true }, { button: 1 }]) {
+        expect(click(extra).preventDefault).not.toHaveBeenCalled()
+      }
+      expect(onOpen).toHaveBeenCalledTimes(1)
+      // Without a door to open one, a link is a link to the file.
+      expect(ofType(documentBody(cutList, BASE, '[v](glass-vendors.md)', '', [vendors]), 'a')[0].props.href)
+        .toBe(`${BASE}docs/glass-vendors.md`)
+    })
+  })
+
+  it('lets a long bare address break, so it cannot push the page wider', () => {
+    const [a] = ofType(markdownElements('| a |\n|---|\n| <https://www.avito.ru/moskva/rezka_stekla_i_zerkal_1979990456> |', BASE), 'a')
+    expect(a.props.style.overflowWrap).toBe('anywhere')
+  })
+
   it('carries the rule its short cells are styled by', () => {
     const styles = ofType(documentBody(cutList, BASE, '| a |\n|---|\n| 1 |', ''), 'style')
     expect(styles.map(text)).toEqual([`.${NOWRAP_CLASS}{white-space:nowrap}`])
   })
 
   it('draws markdown itself, a picture as an image and the rest in a frame', () => {
-    expect(text(documentBody(cutList, BASE, null, ''))).toBe('Loading…')
+    expect(text(documentBody(cutList, BASE, null, '', [], undefined, undefined, undefined, 3100)))
+      .toBe('Loading… 3.1 / 7.8 kB')
     expect(text(documentBody(cutList, BASE, null, 'docs/cut-list.md did not load: HTTP 404')))
       .toBe('docs/cut-list.md did not load: HTTP 404')
     expect(ofType(documentBody(META.documents[1], BASE, null, ''), 'img')[0].props.src)
@@ -207,12 +252,12 @@ describe('one document, as both pages draw it', () => {
 
   describe('the holder', () => {
     beforeEach(() => {
-      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '# Fetched' })))
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('# Fetched')))
     })
     afterEach(() => vi.unstubAllGlobals())
 
     const mounted = (one) => {
-      const view = new DocumentView({ doc: one, base: BASE, onTools: vi.fn() })
+      const view = new DocumentView({ doc: one, base: BASE, onTools: vi.fn(), onReady: vi.fn() })
       view.setState = (patch) => Object.assign(view.state, patch)
       view.componentDidMount()
       return view
@@ -228,6 +273,21 @@ describe('one document, as both pages draw it', () => {
     it('fetches nothing for a document the browser draws itself', () => {
       mounted(META.documents[2])
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('tells the page when it has its file: a text in or failed, a file it does not draw at once, a picture or a frame loaded', async () => {
+      const article = mounted(cutList)
+      expect(article.props.onReady).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(article.props.onReady).toHaveBeenCalledTimes(1))
+      fetch.mockResolvedValueOnce(new Response(null, { status: 404 }))
+      const missing = mounted(cutList)
+      await vi.waitFor(() => expect(missing.state.error).toBe('docs/cut-list.md did not load: HTTP 404'))
+      expect(missing.props.onReady).toHaveBeenCalledTimes(1)
+      expect(mounted(cutPlan).props.onReady).toHaveBeenCalledTimes(1)
+      const onReady = () => {}
+      const [picture] = ofType(documentBody(META.documents[1], BASE, null, '', [], undefined, undefined, onReady), 'img')
+      const [frame] = ofType(documentBody(META.documents[2], BASE, null, '', [], undefined, undefined, onReady), 'iframe')
+      expect([picture.props.onLoad, picture.props.onError, frame.props.onLoad]).toEqual([onReady, onReady, onReady])
     })
 
     it('drops an answer that arrives after it was taken off the page', async () => {

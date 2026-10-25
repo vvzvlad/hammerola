@@ -766,11 +766,18 @@ def export_views(prepared, out_dir):
     So the grouping is applied afterwards, on the document, where all three
     survive.
 
-    Two things are written into the document that the tessellator does not put
-    there:
+    Three things are written into the document that the tessellator does not
+    put there:
 
       * `key` on every leaf, the catalogue key the part came from, so identity
         is stated rather than inferred from the leaf's name;
+      * `at` on every leaf, the rigid motion this view applied to the
+        catalogue's own solid, in the leaf's `loc` format. The two differ when
+        that solid carries a location of its own: the tessellator puts the
+        solid's whole location, `at` composed with its own, into `loc`, while a
+        `<key>.step` has the solid's own location baked into its geometry
+        (`printables.export_printables`) -- so geometry measured from the STEP
+        is placed by `at` alone (`comparescene`);
       * the groups, as `{"name", "id", "loc", "parts"}` nodes, which the viewer
         (`isShapeTree`) and the hub (`render.check_view_file`) both accept.
 
@@ -833,7 +840,7 @@ def export_views(prepared, out_dir):
 
 
 def shaped_document(doc, view):
-    """The tessellated document with `key` stamped on and the groups put back.
+    """The tessellated document with `key` and `at` stamped on, groups put back.
 
     Separated from the export so the whole rewrite can be tested without a CAD
     kernel: what goes in is a JSON document and what comes out is one.
@@ -865,10 +872,11 @@ def shaped_document(doc, view):
         if node["mesh"] is None:
             leaf = next(supplied)
             leaf["key"] = node["key"]
-            leaves.append(leaf)
-            continue
-        repeats[node["key"]] = repeats.get(node["key"], 0) + 1
-        leaves.append(_mesh_leaf(node, repeats[node["key"]]))
+        else:
+            repeats[node["key"]] = repeats.get(node["key"], 0) + 1
+            leaf = _mesh_leaf(node, repeats[node["key"]])
+        leaf["at"] = _motion_loc(node["at"])
+        leaves.append(leaf)
 
     def rebuild(entries, parent_id):
         built = []
@@ -919,6 +927,29 @@ def shaped_document(doc, view):
     return doc
 
 
+def _motion_loc(at):
+    """A reference's `at` as `[[x, y, z], [qx, qy, qz, qw]]`, identity if None.
+
+    The tessellator writes every leaf's `loc` with
+    `ocp_tessellate.ocp_utils.loc_to_tq`, and this makes the same calls on the
+    same `gp_Trsf`, so the two fields share one convention. Made here rather
+    than imported: that module imports the kernel at load, and
+    `shaped_document` runs without one.
+    """
+    if at is None:
+        return [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    if not hasattr(at.wrapped, "Transformation"):
+        # A cq.Vector, whose `wrapped` is a gp_Vec: `Shape.moved` takes one as
+        # a pure shift (`moved(VectorLike)` wraps it in a Location), so the
+        # motion is that shift and no turn.
+        shift = at.wrapped
+        return [[shift.X(), shift.Y(), shift.Z()], [0.0, 0.0, 0.0, 1.0]]
+    trsf = at.wrapped.Transformation()
+    shift, turn = trsf.TranslationPart(), trsf.GetRotation()
+    return [[shift.X(), shift.Y(), shift.Z()],
+            [turn.X(), turn.Y(), turn.Z(), turn.W()]]
+
+
 def _mesh_leaf(node, occurrence):
     """One leaf written from a trimesh, field for field as a tessellated one.
 
@@ -940,7 +971,8 @@ def _mesh_leaf(node, occurrence):
     The identity `loc` is written out in full, like the one on a group above,
     because the viewer reads `loc` off every node it renders -- and it IS the
     identity because the mesh is already where the model put it:
-    `_read_reference` refuses `at` on one.
+    `_read_reference` refuses `at` on one. For the same reason the `at`
+    `shaped_document` stamps on this leaf is the identity too.
     """
     import numpy as np
 

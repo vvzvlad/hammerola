@@ -122,32 +122,69 @@ class Location:
     `wrapped.Transformation().Value(row, col)` by the print gate, and the shift,
     applied by `Shape.moved`. The real class carries the shift in the same
     matrix; keeping it beside is what lets these fakes stay three lines long.
+    `shaped_document` reads both back off the transformation, as the
+    tessellator's `loc_to_tq` does.
     """
 
     def __init__(self, dx=0.0, dy=0.0, dz=0.0, rows=IDENTITY):
         self.dx, self.dy, self.dz = dx, dy, dz
         self.rows = rows
-        self.wrapped = _Wrapped(rows)
+        self.wrapped = _Wrapped(rows, (dx, dy, dz))
 
     def __repr__(self):
         return f"Location({self.dx}, {self.dy}, {self.dz})"
 
 
+class Vector:
+    """cq.Vector given as an `at`: `Shape.moved` takes one as a pure shift, and
+    its `wrapped` is a gp_Vec -- three components and no `Transformation()`."""
+
+    def __init__(self, dx=0.0, dy=0.0, dz=0.0):
+        self.dx, self.dy, self.dz = dx, dy, dz
+        self.wrapped = _Components(dx, dy, dz)
+
+
 class _Wrapped:
-    def __init__(self, rows):
+    def __init__(self, rows, shift):
         self._rows = rows
+        self._shift = shift
 
     def Transformation(self):
-        return _Trsf(self._rows)
+        return _Trsf(self._rows, self._shift)
 
 
 class _Trsf:
-    def __init__(self, rows):
+    def __init__(self, rows, shift=(0.0, 0.0, 0.0)):
         self._rows = rows
+        self._shift = shift
 
     def Value(self, row, col):
         # OCC indexes from 1, and the gate reads it that way.
         return self._rows[row - 1][col - 1]
+
+    def TranslationPart(self):
+        return _Components(*self._shift)
+
+    def GetRotation(self):
+        """The turn as a unit quaternion -- gp_Quaternion's own, from the matrix.
+
+        Computed from the rows, like `IsNegative`, by the branch gp_Quaternion
+        takes for a positive trace -- a turn of less than 120 degrees. The other
+        branches can answer with the opposite sign, so a matrix outside this one
+        is refused rather than answered differently from OCC. So is a
+        reflection, which OCC answers from the matrix without its sign.
+        """
+        if self.IsNegative():
+            raise NotImplementedError(
+                "the fake has no quaternion for a reflection")
+        (a, b, c), (d, e, f), (g, h, i) = self._rows
+        if a + e + i <= 0.0:
+            raise NotImplementedError(
+                "the fake turns a matrix into a quaternion for a positive "
+                "trace only")
+        w = math.sqrt(1.0 + a + e + i) / 2.0
+        return _Components(
+            (h - f) / (4.0 * w), (c - g) / (4.0 * w), (d - b) / (4.0 * w), w)
 
     def IsNegative(self):
         """Does the vectorial part have a negative determinant? -- gp_Trsf's own.
@@ -162,6 +199,25 @@ class _Trsf:
         (a, b, c), (d, e, f), (g, h, i) = self._rows
         det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
         return det < 0.0
+
+
+class _Components:
+    """A gp_XYZ or a gp_Quaternion, as far as anything reads one: by component."""
+
+    def __init__(self, *values):
+        self._values = values
+
+    def X(self):
+        return self._values[0]
+
+    def Y(self):
+        return self._values[1]
+
+    def Z(self):
+        return self._values[2]
+
+    def W(self):
+        return self._values[3]
 
 
 def turned(degrees, axis="z"):

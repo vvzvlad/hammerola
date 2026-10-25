@@ -29,7 +29,7 @@ import { children, head, parseSexpr, valueOf } from './kicadpins.js';
 const EMPTY = new Set(['', '~']);
 
 /** The value of `node`'s `(property "<name>" "<value>" …)`, trimmed. */
-function property(node, name) {
+export function property(node, name) {
   const found = children(node, 'property').find((one) => valueOf(one) === name);
   return found && found.list[2] && typeof found.list[2].atom === 'string' ? found.list[2].atom.trim() : '';
 }
