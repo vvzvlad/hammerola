@@ -7,8 +7,8 @@
 // page would.
 //
 // It says how the copy went itself, for `COPY_SAID_MS`, and needs nothing from
-// the page around it: the bar also stands on the page of a build with no model
-// (DocShell.jsx), which has no toast.
+// the page around it: the strip also stands on the page of a build with no
+// model (DocShell.jsx), which has no toast.
 //
 // An icon with the words in its title, which turns into a tick or a cross for
 // "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet button like Fit

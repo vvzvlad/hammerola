@@ -178,12 +178,13 @@ describe('the documents in the list of views', () => {
       const drawn = file.render()
       const [a] = links(drawn)
       const [copy] = collect(drawn, (el) => (el.type === CopyLink ? el : undefined))
-      return [texts(a), a.props.href, a.props.title, copy.props.href, !!copy.props.words]
+      // `download`: a PDF, HTML or SVG at the same address would open in the tab instead
+      return [texts(a), a.props.href, a.props.title, a.props.download, copy.props.href, !!copy.props.words]
     }
     const WORDS = 180 // the row of the two buttons with their words
-    expect(fit(1440, 700, WORDS)).toEqual([['Download'], href, 'Download', href, true])
+    expect(fit(1440, 700, WORDS)).toEqual([['Download'], href, 'Download', true, href, true])
     // 150 px each side of the bar: short of the words and the side's padding
-    expect(fit(1000, 700, WORDS)).toEqual([[], href, 'Download', href, false])
+    expect(fit(1000, 700, WORDS)).toEqual([[], href, 'Download', true, href, false])
     // the icons alone would fit in those 150 px, and the words still do not
     expect(fit(1000, 700, 60)[0]).toEqual([])
     // the window widens: the words come back, by the width they were measured at

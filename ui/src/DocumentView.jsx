@@ -27,8 +27,8 @@
 //
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory. None of these
-// draws a link that downloads its file: the page's bar does, for whichever is
-// open (`docHref` in `toolBar`, viewlist.jsx).
+// draws a link that downloads its file: the strip at the bottom of the page
+// does, for whichever is open (`DocFile`, viewlist.jsx).
 //
 // WHAT THE PAGE'S BAR CAN DO WITH IT (`onTools`). The bar at the bottom of both
 // pages (`toolBar` in viewlist.jsx) has Fit and Frame; a view that can bring
