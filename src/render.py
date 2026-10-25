@@ -66,9 +66,9 @@ PART_KINDS = (KIND_PRINTABLE, "hardware", "mock")
 # its shell by that word alone (`DOCUMENTS_KIND` in `ui/src/DocShell.jsx`).
 DOCUMENTS_KIND = "documents"
 
-# What a document is, by its extension: which files may be listed at all, and
-# how the page shows each. `app.OPEN_SUFFIXES` and `app.BUILD_CONTENT_TYPES`
-# cover every key (tests/test_documents.py).
+# What the page DRAWS, by extension. Not what may be listed: a document of any
+# other extension is published as `FILE_TYPE` below. `app.OPEN_SUFFIXES` and
+# `app.BUILD_CONTENT_TYPES` cover every key (tests/test_documents.py).
 DOCUMENT_TYPES = {
     ".md": "markdown",
     ".pdf": "pdf",
@@ -91,6 +91,20 @@ DOCUMENT_TYPES = {
 }
 SCHEMATIC_TYPE = DOCUMENT_TYPES[".kicad_sch"]
 BOARD_TYPE = DOCUMENT_TYPES[".kicad_pcb"]
+
+# A document the page does not draw: a file published to be taken rather than
+# read — the DXF a glass shop cuts from, a CSV of measurements, a supplier's
+# STEP the model does not build. The page gives it a row that downloads the
+# file instead of showing it, and the hub serves it to a plain link like every
+# other document (`app.OPEN_SUFFIXES`).
+#
+# DELIBERATELY NOT A KEY OF `DOCUMENT_TYPES`: that table answers "which
+# extension does the page draw, and how", and three places ask it that way —
+# `src/docsbuild.py` picks a schematic and a board out of a list by it, and
+# `app.OPEN_SUFFIXES` and `app.BUILD_CONTENT_TYPES` are built from its keys. A
+# plain file has no extension of its own; it is every extension the table does
+# not name, so there is no row to put it in.
+FILE_TYPE = "file"
 
 # A KiCad schematic or board is a document of its own and arrives as the files
 # the page's viewer reads raw (`src/docsbuild.py` finds a schematic's sheets and
@@ -329,6 +343,21 @@ def _view_fields(pairs):
 def document_type(name: str) -> str | None:
     """The type a document called `name` is shown as, or None if it is none."""
     return DOCUMENT_TYPES.get(Path(name).suffix.lower())
+
+
+def published_type(name: str) -> str:
+    """The type a document called `name` is published under: what the page
+    draws it as, else a plain file.
+
+    A SECOND FUNCTION rather than a changed `document_type`, because the two
+    answer different questions and both are asked. "Does the page draw this
+    extension" has the answer "no" — `src/docsbuild.py` reads it that way to
+    find the schematics and the boards in a list, and would find every DXF a
+    schematic if "no" became a type. "What does this document's entry say it
+    is" has no "no": every published document carries a type, and for a file
+    the page cannot draw that type is `FILE_TYPE`.
+    """
+    return document_type(name) or FILE_TYPE
 
 
 # What stands for `/` in a document's id, which the page carries as `?d=<id>`.
@@ -958,13 +987,14 @@ def _documents(raw: dict, staging: Path, files: dict) -> list:
 
     Each entry is rebuilt: `file` is held to the rule every pointer is
     (`_check_declared_file`, as a path: a document keeps its place in the
-    tree), `type` has to be what the file's extension makes it, `id` is
+    tree), `type` has to be one the file's extension gives it, `id` is
     derived from the path (`document_id`) rather than read, and `bytes` is
     measured off the file rather than read from the upload. `name` falls back
     to the path. `hidden` is carried only when true: the page lists no row for
     such a document and still opens it by its id. A KiCad schematic or board
     also carries `kicad`, the files published with it (`_kicad`), and its
-    `bytes` are the sum of all of them.
+    `bytes` are the sum of all of them; a `FILE_TYPE` document carries no
+    `kicad`, since what the page does not draw it does not draw from a design.
     """
     documents = raw.get("documents")
     if not isinstance(documents, list) or not documents:
@@ -979,15 +1009,19 @@ def _documents(raw: dict, staging: Path, files: dict) -> list:
             raise ValueError("every entry of `documents` must be an object")
         name = entry.get("file")
         _check_declared_file(name, files, f"document {name!r}", path=True)
-        shown_as = document_type(name)
-        if shown_as is None:
+        # Two types are honest for one extension and no more: the one the page
+        # draws it as, and `FILE_TYPE`, which any document may be published as
+        # (`"download": true` in project.json, resolved by `docsbuild._copy`).
+        # What may not happen is a document claiming a drawing its extension
+        # does not give — a `.dxf` that says `markdown` would reach the
+        # markdown renderer, and a `.txt` that says `gerbers` the zip reader.
+        allowed = tuple(dict.fromkeys((published_type(name), FILE_TYPE)))
+        shown_as = entry.get("type")
+        if shown_as not in allowed:
             raise ValueError(
-                f"document {name!r} is none of the types a build publishes "
-                f"to be read: {', '.join(sorted(DOCUMENT_TYPES))}")
-        if entry.get("type") != shown_as:
-            raise ValueError(
-                f"document {name!r} says it is {entry.get('type')!r}, and its "
-                f"extension makes it {shown_as!r}")
+                f"document {name!r} says it is {shown_as!r}, and its "
+                f"extension makes it "
+                f"{' or '.join(repr(one) for one in allowed)}")
         doc_id = document_id(name)
         if doc_id in seen:
             raise ValueError(
