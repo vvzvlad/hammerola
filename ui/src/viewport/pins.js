@@ -9,17 +9,22 @@
 // the shared half. What crosses the boundary is the DATA (`state.pins`) and the
 // PRESS (`hmr:pin`).
 //
-// Many arrows in the ONE group `scene3d.js` places. That module scales the group
-// by world units per pixel, so the geometry is measured in pixels; each arrow
-// stands at a world point of its own, so `place` divides the scale out of its
-// position.
+// Many arrows in the ONE group `scene3d.js` places, asked for with
+// `pixels: false`: the group is left unscaled, so `place` stands each arrow at
+// its world point and scales it to a length taken from the model's own size.
+// Measured in the model rather than on the screen, and depth-tested, so an
+// arrow grows as the reader zooms in and is hidden by the geometry in front of
+// it, like the part it points into.
 
+import { cameraBasis, canvasXY, ndcAt } from "./camera.js";
 import { EVENT_PIN, emit } from "./events.js";
-import { finite3, unit3 } from "./math.js";
+import { dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import {
-  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_PX, PIN_SHAFT_PX,
+  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_LENGTH_FRACTION, PIN_PX,
+  PIN_SHAFT_PX,
 } from "./options.js";
-import { PINS_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
+import { capOwnerAt, pickEntity } from "./picking.js";
+import { PINS_ORDER, createScene3D } from "./scene3d.js";
 
 /** The arrows' tomato red, as a hex the material takes. One colour for both
  *  themes, as the grip's ink is (`INK` in handle.js): the white casing under it
@@ -44,8 +49,8 @@ const UP = [0, 0, 1];
 /**
  * The direction an arrow's body stands out along, from its tip: the comment's
  * normal as a unit vector, or straight down onto the point from above where
- * there is none (a comment left before normals were stored, or one hanging at
- * a part's centre on another build).
+ * there is none (a comment left before normals were stored, or one standing on
+ * the top of a part's box on another build).
  *
  * `unit3` answers a zero vector with null and an infinite component with NaNs,
  * so its answer is checked again.
@@ -56,12 +61,12 @@ export function pinDirection(n) {
 }
 
 export function createPins(vp) {
-  // The group, the place in the library's render pass, the pixel scale, the
-  // press and the teardown are `scene3d.js`'s. `wanted`, `build`, `place`,
-  // `rank` and `onDown` are the declarations below.
+  // The group, the place in the library's render pass, the press and the
+  // teardown are `scene3d.js`'s; the size is ours (`pixels: false`). `wanted`,
+  // `build`, `place`, `rank` and `onDown` are the declarations below.
   const widget = createScene3D(vp, {
     wanted, build, place, press: onDown, rank, cursor: "pointer",
-    order: PINS_ORDER,
+    order: PINS_ORDER, pixels: false,
   });
 
   // What the interface sent last, kept so a list that arrives before the first
@@ -93,17 +98,27 @@ export function createPins(vp) {
   }
 
   /**
-   * The shapes and inks every arrow shares, in CSS pixels along +Y (the axis
+   * The shapes and inks every arrow shares, `PIN_PX` long along +Y (the axis
    * three gives a cylinder and a cone) with the TIP at the origin: a node put
-   * at the point and turned from +Y onto the direction points into the face,
-   * its body standing out of it.
+   * at the point, turned from +Y onto the direction and scaled by `place` to
+   * its world length points into the face, its body standing out of it.
    *
-   * The casing is the same shaft and head grown by `PIN_CASE_PX` all round,
-   * the tip included, and drawn under the ink (`sync` orders them), so it
-   * shows as a white rim.
+   * The casing is the same shaft and head grown by `PIN_CASE_PX` all round, the
+   * tip included, so it ENCLOSES the ink. Only its far side is drawn
+   * (`side: BackSide`, the inverted-hull outline): its front faces are nearer
+   * than the ink and, with the depth test on, would simply cover it and leave a
+   * white arrow, while its back faces show exactly as a rim around the
+   * silhouette.
    *
-   * The ink is lit (Phong) and the casing flat; both carry the flags of
-   * `widgetMaterial`: never hidden, never cut, always blended.
+   * The ink is lit (Phong) and the casing flat, and both are opaque and
+   * depth-tested: an arrow is an object in the scene, so an opaque part in
+   * front of it hides it and a translucent one is laid over it (`PINS_ORDER`
+   * in scene3d.js). `clippingPlanes: []` keeps the section from cutting it, as
+   * on the widgets' own materials.
+   *
+   * The casing's material is built here rather than taken from
+   * `widgetMaterial`, which is the never-hidden, always-blended ink the other
+   * widgets share.
    */
   function build(namespace, grp) {
     three = namespace;
@@ -127,12 +142,15 @@ export function createPins(vp) {
     [shaft, head] = shapes(0);
     [caseShaft, caseHead] = shapes(PIN_CASE_PX);
     const lit = (color) => new three.MeshPhongMaterial({
-      color, shininess: 60, transparent: true, depthTest: false,
-      depthWrite: false, clippingPlanes: [],
+      color, shininess: 60, transparent: false, depthTest: true,
+      depthWrite: true, clippingPlanes: [],
     });
     ink = lit(INK);
     inkActive = lit(INK_ACTIVE);
-    casing = widgetMaterial(three, CASING);
+    casing = new three.MeshBasicMaterial({
+      color: CASING, transparent: false, depthTest: true, depthWrite: true,
+      clippingPlanes: [], toneMapped: false, side: three.BackSide,
+    });
     sync();
   }
 
@@ -173,11 +191,14 @@ export function createPins(vp) {
       arrow.point = pin.p;
       arrow.active = active;
       arrow.node.quaternion.setFromUnitVectors(up, aim.set(...along));
-      // The open arrow is drawn after the others, and with no depth test the
-      // last drawn is on top. Two comments on one part resolve to one anchor,
-      // so this is how the rail brings either one's arrow to the top. All closed
-      // casings go under all closed inks, so crossing closed arrows merge; the
-      // open arrow's casing and ink go above them, so its rim covers the others.
+      // The open comment's arrow is the darker ink, and it is drawn after the
+      // others. Where the arrows stand apart the depth test decides what is
+      // seen and this order changes nothing. It decides only where two
+      // comments on one part resolve to ONE anchor: their arrows are the same
+      // shape at the same depth, the depth test passes on equal depth (three's
+      // default `LessEqualDepth`) and the last drawn wins, so the open arrow,
+      // casing and ink, comes out over the others — which is how the rail
+      // brings either one's arrow out of the other.
       for (const mesh of arrow.meshes) {
         mesh.material = arrow.active ? inkActive : ink;
         mesh.renderOrder = arrow.active ? 2 : 0;
@@ -195,20 +216,40 @@ export function createPins(vp) {
   }
 
   /**
-   * Stand every arrow on its point. The group stays at the origin, unturned,
-   * and `scene3d.js` scales it by `k` after this, so a node at `point / k` is
-   * at `point` in the world while its geometry stays in pixels.
+   * Stand every arrow on its point, at the length the model gives.
+   *
+   * The group stays at the origin, unturned and unscaled (`pixels: false`), so
+   * a node goes straight to its world point and carries the size itself: the
+   * shape is `PIN_PX` long, so the scale is the world length over `PIN_PX`.
+   *
+   * That length is `PIN_LENGTH_FRACTION` of the model's half-diagonal, taken
+   * from the bounding box the hub published with the view (`payload.bb`), which
+   * is a fetched document and so is read a field at a time. A view that carries
+   * no usable box leaves the arrow at `PIN_PX * k`, the size it had on the
+   * screen when it was a screen widget, rather than at nothing.
+   *
+   * One length for every arrow, worked out once a frame.
    */
   function place(root, g, k) {
+    const bb = vp.payload && vp.payload.bb;
+    const span = bb
+      ? [bb.xmax - bb.xmin, bb.ymax - bb.ymin, bb.zmax - bb.zmin] : null;
+    const half = finite3(span) ? Math.hypot(span[0], span[1], span[2]) / 2 : 0;
+    const length = half > 0 ? PIN_LENGTH_FRACTION * half : PIN_PX * k;
+    const scale = length / PIN_PX;
     for (const arrow of arrows.values()) {
       const p = arrow.point;
-      arrow.node.position.set(p[0] / k, p[1] / k, p[2] / k);
+      arrow.node.position.set(p[0], p[1], p[2]);
+      arrow.node.scale.setScalar(scale);
     }
     return true;
   }
 
-  /** Which arrow a contested press goes to: the open one, which is drawn on
-   *  top, rather than the nearest along the ray (`rank` in scene3d.js). */
+  /** Which of the arrows the ray meets at one same distance a press goes to:
+   *  the open one. The press goes to the nearest arrow, the one on top under
+   *  the depth test, and this is asked only between coincident ones — two
+   *  comments on one part resolved to one anchor — where the open one is drawn
+   *  over the others (`sync`; `rank` in scene3d.js). */
   function rank(object) {
     const arrow = owners.get(object.parent);
     return arrow && arrow.active ? 0 : 1;
@@ -220,13 +261,62 @@ export function createPins(vp) {
    * Primary button only: a refused press goes on to what is behind (see
    * `onDown` in scene3d.js), so a right-click on an arrow still opens the part
    * menu and a right-drag still pans.
+   *
+   * Refused too where the arrow is hidden at that pixel (`hidden`): the ray
+   * meets only arrows, so a click on a wall would otherwise open the comment
+   * standing behind it, and the orbit, the pick or the Comment tool under it
+   * would never get the press.
    */
   function onDown(event, g, at) {
     if (event.button !== 0) return false;
     const arrow = owners.get(at.object.parent);
-    if (!arrow) return false;
+    if (!arrow || hidden(g, event, at, arrow)) return false;
     emit(vp, EVENT_PIN, { id: arrow.id });
     return true;
+  }
+
+  /**
+   * Whether an opaque part of the model stands in front of the arrow at the
+   * pressed pixel, as the library's GPU picker sees it.
+   *
+   * The picker answers the nearest model surface drawn at that pixel and never
+   * an arrow (they stay on layer 0, `scene3d.js`), at the same canvas pixel the
+   * tools pick at (`canvasXY`, as in tools.js). Its point blocks the press when
+   * it is nearer the camera than where the ray met the arrow, measured along
+   * the view axis, and only on an opaque part: a translucent one (glass) is laid
+   * over the arrow, which shows through it, so the press goes to the arrow the
+   * reader is looking at.
+   *
+   * A cut face is asked about first, as `entityAt` in tools.js does: the picker
+   * reads through its stencil cap (`capOwnerAt` in picking.js says why), while
+   * the cap itself is opaque and hides an arrow behind it. Its point lies on
+   * the cut plane, the depth the reader sees there.
+   *
+   * Nearer by more than the casing's thickness in the world: the casing pokes
+   * that far past the tip into the face the arrow stands on, and the picker
+   * reads a half-resolution buffer, so a press by the tip can find that face a
+   * hair in front of the arrow seen there.
+   *
+   * Asked on the press only. The hover cursor raycasts on every move, and a GPU
+   * pick there (a readback each time, and a render of the pick buffer whenever
+   * the view has changed) costs too much, so the pointer can show over an arrow
+   * that is hidden.
+   */
+  function hidden(g, event, at, arrow) {
+    const xy = canvasXY(g.canvas, event);
+    const basis = xy ? cameraBasis(vp.viewer, g) : null;
+    const ndc = basis ? ndcAt(g.canvas, event) : null;
+    const found = basis
+      ? (ndc && capOwnerAt(vp, g, ndc)) || pickEntity(g, xy[0], xy[1])
+      : null;
+    if (!found || !finite3(found.point)) return false;
+    const groups = g.nestedGroup && g.nestedGroup.groups;
+    const solid = groups ? groups[found.id] : null;
+    const material = solid && solid.front && solid.front.material;
+    if (!material || !(material.opacity >= 1)) return false;
+    const depth = (p) => dot3(sub3(p, basis.eye), basis.view);
+    const margin = PIN_CASE_PX * arrow.node.scale.x;
+    return depth(vec3(found.point)) < depth(at.point) - margin;
   }
 
   return {

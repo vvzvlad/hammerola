@@ -36,7 +36,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from harness import TOKEN, good_build
+from harness import TOKEN, good_build, one_text, served_skill_files
 
 from src import onboarding
 from src.buildproc.limits import DEFAULT_LIMITS
@@ -183,16 +183,52 @@ def test_emptiness_is_reported_rather_than_guessed_when_the_volume_is_unreadable
 
 
 # -- the three files ---------------------------------------------------------
-def test_the_skill_is_served_as_markdown_with_its_frontmatter(hub):
-    reply = hub.get("/start/skill.md")
+def test_the_skill_is_served_as_an_archive_carrying_its_entry_document(hub):
+    reply = hub.get("/start/skill.tar.gz")
     assert reply.status_code == 200
-    assert reply.headers["content-type"] == "text/markdown; charset=utf-8"
-    text = reply.text
-    # A Claude Code skill is recognised by the frontmatter, so a file served
-    # without it installs and never fires.
+    assert reply.headers["content-type"] == "application/gzip"
+    text = served_skill_files(hub)[onboarding.SKILL_ENTRY]
+    # A Claude Code skill is recognised by the frontmatter of its entry
+    # document, so a set served without it installs and never fires.
     assert text.startswith("---\n")
     assert "\nname: hammerola\n" in text
     assert "\ndescription: " in text
+
+
+def test_the_archive_the_hub_serves_is_the_skill_directory():
+    """Every file of `skill/`, under the path the reader's directory has to carry.
+
+    The bytes the route hands back (`skill_bytes`), compared against the files
+    on disk, exactly as the template's own archive is compared.
+
+    The entry document points at its references by relative path, so an archive
+    that carried only `SKILL.md` — or carried the references under a flattened
+    name — would install a document whose own links lead nowhere, and nothing
+    about it would look wrong until an agent followed one.
+    """
+    with tarfile.open(fileobj=io.BytesIO(onboarding.skill_bytes()),
+                      mode="r:gz") as tar:
+        served = {info.name: tar.extractfile(info).read()
+                  for info in tar.getmembers()}
+    on_disk = {name: path.read_bytes()
+               for name, path in onboarding.skill_members()}
+    assert served == on_disk
+    assert onboarding.SKILL_ENTRY in served, (
+        "the skill archive carries no entry document, so there is nothing for "
+        "an agent to be reading")
+    assert any(name.startswith("references/") for name in served), (
+        "the skill archive carries no references, and the whole reason it is "
+        "an archive rather than one file is that `SKILL.md` sends its reader "
+        "to them. `hammerola/skill.py:_prune` also takes its sweeping ground "
+        "from where the members of THIS archive land, so an archive without "
+        "them stops tidying the directory as well")
+    assert all(name.count("/") <= 1 for name in served), (
+        f"a member nested deeper than `references/<file>` "
+        f"({sorted(name for name in served if name.count('/') > 1)}): "
+        f"`_prune` sweeps exactly the directories members LAND IN, so a level "
+        f"the archive only passes through — `references/` once everything "
+        f"moved into `references/<topic>/` — stops being swept, and whatever "
+        f"an earlier version left there stays")
 
 
 def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
@@ -203,7 +239,7 @@ def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
     date" wrongly, or the reverse. Parsed here with a pattern written in this
     test: using either side's parser would compare it with itself.
     """
-    served = hub.get("/start/skill.md").text
+    served = served_skill_files(hub)[onboarding.SKILL_ENTRY]
     block = served.split("\n---\n", 1)[0]
     found = re.search(r"^version:[ \t]*(\d+)[ \t]*$", block, re.MULTILINE)
     assert found, ("the skill this hub serves names no version in its "
@@ -246,8 +282,8 @@ def test_a_skill_the_hub_cannot_date_is_a_404_and_not_a_dropped_socket(
 
     monkeypatch.setattr(onboarding, "skill_version", refuse)
     assert hub.get("/start").status_code == 404
-    # The file itself is untouched by it: only the manifest reads a version.
-    assert hub.get("/start/skill.md").status_code == 200
+    # The archive itself is untouched by it: only the manifest reads a version.
+    assert hub.get("/start/skill.tar.gz").status_code == 200
 
 
 def test_the_skill_names_no_deployment(hub):
@@ -259,7 +295,7 @@ def test_the_skill_names_no_deployment(hub):
     So the second check looks for a hostname in front of any path this service
     actually serves.
     """
-    text = hub.get("/start/skill.md").text
+    text = one_text(served_skill_files(hub))
     assert "://" not in text
     bare = re.findall(
         r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?=/(?:start|api|project|index))",
@@ -403,6 +439,19 @@ def test_the_archives_carry_nothing_about_when_they_were_built():
         assert [info.mtime for info in tar.getmembers()] == \
             [0] * len(tar.getmembers())
 
+    # The skill rides in an archive of its own, and the property is its own
+    # too: both are built through `_archive` today, and this is what would
+    # catch the skill growing a builder that stamps the hour.
+    skill = onboarding.skill_bytes()[:8]
+    assert skill[:2] == b"\x1f\x8b", "the skill archive is not a gzip stream"
+    assert skill[4:8] == b"\x00\x00\x00\x00", (
+        "the skill archive carries the moment it was built in its gzip "
+        "header, so two hubs on one image serve different bytes")
+    with tarfile.open(fileobj=io.BytesIO(onboarding.skill_bytes()),
+                      mode="r:gz") as tar:
+        assert [info.mtime for info in tar.getmembers()] == \
+            [0] * len(tar.getmembers())
+
     archive = zipfile.ZipFile(io.BytesIO(
         onboarding.client_bytes()[len(onboarding.CLIENT_SHEBANG):]))
     stamps = {info.date_time for info in archive.infolist()}
@@ -460,7 +509,7 @@ def test_no_module_in_the_archive_uses_syntax_the_declared_python_lacks():
 
 def test_the_skill_states_the_same_python_floor(hub):
     """One constant, and the sentence a reader acts on says the same number."""
-    text = hub.get("/start/skill.md").text
+    text = one_text(served_skill_files(hub))
     assert f"python {onboarding.MIN_PYTHON_TEXT}" in text.lower(), (
         f"the skill does not tell the reader they need python "
         f"{onboarding.MIN_PYTHON_TEXT}")
@@ -481,7 +530,7 @@ def test_the_skill_quotes_the_contract_numbers_that_are_actually_enforced(hub):
     """
     from hammerola.limits import MAX_MEMBERS, MAX_PATH_DEPTH, SAFE_COMPONENT
 
-    text = hub.get("/start/skill.md").text
+    text = one_text(served_skill_files(hub))
     alphabet = SAFE_COMPONENT.pattern[2:-2]
     assert alphabet in text, (
         f"the skill does not quote the alphabet it tells people to rename "
@@ -518,7 +567,7 @@ def test_the_skill_and_the_template_describe_the_SAME_image(hub):
     an interpolation instead of importing numpy. Both are checked against the same
     list, so neither can drift into being the optimistic one.
     """
-    skill = hub.get("/start/skill.md").text
+    skill = one_text(served_skill_files(hub))
     template = (onboarding.TEMPLATE_DIR / "model.py").read_text(encoding="utf-8")
     missing = {
         "the skill": [p for p in MODEL_PACKAGES if p not in skill],
@@ -548,7 +597,7 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
     `checklib` leaves the skill telling authors to call something that raises
     AttributeError.
     """
-    skill = hub.get("/start/skill.md").text
+    skill = one_text(served_skill_files(hub))
     bullet = SKILL_CHECKLIB_BULLET.search(skill)
     assert bullet, (
         "the skill no longer has a bullet inventorying `checklib`, so either "
@@ -559,7 +608,7 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
     assert named, "the checklib bullet names no helper at all"
     missing = sorted(n for n in named if not hasattr(checklib, n))
     assert not missing, (
-        f"skill/SKILL.md tells a model author to call {missing}, and "
+        f"the skill tells a model author to call {missing}, and "
         f"src/cadbuild/checklib.py has no such name")
 
 
@@ -601,7 +650,7 @@ def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
     from the skill, and editing `src/cadbuild/checkunits.py` sends nobody to a
     markdown file served out of `skill/`.
     """
-    skill = hub.get("/start/skill.md").text
+    skill = one_text(served_skill_files(hub))
 
     workers = SKILL_WORKERS.search(skill)
     assert workers, (
@@ -609,7 +658,7 @@ def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
         "words this reads it by — reword the pattern with the sentence")
     said = SPELLED.get(workers.group(1).lower())
     assert said == checkunits.CHECK_WORKERS, (
-        f"skill/SKILL.md tells an author {workers.group(1)} workers run the "
+        f"the skill tells an author {workers.group(1)} workers run the "
         f"units and CHECK_WORKERS is {checkunits.CHECK_WORKERS}")
 
     budget = SKILL_BUDGET.search(skill)
@@ -617,7 +666,7 @@ def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
         "the skill no longer states a unit's budget in the words this reads it "
         "by — reword the pattern with the sentence")
     assert int(budget.group(1)) == checkunits.UNIT_BUDGET_SECONDS, (
-        f"skill/SKILL.md tells an author a unit gets {budget.group(1)}s and "
+        f"the skill tells an author a unit gets {budget.group(1)}s and "
         f"UNIT_BUDGET_SECONDS is {checkunits.UNIT_BUDGET_SECONDS}")
 
 
@@ -638,7 +687,7 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
     minutes", `SLOW_BUILD_SECONDS`), and nothing reads those copies back;
     `tests/test_build_ceilings.py` asserts the constants, not this document.
     """
-    skill = hub.get("/start/skill.md").text
+    skill = one_text(served_skill_files(hub))
 
     spelled = SKILL_WALL_MINUTES.search(skill)
     assert spelled, (
@@ -649,7 +698,7 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
         f"the skill spells the wall as {spelled.group(1)!r} minutes and SPELLED "
         f"cannot read that word — add it rather than loosening the pattern")
     assert minutes * 60 == DEFAULT_LIMITS.wall_seconds, (
-        f"skill/SKILL.md tells an author a build has {spelled.group(1)} minutes "
+        f"the skill tells an author a build has {spelled.group(1)} minutes "
         f"and wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
 
     wall = SKILL_WALL.search(skill)
@@ -657,7 +706,7 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
         "the skill no longer states the wall in seconds in the words this reads "
         "it by — reword the pattern with the sentence")
     assert int(wall.group(1)) == DEFAULT_LIMITS.wall_seconds, (
-        f"skill/SKILL.md tells an author the hub kills a build at "
+        f"the skill tells an author the hub kills a build at "
         f"{wall.group(1)}s and wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
 
     # The third spelling, where the unit budget is argued for against what a hung
@@ -672,7 +721,7 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
         f"the skill spells that wall as {whole.group(1)!r} minutes and SPELLED "
         f"cannot read that word — add it rather than loosening the pattern")
     assert whole_minutes * 60 == DEFAULT_LIMITS.wall_seconds, (
-        f"skill/SKILL.md costs a hung check at {whole.group(1)} minutes and "
+        f"the skill costs a hung check at {whole.group(1)} minutes and "
         f"wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
 
     ceiling = SKILL_CLIENT_CEILING.search(skill)
@@ -680,7 +729,7 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
         "the skill no longer states the client's own ceiling in the words this "
         "reads it by — reword the pattern with the sentence")
     assert int(ceiling.group(1)) == hub_client.JOB_TIMEOUT, (
-        f"skill/SKILL.md tells an author the client waits {ceiling.group(1)}s "
+        f"the skill tells an author the client waits {ceiling.group(1)}s "
         f"and JOB_TIMEOUT is {hub_client.JOB_TIMEOUT}")
 
 
@@ -735,7 +784,9 @@ def test_the_hub_refuses_to_build_a_template_a_client_would_refuse(name):
     on the other side. Parametrized over what `check_name` covers.
     """
     with pytest.raises(ValueError):
-        onboarding._refuse_unservable([(name, Path(__file__))])
+        onboarding._refuse_unservable([(name, Path(__file__))],
+                                      onboarding.TEMPLATE_DIR,
+                                      hidden_leaves=True)
 
 
 def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
@@ -749,14 +800,22 @@ def test_the_hub_refuses_a_template_of_more_files_than_a_client_unpacks():
 
     many = [(f"f{index}.py", Path(__file__)) for index in range(MAX_MEMBERS + 1)]
     with pytest.raises(ValueError) as raised:
-        onboarding._refuse_unservable(many)
+        onboarding._refuse_unservable(many, onboarding.TEMPLATE_DIR,
+                                      hidden_leaves=True)
     assert str(MAX_MEMBERS) in str(raised.value)
 
 
-def test_what_the_template_really_holds_is_servable():
-    """...and the guard says yes to the tree that ships, so it is not a no-op
-    the other way either."""
-    onboarding._refuse_unservable(onboarding.template_members())
+def test_what_the_two_directories_really_hold_is_servable():
+    """...and the guard says yes to the trees that ship, so it is not a no-op
+    the other way either.
+
+    The skill is held to the stricter rules of the two: it carries no hidden
+    file, and `references/` is a directory a client has to be willing to make.
+    """
+    onboarding._refuse_unservable(onboarding.template_members(),
+                                  onboarding.TEMPLATE_DIR, hidden_leaves=True)
+    onboarding._refuse_unservable(onboarding.skill_members(),
+                                  onboarding.SKILL_DIR)
 
 
 def test_a_template_the_hub_cannot_serve_is_a_404_and_not_a_500(hub,
@@ -770,7 +829,7 @@ def test_a_template_the_hub_cannot_serve_is_a_404_and_not_a_500(hub,
     monkeypatch.setattr(onboarding, "template_bytes", refuse)
     assert hub.get("/start/template.tar.gz").status_code == 404
     # The other two are untouched by it.
-    assert hub.get("/start/skill.md").status_code == 200
+    assert hub.get("/start/skill.tar.gz").status_code == 200
 
 
 def test_a_start_route_that_cannot_import_is_a_404_and_not_a_dropped_socket(
@@ -1026,13 +1085,13 @@ def test_an_unknown_name_under_start_is_a_404(hub):
     # The third one is percent-encoded on purpose: a plain `..` is collapsed by
     # the client before it is sent, so the encoded form is the only way to ask
     # this hub the question a traversal actually asks.
-    for path in ("/start/nothing", "/start/skill.md/more",
+    for path in ("/start/nothing", "/start/skill.tar.gz/more",
                  "/start/%2e%2e/index.json"):
         assert hub.get(path).status_code == 404, path
 
 
 def test_head_answers_without_a_body(hub):
-    for path in ("/start", "/start/skill.md", "/start/hammerola",
+    for path in ("/start", "/start/skill.tar.gz", "/start/hammerola",
                  "/start/template.tar.gz"):
         reply = hub.request("HEAD", path)
         assert reply.status_code == 200, path
@@ -1043,7 +1102,7 @@ def test_head_answers_without_a_body(hub):
 def test_nothing_under_start_is_cached(hub):
     """All four change with the image under a stable name, and `empty` changes
     with the first push — the same reasoning `site.css` gets."""
-    for path in ("/start", "/start/skill.md", "/start/hammerola",
+    for path in ("/start", "/start/skill.tar.gz", "/start/hammerola",
                  "/start/template.tar.gz"):
         assert hub.get(path).headers["cache-control"] == "no-cache", path
 
@@ -1069,9 +1128,12 @@ def test_the_manifest_key_the_client_follows_is_the_one_the_hub_writes():
 def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     """The same arrangement for `hammerola skill`.
 
-    `hammerola skill` reads two fields out of the manifest, where the file is and
-    which version it is, and spells both itself, because the client imports
-    nothing from the serving half.
+    `hammerola skill` reads two fields out of the manifest, where the archive is
+    and which version it is, and spells both itself, because the client imports
+    nothing from the serving half. The name of the document INSIDE that archive
+    is the third string spelled on both sides: the client looks for it after
+    unpacking, and a hub that renamed it would serve a set the client refuses to
+    install.
     """
     from hammerola import skill as client_skill
 
@@ -1080,6 +1142,18 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     assert client_skill.VERSION_KEY in document
     assert client_skill.SKILL_KEY in document
     assert document[client_skill.SKILL_KEY] == onboarding.SKILL_URL
+    assert client_skill.ENTRY == onboarding.SKILL_ENTRY
+
+    # The fourth: the NAME in the frontmatter, by which the client tells an
+    # installation of this skill from somebody else's. It decides whether a
+    # directory may be swept of what the new version no longer ships, and it
+    # fails SILENTLY if it drifts — the install still works, the sweep just
+    # never runs again and a withdrawn reference sits there being read. So it
+    # is held against the document this hub actually serves.
+    assert client_skill.is_ours(
+        onboarding.SKILL_FILE.read_text(encoding="utf-8")), (
+        "the skill this hub serves is not recognised by the client as this "
+        "skill, so `skill update` would never remove a withdrawn reference")
 
 
 def test_the_keys_and_the_bytes_the_update_command_follows_are_the_hubs_own():
@@ -1145,15 +1219,14 @@ def test_the_client_reads_the_SAME_version_out_of_the_skill_as_the_hub():
 
 
 def test_the_skill_tells_the_reader_how_to_update_it(hub):
-    """The file arrives by `curl` once and is refreshed by the client after.
+    """The set is written by the client, and the client is what refreshes it.
 
-    The raw download stays — it is how the skill gets there before there is a
-    client at all — but a reader who only ever saw that line has no way of
-    knowing the file goes stale, which is the failure this whole entry is
-    about. Both verbs are named, and the check is against the SERVED copy so
-    that a hub is not handing out instructions with a command it does not have.
+    A reader who only ever saw the install line has no way of knowing the
+    instructions go stale, which is the failure this whole entry is about. Both
+    verbs are named, and the check is against the SERVED copy so that a hub is
+    not handing out instructions with a command it does not have.
     """
-    text = hub.get("/start/skill.md").text
+    text = one_text(served_skill_files(hub))
     assert "hammerola skill update" in text
     assert re.search(r"`hammerola skill`", text), (
         "the skill does not tell its reader how to ask whether it is stale")

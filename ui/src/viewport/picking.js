@@ -157,8 +157,9 @@ function capOnScreen(unit, solid) {
  * The answer has `pickEntity`'s shape, but `path` is the solid's own path (same
  * as `id`; a cap is no registered face) and `topo` is a synthetic "face".
  * `tools.js` reads `id` and `name` and passes `point` through in the pick event,
- * where it is a point on the cap's plane, not on a model surface. Callers that
- * measure (measure, comment, move) use `pickEntity`.
+ * where it is a point on the cap's plane, not on a model surface. The comment
+ * tool stands its arrow on that point, and `pins.js` reads it as the depth of
+ * what hides an arrow; measure and move use `pickEntity`.
  */
 export function capOwnerAt(vp, g, ndc) {
   // A cut on screen needs a seed and the renderer's clipping flag:

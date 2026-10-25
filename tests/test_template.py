@@ -13,10 +13,12 @@ the template with the kernel stubbed and asks the hub's own rule. Most tests ask
 whether the template is a tree the hub would accept (a name the path alphabet
 refuses breaks the push of every project made from it).
 
-Two pins are about a document: `skill/SKILL.md` quotes this template (the number
-of checks a run reports, and the wording of an assertion its `checks()` emits).
+Two pins are about a document: the skill quotes this template (the number of
+checks a run reports, and the wording of an assertion its `checks()` emits).
 They are pinned here because the edit that falsifies them is an edit to
-model.py. Neither needs the kernel.
+model.py. The skill is a directory of documents and the quotation may be in any
+of them, so they read the whole set (`harness.one_text`). Neither needs the
+kernel.
 """
 
 import ast
@@ -34,6 +36,7 @@ from pathlib import Path
 import pytest
 
 import modulesource
+from harness import one_text, skill_files
 from src import onboarding
 from src.buildproc import run_build
 from src.cadbuild import checklib, paths, provenance
@@ -549,7 +552,7 @@ def test_every_measurement_in_the_template_points_at_a_real_line_of_the_journal(
 def test_every_section_of_the_template_journal_carries_a_date():
     """Every section the template's model cites carries a date.
 
-    `skill/SKILL.md` describes the journal as "date, what was measured, with
+    The skill describes the journal as "date, what was measured, with
     what, the number", and the template is the worked example; the date says
     whether a figure predates a change that should have moved it.
 
@@ -595,10 +598,10 @@ def test_every_section_of_the_template_journal_carries_a_date():
         f"these sections of the template journal record no date: {undated}")
 
 
-# One backticked constant, and a run of them. The names SKILL.md lists as this
+# One backticked constant, and a run of them. The names the skill lists as this
 # template's estimated clearances are found by the substituted values, not by
 # the surrounding prose, so a reword cannot silently stop the match. Two or more
-# names: SKILL.md also backticks `GRIP_DROP` alone, about another model.
+# names: the skill also backticks `GRIP_DROP` alone, about another model.
 QUOTED_NAME = re.compile(r"`([A-Z][A-Z0-9_]{2,})`")
 QUOTED_NAME_RUN = re.compile(
     QUOTED_NAME.pattern + r"(?:(?:,| and)\s+" + QUOTED_NAME.pattern + r")+")
@@ -771,14 +774,14 @@ def test_the_selector_sees_the_shapes_a_model_is_written_in():
 
 
 def test_the_skill_is_right_about_what_an_estimate_does_in_this_template():
-    """Two sentences of `skill/SKILL.md`, pinned to the file they describe.
+    """Two sentences of the skill, pinned to the file they describe.
 
     The template's clearances are estimates, and its estimates drive geometry.
     Pinned here because the edit that falsifies them is an edit to model.py. The
     names are read out of the document, not transcribed, so deleting the
-    sentences from SKILL.md fails this too.
+    sentences from the skill fails this too.
     """
-    skill = onboarding.SKILL_FILE.read_text(encoding="utf-8")
+    skill = one_text(skill_files())
     tree = ast.parse((TEMPLATE_DIR / "model.py").read_text(encoding="utf-8"))
     kinds = {name: kind for name, (kind, _, _) in declared_in_template().items()}
 
@@ -786,7 +789,7 @@ def test_the_skill_is_right_about_what_an_estimate_does_in_this_template():
     named = sorted({name for run in QUOTED_NAME_RUN.finditer(skill)
                     for name in QUOTED_NAME.findall(run.group(0))})
     assert named, (
-        "SKILL.md no longer lists any of this template's constants as its "
+        "the skill no longer lists any of this template's constants as its "
         "estimated clearances, and the two ways that happens want opposite "
         "fixes. If the passage went away, delete this half of the test with it "
         "-- leaving it green would be a pin that stopped pinning. If the "
@@ -797,7 +800,7 @@ def test_the_skill_is_right_about_what_an_estimate_does_in_this_template():
         "being read by every agent")
     for name in named:
         assert kinds.get(name) == "estimated", (
-            f"skill/SKILL.md names {name} as one of this template's estimated "
+            f"the skill names {name} as one of this template's estimated "
             f"clearances, and it is {kinds.get(name)!r} here")
 
     # ...and that estimates really do drive geometry, which is the other
@@ -810,7 +813,7 @@ def test_the_skill_is_right_about_what_an_estimate_does_in_this_template():
     driving = sorted(name for name, kind in kinds.items()
                      if kind == "estimated" and name in used)
     assert driving, (
-        "skill/SKILL.md says an estimate drives geometry like any other number "
+        "the skill says an estimate drives geometry like any other number "
         "and points at this template; not one of its estimates is named by the "
         "geometry any more")
 
@@ -977,7 +980,7 @@ def test_the_archive_the_hub_serves_is_this_directory():
 
 
 # -- what the skill quotes out of this directory -----------------------------
-# The quotations in SKILL.md are found by the substituted values (a count; a
+# The quotations in the skill are found by the substituted values (a count; a
 # `.stl` name with a byte count), never by the fixed words, which are what is
 # being pinned: a pattern spelling them out would stop matching on a reword
 # instead of failing. (QUOTED_CHECK_COUNT's fixed words are `run_checks`'s own
@@ -998,7 +1001,7 @@ STL_MESSAGE_NEEDLE = "printable mesh"
 
 
 def test_the_skill_quotes_the_number_of_checks_this_template_reports():
-    """`checks: 10 passed` in SKILL.md, against what the counter says.
+    """`checks: 10 passed` in the skill, against what the counter says.
 
     The skill's worked example of checks going green about parts the catalogue
     no longer holds rests on that number, and the document is served to every
@@ -1022,13 +1025,13 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
         "the template no longer defines `checks` as a plain function at module "
         "level -- an `async def` is an ast.AsyncFunctionDef, and one moved "
         "inside another block is not in `tree.body` at all. Either is a change "
-        "to the shape SKILL.md quotes a run of, so say which it is here rather "
+        "to the shape the skill quotes a run of, so say which it is here rather "
         "than leaving the next reader a wordless IndexError")
     assert len(functions) == 1, (
         f"the template defines checks() {len(functions)} times at module "
         f"level. Python binds the name to the LAST of them, so that is the one "
         f"the build runs, while this test would go on measuring the FIRST -- "
-        f"and hold SKILL.md to a count of a function nothing ever executes. "
+        f"and hold the skill to a count of a function nothing ever executes. "
         f"Define checks() once rather than leaving this test to choose")
     function = functions[0]
 
@@ -1077,9 +1080,9 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
         f"produces here, so suspect the line above before the template")
 
     quoted = QUOTED_CHECK_COUNT.findall(
-        onboarding.SKILL_FILE.read_text(encoding="utf-8"))
+        one_text(skill_files()))
     assert quoted, (
-        "SKILL.md no longer quotes a `checks: <n> passed` line from a run of "
+        "the skill no longer quotes a `checks: <n> passed` line from a run of "
         "this template, and the two ways that happens want opposite fixes. If "
         "the passage went away, delete this test with it -- leaving it here "
         "green would be a pin that stopped pinning. If the passage is still "
@@ -1089,7 +1092,7 @@ def test_the_skill_quotes_the_number_of_checks_this_template_reports():
         "consistency with the shape spelled a few lines above it, hides a "
         "quotation that is still being read by every agent")
     assert {int(number) for number in quoted} == {counted}, (
-        f"SKILL.md tells its reader a run of the starter model reports "
+        f"the skill tells its reader a run of the starter model reports "
         f"{sorted({int(n) for n in quoted})} checks; count_checks makes it "
         f"{counted}. The document is served to every agent that installs the "
         f"skill, so the number has to be the one this template really prints")
@@ -1120,13 +1123,13 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
                         for piece in node.values)]
     assert messages, (
         f"no f-string in the template says {STL_MESSAGE_NEEDLE!r} any more. "
-        f"SKILL.md quotes that message to an agent as the one a block preview "
+        f"the skill quotes that message to an agent as the one a block preview "
         f"produces, so either the quotation goes with it or this is the wrong "
         f"needle to find it by")
     assert len(messages) == 1, (
         f"{len(messages)} f-strings in the template say "
         f"{STL_MESSAGE_NEEDLE!r}, so the needle no longer identifies one "
-        f"message and SKILL.md quotes ONE of them. Narrow the needle -- or say "
+        f"message and the skill quotes ONE of them. Narrow the needle -- or say "
         f"here which of them is the quoted one -- rather than letting this "
         f"test pin whichever ast.walk happened to reach first")
     message = messages[0]
@@ -1141,9 +1144,9 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
         "words, so there is nothing in it for the skill to quote")
 
     quoted = QUOTED_STL_MESSAGE.findall(
-        onboarding.SKILL_FILE.read_text(encoding="utf-8"))
+        one_text(skill_files()))
     assert quoted, (
-        "SKILL.md no longer quotes a `<name>.stl ... <n> ...` message from this "
+        "the skill no longer quotes a `<name>.stl ... <n> ...` message from this "
         "template's checks(), and the two ways that happens want opposite "
         "fixes. If the passage went away, delete this test with it rather than "
         "leaving a pin that pins nothing. If the passage is still there, "
@@ -1159,7 +1162,7 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
         for literal in literals:
             found = sentence.find(literal, cursor)
             assert found != -1, (
-                f"SKILL.md quotes {sentence!r} as this template's message, and "
+                f"the skill quotes {sentence!r} as this template's message, and "
                 f"the template writes {literal!r} where that sentence does not "
                 f"have it (or has it out of order). The document teaches the "
                 f"wording of a message an agent is told to recognise")
@@ -1168,11 +1171,11 @@ def test_the_skill_quotes_the_wording_of_the_message_this_template_emits():
         # the last literal or before the first.
         if isinstance(message.values[-1], ast.Constant):
             assert sentence.endswith(literals[-1]), (
-                f"SKILL.md's {sentence!r} runs on past the end of the message "
+                f"the skill's {sentence!r} runs on past the end of the message "
                 f"the template emits, which finishes at {literals[-1]!r}")
         if isinstance(message.values[0], ast.Constant):
             assert sentence.startswith(literals[0]), (
-                f"SKILL.md's {sentence!r} does not open the way the template's "
+                f"the skill's {sentence!r} does not open the way the template's "
                 f"message does, at {literals[0]!r}")
 
 

@@ -3137,7 +3137,7 @@ export default class HammerolaViewer extends React.Component {
       }
       // Carried through where the record's view placed the part, once that
       // view's document is here (`viewPlacement`); until then, and wherever it
-      // cannot be, the part's centre. Not in a comparison, whose scene is
+      // cannot be, the top of the part. Not in a comparison, whose scene is
       // neither view.
       if (anchor.state === 'carried' && !pair && el
           && typeof el.carryPoint === 'function') {
@@ -3244,7 +3244,7 @@ export default class HammerolaViewer extends React.Component {
    * (`dev` or its hash), and `sync` drops the documents of any other. The first
    * ask starts the one fetch and its landing draws the page again, unless the
    * build has changed meanwhile. A failure stays remembered as nothing, so the
-   * pin keeps the part's centre and the next frame does not ask again.
+   * pin keeps the top of the part's box and the next frame does not ask again.
    *
    * No token header: a build's view files are public, and the viewport fetches
    * this build's own views without one (`token: null` in `sync`, which `load`

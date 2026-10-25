@@ -278,8 +278,10 @@ export const hubOrigin = () => String(window.location.origin || '');
  * Robustness, not a guard: `/start` is served by the same hub as this page, so
  * there is no boundary to defend. It catches a manifest that is no good for
  * ordinary reasons (a proxy answering HTML, a field of another type): a field
- * that is not a string beginning with `/` drops the whole block (`startHint`)
- * rather than printing `Skill: undefined`.
+ * that is not a string beginning with `/` drops the whole block (`startHint`).
+ * The block prints no path of its own any more — the skill arrives through the
+ * client — but a manifest with a field of the wrong shape is a manifest to
+ * believe nothing in, including the client's path the block does print.
  */
 function hubPath(value) {
   if (typeof value !== 'string') return '';

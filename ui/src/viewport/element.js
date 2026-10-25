@@ -16,6 +16,7 @@
 import {
   EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
+import { settleCoplanar } from "./coplanar.js";
 import { safeHatch, setCutHatch } from "./hatch.js";
 import { installHoldKey } from "./holdkey.js";
 import { installIdleClock, captureLive, restoreLive, cameraState, isBusy, snapshot }
@@ -34,7 +35,7 @@ import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
-import { applyGhost, applyHidden, applySelected, partCentre, reconcileMoves,
+import { applyGhost, applyHidden, applySelected, partTop, reconcileMoves,
   restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
@@ -663,6 +664,10 @@ export class HmrViewport extends HTMLElement {
       // A scene rendered with `cutHatch` off comes up patched but hatching
       // nothing, so the toggle stays a uniform write.
       safeHatch(g, this.state.cutHatch);
+      // Parts flush in one plane are given a fixed winner here: `render()` has
+      // just built fresh materials, and the offset lives on them. Guarded
+      // inside, like the hatch.
+      settleCoplanar(this.viewer.nestedGroup, scene);
       this.view = named;
       // What is on screen, remembered beside the view for `restage()`. Set only
       // after the render succeeded: a refused document would otherwise be handed
@@ -954,13 +959,16 @@ export class HmrViewport extends HTMLElement {
     }
   }
 
-  /** Where one part is in the world: the centre of its box, or null.
+  /** Where an arrow stands on one part: the top of its world box (centre in x
+   * and y, highest z), or null.
    *
-   * Asked per comment whose anchor is a PART rather than a point, so the pin
-   * follows the part through a rebuild that moved it.
+   * Asked per comment whose anchor is a PART rather than a point, so the arrow
+   * follows the part through a rebuild that moved it. Such an arrow carries no
+   * normal and stands from above, so it stands on the top of the part's box;
+   * at the centre the part itself would hide it (`partTop`).
    */
   partPoint(path) {
-    return partCentre(this.viewer, path);
+    return partTop(this.viewer, path);
   }
 
   /** Where a point and a face normal taken in ANOTHER view of this build stand

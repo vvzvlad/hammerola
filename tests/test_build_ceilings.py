@@ -9,8 +9,9 @@ one multiplication.
 On a drop of the wall, `SLOW_BUILD_SECONDS` is the one that tightens: it is a
 judgement that does not follow the wall, so it can end up at or past the point no
 green build reaches. Prose that quotes the wall goes stale too; find it with a grep
-for the number and for `wall`. `tests/test_onboarding.py` checks the ceilings that
-`skill/SKILL.md` states against these constants; the concurrency and slow-build
+for the number and for `wall`. `tests/test_onboarding.py` checks the ceilings the
+skill states against these constants — over the whole served set, so a sentence
+that moved into `skill/references/` is still held; the concurrency and slow-build
 threshold it quotes are still prose only.
 """
 

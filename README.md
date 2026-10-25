@@ -73,11 +73,22 @@ on every deployment, and the person downloading them does not have a token yet
 by definition:
 
 ```bash
-mkdir -p ~/.local/bin ~/.claude/skills/hammerola
+mkdir -p ~/.local/bin
 curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
-curl -fsSL <hub>/start/skill.md -o ~/.claude/skills/hammerola/SKILL.md   # for an agent
 hammerola login <hub>   # once per machine; the password is prompted for
+hammerola skill update  # the agent instructions, into ~/.claude/skills/hammerola/
 ```
+
+The instructions are a directory — a short `SKILL.md` an agent keeps in front of
+it and reference files it opens when they apply — so the client installs them
+rather than a `curl` per file: it writes the whole directory and removes what
+the new version no longer ships.
+
+**On a machine where the client is already installed, that `curl` line comes
+first.** A client from before the skill was a directory downloads the archive
+and tries to read it as text, and its refusal blames the hub for serving
+something that is not utf-8; it is that client being older than the hub, and
+replacing it (the `curl` above, or `hammerola update`) is the way out.
 
 **That is how it is installed, checkout or no checkout.** There used to be a second
 one — `make client`, which symlinked a `bin/hammerola` script into
@@ -123,8 +134,9 @@ deliberately never a count, a name or a date, and it fails closed: a project
 directory the hub cannot read answers "not empty", rather than telling somebody
 their hub is empty on the strength of an error. It is what the SIGN-IN PAGE of a
 hub nobody has pushed to reads: instead of a login form and nothing else, it
-draws five lines to hand an agent — where the skill is, where the client is,
-what this hub's address is, install the skill and follow it, ask the owner for
+draws seven lines to hand an agent — where the client is, what this hub's
+address is, the command that installs the client, the command that installs the
+skill, the one that logs in, read the skill and follow it, ask the owner for
 the token. The addresses in it are built from the browser's own origin and the
 manifest's paths, so nothing here names a deployment; the request is made only
 when the form is what is on the screen, and every failure of it is silence.

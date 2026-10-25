@@ -7,7 +7,8 @@ things it needs, and one document that names them.
 
     GET /start                    the manifest: the three paths, the versions
                                   of the skill and of the client, and `empty`
-    GET /start/skill.md           the agent instructions, one Markdown file
+    GET /start/skill.tar.gz       the agent instructions: `SKILL.md` and the
+                                  `references/` it sends its reader to
     GET /start/hammerola          the client, one executable file
     GET /start/template.tar.gz    a model directory that builds as it stands
 
@@ -20,13 +21,14 @@ and it is a boolean on purpose: not a count (fleet size and growth), not a name
 (the prefix of a permanent URL, which `/index.json` withholds).
 
 What reads `empty` is the sign-in screen of a hub nobody has pushed to
-(`ui/src/HammerolaEntry.jsx`): five lines to hand to an agent, with the paths
-from the manifest and the address from the browser. The page asks lazily, only
-when showing the form.
+(`ui/src/HammerolaEntry.jsx`): seven lines to hand to an agent, with the client's
+path from the manifest and the address from the browser. The page asks lazily,
+only when showing the form.
 
 Every field has a reader: `hammerola create` follows `template`; the sign-in
-screen reads `empty` and renders `skill` and `client`; `hammerola skill`
-compares `skill_version` with the installed copy; `hammerola build` and
+screen reads `empty` and renders `client`, the one address its block hands over;
+`hammerola skill` follows `skill` to the archive it installs and compares
+`skill_version` with the installed copy; `hammerola build` and
 `hammerola commit` refuse to publish from a client older than `client_version`.
 Both versions are constants of the image, not of the deployment, and
 `client_version` can already be read out of the client served here.
@@ -58,7 +60,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # The manifest carries them so that `hammerola create` and the sign-in page
 # need no copies of these strings.
 START_SEGMENT = "start"
-SKILL_NAME = "skill.md"
+SKILL_NAME = "skill.tar.gz"
 CLIENT_NAME = "hammerola"
 TEMPLATE_NAME = "template.tar.gz"
 
@@ -91,7 +93,15 @@ CLIENT_VERSION_KEY = "client_version"
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _VERSION_LINE = re.compile(r"^version:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
 
-SKILL_FILE = ROOT / "skill" / "SKILL.md"
+# The whole skill is served, not only its entry document: `SKILL.md` names the
+# files under `references/` and a reader that had only the entry would follow
+# those names to files it has not got.
+SKILL_DIR = ROOT / "skill"
+# The one member of that directory this half opens: the version is in its
+# frontmatter, and the client looks for it under this same name after unpacking
+# (`hammerola/skill.py`, which spells its own copy; a test compares the two).
+SKILL_ENTRY = "SKILL.md"
+SKILL_FILE = SKILL_DIR / SKILL_ENTRY
 # `model_template/`, not `template/`: one letter from `templates/` (the page
 # templates), which is copied into the image next to it.
 TEMPLATE_DIR = ROOT / "model_template"
@@ -188,12 +198,37 @@ def manifest(*, empty: bool) -> dict:
 
 @lru_cache(maxsize=1)
 def skill_bytes() -> bytes:
-    """The agent instructions, straight off the image.
+    """The agent instructions, as the .tar.gz the client unpacks into a directory.
 
-    Cached like the page templates are and for the same reason: the file is
-    immutable inside the image, so re-reading it per request would buy nothing.
+    The whole of `skill/` under the paths the reader's own directory has to
+    carry — `SKILL.md`, `references/<name>.md` — because the entry document
+    points at its references by relative path.
+
+    Built like `template_bytes` and held to the same rules, minus the hidden
+    file: an archive the client would refuse to unpack fails here instead.
+
+    Cached like the page templates are and for the same reason: the files are
+    immutable inside the image, so rebuilding it per request would buy nothing.
     """
-    return SKILL_FILE.read_bytes()
+    members = skill_members()
+    _refuse_unservable(members, SKILL_DIR)
+    return _archive(members)
+
+
+def skill_members() -> list:
+    """(member path, path on disk) for the skill, sorted, files only.
+
+    Globbed rather than listed, like `client_members`: a reference added to the
+    directory is part of the skill by definition, and a list would be one more
+    place to forget. Directory entries are left out exactly as
+    `template_members` leaves them out.
+    """
+    members = []
+    for path in sorted(SKILL_DIR.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        members.append((path.relative_to(SKILL_DIR).as_posix(), path))
+    return sorted(members)
 
 
 @lru_cache(maxsize=1)
@@ -204,13 +239,14 @@ def skill_version() -> int:
     teaching renamed commands and old ceilings. The file states its version,
     the manifest repeats it, and `hammerola skill` compares them.
 
-    In the frontmatter, where Claude Code skills already accept extra keys, so
-    the number travels with the file.
+    In the frontmatter of the entry document, where Claude Code skills already
+    accept extra keys, so the number travels with the file. One version for the
+    whole set: `SKILL.md` and its references move together.
 
     Strictly parsed, with no default: a missing version must not read as the
     first one. Cached; the file cannot change while the process runs.
     """
-    text = skill_bytes().decode("utf-8")
+    text = SKILL_FILE.read_text(encoding="utf-8")
     block = _FRONTMATTER.match(text)
     if block is None:
         raise ValueError(
@@ -481,13 +517,19 @@ def template_bytes() -> bytes:
     drops hidden entries). The client unpacks under `unpack.TEMPLATE_RULES`,
     which allows that one name in the last component; `_refuse_unservable`
     holds this side to the same rule.
+    """
+    members = template_members()
+    _refuse_unservable(members, TEMPLATE_DIR, hidden_leaves=True)
+    return _archive(members)
+
+
+def _archive(members) -> bytes:
+    """`(member path, path on disk)` pairs as one .tar.gz, byte for byte the same.
 
     Written through `gzip.GzipFile(mtime=0)` rather than `tarfile.open("w:gz")`,
     which would stamp the moment of the request into the gzip header and make
     the bytes differ between two hubs running the same image.
     """
-    members = template_members()
-    _refuse_unservable(members)
     raw = io.BytesIO()
     with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w") as archive:
@@ -522,27 +564,32 @@ def template_members() -> list:
     return sorted(members)
 
 
-def _refuse_unservable(members) -> None:
+def _refuse_unservable(members, directory, hidden_leaves: bool = False) -> None:
     """Refuse to build an archive the client would refuse to unpack.
 
     The client's `unpack` is the control; this keeps the two sides from
-    disagreeing, so a bad template fails here rather than on `create`.
+    disagreeing, so a bad directory fails here rather than on the laptop.
+
+    `hidden_leaves` picks the client's `TEMPLATE_RULES`, which allow the one
+    hidden file the template carries; the skill is held to `PUSH_RULES`, the
+    hub's own alphabet with no exception at all.
 
     It calls the client's own check rather than repeating it. The one ceiling
     on the set rather than one name, `MAX_MEMBERS`, is checked here, since
     `unpack` applies it to a tar and this side has files.
     """
     from hammerola.limits import MAX_MEMBERS
-    from hammerola.unpack import TEMPLATE_RULES, check_name
+    from hammerola.unpack import PUSH_RULES, TEMPLATE_RULES, check_name
     from hammerola.errors import ClientError
 
+    rules = TEMPLATE_RULES if hidden_leaves else PUSH_RULES
     if len(members) > MAX_MEMBERS:
         raise ValueError(
-            f"{TEMPLATE_DIR} holds {len(members)} files and a client unpacks at "
+            f"{directory} holds {len(members)} files and a client unpacks at "
             f"most {MAX_MEMBERS}")
     for name, _path in members:
         try:
-            check_name(name, f"the template in {TEMPLATE_DIR}", TEMPLATE_RULES)
+            check_name(name, f"the directory {directory}", rules)
         except ClientError as error:
             raise ValueError(str(error)) from error
 
