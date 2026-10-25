@@ -488,9 +488,10 @@ export function chromeView(s, props, deps) {
     // last lines of a page and the end of a PDF's frame stop above the
     // buttons rather than under them.
     docOpen,
-    // Its file, which the bar's Download takes and its Copy link copies
-    // (`toolBar` in viewlist.jsx), from the address DocumentView draws it
-    // from; null over the model, which leaves the bar without the two.
+    // Its file, which Download takes and Copy link copies (`DocFile` in
+    // viewlist.jsx, on the strip left of the bar), from the address
+    // DocumentView draws it from; null over the model, which leaves the strip
+    // without the two.
     docHref: docOpen ? docUrl(PAGE.base, docOpen) : null,
     // A NEW ELEMENT FOR ANOTHER REVISION: a markdown document is fetched once,
     // when its view mounts, so a revision switch with the same document open

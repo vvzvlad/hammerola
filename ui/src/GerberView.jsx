@@ -21,8 +21,8 @@
 // THE PANEL, over the top left corner as on the board (PcbPanel.jsx): the
 // side the board is seen from, which mirrors it and restacks the layers and
 // shows that side's layers (`shownOn`), and an eye per layer. The zip itself
-// is downloaded from the page's bar, as every document is (`docHref` in
-// `toolBar`, viewlist.jsx) — whether or not this page can read it.
+// is downloaded from the strip at the bottom of the page, as every document
+// is (`DocFile`, viewlist.jsx) — whether or not this page can read it.
 //
 // THE CANVAS: a drag with the left button or a finger pans, so does a wheel
 // (the two-finger swipe of a touchpad is one), a pinch or Control and the wheel
