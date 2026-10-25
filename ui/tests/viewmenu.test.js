@@ -33,7 +33,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
 import { ELLIPSIS } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
-import { VIEW_LIST, viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
+import { viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -250,9 +250,9 @@ describe('the menu itself', () => {
     expect(card.bottom).toBe('38px')
     // A model may declare twenty views and the root is `overflow:hidden`, so a
     // menu taller than the window would be cut off rather than scrolled: the
-    // card is capped and the views scroll inside it.
+    // card is capped and scrolls.
     expect(card.maxHeight).toBe('308px')
-    expect(css(VIEW_LIST).overflow).toBe('auto')
+    expect(card.overflow).toBe('auto')
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {

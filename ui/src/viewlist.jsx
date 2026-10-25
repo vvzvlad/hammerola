@@ -73,20 +73,15 @@ export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7p
  * (`toolbarStyle` in chromeview.js).
  *
  * Height capped like the revision menu's list: a model may declare twenty
- * views, and under the root's `overflow:hidden` a taller menu is cut off. A
- * column: the views scroll inside it (`VIEW_LIST`), and the documents stay
- * under them, outside that scroll (`DOC_LIST`).
+ * views, and under the root's `overflow:hidden` a taller menu is cut off. The
+ * card itself scrolls, views and documents together: it is one list with one
+ * scroll, not a list of views and a list of documents scrolling apart.
  */
 export const viewMenuStyle = (open) => 'position:absolute;left:0;'
-  + 'bottom:38px;width:260px;max-height:308px;flex-direction:column;'
+  + 'bottom:38px;width:260px;max-height:308px;overflow:auto;'
   + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
-  + (open ? 'flex' : 'none');
+  + (open ? 'block' : 'none');
 
-export const VIEW_LIST = 'flex:1 1 auto;min-height:0;overflow:auto';
-// The documents sit UNDER the scroll of the views, so a model with twelve views
-// does not push them out of sight. Four rows and the top of a fifth: a longer
-// list shows that it goes on, and scrolls on its own.
-export const DOC_LIST = 'flex:none;max-height:132px;overflow:auto';
 // A document's name and its hint share a row of a narrow menu: the hint
 // (`pdf · 4.7 MB`) stays on one line and the name wraps.
 export const DOC_LABEL = 'flex:1;min-width:0;overflow-wrap:anywhere';
@@ -126,26 +121,18 @@ export function viewList({ label, open, onToggle, views = [], documents = [] }) 
         {CHEVRON}
       </div>
       <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open))}>
-        {views.length > 0 && (
-          <div style={css(VIEW_LIST)}>
-            {views.map((t) => (
-              <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                <span style={css(FILL)}>{t.label}</span>
-                <span style={css(FAINT_MONO)}>{t.hint}</span>
-              </div>
-            ))}
+        {views.map((t) => (
+          <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
+            <span style={css(FILL)}>{t.label}</span>
+            <span style={css(FAINT_MONO)}>{t.hint}</span>
           </div>
-        )}
-        {documents.length > 0 && (
-          <div style={css(DOC_LIST)}>
-            {documents.map((t) => (
-              <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-                <span style={css(DOC_LABEL)}>{t.label}</span>
-                <span style={css(DOC_HINT)}>{t.hint}</span>
-              </div>
-            ))}
+        ))}
+        {documents.map((t) => (
+          <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
+            <span style={css(DOC_LABEL)}>{t.label}</span>
+            <span style={css(DOC_HINT)}>{t.hint}</span>
           </div>
-        )}
+        ))}
       </div>
     </div>
   );
