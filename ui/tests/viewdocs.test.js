@@ -11,7 +11,7 @@
 // for what was drawn (`eltree.js`). The two hub fetches `load()` makes are
 // mocked, as ui/tests/tabs.test.js does.
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const { PAGE } = vi.hoisted(() => ({
   PAGE: { pid: 'proj1', slot: 'latest', base: '/project/proj1/latest/' },
@@ -27,10 +27,10 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import DocumentView from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
-import { VIEWPORT_TAG } from '../src/events.js'
+import { STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
 import { DOC_LIST, VIEW_LIST, viewMenuStyle } from '../src/viewlist.jsx'
-import { makeComponent } from './component.js'
+import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
 const DOCS = [
@@ -377,5 +377,62 @@ describe('?d= on arrival', () => {
     const c = await arrive('?v=open')
     expect(c.state.doc).toBeNull()
     expect(c.computed().docOpen).toBeNull()
+  })
+})
+
+describe('the model under a document opened on arrival', () => {
+  // What the viewport is told to show, one entry per `hmr:state`: the page
+  // with the real `setState` contract, so a `set()` reaches `sync()`.
+  const arriving = async (search = '?v=open&d=docs__cut-list.md', documents = DOCS, setState = replaceState) => {
+    const seen = []
+    const listen = (event) => seen.push(event.detail.view)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+    window.history.replaceState(null, '', `/${search}`)
+    const c = makeComponent(HammerolaViewer, {
+      state: { meta: meta(documents), view: null, rail: null, menu: { id: null, x: 0, y: 0 } },
+      setState, schedulePoll: vi.fn(),
+    })
+    loadMeta.mockResolvedValue(meta(documents))
+    loadBuilds.mockResolvedValue(null)
+    await c.load()
+    return { c, seen }
+  }
+
+  it('waits for the document to have its file, and once given is never taken back', async () => {
+    const { c, seen } = await arriving()
+    expect(seen).toEqual([null])
+    shownDocs(c)[0].props.onReady()
+    expect(seen).toEqual([null, 'open'])
+    // back to the model on another view: one `hmr:state`, that view's
+    c.computed().viewTabs[0].onClick()
+    expect(seen).toEqual([null, 'open', 'closed'])
+    // another document over it, and that one fetching
+    c.computed().docRows[1].onClick()
+    c.sync()
+    shownDocs(c)[0].props.onReady()
+    expect(seen).toEqual([null, 'open', 'closed', 'closed'])
+  })
+
+  it('hands the view over once when the document has its file before the page\'s first word to the viewport', async () => {
+    // React mounts the document, whose `componentDidMount` tells the page, and
+    // only then runs the callback of the `setState` that put it there.
+    const callbacks = []
+    const later = (c) => vi.fn((patch, done) => {
+      c.state = { ...c.state, ...patch }
+      if (done) callbacks.push(done)
+    })
+    const plain = { id: 'cut__glass.dxf', name: 'cut/glass.dxf', type: 'file', file: 'cut/glass.dxf', bytes: 9 }
+    const { c, seen } = await arriving('?v=open&d=cut__glass.dxf', [...DOCS, plain], later)
+    shownDocs(c)[0].props.onReady()
+    callbacks.forEach((done) => done())
+    expect(seen).toEqual(['open'])
+  })
+
+  it('comes in when the document is closed before it has its file', async () => {
+    const { c, seen } = await arriving()
+    // the view on screen, chosen again: nothing to switch, the document goes
+    c.computed().viewTabs[1].onClick()
+    expect(seen).toEqual([null, 'open'])
   })
 })

@@ -9,6 +9,7 @@
 // Props:
 //   url       the `.glb`, fetched the first time the view is on screen, so a
 //             design opened on its schematic costs nothing until it is looked at
+//   bytes     its size, what the bar under `Loading…` fills to (loadbar.jsx)
 //   active    on screen: only then is anything drawn
 //   selected  a designator or null: that part is lit and the camera moves to it;
 //             null puts it out. Never reported back through `onSelect`
@@ -17,6 +18,8 @@
 //             designator and the pointer's page point (`clientX`, `clientY`)
 //   onTools   told `{ fit, frame }` once the model is drawn: what the page's
 //             bar does with this view (DocumentView.jsx)
+//   onFetched told each time the `.glb` has come in or failed to: KicadView.jsx
+//             holds the design's other files back for it
 //
 // THE BOARD IS DRIVEN AS THE MODEL IS. The camera is turned by the model's own
 // trackball (`CADTrackballControls`, board3d.js) at the model's speeds: a left
@@ -40,6 +43,7 @@ import {
   disposeModel, exportRoot, frameBox, light, loadThree, mergeByMaterial, partsOf, pickedPart, plainColours,
 } from './board3d.js';
 import { wheelMove } from './gerber.js';
+import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { css, MONO } from './style.jsx';
 
 // The page's 3D canvas colour behind a transparent canvas, so the view follows
@@ -314,7 +318,9 @@ class Stage {
 export default class BoardView3D extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { loading: false, error: '' };
+    // `received`: the bytes of the `.glb` in so far; `got`: all of them, the
+    // model being built.
+    this.state = { loading: false, error: '', received: 0, got: false };
     this.host = null;
     this.stage = null;
     this.setHost = (element) => {
@@ -352,10 +358,21 @@ export default class BoardView3D extends React.Component {
   load() {
     const { url } = this.props;
     this.loading = true;
-    this.setState({ loading: true, error: '' });
-    const model = fetch(url).then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.arrayBuffer();
+    this.setState({ loading: true, error: '', received: 0, got: false });
+    const count = meter((received) => {
+      if (!this._gone) this.setState({ received });
+    });
+    // In or failed, the parent hears it before the model is built, and the full
+    // bar is painted before the model is read.
+    const model = fetchBody(url, count).then((buffer) => {
+      if (!this._gone) {
+        this.setState({ got: true });
+        this.props.onFetched();
+      }
+      return painted().then(() => buffer);
+    }, (error) => {
+      if (!this._gone) this.props.onFetched();
+      throw error;
     });
     Promise.all([loadThree(), model])
       .then(([lib, buffer]) => new lib.GLTFLoader().parseAsync(buffer, '').then((gltf) => [lib, gltf]))
@@ -381,8 +398,8 @@ export default class BoardView3D extends React.Component {
   }
 
   render() {
-    const { loading, error } = this.state;
-    const note = error || (loading && 'Loading…');
+    const { loading, error, received, got } = this.state;
+    const note = error || (loading && loadBar(received, this.props.bytes, got));
     return (
       <div style={css(SHELL)}>
         <div ref={this.setHost} style={css(HOLDER)} />

@@ -25,6 +25,7 @@ import BoardView3D, { CLICK_SLOP, TRACKBALL_SPEEDS } from '../src/BoardView3D.js
 import { loadThree, TRACKBALL_URL } from '../src/board3d.js'
 import { VIEWER_MODULE_URL } from '../src/viewport/library.js'
 import { drained, runFrames, stubFrames } from './component.js'
+import { texts } from './eltree.js'
 
 /** Every renderer the view made. */
 let renderers = []
@@ -86,16 +87,24 @@ class Loader {
 function fetching() {
   const calls = []
   const fetch = vi.fn(() => new Promise((resolve) => {
-    calls.push((ok = true) => resolve({ ok, status: ok ? 200 : 404, arrayBuffer: async () => new ArrayBuffer(8) }))
+    calls.push((ok = true) => resolve(new Response(ok ? new ArrayBuffer(8) : null, { status: ok ? 200 : 404 })))
   }))
   vi.stubGlobal('fetch', fetch)
   return { fetch, answer: (ok) => calls.shift()(ok) }
 }
 
+/** An answer read, the frame that paints its full bar run, and the model
+ *  read after it. */
+async function arrived() {
+  await drained()
+  runFrames()
+  await drained()
+}
+
 /** The view, mounted with its holder, and a way to hand it new props. */
 function mounted(props) {
-  const view = new BoardView3D({ url: '/b/board.glb', active: false, selected: null, onSelect: vi.fn(), onMenu: vi.fn(),
-    onTools: vi.fn(), ...props })
+  const view = new BoardView3D({ url: '/b/board.glb', bytes: 8_000_000, active: false, selected: null,
+    onSelect: vi.fn(), onMenu: vi.fn(), onTools: vi.fn(), onFetched: vi.fn(), ...props })
   view.setState = (patch) => Object.assign(view.state, patch)
   const host = document.createElement('div')
   host.style.color = 'rgb(0, 102, 204)'
@@ -114,7 +123,7 @@ async function loaded() {
   const net = fetching()
   const { view, update } = mounted({ active: true })
   net.answer()
-  await drained()
+  await arrived()
   const canvas = renderers[0].domElement
   canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 })
   return { view, update, canvas }
@@ -150,7 +159,7 @@ describe('the 3D view of a board', () => {
     expect(net.fetch).toHaveBeenCalledTimes(1)
     expect(net.fetch).toHaveBeenCalledWith('/b/board.glb')
     net.answer()
-    await drained()
+    await arrived()
     expect(renderers).toHaveLength(1)
   })
 
@@ -160,12 +169,32 @@ describe('the 3D view of a board', () => {
     net.answer(false)
     await drained()
     expect(view.state.error).toBe('The 3D model did not load: HTTP 404')
+    // the design waiting on the model hears of the failure; the bar has nothing to drive
+    expect(view.props.onFetched).toHaveBeenCalledTimes(1)
+    expect(view.props.onTools).not.toHaveBeenCalled()
     update({ selected: 'C1' })
     expect(net.fetch).toHaveBeenCalledTimes(1)
     update({ active: false })
     update({ active: true })
     expect(net.fetch).toHaveBeenCalledTimes(2)
     expect(view.state.error).toBe('')
+  })
+
+  it('fills a bar to the model\'s size, paints it full before reading the model, and tells the design it is in', async () => {
+    const net = fetching()
+    const { view } = mounted({ active: true })
+    expect(texts(view.render())).toEqual(['Loading… 0.0 / 8.0 MB'])
+    net.answer()
+    await drained()
+    expect(texts(view.render())).toEqual(['Preparing…'])
+    expect(view.props.onFetched).toHaveBeenCalledTimes(1)
+    // the model is read only after a frame has shown that
+    await drained()
+    expect(renderers).toEqual([])
+    runFrames()
+    await drained()
+    expect(renderers).toHaveLength(1)
+    expect(texts(view.render())).toEqual([])
   })
 
   it('frees a model that arrives after it is gone, and makes nothing of it', async () => {
@@ -176,7 +205,7 @@ describe('the 3D view of a board', () => {
     view.componentWillUnmount()
     view.setHost(null)
     net.answer()
-    await drained()
+    await arrived()
     expect(freed).toHaveBeenCalledTimes(2)
     expect(renderers).toEqual([])
     expect(view.stage).toBeNull()
@@ -259,7 +288,7 @@ describe('the 3D view of a board', () => {
     const { view } = mounted({ active: true })
     expect(view.props.onTools).not.toHaveBeenCalled()
     net.answer()
-    await drained()
+    await arrived()
     const [[tools]] = view.props.onTools.mock.calls
     const { camera, controls } = view.stage
     const first = [camera.position.clone(), controls.target.clone(), camera.quaternion.clone()]

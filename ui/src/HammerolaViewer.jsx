@@ -1014,6 +1014,10 @@ export default class HammerolaViewer extends React.Component {
     this._dl = undefined;
     // -- other views of the build on screen, read for the comments left there
     this._viewDocs = undefined;
+    // -- true once `sync` no longer holds the model back for a document, and
+    // whether the last `sync` did
+    this._modelFree = undefined;
+    this._heldBack = undefined;
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -3168,6 +3172,18 @@ export default class HammerolaViewer extends React.Component {
     // has to move BOTH — the id is what makes the load a reload with a fresh fit
     // rather than a live swap under the old camera (hub.js, `compareView`).
     const only = pair ? compareView(s.cmpView) : null;
+    // HELD BACK while a document laid over the model is fetching its file, so
+    // the one on screen does not share the line with the model under it: the
+    // viewport fetches nothing for `view: null`. Released when the document
+    // says it has its file (`docReady`) or is closed — and only before the
+    // viewport's first view, since a view taken back to null and given again is
+    // a reload there (`setState` in viewport/element.js). `base` and `buildKey`
+    // stay out as well: the element takes a change of either for a new build
+    // and loads its first view, hold or not; absent, they arrive with the view
+    // on release, one load of the view the page is on.
+    const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
+    const held = !pair && !this._modelFree && documents.some((d) => d.id === s.doc);
+    this._heldBack = held;
     const scene = pair ? {
       base: compareBase(PAGE.pid, pair[0], pair[1]),
       views: [only],
@@ -3188,7 +3204,7 @@ export default class HammerolaViewer extends React.Component {
       // and `file` off it, which is exactly what src/render.py writes.
       base: PAGE.base,
       views: (meta && meta.views) || [],
-      view: s.view,
+      view: held ? null : s.view,
       // What makes one build different from the last. The viewport uses it to
       // tell a LIVE RELOAD (same view, new geometry — keep the frame) from a
       // first load, and this side computes it because this side reads meta.json.
@@ -3201,6 +3217,11 @@ export default class HammerolaViewer extends React.Component {
       // switch carry it for nothing.
       token: null,
     };
+    if (held) {
+      delete scene.base;
+      delete scene.buildKey;
+    }
+    if (scene.view) this._modelFree = true;
     window.dispatchEvent(new CustomEvent(STATE, {
       detail: {
         ...scene,
@@ -3255,6 +3276,18 @@ export default class HammerolaViewer extends React.Component {
   }
 
   set(patch, extra) { this.setState(patch, () => this.sync(extra)); }
+
+  /** The document laid over the model has its file (`onReady` in
+   *  DocumentView.jsx): the model `sync` held back goes to the viewport. Sent
+   *  only when the last `sync` did hold it: a document that has its file at
+   *  mount (a file the page does not draw) tells it before the page's own
+   *  first `sync`, which then hands the view over itself, and a second
+   *  `hmr:state` before the model is drawn starts its load again. */
+  docReady() {
+    if (this._modelFree) return;
+    this._modelFree = true;
+    if (this._heldBack) this.sync();
+  }
 
   /**
    * The reader changing which parts they can see — the only writer of `hidden`
@@ -5925,7 +5958,8 @@ export default class HammerolaViewer extends React.Component {
               <div style={css(v.docLayerStyle)}>
                 <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
                               base={PAGE.base} onOpen={v.onDocOpen}
-                              onTools={(tools) => this.setState({ docTools: tools })} />
+                              onTools={(tools) => this.setState({ docTools: tools })}
+                              onReady={() => this.docReady()} />
               </div>
             )}
 
