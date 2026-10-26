@@ -45,9 +45,8 @@ describe('copy link', () => {
     expect(await copyHref(HREF)).toBe(false)
 
     // Each look is an icon that says how the copy went in its title; the
-    // spelt one keeps its words, which are not what reports it.
-    for (const [props, words] of [[{ href: HREF }, []], [{ href: HREF, bar: true }, []],
-      [{ href: HREF, bar: true, words: true }, ['Copy link']]]) {
+    // bar's keeps its words, which are not what reports it.
+    for (const [props, words] of [[{ href: HREF }, []], [{ href: HREF, bar: true }, ['Copy link']]]) {
       const view = control(props)
       await view.copy(click())
       expect([view.render().props.title, texts(view.render())]).toEqual(['Could not copy', words])

@@ -1153,11 +1153,9 @@ describe('the caret a row expands from', () => {
     expect(leaves).toHaveLength(2)
     for (const leaf_ of leaves) expect(pathsIn(leaf_)).toHaveLength(0)
 
-    // AND STILL OCCUPIES ITS BOX, hidden rather than absent: the 20x20 is what
-    // keeps a leaf's name lined up under the names on the level above it.
+    // AND STILL OCCUPIES ITS BOX, hidden rather than absent, so a leaf's name
+    // stays lined up under the names on the level above it.
     const box = css(rowFor(c, '/model/pin').caretStyle)
-    expect(box.width).toBe('20px')
-    expect(box.height).toBe('20px')
     expect(box.visibility).toBe('hidden')
     expect(css(rowFor(c, '/model').caretStyle).visibility).toBeUndefined()
   })

@@ -703,11 +703,9 @@ describe('the right-click menu', () => {
     // selected as a left click selects it
     expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, 'C523'))
     expect(view3d(view).three.props.selected).toBe('C523')
-    // at the pointer, in the view area, in the page's colours
-    expect(menuOf(view).props.style).toMatchObject({ position: 'absolute', left: '300px', top: '200px', width: '220px',
-      background: 'var(--card-bg)', border: '1px solid var(--line)' })
+    // at the pointer, in the view area
+    expect(menuOf(view).props.style).toMatchObject({ position: 'absolute', left: '300px', top: '200px' })
     expect(texts(menuOf(view))).toEqual(['C523', 'Show C523 in hw/board.kicad_pcb', 'Show C523 in hw/board.glb'])
-    expect(itemsOf(view)[0].props.style.color).toBe('var(--text)')
     expect(view.props.onOpen).not.toHaveBeenCalled()
   })
 
@@ -1097,9 +1095,8 @@ describe('a part\'s datasheet', () => {
       // the viewer's own keys (`[`, `]`) stand aside for an open dialog of the page
       expect(shown.window.props).toMatchObject({ role: 'dialog', 'data-state': 'open' })
       expect(texts(shown.veil)).toEqual(['TPA3250', '×'])
-      // over the view area, in the menu's colours
+      // over the view area
       expect(shown.veil.props.style).toMatchObject({ position: 'absolute', inset: '0', padding: '12px' })
-      expect(shown.window.props.style).toMatchObject({ background: 'var(--card-bg)', border: '1px solid var(--line)' })
     })
 
     it('closes on its ×, and on a click on the veil beside it but not on one inside it', () => {

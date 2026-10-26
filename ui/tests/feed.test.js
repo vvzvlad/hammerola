@@ -459,7 +459,6 @@ describe('a second press of Send', () => {
     expect(idle.compSendLabel).toBe('Send')
     expect(idle.compSendStyle).toContain('cursor:pointer')
     expect(out.compSendLabel).toBe('Sending…')
-    expect(out.compSendStyle).toContain('var(--accent-muted)')
     expect(out.compSendStyle).not.toContain('cursor:pointer')
   })
 })

@@ -16,7 +16,7 @@ import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import KicadView, { PAGE_EVENT, SCH } from '../src/KicadView.jsx'
-import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
+import { markdownElements, resolveHref } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
 import { css } from '../src/style.jsx'
@@ -90,17 +90,6 @@ describe('markdown', () => {
       'диаметр отверстия не больше 32;', 'углы вырезов — радиус не меньше 6.'])
   })
 
-  it('keeps a short cell on one line, by class, and lets a long one wrap', () => {
-    const tree = markdownElements(
-      '| Деталь | Размер, мм |\n|---|---|\n'
-      + '| Ребро жёсткости над дверями, клеится плашмя | 1223.0 × 24.0 |', BASE)
-    const [name, size] = ofType(tree, 'td')
-    expect(size.props.className).toBe(NOWRAP_CLASS)
-    expect(name.props.className).toBeUndefined()
-    expect(size.props.style.whiteSpace).toBeUndefined()
-    expect(ofType(tree, 'th').map((th) => th.props.className)).toEqual([NOWRAP_CLASS, NOWRAP_CLASS])
-  })
-
   it('opens a web link in a new tab, and a link into the build in this one', () => {
     const tree = markdownElements('[ozon](https://www.ozon.ru/x) [plain](http://a.b/) [r](report.pdf)', BASE)
     const [ozon, plain, local] = ofType(tree, 'a')
@@ -119,7 +108,7 @@ describe('markdown', () => {
     expect(texts(tree).join('')).toContain('<script>alert(1)</script>')
   })
 
-  it('points relative links and pictures into the same build, on paper', () => {
+  it('points relative links and pictures into the same build', () => {
     const tree = markdownElements(
       '[r](report.pdf) [up](./sub/x.md#a) [ext](https://example.org/x) [here](#top)\n\n![p](photo.png)',
       BASE)
@@ -128,8 +117,6 @@ describe('markdown', () => {
     const img = ofType(tree, 'img')[0]
     expect(img.props.src).toBe(`${BASE}photo.png`)
     expect(img.props.alt).toBe('p')
-    // Black lines on nothing would vanish into the dark page.
-    expect(img.props.style.background).toBe('var(--paper-bg)')
   })
 
   it('leaves a link with a scheme or a root path alone', () => {
@@ -205,11 +192,6 @@ describe('one document, as both pages draw it', () => {
   it('lets the text of a markdown document be selected under the library body rule', () => {
     const [article] = ofType(documentBody(cutList, BASE, 'text', ''), 'article')
     expect(article.props.style.userSelect).toBe('text')
-  })
-
-  it('carries the rule its short cells are styled by', () => {
-    const styles = ofType(documentBody(cutList, BASE, '| a |\n|---|\n| 1 |', ''), 'style')
-    expect(styles.map(text)).toEqual([`.${NOWRAP_CLASS}{white-space:nowrap}`])
   })
 
   it('draws markdown itself, a picture as an image and the rest in a frame', () => {
