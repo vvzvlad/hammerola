@@ -72,6 +72,11 @@ import { css, MONO, SANS } from './style.jsx';
  *  src/render.py, held to this spelling by tests/test_documents.py). */
 export const FILE_TYPE = 'file';
 
+/** The types of document the model's page leaves a comment on: the Comment
+ *  tool is in service over one of them (chromeview.js), and draws an area on
+ *  it (KicadView.jsx). */
+export const COMMENTABLE = new Set(['schematic', 'board']);
+
 const encodePath = (path) => path.split('/').map(encodeURIComponent).join('/');
 
 /** Where a file of this build is served from. */
@@ -196,11 +201,12 @@ export function docLinks(base, documents, onOpen) {
  *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
  *  the file, `received` the bytes of a markdown text in so far, `addressDoc`
  *  the page's reading of which document an address names, for a schematic's
- *  sheet in it (KicadView.jsx), and `onSheet` the page's door for writing
- *  that sheet. Pure but for that link's address, which is the page's current
- *  one (`docLinks`). */
+ *  sheet in it (KicadView.jsx), `onSheet` the page's door for writing
+ *  that sheet, and `comment` what a KiCad design needs for the page's
+ *  comments (KicadView.jsx). Pure but for that link's address, which is the
+ *  page's current one (`docLinks`). */
 export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc,
-  onSheet) {
+  onSheet, comment) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
@@ -216,7 +222,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   }
   if (viewOf(doc)) {
     return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady}
-                      addressDoc={addressDoc} onSheet={onSheet} />;
+                      addressDoc={addressDoc} onSheet={onSheet} comment={comment} />;
   }
   if (doc.type === GERBERS_TYPE) {
     return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady} />;
@@ -276,8 +282,9 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet } = this.props;
+    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment } = this.props;
     const { text, error, received } = this.state;
-    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet);
+    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet,
+      comment);
   }
 }

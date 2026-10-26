@@ -31,8 +31,9 @@ import DocumentView, { docHint, documentBody, docViewKey } from '../src/Document
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
-  menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
+  AREA_EVENT, BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK, drawingOf,
+  drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
+  SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
@@ -1255,3 +1256,126 @@ describe('what the page\'s bar can do with the view on screen', () => {
   })
 })
 
+
+describe('a comment on a design', () => {
+  // The schematic's two sheets as the element lists them, each with its file.
+  const ROOT = 'hw/board.kicad_sch:/root'
+  const AMP = 'hw/board.kicad_sch:/root/amp'
+  const PAGES = [
+    { projectPath: ROOT, name: 'board', parentProjectPath: null, filename: 'hw/board.kicad_sch' },
+    { projectPath: AMP, name: 'amp', parentProjectPath: ROOT, filename: 'hw/sub/amp.kicad_sch' },
+  ]
+  // The page's open comments: one on each sheet and one on the board.
+  const MARKS = [
+    { id: 'c1', doc: 'hw/board.kicad_sch', sheet: 'hw/board.kicad_sch', area: [0, 0, 10, 10] },
+    { id: 'c2', doc: 'hw/board.kicad_sch', sheet: 'hw/sub/amp.kicad_sch', area: [10, 20, 4, 6] },
+    { id: 'c3', doc: 'hw/board.kicad_pcb', sheet: null, area: [5, 5, 2, 2] },
+  ]
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    window.history.replaceState(null, '', '/')
+  })
+
+  /** The design opened on `doc` under the page's `comment`, its viewers ready
+   *  and drawn, the schematic on its root sheet. */
+  const opened = async (doc = DOCS[0], comment = {}) => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view, elements } = mounted(doc)
+    view.props = { ...view.props, comment: {
+      on: false, marks: MARKS, onArea: vi.fn(), onMarker: vi.fn(), focus: null, onFocused: vi.fn(), ...comment } }
+    for (const element of Object.values(elements)) {
+      Object.assign(element, {
+        setCommentMode: vi.fn(), setCommentOverlays: vi.fn(), clearCommentOverlays: vi.fn(),
+        zoomToLocation: vi.fn(), itemsInArea: vi.fn(() => ['C1', 'R2']),
+      })
+    }
+    const sch = elements[SCH]
+    sch.page = ROOT
+    sch.getSchematicPages = () => PAGES
+    sch.getActiveSchematicPage = () => PAGES.find((one) => one.projectPath === sch.page)
+    sch.switchPage = vi.fn((to) => {
+      sch.page = to
+      sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
+      return true
+    })
+    view.componentDidMount()
+    onTestFinished(() => view.componentWillUnmount())
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    return { view, elements, sch }
+  }
+  /** The page handing down `comment`, changed. */
+  const handed = (view, comment) => {
+    const before = view.props
+    view.props = { ...before, comment: { ...before.comment, ...comment } }
+    view.componentDidUpdate(before)
+  }
+  const aTask = () => new Promise((done) => { setTimeout(done, 0) })
+
+  it('puts the view on screen alone in the viewer\'s comment mode while the page\'s tool is armed, each told of a change', async () => {
+    const { view, elements } = await opened()
+    handed(view, { on: true })
+    handed(view, { on: true })
+    handed(view, { on: false })
+    expect([elements[SCH].setCommentMode.mock.calls, elements[PCB].setCommentMode.mock.calls])
+      .toEqual([[[true], [false]], [[false]]])
+  })
+
+  it('hands the page an area drawn on either view, with the file of its sheet and what is in it', async () => {
+    const { view, elements } = await opened(DOCS[0], { on: true })
+    const draw = (context, detail) => elements[context].dispatchEvent(new CustomEvent(AREA_EVENT, { detail }))
+    draw(SCH, { context: SCH, bounds: [1, 2, 3, 4], page: 'hw/sub/amp.kicad_sch' })
+    draw(PCB, { context: PCB, bounds: [5, 6, 7, 8] })
+    expect(view.props.comment.onArea.mock.calls).toEqual([
+      [DOCS[0], { frame: 'sheet', sheet: 'hw/sub/amp.kicad_sch', area: [1, 2, 3, 4], items: ['C1', 'R2'] }],
+      [DOCS[1], { frame: 'board', sheet: null, area: [5, 6, 7, 8], items: ['C1', 'R2'] }],
+    ])
+    expect(elements[SCH].itemsInArea).toHaveBeenCalledWith(SCH, [1, 2, 3, 4])
+  })
+
+  it('stands the open comments on their member, on the schematic the sheet\'s on screen, again once a sheet has loaded', async () => {
+    const { view, elements, sch } = await opened()
+    view.componentDidUpdate(view.props)
+    view.componentDidUpdate(view.props)
+    const marker = (id, x, y, area, page) => ({ id, anchor: { kind: 'world', x, y, ...(page ? { page } : {}) }, areaBounds: area })
+    expect(elements[PCB].setCommentOverlays.mock.calls)
+      .toEqual([[{ context: PCB, comments: [marker('c3', 6, 6, [5, 5, 2, 2])] }]])
+    const onRoot = { context: SCH, comments: [marker('c1', 5, 5, [0, 0, 10, 10], 'hw/board.kicad_sch')] }
+    const onAmp = { context: SCH, comments: [marker('c2', 12, 23, [10, 20, 4, 6], 'hw/sub/amp.kicad_sch')] }
+    expect(sch.setCommentOverlays.mock.calls).toEqual([[onRoot]])
+    // the viewer draws a sheet it has loaded without the markers it holds
+    sch.switchPage(AMP)
+    sch.dispatchEvent(new CustomEvent(SHEET_LOADED_EVENT))
+    await aTask()
+    expect(sch.clearCommentOverlays.mock.calls).toEqual([[SCH]])
+    expect(sch.setCommentOverlays.mock.calls).toEqual([[onRoot], [onAmp]])
+  })
+
+  it('names the comment of a marker clicked to the page, and the draft\'s none', async () => {
+    const { view, elements } = await opened()
+    for (const commentId of ['c2', DRAFT_MARK]) {
+      elements[SCH].dispatchEvent(new CustomEvent(MARKER_EVENT, { detail: { commentId } }))
+    }
+    expect(view.props.comment.onMarker.mock.calls).toEqual([['c2']])
+  })
+
+  it('shows the place the page asks for on its sheet, then at its centre once the sheet has loaded, a step of history only where asked', async () => {
+    const focus = (step) => ({ doc: 'hw/board.kicad_sch', sheet: 'hw/sub/amp.kicad_sch', area: [10, 20, 4, 6], step })
+    for (const step of [true, false]) {
+      window.history.replaceState(null, '', `${BASE}?d=${DOCS[0].id}`)
+      const { view, sch } = await opened()
+      const length = window.history.length
+      handed(view, { focus: focus(step) })
+      expect([sch.switchPage.mock.calls, window.location.search, window.history.length - length])
+        .toEqual([[[AMP]], `?d=${DOCS[0].id}&s=amp`, step ? 1 : 0])
+      expect(view.props.comment.onFocused).toHaveBeenCalledTimes(1)
+      sch.dispatchEvent(new CustomEvent(SHEET_LOADED_EVENT))
+      await aTask()
+      expect(sch.zoomToLocation.mock.calls).toEqual([[12, 23]])
+    }
+    // on the board, at once
+    const { view, elements } = await opened(DOCS[1])
+    handed(view, { focus: { doc: 'hw/board.kicad_pcb', sheet: null, area: [5, 5, 2, 2], step: false } })
+    await aTask()
+    expect(elements[PCB].zoomToLocation.mock.calls).toEqual([[6, 6]])
+  })
+})

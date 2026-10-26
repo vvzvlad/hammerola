@@ -7,8 +7,14 @@
  * the list.
  */
 import { anchorFor, rowsByKey, stamp } from './hub.js';
+import { sheetName } from './kicadpages.js';
 import { ON_ACCENT } from './panelstyle.js';
 import { MONO } from './style.jsx';
+
+/** Where in document `doc` a comment hangs, as the composer heads it and the
+ *  rail says it: `<sheet> of <document>` on a schematic's sheet, else the
+ *  document's name. */
+export const docPlace = (record, doc) => (record.sheet ? `${sheetName(record.sheet)} of ${doc.name}` : doc.name);
 
 export function feedView(s, deps) {
   const { meta, catalogue, stop, node: nodeAt, set, pushChoice, resolveComment } = deps;
@@ -32,9 +38,13 @@ export function feedView(s, deps) {
     nodes: s.tree ? s.tree.nodes : null,
     parts: catalogue || {},
   };
+  const documents = (meta && meta.documents) || [];
   const threads = s.feed.map((record, i) => {
     const anchor = anchorFor(record, anchoredAt);
     const resolved = record.status === 'resolved';
+    // A comment on a document hangs on the one this build lists at its path.
+    const target = anchor.state === 'doc' ? documents.find((d) => d.file === record.doc) : null;
+    const near = Array.isArray(record.items) && record.items.length ? ` — near ${record.items.join(', ')}` : '';
     // THE HEADING IS A ROW OF THE TREE ON SCREEN or it is the catalogue key,
     // and never the stored path used as a stand-in: on another build that
     // path is a number the tessellator was free to hand to something else.
@@ -54,6 +64,7 @@ export function feedView(s, deps) {
         : 'the part is not in this view',
       orphan: 'the part this was left on is no longer in the catalogue',
       none: 'not tied to a part',
+      doc: target ? `on ${docPlace(record, target)}${near}` : 'the document is not in this build',
     }[anchor.state];
     return {
       key: record.id,
@@ -74,8 +85,25 @@ export function feedView(s, deps) {
       // is in sight: a step of history naming no document (`pushChoice`), so
       // Back reopens the one it covered. Only over a document the build lists:
       // under any other `d=` the model is already on screen.
+      //
+      // A comment on a document opens that document instead, as its row in
+      // the list of views does — a step of history unless it is on screen —
+      // and asks it to show the area (`docFocus`, KicadView.jsx): on its
+      // sheet, which is a step of its own only where the document was
+      // already on screen (`step`).
       onOpen: stop(() => {
-        if (((meta && meta.documents) || []).some((d) => d.id === s.doc)) pushChoice(s.view, null);
+        if (anchor.state === 'doc') {
+          if (!target) {
+            set({ activePin: record.id });
+            return;
+          }
+          const step = s.doc === target.id;
+          if (!step) pushChoice(s.view, target.id);
+          set({ activePin: record.id, doc: target.id, docFocus: Array.isArray(record.area)
+            ? { doc: target.file, sheet: record.sheet || null, area: record.area, step } : null });
+          return;
+        }
+        if (documents.some((d) => d.id === s.doc)) pushChoice(s.view, null);
         set({ activePin: record.id, doc: null });
       }),
       resolved,

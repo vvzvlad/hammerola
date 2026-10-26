@@ -31,6 +31,10 @@ import { resolved } from './kicadnets.js';
 import { property } from './kicadsheets.js';
 import { children, head, parseSexpr, valueOf } from './sexpr.js';
 
+/** A sheet as a menu and the comment rail name it: its file's name, without
+ *  the directory and `.kicad_sch`. */
+export const sheetName = (path) => path.slice(path.lastIndexOf('/') + 1).replace(/\.kicad_sch$/, '');
+
 /** The placement of the sheet symbol `symbol` the viewer takes under the
  *  sheet at `path`: the one at that path, else its only one, else null. By
  *  path, as the viewer keys them, the last of one path standing. */

@@ -35,7 +35,18 @@ import { KCBoardAppElement } from "../kicanvas/elements/kc-board/app";
 import { KCSchematicAppElement } from "../kicanvas/elements/kc-schematic/app";
 import { BomApp } from "../kicanvas/elements/bom/app";
 import { KicadPCB, KicadSch } from "../kicad";
-import type { SchematicInstanceContext } from "../kicad/schematic";
+import {
+    ArcSegment,
+    Footprint,
+    LineSegment,
+    Pad,
+    Via,
+} from "../kicad/board";
+import {
+    Label,
+    SchematicSymbol,
+    type SchematicInstanceContext,
+} from "../kicad/schematic";
 
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
@@ -2605,6 +2616,65 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             }));
         return resolve_comment_overlays(request, (anchor) =>
             viewer.resolve_overlay_anchor_for_host(anchor),
+        );
+    }
+
+    /**
+     * What a comment's area holds, as its words: the designators of the
+     * symbols or footprints whose painted box meets `bounds` (`[x, y, w, h]`
+     * in the document's millimetres), power symbols and flags (`#…`) left
+     * out, and the names of the nets there — the schematic's labels, the
+     * board's pads, tracks and vias, without the names KiCad makes up for an
+     * unnamed net. Sorted as people sort designators (R2 before R10), each
+     * once; empty before the viewer has drawn.
+     */
+    public itemsInArea(
+        context: EcadCommentContext,
+        bounds: [number, number, number, number],
+    ): string[] {
+        const [x, y, w, h] = bounds;
+        const meets = (box: BBox) =>
+            Math.min(box.x, box.x2) <= x + w &&
+            Math.max(box.x, box.x2) >= x &&
+            Math.min(box.y, box.y2) <= y + h &&
+            Math.max(box.y, box.y2) >= y;
+        const found = new Set<string>();
+        const designator = (reference: string | undefined) => {
+            if (reference && !reference.startsWith("#")) found.add(reference);
+        };
+        const net = (name: string | undefined) => {
+            if (name && !/^(Net|unconnected)-\(/.test(name)) found.add(name);
+        };
+        const viewer = this.#viewer_for_context(context);
+        for (const layer of viewer?.layers?.in_order() ?? []) {
+            for (const [item, box] of layer.bboxes) {
+                if (!meets(box)) continue;
+                if (context === "SCH") {
+                    const schematic = viewer as SchematicViewer;
+                    if (item instanceof SchematicSymbol) {
+                        designator(
+                            schematic.instance_context?.reference(item) ??
+                                item.reference,
+                        );
+                    } else if (item instanceof Label) {
+                        net(item.shown_text);
+                    }
+                } else {
+                    const board = (viewer as BoardViewer).board;
+                    if (item instanceof Footprint) designator(item.reference);
+                    else if (item instanceof Pad) net(item.net?.name);
+                    else if (
+                        item instanceof LineSegment ||
+                        item instanceof ArcSegment ||
+                        item instanceof Via
+                    ) {
+                        net(board.getNetName(item.net));
+                    }
+                }
+            }
+        }
+        return [...found].sort((a, b) =>
+            a.localeCompare(b, undefined, { numeric: true }),
         );
     }
 

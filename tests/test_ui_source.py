@@ -417,12 +417,14 @@ def test_the_comment_payload_only_uses_fields_the_hub_keeps():
 
     That is the quietest failure on this page: a field added to the payload
     reaches the hub, is discarded, and the sender sees a 201. Anything that has
-    to survive the trip belongs in `text`.
+    to survive the trip belongs in `text`. The body is an object literal, one
+    for a comment on the model and one for a comment on a document; the keys
+    of both are read.
     """
     kept = set(validate_payload({"text": "x"}, 100))
-    body = re.search(r"form\.append\('comment',\s*JSON\.stringify\(\{(.*?)\}\)\)",
+    body = re.search(r"form\.append\('comment',\s*JSON\.stringify\((.*?)\)\);",
                      read(COMPONENT), flags=re.S)
-    assert body, "the comment body is no longer one object literal"
+    assert body, "the comment body is no longer appended as one JSON.stringify call"
     sent = set(re.findall(r"^\s*(\w+):", body.group(1), flags=re.M))
     assert sent <= kept, f"fields the hub will silently drop: {sorted(sent - kept)}"
 

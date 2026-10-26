@@ -897,3 +897,51 @@ describe('the composer keyboard', () => {
     expect(focus).toHaveBeenCalledTimes(1)
   })
 })
+
+// -- a comment on a document --------------------------------------------------
+
+describe('a comment on a document', () => {
+  // A KiCad design's schematic and board, as the build lists them.
+  const SCHEMATIC = { id: 'hw__main.kicad_sch', name: 'Main', type: 'schematic', file: 'hw/main.kicad_sch',
+    kicad: { schematics: ['hw/main.kicad_sch', 'hw/amp.kicad_sch'], project: 'hw/main.kicad_pro' } }
+  const BOARD = { id: 'hw__main.kicad_pcb', name: 'Main board', type: 'board', file: 'hw/main.kicad_pcb',
+    kicad: { project: 'hw/main.kicad_pro' } }
+  const ON_SHEET = { part: null, key: null, doc: SCHEMATIC.file, frame: 'sheet', sheet: 'hw/amp.kicad_sch',
+    area: [10, 20, 4, 6], items: ['C1', 'OUT_A'] }
+  const listing = (c) => {
+    c.state.meta = { ...c.state.meta, documents: [SCHEMATIC, BOARD] }
+    return c
+  }
+
+  it('says the sheet and the document it is on and what is near, the board by its name alone', () => {
+    const c = listing(page({ feed: [
+      record(ON_SHEET),
+      record({ id: 'c2', doc: BOARD.file, frame: 'board', sheet: null, area: [1, 2, 3, 4], items: [] }),
+      record({ id: 'c3', ...ON_SHEET, doc: 'hw/gone.kicad_sch' }),
+    ] }))
+    expect(c.computed().threads.map((t) => t.says)).toEqual([
+      'on amp of Main — near C1, OUT_A', 'on Main board', 'the document is not in this build'])
+  })
+
+  it('posts its place in the document and nothing of the model, with the document\'s own frame', async () => {
+    const fetching = answering({ status: 201 }, served([]))
+    const c = listing(page({ composer: { part: 'plate(2)', partId: '/model/plate', key: 'plate',
+      p: [1, 2, 3], n: [0, 0, 1], text: 'too hot', photo: null } }))
+    c.frameBlob = vi.fn(async () => null)
+    const shot = new Blob(['png'], { type: 'image/png' })
+    c.state.docTools = { frame: vi.fn(async () => shot) }
+
+    // the area replaces where the draft hangs and keeps what was written
+    c.docArea(SCHEMATIC, { frame: 'sheet', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], items: ['C1'] })
+    expect([c.state.composer.part, c.state.composer.text]).toEqual(['amp of Main', 'too hot'])
+    await c.sendComment()
+
+    const body = fetching.mock.calls[0][1].body
+    expect(JSON.parse(body.get('comment'))).toEqual({
+      text: 'too hot', doc: 'hw/main.kicad_sch', frame: 'sheet', sheet: 'hw/amp.kicad_sch',
+      area: [10, 20, 4, 6], items: ['C1'], published: STAMP, view: null, camera: null,
+    })
+    expect(c.frameBlob).not.toHaveBeenCalled()
+    expect(body.get('shot').name).toBe('shot.png')
+  })
+})

@@ -92,10 +92,76 @@ def test_the_frame_of_the_point_is_stored(hub):
 
 
 @pytest.mark.parametrize("frame", [None, "world", "", ["part"]])
-def test_a_frame_other_than_part_is_422(hub, frame):
-    """Absent or exactly "part": any other value names a frame nobody reads."""
+def test_a_frame_nobody_reads_is_422(hub, frame):
+    """Absent or one of `comments.FRAMES`: any other value names a frame
+    nobody reads."""
     pid, commit = _publish(hub)
     r = hub.post_comment(pid, commit, comment_payload(frame=frame))
+    assert r.status_code == 422
+    assert not _records(hub)
+
+
+def _doc_payload(**extra):
+    """A comment drawn as an area on a schematic's sheet, the shape the build
+    page sends for one (SPEC 7A.1): no part, point, view or camera."""
+    payload = {"text": "swap these two", "doc": "kicad/board.kicad_sch",
+               "frame": "sheet", "sheet": "kicad/amp.kicad_sch",
+               "area": [10, 20.5, 30, 0], "items": ["C502", "OUT_C", "R501"],
+               "view": None, "camera": None}
+    payload.update(extra)
+    return payload
+
+
+def test_a_comment_on_a_document_stores_its_place(hub):
+    """Which document, which sheet, the area in its millimetres and what is in
+    it; a model's fields the page does not send are stored as None, and the
+    two the page sends for a markdown passage and a board's layer as well."""
+    pid, commit = _publish(hub)
+    on_sheet = hub.post_comment(pid, commit, _doc_payload())
+    on_board = hub.post_comment(pid, commit, _doc_payload(
+        frame="board", doc="kicad/board.kicad_pcb", sheet=None))
+    quoted = hub.post_comment(pid, commit, _doc_payload(
+        frame="text", doc="notes/note.md", sheet=None, area=None, items=None,
+        layer="F.Cu", quote={"text": "the gap", "before": "", "after": "\nis"}))
+    assert [r.status_code for r in (on_sheet, on_board, quoted)] == [201] * 3
+
+    def stored(reply):
+        name = f"{reply.json()['id']}.json"
+        return json.loads((hub.comment_dir(pid) / name).read_text())
+
+    record = stored(on_sheet)
+    assert {k: record[k] for k in ("doc", "frame", "sheet", "area", "items")} == {
+        "doc": "kicad/board.kicad_sch", "frame": "sheet",
+        "sheet": "kicad/amp.kicad_sch", "area": [10.0, 20.5, 30.0, 0.0],
+        "items": ["C502", "OUT_C", "R501"]}
+    assert [record[k] for k in ("part", "key", "point", "view", "camera",
+                                "layer", "quote")] == [None] * 7
+    record = stored(quoted)
+    assert record["layer"] == "F.Cu"
+    assert record["quote"] == {"text": "the gap", "before": "", "after": "\nis"}
+    # And a comment on the model carries none of them.
+    model = stored(hub.post_comment(pid, commit, comment_payload()))
+    assert [model[k] for k in ("doc", "sheet", "area", "items", "layer",
+                               "quote")] == [None] * 6
+
+
+@pytest.mark.parametrize("bad", [
+    {"area": [1, 2, -1, 3]},
+    {"area": [1, 2, 3]},
+    {"area": [1, 2, 3, float("nan")]},
+    {"items": "R501"},
+    {"items": ["R501", 7]},
+    {"items": ["R501\nC502"]},
+    {"sheet": "amp\n.kicad_sch"},
+    {"doc": ["kicad/board.kicad_sch"]},
+    {"quote": {"text": " ", "before": "", "after": ""}},
+    {"quote": {"text": "gap", "after": ""}},
+    {"quote": {"text": "gap", "before": "‮", "after": ""}},
+    {"quote": "the gap"},
+])
+def test_a_document_place_of_the_wrong_shape_is_422(hub, bad):
+    pid, commit = _publish(hub)
+    r = hub.post_comment(pid, commit, _doc_payload(**bad))
     assert r.status_code == 422
     assert not _records(hub)
 

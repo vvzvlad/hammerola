@@ -841,7 +841,7 @@ export function rowsByKey(tree) {
  * Where one stored comment hangs in the build on screen: `{state, path, point}`.
  *
  * `path` is a tree path to hang the pin on and `point` a coordinate to hang it
- * at; each is null unless the state names it. The five states, each a
+ * at; each is null unless the state names it. The six states, each a
  * different sentence for the reader:
  *
  *   `point`     — the record was written on THIS build, so the coordinate it
@@ -873,6 +873,8 @@ export function rowsByKey(tree) {
  *                 left on is gone from the model.
  *   `none`      — no key at all (an older record, or one left on nothing in
  *                 particular). Unanchored.
+ *   `doc`       — the record names a document of the build (`doc`): it hangs
+ *                 there and never on the model, whatever else it carries.
  *
  * `parts` is read through `hasOwnProperty` and never by `parts[key]`: a key is a
  * string the author chose, and `__proto__` is one they may choose.
@@ -880,6 +882,7 @@ export function rowsByKey(tree) {
 export function anchorFor(record, { published, view, keyRows, nodes, parts }) {
   const unanchored = { state: 'none', path: null, point: null };
   if (!record || typeof record !== 'object') return unanchored;
+  if (typeof record.doc === 'string' && record.doc) return { state: 'doc', path: null, point: null };
 
   const p = record.point;
   const placed = Array.isArray(p) && p.length === 3

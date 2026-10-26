@@ -33,6 +33,10 @@ ATTACHMENTS = ((PHOTO_KIND, "photo"), ("shot", "frame"))
 # by `test_the_client_takes_exactly_the_extensions_the_hub_stores`.
 ATTACHMENT_EXTENSIONS = ("jpg", "png", "webp")
 
+# The frames of a comment on a document whose place is not a part's point
+# (`FRAMES` in src/comments.py): a schematic's sheet, a board, a markdown text.
+DOCUMENT_FRAMES = ("sheet", "board", "text")
+
 
 def run(args) -> int:
     """`comments`, `resolve` or `files` — whichever the parser reached."""
@@ -165,24 +169,18 @@ def _print_comment(record: dict) -> None:
              else f"open, written {record.get('created')}")
     print(f"{cid}  {stamp}")
 
-    # Where, on one line: build, then the optional part, view, point and the
-    # face normal. With `frame: "part"` the point and the normal are in the
-    # part's own frame, which every view of the build shares; without it, in
-    # the world of the view named.
+    # Where, on one line: build, then the document a comment was left on, if
+    # any, and the place in it (`_document_place`); else the optional part,
+    # view, point and the face normal. With `frame: "part"` the point and the
+    # normal are in the part's own frame, which every view of the build
+    # shares; without it, in the world of the view named.
     where = [f"build {record.get('commit')}"]
-    if record.get("part"):
-        where.append(f"part {record['part']}")
-    if record.get("view"):
-        where.append(f"view {record['view']}")
-    point = record.get("point")
-    if isinstance(point, list) and len(point) == 3:
-        frame = " (part coords)" if record.get("frame") == "part" else ""
-        where.append("at " + " ".join(f"{float(v):.1f}" for v in point) + frame)
-    # The outward normal of the face that was clicked: which side of the part
-    # the comment is on.
-    normal = record.get("normal")
-    if isinstance(normal, list) and len(normal) == 3:
-        where.append("facing " + " ".join(f"{float(v):.2f}" for v in normal))
+    if record.get("doc"):
+        where.append(f"doc {record['doc']}")
+    if record.get("doc") and record.get("frame") in DOCUMENT_FRAMES:
+        where += _document_place(record)
+    else:
+        where += _model_place(record)
     print(f"  {'  '.join(where)}")
 
     for line in str(record.get("text", "")).splitlines() or [""]:
@@ -196,3 +194,47 @@ def _print_comment(record: dict) -> None:
               f"hammerola comments files {cid}")
     if record.get("note"):
         print(f"  note: {record['note']}")
+
+
+def _document_place(record: dict) -> list:
+    """Where in a document: a schematic's sheet, a board's layer, the area
+    drawn in the document's millimetres and what is in it, or a quoted
+    passage with the characters around it. Newlines in the quote are written
+    `\\n`, so the place stays one line."""
+    place = []
+    if record.get("sheet"):
+        place.append(f"sheet {record['sheet']}")
+    if record.get("layer"):
+        place.append(f"layer {record['layer']}")
+    area = record.get("area")
+    if isinstance(area, list) and len(area) == 4:
+        place.append("area " + " ".join(f"{float(v):.1f}" for v in area)
+                     + " mm")
+    if record.get("items"):
+        place.append("near " + ", ".join(record["items"]))
+    quote = record.get("quote")
+    if isinstance(quote, dict):
+        passage = (f"{quote.get('before', '')}[{quote.get('text', '')}]"
+                   f"{quote.get('after', '')}").replace("\n", "\\n")
+        place.append(f'quote "{passage}"')
+    return place
+
+
+def _model_place(record: dict) -> list:
+    """Where on the model, or on a part of a document: the part, the view,
+    the point and the face normal."""
+    where = []
+    if record.get("part"):
+        where.append(f"part {record['part']}")
+    if record.get("view"):
+        where.append(f"view {record['view']}")
+    point = record.get("point")
+    if isinstance(point, list) and len(point) == 3:
+        frame = " (part coords)" if record.get("frame") == "part" else ""
+        where.append("at " + " ".join(f"{float(v):.1f}" for v in point) + frame)
+    # The outward normal of the face that was clicked: which side of the part
+    # the comment is on.
+    normal = record.get("normal")
+    if isinstance(normal, list) and len(normal) == 3:
+        where.append("facing " + " ".join(f"{float(v):.2f}" for v in normal))
+    return where

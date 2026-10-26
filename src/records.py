@@ -39,7 +39,7 @@ WIP_PREFIX = ".wip-"
 def one_line(value, field: str, error: type[HttpRefusal]) -> str:
     """A printable single-line string, or an `error` naming the field.
 
-    ONE LENGTH FOR ALL SIX FIELDS, and no parameter for it: both copies this
+    ONE LENGTH FOR ALL ITS FIELDS, and no parameter for it: both copies this
     replaced hard-coded the same 200, every caller wants that, and a limit
     nobody passes differently is a knob that only makes the two doors free to
     drift apart again — which is the thing this module exists to stop.
