@@ -205,12 +205,15 @@ export function offsetOf(index, container, offset) {
   return next ? next.start : index.text.length;
 }
 
-/** The DOM range of `[start, end)` in `index`. */
+/** The DOM range of `[start, end)` in `index`. The start is in the node that
+ *  holds its first character and the end in the node that holds its last, so
+ *  a passage starting a node does not begin at the end of the node before it. */
 export function rangeOf(index, start, end) {
   const range = index.nodes[0].node.ownerDocument.createRange();
   const at = (offset, after) => {
-    const one = index.nodes.find(({ node, start: from }) => (after ? offset > from : offset >= from)
-      && offset <= from + node.data.length);
+    const one = index.nodes.find(({ node, start: from }) => (after
+      ? offset > from && offset <= from + node.data.length
+      : offset >= from && offset < from + node.data.length));
     return [one.node, offset - one.start];
   };
   range.setStart(...at(start, false));
@@ -219,8 +222,9 @@ export function rangeOf(index, start, end) {
 }
 
 /** The quote of `[start, end)` of `text`, `{ text, before, after }`, its
- *  blanks at either end moved out into the sides (the hub keeps a quote's
- *  text trimmed); null for nothing but blanks. */
+ *  blanks at either end moved out into the sides, so that the highlight and
+ *  the rail's line do not start or end on a blank (the hub keeps all three as
+ *  sent); null for nothing but blanks, which the hub refuses as empty. */
 export function quoteOf(text, start, end) {
   let from = start;
   let to = end;

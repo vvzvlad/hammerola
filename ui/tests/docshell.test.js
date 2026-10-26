@@ -146,6 +146,10 @@ describe('a comment\'s quote of markdown', () => {
     // a point between elements: the first text at or after it, or the end
     expect([offsetOf(index, root, 2), offsetOf(index, root, 3)]).toEqual([17, 32])
     expect(rangeOf(index, 5, 12).toString()).toBe('the gap')
+    // a passage that starts a node starts in it, not at the end of the one before
+    const word = rangeOf(index, 9, 12)
+    expect(word.startContainer).toBe(root.querySelector('b').firstChild)
+    expect(word.endContainer).toBe(root.querySelector('b').firstChild)
   })
 
   it('moves the blanks of a selection into its sides, and finds it again where its sides agree most', () => {
