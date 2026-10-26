@@ -58,8 +58,8 @@ export const ASSEMBLED_VIEW_ID = 'assembled';
 /** The four fields, read off one pathname. Pure, and the only place that
  *  arithmetic is written — `PAGE` and `rereadPage` both use it.
  *
- *  Exported for the `popstate` handler, which has to know what an address
- *  means before anything has been fetched. */
+ *  Exported for `parse` in address.js, which reads an address the browser
+ *  moved to before anything of it has been fetched. */
 export function pageFrom(pathname) {
   const parts = String(pathname).split('/');
   // `/project/<pid>/<a>/compare/<b>/` IS THE PAGE OF BUILD `<a>`, COMPARING
@@ -114,11 +114,9 @@ export function rereadPage(pathname) {
 /** True on the two URLs whose content can be rewritten under the reader. */
 export const isPointerPage = () => POINTER_NAMES.includes(PAGE.slot);
 
-/** The query key the camera frame travels under in a model page's address. */
-export const CAMERA_QUERY = 'c';
-
 /**
- * A camera frame `{position, quaternion, target, zoom}` as the value of `c=`:
+ * A camera frame `{position, quaternion, target, zoom}` as the value of `c=`
+ * (`CAMERA_QUERY` in address.js):
  * eleven numbers joined by commas — position x,y,z, quaternion x,y,z,w, target
  * x,y,z, zoom — or null for anything that is not a whole frame.
  *

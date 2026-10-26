@@ -371,13 +371,29 @@
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
+- `ui/src/address.js` — the page's address and the browser's history, the one
+  place history is written or followed: `parse` reads the address on screen whole
+  (the build or comparison of its path, `v=`, `d=`, `s=`, `c=`, `files=`, the
+  hash and the entry's state), `respell` and `fresh` make the address a write
+  names (the order v, d, s, c, files, `c=` unescaped, a parameter the write
+  does not name left where it stands) and `format` joins it into text,
+  `navigate` is the only caller of `pushState` and `replaceState`, and its own
+  listener the only one on `popstate`, handing the address to the components
+  that `subscribe`; `tests/test_ui_source.py` holds the rest of `ui/src` to
+  that, and `ui/tests/addressguard.js` holds a test to leaving no subscriber.
+  What an address names stays each page's choice: `HammerolaViewer`
+  (`screenParams`, `pushChoice`, `writeCamera`, `writeDoc`, `writeSheet`), the
+  Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
+  to another document (`docLinks` in `DocumentView.jsx`)
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
   `HammerolaViewer.jsx`. A header, the document, and the model page's bar
   (`toolBar` in `ui/src/viewlist.jsx`) floating at the bottom with the documents
-  in its list; `?d=<id>` picks the document, and a row rewrites it. It holds
-  which document is open, what the open view can do with Fit and Frame
-  (`docBar`, `onTools`) and whether the window is narrow
+  in its list; `?d=<id>` picks the document, and a row rewrites it, and the
+  sheet a schematic reports (`onSheet`) is written into the address here, both
+  through `address.js`. It holds which document is open, what the open view
+  can do with Fit and Frame (`docBar`, `onTools`) and whether the window is
+  narrow
 - `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
   views in it: `toolBar` (the views, then Measure, Comment, Add primitive, Fit,
   Frame, Settings, a tool that does not apply drawn out of service; with a
@@ -418,7 +434,10 @@
   page to open the sibling (`onOpen`) and, once it is on screen, calls
   `requestCrossProbe` on its element with the designator, the net, or the net's
   sheet and occurrence; another sheet of the schematic on screen is asked for
-  straight away. The viewer cannot be asked what is under a point, so a
+  straight away. A change of the schematic's sheet is told to the page as the
+  value of `s=` (`onSheet`), which writes it into the address; the component
+  reads the address and follows Back and Forward through `address.js` and
+  writes no history itself. The viewer cannot be asked what is under a point, so a
   right click replays its own left click there and builds the menu from the
   selection it reports. The viewer is `static/_v/ecad-viewer.js`,
   imported by URL on first use (`loadEcadViewer`); the wheel over it and the

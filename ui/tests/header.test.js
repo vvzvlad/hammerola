@@ -64,6 +64,9 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds } from '../src/hub.js'
 import { makeComponent } from './component.js'
 import { collect, texts } from './eltree.js'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 /** The component as `computed()` sees it, on a pinned revision with a history. */
 function component({ builds = null, rail = null, props = {} } = {}) {

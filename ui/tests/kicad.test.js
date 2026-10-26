@@ -28,6 +28,7 @@ vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { ret
 // here, the elements below carrying what it would define.
 vi.mock('/_v/ecad-viewer.js', () => ({}))
 
+import { navigate, parse, respell } from '../src/address.js'
 import BoardView3D from '../src/BoardView3D.jsx'
 import DocumentView, { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import PcbPanel from '../src/PcbPanel.jsx'
@@ -38,6 +39,9 @@ import KicadView, {
 } from '../src/KicadView.jsx'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 const BASE = '/project/kicad0001/abc123/'
 
@@ -62,15 +66,17 @@ const ofType = (tree, type) => collect(tree, (el) => (el.type === type ? el : un
 const AREA = { left: 0, top: 50, width: 800, height: 600 }
 
 /** A view with its elements attached, as React would attach them, under a
- *  page that answers `onOpen` by handing that document down, as both pages do.
- *  `viewer` false: plain elements, as when the viewer's module did not load. */
+ *  page that answers `onOpen` by handing that document down and `onSheet` by
+ *  writing the sheet into the address, as both pages do. `viewer` false: plain
+ *  elements, as when the viewer's module did not load. */
 function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
   const onOpen = vi.fn((id) => {
     const before = view.props
     view.props = { ...before, doc: documents.find((one) => one.id === id) }
     view.componentDidUpdate(before)
   })
-  const view = new KicadView({ doc, documents, base: BASE, onOpen, onTools: vi.fn(), onReady: vi.fn() })
+  const onSheet = (sheet, push) => navigate(respell(parse(), { sheet }), { push })
+  const view = new KicadView({ doc, documents, base: BASE, onOpen, onSheet, onTools: vi.fn(), onReady: vi.fn() })
   view.setState = (patch, done) => {
     Object.assign(view.state, patch)
     if (done) done()
@@ -464,10 +470,12 @@ describe('the schematic\'s page', () => {
       [PSU_B, `?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`], [ROOT, `?d=${SHEET}&s=nowhere`]])
   })
 
-  it('is the entry\'s on Back onto the schematic from its board, though the page hands the schematic down first', async () => {
-    // The page's own listener, there before the design and so run before its
-    // listener, as the browser runs them: it hands down the member the entry
-    // names, and React runs that update before the next listener.
+  it('is the entry\'s on Back onto the schematic from its board, though the design hears of Back before the page hands the schematic down', async () => {
+    // The page's update, standing here as a listener after address.js's own:
+    // the design is handed the entry first (`onPop`, subscribed there) with the
+    // props of the entry being left, the board, and then the page's update
+    // hands down the member the entry names, under the same `popstate`, as
+    // React applies it once the subscribers have run.
     let view = null
     const page = () => {
       const doc = DOCS.find((one) => one.id === new URLSearchParams(window.location.search).get('d'))

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('/_v/ecad-viewer.js', () => ({}))
 
 import CopyLink from '../src/copylink.jsx'
-import DocShell, { docBar, DocPage, docQuery, pickDocument } from '../src/DocShell.jsx'
+import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import KicadView, { PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import { markdownElements, NOWRAP_CLASS, resolveHref } from '../src/docmd.js'
@@ -21,6 +21,9 @@ import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
 import { css } from '../src/style.jsx'
 import { DocFile, FILE_SPACER, FLOAT_BAR, viewMenuStyle } from '../src/viewlist.jsx'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 const BASE = '/project/docs0001/abc123/'
 
@@ -443,19 +446,11 @@ describe('the page of a build with no model', () => {
   it('opens the first document with a row by default, and a hidden one only by its id', () => {
     expect(pickDocument(WITH_KICAD.documents, null).id).toBe(SCHEMATIC.id)
     expect(pickDocument(WITH_KICAD.documents, DATASHEET.id).id).toBe(DATASHEET.id)
-    expect(docQuery('?d=ds__ne555.pdf', SCHEMATIC.id, WITH_KICAD.documents)).toBe('')
-    expect(docQuery('', DATASHEET.id, WITH_KICAD.documents)).toBe('?d=ds__ne555.pdf')
     // On screen with no row lit, named on the button.
     const tree = DocPage({ meta: WITH_KICAD, active: DATASHEET.id, base: BASE, onPick: () => {}, viewsOpen: true })
     expect(shown(tree)[0].props.doc.id).toBe(DATASHEET.id)
     expect(rows(tree).map(([label]) => label)).not.toContain('ds/ne555.pdf')
     expect(texts(tree)).toContain('ds/ne555.pdf')
-  })
-
-  it('says ?d= only for a document other than the first, and keeps the rest', () => {
-    expect(docQuery('', 'report.pdf', META.documents)).toBe('?d=report.pdf')
-    expect(docQuery('?d=report.pdf', 'list.md', META.documents)).toBe('')
-    expect(docQuery('?x=1&d=a', 'page.html', META.documents)).toBe('?x=1&d=page.html')
   })
 })
 

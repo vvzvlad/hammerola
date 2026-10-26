@@ -41,6 +41,7 @@ import {
 } from '../src/proposal.js'
 import { makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
+import { guardSubscribers } from './addressguard.js'
 
 const path = (slot) => `/project/proj1/${slot}/`
 
@@ -49,6 +50,7 @@ const path = (slot) => `/project/proj1/${slot}/`
 // CHECKED, both before and after every test. Before-only is what sends the
 // debugging into whichever test happened to run next — see pageguard.js.
 guardPage(path(A))
+guardSubscribers()
 
 /** The mocks, back to what this file starts every test from. */
 beforeEach(() => {
@@ -520,7 +522,7 @@ describe('popstate', () => {
   it('walks back and forward through the views chosen on the build on screen', async () => {
     // Each choice in the menu of views is an entry (`pushChoice`), and Back
     // puts the one before on screen without fetching a build. The entry the
-    // page stood on has no `?v=`: `viewQuery` writes none for the first view,
+    // page stood on has no `?v=`: `viewParam` names none for the first view,
     // so it names that view, not the one showing.
     const c = mounted()
     c.computed().viewTabs[1].onClick()

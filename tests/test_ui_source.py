@@ -699,6 +699,30 @@ def test_the_cookie_is_touched_in_one_place_only():
         f"document.cookie is reached from {users} — it belongs in store.js")
 
 
+# -- the address and the browser's history ------------------------------------
+
+# A call whose first argument is the event `popstate`: `addEventListener`,
+# `removeEventListener`, `window[method]`. Not the bare word, which KicadView.jsx
+# compares `window.event.type` against.
+POPSTATE_LISTENER = re.compile(r"""\(\s*['"]popstate['"]\s*,|onpopstate""")
+
+
+def test_history_is_written_and_followed_in_one_place_only():
+    """address.js writes every entry of the browser's history (`navigate`) and
+    holds the one `popstate` listener, which hands the address to subscribers.
+    A page writing an entry itself would spell the address a second way, and a
+    listener of its own would run outside the order the subscribers keep."""
+    users = {}
+    for path in ALL_UI_FILES:
+        source = strip_comments(read(path))
+        found = [word for word in ("pushState", "replaceState") if word in source]
+        found += ["a popstate listener"] if POPSTATE_LISTENER.search(source) else []
+        if found:
+            users[path.name] = found
+    assert users == {"address.js": ["pushState", "replaceState", "a popstate listener"]}, (
+        f"the history is written or followed from {users} — it belongs in address.js")
+
+
 def test_every_cookie_access_is_guarded():
     """`document.cookie` is an accessor, and a sandboxed frame throws on it.
 
