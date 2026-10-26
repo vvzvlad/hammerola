@@ -115,19 +115,11 @@ export const EVENT_ERROR = "hmr:error";
  */
 export const EVENT_TOOL = "hmr:tool";
 
-/** Up: the camera moved — the reader's hand or the library's fit of a new scene.
- *
- * No detail: it fires on every frame of an orbit, and the interface reads the
- * frame off the element (`getCamera()`) once the reader stops. A frame put on
- * screen through `setCamera()` does not raise it.
- */
-export const EVENT_CAMERA = "hmr:camera";
-
 /** Every name this module owns, for the tests and for a quick audit. */
 export const EVENTS_UP = [
   EVENT_PICK, EVENT_MENU, EVENT_FACE, EVENT_MEASURE, EVENT_MOVED,
   EVENT_PROPOSALMOVE, EVENT_TURNED, EVENT_PROPOSALTURN, EVENT_PLACE, EVENT_PIN,
-  EVENT_MODEL, EVENT_ERROR, EVENT_TOOL, EVENT_CAMERA,
+  EVENT_MODEL, EVENT_ERROR, EVENT_TOOL,
 ];
 
 /**

@@ -408,7 +408,7 @@
   that `subscribe`; `tests/test_ui_source.py` holds the rest of `ui/src` to
   that, and `ui/tests/addressguard.js` holds a test to leaving no subscriber.
   What an address names stays each page's choice: `HammerolaViewer`
-  (`screenParams`, `pushChoice`, `writeCamera`, `writeDoc`, `writeSheet`), the
+  (`screenParams`, `pushChoice`, `writeView`, `writeDoc`, `writeSheet`), the
   Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
   to another document (`docLinks` in `DocumentView.jsx`)
 - `ui/src/DocShell.jsx` — the page of a build with no model

@@ -6,10 +6,11 @@
 // An address is the path of a build — or of a comparison of one (`pageFrom` in
 // hub.js) — and a query naming what is on screen: the model's view `v=`, the
 // document over the model or on the page of a build with no model `d=`, the
-// sheet of the schematic open `s=`, the camera's frame `c=`, and the key to a
-// build's files `files=`. `parse` reads all of it at once, with the state of the
-// history entry; `format` writes it back. What an address names is each page's
-// choice; how it is spelled is this module's:
+// sheet of the schematic open `s=`, the camera's frame `c=` (only a Share
+// link carries it: the page reads it on load and never puts it in the address
+// bar), and the key to a build's files `files=`. `parse` reads all of it at
+// once, with the state of the history entry; `format` writes it back. What an
+// address names is each page's choice; how it is spelled is this module's:
 //
 //   * the parameters go in the order v, d, s, c, files, each value escaped as a
 //     component of a URL but `c=`, whose commas stay as they are;
@@ -18,7 +19,7 @@
 //   * a parameter a change does not name stays where it stands, spelled as it
 //     came — `files=`, and anything this module does not know. A field the
 //     change names is taken out and written again at the end (`respell`); the
-//     view the camera's write names beside its frame goes at the front instead.
+//     view a scene drawn afresh names (`writeView`) goes at the front instead.
 //
 // `navigate` is the only caller of `history.pushState` and `replaceState`, and
 // the listener below the only one on `popstate`: a component that follows Back

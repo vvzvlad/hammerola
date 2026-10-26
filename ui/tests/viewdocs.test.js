@@ -259,12 +259,11 @@ describe('the documents in the list of views', () => {
     expect([c.state.doc, c.state.view]).toEqual([null, 'open'])
   })
 
-  it('make each choice a step of history, with the frame only of the view it stays on, and the row shown none', () => {
-    // Back returns to the choice before (`pushChoice`). The frame describes the
-    // model on screen: a document's entry carries none, nor another view's,
-    // whose own frame `onModel` writes once it is drawn, nor a schematic's
-    // sheet (`s=`) another document's. The rest of the address stays, and so
-    // does the state of the entry.
+  it('make each choice a step of history, with no frame, and the row shown none', () => {
+    // Back returns to the choice before (`pushChoice`). No entry carries the
+    // camera's frame, even with a camera to read, nor a schematic's sheet
+    // (`s=`) another document's. The rest of the address stays, and so does
+    // the state of the entry.
     window.history.replaceState({ hmr: 'latest' }, '', '/?d=hw__a.kicad_sch&files=K&s=amp')
     const c = component()
     c.host = { current: { getCamera: () => ({
@@ -277,7 +276,7 @@ describe('the documents in the list of views', () => {
     expect(window.history.state).toEqual({ hmr: 'latest' })
     c.computed().docRows[0].onClick()
     c.computed().viewTabs[0].onClick()
-    expect(entries()).toEqual([2, '?files=K&c=10,-20,30.5,0,0,0,1,1,2,3,1.5'])
+    expect(entries()).toEqual([2, '?files=K'])
     c.computed().viewTabs[1].onClick()
     expect(entries()).toEqual([3, '?files=K&v=open'])
     c.computed().viewTabs[1].onClick()

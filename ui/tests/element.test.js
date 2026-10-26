@@ -98,7 +98,7 @@ vi.mock('../src/viewport/library.js', () => ({
 // build an HmrViewport rather than an unknown inline box.
 import '../src/viewport/index.js'
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_CAMERA, EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
+import { EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
 import { settleCoplanar } from '../src/viewport/coplanar.js'
 import { safeHatch, setCutHatch } from '../src/viewport/hatch.js'
 import { loadViewerLibrary } from '../src/viewport/library.js'
@@ -478,21 +478,6 @@ describe('reconcile', () => {
     vp.reconcile()
     vp.reconcile()
     expect(vp.gizmo.refresh).toHaveBeenCalledTimes(2)
-  })
-})
-
-describe('onNotify', () => {
-  it('says the camera moved for any of the four camera keys, and for nothing else', () => {
-    // The interface rewrites the address off this event (`onCamera` in
-    // HammerolaViewer); a pick is not a camera move.
-    for (const key of ['position', 'quaternion', 'target', 'zoom']) {
-      const vp = element()
-      vp.onNotify({ [key]: { old: null, new: [1, 2, 3] } })
-      expect(emitted(vp).type).toBe(EVENT_CAMERA)
-    }
-    const vp = element()
-    vp.onNotify({ lastPick: { old: null, new: { path: '/Group/a' } } })
-    expect(vp.dispatchEvent).not.toHaveBeenCalled()
   })
 })
 

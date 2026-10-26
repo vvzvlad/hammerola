@@ -454,8 +454,7 @@ export function chromeView(s, props, deps) {
       onClick: () => {
         (s.view === v.id ? set : setState)({ doc: null });
         // A step of history whose address names the view and no document
-        // (`pushChoice`); the frame follows the view once it is drawn
-        // (`onModel`).
+        // (`pushChoice`).
         pushChoice(v.id, null);
         showView(v.id);
         setState({ viewsOpen: false });
