@@ -15,7 +15,7 @@ vi.mock('/_v/ecad-viewer.js', () => ({}))
 import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
-import KicadView, { PAGE_EVENT, SCH } from '../src/KicadView.jsx'
+import KicadView, { DRAFT_MARK, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
 } from '../src/docmd.js'
@@ -327,6 +327,85 @@ describe('one document, as both pages draw it', () => {
       const zip = doc('fab/board.zip', 'gerbers')
       const onTools = () => {}
       expect(documentBody(zip, BASE, null, '', [], undefined, onTools).props.onTools).toBe(onTools)
+    })
+  })
+
+  describe('the page\'s comments on markdown', () => {
+    const quote = (text, before = '', after = '') => ({ text, before, after })
+    const mark = (id, q, file = cutList.file) => ({ id, doc: file, quote: q })
+
+    /** The document with its text in and drawn, the page's comments handed it
+     *  (`comment`): the article's ref given a node in the page, holding the
+     *  DOM React draws `mind the **gap** here` and `the gap is wide` as, and
+     *  the update after it, as React runs them. `update` hands it the page's
+     *  comments changed by `patch`; `release` is the article's pointer-up. */
+    const drawn = (extra) => {
+      const comment = { on: false, marks: [], focus: null, onArea: vi.fn(), onMarker: vi.fn(), onLost: vi.fn(),
+        onFocused: vi.fn(), ...extra }
+      const view = new DocumentView({ doc: cutList, base: BASE, comment })
+      view.setState = (patch) => Object.assign(view.state, patch)
+      view.setState({ text: 'mind the **gap** here\n\nthe gap is wide' })
+      const [article] = ofType(view.render(), 'article')
+      const node = document.createElement('article')
+      node.innerHTML = '<p>mind the <strong>gap</strong> here</p><p>the gap is wide</p>'
+      document.body.append(node)
+      onTestFinished(() => node.remove())
+      article.ref(node)
+      view.componentDidUpdate()
+      const update = (patch) => {
+        view.props = { ...view.props, comment: { ...view.props.comment, ...patch } }
+        view.componentDidUpdate()
+      }
+      return { comment, node, update, release: article.props.onPointerUp }
+    }
+
+    it('tells the page which of its quotes the text no longer has, the draft\'s never, only as that set changes', () => {
+      const marks = [mark('c1', quote('the gap', 'mind ', ' here')), mark('c2', quote('a crack')),
+        mark(DRAFT_MARK, quote('a hole')), mark('c9', quote('a crack'), 'docs/other.md')]
+      const { comment, update } = drawn({ marks })
+      expect(comment.onLost.mock.calls).toEqual([[cutList.file, ['c2']]])
+      // drawn again, and with a comment the text has: the same set, nothing told
+      update({})
+      update({ marks: [...marks, mark('c3', quote('is wide'))] })
+      expect(comment.onLost).toHaveBeenCalledTimes(1)
+      // the lost one gone from the page: an empty set
+      update({ marks: marks.slice(0, 1) })
+      expect(comment.onLost.mock.calls).toEqual([[cutList.file, ['c2']], [cutList.file, []]])
+    })
+
+    it('scrolls the block a quote the page asks for starts in to the middle, once for the ask, and says it is done', () => {
+      const { comment, node, update } = drawn()
+      const [first, second] = node.querySelectorAll('p')
+      // jsdom scrolls nothing and has no such method
+      for (const block of [first, second]) block.scrollIntoView = vi.fn()
+      const focus = { doc: cutList.file, quote: quote('the gap is', 'mind the gap here', ' wide') }
+      update({ focus })
+      // the paragraph its first character is in, not the one it starts at the end of
+      expect([first.scrollIntoView.mock.calls, second.scrollIntoView.mock.calls]).toEqual([[], [[{ block: 'center' }]]])
+      expect(comment.onFocused).toHaveBeenCalledTimes(1)
+      // drawn again with the same ask, then asked for a quote the text no
+      // longer has: told done, nothing scrolled
+      update({})
+      update({ focus: { ...focus, quote: quote('a crack') } })
+      expect(second.scrollIntoView).toHaveBeenCalledTimes(1)
+      expect(comment.onFocused).toHaveBeenCalledTimes(2)
+    })
+
+    it('takes a passage selected in it for the draft\'s place while the tool is armed, and nothing while it is not', () => {
+      const { comment, node, update, release } = drawn()
+      const range = document.createRange()
+      range.setStart(node.querySelector('p').firstChild, 5)
+      range.setEnd(node.querySelector('strong').firstChild, 3)
+      window.getSelection().addRange(range)
+      onTestFinished(() => window.getSelection().removeAllRanges())
+      const up = { button: 0, clientX: 0, clientY: 0 }
+      release(up)
+      expect(comment.onArea).not.toHaveBeenCalled()
+      update({ on: true })
+      release(up)
+      // with up to QUOTE_CONTEXT characters each side, the text running on across blocks
+      expect(comment.onArea.mock.calls).toEqual([[cutList,
+        { frame: 'text', quote: { text: 'the gap', before: 'mind ', after: ' herethe gap is wide' } }]])
     })
   })
 })
