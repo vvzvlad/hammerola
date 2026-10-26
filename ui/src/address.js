@@ -8,9 +8,9 @@
 // document over the model or on the page of a build with no model `d=`, the
 // sheet of the schematic open `s=`, the camera's frame `c=` (only a Share
 // link carries it: the page reads it on load and never puts it in the address
-// bar), and the key to a build's files `files=`. `parse` reads all of it at once, with the state of the
-// history entry; `format` writes it back. What an address names is each page's
-// choice; how it is spelled is this module's:
+// bar), and the key to a build's files `files=`. `parse` reads all of it at
+// once, with the state of the history entry; `format` writes it back. What an
+// address names is each page's choice; how it is spelled is this module's:
 //
 //   * the parameters go in the order v, d, s, c, files, each value escaped as a
 //     component of a URL but `c=`, whose commas stay as they are;

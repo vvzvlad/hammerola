@@ -7,9 +7,9 @@
 // address carries put on screen by the first model event (on a comparison
 // link, the comparison scene's), and the address bar, which never carries the
 // frame: the page takes `c=` out as it opens, a scene drawn afresh writes the
-// view on screen, and nothing writes the frame back. The viewport is a stub that answers `getCamera`
-// and takes `setCamera`; what the library does with a frame is
-// element.test.js's subject.
+// view on screen, and nothing writes the frame back. The viewport is a stub
+// that answers `getCamera` and takes `setCamera`; what the library does with a
+// frame is element.test.js's subject.
 //
 // Nothing is rendered: the instance is the real prototype with the state
 // spelled out (component.js), and the real methods run over it.
