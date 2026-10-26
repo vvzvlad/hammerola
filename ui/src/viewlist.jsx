@@ -79,15 +79,16 @@ const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
  * document on screen, or null; `choose(id)` is what a row does. A KiCad
  * schematic of more than one file carries what its sheets need (`SheetRows`):
  * itself as `doc`, `base`, the address the build's files are served under,
- * whether it is `on` screen, and `chooseSheet(value)`, which is
- * `choose(id, value)` with a sheet's `s=` value.
+ * `build`, the build's key (`buildKey` in hub.js), whether it is `on` screen,
+ * and `chooseSheet(value)`, which is `choose(id, value)` with a sheet's `s=`
+ * value.
  */
-export function documentRows(documents, open, choose, base) {
+export function documentRows(documents, open, choose, base, build) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
     key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
     ...(doc.type === 'schematic' && doc.kicad.schematics.length > 1
-      ? { doc, base, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
+      ? { doc, base, build, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
   }));
 }
 
@@ -196,7 +197,10 @@ const SHEETS_LOADING = `padding:7px 14px 7px 30px;${FAINT_MONO}`;
  *
  * The sheets are read from the schematic's files the first time they are
  * shown in an open card, not at every opening: they are the files its viewer
- * reads, about a megabyte for a real design. While they come in, one quiet row
+ * reads, about a megabyte for a real design. Read once for each build: a
+ * document keeps its id from revision to revision, so the list keys this
+ * component by the build too (`viewList`), and a revision switched to in place
+ * reads its own sheets. While they come in, one quiet row
  * says so; where they fail there are no sheets. A sheet's row is the page's
  * choice of it (`chooseSheet` with its `s=` value, `sheetQueryValue` in
  * KicadView.jsx); with the schematic on screen the sheet the address names is
@@ -306,7 +310,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
             are siblings of different arrays rather than of one. */}
         {menuGroups(views, documents).map(([head, rows]) => [
           <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
-          ...rows.map((t) => (t.chooseSheet ? <SheetRows key={t.key} row={t} open={open} /> : (
+          ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
             <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
               <span style={css(DOC_LABEL)}>{t.label}</span>
               <span style={css(DOC_HINT)}>{t.hint}</span>

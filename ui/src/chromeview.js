@@ -103,7 +103,7 @@ export function chromeView(s, props, deps) {
     pushChoice(s.view, id, sheet);
   };
   // A document listed `hidden` has no row (viewlist.jsx).
-  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base);
+  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta));
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full

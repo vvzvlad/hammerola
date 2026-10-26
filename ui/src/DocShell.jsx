@@ -28,7 +28,7 @@ import React from 'react';
 
 import { navigate, parse, respell, subscribe, unsubscribe } from './address.js';
 import DocumentView, { docUrl, docViewKey } from './DocumentView.jsx';
-import { PAGE, shortId } from './hub.js';
+import { buildKey, PAGE, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
@@ -68,7 +68,7 @@ const BAR = `${BAR_LAYER}18`;
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }) {
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
-    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base),
+    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta)),
     docHref: docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),

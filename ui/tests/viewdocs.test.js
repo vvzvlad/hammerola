@@ -452,7 +452,7 @@ describe('the documents in the list of views', () => {
 describe('a schematic\'s sheets under its row', () => {
   // The rows a page hands the list, and the sheets' component as `viewList`
   // draws it, driven on an instance whose `setState` writes into its state.
-  const rows = (open, choose = vi.fn()) => documentRows([MAIN, KICAD[1], KICAD[2], ...DOCS], open, choose, PAGE.base)
+  const rows = (open, choose = vi.fn(), build = 'c1') => documentRows([MAIN, KICAD[1], KICAD[2], ...DOCS], open, choose, PAGE.base, build)
   const sheets = (row, open = true) => {
     const one = new SheetRows({ row, open })
     one.setState = (patch) => Object.assign(one.state, patch)
@@ -473,9 +473,11 @@ describe('a schematic\'s sheets under its row', () => {
     vi.stubGlobal('fetch', served)
     const choose = vi.fn()
     const listed = rows(null, choose)
-    const drawn = collect(viewList({ label: '', open: true, onToggle: () => {}, documents: listed }),
-      (el) => (el.type === SheetRows ? el.props.row.key : undefined))
-    expect(drawn).toEqual([MAIN.id])
+    const drawn = (documents) => collect(viewList({ label: '', open: true, onToggle: () => {}, documents }),
+      (el) => (el.type === SheetRows ? [el.props.row.key, el.key] : undefined))
+    // keyed by the build too: another revision of the same document id, swapped
+    // in on the page, is a new component that reads its own sheets
+    expect([drawn(listed), drawn(rows(null, choose, 'c2'))]).toEqual([[[MAIN.id, `c1:${MAIN.id}`]], [[MAIN.id, `c2:${MAIN.id}`]]])
     const one = sheets(listed[0])
     const [row] = collect(one.render(), (el) => (el.props.style === css(listed[0].rowStyle) ? el : undefined))
     expect([texts(row), collect(row, (el) => (el.type === 'svg' ? el : undefined)).length]).toEqual([['Главная · схема', '3 sheets'], 1])
