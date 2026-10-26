@@ -34,6 +34,10 @@ UI_FILES := hammerola.js
 VIEWER_FILES := three-cad-viewer.esm.js three-cad-viewer.css
 VIEWER_THREE := three.module.js three.core.js
 
+# The KiCad viewer's outputs, published by the same rules: the element, and the parser
+# worker it starts from beside its own URL, which is why both keep their names.
+ECAD_FILES := ecad-viewer.js parser.worker.js
+
 .DEFAULT_GOAL := help
 
 # --- Help --------------------------------------------------------------------
@@ -202,6 +206,12 @@ viewer/node_modules/.package-lock.json: viewer/package.json $(wildcard viewer/pa
 	cd viewer && if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; \
 		else npm install --legacy-peer-deps; fi
 
+# And for the KiCad viewer, whose one package.json and lockfile stand at the root of
+# ecad-viewer/.
+ecad-viewer/node_modules/.package-lock.json: ecad-viewer/package.json $(wildcard ecad-viewer/package-lock.json)
+	@$(REQUIRE_NPM)
+	cd ecad-viewer && if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
 # Each file is copied to a temporary in the destination directory and renamed over its
 # predecessor, so a running `make run` serves either the whole old file or the whole new
 # one (a plain `cp` would serve a truncated bundle with status 200). Same directory,
@@ -238,6 +248,21 @@ viewer: viewer/node_modules/.package-lock.json ## Build the vendored CAD viewer 
 		tmp=$(UI_OUT)/$$f.tmp.$$$$; \
 		trap 'rm -f "$$tmp"' EXIT; \
 		cp viewer/node_modules/three/build/$$f "$$tmp" \
+			&& mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
+	done
+
+# Committed, as the CAD viewer's output is and for the same reasons. The build is the
+# fork's own script (packages/ecad-viewer-app/scripts/build.js), which writes into the
+# app's build/ directory.
+.PHONY: ecad
+ecad: ecad-viewer/node_modules/.package-lock.json ## Build the vendored KiCad viewer (ecad-viewer/) into static/_v/
+	@$(REQUIRE_NPM)
+	cd ecad-viewer && npm run build
+	mkdir -p $(UI_OUT)
+	for f in $(ECAD_FILES); do \
+		tmp=$(UI_OUT)/$$f.tmp.$$$$; \
+		trap 'rm -f "$$tmp"' EXIT; \
+		cp ecad-viewer/packages/ecad-viewer-app/build/$$f "$$tmp" \
 			&& mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
 	done
 

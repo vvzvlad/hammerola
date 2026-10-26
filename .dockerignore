@@ -82,3 +82,5 @@ static/_v/hammerola*
 # image has any use for — what it serves is the built bundle, which arrives
 # through the static/ COPY line like every other asset.
 viewer/
+# The vendored KiCad viewer, for the same reason.
+ecad-viewer/
