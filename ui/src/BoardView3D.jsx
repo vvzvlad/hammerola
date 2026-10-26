@@ -20,7 +20,7 @@
 //             bar does with this view (DocumentView.jsx)
 //   onFetched told each time the `.glb` has come in or failed to: KicadView.jsx
 //             holds the design's other files back for it
-//   comment   the model page's comments on this model (KicadView.jsx), or none:
+//   comment   the page's comments on this model (KicadView.jsx), or none:
 //             `on`, the page's Comment tool armed here, so that a left click
 //             on a part is the place of a comment (`onPoint` with `partPlace`
 //             of board3d.js: the designator, and the point and the normal in
