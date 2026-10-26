@@ -99,6 +99,11 @@ export const btn = (active, hide, off) => `display:flex;align-items:center;gap:6
 /* A card floating over the model — the new-build banner, the measurement. */
 export const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px var(--shadow-soft)`;
 
+/* The toast a build page says how a step went in, over everything else, and
+   how long it stays. */
+export const TOAST_MS = 2600;
+export const toastStyle = (show) => `position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 16px;background:var(--tooltip-bg);color:var(--tooltip-text);border-radius:7px;font:500 12px ${SANS};box-shadow:0 6px 20px var(--shadow);z-index:70;display:` + (show ? 'block' : 'none');
+
 /* -- the four icons a tree row is drawn with ------------------------------- */
 //
 // The parts tree and the proposal's branch draw the SAME controls, so these are

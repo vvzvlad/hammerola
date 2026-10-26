@@ -19,6 +19,7 @@
  * come from ui/src/panelstyle.js.
  */
 import { format, fresh, parse, viewParam } from './address.js';
+import { railView } from './comments.jsx';
 import { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
@@ -351,32 +352,8 @@ export function chromeView(s, props, deps) {
     treeBtnStyle: btn(false, !narrow || s.compare || !!docOpen) + ';border:1px solid '
       + (s.treeOpen ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);background:var(--card-bg)'),
 
-    railToggle: stop(() => setState({ rail: !railOpen })),
-    railBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)' + (viewer ? ';display:none' : ''),
-    // The two states differ by tone, not ink contrast. White on `--accent` is
-    // 4.27:1 in both themes and cannot rise without moving the accent, and a
-    // grey that looks faint on a light page stands out on a dark one. The
-    // signal that carries across both themes at 17px is the disc turning blue;
-    // each state gets an ink its own fill can be read with.
-    //
-    // So the resting pill is an ordinary chip: `--text-soft` on `--chip-bg`,
-    // 6.51:1 in light, 8.36:1 in dark. (`--line-strong` under white is
-    // 1.68:1 in light and 9.89:1 in dark, backwards in one theme.)
-    railCountStyle: 'min-width:17px;height:17px;padding:0 5px;border-radius:9px;'
-      + (openCount ? ON_ACCENT
-                   : 'background:var(--chip-bg);color:var(--text-soft)')
-      + `;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO}`,
-    openCount,
-    // A COLUMN BESIDE THE MODEL, OR A SHEET OVER IT. 300px taken out of the
-    // width is a third of a phone's screen, and what is left is the thing the
-    // page exists to show — so on narrow the rail stops being a column and
-    // covers the body instead, the way the tree already does. It is the same
-    // panel either way: it opens and closes by the same button and holds the
-    // same threads.
-    railStyle: (narrow ? 'position:absolute;inset:0;z-index:20' : 'width:300px;flex:none')
-      + ';background:var(--header-bg);border-left:1px solid var(--line);display:'
-      + (railOpen && !viewer ? 'flex' : 'none') + ';flex-direction:column;min-height:0',
-    threads,
+    // -- the comment rail and the header's button that opens it (comments.jsx)
+    ...railView({ open: railOpen, viewer, narrow, threads, openCount, stop, setState }),
 
     // -- the theme, standing next to the comments ----------------------------
     //

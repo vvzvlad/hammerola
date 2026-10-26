@@ -20,6 +20,7 @@ import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
 } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
+import { clearToken, writeToken } from '../src/store.js'
 import { collect, texts } from './eltree.js'
 import { css } from '../src/style.jsx'
 import { DocFile, FILE_SPACER, FLOAT_BAR, viewMenuStyle } from '../src/viewlist.jsx'
@@ -451,7 +452,8 @@ describe('the page of a build with no model', () => {
     expect(drawn({})).toEqual(TOOLS)
     // a narrow window keeps the list and Fit, as the model's page does
     expect(drawn({ narrow: true })).toEqual(['Fit'])
-    const bar = (extra) => docBar({ meta: META, doc: META.documents[0], onPick: () => {}, ...extra })
+    // over a PDF, which takes no comment
+    const bar = (extra) => docBar({ meta: META, doc: META.documents[2], onPick: () => {}, ...extra })
     const off = (values, key) => css(values[key]).pointerEvents === 'none'
     const KEYS = ['measureBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle', 'frameBtnStyle', 'settingsBtnStyle']
     expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true])
@@ -546,6 +548,12 @@ describe('the page of a build with no model', () => {
   })
 })
 
+// The comments' fields of a shell nobody has commented on.
+const AT_REST = {
+  feed: [], activePin: null, composer: null, sending: false, rail: false, tool: null,
+  docFocus: null, docLost: {}, toast: null,
+}
+
 describe('the shell', () => {
   let shell
   const mount = (search) => {
@@ -576,7 +584,7 @@ describe('the shell', () => {
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
-    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false })
+    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST })
     // the door `Show in …` on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
@@ -602,6 +610,11 @@ describe('the shell', () => {
       shell.componentDidMount()
       listeners.forEach((fn) => fn({ matches: false }))
       expect(shell.render().props.narrow).toBe(false)
+      // narrowing puts an armed Comment down: its button leaves the bar, and a
+      // phone has no Escape to put it down with
+      shell.state.tool = 'comment'
+      listeners.forEach((fn) => fn({ matches: true }))
+      expect([shell.state.narrow, shell.state.tool]).toEqual([true, null])
       const tools = { fit() {}, frame() {} }
       shell.render().props.onTools(tools)
       expect(shell.render().props.tools).toBe(tools)
@@ -719,5 +732,173 @@ describe('the shell', () => {
       shell.componentWillUnmount()
       vi.unstubAllGlobals()
     }
+  })
+})
+
+// -- comments, as over a document on the model's page ---------------------------
+
+describe('comments on the page of a build with no model', () => {
+  const STAMP = '2026-10-26T18:00:00.123Z'
+  const BUILD = { ...WITH_KICAD, published: STAMP }
+  /** A comment the hub stored on the amp sheet of the schematic. */
+  const stored = (over) => ({
+    id: 'c1', pid: 'docs0001', commit: BUILD.commit, published: STAMP, view: null, part: null, key: null,
+    point: null, camera: null, text: 'too hot', status: 'open', created: '2026-10-26T18:20:00Z',
+    resolved: null, note: null, doc: SCHEMATIC.file, frame: 'sheet', sheet: 'hw/amp.kicad_sch',
+    area: [10, 20, 4, 6], items: ['C1'], ...over,
+  })
+  // and one on a part of a model, which this build has none of
+  const ON_MODEL = stored({ id: 'c2', doc: null, frame: 'part', sheet: null, area: null, items: null,
+    part: '/model/plate', key: 'plate', view: 'assembled', text: 'too thin' })
+  const CLICK = { stopPropagation() {} }
+
+  /** The shell a reader opens at `search`, with the token unless `token` is
+   *  null, its `setState` React's contract (a function patch, the callback
+   *  after). The hub answers a request with what `answer(url, init)` gives,
+   *  `[status, body]`. */
+  const opened = ({ search = '', token = 'sekrit', answer = () => [200, { comments: [] }] } = {}) => {
+    if (token) writeToken(token)
+    else clearToken()
+    onTestFinished(() => clearToken())
+    vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+      const [status, body] = answer(url, init)
+      return new Response(JSON.stringify(body), { status })
+    }))
+    onTestFinished(() => vi.unstubAllGlobals())
+    window.history.replaceState(null, '', `${BASE}${search}`)
+    rereadPage(BASE)
+    const shell = new DocShell({ meta: BUILD })
+    shell.setState = (patch, done) => {
+      Object.assign(shell.state, typeof patch === 'function' ? patch(shell.state) : patch)
+      if (done) done()
+    }
+    onTestFinished(() => shell.componentWillUnmount())
+    return shell
+  }
+  const values = (shell) => shell.render().props.comments
+  const drawn = (shell) => DocPage(shell.render().props)
+  /** The bar's Comment, as drawn. */
+  const commentTool = (shell) => collect(drawn(shell), (el) => (el.props.onClick && texts(el).join('') === 'Comment'
+    ? el : undefined))[0]
+  const posted = (shell) => fetch.mock.calls.filter(([, init]) => init && init.method === 'POST')
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/')
+    rereadPage('/')
+  })
+
+  it('arms Comment over a document that takes one, saying how, and keeps it out of service over one that does not', () => {
+    const shell = opened()
+    expect(commentTool(shell).props.style.pointerEvents).not.toBe('none')
+    commentTool(shell).props.onClick()
+    expect([shell.state.tool, shell.state.toast, values(shell).docComment.on])
+      .toEqual(['comment', 'Drag an area on the drawing to pin the task', true])
+    commentTool(shell).props.onClick()
+    expect(values(shell).docComment.on).toBe(false)
+    expect(commentTool(opened({ search: '?d=ds__ne555.pdf' })).props.style.pointerEvents).toBe('none')
+    // and hidden from a reader without the token, who has no comments button
+    const reader = opened({ token: null })
+    expect(commentTool(reader).props.style.display).toBe('none')
+    expect(css(values(reader).railBtnStyle).display).toBe('none')
+  })
+
+  it('takes a place on the document into the composer, puts the tool down, and posts it with the document\'s frame', async () => {
+    const shell = opened({ answer: (url, init) => (init && init.method === 'POST' ? [201, { id: 'c1' }]
+      : [200, { comments: [stored()] }]) })
+    shell.state.tool = 'comment'
+    const shot = new Blob(['png'], { type: 'image/png' })
+    shell.onTools({ fit() {}, frame: async () => shot })
+    const [view] = collect(drawn(shell), (el) => (el.type === DocumentView ? el : undefined))
+    view.props.comment.onArea(SCHEMATIC, { frame: 'sheet', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], items: ['C1'] })
+    expect(shell.state.tool).toBeNull()
+    expect([css(values(shell).composerStyle).display, values(shell).composerPart]).toEqual(['block', 'amp of Схема'])
+    values(shell).compType({ target: { value: 'too hot' } })
+    await values(shell).compSend()
+
+    const [[url, init]] = posted(shell)
+    expect(url).toBe(`/api/v1/comments/docs0001/${BUILD.commit}`)
+    expect(JSON.parse(init.body.get('comment'))).toEqual({
+      text: 'too hot', doc: SCHEMATIC.file, frame: 'sheet', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6],
+      items: ['C1'], published: STAMP, view: null, camera: null,
+    })
+    expect(init.body.get('shot').name).toBe('shot.png')
+    // read back off the hub, the rail open on it
+    expect([shell.state.composer, shell.state.rail, shell.state.feed]).toEqual([null, true, [stored()]])
+  })
+
+  it('loads the queue on arrival with the token, counts the open ones on the header\'s button and lists them all in the rail', async () => {
+    const shell = opened({ answer: () => [200, { comments: [stored(), ON_MODEL, stored({ id: 'c3', status: 'resolved' })] }] })
+    shell.componentDidMount()
+    await vi.waitFor(() => expect(shell.state.feed).toHaveLength(3))
+    expect(fetch).toHaveBeenCalledWith('/api/v1/comments?project=docs0001', { headers: { 'X-Hammerola-Token': 'sekrit' } })
+    const button = collect(drawn(shell), (el) => (el.props.onClick && texts(el)[0] === 'Comments' ? el : undefined))[0]
+    expect(texts(button)).toEqual(['Comments', '2'])
+    expect(css(values(shell).railStyle).display).toBe('none')
+    button.props.onClick(CLICK)
+    expect(css(values(shell).railStyle).display).toBe('flex')
+    expect(values(shell).threads.map((t) => t.says)).toEqual(['on amp of Схема — near C1',
+      'left on the model, which this build does not have', 'on amp of Схема — near C1'])
+    expect(texts(drawn(shell))).toEqual(expect.arrayContaining(['too hot', 'too thin', 'on amp of Схема — near C1']))
+    // a reader without the token asks for nothing
+    opened({ token: null }).componentDidMount()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('opens a row\'s document at its place as a step of history, the sheet the reader\'s step where it was on screen, and a row on a model nowhere', () => {
+    const shell = opened({ search: '?d=list.md' })
+    Object.assign(shell.state, { feed: [stored(), ON_MODEL] })
+    const push = vi.spyOn(window.history, 'pushState')
+    onTestFinished(() => push.mockRestore())
+    const row = (i) => values(shell).threads[i].onOpen(CLICK)
+    row(0)
+    expect([push.mock.calls.length, window.location.search, shell.state.active, shell.state.activePin])
+      .toEqual([1, '', SCHEMATIC.id, 'c1'])
+    expect(shell.state.docFocus).toEqual({ doc: SCHEMATIC.file, sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], step: false })
+    row(0)
+    expect([push.mock.calls.length, shell.state.docFocus.step]).toEqual([1, true])
+    row(1)
+    expect([push.mock.calls.length, shell.state.active, shell.state.activePin]).toEqual([1, SCHEMATIC.id, 'c2'])
+    // another document picked drops the place asked for, so it is not shown later
+    shell.pick(BOARD.id)
+    expect(shell.state.docFocus).toBeNull()
+  })
+
+  it('marks the open comments and the draft on the document, a mark lighting its row in the opened rail', () => {
+    const shell = opened()
+    Object.assign(shell.state, { feed: [stored(), stored({ id: 'c3', status: 'resolved' })],
+      composer: { doc: BOARD.file, frame: 'board', area: [1, 2, 3, 4], text: '' } })
+    const { marks, onMarker } = values(shell).docComment
+    expect(marks.map((one) => [one.id, one.doc, one.active])).toEqual([['c1', SCHEMATIC.file, false],
+      [DRAFT_MARK, BOARD.file, true]])
+    onMarker(DRAFT_MARK)
+    expect(shell.state.rail).toBe(false)
+    onMarker('c1')
+    expect([shell.state.activePin, shell.state.rail]).toEqual(['c1', true])
+  })
+
+  it('marks a row processed and reads the queue back', async () => {
+    const shell = opened({ answer: (url) => (url.endsWith('/resolve') ? [200, {}]
+      : [200, { comments: [stored({ status: 'resolved' })] }]) })
+    Object.assign(shell.state, { feed: [stored()] })
+    values(shell).threads[0].onResolve(CLICK)
+    await vi.waitFor(() => expect(shell.state.feed[0].status).toBe('resolved'))
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v1/comments/c1/resolve',
+      '/api/v1/comments?project=docs0001'])
+  })
+
+  it('puts the armed tool down on Escape, taking it before a design under it hears it', () => {
+    const shell = opened()
+    // KicadView's listener, on the window before the shell's
+    const design = vi.fn((event) => event.defaultPrevented)
+    window.addEventListener('keydown', design)
+    onTestFinished(() => window.removeEventListener('keydown', design))
+    shell.componentDidMount()
+    const escape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    shell.state.tool = 'comment'
+    escape()
+    expect(shell.state.tool).toBeNull()
+    // nothing armed: the Escape is the design's
+    escape()
+    expect(design.mock.results.map((one) => one.value)).toEqual([true, false])
   })
 })

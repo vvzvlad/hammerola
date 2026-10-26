@@ -140,9 +140,9 @@
 // at a time; it goes on its `×`, a click beside it and Escape — which then
 // closes the window only — and when its view leaves the screen.
 //
-// COMMENTS (`comment`, the model's page only; DocShell.jsx hands none). With
-// the page's Comment tool armed (`on`) the drawn view on screen is in the
-// viewer's comment mode, where a drag draws a rubber band; the area drawn goes
+// COMMENTS (`comment`, handed by both pages: comments.jsx). With the page's
+// Comment tool armed (`on`) the drawn view on screen is in the viewer's
+// comment mode, where a drag draws a rubber band; the area drawn goes
 // to the page (`onArea`) as the place of a comment — its sheet's file on the
 // schematic, `[x, y, w, h]` in the document's millimetres, and what is inside
 // it as the element reads it (`itemsInArea`). The open comments of each drawn
