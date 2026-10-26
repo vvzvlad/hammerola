@@ -653,8 +653,9 @@ export default class KicadView extends React.Component {
   /** The sheet on screen told to the page as `s=` says it ('' for the root
    *  sheet, which has none), which writes it into the address (`onSheet`):
    *  as a step of history for a step of the reader's (`push`), else in place
-   *  of the entry on screen. The page draws nothing for it, so the address it
-   *  writes is noted as seen here (`componentDidUpdate`). */
+   *  of the entry on screen. The page need not draw anything for it (it does
+   *  only while the list of views is open), so the address it writes is noted
+   *  as seen here (`componentDidUpdate`). */
   tellSheet(push) {
     this.props.onSheet(sheetQueryValue(this.pages(), this.page), push);
     this.seen = addressNow();
