@@ -390,8 +390,13 @@
   in its list; `?d=<id>` picks the document, and a row rewrites it, and the
   sheet a schematic reports (`onSheet`) is written into the address here, both
   through `address.js`. It holds which document is open, what the open view
-  can do with Fit and Frame (`docBar`, `onTools`) and whether the window is
-  narrow
+  can do with Fit and Frame (`docBar`, `onTools`), whether the window is
+  narrow, and the build's comments as the model page holds them over a
+  document (`ui/src/comments.jsx`)
+- `ui/src/comments.jsx` — the comments both pages share: loading the
+  project's queue, the draft on a document, Send and resolve, the header's
+  button with the open count, the composer and the rail; what a rail row says
+  and opens is `ui/src/feedview.js`
 - `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
   views in it: `toolBar` (the views, then Measure, Comment, Add primitive, Fit,
   Frame, Settings, a tool that does not apply drawn out of service; with a
