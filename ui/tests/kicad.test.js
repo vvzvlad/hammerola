@@ -550,24 +550,6 @@ describe('the schematic\'s page', () => {
     view.choose(SHOW_FAULT)
     expect([sch.page, push.mock.calls]).toEqual([AMP, [[null, '', `${BASE}?d=${SHEET}&s=amp`]]])
   })
-
-  it('is the root on the bar\'s Contents, told to the bar below the root alone, a step Back undoes', async () => {
-    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
-    const { view, sch } = await opened()
-    const told = () => view.props.onTools.mock.lastCall[0]
-    expect(told().contents).toBeUndefined()
-    // two sheets down, the root not this sheet's parent
-    sch.switchPage(PSU_B)
-    const { contents } = told()
-    const push = vi.spyOn(window.history, 'pushState')
-    contents()
-    expect([sch.page, push.mock.calls, told().contents]).toEqual([ROOT, [[null, '', `${BASE}?d=${SHEET}`]], undefined])
-    await go(-1)
-    expect([sch.page, told().contents]).toEqual([PSU_B, contents])
-    // the board on screen, the schematic behind it below its root
-    view.props.onOpen(BOARD)
-    expect(told().contents).toBeUndefined()
-  })
 })
 
 describe('a click selects the same part in every view', () => {

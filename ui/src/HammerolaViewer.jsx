@@ -1046,8 +1046,7 @@ export default class HammerolaViewer extends React.Component {
       // -- what the reader is doing
       // `doc`: the document laid over the model, or null (`docOpen`).
       // `docTools`: what the bar's Fit and Frame do with it, `{ fit, frame }`
-      // once its view says it can (`onTools` in DocumentView.jsx), with
-      // `contents` for a schematic below its root sheet, else null.
+      // once its view says it can (`onTools` in DocumentView.jsx), else null.
       view: null, doc: null, docTools: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,

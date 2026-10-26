@@ -130,8 +130,7 @@
 // (`drawingOf`): Fit is the viewer's own reset (`zoom_fit_top_item`, what its
 // toolbar's reset button calls and what it opens a sheet with), Frame draws a
 // frame and reads the canvas in the same task. The 3D view says its own
-// (BoardView3D.jsx). The schematic on a sheet below its root adds Contents,
-// which puts its root sheet back (`toContents`).
+// (BoardView3D.jsx).
 //
 // A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
 // when the part's KiCad `Datasheet` field names a document of the build, listed
@@ -498,12 +497,9 @@ export default class KicadView extends React.Component {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
       tools3d: null, received: 0, got: false,
     };
-    // What the bar can do with a drawn view on screen, one object for both; the
-    // same with Contents for the schematic on a sheet below its root, one object
-    // too, as `report` tells the page of a change by identity; and the last
-    // thing the page was told.
+    // What the bar can do with a drawn view on screen, one object for both, and
+    // the last thing the page was told (`report`).
     this.drawnTools = { fit: () => this.fitDrawn(), frame: () => this.frameDrawn() };
-    this.sheetTools = { ...this.drawnTools, contents: () => this.toContents() };
     this.reported = undefined;
     this.onTools3D = (tools) => this.setState({ tools3d: tools });
     // A selection waiting for the page to hand down the member it is on:
@@ -598,22 +594,11 @@ export default class KicadView extends React.Component {
     return new Promise((resolve) => drawing.canvas.toBlob(resolve, 'image/png'));
   }
 
-  /** The bar's Contents: the schematic put on its root sheet, the one with the
-   *  sheet symbols (`sheetFromQuery` with no `s=`). A step of the reader's, so
-   *  `paged` pushes it into the address, and Back returns to the sheet left. */
-  toContents() {
-    const element = this.elements[SCH];
-    if (element && typeof element.switchPage === 'function') element.switchPage(sheetFromQuery(this.pages(), ''));
-  }
-
   /** What the bar can do with the view on screen: a drawn one once its files
-   *  are in, with Contents for the schematic on a sheet below its root; the 3D
-   *  model once it is loaded. */
+   *  are in, the 3D model once it is loaded. */
   toolsOnScreen() {
     if (this.side() === BOARD3D) return this.state.tools3d;
-    if (!this.state.ready || this.state.error) return null;
-    const page = this.side() === SCH && this.pages().find((one) => one.projectPath === this.page);
-    return page && page.parentProjectPath ? this.sheetTools : this.drawnTools;
+    return this.state.ready && !this.state.error ? this.drawnTools : null;
   }
 
   /** The page told what the bar can do (`onTools`), when that has changed. */
@@ -684,14 +669,12 @@ export default class KicadView extends React.Component {
    *  (`componentDidUpdate`), and Back or Forward put the entry's own back.
    *  Not for the page the address asked for (`followPage`), which it already
    *  names, nor for the first page the element shows, which is only
-   *  remembered. Every change of page is told to the bar, whose Contents
-   *  depends on it (`toolsOnScreen`). */
+   *  remembered. */
   paged() {
     const now = this.activePage();
     if (!now || now === this.page) return;
     const before = this.page;
     this.page = now;
-    this.report();
     if (now === this.pageFromHistory) {
       this.pageFromHistory = null;
       return;
@@ -937,13 +920,12 @@ export default class KicadView extends React.Component {
       })
       .then(() => {
         // The schematic goes to the sheet the address names, from the page it
-        // opened on, which the bar is told of. A part selected in the 3D view
-        // while the files came in is selected in the viewers now: they had
-        // nothing to select it in then.
+        // opened on. A part selected in the 3D view while the files
+        // came in is selected in the viewers now: they had nothing to select
+        // it in then.
         if (!this._gone) {
           this.setState({ ready: true }, () => {
             this.page = this.activePage();
-            this.report();
             this.followPage(true);
             this.select(BOARD3D, this.state.selected);
           });
