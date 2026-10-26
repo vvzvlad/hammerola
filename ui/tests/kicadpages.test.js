@@ -16,9 +16,12 @@ const sheet = (uuid, name, file, pages = {}, names = ['Sheetname', 'Sheetfile'])
 \t\t(instances (project "dionis" ${Object.entries(pages).map(([path, page]) => `(path "${path}" (page "${page}"))`).join(' ')})))\n`
 const schematic = (uuid, ...sheets) => `(kicad_sch\n\t(version 20250610)\n\t(generator "eeschema")\n\t(uuid "${uuid}")\n${sheets.join('')})\n`
 
-// The root places a KiCad 6 sheet with no page number, an amplifier twice, a
-// file that is not there and notes on page 10; the amplifier places a filter,
-// which is two sheets of one name, and names the root, its own ancestor.
+// The root places a KiCad 6 sheet, with no placements in its symbol, an
+// amplifier twice, a file that is not there, notes whose only placement is
+// under another root (a file copied in from another project), on page 1, and a
+// sheet placed twice elsewhere, under neither of them; the amplifier places a
+// filter, which is two sheets of one name, and names the root, its own
+// ancestor.
 const ROOT = 'kicad/top.kicad_sch'
 const TEXTS = {
   [ROOT]: schematic('r',
@@ -26,7 +29,8 @@ const TEXTS = {
     sheet('s-ampl', 'amp_l', 'amp/amp.kicad_sch', { '/r': '3' }),
     sheet('s-gone', 'gone', 'missing.kicad_sch', { '/r': '4' }),
     sheet('s-ampr', 'amp_r', 'amp/amp.kicad_sch', { '/r': '2' }),
-    sheet('s-notes', 'notes', 'notes.kicad_sch', { '/r': '10' })),
+    sheet('s-notes', 'notes', 'notes.kicad_sch', { '/old': '1' }),
+    sheet('s-copy', 'copy', 'psu.kicad_sch', { '/old': '7', '/older': '8' })),
   'kicad/amp/amp.kicad_sch': schematic('a',
     sheet('s-filter', 'filter', 'filter.kicad_sch', { '/r/s-ampl': '6', '/r/s-ampr': '5' }),
     sheet('s-loop', 'loop', '../top.kicad_sch', { '/r/s-ampl': '8', '/r/s-ampr': '9' })),
@@ -42,17 +46,16 @@ describe('a schematic\'s sheets', () => {
     const AMP_R = 'kicad/amp/amp.kicad_sch:/r/s-ampr'
     expect(sheets).toEqual([
       { projectPath: `${ROOT}:/r`, name: 'Root', parentProjectPath: undefined },
+      { projectPath: 'kicad/notes.kicad_sch:/r/s-notes', name: 'notes', parentProjectPath: `${ROOT}:/r` },
       { projectPath: AMP_R, name: 'amp_r', parentProjectPath: `${ROOT}:/r` },
       { projectPath: AMP_L, name: 'amp_l', parentProjectPath: `${ROOT}:/r` },
       { projectPath: 'kicad/amp/filter.kicad_sch:/r/s-ampr/s-filter', name: 'filter', parentProjectPath: AMP_R },
       { projectPath: 'kicad/amp/filter.kicad_sch:/r/s-ampl/s-filter', name: 'filter', parentProjectPath: AMP_L },
-      { projectPath: 'kicad/notes.kicad_sch:/r/s-notes', name: 'notes', parentProjectPath: `${ROOT}:/r` },
-      { projectPath: 'kicad/psu.kicad_sch:/r/s-psu', name: 'psu', parentProjectPath: `${ROOT}:/r` },
     ])
     // the `s=` of each row: none for the root, the name where it is the only
     // one, the path where two sheets share it
-    expect(sheets.map((one) => sheetQueryValue(sheets, one.projectPath))).toEqual(['', 'amp_r', 'amp_l',
-      'kicad/amp/filter.kicad_sch:/r/s-ampr/s-filter', 'kicad/amp/filter.kicad_sch:/r/s-ampl/s-filter', 'notes', 'psu'])
+    expect(sheets.map((one) => sheetQueryValue(sheets, one.projectPath))).toEqual(['', 'notes', 'amp_r', 'amp_l',
+      'kicad/amp/filter.kicad_sch:/r/s-ampr/s-filter', 'kicad/amp/filter.kicad_sch:/r/s-ampl/s-filter'])
   })
 
   it('are none where the root file does not parse', () => {

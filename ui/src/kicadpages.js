@@ -15,10 +15,15 @@
 // (`resolved` in kicadnets.js). A file that is not among the texts, and one
 // naming a file it is itself placed under, place no sheet.
 //
-// THE ORDER is the root, then KiCad's page numbers, which a sheet symbol holds
-// for its placement under its parent (`(instances (project … (path "<parent
-// path>" (page "5"))))`, KiCad 7 on); sheets without one follow, in the order
-// they are reached.
+// A sheet symbol places a sheet as the viewer takes it (`Project` in the
+// fork's kicanvas/project.ts): by its placement under its parent's path
+// (`(instances (project … (path "<parent path>" (page "5"))))`, KiCad 7 on),
+// else by its only placement wherever that is; with neither — a KiCad 6 file,
+// which keeps no placements in its sheet symbols, or several placements none
+// of them under this parent — it places none, as the viewer lists none.
+//
+// THE ORDER is the root, then KiCad's page numbers, which that placement
+// holds; sheets without one follow, in the order they are reached.
 //
 // Texts in, a list out: a root file that does not parse gives no sheets.
 
@@ -26,17 +31,15 @@ import { resolved } from './kicadnets.js';
 import { property } from './kicadsheets.js';
 import { children, head, parseSexpr, valueOf } from './sexpr.js';
 
-/** The page number the sheet symbol `symbol` holds for its placement under
- *  the sheet at `path`, or NaN. */
-function pageNumber(symbol, path) {
-  for (const instances of children(symbol, 'instances')) {
-    for (const project of children(instances, 'project')) {
-      for (const placement of children(project, 'path')) {
-        if (valueOf(placement) === path) return Number.parseInt(valueOf(children(placement, 'page')[0]), 10);
-      }
-    }
-  }
-  return NaN;
+/** The placement of the sheet symbol `symbol` the viewer takes under the
+ *  sheet at `path`: the one at that path, else its only one, else null. By
+ *  path, as the viewer keys them, the last of one path standing. */
+function placement(symbol, path) {
+  const byPath = new Map(children(symbol, 'instances')
+    .flatMap((instances) => children(instances, 'project'))
+    .flatMap((project) => children(project, 'path'))
+    .map((one) => [valueOf(one), one]));
+  return byPath.get(path) || (byPath.size === 1 ? [...byPath.values()][0] : null);
 }
 
 /**
@@ -62,11 +65,12 @@ export function schematicSheets(texts, root) {
   const visit = (file, path, parent, above) => {
     for (const symbol of children(files.get(file), 'sheet')) {
       const target = resolved(file, property(symbol, 'Sheetfile') || property(symbol, 'Sheet file'));
-      if (!files.has(target) || above.includes(target)) continue;
+      const at = placement(symbol, path);
+      if (!at || !files.has(target) || above.includes(target)) continue;
       const own = `${path}/${valueOf(children(symbol, 'uuid')[0])}`;
       const sheet = { projectPath: `${target}:${own}`, name: property(symbol, 'Sheetname') || property(symbol, 'Sheet name'),
         parentProjectPath: parent.projectPath };
-      placed.push({ sheet, page: pageNumber(symbol, path) });
+      placed.push({ sheet, page: Number.parseInt(valueOf(children(at, 'page')[0]), 10) });
       visit(target, own, sheet, [...above, target]);
     }
   };
