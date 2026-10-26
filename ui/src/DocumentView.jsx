@@ -205,12 +205,13 @@ const SCREEN = ['view', 'doc', 'sheet'];
  *     `?d=<id>&s=<sheet>`) or this page's full address copied from the
  *     browser, the same origin and path, but not a bare `#…`: it names a whole
  *     screen, so its `v=`, `d=` and `s=` replace the page's, a field it leaves
- *     out going, while `files=` and the parameters it does not name, `c=`
- *     among them, stay as the address has them. A plain click makes it a step
+ *     out going, while `files=` and the parameters it does not name stay as
+ *     the address has them. A plain click makes it a step
  *     of history the page follows as it follows Back (`follow` in address.js),
  *     none where the address already names that screen; one naming a view and
  *     no document opens nothing on the page of a build with no model, which has
- *     no `views`.
+ *     no `views`. Only with a door to the page (`onOpen`); without one it
+ *     stays a plain link.
  *   * A link to another document of this build, by its path: that document's
  *     `?d=`, and a plain click opens it through `onOpen`, as its row in the
  *     list does. Without a door to open one it stays a link to the file.
@@ -228,7 +229,10 @@ export function docLinks(base, documents, onOpen, views) {
   return (href) => {
     const url = urlOf(href);
     if (!url || url.origin !== window.location.origin) return null;
-    if (url.pathname === window.location.pathname && !href.startsWith('#')) {
+    // Only where the holder handed a door to the page (`onOpen`): a document
+    // drawn without one — the datasheet's window over a KiCad design — asks
+    // the page for nothing, and its link stays a plain one.
+    if (onOpen && url.pathname === window.location.pathname && !href.startsWith('#')) {
       const named = parse(url, null);
       const fields = Object.fromEntries(SCREEN.map((field) => [field, named[field]]));
       const screen = (at) => ({ ...respell(at, fields), hash: '' });

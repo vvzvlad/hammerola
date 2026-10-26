@@ -227,8 +227,12 @@ describe('one document, as both pages draw it', () => {
     it('is that address with the screen the link names, the key and what it does not name kept', () => {
       window.history.replaceState({ hmr: 'abc123' }, '', `${BASE}?v=glass&files=k1&x=2&s=psu#top`)
       const copied = `${window.location.origin}${BASE}?v=print&c=1,2#x`
-      const tree = documentBody(cutList, BASE, `[o](?v=open) [s](?d=hw__board.kicad_sch&s=amp) [c](${copied}) `
-        + '[p](/project/docs0001/abc123/) [h](#top) [l](/project/docs0001/latest/?v=open)', '')
+      const note = `[o](?v=open) [s](?d=hw__board.kicad_sch&s=amp) [c](${copied}) `
+        + '[p](/project/docs0001/abc123/) [h](#top) [l](/project/docs0001/latest/?v=open)'
+      // drawn with no door to the page — the datasheet's window — it is a plain link
+      const [loose] = ofType(documentBody(cutList, BASE, note, ''), 'a')
+      expect([loose.props.href, loose.props.onClick]).toEqual(['?v=open', undefined])
+      const tree = documentBody(cutList, BASE, note, '', [], vi.fn())
       const [open, sheet, full, plain, here, other] = ofType(tree, 'a')
       expect([open, sheet, full, plain].map((a) => a.props.href)).toEqual([`${BASE}?files=k1&x=2&v=open`,
         `${BASE}?files=k1&x=2&d=hw__board.kicad_sch&s=amp`, `${BASE}?files=k1&x=2&v=print`, `${BASE}?files=k1&x=2`])
