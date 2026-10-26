@@ -1,5 +1,7 @@
 # hammerola
 
+**English** · [Русский](README.ru.md)
+
 A build system and a viewer for parts that an agent models in code. The agent
 writes a `model.py` in CadQuery and pushes the source; the hub computes the
 geometry and shows the part in a browser — turn it, hide what is in the way, cut
