@@ -186,9 +186,12 @@ export default class DocShell extends React.Component {
 
   /** The schematic's sheet on screen as KicadView reports it (`onSheet`):
    *  `sheet` the value of `s=`, '' for the root sheet. A step of history for
-   *  the reader's own change (`push`), else the entry on screen rewritten. */
+   *  the reader's own change (`push`), else the entry on screen rewritten.
+   *  With the list of views open the page is drawn again, as the model's page
+   *  is (`writeSheet` in HammerolaViewer.jsx). */
   writeSheet(sheet, push) {
     navigate(respell(parse(), { sheet }), { push });
+    if (this.state.viewsOpen) this.forceUpdate();
   }
 
   render() {

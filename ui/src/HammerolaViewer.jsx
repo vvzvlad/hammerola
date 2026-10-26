@@ -4957,9 +4957,13 @@ export default class HammerolaViewer extends React.Component {
    * `sheet` the value of `s=`, '' for the root sheet, which has none. A step of
    * history for the reader's own change of sheet (`push`), the entry on screen
    * rewritten for one the page made; the path and every other parameter stay.
+   * With the list of views open the page is drawn again, so that the sheet lit
+   * under the schematic's row (`SheetRows` in viewlist.jsx) follows a step
+   * the reader took in the viewer meanwhile, by a key: nothing else redraws it.
    */
   writeSheet(sheet, push) {
     navigate(respell(parse(), { sheet }), { push });
+    if (this.state.viewsOpen) this.forceUpdate();
   }
 
   /**
