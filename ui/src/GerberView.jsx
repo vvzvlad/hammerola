@@ -370,7 +370,7 @@ export default class GerberView extends React.Component {
     };
     this.toggle = () => this.setState({ open: !this.state.open });
     // What the page's bar does with this view (`onTools` in DocumentView.jsx).
-    this.tools = { fit: () => this.stage.fit(), frame: () => this.stage.snapshot() };
+    this.tools = { fit: () => this.stage.fit(), frame: () => this.frame() };
     // What the stage tells this view (`Stage`): the marks follow each frame.
     this.handlers = {
       onBand: (band) => this.setState({ band }),
@@ -385,6 +385,42 @@ export default class GerberView extends React.Component {
   marks() {
     const { comment, doc } = this.props;
     return ((comment && comment.marks) || []).filter((one) => doc && one.doc === doc.file && Array.isArray(one.area));
+  }
+
+  /** The frame as a PNG blob: the canvas with the marks drawn on it as they
+   *  stand over it. The marks are elements over the canvas, not in it, and a
+   *  comment's frame (its `shot`) has to show the area it is about, as the
+   *  schematic's and the board's do, whose markers are in their canvas. */
+  frame() {
+    const { stage } = this;
+    const marks = this.marks();
+    if (!marks.length) return stage.snapshot();
+    const out = document.createElement('canvas');
+    out.width = stage.canvas.width;
+    out.height = stage.canvas.height;
+    const pen = out.getContext('2d');
+    pen.drawImage(stage.canvas, 0, 0);
+    // Canvas pixels per CSS pixel, which is what `canvasBox` answers in.
+    const k = stage.canvas.width / stage.width;
+    const style = getComputedStyle(this.host);
+    const ink = (name) => style.getPropertyValue(name).trim();
+    for (const mark of marks) {
+      const at = canvasBox(stage.view, mark.area, stage.width, stage.height, flipOf(stage.side));
+      const accent = ink(mark.active ? '--accent-strong' : '--accent');
+      pen.setLineDash([4 * k, 3 * k]);
+      pen.lineWidth = 1.5 * k;
+      pen.strokeStyle = accent;
+      pen.strokeRect(at.left * k, at.top * k, at.width * k, at.height * k);
+      pen.setLineDash([]);
+      pen.beginPath();
+      pen.arc((at.left + at.width / 2) * k, (at.top + at.height / 2) * k, (MARKER_PX / 2) * k, 0, 2 * Math.PI);
+      pen.fillStyle = accent;
+      pen.fill();
+      pen.lineWidth = 2 * k;
+      pen.strokeStyle = ink('--card-bg');
+      pen.stroke();
+    }
+    return new Promise((resolve) => out.toBlob(resolve, 'image/png'));
   }
 
   /** An area drawn in comment mode, handed to the page with what was on

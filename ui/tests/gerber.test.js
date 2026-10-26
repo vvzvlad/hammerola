@@ -556,4 +556,36 @@ describe('the view on the page', () => {
     canvas.toBlob = vi.fn((done, type) => done(type === 'image/png' ? blob : null))
     await expect(tools.frame()).resolves.toBe(blob)
   })
+
+  it('frames the canvas with a comment\'s area drawn on it where it stands, in the canvas\'s own pixels', async () => {
+    // Two canvas pixels to a CSS pixel, which is what the marks are placed in.
+    vi.stubGlobal('devicePixelRatio', 2)
+    const doc = { file: 'fab/dionis_speaker_gerber.zip' }
+    const comment = { on: false, marks: [], focus: null, onArea: vi.fn(), onMarker: vi.fn(), onFocused: vi.fn() }
+    const { view, canvas, processor } = await loaded({ doc, comment })
+    const [[tools]] = view.props.onTools.mock.calls
+    // jsdom draws nothing: the 2D context records what it is told, and each
+    // canvas's PNG says which canvas it is.
+    const pen = {
+      drawImage: vi.fn(), strokeRect: vi.fn(), setLineDash() {}, beginPath() {}, arc() {}, fill() {}, stroke() {},
+    }
+    HTMLCanvasElement.prototype.getContext.mockImplementation((kind) => (kind === '2d' ? pen : { getExtension: () => ({ loseContext }) }))
+    const [bare, framed] = [new Blob(['the board']), new Blob(['the board and its marks'])]
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (done, type) {
+      done(type === 'image/png' ? (this === canvas ? bare : framed) : null)
+    })
+
+    // with no mark on the zip, the canvas as it stands
+    await expect(tools.frame()).resolves.toBe(bare)
+    expect(pen.drawImage).not.toHaveBeenCalled()
+
+    // an area that stands between the CSS points (100, 200) and (300, 300)
+    const [low, high] = [[100, 300], [300, 200]].map((at) => pointAt(last(processor), at))
+    const area = [low[0], low[1], high[0] - low[0], high[1] - low[1]]
+    view.props = { ...view.props, comment: { ...comment, marks: [{ id: 'c1', doc: doc.file, area, active: true }] } }
+    await expect(tools.frame()).resolves.toBe(framed)
+    expect(pen.drawImage.mock.calls).toEqual([[canvas, 0, 0]])
+    expect(pen.strokeRect).toHaveBeenCalledTimes(1)
+    close(pen.strokeRect.mock.calls[0], [200, 400, 400, 200])
+  })
 })
