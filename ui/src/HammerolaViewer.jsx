@@ -4088,7 +4088,7 @@ export default class HammerolaViewer extends React.Component {
       // renders the new geometry and puts them all back. Nothing here has to
       // arrange that beyond sending the new numbers.
       this.sync(gone.extra);
-      this.toast(`Now viewing ${shortId(next.commit)} — your frame and tree are kept`);
+      this.toast(`Now viewing ${shortId(next.commit)}`);
     });
   }
 
