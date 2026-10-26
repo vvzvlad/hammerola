@@ -610,6 +610,11 @@ describe('the shell', () => {
       shell.componentDidMount()
       listeners.forEach((fn) => fn({ matches: false }))
       expect(shell.render().props.narrow).toBe(false)
+      // narrowing puts an armed Comment down: its button leaves the bar, and a
+      // phone has no Escape to put it down with
+      shell.state.tool = 'comment'
+      listeners.forEach((fn) => fn({ matches: true }))
+      expect([shell.state.narrow, shell.state.tool]).toEqual([true, null])
       const tools = { fit() {}, frame() {} }
       shell.render().props.onTools(tools)
       expect(shell.render().props.tools).toBe(tools)

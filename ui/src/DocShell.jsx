@@ -61,7 +61,9 @@ export function pickDocument(documents, wanted) {
 }
 
 const SHELL = `position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px`;
-const HEADER = `min-height:50px;flex:none;display:flex;align-items:center;gap:6px 12px;padding:0 16px;${HEADER_BAR}`;
+// Wraps, as the model page's header does: a row that cannot wrap cuts the
+// comments button off a phone's width.
+const HEADER = `min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:0 16px;${HEADER_BAR}`;
 // Under the header the document's stage and the comment rail beside it, which
 // covers the stage on a narrow window (`railView` in comments.jsx).
 const BODY = 'flex:1;display:flex;min-height:0;position:relative';
@@ -191,7 +193,9 @@ export default class DocShell extends React.Component {
     this.tt = undefined;
     this.onTools = (tools) => this.setState({ tools });
     this.mq = null;
-    this.onNarrow = (event) => this.setState({ narrow: event.matches });
+    // Narrowing puts an armed tool down, as on the model's page: its button
+    // leaves the bar, and a phone has no Escape to put it down with.
+    this.onNarrow = (event) => this.setState(event.matches ? { narrow: true, tool: null } : { narrow: false });
     // Back and Forward through the documents picked (`pick`): the entry's
     // document, read as the constructor reads it.
     this.onPop = (at) => this.set({ active: this.addressDoc(at) });
