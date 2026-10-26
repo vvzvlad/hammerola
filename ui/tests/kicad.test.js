@@ -14,12 +14,9 @@
 // The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
 // and are checked in a browser; here the two elements are plain DOM elements
 // carrying the methods this component calls, a click is the event the viewer
-// dispatches for one, and each holds a canvas whose click reports what the test
-// put under the pointer (`element.under`), as the viewer's own click does. The
-// 3D view is a stand-in whose props are read off the drawn tree.
-
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+// dispatches for one, and each holds a canvas and answers `selectAt` with what
+// the test put under the pointer (`element.under`), as the viewer's own click
+// does. The 3D view is a stand-in whose props are read off the drawn tree.
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -84,20 +81,16 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.clearSelection = vi.fn()
       element.replaceSources = vi.fn(async () => {})
     }
-    // The canvas the viewer draws on: a click reports what is under the
-    // pointer, after the move that put it there. `picks` is what it was handed,
-    // and anything handed to the element itself instead.
+    // The canvas the viewer draws on, and the element's hit test: `selectAt`
+    // reports what is under the point, as the viewer's own click does.
+    // `picks` is the points it was asked for.
     const canvas = document.createElement('canvas')
     element.append(canvas)
     element.canvas = canvas
     element.picks = []
-    canvas.addEventListener('mousemove', (event) => element.picks.push(['move', event.clientX, event.clientY]))
-    canvas.addEventListener('click', (event) => {
-      element.picks.push([`click ${event.button}`, event.clientX, event.clientY])
+    element.selectAt = (x, y) => {
+      element.picks.push([x, y])
       click(element, element.under)
-    })
-    for (const type of ['mousemove', 'click']) {
-      element.addEventListener(type, (event) => event.target === element && element.picks.push([`${type} on the element`]))
     }
     view.refCallbacks[context](element)
     elements[context] = element
@@ -236,11 +229,6 @@ describe('a KiCad design', () => {
     expect(sources[PCB].map((s) => s.filename)).toEqual(['hw/board.kicad_pro', 'hw/board.kicad_pcb'])
     // no project: each viewer gets its own files alone
     expect(designFiles(designMembers(DOCS, DOCS[4]))).toEqual(['psu/psu.kicad_pcb'])
-    // a schematic goes with the pin entries the viewer draws pins from
-    const bare = '(kicad_sch (lib_symbols (symbol "Device:R" (symbol "R_1_1" (pin passive line (number "1")))))'
-      + ' (symbol (lib_id "Device:R") (uuid "r1")))'
-    const handed = designSources(members, { ...Object.fromEntries(designFiles(members).map((f) => [f, f])), 'hw/sub/power.kicad_sch': bare })
-    expect(handed[SCH][2].content).toMatch(/\(lib_id "Device:R"\) \(uuid "r1"\) \(pin "1" \(uuid "[0-9a-f-]{36}"\)\)\)\)$/)
   })
 })
 
@@ -614,11 +602,11 @@ describe('the right-click menu', () => {
     ])
   })
 
-  it('asks the viewer what is under a right click as it picks for a left one, selects it, and opens there', () => {
+  it('asks the element what is under a right click, selects it, and opens there', () => {
     const { view, elements } = mounted()
     elements[SCH].under = C523
     rightClick(elements[SCH], 300, 250)
-    expect(elements[SCH].picks).toEqual([['move', 300, 250], ['click 0', 300, 250]])
+    expect(elements[SCH].picks).toEqual([[300, 250]])
     // selected as a left click selects it
     expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, 'C523'))
     expect(view3d(view).three.props.selected).toBe('C523')
@@ -650,12 +638,17 @@ describe('the right-click menu', () => {
     const list = document.createElement('kc-sch-selection-menu')
     list.hidden = true
     app.attachShadow({ mode: 'open' }).append(element.canvas, list)
-    // a click on a label with namesakes on other sheets opens it
-    element.canvas.addEventListener('click', () => { list.hidden = false })
+    // selecting a label with namesakes on other sheets opens it
+    const select = element.selectAt
+    element.selectAt = (x, y) => {
+      select(x, y)
+      list.hidden = false
+    }
     element.under = { sourceContext: SCH, itemType: 'global-label', net: 'AMP_FAULT' }
     rightClick(element, 300, 250)
     expect([texts(menuOf(view)), list.hidden]).toEqual([['net AMP_FAULT', 'Show net AMP_FAULT in hw/board.kicad_pcb'], true])
-    element.canvas.dispatchEvent(new MouseEvent('click', { button: 0 }))
+    // the reader's own left click opened it
+    list.hidden = false
     rightClick(element, 300, 250)
     expect(list.hidden).toBe(false)
   })
@@ -1047,40 +1040,6 @@ describe('a part\'s datasheet', () => {
       view.componentDidUpdate()
       expect(view.state.sheet).toBeNull()
     })
-  })
-})
-
-describe('our edits to the vendored viewer', () => {
-  // The wheel and the look of a selection are the viewer's own code now
-  // (static/_v/PROVENANCE.md, "Our edits"), so nothing of ours runs for them
-  // and no test here can exercise them — they are checked in a browser. What
-  // CAN be checked, and is what an upgrade loses silently, is that the edits
-  // are still in the file: the viewer upstream zooms on every wheel and fills
-  // a selected footprint, and both read as "the viewer does that" rather than
-  // as a regression.
-  const bundle = readFileSync(resolve(process.cwd(), '../static/_v/ecad-viewer.js'), 'utf8')
-
-  it('leaves a selected footprint outlined, not filled over, and the copper pours where they were', () => {
-    expect(bundle).toContain('paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;')
-    // the fill was a pass over the selection mask in cyan at 55% — nowhere now
-    expect(bundle).not.toContain('new w(0,.85,1,.55)')
-    // selecting a footprint hid every zone layer until the selection was cleared
-    expect(bundle).toContain('this.#l={kind:"fp",fp:t},this.painter.paint_footprint(t),this.draw()}')
-    expect(bundle).not.toContain('this.#e.set(n.name,n.visibility),n.visible=!1')
-  })
-
-  it('dims the board under a highlighted net, not the page around it', () => {
-    // the veil was the outline's box grown by a quarter of its longer side plus 5 mm
-    expect(bundle).toContain('return n||(n=new Y(0,0,1,1)),n}')
-    expect(bundle).not.toContain('n.grow(Math.max(n.w,n.h)*.25+5)')
-  })
-
-  it('pans on a plain wheel and zooms about the pointer on Control, by the Gerbers\' numbers', () => {
-    // `#E` pans and `#F` zooms about a point; 16 px a line, the zoom delta
-    // clamped to 40 px and the rate 0.01 a pixel (`og`, the viewer's own 0.005).
-    expect(bundle).toContain(
-      'e.ctrlKey?this.#F(Math.max(-40,Math.min(40,e.deltaY*t))*(.01/og),this.#K(e)):this.#E(e.deltaX*t,e.deltaY*t)')
-    expect(bundle).toContain('let t=e.deltaMode===WheelEvent.DOM_DELTA_LINE?16:')
   })
 })
 

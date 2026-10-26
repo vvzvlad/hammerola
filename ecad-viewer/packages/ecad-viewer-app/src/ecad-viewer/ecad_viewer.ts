@@ -2518,6 +2518,17 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     /**
+     * Select what is under the client point (`clientX`, `clientY`, a
+     * MouseEvent's clientX/clientY) in the viewer on screen, as a left click
+     * there selects it, and report it as `ecad-viewer:selection`: the
+     * element's hit test, for a gesture of the host's own there, such as a
+     * right click.
+     */
+    public selectAt(clientX: number, clientY: number): void {
+        this.#active_inner_viewer()?.select_at(clientX, clientY);
+    }
+
+    /**
      * Replace the highlighted nets on the board. Nets resolve by name first
      * (stable across saves), then by code; unresolved refs are reported, not
      * guessed. Never moves the camera unless `focus` is set. The host owns

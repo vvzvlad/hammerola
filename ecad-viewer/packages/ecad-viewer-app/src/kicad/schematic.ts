@@ -1656,6 +1656,7 @@ export class SchematicSymbol {
             data.properties?.map((p) => [p.name, new Property(p, this)]),
         );
         this.pins = data.pins?.map((p) => new PinInstance(p, this)) ?? [];
+        if (!this.pins.length) this.pins = this.#library_pins();
         this.default_instance = data.default_instance;
 
         // Walk through all instances and flatten them.
@@ -1711,6 +1712,35 @@ export class SchematicSymbol {
         // horrible has happened, the schematic should absolutely have the
         // library symbol for this symbol instance.
         return this.parent.lib_symbols!.by_name(this.lib_name ?? this.lib_id)!;
+    }
+
+    /**
+     * The pins of a placed symbol whose file names none of them: KiCad draws
+     * a symbol without its `(pin "N" (uuid …))` records, and other tools
+     * (konnect) write none. One per pin number of the library symbol, every
+     * unit's (which unit is drawn is decided per placement), in body style 0
+     * or this symbol's own, where {@link LibSymbol.pin_by_number} finds them.
+     * None when the library symbol is missing.
+     */
+    #library_pins(): PinInstance[] {
+        const lib = this.parent.lib_symbols?.by_name(
+            this.lib_name ?? this.lib_id,
+        );
+        if (!lib) return [];
+        const numbers = new Set<string>();
+        for (const symbol of [lib, ...lib.children]) {
+            if (
+                symbol !== lib &&
+                symbol.style != 0 &&
+                symbol.style != this.convert
+            )
+                continue;
+            for (const pin of symbol.pins) numbers.add(pin.number.text);
+        }
+        return [...numbers].map(
+            (number) =>
+                new PinInstance({ number, uuid: "", alternate: "" }, this),
+        );
     }
 
     get_property_text(name: string) {

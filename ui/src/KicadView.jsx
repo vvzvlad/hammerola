@@ -17,8 +17,7 @@
 // In `source-mode="host"` it reads nothing by itself; this component fetches the
 // members' files from the build (meta.json names them, `kicad`) and hands them
 // over as `{filename, content}`, under their paths in the tree, so a sheet's
-// `Sheetfile` resolves against them as KiCad resolves it. A schematic is handed
-// over with the pin entries the viewer needs to draw pins (kicadpins.js).
+// `Sheetfile` resolves against them as KiCad resolves it.
 //
 // WHAT IS ON SCREEN DOWNLOADS FIRST. Opened on the 3D view, the design fetches
 // the schematic's and the board's files only once the board's `.glb` has come
@@ -98,23 +97,20 @@
 //     reported. An item of another sheet of the schematic on screen asks its
 //     element straight away: the page shows what it showed.
 //
-// WHAT IS UNDER THE POINTER at a right click is the viewer's own answer to a
-// left click there. It selects on the left button only and has no hit test an
-// element offers, so the right click's position is handed to the canvas it
-// landed on as the pointer move and the click the viewer picks with — neither
-// bubbles, so nothing else on the page sees them — and the selection that
-// click reports is what the menu is for. The thing is selected too, as a right
-// click in KiCad selects it. A right press the viewer panned with (it pans from
-// `PAN_SLOP` on) is no click. The 3D view picks with its own raycast.
+// WHAT IS UNDER THE POINTER at a right click is the element's own hit test,
+// `selectAt`: it selects there what a left click there selects, and the
+// selection it reports is what the menu is for. The thing is selected too, as
+// a right click in KiCad selects it. A right press the viewer panned with (it
+// pans from `PAN_SLOP` on) is no click. The 3D view picks with its own raycast.
 //
 // THE MENU is one at a time, inside the view area, in the page's colours; it
 // goes on Escape, a press anywhere else, the wheel, a resize, and when its view
 // leaves the screen.
 //
 // THE WHEEL ON THE SCHEMATIC AND THE BOARD, and HOW A SELECTION LOOKS there,
-// are the viewer's own doing: both are edits of ours to the vendored file
-// (static/_v/PROVENANCE.md, "Our edits"), so nothing on this side takes the
-// event or paints anything. A two-finger swipe of a touchpad moves the
+// are the viewer's own doing: both are edits of ours to its source in
+// ecad-viewer/ (static/_v/PROVENANCE.md, "Our edits"), so nothing on this side
+// takes the event or paints anything. A two-finger swipe of a touchpad moves the
 // drawing, a pinch — a wheel event with Control held — and Control and the
 // wheel zoom about the pointer, by the Gerbers' arithmetic (`wheelMove` in
 // gerber.js); a selected footprint is outlined, not filled over, and the
@@ -145,7 +141,6 @@ import React from 'react';
 import BoardView3D from './BoardView3D.jsx';
 import DocumentView from './DocumentView.jsx';
 import { netIndex } from './kicadnets.js';
-import { addPinEntries } from './kicadpins.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
@@ -156,8 +151,9 @@ import { typingTarget } from './viewport/holdkey.js';
 /** Where the hub serves the viewer; `parser.worker.js` is fetched beside it. */
 export const ECAD_VIEWER_URL = '/_v/ecad-viewer.js';
 
-/** How far a press may move before the viewer pans with it (`ag` in
- *  ecad-viewer.js): a right press released nearer than this is a click. */
+/** How far a press may move before the viewer pans with it (`drag_threshold`
+ *  in ecad-viewer/packages/ecad-viewer-app/src/base/dom/move-and-zoom.ts): a
+ *  right press released nearer than this is a click. */
 export const PAN_SLOP = 3;
 
 /** The event an element reports a click's selection with
@@ -260,13 +256,9 @@ function viewFiles(members) {
 /** Every file the design's drawn views read, each once. */
 export const designFiles = (members) => [...new Set(Object.values(viewFiles(members)).flat())];
 
-/** What each element is handed, from the files' texts by path: a schematic
- *  with the pin entries the viewer draws pins from (kicadpins.js). */
+/** What each element is handed, from the files' texts by path. */
 export function designSources(members, texts) {
-  const source = (filename) => ({
-    filename,
-    content: filename.endsWith('.kicad_sch') ? addPinEntries(texts[filename]) : texts[filename],
-  });
+  const source = (filename) => ({ filename, content: texts[filename] });
   return Object.fromEntries(Object.entries(viewFiles(members)).map(([view, files]) => [view, files.map(source)]));
 }
 
@@ -750,16 +742,14 @@ export default class KicadView extends React.Component {
     }
   }
 
-  /** A right press released on a drawn view. Released where it was pressed it
-   *  is a click on what is under the pointer, which the viewer is asked for as
-   *  for a left click: the point goes to the canvas the press landed on as the
-   *  move and the click the viewer picks with, and the selection that click
-   *  reports opens the menu (`picked`). Released anywhere else, the viewer
-   *  panned with it.
+  /** A right press released on a drawn view's canvas. Released where it was
+   *  pressed it is a click on what is under the pointer, which the element is
+   *  asked for (`selectAt`), and the selection it reports opens the menu
+   *  (`picked`). Released anywhere else, the viewer panned with it.
    *
-   *  The same click on a label or a sheet pin opens the schematic's own list
+   *  Selecting a label or a sheet pin there opens the schematic's own list
    *  of the label's namesakes (`kc-sch-selection-menu`), which stays open
-   *  after our menu; a list that click opened is closed again, as the viewer
+   *  after our menu; a list that opened so is closed again, as the viewer
    *  itself closes it (`hidden`). One the reader opened with the left button
    *  is left as it is. */
   release(context, event) {
@@ -769,13 +759,14 @@ export default class KicadView extends React.Component {
       || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) >= PAN_SLOP) return;
     const [canvas] = event.composedPath();
     if (!canvas || canvas.localName !== 'canvas') return;
-    const at = { clientX: event.clientX, clientY: event.clientY };
     const list = labelList(canvas);
     const listShut = Boolean(list && list.hidden);
     this.pointing = { from: context, x: event.clientX, y: event.clientY };
-    canvas.dispatchEvent(new MouseEvent('mousemove', at));
-    canvas.dispatchEvent(new MouseEvent('click', { ...at, button: 0, detail: 1 }));
-    this.pointing = null;
+    try {
+      this.elements[context].selectAt(event.clientX, event.clientY);
+    } finally {
+      this.pointing = null;
+    }
     if (listShut && !list.hidden) list.hidden = true;
   }
 

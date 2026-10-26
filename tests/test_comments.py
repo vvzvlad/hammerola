@@ -585,8 +585,9 @@ def test_the_committed_page_scripts_never_build_markup_from_a_string():
     # script of ours (static/_v/PROVENANCE.md). `three.module.js` and
     # `three.core.js` are npm's builds of three, here because the viewer bundle
     # imports three by URL. `ecad-viewer.js` and its `parser.worker.js` are the
-    # KiCad viewer, vendored built. `GLTFLoader.js` and the two helpers it
-    # imports are three's own add-ons, copied for the board's 3D view.
+    # KiCad viewer, built from its source in ecad-viewer/. `GLTFLoader.js` and
+    # the two helpers it imports are three's own add-ons, copied for the board's
+    # 3D view.
     # `wasm_gerber_processor.js` is the Gerber renderer's glue, vendored built.
     # The build artefact is skipped for the reason the docstring gives. Each is
     # named, so a further library file here is a decision made in this line.

@@ -718,13 +718,8 @@ export class BoardPainter extends DocumentPainter {
     paint_footprint(fp: board_items.Footprint) {
         this.clear_interactive();
 
-        const mask = this.layers.selection_mask;
-        mask.color = new Color(0, 0.85, 1, 0.55);
-        this.gfx.start_layer(mask.name);
-        this.paint_item(mask, fp);
-        mask.graphics = this.gfx.end_layer();
-        mask.graphics.composite_operation = "source-over";
-
+        // The box alone: a fill over the footprint hides the very part a
+        // cross-probe brought the reader to.
         const outline = this.layers.selection_fg;
         this.gfx.start_layer(outline.name);
         this.gfx.line(Polyline.from_BBox(fp.bbox.grow(0.15), 0.25, Color.cyan));
@@ -734,7 +729,7 @@ export class BoardPainter extends DocumentPainter {
 
     /**
      * Light single-click selection: green bounding outline only (no hatch).
-     * Cross-probe uses {@link paint_footprint} for the stronger cyan hatch.
+     * Cross-probe uses {@link paint_footprint} for the cyan outline.
      */
     outline_footprint(fp: board_items.Footprint) {
         this.clear_interactive();
@@ -943,8 +938,9 @@ export class BoardPainter extends DocumentPainter {
             }
         }
         if (!extent) extent = new BBox(0, 0, 1, 1);
-        // Grow past the outline so the dim reaches drawings around the board.
-        return extent.grow(Math.max(extent.w, extent.h) * 0.25 + 5);
+        // The outline's box itself, so the dim darkens the board and not the
+        // page around it.
+        return extent;
     }
 
     highlight(item: BoardInteractiveItem | null) {

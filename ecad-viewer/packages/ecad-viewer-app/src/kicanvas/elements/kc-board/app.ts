@@ -80,7 +80,7 @@ export class KCBoardAppElement extends KCViewerAppElement<KCBoardViewerElement> 
     ) {
         if (!(item instanceof Footprint)) return;
         const viewer = this.viewer as BoardViewer;
-        // Single-click: green outline. Cross-probe (dblclick / host): cyan hatch.
+        // Single-click: green outline. Cross-probe (dblclick / host): cyan outline.
         if (intent === "crossprobe") viewer.highlight_fp(item);
         else viewer.outline_fp(item);
     }

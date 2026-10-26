@@ -740,6 +740,19 @@ export abstract class Viewer extends EventTarget {
 
     abstract on_click(pos: Vec2, event?: MouseEvent): void;
 
+    /**
+     * Select what is under the client point (`clientX`, `clientY`, a
+     * MouseEvent's clientX/clientY) as a left click there selects it, without
+     * a click: what a host's own gesture there, such as a right click, is on.
+     * Before the viewer has drawn (no viewport, no layers yet) there is
+     * nothing under any point, and nothing is selected.
+     */
+    public select_at(clientX: number, clientY: number) {
+        if (!this.#active || this.#comment_mode) return;
+        if (!this.viewport || !this.layers) return;
+        this.on_click(this.screenToWorld(clientX, clientY));
+    }
+
     abstract on_dblclick(pos: Vec2): void;
 
     /**

@@ -40,10 +40,10 @@
 // sheet used twice, or one that names its own ancestor) keeps the path it was
 // reached by first and is not followed again.
 //
-// Texts in, an index out, read with kicadpins.js's reader: a schematic that
+// Texts in, an index out, read with sexpr.js's reader: a schematic that
 // does not parse gives no occurrences and throws nothing.
 
-import { children, head, parseSexpr, valueOf } from './kicadpins.js';
+import { children, head, parseSexpr, valueOf } from './sexpr.js';
 import { property } from './kicadsheets.js';
 
 /** The kind of occurrence a label is, by the name of its list. */

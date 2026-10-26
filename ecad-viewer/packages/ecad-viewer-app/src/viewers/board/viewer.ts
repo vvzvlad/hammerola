@@ -106,6 +106,8 @@ export class BoardViewer extends DocumentViewer<
     LayerSet,
     BoardTheme
 > {
+    // Stays empty: highlight_fp no longer hides the pours (static/_v/
+    // PROVENANCE.md, our edit 3); kept so the diff against the fork stays small.
     #zones_visibility = new Map<string, VisibilityType>();
 
     /**
@@ -367,16 +369,13 @@ export class BoardViewer extends DocumentViewer<
         const labels = this.#net_labels_for_current_scene();
         if (labels) labels.emphasized_nets = null;
         this.#crossprobe = { kind: "fp", fp };
-        if (!this.#zones_visibility.size)
-            for (const layer of this.layers.zone_layers()) {
-                this.#zones_visibility.set(layer.name, layer.visibility);
-                layer.visible = false;
-            }
+        // The copper pours stay as they are: a part reached from the
+        // schematic is shown on the board as it is drawn.
         this.painter.paint_footprint(fp);
         this.draw();
     }
 
-    /** Single-click selection: green outline only (no hatch / zone hide). */
+    /** Single-click selection: green outline only. */
     public outline_fp(fp: board_items.Footprint) {
         // An outline is an inspection, not an emphasis: keep the net set.
         if (this.#highlighted_nets.size) return;

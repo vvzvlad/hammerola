@@ -6,7 +6,6 @@
 
 import { BBox, Camera2, Vec2 } from "../math";
 
-const line_delta_multiplier = 8;
 const page_delta_multiplier = 24;
 const zoom_speed = 0.005;
 const pan_speed = 1;
@@ -279,29 +278,27 @@ export class MoveAndZoom {
         }
         e.preventDefault();
 
-        let dx = e.deltaX;
-        let dy = e.deltaY;
-
-        // shift modifier flips the X and Y axes (horizontal scroll)
-        if (dx == 0 && e.shiftKey) {
-            [dx, dy] = [dy, dx];
-        }
-
-        // work around line/page scrolling
-        if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-            dx *= line_delta_multiplier;
-            dy *= line_delta_multiplier;
-        } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-            dx *= page_delta_multiplier;
-            dy *= page_delta_multiplier;
-        }
-
-        // work around browsers setting a huge scroll distance
-        dx = Math.sign(dx) * Math.min(page_delta_multiplier, Math.abs(dx));
-        dy = Math.sign(dy) * Math.min(page_delta_multiplier, Math.abs(dy));
-
+        // The wheel is a touchpad's: a two-finger swipe pans, and a pinch,
+        // which arrives with Control held, zooms about the pointer. The
+        // numbers are the hub's Gerber view's (`wheelMove` in
+        // ui/src/gerber.js): 16 px to a line, the zoom delta clamped to
+        // 40 px, 0.01 a pixel.
+        const step =
+            e.deltaMode === WheelEvent.DOM_DELTA_LINE
+                ? 16
+                : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+                  ? page_delta_multiplier
+                  : 1;
         this.#rect = this.target.getBoundingClientRect();
-        this.#handle_zoom(dy, this.#relative_mouse_pos(e));
+        if (e.ctrlKey) {
+            this.#handle_zoom(
+                Math.max(-40, Math.min(40, e.deltaY * step)) *
+                    (0.01 / zoom_speed),
+                this.#relative_mouse_pos(e),
+            );
+        } else {
+            this.#handle_pan(e.deltaX * step, e.deltaY * step);
+        }
 
         this.#dispatch_panzoom(e);
     }
