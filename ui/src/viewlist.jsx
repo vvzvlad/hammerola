@@ -105,13 +105,13 @@ export function menuGroups(views, documents) {
   return [...groups];
 }
 
-/** The button. One width whatever it names, so that the bar keeps its size
- *  and place from view to view (AGENTS.md): a view's name is the model's own
- *  sentence and can be any length, so a longer one is cut; the chevron follows
- *  the name, and after a shorter one the rest of the width stays empty. Where
- *  the bar is short of room the wrapper shrinks (`viewList`) and the button
- *  with it. */
-export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;width:220px;max-width:100%;box-sizing:border-box;`
+/** The button. As wide as the name it shows, the chevron right after it, so
+ *  that no empty space is left after a short name; the bar grows or shrinks
+ *  about its centre with the name from view to view (AGENTS.md). A view's name
+ *  is the model's own sentence and can be any length; the button sits in a
+ *  bar that must not grow past the window, so it is capped and the name is cut
+ *  rather than allowed to push. */
+export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
   + (open ? TAB_ON : TAB_OFF);
 
 // How the card looks, and the submenu of a schematic's sheets beside it
