@@ -1,8 +1,9 @@
 // The sheets of a KiCad schematic, as the list of views offers them: a row each
-// under the schematic's row (`SheetRows` in viewlist.jsx), the root sheet — the
-// design's table of contents — first. Read from the schematic's own files, the
-// ones its element is handed (`kicad.schematics` in meta.json, the root first),
-// so the list does not wait for the design to be open.
+// in the submenu of the schematic's row (`SheetRows` in viewlist.jsx), the
+// root sheet — the design's table of contents — first. Read from the
+// schematic's own files, the ones its element is handed (`kicad.schematics` in
+// meta.json, the root first), so the list does not wait for the design to be
+// open.
 //
 // A SHEET is one placement, in the shape the viewer's `getSchematicPages()`
 // lists it in: `{ projectPath, name, parentProjectPath }`, so a file two sheet
