@@ -31,7 +31,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, drawingOf, drawnViews,
-  forgetPageOnLoad, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
+  menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
 } from '../src/KicadView.jsx'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
@@ -308,16 +308,26 @@ describe('what is on screen downloads first', () => {
 })
 
 describe('the schematic\'s page', () => {
-  // Kept in the entry's `history.state`, the address unchanged. The element
+  // Named in the address as `s=`, beside the schematic's `d=`. The element
   // switches as the viewer does, reporting the change inside `switchPage`.
   const SHEET = 'hw__board.kicad_sch'
   const BOARD = 'hw__board.kicad_pcb'
   const ROOT = 'hw/board.kicad_sch:/root'
   const AMP = 'hw/board.kicad_sch:/root/amp'
+  // Two sheets of one name, which `s=` tells apart by their paths.
+  const PSU_A = 'hw/board.kicad_sch:/root/psu-a'
+  const PSU_B = 'hw/board.kicad_sch:/root/amp/psu-b'
+  const PAGES = [
+    { projectPath: ROOT, name: 'board', parentProjectPath: null },
+    { projectPath: AMP, name: 'amp', parentProjectPath: ROOT },
+    { projectPath: PSU_A, name: 'psu', parentProjectPath: ROOT },
+    { projectPath: PSU_B, name: 'psu', parentProjectPath: AMP },
+  ]
   // What the amp sheet draws: a part, and a net of `Show … · amp`.
   const ON_AMP = ['U7', 'AMP_FAULT']
   const FAULT = { targetContext: SCH, kind: 'net', value: 'AMP_FAULT', net: 'AMP_FAULT',
     sheet: 'hw/sub/amp.kicad_sch', uuid: 'fault-amp' }
+  const SHOW_FAULT = { view: SCH, id: SHEET, label: 'Show net AMP_FAULT in hw/board.kicad_sch · amp', request: FAULT }
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -332,7 +342,8 @@ describe('the schematic\'s page', () => {
     const sch = elements[SCH]
     sch.page = ROOT
     sch.replaceSources = vi.fn(async () => { sch.loaded = true })
-    sch.getActiveSchematicPage = () => ({ projectPath: sch.page, name: 'Root', page: '1' })
+    sch.getSchematicPages = () => PAGES
+    sch.getActiveSchematicPage = () => ({ projectPath: sch.page, name: 'board', page: '1' })
     sch.show = (to) => {
       sch.page = to
       sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
@@ -359,109 +370,191 @@ describe('the schematic\'s page', () => {
     window.history.go(delta)
     await popped
   }
-
-  it('is a step of history on every change, the page left stamped on the entry it leaves', async () => {
-    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}`)
-    const { sch } = await opened()
-    const replace = vi.spyOn(window.history, 'replaceState')
-    const push = vi.spyOn(window.history, 'pushState')
-    // a double click on a sheet symbol, inside the viewer
-    sch.switchPage(AMP)
-    expect(replace.mock.calls).toEqual([[{ hmr: 'latest', kicadPage: { doc: SHEET, page: ROOT } }, '']])
-    expect(push.mock.calls).toEqual([[{ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '']])
-    expect(window.location.search).toBe(`?d=${SHEET}`)
-    // a report that moved no page, as for another change of the project
-    sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
-    expect(push).toHaveBeenCalledTimes(1)
-  })
-
-  it('is put back by Back and Forward, which push nothing', async () => {
-    const { sch } = await opened()
-    sch.switchPage(AMP)
-    sch.switchPage.mockClear()
-    const push = vi.spyOn(window.history, 'pushState')
-    await go(-1)
-    expect([sch.page, sch.switchPage.mock.calls]).toEqual([ROOT, [[ROOT]]])
-    await go(1)
-    expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[ROOT], [AMP]]])
-    expect(push).not.toHaveBeenCalled()
-  })
-
-  it('is left as it is by an entry without a record of this schematic', async () => {
-    const { sch } = await opened()
-    for (const state of [{ hmr: 'latest' }, { kicadPage: { doc: 'psu__psu.kicad_sch', page: AMP } }]) {
-      window.history.replaceState(state, '')
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    }
-    expect(sch.switchPage).not.toHaveBeenCalled()
-  })
-
-  it('is the entry\'s once the viewers are ready: Back onto a design no longer open, after a reload too', async () => {
-    // The browser restores the entry, and the page mounts the design after the
-    // `popstate`; Back while the files are still coming in waits for them.
-    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '', `${BASE}?d=${SHEET}`)
-    window.dispatchEvent(new PopStateEvent('popstate'))
-    const push = vi.spyOn(window.history, 'pushState')
-    const { sch } = await opened(DOCS[0], () => window.dispatchEvent(new PopStateEvent('popstate')))
-    expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[AMP]]])
-    expect(push).not.toHaveBeenCalled()
-  })
-
-  it('is forgotten by the entry the document loaded under, its other fields kept', () => {
-    // main.jsx calls this before drawing: a reload or a link opens on the first sheet.
-    window.history.replaceState({ hmr: 'latest', kicadPage: { doc: SHEET, page: AMP } }, '', `${BASE}?d=${SHEET}`)
-    forgetPageOnLoad()
-    expect([window.history.state, window.location.search]).toEqual([{ hmr: 'latest' }, `?d=${SHEET}`])
-    // an entry without one is not written at all
-    const replace = vi.spyOn(window.history, 'replaceState')
-    forgetPageOnLoad()
-    expect(replace).not.toHaveBeenCalled()
-  })
-
-  it('is recorded in the entry the browser is on, not pushed, where the reader did not move it there', async () => {
-    const recorded = (page) => ({ hmr: 'latest', kicadPage: { doc: SHEET, page } })
-    // a part clicked on the board, its symbol on another sheet of the hidden schematic
-    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
-    const board = await opened(DOCS[1])
-    const push = vi.spyOn(window.history, 'pushState')
-    click(board.elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
-    expect([board.sch.page, window.history.state]).toEqual([AMP, recorded(AMP)])
-    // any other move of the hidden schematic
-    board.sch.show(ROOT)
-    expect(window.history.state).toEqual(recorded(ROOT))
-    // a part selected in the 3D view while the files came in, selected in the
-    // schematic on screen once they are in
-    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}`)
-    const { sch } = await opened(DOCS[0], (view) => view.setState({ selected: 'U7' }))
-    expect([sch.page, window.history.state]).toEqual([AMP, recorded(AMP)])
-    expect(push).not.toHaveBeenCalled()
-  })
-
-  it('moves with `Show … · <sheet>` from the board inside the one entry that opens the schematic', async () => {
-    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
-    const { view, sch } = await opened(DOCS[1])
-    // the page answering as the model's page does, with a step of its own (`pushChoice`)
+  /** The page answering `onOpen` as the model's page does, with a step of its
+   *  own naming the member (`pushChoice`) before handing it down. */
+  const answering = (view) => {
     const open = view.props.onOpen
     view.props = { ...view.props, onOpen: (id) => {
       window.history.pushState(window.history.state, '', `${BASE}?d=${id}`)
       open(id)
     } }
+  }
+
+  it('is a step of history on every change, named as `s=` in the address, the root sheet as none', async () => {
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}&files=K#top`)
+    const { sch } = await opened()
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    // a double click on a sheet symbol, inside the viewer
+    sch.switchPage(AMP)
+    expect(push.mock.calls).toEqual([[{ hmr: 'latest' }, '', `${BASE}?d=${SHEET}&files=K&s=amp#top`]])
+    // a sheet whose name another sheet has goes by its path
+    sch.switchPage(PSU_B)
+    expect(window.location.search).toBe(`?d=${SHEET}&files=K&s=${encodeURIComponent(PSU_B)}`)
+    sch.switchPage(ROOT)
+    expect(window.location.search).toBe(`?d=${SHEET}&files=K`)
+    // a report that moved no page, as for another change of the project
+    sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([3, 0])
+  })
+
+  it('is put back by Back and Forward, which write nothing', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
+    const { sch } = await opened()
+    sch.switchPage(AMP)
+    sch.switchPage(PSU_B)
+    sch.switchPage.mockClear()
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    await go(-1)
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[AMP]]])
+    await go(-1)
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([ROOT, [[AMP], [ROOT]]])
+    await go(2)
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([PSU_B, [[AMP], [ROOT], [PSU_B]]])
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([0, 0])
+  })
+
+  it('is left as it is by an address naming another document', async () => {
+    const { sch } = await opened()
+    for (const query of [`?d=${BOARD}&s=amp`, '?s=amp', '?d=psu__psu.kicad_sch&s=amp']) {
+      window.history.replaceState(null, '', `${BASE}${query}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }
+    expect(sch.switchPage).not.toHaveBeenCalled()
+  })
+
+  it('is the address\'s once the viewers are ready: a link, a reload, Back onto a design no longer open', async () => {
+    // The browser restores the entry, and the page mounts the design after the
+    // `popstate`; Back while the files are still coming in waits for them.
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}&s=amp`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    const { sch } = await opened(DOCS[0], () => window.dispatchEvent(new PopStateEvent('popstate')))
+    expect([sch.page, sch.switchPage.mock.calls]).toEqual([AMP, [[AMP]]])
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([0, 0])
+  })
+
+  it('is the root sheet for an `s=` naming no sheet of the schematic, or a name two sheets share, which the address opened drops and Back and Forward keep', async () => {
+    // a link naming a sheet this revision does not have
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=nowhere`)
+    const { sch } = await opened()
+    const seen = [[sch.page, window.location.search]]
+    // Back onto another revision's entry, this design still mounted while the
+    // page swaps that revision in: the entry keeps its sheet for it
+    for (const value of ['amp', 'psu', PSU_B, 'nowhere']) {
+      window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=${encodeURIComponent(value)}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      seen.push([sch.page, window.location.search])
+    }
+    expect(seen).toEqual([[ROOT, `?d=${SHEET}`], [AMP, `?d=${SHEET}&s=amp`], [ROOT, `?d=${SHEET}&s=psu`],
+      [PSU_B, `?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`], [ROOT, `?d=${SHEET}&s=nowhere`]])
+  })
+
+  it('is the entry\'s on Back onto the schematic from its board, though the page hands the schematic down first', async () => {
+    // The page's own listener, there before the design and so run before its
+    // listener, as the browser runs them: it hands down the member the entry
+    // names, and React runs that update before the next listener.
+    let view = null
+    const page = () => {
+      const doc = DOCS.find((one) => one.id === new URLSearchParams(window.location.search).get('d'))
+      if (!view || doc === view.props.doc) return
+      const before = view.props
+      view.props = { ...before, doc }
+      view.componentDidUpdate(before)
+    }
+    window.addEventListener('popstate', page)
+    onTestFinished(() => window.removeEventListener('popstate', page))
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=amp`)
+    const design = await opened()
+    view = design.view
+    // Alt+Backspace to the root sheet, then the board
+    design.sch.switchPage(ROOT)
+    answering(view)
+    view.props.onOpen(BOARD)
+    await go(-2)
+    expect([view.props.doc.id, design.sch.page, window.location.search]).toEqual([SHEET, AMP, `?d=${SHEET}&s=amp`])
+    // Back onto the root sheet's entry, the hidden schematic moved to the amp
+    // sheet by a part clicked on the board meanwhile
+    design.sch.switchPage(ROOT)
+    view.props.onOpen(BOARD)
+    click(design.elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
+    expect(design.sch.page).toBe(AMP)
+    await go(-1)
+    expect([view.props.doc.id, design.sch.page, window.location.search]).toEqual([SHEET, ROOT, `?d=${SHEET}`])
+  })
+
+  it('is rewritten in place where the page moved the schematic on screen, and left alone while it is hidden', async () => {
+    // a part clicked on the board, its symbol on another sheet of the hidden
+    // schematic, and any other move of it there
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
+    const board = await opened(DOCS[1])
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    click(board.elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
+    expect(board.sch.page).toBe(AMP)
+    board.sch.show(ROOT)
+    expect([window.location.search, replace.mock.calls.length]).toEqual([`?d=${BOARD}`, 0])
+    // a part selected in the 3D view while the files came in, selected in the
+    // schematic on screen once they are in
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${SHEET}`)
+    replace.mockClear()
+    const { sch } = await opened(DOCS[0], (view) => view.setState({ selected: 'U7' }))
+    expect([sch.page, window.location.search, replace.mock.calls.length]).toEqual([AMP, `?d=${SHEET}&s=amp`, 1])
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('is taken up by the address, in place, when the schematic comes on screen on a sheet below its root', async () => {
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
+    const { view, elements, sch } = await opened(DOCS[1])
+    answering(view)
+    click(elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    view.props.onOpen(SHEET)
+    expect([sch.page, window.location.search]).toEqual([AMP, `?d=${SHEET}&s=amp`])
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([1, 1])
+  })
+
+  it('moves with `Show … · <sheet>` from the board inside the one entry that opens the schematic', async () => {
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
+    const { view, sch } = await opened(DOCS[1])
+    answering(view)
     const push = vi.spyOn(window.history, 'pushState')
     view.setState({ menu: { from: PCB } })
-    view.choose({ view: SCH, id: SHEET, label: 'Show net AMP_FAULT in hw/board.kicad_sch · amp', request: FAULT })
+    view.choose(SHOW_FAULT)
     expect(push).toHaveBeenCalledTimes(1)
-    expect([sch.page, window.location.search, window.history.state.kicadPage])
-      .toEqual([AMP, `?d=${SHEET}`, { doc: SHEET, page: AMP }])
+    expect([sch.page, window.location.search]).toEqual([AMP, `?d=${SHEET}&s=amp`])
     await go(-1)
     expect(window.location.search).toBe(`?d=${BOARD}`)
   })
 
   it('is the reader\'s step on a `… · <sheet>` item of the schematic on screen', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
     const { view, sch } = await opened()
     const push = vi.spyOn(window.history, 'pushState')
     view.setState({ menu: { from: SCH } })
-    view.choose({ view: SCH, id: SHEET, label: 'Show net AMP_FAULT in hw/board.kicad_sch · amp', request: FAULT })
-    expect([sch.page, push.mock.calls]).toEqual([AMP, [[{ kicadPage: { doc: SHEET, page: AMP } }, '']]])
+    view.choose(SHOW_FAULT)
+    expect([sch.page, push.mock.calls]).toEqual([AMP, [[null, '', `${BASE}?d=${SHEET}&s=amp`]]])
+  })
+
+  it('is the root on the bar\'s Contents, told to the bar below the root alone, a step Back undoes', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
+    const { view, sch } = await opened()
+    const told = () => view.props.onTools.mock.lastCall[0]
+    expect(told().contents).toBeUndefined()
+    // two sheets down, the root not this sheet's parent
+    sch.switchPage(PSU_B)
+    const { contents } = told()
+    const push = vi.spyOn(window.history, 'pushState')
+    contents()
+    expect([sch.page, push.mock.calls, told().contents]).toEqual([ROOT, [[null, '', `${BASE}?d=${SHEET}`]], undefined])
+    await go(-1)
+    expect([sch.page, told().contents]).toEqual([PSU_B, contents])
+    // the board on screen, the schematic behind it below its root
+    view.props.onOpen(BOARD)
+    expect(told().contents).toBeUndefined()
   })
 })
 

@@ -306,13 +306,16 @@ export class DocFile extends React.Component {
  *                Download (a link that takes the file) and Copy link for it,
  *                drawn outside the bar at the left end of the strip
  *                (`DocFile`), and with none open not at all;
- *   the tools    `showTools` (false on a narrow window, which keeps the views
- *                and Fit), and each tool's style and handler: `measureBtnStyle`
- *                and `tMeasure`, `commentBtnStyle` and `tComment`,
- *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
- *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
- *                and `tSettings`. A tool out of service is drawn `OFF` and
- *                takes no click, so its handler may be absent.
+ *   the sheet    `toContents`, set while a schematic is on screen on a sheet
+ *                below its root: Contents, which puts the root sheet back,
+ *                drawn right after the views; unset, it is not drawn;
+ *   the tools    `showTools` (false on a narrow window, which keeps the views,
+ *                Contents and Fit), and each tool's style and handler:
+ *                `measureBtnStyle` and `tMeasure`, `commentBtnStyle` and
+ *                `tComment`, `proposalBtnStyle` and `tProposal`, `fitBtnStyle`
+ *                and `fitView`, `frameBtnStyle` and `grabFrame`,
+ *                `settingsBtnStyle` and `tSettings`. A tool out of service is
+ *                drawn `OFF` and takes no click, so its handler may be absent.
  * `menus` are the cards `Add primitive` and Settings open (`proposal`,
  * `settings`), which only the model's page has. Pure. What it returns goes
  * straight into the layer (`BAR_LAYER`): the bar alone, or with a document
@@ -347,7 +350,16 @@ function floatBar(b, menus) {
           ))}
         </div>
       )}
-      {/* Everything between the views and Fit belongs to a pointer and a
+      {b.toContents && (
+        <>
+          <div style={css(RULE)} />
+          <div onClick={b.toContents} title="back to the root sheet" style={css(quietBtn(false))}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 7.5L8 2l6 5.5" /><path d="M3.5 6.2V14h9V6.2M6.5 14v-3.5h3V14" /></svg>
+            Contents
+          </div>
+        </>
+      )}
+      {/* Everything else between the views and Fit belongs to a pointer and a
           canvas with room to aim in — see `showTools`. */}
       {b.showTools && (
         <>

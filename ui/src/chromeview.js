@@ -19,6 +19,7 @@
  * come from ui/src/panelstyle.js.
  */
 import { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
+import { SHEET_QUERY } from './KicadView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -118,11 +119,14 @@ export function chromeView(s, props, deps) {
   // an unknown `?d=` does. With no document open and the Current view box
   // ticked, from the camera's angle too (`cameraQuery`), read as this window
   // renders; a document covers the model, so its link carries no frame and
-  // the window offers no box.
+  // the window offers no box. A schematic open on a sheet below its root
+  // carries the sheet the address names (`SHEET_QUERY` in KicadView.jsx).
   const shareCamera = !!(share && share.camera && !docOpen);
   const shareView = share ? viewQuery(s.view, views) : '';
+  const shareSheet = docOpen && new URLSearchParams(location.search).get(SHEET_QUERY);
   const shareQuery = !share ? '' : docOpen
     ? `${shareView}${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}`
+      + (shareSheet ? `&${SHEET_QUERY}=${encodeURIComponent(shareSheet)}` : '')
     : shareCamera ? cameraQuery(shareView) : shareView;
   const shareBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;'
     + `align-items:center;justify-content:center;font:600 10px ${MONO};`
@@ -532,8 +536,8 @@ export function chromeView(s, props, deps) {
     // model back opens over both.
     toolbarStyle: BAR_LAYER
       + (docOpen ? '18' : s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
-    // At phone width the toolbar keeps the view tabs and Fit, the controls for
-    // looking at the model. Measure and Comment want a pointer and room to aim,
+    // At phone width the toolbar keeps the view tabs, Contents on a schematic
+    // below its root sheet, and Fit, the controls for looking. Measure and Comment want a pointer and room to aim,
     // Frame saves a PNG a phone has nowhere to put, the theme toggle is a
     // preference; the dividers go with them.
     //
@@ -645,6 +649,10 @@ export function chromeView(s, props, deps) {
     fitBtnStyle: quietBtn(!!docOpen && !s.docTools),
     grabFrame: docOpen ? (s.docTools ? () => saveFrame(s.docTools.frame()) : undefined) : () => saveFrame(),
     frameBtnStyle: quietBtn(!!docOpen && !s.docTools),
+    // CONTENTS puts a schematic on a sheet below its root back on the root
+    // sheet, there while its view says it can (`contents` in `docTools`,
+    // KicadView.jsx); without a handler the bar does not draw it.
+    toContents: docOpen && s.docTools && s.docTools.contents ? () => s.docTools.contents() : undefined,
     // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
     // reader to click a model that will not answer: a tool armed before a
     // comparison opened stays armed and stops firing, and this line is the
