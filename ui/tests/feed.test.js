@@ -35,6 +35,7 @@ import { drained as settled, makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 import { fakeViewer } from './fakes.js'
 import { guardPage } from './pageguard.js'
+import { guardSubscribers } from './addressguard.js'
 
 // THE RE-ENCODE IS SPIED HERE RATHER THAN RUN, and the constants beside it are
 // the real ones. What the module DOES is pinned in ui/tests/shrink.test.js; what
@@ -56,6 +57,7 @@ const OLDER = '1f2e3d4c5b6a7988776655443322110099887766554433221100998877665544'
 const STAMP = '2026-08-27T18:00:00.123Z'
 
 guardPage(`/project/proj1/${REV}/`)
+guardSubscribers()
 
 /**
  * The build on screen: it draws `plate`, and its catalogue also holds `post`.

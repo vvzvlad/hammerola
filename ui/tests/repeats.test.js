@@ -32,6 +32,9 @@ import { css } from '../src/style.jsx'
 import assembled from './fixtures/assembled.json'
 import { makeComponent, replaceState } from './component.js'
 import { collect } from './eltree.js'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 /** The fixture's own leaves, as the view file spells them. */
 const REAL = assembled.parts

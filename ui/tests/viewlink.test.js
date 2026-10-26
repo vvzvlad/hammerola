@@ -249,7 +249,7 @@ describe('the address bar', () => {
     c.setState({ meta: META })
     c.writeCamera()
     expect(location.search).toBe(`?d=docs__a.md&files=K&c=${TEXT}`)
-    // `writeDoc` spells the address as `screenQuery` does: `d=` or `c=`, and
+    // `writeDoc` names the address as `screenParams` does: `d=` or `c=`, and
     // no sheet of the schematic open before.
     window.history.replaceState(null, '', `${HOME}?d=hw__a.kicad_sch&files=K&s=amp`)
     c.writeDoc('docs__a.md')

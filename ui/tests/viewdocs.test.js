@@ -403,6 +403,21 @@ describe('the documents in the list of views', () => {
     expect(shownDocs(c)[0].key).not.toBe(before.key)
   })
 
+  it('write the sheet the schematic reports as `s=`, a step of history for the reader\'s, in place otherwise', () => {
+    // The schematic's view tells the page its sheet (`onSheet`), and the page
+    // writes it beside the `d=` naming the schematic; the root sheet is none.
+    window.history.replaceState({ hmr: 'latest' }, '', `/?d=${KICAD[0].id}`)
+    const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
+    const push = vi.spyOn(window.history, 'pushState')
+    const rewrite = vi.spyOn(window.history, 'replaceState')
+    onTestFinished(() => { push.mockRestore(); rewrite.mockRestore() })
+    const written = () => [push.mock.calls.length, rewrite.mock.calls.length, window.location.search]
+    shownDocs(c)[0].props.onSheet('amp', true)
+    expect(written()).toEqual([1, 0, `?d=${KICAD[0].id}&s=amp`])
+    shownDocs(c)[0].props.onSheet('', false)
+    expect(written()).toEqual([1, 1, `?d=${KICAD[0].id}`])
+  })
+
   it('show the model for a document this revision does not list', () => {
     const v = component({ doc: 'gone.md' }).computed()
     expect(v.docOpen).toBeNull()

@@ -55,6 +55,9 @@ import { indexTree } from '../src/hub.js'
 import { css, NARROW } from '../src/style.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, styles, texts } from './eltree.js'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 /**
  * A `matchMedia` that answers what the test says and remembers who is listening.

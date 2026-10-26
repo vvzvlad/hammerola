@@ -26,6 +26,9 @@ import { css } from '../src/style.jsx'
 import { treeFromShapes } from '../src/viewport/parts.js'
 import { makeComponent, replaceState } from './component.js'
 import { collect, texts, titles } from './eltree.js'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 const REV = 'e05f73ba91b263b8517147e338d23e868533c6a034a342ad5926abb6edcb7b40'
 // WHICH BUILD THIS PAGE IS SHOWING, off its meta.json — the half of the answer

@@ -61,6 +61,7 @@
 
 import React from 'react';
 
+import { format, parse, respell } from './address.js';
 import { markdownElements, NOWRAP_CLASS } from './docmd.js';
 import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
@@ -68,10 +69,6 @@ import { mb } from './hub.js';
 import KicadView, { designKey, viewOf } from './KicadView.jsx';
 import { fetchBody, loadBar, meter } from './loadbar.jsx';
 import { css, MONO, SANS } from './style.jsx';
-
-/** The query key that names a document in a build's address, on both pages:
- *  the document on screen of a build with no model, the document over a model. */
-export const DOC_QUERY = 'd';
 
 /** A document the page does not draw, whatever its extension (`FILE_TYPE` in
  *  src/render.py, held to this spelling by tests/test_documents.py). */
@@ -162,9 +159,10 @@ const PREVIEW = 'flex:1;min-height:0;width:100%;object-fit:contain';
 const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`;
 
 /** What a markdown link to another document of this build becomes (`links` in
- *  docmd.js): the page's own address with that document's `?d=`, so a new tab
- *  or a copied link lands on it too, and a plain click that opens it through
- *  `onOpen`, as its row in the list does. Null without a door to open one. */
+ *  docmd.js): the page's own address with that document's `?d=` and no hash,
+ *  which names a place in the document on screen, so a new tab or a copied
+ *  link lands on it too; and a plain click that opens it through `onOpen`, as
+ *  its row in the list does. Null without a door to open one. */
 export function docLinks(base, documents, onOpen) {
   if (!onOpen || !Array.isArray(documents)) return null;
   const { origin } = window.location;
@@ -182,10 +180,8 @@ export function docLinks(base, documents, onOpen) {
     const path = pathOf(href);
     const hit = path && documents.find((d) => pathOf(docUrl(base, d)) === path);
     if (!hit) return null;
-    const query = new URLSearchParams(window.location.search);
-    query.set(DOC_QUERY, hit.id);
     return {
-      href: `${window.location.pathname}?${query}`,
+      href: format({ ...respell(parse(), { doc: hit.id }), hash: '' }),
       onClick: (event) => {
         // A modified or middle click is the browser's: a new tab or window.
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -202,9 +198,11 @@ export function docLinks(base, documents, onOpen) {
  *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
  *  the file, `received` the bytes of a markdown text in so far, `addressDoc`
  *  the page's reading of which document an address names, for a schematic's
- *  sheet in it (KicadView.jsx). Pure but for that link's address, which is
- *  the page's current one (`docLinks`). */
-export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc) {
+ *  sheet in it (KicadView.jsx), and `onSheet` the page's door for writing
+ *  that sheet. Pure but for that link's address, which is the page's current
+ *  one (`docLinks`). */
+export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc,
+  onSheet) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
@@ -220,7 +218,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   }
   if (viewOf(doc)) {
     return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady}
-                      addressDoc={addressDoc} />;
+                      addressDoc={addressDoc} onSheet={onSheet} />;
   }
   if (doc.type === GERBERS_TYPE) {
     return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady} />;
@@ -280,8 +278,8 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady, addressDoc } = this.props;
+    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet } = this.props;
     const { text, error, received } = this.state;
-    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc);
+    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet);
   }
 }
