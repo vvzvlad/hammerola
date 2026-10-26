@@ -20,6 +20,7 @@ import {
   addNode, bodies, emptyProposal, firstFree, removeNode, updateNode,
 } from './proposal.js';
 import { MONO } from './style.jsx';
+import { HOLDABLE, markMenu } from './longpress.js';
 
 export function proposalView(s, deps) {
   const {
@@ -314,7 +315,7 @@ export function proposalView(s, deps) {
       // row's eye, square, tick and name sit under the head's. Padding, not
       // margin, so the row's pill starts where the head's does; the row takes
       // no click of its own (`onContextMenu` only).
-      rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 25px;margin:0 0 1px;border-radius:4px;background:'
+      rowStyle: HOLDABLE + 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 25px;margin:0 0 1px;border-radius:4px;background:'
         + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
       // Drawn as absent rather than left out on a row with nothing in the
       // scene: `visibility:hidden` keeps the width, so names line up, and a
@@ -375,6 +376,7 @@ export function proposalView(s, deps) {
       // `menuItems` already strips what does not apply under `compared`.
       onMenu: isMove || !scene ? null : stop((e) => {
         e.preventDefault();
+        markMenu(e.nativeEvent);
         setState({ menu: { id: scene.id, ...menuAt(e.clientX, e.clientY) } });
       }),
       // The fields show under the selected row only, so the tree stays one line

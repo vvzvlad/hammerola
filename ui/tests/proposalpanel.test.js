@@ -18,6 +18,7 @@ import {
   MOVED, PLACE, PROPOSALMOVE, PROPOSALTURN, TURNED,
 } from '../src/events.js'
 import { indexTree, PAGE } from '../src/hub.js'
+import { menuOpened } from '../src/longpress.js'
 import {
   addNode, DIM_OPS, dropMoves, emptyProposal, moves, proposalText, removeNode,
 } from '../src/proposal.js'
@@ -48,7 +49,7 @@ const ELSEWHERE = '2026-09-19T09:30:00.456Z'
 const VIEW = 'assembled'
 const ANOTHER_VIEW = 'exploded'
 
-const click = { stopPropagation() {}, preventDefault() {} }
+const click = { stopPropagation() {}, preventDefault() {}, nativeEvent: {} }
 
 /**
  * A part of the build dragged in the scene, as the viewport reports it: every
@@ -958,9 +959,13 @@ describe('the proposal as a branch of the tree', () => {
     const { c, el } = mounted({ proposal: withBlock() })
     const at = stage(c, el, ['korpus'])
 
-    rows(c)[0].onMenu({ ...click, clientX: 40, clientY: 90 })
+    // Its own native event: `click`'s is shared by the whole file.
+    const nativeEvent = {}
+    rows(c)[0].onMenu({ ...click, nativeEvent, clientX: 40, clientY: 90 })
 
     expect(c.state.menu.id).toBe(`${at}/korpus`)
+    // Marked, or iOS's click on the release of a long press shuts it again.
+    expect(menuOpened(nativeEvent)).toBe(true)
     const said = c.computed().menuItems.map((m) => m.label)
     expect(said).toContain('Isolate')
     expect(said).toContain('Move')

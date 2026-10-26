@@ -120,6 +120,10 @@ import { proposalView } from './proposalview.js';
 // And the menu a right-click opens, on a row of the tree or on the part in the
 // scene — one section of `computed()` and one shape, whichever door opened it.
 import { rowMenu } from './rowmenu.js';
+// And the long press that stands in for a right-click on a phone, with the
+// declaration a row needs for iOS to let it through and the mark a handler
+// leaves when it opened the menu.
+import { HOLDABLE, installLongPress, markMenu } from './longpress.js';
 // And the chrome round the model: the header, the token control, the tab strip,
 // the view switcher and the floating toolbar.
 import { chromeView } from './chromeview.js';
@@ -1521,6 +1525,10 @@ export default class HammerolaViewer extends React.Component {
       this._mq.addEventListener('change', this._narrow);
     }
 
+    // A finger's long press opens the part menu, on the part in the scene and
+    // on its row in the tree, as a right click does (longpress.js).
+    this._unhold = installLongPress();
+
     // The viewport listens for `hmr:state` from its `connectedCallback`, so a
     // state sent before the element upgrades is simply lost. This is the resend
     // for the case where the adapter's module lands after the first paint — the
@@ -1538,6 +1546,7 @@ export default class HammerolaViewer extends React.Component {
     window.removeEventListener('keydown', this._kd);
     unsubscribe(this._pop);
     if (this._mq) this._mq.removeEventListener('change', this._narrow);
+    if (this._unhold) this._unhold();
     clearTimeout(this._tt);
     clearTimeout(this._poll);
     // And the nudge still waiting for the arrows to stop, which would otherwise
@@ -5083,7 +5092,7 @@ export default class HammerolaViewer extends React.Component {
         : (node.known ? '' : '?');
       rows.push({
         key: node.id,
-        rowStyle: 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
+        rowStyle: HOLDABLE + 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
         // A stroked path, not a glyph: `▾` (U+25BE) is a small triangle whose ink
         // size the font decides; a path in a 16-unit viewBox is the only form
         // whose size this file controls.
@@ -5127,6 +5136,7 @@ export default class HammerolaViewer extends React.Component {
         // different places.
         onMenu: stop((e) => {
           e.preventDefault();
+          markMenu(e.nativeEvent);
           this.setState({ menu: { id: node.id, ...menuAt(e.clientX, e.clientY) } });
         }),
       });
@@ -5356,7 +5366,7 @@ export default class HammerolaViewer extends React.Component {
       // The section is a ROW in the tree with its own eye, not a mode with a
       // panel: a panel in the page's column takes height from the canvas, so
       // every press and release of the hold key would resize the model.
-      secRowStyle: 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (cutOn ? 'var(--accent-line);background:var(--accent-bg-soft)' : 'transparent;background:var(--float-bg-soft)'),
+      secRowStyle: HOLDABLE + 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (cutOn ? 'var(--accent-line);background:var(--accent-bg-soft)' : 'transparent;background:var(--float-bg-soft)'),
       secEyeClick: stop(() => this.set({ secOn: !s.secOn })),
       // THE SAME GESTURE THE PARTS BELOW ANSWER TO, on the row above them: a
       // right-click here opens the one shared menu under `SECTION_ROW`, where
@@ -5365,6 +5375,7 @@ export default class HammerolaViewer extends React.Component {
       // into this menu must not put it somewhere the other two would not.
       secRowMenu: stop((e) => {
         e.preventDefault();
+        markMenu(e.nativeEvent);
         this.setState({ menu: { id: SECTION_ROW, ...menuAt(e.clientX, e.clientY) } });
       }),
       secEyeOuter: eyeOuter(cutOn ? 'on' : 'off'), secEyeDot: eyeDot(cutOn ? 'on' : 'off'),

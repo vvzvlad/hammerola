@@ -27,6 +27,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer, { menuAt, SECTION_ROW } from '../src/HammerolaViewer.jsx'
 import { countedName, indexTree } from '../src/hub.js'
 import { FACE, MEASURE, MOVED, PICK, PLACE, STATE } from '../src/events.js'
+import { menuOpened } from '../src/longpress.js'
 import { moves } from '../src/proposal.js'
 import { css } from '../src/style.jsx'
 import assembled from './fixtures/assembled.json'
@@ -286,7 +287,7 @@ const rowFor = (c, id) => {
   return row
 }
 
-const click = { stopPropagation() {}, preventDefault() {} }
+const click = { stopPropagation() {}, preventDefault() {}, nativeEvent: {} }
 
 describe('the row a run of copies draws as', () => {
   it('says how many, and says nothing where there is one', () => {
@@ -911,10 +912,12 @@ describe('the section row\'s context menu', () => {
    * without it the browser's context menu opens on top of ours.
    */
   const openSecMenu = (c, [clientX, clientY] = [40, 60]) => {
-    const e = { stopPropagation: vi.fn(), preventDefault: vi.fn(), clientX, clientY }
+    const e = { stopPropagation: vi.fn(), preventDefault: vi.fn(), nativeEvent: {}, clientX, clientY }
     c.computed().secRowMenu(e)
     expect(e.preventDefault, "the browser's own menu would sit over ours")
       .toHaveBeenCalled()
+    // Marked, or iOS's click on the release of a long press shuts it again.
+    expect(menuOpened(e.nativeEvent)).toBe(true)
     return c.computed()
   }
 
@@ -1089,9 +1092,14 @@ describe('the section row\'s context menu', () => {
     // The other half of one shared menu: the branch added for the cut must not
     // be reachable from a part, and the part's own items must all still be.
     const c = component(THREE_PINS)
-    rowFor(c, '/model/pin').onMenu({ ...click, clientX: 40, clientY: 60 })
+    // Its own native event: `click`'s is shared by the whole file, and a mark
+    // left on it by another test would pass this one.
+    const nativeEvent = {}
+    rowFor(c, '/model/pin').onMenu({ ...click, nativeEvent, clientX: 40, clientY: 60 })
 
     expect(c.state.menu).toEqual({ id: '/model/pin', ...menuAt(40, 60) })
+    // Marked, or iOS's click on the release of a long press shuts it again.
+    expect(menuOpened(nativeEvent)).toBe(true)
     const v = c.computed()
     expect(v.menuName).toBe('pin ×3')
     const labels = v.menuItems.map((m) => m.label)
