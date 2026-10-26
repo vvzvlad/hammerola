@@ -33,11 +33,12 @@
 // stands. Everything the renderer holds is freed on unmount, the WebGL context
 // included: a page has few to give.
 //
-// COMMENTS (`comment`, the model's page only). With the page's Comment tool
-// armed (`on`) a drag with the left button or a finger draws an area instead
-// of panning, and a click is an area of no size; the area goes to the page
-// (`onArea`) as the place of a comment: `[x, y, w, h]` in the Gerbers' own
-// units (`boardArea`), and the side and the layers on screen (`layerNote`).
+// COMMENTS (`comment`, handed by both pages: comments.jsx). With the page's
+// Comment tool armed (`on`) a drag with the left button or a finger draws an
+// area instead of panning, and a click is an area of no size; the area goes to
+// the page (`onArea`) as the place of a comment: `[x, y, w, h]` in the
+// Gerbers' own units (`boardArea`), and the side and the layers on screen
+// (`layerNote`).
 // The open comments and the draft on this zip (`marks`) stand over the canvas
 // as their areas, dashed, with a marker at each centre, following the pan and
 // the zoom; a click on a marker names its comment to the page (`onMarker`).

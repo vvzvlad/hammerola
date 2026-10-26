@@ -56,6 +56,8 @@ TOKENS_CSS = ROOT / "static" / "_v" / "tokens.css"
 EVENTS_JS = UI / "events.js"
 ADAPTER_EVENTS_JS = VIEWPORT / "events.js"
 COMPONENT = UI / "HammerolaViewer.jsx"
+# What both build pages fetch, post and draw comments with.
+COMMENTS = UI / "comments.jsx"
 
 # `const NAME = "hmr:thing";` — the shape the ONE event module is written in.
 EVENT_DECL = re.compile(r"""(?:export\s+)?const\s+(\w+)\s*=\s*["'](hmr:[a-z]+)["']""")
@@ -379,7 +381,7 @@ class _Reached:
 
 
 def test_the_comment_post_goes_where_the_hub_listens():
-    """The route in the component is the one src/app.py dispatches on.
+    """The route the pages post a comment to is the one src/app.py dispatches on.
 
     app.py matches on a prefix of path segments, so the URL the browser has to
     use is that prefix joined — derived here rather than repeated. The entry is
@@ -397,8 +399,8 @@ def test_the_comment_post_goes_where_the_hub_listens():
         f"expected one POST_ROUTES entry to reach _handle_comment_post, "
         f"found {leading}")
     prefix = "/" + "/".join(leading[0])
-    assert f"`{prefix}/" in read(COMPONENT), (
-        f"the component does not post to {prefix}/<pid>/<commit>")
+    assert f"`{prefix}/" in read(COMMENTS), (
+        f"the pages do not post to {prefix}/<pid>/<commit>")
 
 
 def test_the_attachment_field_names_are_the_hubs():
@@ -408,7 +410,7 @@ def test_the_attachment_field_names_are_the_hubs():
     returns None, the comment is stored without it, and the reader is told it
     was sent.
     """
-    component = strip_comments(read(COMPONENT))
+    component = strip_comments(read(COMMENTS))
     for kind in (PHOTO_KIND, SHOT_KIND):
         assert f"'{kind}'" in component, f"nothing is appended as `{kind}`"
 
@@ -424,7 +426,7 @@ def test_the_comment_payload_only_uses_fields_the_hub_keeps():
     """
     kept = set(validate_payload({"text": "x"}, 100))
     body = re.search(r"form\.append\('comment',\s*JSON\.stringify\((.*?)\)\);",
-                     read(COMPONENT), flags=re.S)
+                     read(COMMENTS), flags=re.S)
     assert body, "the comment body is no longer appended as one JSON.stringify call"
     sent = set(re.findall(r"^\s*(\w+):", body.group(1), flags=re.M))
     assert sent <= kept, f"fields the hub will silently drop: {sorted(sent - kept)}"

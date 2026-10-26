@@ -74,12 +74,12 @@ import { css, MONO, SANS } from './style.jsx';
  *  src/render.py, held to this spelling by tests/test_documents.py). */
 export const FILE_TYPE = 'file';
 
-/** The types of document the model's page leaves a comment on, each with
- *  what arming the Comment tool over it says to do: the tool is in service
- *  over one of them (chromeview.js) and takes its place there — an area of a
- *  schematic's sheet or a board (KicadView.jsx) or of the Gerbers
- *  (GerberView.jsx), a part of the board's 3D model (BoardView3D.jsx), a
- *  passage of markdown (`quoting` below). */
+/** The types of document both pages leave a comment on, each with what
+ *  arming the Comment tool over it says to do: the tool is in service over
+ *  one of them (chromeview.js, `docBar` in DocShell.jsx) and takes its place
+ *  there — an area of a schematic's sheet or a board (KicadView.jsx) or of
+ *  the Gerbers (GerberView.jsx), a part of the board's 3D model
+ *  (BoardView3D.jsx), a passage of markdown (`quoting` below). */
 export const COMMENTABLE = new Map([
   ['schematic', 'Drag an area on the drawing to pin the task'],
   ['board', 'Drag an area on the drawing to pin the task'],
@@ -280,9 +280,10 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
 /**
  * One document, holding the text of a markdown one while it is fetched.
  *
- * A markdown one takes the model page's comments (`comment`) itself. With the
- * Comment tool armed (`on`) a selection made in the article is the place of a
- * comment, handed to the page (`onArea`) as its quote (`quoteOf`, docmd.js).
+ * A markdown one takes the page's comments (`comment`, comments.jsx) itself.
+ * With the Comment tool armed (`on`) a selection made in the article is the
+ * place of a comment, handed to the page (`onArea`) as its quote (`quoteOf`,
+ * docmd.js).
  * The quotes of the open comments and the draft on it (`marks`) are found in
  * the text (`findQuote`) and highlighted; a click on one names its comment to
  * the page (`onMarker`), and the ids of those not found go back to it
