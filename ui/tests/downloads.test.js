@@ -940,7 +940,7 @@ describe('the part menu opened from the scene', () => {
     const c = component({ node: null, expanded: { '/model': true, '/model/inner': true } })
     const row = c.computed().rows.find((r) => r.key === id)
     expect(row, `no tree row for ${id}`).toBeTruthy()
-    row.onMenu({ stopPropagation() {}, preventDefault() {}, clientX, clientY })
+    row.onMenu({ stopPropagation() {}, preventDefault() {}, nativeEvent: {}, clientX, clientY })
     return c
   }
 

@@ -14,6 +14,10 @@
 // from the library, which pans on it (wheel.js). Travel decides at release:
 // under CLICK_PX it was a click and the part menu opens; otherwise the reader
 // was panning.
+//
+// A finger has no right button. Its long press arrives as a `contextmenu`
+// while the press is still down (longpress.js, or Android's own), opens the
+// same menu, and leaves its release nothing to do.
 
 import {
   EVENT_FACE, EVENT_MEASURE, EVENT_MENU, EVENT_PICK, EVENT_PLACE, emit,
@@ -29,6 +33,7 @@ import {
   sectionOffset, sectionRange,
 } from "./section.js";
 import { tidy } from "../proposal.js";
+import { markMenu } from "../longpress.js";
 
 /**
  * A rounding step for a dragged part: a 1-2-5 decade near a two-hundredth of the
@@ -391,13 +396,40 @@ export function installTools(vp) {
     return (ndc && capOwnerAt(vp, g, ndc)) || pickEntity(g, x, y);
   }
 
+  /** The part menu for the part under `event`.
+   *
+   * `entityAt`, the same resolver as the plain pick, so the menu and the
+   * selection name one part on a cut face.
+   *
+   * It does not emit a pick: the menu is about the part under the cursor, the
+   * selection about the part the reader chose, and a tree row's menu also
+   * leaves the selection alone.
+   */
+  function openMenu(g, event) {
+    const at = canvasXY(g.canvas, event);
+    if (!at) return;
+    const entity = entityAt(g, event, at[0], at[1]);
+    emit(vp, EVENT_MENU, {
+      id: entity ? entity.id : null,
+      name: entity ? entity.name : null,
+      // The cursor, where a context menu opens, in client coordinates: the
+      // menu is `position: fixed` on the page.
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
   function onUp(event) {
     const p = press;
     finish();
     if (!p) return;
     const g = internals(vp.viewer);
     if (!g) return;
-    if (p.moved) {
+    // A long press already opened the menu: a pick here would close it again
+    // (the interface shuts the menu on a pick), and a tool would take the
+    // release for its click. A cut dragged before the menu came still reports
+    // where the plane ended.
+    if (p.moved || p.held) {
       conclude(p);
       return;
     }
@@ -407,21 +439,7 @@ export function installTools(vp) {
     if (!at) return;
     const [x, y] = at;
     if (p.menu) {
-      // `entityAt`, the same resolver as the plain pick below, so the menu and
-      // the selection name one part on a cut face.
-      //
-      // It does not emit a pick: the menu is about the part under the cursor,
-      // the selection about the part the reader chose, and a tree row's menu
-      // also leaves the selection alone.
-      const entity = entityAt(g, event, x, y);
-      emit(vp, EVENT_MENU, {
-        id: entity ? entity.id : null,
-        name: entity ? entity.name : null,
-        // The cursor, where a context menu opens, in client coordinates: the
-        // menu is `position: fixed` on the page.
-        x: event.clientX,
-        y: event.clientY,
-      });
+      openMenu(g, event);
       return;
     }
     if (p.tool === "cut") {
@@ -514,6 +532,8 @@ export function installTools(vp) {
     const tool = vp.activeTool;
     press = {
       tool,
+      // A finger, whose long press opens the menu (`onContextMenu`).
+      touch: event.pointerType === "touch",
       x: event.clientX, y: event.clientY,
       startX: event.clientX, startY: event.clientY,
       moved: false, axis: undefined,
@@ -538,23 +558,42 @@ export function installTools(vp) {
     event.stopPropagation();
   };
 
-  /** The browser's own menu, kept off the canvas.
+  /** The browser's own menu, kept off the canvas; and a finger's long press,
+   * which opens ours.
    *
    * The right button opens this page's menu, and the native one would appear on
    * top of it (outside Windows `contextmenu` fires on the press). Preventing it
    * also keeps the release arriving where the native menu would take the
    * pointer.
+   *
+   * During a touch press this event IS the long press: longpress.js only sends
+   * it once the finger has held still, and Android's own comes under the same
+   * rule. Once per press, since Android's can follow ours. A mouse press never
+   * opens the menu here: a right press's release does, after the pan check.
+   *
+   * In the capture phase: the library stops `contextmenu` on its canvas
+   * (viewer/src/core/viewer.ts), so a listener waiting for it to bubble up to
+   * the box never hears the long press.
    */
-  const onContextMenu = (event) => event.preventDefault();
+  const onContextMenu = (event) => {
+    event.preventDefault();
+    const p = press;
+    if (!p || !p.touch || p.held) return;
+    const g = internals(vp.viewer);
+    if (!g) return;
+    p.held = true;
+    markMenu(event);
+    openMenu(g, event);
+  };
 
   vp.box.addEventListener("pointerdown", onDown, true);
-  vp.box.addEventListener("contextmenu", onContextMenu);
+  vp.box.addEventListener("contextmenu", onContextMenu, true);
 
   // The teardown also removes the window listeners: a viewport unmounted
   // mid-drag would otherwise leave capture-phase listeners holding a dead scene.
   return () => {
     vp.box.removeEventListener("pointerdown", onDown, true);
-    vp.box.removeEventListener("contextmenu", onContextMenu);
+    vp.box.removeEventListener("contextmenu", onContextMenu, true);
     // `finish`, not `endGesture`: the viewport is going away, and there is no
     // scene left to read the plane off.
     finish();

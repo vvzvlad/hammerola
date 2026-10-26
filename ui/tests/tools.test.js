@@ -37,6 +37,7 @@ import { CLICK_PX } from '../src/viewport/options.js'
 import { faceNormalAt, pickEntity } from '../src/viewport/picking.js'
 import { placeSectionPlane, sectionOffset } from '../src/viewport/section.js'
 import { installTools } from '../src/viewport/tools.js'
+import { menuOpened } from '../src/longpress.js'
 import { makeViewport, RECT, settled } from './component.js'
 import {
   fakeCapUnits, fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
@@ -68,8 +69,11 @@ function toolViewport(state = {}, viewer = fakeViewer()) {
       // needs the browser's own context menu kept off the canvas, and that is a
       // second listener on this same element.
       on: {},
-      addEventListener(type, fn) {
+      // Whether each listener is in the capture phase.
+      capture: {},
+      addEventListener(type, fn, capture) {
         this.on[type] = fn
+        this.capture[type] = capture === true
         if (type === 'pointerdown') this.down = fn
       },
       removeEventListener() {},
@@ -80,9 +84,10 @@ function toolViewport(state = {}, viewer = fakeViewer()) {
 }
 
 /** A press on the canvas. The event is returned so a test can ask who got it. */
-function pointerDown(vp, [clientX, clientY] = [100, 100], button = 0) {
+function pointerDown(vp, [clientX, clientY] = [100, 100], button = 0, pointerType = 'mouse') {
   const event = {
     button,
+    pointerType,
     target: vp.viewer.canvas,
     clientX,
     clientY,
@@ -480,6 +485,93 @@ describe('the right button: a menu or a pan', () => {
     const event = { preventDefault: vi.fn() }
     vp.box.on.contextmenu(event)
     expect(event.preventDefault).toHaveBeenCalled()
+  })
+
+  it('does not open on the browser\'s menu event during the press', () => {
+    // That event comes on the press outside Windows; opening there would open
+    // the menu at the start of every pan.
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValue(PLATE)
+
+    rightDown(vp, [140, 90])
+    vp.box.on.contextmenu({ clientX: 140, clientY: 90, preventDefault: vi.fn() })
+
+    expect(emitted(vp)).not.toContain(EVENT_MENU)
+    pointerUp([140, 90])
+  })
+})
+
+describe('a finger\'s long press', () => {
+  // A phone has no right button: the long press arrives as `contextmenu` while
+  // the finger is still down (ui/src/longpress.js, or Android's own).
+  const touchDown = (vp, at) => pointerDown(vp, at, 0, 'touch')
+  /** The long press's `contextmenu`, handed back so a test can read its mark. */
+  const held = (vp, [clientX, clientY]) => {
+    const event = { clientX, clientY, preventDefault: vi.fn() }
+    vp.box.on.contextmenu(event)
+    return event
+  }
+
+  it('opens the part menu, and its release neither picks nor closes it', () => {
+    // A pick going out on the release is what would close the menu: the
+    // interface shuts it on every pick. And the event is marked, so the click
+    // iOS sends on the release is eaten too (longpress.js).
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValue(PLATE)
+
+    touchDown(vp, [140, 90])
+    const event = held(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(details(vp, EVENT_MENU)).toEqual([
+      { id: '/model/plate', name: 'plate', x: 140, y: 90 },
+    ])
+    expect(emitted(vp)).toEqual([EVENT_MENU])
+    expect(menuOpened(event)).toBe(true)
+  })
+
+  it('hears the event before the library\'s canvas stops it', () => {
+    // viewer/src/core/viewer.ts stops `contextmenu` on its canvas, so only a
+    // capture-phase listener on the box ever hears the long press.
+    const vp = toolViewport({ tool: null })
+    expect(vp.box.capture.contextmenu).toBe(true)
+  })
+
+  it('opens once, though Android\'s own event can follow ours', () => {
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValue(PLATE)
+
+    touchDown(vp, [140, 90])
+    held(vp, [140, 90])
+    held(vp, [141, 90])
+    pointerUp([141, 90])
+
+    expect(details(vp, EVENT_MENU)).toHaveLength(1)
+  })
+
+  it('takes the release from an armed tool', () => {
+    // The right button's rule: the menu is reachable whatever is armed, and
+    // the release that ends the press is not the tool's click.
+    const vp = toolViewport({ tool: 'measure' })
+    pickEntity.mockReturnValue(PLATE)
+
+    touchDown(vp, [140, 90])
+    held(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(emitted(vp)).toEqual([EVENT_MENU])
+  })
+
+  it('is a mouse\'s plain click when the press is not a finger', () => {
+    // Control-click on a Mac: a left press with the browser's menu event.
+    const vp = toolViewport({ tool: null })
+    pickEntity.mockReturnValue(PLATE)
+
+    pointerDown(vp, [140, 90])
+    held(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(emitted(vp)).toEqual([EVENT_PICK])
   })
 })
 
