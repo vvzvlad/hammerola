@@ -202,17 +202,26 @@ def _items(value) -> list:
 
 
 def _quote(value, max_text_chars: int) -> dict:
-    """A passage of a markdown document: `text`, checked as the comment's own
-    text is, and the characters `before` and `after` it, which may be empty."""
+    """A passage of a markdown document: `text`, and the characters `before`
+    and `after` it, which may be empty. All three are kept as sent — the page
+    finds the passage again by its text between its two sides, which a trimmed
+    or re-joined `text` would no longer sit between — and only checked: as a
+    body is for its characters, and `text` for not being blank and for the
+    comment's own ceiling."""
     if not isinstance(value, dict):
         raise CommentError(422, "`quote` must be an object")
-    quote = {"text": _body_text(value.get("text"), max_text_chars)}
-    for field in ("before", "after"):
+    quote = {}
+    for field in ("text", "before", "after"):
         side = value.get(field)
         if not isinstance(side, str):
             raise CommentError(422, f"`quote.{field}` must be a string")
-        check_body_printable(side, CommentError)
+        check_body_printable(side, CommentError, f"quote.{field}")
         quote[field] = side
+    if not quote["text"].strip():
+        raise CommentError(422, "`quote.text` is empty")
+    if len(quote["text"]) > max_text_chars:
+        raise CommentError(
+            413, f"`quote.text` is longer than {max_text_chars} characters")
     return quote
 
 

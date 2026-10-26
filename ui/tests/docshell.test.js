@@ -16,7 +16,9 @@ import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import KicadView, { PAGE_EVENT, SCH } from '../src/KicadView.jsx'
-import { markdownElements, resolveHref } from '../src/docmd.js'
+import {
+  findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
+} from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { collect, texts } from './eltree.js'
 import { css } from '../src/style.jsx'
@@ -131,6 +133,31 @@ describe('markdown', () => {
   it('keeps a table cell\'s alignment', () => {
     const tree = markdownElements('| a | b |\n|:-|-:|\n| 1 | 2 |', BASE)
     expect(ofType(tree, 'td').map((td) => td.props.style.textAlign)).toEqual(['left', 'right'])
+  })
+})
+
+describe('a comment\'s quote of markdown', () => {
+  it('reads the text as drawn, a style left out, and finds a selection\'s ends in it', () => {
+    const root = document.createElement('article')
+    root.innerHTML = '<style>.x{}</style><p>mind the <b>gap</b> here</p><p>the gap is wide</p>'
+    const index = textIndex(root)
+    expect(index.text).toBe('mind the gap herethe gap is wide')
+    expect(offsetOf(index, root.querySelector('b').firstChild, 1)).toBe(10)
+    // a point between elements: the first text at or after it, or the end
+    expect([offsetOf(index, root, 2), offsetOf(index, root, 3)]).toEqual([17, 32])
+    expect(rangeOf(index, 5, 12).toString()).toBe('the gap')
+  })
+
+  it('moves the blanks of a selection into its sides, and finds it again where its sides agree most', () => {
+    const text = 'mind the gap here, the gap is wide'
+    expect(quoteOf(text, 4, 13)).toEqual({ text: 'the gap', before: 'mind ', after: ' here, the gap is wide' })
+    expect(quoteOf(text, 4, 5)).toBeNull()
+    const second = quoteOf(text, 19, 26)
+    expect(second.before).toBe('mind the gap here, ')
+    expect(findQuote(text, second)).toEqual([19, 26])
+    expect(findQuote(text.replace('is wide', 'is narrow'), second)).toEqual([19, 26])
+    expect(findQuote(text, { text: 'the gap', before: '', after: '' })).toEqual([5, 12])
+    expect(findQuote(text, { ...second, text: 'a crack' })).toBeNull()
   })
 })
 

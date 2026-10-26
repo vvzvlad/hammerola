@@ -20,6 +20,18 @@
 //             bar does with this view (DocumentView.jsx)
 //   onFetched told each time the `.glb` has come in or failed to: KicadView.jsx
 //             holds the design's other files back for it
+//   comment   the model page's comments on this model (KicadView.jsx), or none:
+//             `on`, the page's Comment tool armed here, so that a left click
+//             on a part is the place of a comment (`onPoint` with `partPlace`
+//             of board3d.js: the designator, and the point and the normal in
+//             the part's own frame) and selects nothing; `marks`, the open
+//             comments and the draft, `{ id, part, point, normal, active }`,
+//             each an arrow on its part as the model's page draws one
+//             (`arrowKit` in viewport/pins.js), as long against the board as
+//             that one is against the model (`PIN_LENGTH_FRACTION`), a left
+//             click on it named back (`onMarker`), the ids of those whose
+//             part the model has none of told (`onLost`) as that changes;
+//             `focus`, a part to frame, which then is told done (`onFocused`)
 //
 // THE BOARD IS DRIVEN AS THE MODEL IS. The camera is turned by the model's own
 // trackball (`CADTrackballControls`, board3d.js) at the model's speeds: a left
@@ -40,12 +52,14 @@
 import React from 'react';
 
 import {
-  disposeModel, exportRoot, frameBox, light, loadThree, mergeByMaterial, partsOf, pickedPart, plainColours,
-  sharedGeometries,
+  disposeModel, exportRoot, frameBox, fromPart, light, loadThree, mergeByMaterial, partPlace, partsOf, pickedPart,
+  plainColours, sharedGeometries,
 } from './board3d.js';
 import { wheelMove } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { css, MONO } from './style.jsx';
+import { PIN_LENGTH_FRACTION, PIN_PX } from './viewport/options.js';
+import { arrowKit, pinDirection } from './viewport/pins.js';
 
 // The page's 3D canvas colour behind a transparent canvas, so the view follows
 // the theme. The canvas goes into HOLDER, which React renders empty and so never
@@ -74,6 +88,8 @@ export const CLICK_SLOP = 4;
  *  defaults, 1.0 each, times its factors for a trackball (`SPEED_FACTORS` in
  *  viewer/src/camera/controls.ts, multiplied in by `_applySpeedFactors`). */
 export const TRACKBALL_SPEEDS = { rotateSpeed: 1.0, zoomSpeed: 2.0, panSpeed: 0.22 };
+/** Up in glTF, which a comment's arrow with no normal comes down from. */
+const GLTF_UP = [0, 1, 0];
 
 /** One loaded model on its canvas: the WebGL half of the view. */
 class Stage {
@@ -97,6 +113,13 @@ class Stage {
 
     this.scene = new THREE.Scene();
     this.scene.add(this.model);
+    // The comments' arrows, beside the model so they are neither in its box
+    // nor among its parts; the comment each node is (`setMarks`).
+    this.kit = arrowKit(THREE);
+    this.pins = new THREE.Object3D();
+    this.scene.add(this.pins);
+    this.arrows = new Map();
+    this.arrowLength = (PIN_LENGTH_FRACTION * this.box.getSize(new THREE.Vector3()).length()) / 2;
     this.camera = new THREE.PerspectiveCamera(FOV, 1, this.radius / 100, this.radius * 100);
     this.scene.add(this.camera);
     // Two directional lights: one fixed above the board, one riding with the
@@ -132,6 +155,9 @@ class Stage {
 
     // A click with the left button or the right one: `[button, x, y]` of the
     // press. The right one selects as the left does and opens the menu too.
+    // A left one on a comment's arrow names it, and with the Comment tool
+    // armed one on a part is a comment's place, selecting nothing; what is
+    // nearest decides, so a part in front of an arrow hides it.
     this.raycaster = new THREE.Raycaster();
     this.down = null;
     canvas.addEventListener('pointerdown', (event) => {
@@ -142,6 +168,20 @@ class Stage {
       this.down = null;
       if (!down || event.button !== down[0]
         || Math.hypot(event.clientX - down[1], event.clientY - down[2]) > CLICK_SLOP) return;
+      if (down[0] === 0) {
+        this.aim(event);
+        const [hit] = this.raycaster.intersectObjects([this.root, this.pins], true);
+        const mark = hit ? this.markOf(hit.object) : null;
+        if (mark !== null) {
+          this.handlers.onMarker(mark);
+          return;
+        }
+        if (this.handlers.commenting()) {
+          const place = hit && partPlace(THREE, hit, this.root, this.raycaster.ray.direction);
+          if (place) this.handlers.onPoint(place);
+          return;
+        }
+      }
       const part = this.pick(event);
       this.select(part, false);
       this.handlers.onSelect(part);
@@ -274,15 +314,67 @@ class Stage {
     this.request();
   }
 
-  /** The designator of the part under a pointer event, or null. */
-  pick(event) {
+  /** The raycaster through the point of a pointer event. */
+  aim(event) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const at = new this.THREE.Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(at, this.camera);
+  }
+
+  /** The designator of the part under a pointer event, or null. */
+  pick(event) {
+    this.aim(event);
     return pickedPart(this.raycaster.intersectObject(this.root, true), this.root);
+  }
+
+  /** The id of the comment whose arrow `object` is part of, or null. */
+  markOf(object) {
+    for (let node = object; node; node = node.parent) {
+      if (this.arrows.has(node)) return this.arrows.get(node);
+    }
+    return null;
+  }
+
+  /** The arrows of `marks` (see the header), each standing on the first
+   *  node of its part, its point and normal put in the world through it
+   *  (`fromPart`); the ids of those whose part the model has none of. */
+  setMarks(marks) {
+    const { THREE } = this;
+    for (const node of this.arrows.keys()) this.pins.remove(node);
+    this.arrows.clear();
+    const lost = [];
+    const y = new THREE.Vector3(0, 1, 0);
+    for (const mark of marks) {
+      const nodes = this.parts.get(mark.part);
+      if (!nodes || !Array.isArray(mark.point)) {
+        lost.push(mark.id);
+        continue;
+      }
+      const { p, n } = fromPart(THREE, nodes[0], mark.point, mark.normal);
+      const arrow = this.kit.arrow();
+      this.kit.paint(arrow, Boolean(mark.active));
+      arrow.node.position.copy(p);
+      arrow.node.quaternion.setFromUnitVectors(y, new THREE.Vector3(...pinDirection(n && n.toArray(), GLTF_UP)));
+      arrow.node.scale.setScalar(this.arrowLength / PIN_PX);
+      this.pins.add(arrow.node);
+      this.arrows.set(arrow.node, mark.id);
+    }
+    this.request();
+    return lost;
+  }
+
+  /** The camera onto the part `designator`, if the model has it, from the
+   *  side it looks from now. */
+  framePart(designator) {
+    const nodes = designator && this.parts.get(designator);
+    if (!nodes) return;
+    const box = new this.THREE.Box3();
+    for (const node of nodes) box.expandByObject(node);
+    const direction = this.camera.position.clone().sub(this.controls.target).normalize();
+    this.look(box, direction, PART_MARGIN, this.radius * PART_LEAST);
   }
 
   /** Light the part `designator` (null: none), the camera moving to it when
@@ -294,12 +386,7 @@ class Stage {
     const nodes = designator && this.parts.get(designator);
     if (nodes) {
       light(nodes, new this.THREE.Color().setStyle(window.getComputedStyle(this.host).color));
-      if (frame) {
-        const box = new this.THREE.Box3();
-        for (const node of nodes) box.expandByObject(node);
-        const direction = this.camera.position.clone().sub(this.controls.target).normalize();
-        this.look(box, direction, PART_MARGIN, this.radius * PART_LEAST);
-      }
+      if (frame) this.framePart(designator);
     }
     this.request();
   }
@@ -309,6 +396,7 @@ class Stage {
     if (this.observer) this.observer.disconnect();
     this.host.removeEventListener('wheel', this.onWheel, true);
     this.controls.dispose();
+    this.kit.dispose();
     disposeModel(this.model);
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -347,7 +435,8 @@ export default class BoardView3D extends React.Component {
   }
 
   /** Bring the stage in line with the props: load on first showing (and again
-   *  on showing after a failure), then the selection and whether it draws. */
+   *  on showing after a failure), then the selection, whether it draws, and
+   *  the comments. */
   follow(prev) {
     const { active, selected } = this.props;
     const shown = active && !prev.active;
@@ -355,6 +444,31 @@ export default class BoardView3D extends React.Component {
     if (!this.stage) return;
     this.stage.select(selected || null, true);
     if (active !== prev.active) this.stage.setActive(active);
+    this.comments();
+  }
+
+  /** The stage in line with `comment` (see the header): its arrows, rebuilt
+   *  only when the marks changed, the lost ones told only when they changed;
+   *  a focus not yet framed; and a crosshair while the tool is armed. */
+  comments() {
+    const { comment } = this.props;
+    const marks = (comment && comment.marks) || [];
+    const key = JSON.stringify(marks);
+    if (key !== this.marked) {
+      this.marked = key;
+      const lost = JSON.stringify(this.stage.setMarks(marks));
+      if (comment && lost !== this.lost) {
+        this.lost = lost;
+        comment.onLost(JSON.parse(lost));
+      }
+    }
+    const focus = comment && comment.focus;
+    if (focus && focus !== this.focused) {
+      this.focused = focus;
+      this.stage.framePart(focus.part);
+      comment.onFocused();
+    }
+    this.stage.renderer.domElement.style.cursor = comment && comment.on ? 'crosshair' : '';
   }
 
   load() {
@@ -387,9 +501,13 @@ export default class BoardView3D extends React.Component {
         this.stage = new Stage(lib, this.host, gltf, {
           onSelect: (designator) => this.props.onSelect && this.props.onSelect(designator),
           onMenu: (designator, x, y) => this.props.onMenu && this.props.onMenu(designator, x, y),
+          commenting: () => Boolean(this.props.comment && this.props.comment.on),
+          onPoint: (place) => this.props.comment && this.props.comment.onPoint(place),
+          onMarker: (id) => this.props.comment && this.props.comment.onMarker(id),
         });
         this.stage.select(this.props.selected || null, true);
         this.stage.setActive(Boolean(this.props.active));
+        this.comments();
         this.setState({ loading: false });
         this.props.onTools(this.tools);
       })

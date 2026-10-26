@@ -60,7 +60,7 @@ export function chromeView(s, props, deps) {
   const setTool = (t) => () => {
     set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, viewsOpen: false, menu: null });
     if (t === 'comment' && s.tool !== 'comment') {
-      toast(docCommentable ? 'Drag an area on the drawing to pin the task' : 'Click a spot on the model to pin the task');
+      toast(docCommentable ? COMMENTABLE.get(docOpen.type) : 'Click a spot on the model to pin the task');
     }
     if (t === 'measure' && s.tool !== 'measure') toast('Click a part for its size, or two for the gap between them');
   };
@@ -93,8 +93,8 @@ export function chromeView(s, props, deps) {
   // that does not list `s.doc` shows its model.
   const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
   const docOpen = documents.find((d) => d.id === s.doc) || null;
-  // A document over the model that takes a comment (`COMMENTABLE`): an area
-  // drawn on it is the comment's place (KicadView.jsx).
+  // A document over the model that takes a comment (`COMMENTABLE`): a place
+  // taken on it is the comment's place, which arming the tool says how to take.
   const docCommentable = !!docOpen && COMMENTABLE.has(docOpen.type);
   // Opening a document: what its row does, what `Show in …` of a KiCad
   // design's right-click menu does with the other member's id, and what a

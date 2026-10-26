@@ -154,7 +154,10 @@
 // to its sheet — as the reader's own step of history where the page took none
 // for it (`step`), else rewriting the entry the page wrote — and the view is
 // moved to the area's centre (`zoomToLocation`), after the sheet has loaded;
-// the page is then told (`onFocused`).
+// the page is then told (`onFocused`). The 3D model takes the same, its own
+// way (`comment3D`, BoardView3D.jsx): a click on a part is the place, the
+// marks are arrows on parts, the focus frames a part, and the ids of comments
+// on parts the model does not have go back to the page (`onLost`).
 
 import React from 'react';
 
@@ -206,7 +209,8 @@ export const DRAFT_MARK = 'draft';
  * sheet is on screen.
  */
 export function commentMarks(marks, file, sheet) {
-  return (marks || []).filter((one) => one.doc === file && (sheet === undefined || one.sheet === sheet))
+  return (marks || []).filter((one) => one.doc === file && Array.isArray(one.area)
+    && (sheet === undefined || one.sheet === sheet))
     .map(({ id, sheet: page, area: [x, y, w, h] }) => ({
       id,
       anchor: { kind: 'world', x: x + w / 2, y: y + h / 2, ...(page ? { page } : {}) },
@@ -997,15 +1001,33 @@ export default class KicadView extends React.Component {
     if (comment && detail && detail.commentId && detail.commentId !== DRAFT_MARK) comment.onMarker(detail.commentId);
   }
 
-  /** The place the page asks to be shown (`focus`), once the member it is on
-   *  is on screen and drawn, the schematic on the sheet it opened on. */
+  /** What the 3D model needs for comments (BoardView3D.jsx): the tool armed
+   *  while it is on screen, the marks and the focus on its file, and the
+   *  doors back, the draft's arrow naming nothing (`marker`) and never lost. */
+  comment3D() {
+    const { comment } = this.props;
+    const model = this.members()[BOARD3D];
+    if (!comment || !model) return null;
+    return {
+      on: Boolean(comment.on) && this.side() === BOARD3D,
+      marks: (comment.marks || []).filter((one) => one.doc === model.file && one.part),
+      focus: comment.focus && comment.focus.doc === model.file ? comment.focus : null,
+      onPoint: (place) => comment.onArea(model, { frame: 'part', ...place }),
+      onMarker: (id) => this.marker({ commentId: id }),
+      onFocused: comment.onFocused,
+      onLost: (ids) => comment.onLost(model.file, ids.filter((id) => id !== DRAFT_MARK)),
+    };
+  }
+
+  /** The area the page asks to be shown (`focus`), once the drawn member it
+   *  is on is on screen and drawn, the schematic on the sheet it opened on. */
   followFocus() {
     const { comment } = this.props;
     const focus = comment && comment.focus;
     const side = this.side();
     const member = this.members()[side];
     if (!focus || focus === this.focused || !this.state.ready || !member || member.file !== focus.doc
-      || (side === SCH && !this.page)) return;
+      || !Array.isArray(focus.area) || (side === SCH && !this.page)) return;
     this.focused = focus;
     const [x, y, w, h] = focus.area;
     this.zoomTo = { x: x + w / 2, y: y + h / 2 };
@@ -1191,7 +1213,7 @@ export default class KicadView extends React.Component {
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={side === BOARD3D}
                          selected={selected} onSelect={this.onSelect3D} onMenu={this.onMenu3D}
-                         onTools={this.onTools3D} onFetched={this.onFetched3D} />
+                         onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}

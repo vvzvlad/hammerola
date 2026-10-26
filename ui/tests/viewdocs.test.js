@@ -680,4 +680,30 @@ describe('a comment on a KiCad design', () => {
     open()
     expect([push.mock.calls.length, c.state.docFocus.step]).toEqual([1, true])
   })
+
+  it('drops the place a row asked for at any other change of document, so a later opening of it is the reader\'s own', () => {
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    const onModel = { ...comment, id: 'c2', doc: null, frame: null, sheet: null, area: null, items: null }
+    const c = component({ meta: meta([MAIN, ...KICAD.slice(1)]), feed: [comment, onModel] })
+    const row = (i) => c.computed().threads[i].onOpen({ stopPropagation() {} })
+    const asked = () => [c.state.docFocus, shownDocs(c).map((el) => el.props.comment.focus)]
+    // Back before the schematic was ready to show the area
+    row(0)
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    c.followEntry()
+    expect([c.state.doc, ...asked()]).toEqual([null, null, []])
+    // then opened from the menu on another sheet: nothing moves it
+    const choose = (value) => c.computed().docRows[0].chooseSheet(value)
+    choose('hw/psu.kicad_sch:/r/b')
+    expect([c.state.doc, ...asked()]).toEqual([MAIN.id, null, [null]])
+    // a choice in the menu before the area was shown
+    row(0)
+    expect(c.state.docFocus).not.toBeNull()
+    choose('')
+    expect(asked()).toEqual([null, [null]])
+    // a row of a comment on the model
+    row(0)
+    row(1)
+    expect([c.state.doc, c.state.docFocus]).toEqual([null, null])
+  })
 })

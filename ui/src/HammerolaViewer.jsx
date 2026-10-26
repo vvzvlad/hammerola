@@ -146,7 +146,7 @@ import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
 // The Copy link at the end of each file row of both menus.
 import CopyLink from './copylink.jsx';
-import { docPlace, feedView } from './feedview.js';
+import { docPlace, dropStaleFocus, feedView } from './feedview.js';
 import { comparePanel } from './compareview.js';
 // The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
@@ -1101,9 +1101,13 @@ export default class HammerolaViewer extends React.Component {
       // The project's whole comment queue, as the hub answers it (`loadFeed`),
       // in the records' own shape — oldest first, as SPEC 7A.2 sorts them.
       // `docFocus`: the place in a document a row of the rail asked to be
-      // shown, `{ doc, sheet, area, step }`, until the document has shown it
-      // (`feedView`, KicadView.jsx).
-      feed: [], activePin: null, composer: null, docFocus: null,
+      // shown, `{ doc, sheet, area, step }`, `{ doc, part, step }` or `{ doc,
+      // quote, step }` (`feedView`), until the document has shown it
+      // (KicadView.jsx, BoardView3D.jsx, GerberView.jsx, DocumentView.jsx) or
+      // anything else moves the document over the model (`dropStaleFocus`).
+      // `docLost`: by a document's file, the ids of the comments on it that
+      // it, open, found no place for, as it last said (`onLost`).
+      feed: [], activePin: null, composer: null, docFocus: null, docLost: {},
       // A comment is on the wire. The same idea as `swapping` above and for the
       // same two reasons: `sendComment` refuses on it, and `compSendStyle`
       // draws it, so the button that has stopped taking clicks stops looking
@@ -1603,17 +1607,21 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * An area drawn on document `doc` with the Comment tool (KicadView.jsx):
-   * the composer's draft hangs there — `frame`, `sheet`, `area` and the
-   * `items` in it, `place` — headed with where that is (`docPlace`). Over a
-   * draft already standing it replaces where that one hangs and keeps what
-   * the reader wrote and attached.
+   * A place taken on document `doc` with the Comment tool: the composer's
+   * draft hangs there — `place`, in the comment's own fields (SPEC 7A.1):
+   * `frame`, and `sheet`, `area` and the `items` in it on a KiCad design
+   * (KicadView.jsx), `area` and `layer` on the Gerbers (GerberView.jsx), the
+   * part's designator, `point` and `normal` on the board's 3D model
+   * (BoardView3D.jsx), `quote` on markdown (DocumentView.jsx) — headed with
+   * where that is (`docPlace`), which takes `part`: the designator is kept as
+   * `designator`. Over a draft already standing it replaces where that one
+   * hangs and keeps what the reader wrote and attached.
    */
   docArea(doc, place) {
     if (this.viewer()) return;
     const c = this.state.composer;
     this.openComposer({
-      ...place, doc: doc.file, part: docPlace(place, doc),
+      ...place, doc: doc.file, part: docPlace(place, doc), designator: place.part || null,
       partId: null, key: null, p: null, n: null, meas: null,
       text: c ? c.text : '', photo: c ? c.photo : null,
     });
@@ -2102,6 +2110,9 @@ export default class HammerolaViewer extends React.Component {
         // that lists it.
         doc: next && Array.isArray(next.documents)
           && next.documents.some((d) => d.id === doc) ? doc : null,
+        // A place asked of a document, and what the documents could not
+        // place, were the build's being left.
+        docFocus: null, docLost: {},
         // The comparison goes too: the panel stands where the tree stands and
         // the scene is the comparison's, so keeping it would change nothing the
         // reader sees. The picker's ticks (`cmp`) stay: they are the reader's
@@ -2163,6 +2174,7 @@ export default class HammerolaViewer extends React.Component {
             ...this.state.composer,
             part: '', partId: null, key: null, p: null, n: null, meas: null,
             doc: null, frame: null, sheet: null, area: null, items: null,
+            layer: null, quote: null, designator: null, point: null, normal: null,
           }
           : null,
         // The toast that `clearTimeout(this._tt)` above disarmed.
@@ -3349,7 +3361,7 @@ export default class HammerolaViewer extends React.Component {
     }));
   }
 
-  set(patch, extra) { this.setState(patch, () => this.sync(extra)); }
+  set(patch, extra) { this.setState(dropStaleFocus(patch), () => this.sync(extra)); }
 
   /** The document laid over the model has its file (`onReady` in
    *  DocumentView.jsx): the model `sync` held back goes to the viewport. Sent
@@ -4545,7 +4557,8 @@ export default class HammerolaViewer extends React.Component {
       const body = extra.length ? `${text}\n\n${extra.join('\n')}` : text;
       const form = new FormData();
       // A draft on a document (`docArea`) hangs on its place there and on no
-      // part, view or camera of the model.
+      // view or camera of the model; the place's fields its kind does not
+      // have are undefined, and left out.
       form.append('comment', JSON.stringify(c.doc ? {
         text: body,
         doc: c.doc,
@@ -4553,6 +4566,11 @@ export default class HammerolaViewer extends React.Component {
         sheet: c.sheet,
         area: c.area,
         items: c.items,
+        layer: c.layer,
+        quote: c.quote,
+        part: c.designator || undefined,
+        point: c.point,
+        normal: c.normal,
         published: meta.published || null,
         view: null,
         camera: null,
@@ -5359,7 +5377,8 @@ export default class HammerolaViewer extends React.Component {
       revRows, downloadGroups, dlShown, threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
-      setState: this.setState.bind(this),
+      // Opening a document from the menu of views moves it without `set`.
+      setState: (patch, done) => this.setState(dropStaleFocus(patch), done),
       // THE STATE AS IT STANDS WHEN THE HANDLER RUNS, and not as it stood when
       // this object was built: both readers of it are inside a `setState`
       // callback, where the point is that the update has landed. See the token
@@ -5624,19 +5643,34 @@ export default class HammerolaViewer extends React.Component {
       composerStyle: `position:absolute;right:16px;bottom:${chrome.docOpen ? 72 : 16}px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:`
         + (s.composer && !viewer && (s.composer.doc ? !!chrome.docOpen && chrome.docOpen.file === s.composer.doc : !chrome.docOpen)
           ? 'block' : 'none'),
-      // What a KiCad design over the model needs for comments (KicadView.jsx):
-      // whether the Comment tool is armed on it, the markers of the open
-      // comments on documents and of the draft, and the doors back.
+      // What a document over the model needs for comments (`COMMENTABLE`):
+      // whether the Comment tool is armed on it, the marks of the open
+      // comments on documents and of the draft, each with its place in the
+      // comment's own fields and lit (`active`) when it is the draft or the
+      // rail has it open, and the doors back. The draft's mark names no
+      // comment (`onMarker`).
       docComment: {
         on: s.tool === 'comment' && !viewer && !this.toolsOff(),
         marks: [
-          ...s.feed.filter((r) => r.status !== 'resolved' && r.doc && Array.isArray(r.area)),
-          ...(s.composer && s.composer.doc && s.composer.area ? [{ ...s.composer, id: DRAFT_MARK }] : []),
-        ].map(({ id, doc, sheet, area }) => ({ id, doc, sheet: sheet || null, area })),
+          ...s.feed.filter((r) => r.status !== 'resolved' && r.doc),
+          ...(s.composer && s.composer.doc ? [{ ...s.composer, part: s.composer.designator, id: DRAFT_MARK }] : []),
+        ].map(({ id, doc, sheet, area, part, point, normal, quote }) => ({
+          id, doc, sheet: sheet || null, area: area || null, part: part || null, point: point || null,
+          normal: normal || null, quote: quote || null, active: id === DRAFT_MARK || id === s.activePin,
+        })),
         onArea: (doc, place) => this.docArea(doc, place),
-        onMarker: (id) => this.set({ activePin: id, rail: true }),
+        onMarker: (id) => {
+          if (id !== DRAFT_MARK) this.set({ activePin: id, rail: true });
+        },
         focus: s.docFocus || null,
         onFocused: () => this.setState({ docFocus: null }),
+        // Set by assignment: a computed key in this file reads as a handler's
+        // event (tests/test_ui_source.py).
+        onLost: (file, ids) => this.setState((now) => {
+          const docLost = { ...now.docLost };
+          docLost[file] = ids;
+          return { docLost };
+        }),
       },
       nextLabel: String(s.feed.length + 1),
       composerPart: s.composer ? s.composer.part : '',

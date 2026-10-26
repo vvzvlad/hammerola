@@ -323,6 +323,49 @@ export function wheelMove(event) {
 /** `view` with the board turned over about the canvas's vertical centre line. */
 export const turned = (view) => ({ ...view, x: -view.x });
 
+/** The canvas point, CSS pixels, the board point (`u`, `v`) lands on: the
+ *  law in the header. */
+export const canvasAt = (view, u, v, width, height, flip) => [
+  width / 2 + flip * u * view.scale + view.x, height / 2 - v * view.scale + view.y];
+
+/** The board point under the canvas point (`px`, `py`): `canvasAt` undone. */
+export const boardAt = (view, px, py, width, height, flip) => [
+  (px - width / 2 - view.x) / (flip * view.scale), (height / 2 + view.y - py) / view.scale];
+
+/** The area of the board between two canvas points, as a comment stores it
+ *  (SPEC 7A.1, `area`): `[x, y, w, h]` in the board's units, its corner of
+ *  least x and least y — Gerber's y is up — and its size. */
+export function boardArea(view, from, to, width, height, flip) {
+  const [u1, v1] = boardAt(view, from[0], from[1], width, height, flip);
+  const [u2, v2] = boardAt(view, to[0], to[1], width, height, flip);
+  return [Math.min(u1, u2), Math.min(v1, v2), Math.abs(u2 - u1), Math.abs(v2 - v1)];
+}
+
+/** Where `area` (`boardArea`) lands on the canvas, `{ left, top, width,
+ *  height }` in CSS pixels, from either side. */
+export function canvasBox(view, [x, y, w, h], width, height, flip) {
+  const [a, b] = canvasAt(view, x, y, width, height, flip);
+  const [c, d] = canvasAt(view, x + w, y + h, width, height, flip);
+  return { left: Math.min(a, c), top: Math.min(b, d), width: Math.abs(c - a), height: Math.abs(d - b) };
+}
+
+/** `view` moved so the board point (`u`, `v`) is at the canvas's centre. */
+export const centredOn = (view, u, v, flip) => ({ ...view, x: -flip * u * view.scale, y: v * view.scale });
+
+/** The most characters a comment's `layer` may have: the hub's ceiling on a
+ *  one-line field (`MAX_FIELD_CHARS` in src/records.py, held to it by
+ *  tests/test_ui_source.py). */
+export const LAYER_NOTE_CHARS = 200;
+
+/** What a comment's `layer` says the board was seen as: the side, then the
+ *  layers on screen as the panel lists them (`layers`, those `shown` and not
+ *  `failed`), `top: F.Cu, F.Mask, Edge.Cuts`; cut to `LAYER_NOTE_CHARS`. */
+export function layerNote(layers, shown, failed, side) {
+  const note = `${side}: ${layers.filter((layer) => shown[layer.file] && !failed[layer.file])
+    .map((layer) => layer.label).join(', ')}`;
+  return note.length > LAYER_NOTE_CHARS ? `${note.slice(0, LAYER_NOTE_CHARS - 1)}…` : note;
+}
+
 /** The renderer's zoom and offset for `view` on a canvas of `width` × `height`. */
 export function toProcessor(view, width, height, flip) {
   const unit = Math.min(width, height) / 2;

@@ -908,8 +908,12 @@ describe('a comment on a document', () => {
     kicad: { project: 'hw/main.kicad_pro' } }
   const ON_SHEET = { part: null, key: null, doc: SCHEMATIC.file, frame: 'sheet', sheet: 'hw/amp.kicad_sch',
     area: [10, 20, 4, 6], items: ['C1', 'OUT_A'] }
+  // The board's 3D model and a markdown note.
+  const MODEL = { id: 'hw__main.glb', name: 'Main, 3D', type: 'board3d', file: 'hw/main.glb' }
+  const NOTE = { id: 'notes__note.md', name: 'Note', type: 'markdown', file: 'notes/note.md' }
+  const QUOTE = { text: 'the gap', before: 'mind ', after: ' here' }
   const listing = (c) => {
-    c.state.meta = { ...c.state.meta, documents: [SCHEMATIC, BOARD] }
+    c.state.meta = { ...c.state.meta, documents: [SCHEMATIC, BOARD, MODEL, NOTE] }
     return c
   }
 
@@ -943,5 +947,40 @@ describe('a comment on a document', () => {
     })
     expect(c.frameBlob).not.toHaveBeenCalled()
     expect(body.get('shot').name).toBe('shot.png')
+  })
+
+  it('says the part or the passage it hangs on, and that it is lost once its document, open, found it nowhere', () => {
+    const c = listing(page({ feed: [
+      record({ key: null, doc: MODEL.file, frame: 'part', part: 'R5', point: [1, 2, 3], normal: [0, 0, 1] }),
+      record({ id: 'c2', part: null, key: null, doc: NOTE.file, frame: 'text', quote: QUOTE }),
+    ] }))
+    const says = () => c.computed().threads.map((t) => t.says)
+    expect(says()).toEqual(['on R5 of Main, 3D', 'on Note'])
+    // what each document, open, told the page it found nowhere
+    c.computed().docComment.onLost(MODEL.file, ['c1'])
+    c.computed().docComment.onLost(NOTE.file, ['c2'])
+    expect(says()).toEqual(['the part is not on this board', 'the text has changed'])
+  })
+
+  it('posts a part with its point and normal, and a passage with its sides', async () => {
+    const fetching = answering({ status: 201 }, served([]))
+    const c = listing(page())
+    c.frameBlob = vi.fn(async () => null)
+    const send = async () => {
+      c.state.composer = { ...c.state.composer, text: 'look here' }
+      await c.sendComment()
+    }
+    c.docArea(MODEL, { frame: 'part', part: 'R5', point: [1, 2, 3], normal: [0, 0, 1] })
+    expect(c.state.composer.part).toBe('R5 of Main, 3D')
+    await send()
+    c.docArea(NOTE, { frame: 'text', quote: QUOTE })
+    await send()
+
+    const posted = fetching.mock.calls.filter(([, init]) => init && init.body instanceof FormData)
+    expect(posted.map(([, init]) => JSON.parse(init.body.get('comment')))).toEqual([
+      { text: 'look here', doc: MODEL.file, frame: 'part', part: 'R5', point: [1, 2, 3], normal: [0, 0, 1],
+        published: STAMP, view: null, camera: null },
+      { text: 'look here', doc: NOTE.file, frame: 'text', quote: QUOTE, published: STAMP, view: null, camera: null },
+    ])
   })
 })

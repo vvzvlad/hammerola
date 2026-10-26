@@ -145,6 +145,24 @@ def test_a_comment_on_a_document_stores_its_place(hub):
                                "quote")] == [None] * 6
 
 
+def test_a_quote_is_kept_as_sent_and_a_bad_side_named(hub):
+    """The page finds a quote again by its text between its two sides, so the
+    hub keeps all three as they came, blanks and line breaks included; a side
+    it refuses is the one the 422 names."""
+    pid, commit = _publish(hub)
+    quote = {"text": " the\ngap ", "before": "mind ", "after": "\tis"}
+    on_text = dict(frame="text", doc="notes/note.md", sheet=None, area=None,
+                   items=None)
+    r = hub.post_comment(pid, commit, _doc_payload(**on_text, quote=quote))
+    assert r.status_code == 201
+    name = f"{r.json()['id']}.json"
+    assert json.loads((hub.comment_dir(pid) / name).read_text())["quote"] == quote
+    bad = hub.post_comment(pid, commit, _doc_payload(
+        **on_text, quote={**quote, "after": "‮"}))
+    assert bad.status_code == 422
+    assert "`quote.after`" in bad.json()["error"]
+
+
 @pytest.mark.parametrize("bad", [
     {"area": [1, 2, -1, 3]},
     {"area": [1, 2, 3]},

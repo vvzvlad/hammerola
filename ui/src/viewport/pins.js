@@ -50,14 +50,114 @@ const UP = [0, 0, 1];
  * The direction an arrow's body stands out along, from its tip: the comment's
  * normal as a unit vector, or straight down onto the point from above where
  * there is none (a comment left before normals were stored, or one standing on
- * the top of a part's box on another build).
+ * the top of a part's box on another build). `up` is that above: the model's
+ * +Z here, a board's 3D model's glTF +Y (BoardView3D.jsx).
  *
  * `unit3` answers a zero vector with null and an infinite component with NaNs,
  * so its answer is checked again.
  */
-export function pinDirection(n) {
+export function pinDirection(n, up = UP) {
   const unit = finite3(n) ? unit3(n) : null;
-  return finite3(unit) ? unit : UP;
+  return finite3(unit) ? unit : up;
+}
+
+/**
+ * The shapes and inks every arrow shares, built once in the three namespace
+ * `three`, and the arrows made of them: the model's (`createPins` below) and
+ * those on a board's 3D model (BoardView3D.jsx), one look for both.
+ *
+ * An arrow is `PIN_PX` long along +Y (the axis three gives a cylinder and a
+ * cone) with the TIP at the origin: a node put at the point, turned from +Y
+ * onto the direction and scaled to its world length points into the face, its
+ * body standing out of it.
+ *
+ * The casing is the same shaft and head grown by `PIN_CASE_PX` all round, the
+ * tip included, so it ENCLOSES the ink. Only its far side is drawn
+ * (`side: BackSide`, the inverted-hull outline): its front faces are nearer
+ * than the ink and, with the depth test on, would simply cover it and leave a
+ * white arrow, while its back faces show exactly as a rim around the
+ * silhouette.
+ *
+ * The ink is lit (Phong) and the casing flat, and both are opaque and
+ * depth-tested: an arrow is an object in the scene, so an opaque part in
+ * front of it hides it and a translucent one is laid over it (`PINS_ORDER`
+ * in scene3d.js). `clippingPlanes: []` keeps the section from cutting it, as
+ * on the widgets' own materials.
+ *
+ * The casing's material is built here rather than taken from
+ * `widgetMaterial`, which is the never-hidden, always-blended ink the other
+ * widgets share.
+ */
+export function arrowKit(three) {
+  const shapes = (grow) => {
+    const headLength = PIN_HEAD_PX + 2 * grow;
+    const cone = new three.ConeGeometry(PIN_HEAD_WIDTH_PX / 2 + grow,
+                                        headLength, SIDES);
+    // A cone is centred on the origin and points +Y: turned over to point at
+    // the tip, and lifted so its point is `grow` beyond the origin.
+    cone.rotateZ(Math.PI);
+    cone.translate(0, headLength / 2 - grow, 0);
+    // The rod runs from `grow` short of the ink head's base (`PIN_HEAD_PX`)
+    // to `grow` past the tail (`PIN_PX`). The casing's rod has to start
+    // inside the ink's head: its end
+    // cap faces the tip, so seen from the tail it is a back face the
+    // casing draws, and level with the ink's base it would fight it for
+    // every pixel round the shaft.
+    const length = PIN_PX - PIN_HEAD_PX + 2 * grow;
+    const rod = new three.CylinderGeometry(PIN_SHAFT_PX / 2 + grow,
+                                           PIN_SHAFT_PX / 2 + grow, length, SIDES);
+    rod.translate(0, (PIN_HEAD_PX + PIN_PX) / 2, 0);
+    return [rod, cone];
+  };
+  const [shaft, head] = shapes(0);
+  const [caseShaft, caseHead] = shapes(PIN_CASE_PX);
+  const lit = (color) => new three.MeshPhongMaterial({
+    color, shininess: 60, transparent: false, depthTest: true,
+    depthWrite: true, clippingPlanes: [],
+  });
+  const ink = lit(INK);
+  const inkActive = lit(INK_ACTIVE);
+  const casing = new three.MeshBasicMaterial({
+    color: CASING, transparent: false, depthTest: true, depthWrite: true,
+    clippingPlanes: [], toneMapped: false, side: three.BackSide,
+  });
+  return {
+    /** A new arrow, `{ node, meshes, casings }`: the ink and the casing as
+     *  children of one plain `Object3D`, never a `Group` — three re-reads
+     *  `renderOrder` as the group order at every `Group`, which would drop
+     *  the arrow out of its band (handle.js nests its rings the same way). */
+    arrow() {
+      const node = new three.Object3D();
+      const meshes = [new three.Mesh(shaft, ink), new three.Mesh(head, ink)];
+      const casings = [new three.Mesh(caseShaft, casing),
+                       new three.Mesh(caseHead, casing)];
+      node.add(...meshes, ...casings);
+      return { node, meshes, casings };
+    },
+    /**
+     * Paint `arrow` as the open comment's or not. The open comment's arrow
+     * is the darker ink, and it is drawn after the others. Where the arrows
+     * stand apart the depth test decides what is seen and this order changes
+     * nothing. It decides only where two comments on one part resolve to ONE
+     * anchor: their arrows are the same shape at the same depth, the depth
+     * test passes on equal depth (three's default `LessEqualDepth`) and the
+     * last drawn wins, so the open arrow, casing and ink, comes out over the
+     * others — which is how the rail brings either one's arrow out of the
+     * other.
+     */
+    paint(arrow, active) {
+      for (const mesh of arrow.meshes) {
+        mesh.material = active ? inkActive : ink;
+        mesh.renderOrder = active ? 2 : 0;
+      }
+      for (const mesh of arrow.casings) mesh.renderOrder = active ? 1 : -1;
+    },
+    /** Free the shared shapes and inks: nothing frees them through the
+     *  arrows standing, and there may be none. */
+    dispose() {
+      for (const owned of [shaft, head, caseShaft, caseHead, ink, inkActive, casing]) owned.dispose();
+    },
+  };
 }
 
 export function createPins(vp) {
@@ -82,13 +182,7 @@ export function createPins(vp) {
   // Built with the group, on the first `attach` that brings the namespace.
   let three = null;
   let group = null;
-  let shaft = null;
-  let head = null;
-  let ink = null;
-  let inkActive = null;
-  let caseShaft = null;
-  let caseHead = null;
-  let casing = null;
+  let kit = null;
   let up = null;
   let aim = null;
 
@@ -97,66 +191,14 @@ export function createPins(vp) {
     return arrows.size > 0;
   }
 
-  /**
-   * The shapes and inks every arrow shares, `PIN_PX` long along +Y (the axis
-   * three gives a cylinder and a cone) with the TIP at the origin: a node put
-   * at the point, turned from +Y onto the direction and scaled by `place` to
-   * its world length points into the face, its body standing out of it.
-   *
-   * The casing is the same shaft and head grown by `PIN_CASE_PX` all round, the
-   * tip included, so it ENCLOSES the ink. Only its far side is drawn
-   * (`side: BackSide`, the inverted-hull outline): its front faces are nearer
-   * than the ink and, with the depth test on, would simply cover it and leave a
-   * white arrow, while its back faces show exactly as a rim around the
-   * silhouette.
-   *
-   * The ink is lit (Phong) and the casing flat, and both are opaque and
-   * depth-tested: an arrow is an object in the scene, so an opaque part in
-   * front of it hides it and a translucent one is laid over it (`PINS_ORDER`
-   * in scene3d.js). `clippingPlanes: []` keeps the section from cutting it, as
-   * on the widgets' own materials.
-   *
-   * The casing's material is built here rather than taken from
-   * `widgetMaterial`, which is the never-hidden, always-blended ink the other
-   * widgets share.
-   */
+  /** The shapes and inks every arrow shares (`arrowKit`), scaled by `place`
+   *  to their world length. */
   function build(namespace, grp) {
     three = namespace;
     group = grp;
     up = new three.Vector3(0, 1, 0);
     aim = new three.Vector3();
-    const shapes = (grow) => {
-      const headLength = PIN_HEAD_PX + 2 * grow;
-      const cone = new three.ConeGeometry(PIN_HEAD_WIDTH_PX / 2 + grow,
-                                          headLength, SIDES);
-      // A cone is centred on the origin and points +Y: turned over to point at
-      // the tip, and lifted so its point is `grow` beyond the origin.
-      cone.rotateZ(Math.PI);
-      cone.translate(0, headLength / 2 - grow, 0);
-      // The rod runs from `grow` short of the ink head's base (`PIN_HEAD_PX`)
-      // to `grow` past the tail (`PIN_PX`). The casing's rod has to start
-      // inside the ink's head: its end
-      // cap faces the tip, so seen from the tail it is a back face the
-      // casing draws, and level with the ink's base it would fight it for
-      // every pixel round the shaft.
-      const length = PIN_PX - PIN_HEAD_PX + 2 * grow;
-      const rod = new three.CylinderGeometry(PIN_SHAFT_PX / 2 + grow,
-                                             PIN_SHAFT_PX / 2 + grow, length, SIDES);
-      rod.translate(0, (PIN_HEAD_PX + PIN_PX) / 2, 0);
-      return [rod, cone];
-    };
-    [shaft, head] = shapes(0);
-    [caseShaft, caseHead] = shapes(PIN_CASE_PX);
-    const lit = (color) => new three.MeshPhongMaterial({
-      color, shininess: 60, transparent: false, depthTest: true,
-      depthWrite: true, clippingPlanes: [],
-    });
-    ink = lit(INK);
-    inkActive = lit(INK_ACTIVE);
-    casing = new three.MeshBasicMaterial({
-      color: CASING, transparent: false, depthTest: true, depthWrite: true,
-      clippingPlanes: [], toneMapped: false, side: three.BackSide,
-    });
+    kit = arrowKit(three);
     sync();
   }
 
@@ -173,18 +215,10 @@ export function createPins(vp) {
       seen.add(key);
       let arrow = arrows.get(key);
       if (!arrow) {
-        // A plain `Object3D`, never a `Group`: three re-reads `renderOrder` as
-        // the group order at every `Group`, which would drop the arrow out of
-        // this widget's band (handle.js nests its rings the same way).
-        const node = new three.Object3D();
-        const meshes = [new three.Mesh(shaft, ink), new three.Mesh(head, ink)];
-        const casings = [new three.Mesh(caseShaft, casing),
-                         new three.Mesh(caseHead, casing)];
-        node.add(...meshes, ...casings);
-        group.add(node);
-        arrow = { id: pin.id, node, meshes, casings };
+        arrow = { id: pin.id, ...kit.arrow() };
+        group.add(arrow.node);
         arrows.set(key, arrow);
-        owners.set(node, arrow);
+        owners.set(arrow.node, arrow);
       }
       const along = pinDirection(pin.n);
       const active = !!pin.active;
@@ -197,19 +231,7 @@ export function createPins(vp) {
       arrow.point = pin.p;
       arrow.active = active;
       arrow.node.quaternion.setFromUnitVectors(up, aim.set(...along));
-      // The open comment's arrow is the darker ink, and it is drawn after the
-      // others. Where the arrows stand apart the depth test decides what is
-      // seen and this order changes nothing. It decides only where two
-      // comments on one part resolve to ONE anchor: their arrows are the same
-      // shape at the same depth, the depth test passes on equal depth (three's
-      // default `LessEqualDepth`) and the last drawn wins, so the open arrow,
-      // casing and ink, comes out over the others — which is how the rail
-      // brings either one's arrow out of the other.
-      for (const mesh of arrow.meshes) {
-        mesh.material = arrow.active ? inkActive : ink;
-        mesh.renderOrder = arrow.active ? 2 : 0;
-      }
-      for (const mesh of arrow.casings) mesh.renderOrder = arrow.active ? 1 : -1;
+      kit.paint(arrow, arrow.active);
     }
     for (const [key, arrow] of [...arrows]) {
       if (seen.has(key)) continue;
@@ -344,10 +366,7 @@ export function createPins(vp) {
       widget.destroy();
       // The shared shapes and inks: `widget.destroy` reaches them only through
       // the arrows standing at the time, and there may be none.
-      for (const owned of [shaft, head, caseShaft, caseHead, ink, inkActive,
-                           casing]) {
-        if (owned) owned.dispose();
-      }
+      if (kit) kit.dispose();
       arrows.clear();
       owners.clear();
     },

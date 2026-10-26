@@ -54,8 +54,10 @@ def one_line(value, field: str, error: type[HttpRefusal]) -> str:
     return value
 
 
-def check_body_printable(value: str, error: type[HttpRefusal]) -> None:
-    """Refuse the control characters in a `text` field, or return quietly.
+def check_body_printable(value: str, error: type[HttpRefusal],
+                         field: str = "text") -> None:
+    """Refuse the control characters in a body field — `text` unless `field`
+    names another — or return quietly.
 
     Newline and tab survive, because a body is prose or a table and people press
     Enter. Everything else in Unicode category C goes — U+202E among them, which
@@ -65,7 +67,7 @@ def check_body_printable(value: str, error: type[HttpRefusal]) -> None:
     """
     if first_nonprintable(
             value.replace("\n", "").replace("\t", "")) is not None:
-        raise error(422, "`text` contains a non-printable character")
+        raise error(422, f"`{field}` contains a non-printable character")
 
 
 def sweep_leftovers(root: Path, pattern: str) -> None:
