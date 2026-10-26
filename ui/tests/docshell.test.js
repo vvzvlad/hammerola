@@ -229,9 +229,13 @@ describe('one document, as both pages draw it', () => {
       const copied = `${window.location.origin}${BASE}?v=print&c=1,2#x`
       const note = `[o](?v=open) [s](?d=hw__board.kicad_sch&s=amp) [c](${copied}) `
         + '[p](/project/docs0001/abc123/) [h](#top) [l](/project/docs0001/latest/?v=open)'
-      // drawn with no door to the page — the datasheet's window — it is a plain link
-      const [loose] = ofType(documentBody(cutList, BASE, note, ''), 'a')
-      expect([loose.props.href, loose.props.onClick]).toEqual([`${BASE}?files=k1&x=2&v=open`, undefined])
+      // drawn with no door to the page — the datasheet's window — each is that
+      // address, key kept, with no click handler and in the same tab
+      const loose = ofType(documentBody(cutList, BASE, note, ''), 'a').slice(0, 3)
+      expect(loose.map((a) => [a.props.href, a.props.onClick, a.props.target])).toEqual([
+        [`${BASE}?files=k1&x=2&v=open`, undefined, undefined],
+        [`${BASE}?files=k1&x=2&d=hw__board.kicad_sch&s=amp`, undefined, undefined],
+        [`${BASE}?files=k1&x=2&v=print`, undefined, undefined]])
       const tree = documentBody(cutList, BASE, note, '', [], vi.fn())
       const [open, sheet, full, plain, here, other] = ofType(tree, 'a')
       expect([open, sheet, full, plain].map((a) => a.props.href)).toEqual([`${BASE}?files=k1&x=2&v=open`,
