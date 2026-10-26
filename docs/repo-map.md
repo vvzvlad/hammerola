@@ -174,7 +174,7 @@
   — landing on exactly the reader the answer is for. ALL FIVE MANIFEST FIELDS
   HAVE A READER: `hammerola create` follows `template`; `hammerola skill update`
   follows `skill` to the archive it unpacks, and `hammerola skill` compares the
-  copy installed on a laptop against `skill_version`, which is a constant of the
+  copy installed on a laptop against `skill_digest`, which is a constant of the
   IMAGE and not a second statement about this deployment — `empty` is still the
   only one of those; and the SIGN-IN PAGE reads `empty` — the gate on everything
   below — and then follows `client` when it says this hub has nothing on it
@@ -249,11 +249,9 @@
   PALETTE — every colour the site paints with, named once per theme, linked by
   all three templates; issue #35), the resolver's `site.css` and `favicon.svg`,
   and the KiCad viewer: `ecad-viewer.js` with the `parser.worker.js` it starts
-  from beside itself, taken BUILT out of KiCAD-Prism's repository and never
-  rebuilt here — `ecad-viewer.js` carries edits of ours, made in the
-  minified file and written out to be re-applied (where from, the commits, the
-  hashes, the edits and what the hub's CSP cuts out of it — `PROVENANCE.md`; its
-  licence — `ecad-viewer-LICENSE.md`).
+  from beside itself, built by `make ecad` out of `ecad-viewer/` (where from, the
+  commits, the hashes, the edits and what the hub's CSP cuts out of it —
+  `PROVENANCE.md`; its licence — `ecad-viewer-LICENSE.md`).
   A separate tree with its own `COPY` line in the Dockerfile and its own smoke
   check (g), which names `tokens.css` because its absence looks like nothing —
   every page still answers 200 and every `var(--…)` in it resolves to nothing.
@@ -344,22 +342,18 @@
   not exist, is empty, or holds this skill's own entry document
   (`skill.why_not_here`), and refuses anything else before the network: a
   mistyped `--path` written into once would read as our installation to the
-  next run, which would then sweep somebody else's files. One version for the whole set, carried by the entry
-  document. ITS FRONTMATTER IS READ BY THE HUB, AND READ
-  STRICTLY: editing that header is editing what the service serves, not
-  cosmetics in a document written for agents. `onboarding.skill_version` lifts
-  `version:` out of it and raises `ValueError` on a file with no frontmatter
-  block or no such key, and `manifest()` calls it — so a header this cannot be
-  read out of takes the whole `/start` document down to a 404, which is why
-  `ci/smoke.py` deliberately holds `/start` out of `START_ROUTES` and leans on
-  check (g), which requires `/app/skill/SKILL.md` and one of the references by
-  name; the gate also opens the archive it serves and holds the version inside
-  it against the one the manifest states. THE STRICTNESS IS THE DECISION and
-  not an oversight to be softened into a default: a version that cannot be read
-  has to be a REFUSAL rather than
-  "version unknown", because a default would make a shipped skill that lost its
-  version indistinguishable from a fresh one — the exact silence the versioning
-  exists to end. What it exists to say, and what nothing else
+  next run, which would then sweep somebody else's files. WHETHER A LAPTOP'S
+  COPY IS CURRENT IS DECIDED BY A DIGEST OF ITS FILES, never by a number
+  somebody raises: `hammerola/skill.tree_digest`, which the hub imports for the
+  manifest's `skill_digest` (`onboarding.skill_digest`), so any change to any
+  file of the skill changes it. Hidden files are left out on both sides — the
+  hub refuses to serve one, and Finder drops `.DS_Store` into the installed
+  directory. `manifest()` reads every file of the skill for it, so an unreadable
+  one takes the whole `/start` document down to a 404; `ci/smoke.py` holds
+  `/start` out of `START_ROUTES` because the archive route opens the same
+  files, leans on check (g), which requires `/app/skill/SKILL.md` and one of
+  the references by name, and opens the archive it serves to find the entry
+  document in it. What the skill exists to say, and what nothing else
   says anywhere: `build` fills the draft slot and leaves the project off the
   front page, `commit` is what makes a version exist, and finished work is
   committed. The rest is the model contract (pointing at `model_template/` as the
@@ -367,21 +361,37 @@
   push — the path alphabet, a `checklib.py` of one's own, dependencies, and the
   fact that `model.py` is executed by the hub. It carries no address: the reader
   substitutes their own hub
-- `ui/` — the React sources for the browser UI, and one of the two places node
-  is used here (`viewer/` below is the other). Built twice, by two toolchains
-  that must not disagree: `make ui` for a workstation and the Dockerfile's `ui`
+- `ui/` — the React sources for the browser UI, and one of the three places node
+  is used here (`viewer/` and `ecad-viewer/` below are the others). Built
+  twice, by two toolchains that must not disagree: `make ui` for a workstation and the Dockerfile's `ui`
   stage for the image. Nothing under
   `src/` imports or executes anything in it, which is why `make run` and
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
+- `ui/src/address.js` — the page's address and the browser's history, the one
+  place history is written or followed: `parse` reads the address on screen whole
+  (the build or comparison of its path, `v=`, `d=`, `s=`, `c=`, `files=`, the
+  hash and the entry's state), `respell` and `fresh` make the address a write
+  names (the order v, d, s, c, files, `c=` unescaped, a parameter the write
+  does not name left where it stands) and `format` joins it into text,
+  `navigate` is the only caller of `pushState` and `replaceState`, and its own
+  listener the only one on `popstate`, handing the address to the components
+  that `subscribe`; `tests/test_ui_source.py` holds the rest of `ui/src` to
+  that, and `ui/tests/addressguard.js` holds a test to leaving no subscriber.
+  What an address names stays each page's choice: `HammerolaViewer`
+  (`screenParams`, `pushChoice`, `writeCamera`, `writeDoc`, `writeSheet`), the
+  Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
+  to another document (`docLinks` in `DocumentView.jsx`)
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
   `HammerolaViewer.jsx`. A header, the document, and the model page's bar
   (`toolBar` in `ui/src/viewlist.jsx`) floating at the bottom with the documents
-  in its list; `?d=<id>` picks the document, and a row rewrites it. It holds
-  which document is open, what the open view can do with Fit and Frame
-  (`docBar`, `onTools`) and whether the window is narrow
+  in its list; `?d=<id>` picks the document, and a row rewrites it, and the
+  sheet a schematic reports (`onSheet`) is written into the address here, both
+  through `address.js`. It holds which document is open, what the open view
+  can do with Fit and Frame (`docBar`, `onTools`) and whether the window is
+  narrow
 - `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
   views in it: `toolBar` (the views, then Measure, Comment, Add primitive, Fit,
   Frame, Settings, a tool that does not apply drawn out of service; with a
@@ -422,12 +432,15 @@
   page to open the sibling (`onOpen`) and, once it is on screen, calls
   `requestCrossProbe` on its element with the designator, the net, or the net's
   sheet and occurrence; another sheet of the schematic on screen is asked for
-  straight away. The viewer cannot be asked what is under a point, so a
-  right click replays its own left click there and builds the menu from the
-  selection it reports. The viewer is `static/_v/ecad-viewer.js`,
-  imported by URL on first use (`loadEcadViewer`); the wheel over it and the
-  look of a selected footprint are its own code, both edited by us
-  (`static/_v/PROVENANCE.md`, "Our edits")
+  straight away. A change of the schematic's sheet is told to the page as the
+  value of `s=` (`onSheet`), which writes it into the address; the component
+  reads the address and follows Back and Forward through `address.js` and
+  writes no history itself. What is under a right click is the element's own answer
+  (`selectAt`), and the menu is built from the selection it reports. The viewer
+  is `static/_v/ecad-viewer.js`, built from `ecad-viewer/` and imported by URL
+  on first use (`loadEcadViewer`); the wheel over it, the look of a selected
+  footprint, the pins of a symbol the file gives no pin records and that hit
+  test are its own code, edited by us (`static/_v/PROVENANCE.md`, "Our edits")
 - `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three
   and `GLTFLoader.js` imported by URL from `static/_v/` (three's own add-ons,
   `static/_v/PROVENANCE.md`) and the camera turned by the model's own trackball,
@@ -470,11 +483,8 @@
   its net (`/amp/OUT_C` for a local label on the sheet `amp`; hierarchical labels
   of one name share the one the board has), which `KicadView` asks the board for
   and gives a net's menu an item per other sheet with the same board name on
-- `ui/src/kicadpins.js` — a schematic's text with the `(pin "N" (uuid …))`
-  entries the viewer draws a placed symbol's pins from, added from the sheet's
-  `lib_symbols` to every symbol that has none (konnect writes none); text it
-  cannot read comes back as it was. `KicadView.designSources` runs every
-  schematic through it
+- `ui/src/sexpr.js` — the reader of KiCad's s-expressions that `kicadnets.js`
+  and `kicadsheets.js` read a design's texts with
 - `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
   this tree (MIT, issue #14; the tag and commit it sits on are recorded in
   `static/_v/PROVENANCE.md` and nowhere else, so an upgrade moves one file),
@@ -488,6 +498,20 @@
   a whole is in `.dockerignore` — the image serves the built files and has no
   use for a node toolchain. `static/_v/PROVENANCE.md` has the commit it was
   taken at, the two edits, and how to upgrade
+- `ecad-viewer/` — the KiCad viewer's own source: `krishna-swaroop/ecad-viewer`
+  forked into this tree (MIT; the commit it sits on is recorded in
+  `static/_v/PROVENANCE.md` and nowhere else), at the fork's own paths and cut
+  down to what builds the two files the hub serves, because what we need from it
+  are edits to its CODE — how a selection and a highlighted net look on the
+  board, the wheel, a symbol's pins without pin records, a hit test the page can
+  ask (`selectAt`). A fork kept as SOURCE is what makes those rebasable onto the
+  next commit; string replacements in the minified bundle would not be. `make
+  ecad` builds it with the fork's own script into `static/_v/`. The outputs are
+  committed and the inputs are not: `ecad-viewer/node_modules/` and
+  `ecad-viewer/packages/ecad-viewer-app/build/` are gitignored, and the directory
+  as a whole is in `.dockerignore`. `static/_v/PROVENANCE.md` has the commit it
+  was taken at, what was left out, the edits, the hashes that prove it builds
+  Prism's file byte for byte without them, and how to upgrade
 - `ci/Dockerfile.test` — the container the Python suite runs in, in both workflows.
   Not the artefact: the shipped image is the Dockerfile at the root, which installs
   requirements.lock with `--require-hashes` and no test dependency at all. This one

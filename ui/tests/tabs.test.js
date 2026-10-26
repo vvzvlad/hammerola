@@ -230,16 +230,12 @@ describe('what a tab links at', () => {
     expect(tabHrefs(c)).toEqual(['/project/alpha/', '/project/proj1/', '/project/beta/'])
   })
 
-  it('shows the stored title, and keeps a long one from widening the page', () => {
+  it('shows the stored title', () => {
     const c = component({
       tabs: [entry('alpha', 'Alpha', 900), entry('proj1', 'Fixture bracket', 1000)],
     })
     const v = c.computed()
     expect(v.tabs.map((t) => t.label)).toEqual(['Alpha', 'Fixture bracket'])
-    v.tabs.forEach((t) => {
-      expect(t.style).toContain('max-width')
-      expect(t.labelStyle).toContain('text-overflow:ellipsis')
-    })
   })
 
   it('breaks its line rather than losing its tail off the edge', () => {

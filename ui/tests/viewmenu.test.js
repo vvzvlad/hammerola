@@ -30,9 +30,8 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
-import { ELLIPSIS } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
-import { FILE_SIDE, FILE_SPACER, FLOAT_BAR, TAB_STRIP, viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
+import { viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -119,38 +118,13 @@ describe('how many views it takes to fold the strip into a menu', () => {
     expect(c.computed().viewLabel).toBe('')
   })
 
-  it('keeps a long name from widening the toolbar it sits in', () => {
-    // A view's name is the model's own sentence. The button is inside the same
-    // non-wrapping row the strip was, so an uncapped name reintroduces the
-    // failure the menu was written to remove.
-    expect(viewButtonStyle(false)).toContain('max-width')
-    expect(ELLIPSIS).toContain('text-overflow:ellipsis')
-    // and the caption inside it is the one that is cut
-    expect(drawnWith(component({ views: someViews(9) }), ELLIPSIS)).toHaveLength(1)
-  })
-
-  it('lets the views, and nothing else, give up width when the bar is short of room', () => {
-    // The bar never grows past its layer; the view button's wrapper, or the
-    // strip, takes the shrinking, and the one two-word label stays on one line,
-    // so the bar stays one line high instead of running off the window.
-    expect(css(FLOAT_BAR).maxWidth).toBe('calc(100% - 24px)')
-    // Beside the open document's buttons, the strip's two sides take equal
-    // shares of what the bar leaves; the left one never less than its buttons,
-    // the bar shrinking instead.
-    expect([css(FLOAT_BAR).minWidth, css(FILE_SIDE).flex, css(FILE_SPACER).flex]).toEqual(['0', '1 1 0', '1 1 0'])
-    expect(css(FILE_SIDE).minWidth).toBeUndefined()
-    // a side's share starts from its padding: the same sum on both, or the bar is off centre
-    const pad = (style) => css(style).padding.split(' ').map(parseFloat)
-    expect([pad(FILE_SIDE)[1] + pad(FILE_SIDE)[3], pad(FILE_SPACER)[1] + pad(FILE_SPACER)[3]]).toEqual([20, 20])
-    const shrinks = (style) => [css(style).minWidth, css(style).flexShrink]
-    expect(shrinks(TAB_STRIP)).toEqual(['0', '100'])
+  it('anchors the card to the view button', () => {
+    // The bar's `contain:layout` makes it a containing block for the card, so
+    // without a `position:relative` wrapper round the button the card would be
+    // measured from the bar's whole box and start at its left end (`viewList`).
     const menu = component({ views: someViews(9) }).render()
     const wrapper = collect(menu, (el) => (el.type === 'div' && el.props.style && el.props.style.flexShrink === '100' ? el : undefined))
-    expect(wrapper.map((el) => [el.props.style.minWidth, el.props.style.position])).toEqual([['0', 'relative']])
-    const strip = component({ views: someViews(2) })
-    strip.computed().viewTabs.forEach((t) => expect([css(t.style).minWidth, css(t.style).textOverflow]).toEqual(['0', 'ellipsis']))
-    const primitive = collect(menu, (el) => (el.type === 'div' && el.props.onClick && texts(el).join('') === 'Add primitive' ? el : undefined))
-    expect(primitive.map((el) => el.props.style.whiteSpace)).toEqual(['nowrap'])
+    expect(wrapper.map((el) => el.props.style.position)).toEqual(['relative'])
   })
 
   it('names the view whole in a pill\'s tooltip, since a short bar cuts its caption', () => {
@@ -284,7 +258,7 @@ describe('the menu itself', () => {
     // scrolls, beside the tools off the window's height.
     expect(card.maxHeight).toBe('308px')
     expect(card.overflow).toBe('auto')
-    expect(css(viewMenuStyle(true))).toMatchObject({ width: '360px', maxHeight: 'calc(100dvh - 240px)' })
+    expect(css(viewMenuStyle(true))).toMatchObject({ maxHeight: 'calc(100dvh - 240px)' })
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {

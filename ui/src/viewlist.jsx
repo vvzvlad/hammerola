@@ -31,7 +31,7 @@
 
 import React from 'react';
 
-import CopyLink from './copylink.jsx';
+import CopyLink, { WORDS_CLASS } from './copylink.jsx';
 import { docExt, docHint, docSize, FILE_TYPE } from './DocumentView.jsx';
 import { shortId } from './hub.js';
 import { viewOf } from './KicadView.jsx';
@@ -211,7 +211,7 @@ export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
 /** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). Where the
  *  bar is short of room it is the strip that shrinks, as the view button does
  *  (`viewList`), its pills' names cut by their ellipsis. */
-export const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shrink:100;background:var(--chip-bg);border-radius:6px';
+const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shrink:100;background:var(--chip-bg);border-radius:6px';
 
 // The open document's file, on the strip to the left of the bar.
 //
@@ -222,12 +222,33 @@ export const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shri
 // and shrinks, so the two never overlap.
 // Its padding: from the strip's left edge, and from the bar.
 const FILE_SIDE_PAD = [12, 8];
-export const FILE_SIDE = `flex:1 1 0;display:flex;align-items:center;padding:0 ${FILE_SIDE_PAD[1]}px 0 ${FILE_SIDE_PAD[0]}px`;
+const FILE_SIDE = `flex:1 1 0;display:flex;flex-direction:column;justify-content:center;padding:0 ${FILE_SIDE_PAD[1]}px 0 ${FILE_SIDE_PAD[0]}px`;
 // The same padding, mirrored: a side's share of the strip starts from its
 // padding, so unequal padding would set the bar off centre by half the difference.
 export const FILE_SPACER = `flex:1 1 0;padding:0 ${FILE_SIDE_PAD[0]}px 0 ${FILE_SIDE_PAD[1]}px`;
-// One line, so that the width `DocFile` measures is the words' whole width.
+// One line, so that a row's width is the whole width of its words.
 const FILE_ROW = 'display:flex;align-items:center;gap:8px;white-space:nowrap';
+// Words or icons is decided by CSS alone (`DocFile`), from two copies of the
+// row nobody sees: no clicks, no focus, nothing read out.
+//   `FILE_FLOOR`, the row in icons and no height, stacked over the rest: what
+//   the side cannot get narrower than, since a flex item's least width is its
+//   content's.
+//   `FILE_FIT`, the side's width in two columns: the words' width while there
+//   is room for it (`FILE_RULER`, the row in words), and the room left beside
+//   them (`FILE_ROOM`). The room's column gives up its width first; once it
+//   is at nothing, the ruler's column shrinks, and it counts for nothing in
+//   the side's least width (`minmax(0, max-content)`).
+// The buttons themselves stand in the room and run over the ruler's column.
+// The room is a container: wider than nothing, the words fit and the buttons
+// spell them (`FILE_CSS`); at nothing they are icons, which the floor keeps room for.
+const UNSEEN = 'visibility:hidden;overflow:hidden';
+const FILE_FLOOR = `height:0;${UNSEEN}`;
+const FILE_FIT = 'display:grid;grid-template-columns:minmax(0,1fr) minmax(0,max-content);align-items:center';
+const FILE_ROOM = 'grid-area:1/1;min-width:0;container:hmr-file/inline-size';
+const FILE_RULER = `grid-area:1/2;${UNSEEN}`;
+const SPELT_CLASS = 'hmr-spelt';
+const FILE_CSS = `.${WORDS_CLASS}{display:none}.${SPELT_CLASS} .${WORDS_CLASS}{display:inline}`
+  + `@container hmr-file (width > 0px){.${WORDS_CLASS}{display:inline}}`;
 // Buttons as the Share dialog's are (HammerolaViewer.jsx): Download filled with
 // the accent like its Copy, Copy link edged on the card like its Close. The
 // strip under them takes no clicks (`BAR_LAYER`), so each takes its own.
@@ -236,62 +257,35 @@ export const FILE_DOWNLOAD = `${FILE_BTN}${ON_ACCENT_EDGE}`;
 export const FILE_COPY = `${FILE_BTN}border:1px solid var(--line);background:var(--card-bg);color:var(--text)`;
 const DOWNLOAD_ICON = <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>;
 
+/** The row: Download and Copy link for `href`, their words in `WORDS_CLASS`.
+ *  Copy link is a sibling of the link, never inside it (copylink.jsx). */
+const fileRow = (href) => (
+  <div style={css(FILE_ROW)}>
+    <a href={href} download title="Download" style={css(FILE_DOWNLOAD)}>
+      {DOWNLOAD_ICON}
+      <span className={WORDS_CLASS}>Download</span>
+    </a>
+    <CopyLink href={href} bar style={FILE_COPY} />
+  </div>
+);
+
 /**
  * Download and Copy link for `href`, the open document's file, in words while
  * the words fit between the strip's left edge and the centred bar, as icons
- * with the words in their titles when they do not. Mounted as the bar's
- * previous sibling in its layer (`toolBar`): it watches the layer and the bar
- * and measures the words while they are shown. Copy link is a sibling of the
- * link, never inside it (copylink.jsx).
+ * with the words in their titles when they do not (`FILE_FIT`). Mounted as the
+ * bar's previous sibling in its layer (`toolBar`). Pure.
  */
-export class DocFile extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { icons: false };
-    this.side = React.createRef();
-    this.row = React.createRef();
-  }
-
-  componentDidMount() {
-    const side = this.side.current;
-    this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.fit()) : null;
-    if (this.observer) {
-      this.observer.observe(side.parentElement);
-      this.observer.observe(side.nextElementSibling);
-    }
-    this.fit();
-  }
-
-  componentWillUnmount() {
-    if (this.observer) this.observer.disconnect();
-  }
-
-  /** Words where they fit beside the bar centred in the layer, icons where not.
-   *  The words' width is taken while they are on screen and kept for the
-   *  icons' turn: the labels never change. */
-  fit() {
-    const side = this.side.current;
-    if (!this.state.icons) this.wordsWidth = this.row.current.offsetWidth;
-    const room = (side.parentElement.clientWidth - side.nextElementSibling.offsetWidth) / 2;
-    const icons = room < this.wordsWidth + FILE_SIDE_PAD[0] + FILE_SIDE_PAD[1];
-    if (icons !== this.state.icons) this.setState({ icons });
-  }
-
-  render() {
-    const { href } = this.props;
-    const { icons } = this.state;
-    return (
-      <div ref={this.side} style={css(FILE_SIDE)}>
-        <div ref={this.row} style={css(FILE_ROW)}>
-          <a href={href} download title="Download" style={css(FILE_DOWNLOAD)}>
-            {DOWNLOAD_ICON}
-            {!icons && 'Download'}
-          </a>
-          <CopyLink href={href} bar words={!icons} style={FILE_COPY} />
-        </div>
+export function DocFile({ href }) {
+  return (
+    <div style={css(FILE_SIDE)}>
+      <style>{FILE_CSS}</style>
+      <div style={css(FILE_FLOOR)}>{fileRow(href)}</div>
+      <div style={css(FILE_FIT)}>
+        <div style={css(FILE_ROOM)}>{fileRow(href)}</div>
+        <div className={SPELT_CLASS} style={css(FILE_RULER)}>{fileRow(href)}</div>
       </div>
-    );
-  }
+    </div>
+  );
 }
 
 /**

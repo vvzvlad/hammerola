@@ -493,8 +493,8 @@ export function proposalView(s, deps) {
       proposalEyeClick: stop(() => toggleProposalEye()),
       // The row's three columns, spent by the head too: an eye, then an empty
       // ghost slot and an empty colour slot that keep their width, so the master
-      // tick sits over the row ticks. The slots come from the rows' constants; a
-      // test measures each head column against the row's.
+      // tick sits over the row ticks. The slots come from the rows' constants,
+      // so a column that changes in a row changes in the head with it.
       proposalMarksStyle: 'display:flex;align-items:center;flex:none',
       proposalGhostStyle: `${SLOT_22};visibility:hidden`,
       proposalDotStyle: `${SWATCH}transparent`,

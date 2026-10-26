@@ -75,13 +75,17 @@ import {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
   PLACE, PIN, MODEL, ERROR, TOOL, CAMERA, VIEWPORT_TAG,
 } from './events.js';
+// The page's address and its history, every read of them and every write.
 import {
-  PAGE, ASSEMBLED_VIEW_ID, CAMERA_QUERY, COMPARE_GROUPS, HUB_UNREACHABLE,
+  fresh, navigate, parse, respell, subscribe, unsubscribe, viewParam,
+} from './address.js';
+import {
+  PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, HUB_UNREACHABLE,
   JOB_DONE, JOB_FAILED, anchorFor, askHub, compareBase, decodeCamera,
   encodeCamera, isPointerPage, buildKey,
   countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
-  loadJob, loadMeta, loadBuilds, pageFrom, placementIn, rereadPage, rowsByKey,
-  shortId, startCompare, mb,
+  loadJob, loadMeta, loadBuilds, pageFrom, rereadPage, rowsByKey, shortId,
+  startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` come from here, not the viewport: the theme is the
 // whole interface's palette, per-reader state like the token, the notes and the
@@ -123,8 +127,7 @@ import { chromeView } from './chromeview.js';
 // the view list; drawn as the documents page draws it.
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
-import DocumentView, { DOC_QUERY, docExt, FILE_TYPE } from './DocumentView.jsx';
-import { SHEET_QUERY } from './KicadView.jsx';
+import DocumentView, { docExt, FILE_TYPE } from './DocumentView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -982,16 +985,14 @@ export default class HammerolaViewer extends React.Component {
     // only (`filesKeyFor`). Read once and never written — the address of a
     // reader without the token does not move, and the owner's keys come with
     // builds.json instead.
-    this._linkKey = {
-      slot: PAGE.slot,
-      key: new URLSearchParams(location.search).get('files') || '',
-    };
+    const opened = parse();
+    this._linkKey = { slot: PAGE.slot, key: opened.files || '' };
     // The camera frame the ADDRESS carried when the page loaded (`?c=`), or
     // null. Read here, before anything rewrites the address, and spent by the
     // first model event (`onModel`); on a comparison link by the comparison
     // scene's, or put on the own view when the comparison ends without one
     // (`sceneNeverCame`).
-    this._linkCamera = decodeCamera(new URLSearchParams(location.search).get(CAMERA_QUERY));
+    this._linkCamera = decodeCamera(opened.camera);
     // The rest of this page's instance fields, declared in one place because
     // `componentWillUnmount` must know every one: it removes the listeners and
     // clears the timers, and a field it misses is a leaked listener or a timer
@@ -1001,10 +1002,10 @@ export default class HammerolaViewer extends React.Component {
     // `clearTimeout(undefined)` is a no-op, `this._h || {}` sweeps nothing,
     // `(this._swapGen || 0) + 1` starts at one.
     //
-    // -- the listeners `componentDidMount` puts on the window
+    // -- the listeners `componentDidMount` puts on the window and the address
     this._h = undefined;            // the viewport's events, name -> handler
     this._kd = undefined;           // keydown: Escape, the undo chord, the hold key
-    this._pop = undefined;          // popstate, for a build swapped in place
+    this._pop = undefined;          // Back and Forward (`subscribe`), for a build swapped in place
     this._mq = undefined;           // the breakpoint's media query list, or null
     this._narrow = undefined;       // and the listener on it
     // -- true once this component has gone, for anything that may wake up after
@@ -1028,8 +1029,6 @@ export default class HammerolaViewer extends React.Component {
     this._proposalSent = undefined; // the payload last written, so a save can be skipped
     // -- the download chain in flight, which `cancelDownloads` aborts
     this._dl = undefined;
-    // -- other views of the build on screen, read for the comments left there
-    this._viewDocs = undefined;
     // -- true once `sync` no longer holds the model back for a document, and
     // whether the last `sync` did
     this._modelFree = undefined;
@@ -1384,12 +1383,18 @@ export default class HammerolaViewer extends React.Component {
         // is what the reader can find in the tree. They stay distinct by the
         // pin on the model and by the posted `partId`, the copy's own path.
         const row = this.node(d.id);
+        // The point and the face normal at it, turned towards the reader (the
+        // direction the comment's arrow stands out along), in the frame of the
+        // solid clicked, as the comment stores them: taken out of the world now,
+        // through that solid's placement at the click.
+        const el = this.el();
+        const local = el && d.id && d.p && typeof el.toPart === 'function'
+          ? el.toPart(d.id, d.p, d.n || null) : null;
         this.openComposer({
           part: (row && row.name) || d.name || 'model',
-          partId: d.id || null, key: (row && row.key) || null, p: d.p || null,
-          // The face normal at that point, turned towards the reader: the
-          // direction the comment's arrow stands out along.
-          n: d.n || null,
+          partId: d.id || null, key: (row && row.key) || null,
+          p: local ? local.p : null,
+          n: local ? local.n : null,
           text: '', photo: null,
           meas: this.state.measure ? this.state.measure.full : null,
         });
@@ -1466,16 +1471,13 @@ export default class HammerolaViewer extends React.Component {
     window.addEventListener('keydown', this._kd);
 
     // Back and forward through the revisions this page pushed. A switch is a
-    // `pushState` (see `switchBuild`), so without this listener Back would
-    // change the address bar and leave the previous revision on screen.
+    // push (see `switchBuild`), so without this listener Back would change the
+    // address bar and leave the previous revision on screen.
     //
-    // The entry is read off `location`, never `event.state`: the entry may be
-    // the server-rendered one, which carries no state of ours.
-    //
-    // Parsed by `pageFrom`, the page's own address arithmetic, because an entry
-    // can name a comparison pair as well as a slot.
-    this._pop = () => {
-      const at = pageFrom(location.pathname);
+    // The entry is read off its address (`parse`), never its state: the entry
+    // may be the server-rendered one, which carries no state of ours. The
+    // address can name a comparison pair as well as a slot.
+    this._pop = (at) => {
       // "Is this the build we are already on" is not asked here: `PAGE.slot`
       // still names the build being left during a swap. `switchBuild` answers
       // it, against where the page is going.
@@ -1488,7 +1490,7 @@ export default class HammerolaViewer extends React.Component {
         .then(() => this.syncCompare(at))
         .catch((error) => console.error('switch', error));
     };
-    window.addEventListener('popstate', this._pop);
+    subscribe(this._pop);
 
     // The window can cross the breakpoint while the page is open; turning a
     // phone sideways is a resize. The constructor's read is only the first
@@ -1534,7 +1536,7 @@ export default class HammerolaViewer extends React.Component {
   componentWillUnmount() {
     Object.keys(this._h || {}).forEach((k) => window.removeEventListener(k, this._h[k]));
     window.removeEventListener('keydown', this._kd);
-    window.removeEventListener('popstate', this._pop);
+    unsubscribe(this._pop);
     if (this._mq) this._mq.removeEventListener('change', this._narrow);
     clearTimeout(this._tt);
     clearTimeout(this._poll);
@@ -1587,13 +1589,11 @@ export default class HammerolaViewer extends React.Component {
       console.warn('builds', error);
       return null;
     });
-    const query = new URLSearchParams(location.search);
-    const wanted = query.get('v');
+    const { view: wanted, doc } = parse();
     const opening = meta.views.find((v) => v.id === wanted) || meta.views[0];
     // `?d=` opens one of the build's documents over the model, as `?v=` opens a
     // view; the model loads underneath either way. An id the build does not
     // list is ignored (`docOpen` in chromeview.js looks it up).
-    const doc = query.get(DOC_QUERY);
     // The arrival on the tab strip, recorded here rather than in
     // `componentDidMount` because this is the first moment a human-readable
     // project name exists; before `meta` lands there is only `PAGE.pid`.
@@ -1614,9 +1614,9 @@ export default class HammerolaViewer extends React.Component {
                     // which the line above sets.
                     //
                     // On the view the address names: `opening` comes from `?v=`, which
-                    // `moveAddress` writes via `viewQuery` (the one helper every address on
-                    // this page uses). A comparison started on a non-default tab is sent as
-                    // `…/compare/<b>/?v=<tab>`; on the first view `viewQuery` drops the query.
+                    // `moveAddress` writes as every address on this page is written
+                    // (`viewParam` in address.js). A comparison started on a non-default tab
+                    // is sent as `…/compare/<b>/?v=<tab>`; the first view has no `v=`.
                     //
                     // A tab pressed later writes its own `v=` as on a build page: a step of
                     // history on the comparison's path (`pushChoice`), not a navigation.
@@ -1748,9 +1748,9 @@ export default class HammerolaViewer extends React.Component {
         // answers that.
         const staying = this.addressOf(
           this.state.compare ? this.state.cmpPair : null);
-        if (location.pathname !== staying) {
-          history.replaceState({ hmr: slot }, '', staying
-            + this.screenQuery(this.state.view, views, this.shownDoc()));
+        if (parse().path !== staying) {
+          navigate(fresh(staying, this.screenParams(this.state.view, views, this.shownDoc()),
+            { hmr: slot }));
           // The repaired address may be a comparison's, so `PAGE.cmp` has to
           // follow it; on a plain build URL this re-derives what was there.
           rereadPage(staying);
@@ -1873,7 +1873,7 @@ export default class HammerolaViewer extends React.Component {
     // AND THE ADDRESS SAYS SO, by the same reading the cancelling branch above
     // writes its address with, the document included where it stayed.
     if (push) {
-      history.pushState({ hmr: slot }, '', path + this.screenQuery(view, views, gone.state.doc));
+      navigate(fresh(path, this.screenParams(view, views, gone.state.doc), { hmr: slot }), { push: true });
     }
     // In place, so every module that imported `PAGE` sees the new revision —
     // `loadMeta`, `loadBuilds`, `isPointerPage`, `sync`'s `base`, the comment
@@ -1884,7 +1884,7 @@ export default class HammerolaViewer extends React.Component {
     // an entry this page wrote, which may be a comparison of the build being
     // opened, and re-deriving from `path` would leave `PAGE.cmp` empty under an
     // address naming a pair.
-    rereadPage(push ? path : undefined);
+    rereadPage(push ? path : parse().path);
 
     // Two things in flight were started against the old `PAGE.base` and cannot
     // notice the move, so the swap stops them here, once the move is certain.
@@ -2937,8 +2937,7 @@ export default class HammerolaViewer extends React.Component {
   standOnPointer(slot) {
     const to = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
     const views = (this.state.meta && this.state.meta.views) || [];
-    history.replaceState({ hmr: slot }, '', to
-      + this.screenQuery(this.state.view, views, this.shownDoc()));
+    navigate(fresh(to, this.screenParams(this.state.view, views, this.shownDoc()), { hmr: slot }));
     // IN PLACE, so `PAGE.slot` says what the bar says — which is what the watch
     // below, the chip and every relative fetch on this page are read off.
     rereadPage(to);
@@ -2989,8 +2988,8 @@ export default class HammerolaViewer extends React.Component {
    * `popstate` all arrive with the address already right, and a push for them
    * would be a Back to nowhere.
    *
-   * The view query is `viewQuery`, so a comparison of the default view has
-   * nothing after the path.
+   * The first view has no `v=` (`viewParam`), so a comparison of the default
+   * view has nothing after the path.
    *
    * The entry is read off the address being written, not `PAGE`: on a pointer
    * page the bar is about to say the commit while `PAGE` still says `latest`.
@@ -2998,12 +2997,10 @@ export default class HammerolaViewer extends React.Component {
    */
   moveAddress(pair) {
     const to = this.addressOf(pair);
-    if (location.pathname === to) return;
+    if (parse().path === to) return;
     const views = (this.state.meta && this.state.meta.views) || [];
-    const address = to + this.screenQuery(this.state.view, views, this.shownDoc());
-    const entry = { hmr: pageFrom(to).slot };
-    if (to === this.addressOf(null)) history.replaceState(entry, '', address);
-    else history.pushState(entry, '', address);
+    navigate(fresh(to, this.screenParams(this.state.view, views, this.shownDoc()), { hmr: pageFrom(to).slot }),
+      { push: to !== this.addressOf(null) });
     // IN PLACE, so `PAGE.cmp` says exactly what the bar says — the same reason
     // every other address move on this page ends with this line.
     rereadPage(to);
@@ -3031,7 +3028,7 @@ export default class HammerolaViewer extends React.Component {
     // having done nothing and both doors below find the address already
     // correct. `PAGE.cmp` is what says this page is a comparison, and it would
     // be the one field left describing the entry before this one.
-    rereadPage(location.pathname);
+    rereadPage(parse().path);
     const s = this.state;
     const pair = s.compare && Array.isArray(s.cmpPair) ? s.cmpPair : null;
     if (!at.cmp) {
@@ -3176,8 +3173,7 @@ export default class HammerolaViewer extends React.Component {
     const s = this.state;
     const meta = s.meta;
     // Where the queue hangs on the build on screen. `anchorFor` uses the stored
-    // coordinate only on the build it was taken on — as it stands in this view,
-    // or carried here from the view it was left in; on others it follows the
+    // coordinate only on the build it was taken on; on others it follows the
     // catalogue key to the row drawing the part, and `partPoint` asks the
     // viewport where that row is now. The other three answers (in the catalogue
     // but not this view, key names nothing, record predates the field) draw no
@@ -3190,12 +3186,8 @@ export default class HammerolaViewer extends React.Component {
       nodes: s.tree ? s.tree.nodes : null,
       parts: (meta && meta.parts) || {},
     };
-    const pair = this.comparePair();
-    // Another build's view documents go with it (`viewPlacement`).
-    if (this._viewDocs && this._viewDocs.published !== at.published) {
-      this._viewDocs = undefined;
-    }
     const pins = [];
+    const comparing = !!this.comparePair();
     s.feed.forEach((record) => {
       // A processed comment stays in the rail and draws no pin: the model shows
       // only what is still waiting.
@@ -3207,30 +3199,35 @@ export default class HammerolaViewer extends React.Component {
       // face that was clicked. Everywhere else `n` is null and the viewport
       // stands the arrow from above.
       let n = null;
-      if (anchor.state === 'point') {
+      const normal = finite3(record.normal) ? record.normal : null;
+      if (anchor.state === 'point' && !anchor.path) {
         p = anchor.point;
-        if (finite3(record.normal)) n = record.normal;
+        n = normal;
       }
-      // Carried through where the record's view placed the part, once that
-      // view's document is here (`viewPlacement`); until then, and wherever it
-      // cannot be, the top of the part. Not in a comparison, whose scene is
-      // neither view.
-      if (anchor.state === 'carried' && !pair && el
-          && typeof el.carryPoint === 'function') {
-        const from = this.viewPlacement(record.view, record.part);
-        const carried = from && el.carryPoint(anchor.path, from, anchor.point,
-                                              finite3(record.normal) ? record.normal : null);
-        if (carried) ({ p, n } = carried);
+      // A point in the frame of the part it was left on, put in the world
+      // through the instance this view draws (`fromPart`). Not in a comparison:
+      // its scene draws two revisions, and the key's first instance there is
+      // revision A's, which need not be the build the point was taken on — so
+      // the arrow stands on top of the part, as on any other build.
+      if (anchor.state === 'point' && anchor.path && el) {
+        if (comparing && typeof el.partPoint === 'function') {
+          p = el.partPoint(anchor.path);
+        } else if (!comparing && typeof el.fromPart === 'function') {
+          const placed = el.fromPart(anchor.path, anchor.point, normal);
+          if (placed) ({ p, n } = placed);
+        }
       }
-      if ((anchor.state === 'part' || (anchor.state === 'carried' && !p))
-          && el && typeof el.partPoint === 'function') {
+      if (anchor.state === 'part' && el && typeof el.partPoint === 'function') {
         p = el.partPoint(anchor.path);
       }
       if (p) pins.push({ id: record.id, p, n, active: s.activePin === record.id });
     });
-    if (s.composer && s.composer.p) {
-      pins.push({ id: 'draft', p: s.composer.p, n: s.composer.n || null,
-                  active: true });
+    // The draft's point is in the frame of the solid it was placed on, as the
+    // comment will store it (the `PLACE` handler), and stands where a posted
+    // one would.
+    if (s.composer && s.composer.p && el && typeof el.fromPart === 'function') {
+      const draft = el.fromPart(s.composer.partId, s.composer.p, s.composer.n || null);
+      if (draft) pins.push({ id: 'draft', p: draft.p, n: draft.n, active: true });
     }
     // Which document the viewport is pointed at — all that comparing changes
     // here. A comparison is an ordinary view document at its own address
@@ -3242,7 +3239,7 @@ export default class HammerolaViewer extends React.Component {
     // reader's hidden list rather than merging with it, since those ids name
     // solids of the build's tree, not this one; the reader's list returns when
     // the panel closes, because nothing here writes `s.hidden`.
-    //
+    const pair = this.comparePair();
     // ONE ENTRY, AND `view` IS ITS OWN ID rather than a second spelling of it:
     // the element picks the entry it fetches by matching the two, and a view tab
     // has to move BOTH — the id is what makes the load a reload with a fresh fit
@@ -3308,47 +3305,6 @@ export default class HammerolaViewer extends React.Component {
         ...(extra || {}),
       },
     }));
-  }
-
-  /**
-   * Where `path` stands in another view of the build on screen
-   * (`hub.placementIn`), or null: while that view's document is on the wire,
-   * when it could not be read, or when it does not draw the path.
-   *
-   * Kept per view for the build on screen only, by `published`, which names the
-   * geometry: the same view is fetched once whichever address serves the build
-   * (`dev` or its hash), and `sync` drops the documents of any other. The first
-   * ask starts the one fetch and its landing draws the page again, unless the
-   * build has changed meanwhile. A failure stays remembered as nothing, so the
-   * pin keeps the top of the part's box and the next frame does not ask again.
-   *
-   * No token header: a build's view files are public, and the viewport fetches
-   * this build's own views without one (`token: null` in `sync`, which `load`
-   * in viewport/element.js turns into no header).
-   */
-  viewPlacement(view, path) {
-    const meta = this.state.meta;
-    const published = (meta && meta.published) || null;
-    const entry = ((meta && meta.views) || []).find((v) => v && v.id === view);
-    if (!published || !entry || !entry.file) return null;
-    const cache = this._viewDocs
-      || (this._viewDocs = { published, docs: new Map() });
-    if (!cache.docs.has(view)) {
-      cache.docs.set(view, null);
-      fetch(PAGE.base + entry.file)
-        .then((response) => {
-          if (!response.ok) throw new Error(`${entry.file} -> HTTP ${response.status}`);
-          return response.json();
-        })
-        .then((doc) => {
-          if (this._gone || this._viewDocs !== cache) return;
-          cache.docs.set(view, doc);
-          this.sync();
-        })
-        .catch((error) => console.warn('view document', error));
-    }
-    const doc = cache.docs.get(view);
-    return doc ? placementIn(doc, path) : null;
   }
 
   set(patch, extra) { this.setState(patch, () => this.sync(extra)); }
@@ -4514,10 +4470,10 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ sending: true });
     try {
       // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
-      // `part`, `key`, `published`, `point`, `normal` and `camera` and DROPS
-      // everything else without saying so — so the measurement rides in the text,
-      // where the agent will actually read it, rather than in a field discarded on
-      // the way in.
+      // `part`, `key`, `published`, `point`, `normal`, `frame` and `camera` and
+      // DROPS everything else without saying so — so the measurement rides in the
+      // text, where the agent will actually read it, rather than in a field
+      // discarded on the way in.
       const extra = [];
       if (c.meas) extra.push(`measured: ${c.meas}`);
       // Where the hub holds a proposal, a pointer to it. The document is not
@@ -4548,6 +4504,9 @@ export default class HammerolaViewer extends React.Component {
         point: c.p || null,
         // Which way the comment's arrow stands out of the face at that point.
         normal: c.n || null,
+        // Both in the frame of the solid `part` names (the `PLACE` handler), so
+        // they are a place on it in every view of this build.
+        frame: 'part',
         camera: this.frameCamera(),
       }));
       // The two attachments, and the only place either is shrunk (shrink.js):
@@ -4852,7 +4811,7 @@ export default class HammerolaViewer extends React.Component {
   /**
    * The view a history entry is asking for among `views`: its own `?v=`,
    * resolved as `load()` resolves it — absent, or naming a view the build does
-   * not have, it is the first. `viewQuery` drops `v=` for the first view, so an
+   * not have, it is the first. The first view has no `v=` (`viewParam`), so an
    * entry without one is asking for that view. With no views to resolve
    * against (no meta yet), the view showing.
    *
@@ -4861,7 +4820,7 @@ export default class HammerolaViewer extends React.Component {
    * choice the entry already names.
    */
   entryView(views) {
-    const wanted = new URLSearchParams(location.search).get('v');
+    const wanted = parse().view;
     const named = views.find((v) => v.id === wanted) || views[0];
     return named ? named.id : this.state.view;
   }
@@ -4871,7 +4830,7 @@ export default class HammerolaViewer extends React.Component {
    * fallback, unlike `entryView`: an address without `d=` shows the model.
    */
   entryDoc() {
-    return new URLSearchParams(location.search).get(DOC_QUERY);
+    return parse().doc;
   }
 
   /**
@@ -4904,53 +4863,38 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * The query an address needs so that opening it lands on `view`.
-   *
-   * `load()` reads `?v=` on a fresh open, so an address this page writes must
-   * carry it wherever the view differs from the one the address would open
-   * on, or a copied link would show a different view. Dropped for the build's
-   * first view, which the path already implies.
-   *
-   * Read through `screenQuery` by every address this page writes whole, by
-   * `writeCamera`, and by the Share window's link.
-   */
-  viewQuery(view, views) {
-    const first = views[0] && views[0].id;
-    return view === first ? '' : `?v=${encodeURIComponent(view)}`;
-  }
-
-  /**
-   * `query` with the frame on screen added as `c=`, so the address opens on
-   * the angle the reader is looking from. Unchanged while there is no frame to
-   * read. Wrapped round `viewQuery` by `screenQuery` with no document open, and
+   * The frame on screen as `c=` says it, so an address opens on the angle the
+   * reader is looking from; null while there is no frame to read. Read by
+   * `screenParams` with no document open, by `writeCamera` and `writeDoc`, and
    * by the Share window's link with its Current view box ticked.
    */
-  cameraQuery(query) {
-    const frame = encodeCamera(this.frameCamera());
-    return frame ? `${query}${query ? '&' : '?'}${CAMERA_QUERY}=${frame}` : query;
+  cameraParam() {
+    return encodeCamera(this.frameCamera());
   }
 
   /**
-   * The query an address needs so that opening it lands on what the menu of
-   * views has chosen: `viewQuery` for `view`, then `d=` naming document `doc`,
-   * or with no document the frame on screen (`cameraQuery`). Never both: the
-   * frame describes the model, which a document covers. The document the
-   * address already names keeps the schematic's sheet it names (`s=`,
-   * `SHEET_QUERY` in KicadView.jsx), which is the one on screen; another
-   * revision without that sheet opens on the root one, as a fresh load with
-   * an unknown `?s=` does.
+   * What an address names so that opening it lands on what the menu of views
+   * has chosen, as fields of address.js: `view` (none for the first,
+   * `viewParam`), then document `doc`, or with no document the frame on screen
+   * (`cameraParam`). Never both: the frame describes the model, which a
+   * document covers. The document the address already names keeps the
+   * schematic's sheet it names (`s=`), which is the one on screen; another
+   * revision without that sheet opens on the root one, as a fresh load with an
+   * unknown `?s=` does.
    *
-   * Every address this page writes whole is spelled here: the push that lands
-   * a swap, the replace that calls one off, the moves onto and off a
-   * comparison, and a choice in the menu of views (`pushChoice`, which leaves
-   * another view's frame to `onModel`).
+   * Every address this page writes whole names these: the push that lands a
+   * swap, the replace that calls one off, the moves onto and off a comparison,
+   * and a choice in the menu of views (`pushChoice`, which leaves another
+   * view's frame to `onModel`).
    */
-  screenQuery(view, views, doc) {
-    const query = this.viewQuery(view, views);
-    const sheet = doc && doc === this.entryDoc() && new URLSearchParams(location.search).get(SHEET_QUERY);
-    return doc ? `${query}${query ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(doc)}`
-      + (sheet ? `&${SHEET_QUERY}=${encodeURIComponent(sheet)}` : '')
-      : this.cameraQuery(query);
+  screenParams(view, views, doc) {
+    const at = parse();
+    return {
+      view: viewParam(view, views),
+      doc,
+      sheet: doc && doc === at.doc ? at.sheet : null,
+      camera: doc ? null : this.cameraParam(),
+    };
   }
 
   /**
@@ -4977,50 +4921,45 @@ export default class HammerolaViewer extends React.Component {
 
   /**
    * Rewrite `c=` in the address bar with the frame on screen, keeping the path
-   * and every other parameter as written. Given a `view`, `v=` is rewritten
-   * too, as `viewQuery` spells it (none for the first view); without one it
-   * stays as it stands. Nothing is written while a document is open
-   * (`shownDoc`): the frame describes the model, which the document covers
-   * (`screenQuery`).
+   * and every other parameter as written (`respell`). Given a `view`, `v=` is
+   * rewritten too, in front (none for the first view); without one it stays
+   * as it stands. Nothing is written while a document is open (`shownDoc`):
+   * the frame describes the model, which the document covers
+   * (`screenParams`).
    *
    * A replace, never a push: moving the camera is not somewhere the reader
-   * went, and Back must not walk through every angle. The commas stay
-   * unescaped, which `URLSearchParams` would not leave them.
+   * went, and Back must not walk through every angle.
    */
   writeCamera(view) {
     if (this.shownDoc()) return;
-    const frame = encodeCamera(this.frameCamera());
+    const frame = this.cameraParam();
     if (!frame) return;
-    const key = (pair) => pair.split('=')[0];
-    let kept = location.search.slice(1).split('&')
-      .filter((pair) => pair && key(pair) !== CAMERA_QUERY);
-    if (view !== undefined) {
-      const views = (this.state.meta && this.state.meta.views) || [];
-      const named = this.viewQuery(view, views).slice(1);
-      kept = [...(named ? [named] : []), ...kept.filter((pair) => key(pair) !== 'v')];
-    }
-    history.replaceState(history.state, '', `${location.pathname}?`
-      + `${[...kept, `${CAMERA_QUERY}=${frame}`].join('&')}${location.hash}`);
+    const views = (this.state.meta && this.state.meta.views) || [];
+    const fields = view === undefined ? { camera: frame } : { view: viewParam(view, views), camera: frame };
+    navigate(respell(parse(), fields, view !== undefined));
   }
 
   /**
    * Rewrite `d=` in the address bar: the document now laid over the model, or
    * none, so a copied address opens on what is on screen. `c=` and the
    * schematic's sheet (`s=`) go with it, and with no document `c=` comes back
-   * as the frame on screen, as `screenQuery` spells an address. A replace
+   * as the frame on screen, as `screenParams` names an address. A replace
    * like `writeCamera`, every other parameter kept as written: for the
    * document the banner's build does not list (`takePending`), whose address
    * does not move.
    */
   writeDoc(id) {
-    const key = (pair) => pair.split('=')[0];
-    const kept = location.search.slice(1).split('&')
-      .filter((pair) => pair && ![DOC_QUERY, CAMERA_QUERY, SHEET_QUERY].includes(key(pair)));
-    const frame = id ? null : encodeCamera(this.frameCamera());
-    if (id) kept.push(`${DOC_QUERY}=${encodeURIComponent(id)}`);
-    else if (frame) kept.push(`${CAMERA_QUERY}=${frame}`);
-    history.replaceState(history.state, '', location.pathname
-      + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
+    navigate(respell(parse(), { doc: id, sheet: null, camera: id ? null : this.cameraParam() }));
+  }
+
+  /**
+   * The schematic's sheet on screen as KicadView reports it (`onSheet`):
+   * `sheet` the value of `s=`, '' for the root sheet, which has none. A step of
+   * history for the reader's own change of sheet (`push`), the entry on screen
+   * rewritten for one the page made; the path and every other parameter stay.
+   */
+  writeSheet(sheet, push) {
+    navigate(respell(parse(), { sheet }), { push });
   }
 
   /**
@@ -5030,25 +4969,23 @@ export default class HammerolaViewer extends React.Component {
    * entry already names: the row already shown.
    *
    * The path and every other parameter stay as written (`files=` among them);
-   * `v=`, `d=` and `c=` are spelled anew by `screenQuery`, which keeps the
-   * schematic's sheet (`s=`, `SHEET_QUERY` in KicadView.jsx) only for the
-   * document already named: a design chosen after another document opens on
-   * its root sheet, while its schematic chosen after its own board, the
-   * element kept, writes back the sheet it is on. Another view gets no `c=`: the frame on screen is the view being
-   * left's, and `onModel` writes the new one's once it is drawn. The entry
-   * keeps the state object of the one it follows, the build not having moved.
+   * `v=`, `d=`, `s=` and `c=` are written anew (`respell`) as `screenParams`
+   * names them, which keeps the schematic's sheet only for the document
+   * already named: a design chosen after another document opens on its root
+   * sheet, while its schematic chosen after its own board, the element kept,
+   * writes back the sheet it is on (`writeSheet`). Another view gets no `c=`:
+   * the frame on screen is the view being left's, and `onModel` writes the new
+   * one's once it is drawn. The entry keeps the state object of the one it
+   * follows, the build not having moved.
    */
   pushChoice(view, doc) {
     const views = (this.state.meta && this.state.meta.views) || [];
-    if (view === this.entryView(views) && doc === this.entryDoc()) return;
-    const mine = ['v', DOC_QUERY, CAMERA_QUERY, SHEET_QUERY];
-    const kept = location.search.slice(1).split('&')
-      .filter((pair) => pair && !mine.includes(pair.split('=')[0]));
-    const named = (!doc && view !== this.state.view ? this.viewQuery(view, views)
-      : this.screenQuery(view, views, doc)).slice(1);
-    if (named) kept.push(named);
-    history.pushState(history.state, '', location.pathname
-      + (kept.length ? `?${kept.join('&')}` : '') + location.hash);
+    const at = parse();
+    if (view === this.entryView(views) && doc === at.doc) return;
+    const fields = !doc && view !== this.state.view
+      ? { view: viewParam(view, views), doc: null, sheet: null, camera: null }
+      : this.screenParams(view, views, doc);
+    navigate(respell(at, fields), { push: true });
   }
 
   /**
@@ -5363,8 +5300,7 @@ export default class HammerolaViewer extends React.Component {
       loadFeed: this.loadFeed.bind(this),
       loadProposal: this.loadProposal.bind(this),
       refreshBuilds: this.refreshBuilds.bind(this),
-      viewQuery: this.viewQuery.bind(this),
-      cameraQuery: this.cameraQuery.bind(this),
+      cameraParam: this.cameraParam.bind(this),
       pushChoice: this.pushChoice.bind(this),
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
@@ -6220,6 +6156,7 @@ export default class HammerolaViewer extends React.Component {
               <div style={css(v.docLayerStyle)}>
                 <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
                               base={PAGE.base} onOpen={v.onDocOpen}
+                              onSheet={(sheet, push) => this.writeSheet(sheet, push)}
                               onTools={(tools) => this.setState({ docTools: tools })}
                               onReady={() => this.docReady()} />
               </div>

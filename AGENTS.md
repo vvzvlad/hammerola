@@ -4,9 +4,10 @@
 вьювером. `src/` — сервис-хаб, `src/cadbuild/` — сборочная половина,
 `src/buildproc/` — отдельный сборочный процесс с rlimit-ами, `hammerola/` —
 клиент (stdlib only), которым автор публикуется, `ui/` — браузерный бандл,
-`viewer/` — наш форк three-cad-viewer, `skill/` — инструкции агенту, который
-проектирует деталь (каталог: короткий `SKILL.md` плюс `references/*.md`),
-`ci/smoke.py` — гейт образа.
+`viewer/` — наш форк three-cad-viewer, `ecad-viewer/` — наш форк
+KiCad-вьювера, `skill/` — инструкции агенту, который проектирует деталь
+(каталог: короткий `SKILL.md` плюс `references/*.md`), `ci/smoke.py` — гейт
+образа.
 
 Обоснования лежат в `docs/` и читаются по ссылке; сюда их не переносить.
 
@@ -38,6 +39,9 @@
   `viewer/src/` → `make viewer` → коммитишь исходник и сборку одним коммитом.
   `three.module.js` и `three.core.js` — npm-овские, копируются без изменений
   (three вынесен из бандла). Импорт-карты нет: CSP хаба режет инлайновый скрипт.
+- **`static/_v/ecad-viewer.js` и `parser.worker.js` — НАШ выход из `ecad-viewer/`:**
+  правишь `ecad-viewer/packages/*/src/` → `make ecad` → коммитишь исходник и
+  сборку одним коммитом.
 - **Чего не делать никогда** (SPEC 8A.4): docker-сокет в любом виде,
   docker-in-docker и `privileged`, `exec()` модели в процессе хаба,
   RestrictedPython и любой in-process барьер, nsjail/bubblewrap внутри Docker,

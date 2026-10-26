@@ -13,10 +13,10 @@
 // An icon with the words in its title, which turns into a tick or a cross for
 // "Copied" or "Could not copy": `bar`, a 13 px icon in a quiet button like Fit
 // and Frame (on the strip `DocFile` lays a bordered button's look over it),
-// followed by the words "Copy link" when `words` is set, and
-// otherwise a 12 px icon for the end of a row. The words stay "Copy link"
-// while the icon says how the copy went: a word changing length would change
-// the width `DocFile` measures to choose between words and icons. Either is a SIBLING of the link
+// followed by the words "Copy link" in `WORDS_CLASS`, and otherwise a 12 px
+// icon for the end of a row. The words stay "Copy link"
+// while the icon says how the copy went: a word changing length would make the
+// row wider than the copy of it `DocFile` sizes its room by. Either is a SIBLING of the link
 // it copies, never inside it — a control inside an `<a>` is not valid markup —
 // and its click neither follows a link nor reaches the page's handler that
 // closes a menu, so the menu stays up to say "Copied".
@@ -28,6 +28,10 @@ import { css } from './style.jsx';
 
 /** How long the control says "Copied" or "Could not copy" before it is itself again, ms. */
 export const COPY_SAID_MS = 1500;
+
+/** The class of a strip button's words, which the strip hides where they do
+ *  not fit (`DocFile` in viewlist.jsx). */
+export const WORDS_CLASS = 'hmr-words';
 
 /** The address `href` names, whole, as a reader somewhere else has to be given it. */
 export const absoluteHref = (href) => new URL(href, window.location.href).href;
@@ -60,8 +64,8 @@ const ICON_PATHS = {
 const BAR = `${QUIET_BTN};background:none`;
 
 /** The control. Props: `href`, the download link's own; `bar` for the bar's
- *  look, and `words` with it for the word after the icon; `style`, a css
- *  string laid over the look (the row's padding). */
+ *  look, the words after the icon; `style`, a css string laid over the look
+ *  (the row's padding). */
 export default class CopyLink extends React.Component {
   constructor(props) {
     super(props);
@@ -87,7 +91,7 @@ export default class CopyLink extends React.Component {
   };
 
   render() {
-    const { bar, words: spelt, style = '' } = this.props;
+    const { bar, style = '' } = this.props;
     const { said } = this.state;
     const words = said || 'Copy link';
     const icon = (size) => (
@@ -98,7 +102,7 @@ export default class CopyLink extends React.Component {
     return (
       <button type="button" onClick={this.copy} title={words} style={css(bar ? `${BAR};${style}` : `${ICON};${style}`)}>
         {icon(bar ? 13 : 12)}
-        {bar && spelt && 'Copy link'}
+        {bar && <span className={WORDS_CLASS}>Copy link</span>}
       </button>
     );
   }

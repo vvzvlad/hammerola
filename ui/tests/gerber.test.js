@@ -21,7 +21,6 @@ import {
   fitView, layerOf, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, toProcessor, turned, zoomAt,
 } from '../src/gerber.js'
 import GerberView from '../src/GerberView.jsx'
-import { MONO } from '../src/style.jsx'
 import { drained, runFrames, stubFrames } from './component.js'
 import { collect, links, texts } from './eltree.js'
 
@@ -228,12 +227,9 @@ describe('the panel', () => {
     const view = mounted()
     const [panel] = collect(view.render(), (el) => (el.props['data-panel'] ? el : undefined))
     expect(panel.props.style).toMatchObject({ position: 'absolute', top: '10px', left: '12px', maxWidth: 'calc(100% - 24px)' })
-    expect(panel.props.style.right).toBeUndefined()
     const [row] = collect(view.render(), (el) => (el.props['data-layer'] ? el : undefined))
-    const [eye, name] = row.props.children
+    const [eye] = row.props.children
     expect(eye.props['data-eye']).toBe(row.props['data-layer'])
-    expect(eye.props.style).toMatchObject({ width: '24px', flex: 'none' })
-    expect([name.props.style.font, row.props.style.height]).toEqual([`400 12px ${MONO}`, '24px'])
   })
 
   it('turns the board over and toggles a layer, and leaves the zip\'s download to the bar', () => {

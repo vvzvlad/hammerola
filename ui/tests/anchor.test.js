@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { anchorFor, indexTree, placementIn, rowsByKey } from '../src/hub.js'
+import { anchorFor, indexTree, rowsByKey } from '../src/hub.js'
 
 /** A leaf of the tree the viewport emits: a path, a name and a catalogue key. */
 const leaf = (name, key) => ({ id: `/model/${name}`, name, key });
@@ -102,22 +102,24 @@ describe('anchorFor trusts the coordinate on its own build only', () => {
     expect(fromRevision).toEqual({ state: 'point', path: null, point: [1, 2, 3.5] });
   });
 
-  it('carries the point into another view of the same build', () => {
-    // The view moves the part and keeps its vertices, so the coordinate is still
-    // a place on it once the two placements are undone and redone (`sync`).
-    const at = anchorFor(record({ point: [1, 2, 3.5], view: 'exploded' }),
-                         on(TREE, { commit: 'dev' }));
-    expect(at).toEqual({ state: 'carried', path: '/model/pin', point: [1, 2, 3.5] });
+  it('keeps a world point without `frame` to the view it was left in', () => {
+    // A record left before the part's frame stored the world of its own view,
+    // where another view stands the part elsewhere.
+    const at = anchorFor(record({ point: [1, 2, 3.5], view: 'exploded' }), on(TREE));
+    expect(at).toEqual({ state: 'part', path: '/model/pin', point: null });
   });
 
-  it('carries it onto the instance it was left on when this view draws it', () => {
-    const at = anchorFor(
-      record({ point: [1, 2, 3.5], view: 'exploded', part: '/model/pin(2)' }),
-      on(TREE));
-    expect(at).toEqual({ state: 'carried', path: '/model/pin(2)', point: [1, 2, 3.5] });
+  it('takes a point in the part\'s frame in any view, on the instance it was left on', () => {
+    // A view moves the part and keeps its vertices, so the point is a place on
+    // the part wherever this view stands it (`sync` puts it there).
+    for (const view of ['assembled', 'exploded']) {
+      const at = anchorFor(record({ point: [1, 2, 3.5], frame: 'part', view,
+                                    part: '/model/pin(2)' }), on(TREE));
+      expect(at, view).toEqual({ state: 'point', path: '/model/pin(2)', point: [1, 2, 3.5] });
+    }
   });
 
-  it('carries it onto the instance it was left on in a group of its own', () => {
+  it('takes it onto the instance it was left on in a group of its own', () => {
     // Two groups make two rows under one key, and `rowsByKey` keeps the first:
     // the clicked instance is not among that row's leaves, yet it is drawn here.
     const split = indexTree(model([
@@ -126,42 +128,31 @@ describe('anchorFor trusts the coordinate on its own build only', () => {
       { id: '/model/b', name: 'b',
         children: [{ id: '/model/b/pin(2)', name: 'pin(2)', key: 'pin' }] },
     ]));
-    const at = anchorFor(
-      record({ point: [1, 2, 3.5], view: 'exploded', part: '/model/b/pin(2)' }),
-      on(split));
-    expect(at).toEqual({ state: 'carried', path: '/model/b/pin(2)', point: [1, 2, 3.5] });
+    const at = anchorFor(record({ point: [1, 2, 3.5], frame: 'part',
+                                  part: '/model/b/pin(2)' }), on(split));
+    expect(at).toEqual({ state: 'point', path: '/model/b/pin(2)', point: [1, 2, 3.5] });
   });
 
-  it('carries it onto the first instance when the stored path names another part here', () => {
-    const at = anchorFor(
-      record({ point: [1, 2, 3.5], view: 'exploded', part: '/model/washer' }),
-      on(TREE));
-    expect(at).toEqual({ state: 'carried', path: '/model/pin', point: [1, 2, 3.5] });
+  it('takes it onto the first instance when this view draws the stored path as another part or not at all', () => {
+    for (const part of ['/model/washer', '/other/pin']) {
+      const at = anchorFor(record({ point: [1, 2, 3.5], frame: 'part', part }), on(TREE));
+      expect(at, part).toEqual({ state: 'point', path: '/model/pin', point: [1, 2, 3.5] });
+    }
   });
 
-  it('carries it onto the first instance when this view draws the part elsewhere', () => {
-    const at = anchorFor(
-      record({ point: [1, 2, 3.5], view: 'exploded', part: '/other/pin' }),
-      on(TREE));
-    expect(at).toEqual({ state: 'carried', path: '/model/pin', point: [1, 2, 3.5] });
-  });
-
-  it('carries nothing into a view that does not draw the part', () => {
+  it('takes no point in the part\'s frame into a view without the part, or another build', () => {
+    const framed = record({ point: [1, 2, 3.5], frame: 'part' });
     const other = indexTree(model([leaf('washer', 'bracket')]));
-    const at = anchorFor(record({ point: [1, 2, 3.5], view: 'exploded' }), on(other));
-    expect(at).toEqual({ state: 'elsewhere', path: null, point: null });
-  });
-
-  it('carries no point into another view of another build', () => {
-    const at = anchorFor(record({ point: [1, 2, 3.5], view: 'exploded' }),
-                         on(TREE, { published: '2026-08-28T09:00:00.000Z' }));
-    expect(at).toEqual({ state: 'part', path: '/model/pin', point: null });
+    expect(anchorFor(framed, on(other)))
+      .toEqual({ state: 'elsewhere', path: null, point: null });
+    expect(anchorFor(framed, on(TREE, { published: '2026-08-28T09:00:00.000Z' })))
+      .toEqual({ state: 'part', path: '/model/pin', point: null });
   });
 
   it('ignores a point that is not three finite numbers', () => {
     for (const point of [[1, 2], [1, 2, 'x'], [1, 2, NaN], [1, 2, Infinity]]) {
       expect(anchorFor(record({ point }), on(TREE)).state).toBe('part');
-      expect(anchorFor(record({ point, view: 'exploded' }), on(TREE)).state)
+      expect(anchorFor(record({ point, frame: 'part' }), on(TREE)).state)
         .toBe('part');
     }
   });
@@ -196,58 +187,9 @@ describe('anchorFor trusts the coordinate on its own build only', () => {
       expect(anchorFor(record({ point: [1, 2, 3.5] }),
                        on(TREE, { published: stamp })).state).toBe('part');
       expect(anchorFor(record({ published: stamp, point: [1, 2, 3.5],
-                                view: 'exploded' }),
+                                frame: 'part' }),
                        on(TREE, { published: stamp })).state).toBe('part');
     }
-  });
-});
-
-describe('placementIn', () => {
-  const S = Math.SQRT1_2;
-  /** A view document's node: an id, a placement and, for a group, its parts. */
-  const node = (id, loc, parts) => ({ id, ...(loc ? { loc } : {}),
-                                      ...(parts ? { parts } : {}) });
-
-  it('reads a leaf of an unmoved group as its own loc', () => {
-    // The glass view of the owner's build: `back_right` laid flat, under a
-    // root and a group that stand where the model put them.
-    const doc = node('/Group', [[0, 0, 0], [0, 0, 0, 1]], [
-      node('/Group/glass', [[0, 0, 0], [0, 0, 0, 1]], [
-        node('/Group/glass/back_right', [[-672.5, -603.5, 495], [-S, 0, 0, S]]),
-      ]),
-    ]);
-    expect(placementIn(doc, '/Group/glass/back_right')).toEqual({
-      position: [-672.5, -603.5, 495], quaternion: [-S, 0, 0, S],
-    });
-  });
-
-  it('composes the locs from the root down, parent first', () => {
-    // A quarter turn about z at the root, a shift in the group, a quarter turn
-    // about x at the leaf. Taken the other way round, the leaf's turn would be
-    // applied first and the quaternion would come out [0.5, -0.5, 0.5, 0.5].
-    const doc = node('/Group', [[10, 0, 0], [0, 0, S, S]], [
-      node('/Group/a', [[1, 0, 0], [0, 0, 0, 1]], [
-        node('/Group/a/pin', [[0, 2, 0], [S, 0, 0, S]]),
-      ]),
-    ]);
-    const at = placementIn(doc, '/Group/a/pin');
-    // [10, 0, 0] + (quarter turn about z of [1, 2, 0]).
-    [8, 1, 0].forEach((v, i) => expect(at.position[i]).toBeCloseTo(v, 12));
-    [0.5, 0.5, 0.5, 0.5].forEach((v, i) => expect(at.quaternion[i]).toBeCloseTo(v, 12));
-  });
-
-  it('takes a node without a loc as standing where its parent does', () => {
-    // The library renders a missing loc as the identity (`renderLoop`).
-    const doc = node('/Group', [[5, 6, 7], [0, 0, 0, 1]], [node('/Group/pin')]);
-    expect(placementIn(doc, '/Group/pin')).toEqual({
-      position: [5, 6, 7], quaternion: [0, 0, 0, 1],
-    });
-  });
-
-  it('answers null for a path the document does not draw', () => {
-    const doc = node('/Group', null, [node('/Group/pin')]);
-    expect(placementIn(doc, '/Group/washer')).toBeNull();
-    expect(placementIn(null, '/Group/pin')).toBeNull();
   });
 });
 

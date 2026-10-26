@@ -1895,14 +1895,14 @@ describe('activeTool', () => {
   })
 })
 
-// -- a comment's point, carried into another view of the same build ------------
+// -- a comment's point, in the frame of the part it was left on ----------------
 //
-// A view moves a part and keeps its vertices, so a point clicked in one view is
-// a place on the part in every other: undo the placement it was clicked under,
-// redo the one on screen. The scene is real three, because what is asked is the
-// arithmetic of its matrices.
+// A view moves a part and keeps its vertices, so a point in the part's own frame
+// is a place on the part in every view: out of the world through the part's
+// placement at the click, back into it through the placement on screen. The
+// scene is real three, because what is asked is the arithmetic of its matrices.
 
-describe('carryPoint', () => {
+describe('fromPart and toPart', () => {
   const S = Math.SQRT1_2
   const PATH = '/Group/glass/back_right'
   const STILL = { position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
@@ -1916,6 +1916,13 @@ describe('carryPoint', () => {
   // (x, z, -y), then the shift.
   const IN_GLASS = [-660.5, -598.5, 461]
   const IN_GLASS_N = [0, 0, 1]
+  // The glass placement split between the part's parent group (the shift) and
+  // its own (the turn): the world matrix composes both, as the document's locs
+  // nest.
+  const NESTED = {
+    parent: { position: GLASS.position, quaternion: STILL.quaternion },
+    leaf: { position: STILL.position, quaternion: GLASS.quaternion },
+  }
 
   /** A viewport drawing one solid at PATH: its group at `leaf` under a parent
    *  group at `parent`, the matrices composed as a render leaves them. */
@@ -1940,23 +1947,18 @@ describe('carryPoint', () => {
     expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 9))
   }
 
-  it('takes a point and its normal out of the glass view into an unmoved part', () => {
-    const { vp } = scene()
-    const at = vp.carryPoint(PATH, GLASS, IN_GLASS, IN_GLASS_N)
-    near(at.p, LOCAL)
-    near(at.n, LOCAL_N)
-  })
-
-  it('puts them where the part stands on screen, its parent group included', () => {
-    // The shift on the parent and the turn on the part's own group: the world
-    // matrix composes both, the way the document's locs nest.
-    const { vp } = scene({
-      parent: { position: GLASS.position, quaternion: STILL.quaternion },
-      leaf: { position: STILL.position, quaternion: GLASS.quaternion },
-    })
-    const at = vp.carryPoint(PATH, STILL, LOCAL, LOCAL_N)
+  it('puts a point and its normal where the part stands, its parent group included', () => {
+    const { vp } = scene(NESTED)
+    const at = vp.fromPart(PATH, LOCAL, LOCAL_N)
     near(at.p, IN_GLASS)
     near(at.n, IN_GLASS_N)
+  })
+
+  it('takes a world point and its normal back into the part\'s frame', () => {
+    const { vp } = scene(NESTED)
+    const at = vp.toPart(PATH, IN_GLASS, IN_GLASS_N)
+    near(at.p, LOCAL)
+    near(at.n, LOCAL_N)
   })
 
   it('reads the part where a move left it, before the next render', () => {
@@ -1964,18 +1966,22 @@ describe('carryPoint', () => {
     // is composed by the next frame.
     const { vp, group } = scene()
     group.position.x = 100
-    near(vp.carryPoint(PATH, STILL, LOCAL, null).p, [LOCAL[0] + 100, LOCAL[1], LOCAL[2]])
+    near(vp.fromPart(PATH, LOCAL, null).p, [LOCAL[0] + 100, LOCAL[1], LOCAL[2]])
+    near(vp.toPart(PATH, [LOCAL[0] + 100, LOCAL[1], LOCAL[2]], null).p, LOCAL)
   })
 
-  it('carries no normal when the comment stored none', () => {
-    const { vp } = scene()
-    expect(vp.carryPoint(PATH, GLASS, IN_GLASS, null).n).toBeNull()
+  it('turns no normal when none is given', () => {
+    const { vp } = scene(NESTED)
+    expect(vp.fromPart(PATH, LOCAL, null).n).toBeNull()
+    expect(vp.toPart(PATH, IN_GLASS, null).n).toBeNull()
   })
 
   it('answers null for a part the scene does not draw, or without three', () => {
     const { vp } = scene()
-    expect(vp.carryPoint('/Group/glass/riser', GLASS, IN_GLASS, IN_GLASS_N)).toBeNull()
+    expect(vp.fromPart('/Group/glass/riser', LOCAL, LOCAL_N)).toBeNull()
+    expect(vp.toPart('/Group/glass/riser', IN_GLASS, IN_GLASS_N)).toBeNull()
     vp.three = null
-    expect(vp.carryPoint(PATH, GLASS, IN_GLASS, IN_GLASS_N)).toBeNull()
+    expect(vp.fromPart(PATH, LOCAL, LOCAL_N)).toBeNull()
+    expect(vp.toPart(PATH, IN_GLASS, IN_GLASS_N)).toBeNull()
   })
 })

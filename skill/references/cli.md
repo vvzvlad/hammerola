@@ -66,10 +66,10 @@ hammerola skill update        # writes this skill into ~/.claude/skills/hammerol
 Behind a password proxy, add `-u <login>` to the `curl` line (curl asks the
 password); `hammerola login` notices the proxy and asks its login and password.
 
-The client installs the skill and updates it: `hammerola skill` compares the
-installed version with the hub's, `hammerola skill update` writes the hub's
-copy over the whole directory — the file you are reading and every file beside
-it — and removes what the new version no longer ships. A stale skill fails
+The client installs the skill and updates it: `hammerola skill` compares a
+digest of the installed files with the hub's, `hammerola skill update` writes
+the hub's copy over the whole directory — the file you are reading and every
+file beside it — and removes what the new version no longer ships. A stale skill fails
 silently, teaching commands that no longer exist, and nothing checks it for
 you: ask when you start on a project. Installed somewhere else? Pass
 `--path DIR`, or both verbs act on a directory nobody reads.

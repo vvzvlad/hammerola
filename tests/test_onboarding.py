@@ -25,10 +25,10 @@ asks for `onboarding_cache_sandbox`, which clears the caches before and after.
 """
 
 import ast
-import hashlib
 import io
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -43,6 +43,8 @@ from src import onboarding
 from src.buildproc.limits import DEFAULT_LIMITS
 from src.cadbuild import checklib, checkunits
 from hammerola import hub as hub_client
+from hammerola.skill import tree_digest
+from hammerola.unpack import extract
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,20 +78,20 @@ def test_the_manifest_says_nothing_about_this_hub_but_whether_it_is_empty(
     is behind the token to withhold. So the shape is fixed: constants of the IMAGE,
     and one boolean about this deployment.
 
-    `skill_version` and `client_version` are constants of the image like the three
+    `skill_digest` and `client_version` are constants of the image like the three
     paths: two hubs on one image answer the same, and they change with the
     software, never with a push. `client_version` is also already inside the file
     `client` serves to anyone. `empty` is the only field about the deployment, and
     any new candidate has to make the same argument.
     """
     assert set(manifest) == {"empty", "skill", "client", "template",
-                             "skill_version", "client_version"}
+                             "skill_digest", "client_version"}
     assert manifest["empty"] is True
     assert isinstance(manifest["empty"], bool)
     assert manifest["skill"] == onboarding.SKILL_URL
     assert manifest["client"] == onboarding.CLIENT_URL
     assert manifest["template"] == onboarding.TEMPLATE_URL
-    assert manifest[onboarding.SKILL_VERSION_KEY] == onboarding.skill_version()
+    assert manifest[onboarding.SKILL_DIGEST_KEY] == onboarding.skill_digest()
     assert manifest[onboarding.CLIENT_VERSION_KEY] == onboarding.CLIENT_VERSION
 
 
@@ -232,96 +234,58 @@ def test_the_archive_the_hub_serves_is_the_skill_directory():
         f"an earlier version left there stays")
 
 
-def test_the_manifest_states_the_version_of_the_SKILL_IT_SERVES(hub):
-    """The manifest states the version of the skill this hub serves.
+def test_the_manifest_states_the_digest_of_the_SKILL_IT_SERVES(hub, tmp_path):
+    """The manifest's digest is the digest of the archive this hub serves.
 
-    `hammerola skill` compares a laptop's copy against the manifest's number, so a
-    number that stopped matching the served file would silently report "up to
-    date" wrongly, or the reverse. Parsed here with a pattern written in this
-    test: using either side's parser would compare it with itself.
+    `hammerola skill` takes the digest of a laptop's copy, unpacked from that
+    archive, and compares it with the manifest's. A digest over other files than
+    `skill_members` packs would read "out of date" right after every update. So
+    the served bytes are unpacked here with the client's own `extract`.
     """
-    served = served_skill_files(hub)[onboarding.SKILL_ENTRY]
-    block = served.split("\n---\n", 1)[0]
-    found = re.search(r"^version:[ \t]*(\d+)[ \t]*$", block, re.MULTILINE)
-    assert found, ("the skill this hub serves names no version in its "
-                   "frontmatter")
-    assert int(found.group(1)) == hub.get("/start").json()["skill_version"]
+    unpacked = tmp_path / "unpacked"
+    extract(hub.get(onboarding.SKILL_URL).content, unpacked)
+    assert tree_digest(unpacked) == hub.get("/start").json()["skill_digest"]
 
 
-# The skill as it stood at its current version: that version and the digest of
-# every file the hub packs into the archive (`skill_members`), the entry's
-# `version:` line left out so that raising it does not move the digest.
-SKILL_PIN = (38, "880f357ce73788135f0d47691cc013ba99c8a12b8809384a4acb293da9022a59")
-
-
-def _skill_digest() -> str:
-    digest = hashlib.sha256()
-    for name, path in onboarding.skill_members():
-        data = path.read_bytes()
-        if name == onboarding.SKILL_ENTRY:
-            data = re.sub(rb"^version:[ \t]*\d+[ \t]*\n", b"", data, count=1,
-                          flags=re.MULTILINE)
-        digest.update(name.encode() + b"\0" + data + b"\0")
-    return digest.hexdigest()
-
-
-def test_any_change_to_any_file_of_the_skill_raises_its_version():
-    """A change to the skill that keeps its version never reaches a laptop
-    that already has that version.
-
-    `hammerola skill` compares versions only, so a copy installed at the same
-    number reads as current however the files moved under it. Tests run before
-    the image is built in both workflows, so this stops the deploy too.
-    """
-    pinned_version, pinned_digest = SKILL_PIN
-    version, digest = onboarding.skill_version(), _skill_digest()
-    if version == pinned_version:
-        assert digest == pinned_digest, (
-            f"skill/ changed and its version did not: raise `version:` in "
-            f"skill/SKILL.md to {version + 1} and set SKILL_PIN in this file to "
-            f"({version + 1}, {digest!r})")
-    else:
-        assert (version, digest) == SKILL_PIN, (
-            f"the skill is at version {version}: set SKILL_PIN in this file to "
-            f"({version}, {digest!r})")
-
-
-def test_a_skill_with_no_version_is_refused_rather_than_read_as_the_first(
+def test_any_change_to_any_file_of_the_skill_changes_the_manifests_digest(
         tmp_path, monkeypatch, onboarding_cache_sandbox):
-    """NO DEFAULT, and that is the decision this test holds.
+    """What tells a laptop that the hub's skill moved, with nothing raised by
+    hand: an edited, added, renamed or removed reference each changes it."""
+    copy = tmp_path / "skill"
+    shutil.copytree(onboarding.SKILL_DIR, copy)
+    monkeypatch.setattr(onboarding, "SKILL_DIR", copy)
+    reference = copy / "references" / "brief.md"
 
-    A missing version read as 1 would make a shipped file that LOST its version
-    indistinguishable from a fresh one, and the tool would say "up to date" about
-    a skill nobody can date. So it raises, and `src/app.py` turns that into a
-    logged 404 on the route. Both shapes, because they fail at different lines: no
-    frontmatter at all, and frontmatter with everything but the version.
-    """
-    for text in ("# no frontmatter here\n",
-                 "---\nname: hammerola\ndescription: x\n---\n\nbody\n"):
-        path = tmp_path / "SKILL.md"
-        path.write_text(text, encoding="utf-8")
-        monkeypatch.setattr(onboarding, "SKILL_FILE", path)
-        onboarding.skill_bytes.cache_clear()
-        onboarding.skill_version.cache_clear()
-        with pytest.raises(ValueError) as raised:
-            onboarding.skill_version()
-        assert "version" in str(raised.value)
+    def stated():
+        onboarding.skill_digest.cache_clear()
+        return onboarding.manifest(empty=True)[onboarding.SKILL_DIGEST_KEY]
+
+    seen = [stated()]
+    reference.write_bytes(reference.read_bytes() + b"one more line\n")
+    seen.append(stated())
+    (copy / "references" / "added.md").write_text("new\n", encoding="utf-8")
+    seen.append(stated())
+    reference.rename(copy / "references" / "renamed.md")
+    seen.append(stated())
+    (copy / "references" / "added.md").unlink()
+    seen.append(stated())
+    assert len(set(seen)) == len(seen), seen
 
 
-def test_a_skill_the_hub_cannot_date_is_a_404_and_not_a_dropped_socket(
+def test_a_skill_the_hub_cannot_read_is_a_404_and_not_a_dropped_socket(
         hub, monkeypatch):
-    """The manifest opens a file, so it can fail like the other routes.
+    """The manifest reads the skill's files, so it can fail like the other routes.
 
-    `_handle_get` has no blanket `except`, so a ValueError out of the version
-    parse must be turned into a 404 rather than reach the caller as a closed
-    connection. The STATUS is asserted: "not 200" would pass on a dropped socket.
+    `_handle_get` has no blanket `except`, so an OSError out of the digest must
+    be turned into a 404 rather than reach the caller as a closed connection.
+    The STATUS is asserted: "not 200" would pass on a dropped socket.
     """
     def refuse():
-        raise ValueError("planted: no version in the frontmatter")
+        raise OSError("planted: a file of the skill cannot be read")
 
-    monkeypatch.setattr(onboarding, "skill_version", refuse)
+    monkeypatch.setattr(onboarding, "skill_digest", refuse)
     assert hub.get("/start").status_code == 404
-    # The archive itself is untouched by it: only the manifest reads a version.
+    # The archive itself is untouched by it: only the manifest takes a digest.
     assert hub.get("/start/skill.tar.gz").status_code == 200
 
 
@@ -1168,7 +1132,7 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     """The same arrangement for `hammerola skill`.
 
     `hammerola skill` reads two fields out of the manifest, where the archive is
-    and which version it is, and spells both itself, because the client imports
+    and its digest, and spells both itself, because the client imports
     nothing from the serving half. The name of the document INSIDE that archive
     is the third string spelled on both sides: the client looks for it after
     unpacking, and a hub that renamed it would serve a set the client refuses to
@@ -1177,8 +1141,8 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     from hammerola import skill as client_skill
 
     document = onboarding.manifest(empty=True)
-    assert client_skill.VERSION_KEY == onboarding.SKILL_VERSION_KEY
-    assert client_skill.VERSION_KEY in document
+    assert client_skill.DIGEST_KEY == onboarding.SKILL_DIGEST_KEY
+    assert client_skill.DIGEST_KEY in document
     assert client_skill.SKILL_KEY in document
     assert document[client_skill.SKILL_KEY] == onboarding.SKILL_URL
     assert client_skill.ENTRY == onboarding.SKILL_ENTRY
@@ -1190,7 +1154,7 @@ def test_the_two_keys_the_skill_command_follows_are_the_ones_the_hub_writes():
     # never runs again and a withdrawn reference sits there being read. So it
     # is held against the document this hub actually serves.
     assert client_skill.is_ours(
-        onboarding.SKILL_FILE.read_text(encoding="utf-8")), (
+        (onboarding.SKILL_DIR / onboarding.SKILL_ENTRY).read_text(encoding="utf-8")), (
         "the skill this hub serves is not recognised by the client as this "
         "skill, so `skill update` would never remove a withdrawn reference")
 
@@ -1225,8 +1189,7 @@ def test_the_version_the_manifest_states_is_the_one_inside_the_client_it_serves(
     loop with nothing anywhere going red.
 
     Read out of the archive with the client's own reader, over the bytes that
-    really ship, exactly as the skill's two parsers are compared over the file
-    that really ships.
+    really ship.
     """
     from hammerola import update as client_update
 
@@ -1237,24 +1200,6 @@ def test_the_version_the_manifest_states_is_the_one_inside_the_client_it_serves(
                                          client_update.VERSION_NAME)
     assert inside == onboarding.manifest(empty=True)[
         onboarding.CLIENT_VERSION_KEY]
-
-
-def test_the_client_reads_the_SAME_version_out_of_the_skill_as_the_hub():
-    """TWO PARSERS OVER ONE FILE, and this is what keeps them honest.
-
-    The client may import nothing from `src/onboarding.py`, so it carries its
-    own copy of the frontmatter patterns. A copy that drifted would not fail
-    anything by itself — it would make `hammerola skill` compare a number it
-    read differently against the hub's, and print "out of date" about a file
-    that is current, or the reverse. Neither goes red anywhere else.
-
-    Run over the file that actually ships, rather than over an invented one:
-    what has to agree is the reading of THIS document.
-    """
-    from hammerola import skill as client_skill
-
-    text = onboarding.SKILL_FILE.read_text(encoding="utf-8")
-    assert client_skill.version_of(text) == onboarding.skill_version()
 
 
 def test_the_skill_tells_the_reader_how_to_update_it(hub):

@@ -10,11 +10,10 @@
  * Nothing here is a class or a stylesheet: every rule is an inline style string
  * through `css()` (see `style.jsx` for why).
  *
- * THE STRINGS ARE PINNED BY TESTS AS STRINGS. `ui/tests` asserts on the values
- * `computed()` answers with — `toBe('430px')`, `toContain('background:…')` —
- * so a declaration that comes out in a different ORDER, or with a space added,
- * is a changed rule even where the browser would paint the same pixels. The
- * `tail` slot on `popover` below exists for exactly that.
+ * THE TESTS HOLD WHAT A POPOVER DOES, NOT HOW IT LOOKS. `ui/tests` asserts
+ * where it can go and whether it is up — its `position` and `display`, and on
+ * a narrow window its `left`, `right` and `bottom` (`narrow.test.js`); its
+ * colours, sizes and spacing are checked by eye.
  *
  * PUNCTUATION IS PART OF THE NAME, and a call site cannot see it. Most names
  * here are finished declarations and end in neither `;` nor `:` — whoever
@@ -53,11 +52,8 @@ export const POP_SHADOW_HIGH = '0 12px 40px var(--shadow)';
  * each a card hung off its own control, each becoming
  * `popSheet` when narrow, each shown by its own flag. Five spellings of one
  * shape, which is five places for the card to drift apart.
- * `tail` IS A POSITION, NOT A FEATURE. The string is pinned as
- * text, so a declaration moved past another is a changed rule, and one of the
- * five carries a declaration the common block would not put there: the
- * downloads menu's padding after the shadow. One call site, and the spelling
- * the tests hold.
+ * `tail` is what a call site appends after the shadow, before the layer and
+ * the flag; one of the five has any: the downloads menu's padding.
  */
 export function popover({
   narrow, anchor, width, radius, z, open, pad = '', shadow = POP_SHADOW, tail = '',

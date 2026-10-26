@@ -1,4 +1,4 @@
-"""`hammerola skill` and `skill update` — the verb that dates the instructions.
+"""`hammerola skill` and `skill update` — the verb that tells stale instructions.
 
 What is worth pinning here, in the order it would hurt to get wrong:
 
@@ -83,37 +83,16 @@ def configured(hub, monkeypatch):
 
 def shipped() -> str:
     """The entry document as this checkout has it — the hub serves these bytes."""
-    return onboarding.SKILL_FILE.read_text(encoding="utf-8")
+    return (onboarding.SKILL_DIR / onboarding.SKILL_ENTRY).read_text(encoding="utf-8")
 
 
-def dated(version) -> str:
-    """A minimal skill document carrying `version` — or none at all."""
-    line = "" if version is None else f"version: {version}\n"
-    return f"---\nname: hammerola\ndescription: x\n{line}---\n\nbody\n"
+# An installation of this skill that is not the hub's copy.
+OLDER = "---\nname: hammerola\ndescription: x\n---\n\nbody\n"
 
 
-# -- reading a version out of a file -----------------------------------------
-@pytest.mark.parametrize("text,expected", [
-    (dated(1), 1),
-    (dated(12), 12),
-    (dated(None), None),
-    ("# not a skill at all\n", None),
-    ("", None),
-    # THE SHARP ONE: a `version:` line in the BODY is not the frontmatter's, and
-    # a pattern that searched the whole document would date a file by a sentence
-    # somebody wrote about versions.
-    ("---\nname: hammerola\n---\n\nversion: 99\n", None),
-])
-def test_the_version_is_read_out_of_the_frontmatter_and_only_there(text,
-                                                                   expected):
-    assert skill.version_of(text) == expected
-
-
-def test_the_shipped_skill_is_dated():
-    """The file this repository serves has a version, so `skill` can compare it
-    at all. A skill that lost the key would leave every reader "before
-    versioning" forever, with nothing else going red."""
-    assert skill.version_of(shipped()) == onboarding.skill_version()
+def stated() -> str:
+    """The digest the hub states, as `skill` prints it."""
+    return onboarding.skill_digest()[:skill.SHOWN]
 
 
 def test_the_default_path_is_the_one_the_skill_tells_a_reader_to_write():
@@ -139,43 +118,45 @@ def test_a_skill_that_is_not_installed_is_reported_and_is_not_a_failure(
     assert not installed.exists(), "a question made a directory"
 
 
-def test_the_same_version_on_both_sides_says_so(configured, installed, capsys):
-    plant(installed, shipped())
+def test_the_hubs_files_are_up_to_date_and_any_other_file_is_not(
+        configured, installed, capsys):
+    """The digest covers every file, and hidden ones on neither side.
+
+    A `.DS_Store` Finder drops into the directory must not read as a change, or
+    every Mac would be told to update forever; an edited reference must, since
+    that is the change the digest exists to carry to a laptop.
+    """
+    shutil.copytree(onboarding.SKILL_DIR, installed)
+    (installed / ".DS_Store").write_bytes(b"\x00")
+    (installed / "references" / ".DS_Store").write_bytes(b"\x00")
 
     assert main(["skill", "--path", str(installed)]) == 0
 
     out = capsys.readouterr().out
     assert "up to date" in out
-    assert f"version {onboarding.skill_version()}" in out
+    assert f"digest {stated()} installed" in out
     assert "hammerola skill update" not in out, (
         "a current copy was told to update itself")
+
+    reference = installed / "references" / "brief.md"
+    reference.write_bytes(reference.read_bytes() + b"a local edit\n")
+    assert main(["skill", "--path", str(installed)]) == 0
+    assert "out of date" in capsys.readouterr().out
 
 
 def test_an_older_copy_is_told_exactly_what_to_run(configured, installed,
                                                    capsys):
     """The point of the whole verb: the one line somebody acts on."""
-    plant(installed, dated(0))
+    plant(installed, OLDER)
 
     assert main(["skill", "--path", str(installed)]) == 0
 
     out = capsys.readouterr().out
     assert "out of date" in out
     assert "hammerola skill update" in out
-    assert "version 0" in out
-    assert f"version {onboarding.skill_version()}" in out
-
-
-def test_a_copy_from_before_versioning_is_named_as_one(configured, installed,
-                                                       capsys):
-    """A file installed before the version existed. Not an error and not
-    "up to date" either: it is undatable, which is its own sentence."""
-    plant(installed, dated(None))
-
-    assert main(["skill", "--path", str(installed)]) == 0
-
-    out = capsys.readouterr().out
-    assert "no version" in out
-    assert "hammerola skill update" in out
+    assert f"digest {skill.tree_digest(installed)[:skill.SHOWN]} installed" \
+        in out
+    assert f"digest {stated()} served" in out
 
 
 def test_a_hub_that_cannot_be_reached_still_says_what_is_installed(
@@ -184,12 +165,13 @@ def test_a_hub_that_cannot_be_reached_still_says_what_is_installed(
     machine on a train gets that half — the refusal lands under it rather than
     instead of it."""
     monkeypatch.setenv("HUB_URL", "http://127.0.0.1:1")
-    plant(installed, dated(3))
+    plant(installed, OLDER)
 
     assert main(["skill", "--path", str(installed)]) == 1
 
     captured = capsys.readouterr()
-    assert "version 3 installed" in captured.out
+    assert f"{skill.tree_digest(installed)[:skill.SHOWN]} installed" \
+        in captured.out
     assert "cannot reach" in captured.err
 
 
@@ -224,21 +206,18 @@ def test_update_writes_the_whole_set_and_makes_the_directory_for_it(
     assert on_disk == skill_files()
     out = capsys.readouterr().out
     assert config.display_path(installed) in out
-    assert "nothing installed" in out
-    assert f"version {onboarding.skill_version()}" in out
+    assert f"nothing installed -> digest {stated()}" in out
 
 
 def test_update_replaces_an_older_copy_and_says_what_it_went_from(
         configured, installed, capsys):
-    plant(installed, dated(0))
+    plant(installed, OLDER)
+    before = skill.tree_digest(installed)[:skill.SHOWN]
 
     assert main(["skill", "update", "--path", str(installed)]) == 0
 
-    entry = (installed / skill.ENTRY).read_text(encoding="utf-8")
-    assert skill.version_of(entry) == onboarding.skill_version()
-    out = capsys.readouterr().out
-    assert "version 0" in out
-    assert f"-> version {onboarding.skill_version()}" in out
+    assert skill.tree_digest(installed) == onboarding.skill_digest()
+    assert f"digest {before} -> digest {stated()}" in capsys.readouterr().out
 
 
 def test_update_removes_what_this_version_does_not_have(configured, installed,
@@ -251,7 +230,7 @@ def test_update_removes_what_this_version_does_not_have(configured, installed,
     nothing about it. The removals are printed, because a verb that deletes
     says what it deleted.
     """
-    plant(installed, dated(0), **{"references/withdrawn.md": "an old rule\n"})
+    plant(installed, OLDER, **{"references/withdrawn.md": "an old rule\n"})
 
     assert main(["skill", "update", "--path", str(installed)]) == 0
 
@@ -381,7 +360,7 @@ def test_the_old_file_form_of_path_is_refused_where_the_file_is_missing(
     assert not target.exists()
 
 
-def test_the_version_report_does_not_recommend_an_update_that_would_refuse(
+def test_the_report_does_not_recommend_an_update_that_would_refuse(
         configured, installed, capsys):
     """`hammerola skill` answers with the same reason `skill update` would.
 
@@ -408,14 +387,14 @@ def test_the_version_report_does_not_recommend_an_update_that_would_refuse(
 def test_update_over_a_current_copy_says_it_was_unchanged(configured,
                                                           installed, capsys):
     """It writes anyway — the verb is "make this the hub's copy", not "apply a
-    difference" — and the output says the version did not move, so a re-run
+    difference" — and the output says the digest did not move, so a re-run
     does not read like it fixed something."""
-    plant(installed, shipped())
+    shutil.copytree(onboarding.SKILL_DIR, installed)
 
     assert main(["skill", "update", "--path", str(installed)]) == 0
 
     assert (installed / skill.ENTRY).read_text(encoding="utf-8") == shipped()
-    assert "unchanged" in capsys.readouterr().out
+    assert f"digest {stated()}, unchanged" in capsys.readouterr().out
 
 
 def test_update_with_no_path_writes_where_the_default_points(configured,
@@ -466,20 +445,17 @@ def test_the_path_is_honoured_whichever_side_of_the_subcommand_it_is_on(
      "not a readable .tar.gz"),
     (lambda: archive({"references/brief.md": "a rule\n"}),
      "an archive with no entry document in it", "Nothing was written"),
-    (lambda: archive({"SKILL.md": dated(None)}),
-     "an entry document naming no version", "Nothing was written"),
 ])
-def test_update_refuses_what_it_cannot_read_a_version_out_of(
+def test_update_refuses_what_is_not_a_skill_archive(
         served, why, said, configured, installed, monkeypatch, capsys):
-    """CHECKED BEFORE ANYTHING IS WRITTEN. Any of these would otherwise land on
-    disk AS the agent's instructions — and the only later symptom is `skill`
-    saying the installed copy names no version.
+    """CHECKED BEFORE ANYTHING IS WRITTEN. Either would otherwise land on disk
+    AS the agent's instructions.
 
     That nothing was written is the whole claim, and the directory that was
     there before is still there, untouched: this verb also REMOVES, so a
     refusal that pruned first would take a working skill away and put nothing
-    in its place. The refusal says so in the two cases this command phrases
-    itself; the unreadable archive is refused by `unpack` in its own words.
+    in its place. The refusal says so in the case this command phrases itself;
+    the unreadable archive is refused by `unpack` in its own words.
 
     Only the ARCHIVE route is doctored: the manifest still answers, so what is
     under test is the client's reading of what came back rather than a hub that
@@ -490,13 +466,12 @@ def test_update_refuses_what_it_cannot_read_a_version_out_of(
     assert configured.get("/start").status_code == 200, (
         "the premise is gone: the manifest went down with the archive, so this "
         f"no longer reaches the client's reading of {why}")
-    plant(installed, dated(0), **{"references/mine.md": "kept\n"})
+    plant(installed, OLDER, **{"references/mine.md": "kept\n"})
 
     assert main(["skill", "update", "--path", str(installed)]) == 1
 
     assert said in capsys.readouterr().err
-    entry = (installed / skill.ENTRY).read_text(encoding="utf-8")
-    assert skill.version_of(entry) == 0
+    assert (installed / skill.ENTRY).read_text(encoding="utf-8") == OLDER
     assert (installed / "references" / "mine.md").is_file()
 
 

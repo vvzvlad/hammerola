@@ -54,3 +54,9 @@ ui/dist/
 # few times a year, deliberately, and the same commit carries both halves.
 viewer/node_modules/
 viewer/dist/
+
+# The vendored KiCad viewer's, the same way: `ecad-viewer/` (the fork's SOURCE at the
+# commit PROVENANCE.md names, our edits, the exact pins and package-lock.json) IS
+# committed, and so is what it builds: static/_v/ecad-viewer.js and parser.worker.js.
+ecad-viewer/node_modules/
+ecad-viewer/packages/ecad-viewer-app/build/
