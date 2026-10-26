@@ -1,12 +1,28 @@
 # hammerola
 
-Builds CAD models from code and serves them in a browser. Push a model's source,
-get back a page: turn the part, hide what is in the way, cut a section through
-it, measure it, download it as STEP/STL/3MF. What goes with the part publishes
-on the same page — a KiCad schematic and board with the board's Gerbers, a cut
-list, a PDF, the DXF a glass shop cuts from, or a file of any other kind — and a
-project with no model at all publishes those on their own. The name is from
-"pianola" — a mechanism that plays itself.
+A build system and a viewer for parts that an agent models in code. The agent
+writes a `model.py` in CadQuery and pushes the source; the hub computes the
+geometry and shows the part in a browser — turn it, hide what is in the way, cut
+a section through it, measure it, download it as STEP/STL/3MF. The person looks,
+clicks a spot on the model and leaves a note there; the agent reads the notes
+with `hammerola comments`, fixes the code and pushes the next revision. No CAD
+application is needed anywhere: the model is Python, and the kernel that
+computes it is in the hub.
+
+It came out of teaching an agent to model. What such an agent hands back is an
+STL, and an STL is an unpleasant thing to review — Fusion is pleasant, with each
+part in its own colour, a section through anything and a part you can drag
+aside. Telling the agent in words what to fix is worse still; what you want is
+to point at a place on the model. So a comment is taken at the point clicked,
+with the camera angle it was written from and, when there is one, a photo of
+the printed part. The other reason is sharing: a revision's URL shows the same
+geometry a year later, so showing someone a part is a link, and so is "make it
+like this" sent with a board. 3D models came first; KiCad projects, PDFs and
+Markdown were added after, and what goes with the part publishes on the same
+page — a schematic and board with the board's Gerbers, a cut list, a PDF, the
+DXF a glass shop cuts from, or a file of any other kind. A project with no model
+at all publishes those on their own. The name is from "pianola" — a mechanism
+that plays itself.
 
 <!-- Screenshots live in docs/images/ rather than in static/. static/ is the
      viewer payload that ships INSIDE the image, and its `hammerola*` names are
