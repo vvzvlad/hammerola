@@ -736,7 +736,11 @@ export default class KicadView extends React.Component {
    *  selection it made, and so does the reader's `… · <sheet>` item over the
    *  schematic on screen (`choose`): the viewer focuses its target once the
    *  sheet is open, and a selection put out meanwhile cancels that. The
-   *  highlighted nets stay. */
+   *  highlighted nets stay.
+   *
+   *  Every change of page hands the element the new sheet's comment markers
+   *  at once (`overlay`): the element may still be loading that sheet, and
+   *  draws them with it once it is drawn. */
   paged() {
     const now = this.activePage();
     if (!now || now === this.page) return;
@@ -746,6 +750,7 @@ export default class KicadView extends React.Component {
     if (!this.probing && !this.choosing && typeof element.clearSelection === 'function') {
       element.clearSelection({ keepHighlights: true });
     }
+    this.overlay();
     if (now === this.pageFromHistory) {
       this.pageFromHistory = null;
       return;
@@ -1038,25 +1043,17 @@ export default class KicadView extends React.Component {
     comment.onFocused();
   }
 
-  /** A sheet of the schematic is loaded and drawn: its markers are handed
-   *  again, cleared first — the viewer keeps the scene it was handed but draws
-   *  the sheet without it, and takes the same scene again as no change — and
-   *  the view goes to the centre a focus is waiting to show. Also the end of a
-   *  focus that switched no sheet. Both wait a task: the viewer fits the sheet
-   *  to the screen once its load returns, after this event. */
+  /** A sheet of the schematic is loaded and drawn: the view goes to the
+   *  centre a focus is waiting to show. Also the end of a focus that switched
+   *  no sheet. It waits a task: the viewer fits the sheet to the screen once
+   *  its load returns, after this event. */
   sheetLoaded() {
     const at = this.zoomTo;
     this.zoomTo = null;
+    if (!at) return;
     setTimeout(() => {
-      if (this._gone) return;
-      const sheet = this.elements[SCH];
-      if (sheet && typeof sheet.clearCommentOverlays === 'function' && this.overlaid[SCH] !== undefined) {
-        sheet.clearCommentOverlays(SCH);
-        delete this.overlaid[SCH];
-        this.overlay();
-      }
       const element = this.elements[this.side()];
-      if (at && element && typeof element.zoomToLocation === 'function') element.zoomToLocation(at.x, at.y);
+      if (!this._gone && element && typeof element.zoomToLocation === 'function') element.zoomToLocation(at.x, at.y);
     }, 0);
   }
 

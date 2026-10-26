@@ -383,7 +383,6 @@ export abstract class DocumentViewer<
                 ?.delete(this.#diff_presentation);
         }
         this.layers = this.disposables.add(this.create_layer_set());
-        this.rebind_overlay_layers();
 
         // Paint the board
         this.painter = this.create_painter();
@@ -404,6 +403,13 @@ export abstract class DocumentViewer<
                 this.layers,
                 this.theme,
             ).paint(this.drawing_sheet);
+
+        // The overlay scenes go into the new layers only now: the document's
+        // painter paints every layer the set yields in display order
+        // (`paintable_layers`), the overlays' own layers among them, and
+        // would leave an overlay compiled before it with an empty layer,
+        // which the same scene handed again, being no change, never fills.
+        this.rebind_overlay_layers();
 
         // Create the grid
         this.grid = new Grid(

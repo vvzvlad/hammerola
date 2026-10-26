@@ -648,6 +648,12 @@ export abstract class Viewer extends EventTarget {
             return;
         }
 
+        // Screen-sized overlays are sized for the zoom they are drawn at,
+        // whatever set it: a fit after a document loads (`zoom_fit_top_item`)
+        // moves the camera without a viewport change, and the overlays the
+        // load compiled into its new layers were sized for the zoom before.
+        this.#overlay_scenes?.refresh_screen_sized();
+
         // Render all layers in display order (back to front). Allocate the
         // available clip-space depth across the layers that will actually be
         // drawn. A fixed increment overflows once zoom-dependent label layers

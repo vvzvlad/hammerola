@@ -1332,7 +1332,7 @@ describe('a comment on a design', () => {
     expect(elements[SCH].itemsInArea).toHaveBeenCalledWith(SCH, [1, 2, 3, 4])
   })
 
-  it('stands the open comments on their member, on the schematic the sheet\'s on screen, again once a sheet has loaded', async () => {
+  it('stands the open comments on their member, on the schematic the sheet\'s on screen, the new sheet\'s as its page changes', async () => {
     const { view, elements, sch } = await opened()
     view.componentDidUpdate(view.props)
     view.componentDidUpdate(view.props)
@@ -1342,12 +1342,12 @@ describe('a comment on a design', () => {
     const onRoot = { context: SCH, comments: [marker('c1', 5, 5, [0, 0, 10, 10], 'hw/board.kicad_sch')] }
     const onAmp = { context: SCH, comments: [marker('c2', 12, 23, [10, 20, 4, 6], 'hw/sub/amp.kicad_sch')] }
     expect(sch.setCommentOverlays.mock.calls).toEqual([[onRoot]])
-    // the viewer draws a sheet it has loaded without the markers it holds
+    // handed while the element loads the sheet, and not again once it has
     sch.switchPage(AMP)
+    expect(sch.setCommentOverlays.mock.calls).toEqual([[onRoot], [onAmp]])
     sch.dispatchEvent(new CustomEvent(SHEET_LOADED_EVENT))
     await aTask()
-    expect(sch.clearCommentOverlays.mock.calls).toEqual([[SCH]])
-    expect(sch.setCommentOverlays.mock.calls).toEqual([[onRoot], [onAmp]])
+    expect([sch.clearCommentOverlays.mock.calls, sch.setCommentOverlays.mock.calls]).toEqual([[], [[onRoot], [onAmp]]])
   })
 
   it('names the comment of a marker clicked to the page, and the draft\'s none', async () => {

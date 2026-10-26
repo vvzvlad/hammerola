@@ -39,7 +39,6 @@ import {
     ArcSegment,
     Footprint,
     LineSegment,
-    Pad,
     Via,
 } from "../kicad/board";
 import {
@@ -2623,10 +2622,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      * What a comment's area holds, as its words: the designators of the
      * symbols or footprints whose painted box meets `bounds` (`[x, y, w, h]`
      * in the document's millimetres), power symbols and flags (`#…`) left
-     * out, and the names of the nets there — the schematic's labels, the
-     * board's pads, tracks and vias, without the names KiCad makes up for an
-     * unnamed net. Sorted as people sort designators (R2 before R10), each
-     * once; empty before the viewer has drawn.
+     * out, and the names of the nets there — the schematic's labels and the
+     * net a power symbol (`#PWR…`) names by its value, the board's pads,
+     * tracks and vias, without the names KiCad makes up for an unnamed net.
+     * A pad is painted inside its footprint and has no painted box of its
+     * own, so a footprint met by the area gives the nets of those of its pads
+     * whose box on the board (`Pad.bbox`, what a click on a pad tests) meets
+     * it. Sorted as people sort designators (R2 before R10), each once; empty
+     * before the viewer has drawn.
      */
     public itemsInArea(
         context: EcadCommentContext,
@@ -2652,18 +2655,25 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 if (context === "SCH") {
                     const schematic = viewer as SchematicViewer;
                     if (item instanceof SchematicSymbol) {
-                        designator(
-                            schematic.instance_context?.reference(item) ??
-                                item.reference,
-                        );
+                        const instance = schematic.instance_context;
+                        const reference =
+                            instance?.reference(item) ?? item.reference;
+                        if (reference.startsWith("#PWR")) {
+                            net(instance?.value(item) ?? item.value);
+                        } else {
+                            designator(reference);
+                        }
                     } else if (item instanceof Label) {
                         net(item.shown_text);
                     }
                 } else {
                     const board = (viewer as BoardViewer).board;
-                    if (item instanceof Footprint) designator(item.reference);
-                    else if (item instanceof Pad) net(item.net?.name);
-                    else if (
+                    if (item instanceof Footprint) {
+                        designator(item.reference);
+                        for (const pad of item.pads) {
+                            if (meets(pad.bbox)) net(pad.net?.name);
+                        }
+                    } else if (
                         item instanceof LineSegment ||
                         item instanceof ArcSegment ||
                         item instanceof Via
