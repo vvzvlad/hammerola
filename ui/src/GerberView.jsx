@@ -413,7 +413,9 @@ export default class GerberView extends React.Component {
       pen.strokeRect(at.left * k, at.top * k, at.width * k, at.height * k);
       pen.setLineDash([]);
       pen.beginPath();
-      pen.arc((at.left + at.width / 2) * k, (at.top + at.height / 2) * k, (MARKER_PX / 2) * k, 0, 2 * Math.PI);
+      // The ring's 2 px inside the marker's 18, as `border-box` draws it on
+      // screen: a stroke is centred on its line.
+      pen.arc((at.left + at.width / 2) * k, (at.top + at.height / 2) * k, (MARKER_PX / 2 - 1) * k, 0, 2 * Math.PI);
       pen.fillStyle = accent;
       pen.fill();
       pen.lineWidth = 2 * k;
