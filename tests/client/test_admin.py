@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from harness import comment_payload, copying_builder
-from modeldir import make_model
+from modeldir import make_model, publish_model
 
 from hammerola import limits
 from hammerola.cli import main
@@ -54,21 +54,13 @@ def run(model, *args):
     return main(["-C", str(model), *args])
 
 
-def publish(model, capsys):
-    assert run(model, "commit") == 0
-    for line in capsys.readouterr().out.splitlines():
-        if line.startswith("revision "):
-            return line.split()[1].rstrip(":")
-    raise AssertionError("no revision was printed")
-
-
 def project_json(model):
     return json.loads((model / "project.json").read_text())
 
 
 # -- rename ------------------------------------------------------------------
 def test_rename_moves_the_title_in_both_places(hub, model, capsys):
-    publish(model, capsys)
+    publish_model(hub, model)
 
     assert run(model, "rename", "The bracket, mk2") == 0
     out = capsys.readouterr().out
@@ -83,7 +75,7 @@ def test_rename_never_touches_the_id(hub, model, capsys):
     """The whole reason the command exists in this shape. Renaming an id would
     not rename anything — it would abandon the project and start an empty one
     beside it."""
-    publish(model, capsys)
+    publish_model(hub, model)
     before = project_json(model)["id"]
 
     assert run(model, "rename", "Something else entirely") == 0
@@ -119,7 +111,7 @@ def test_rename_keeps_everything_else_in_project_json(hub, model, capsys):
     payload["notes"] = {"printer": "X1C"}
     payload["project"] = "demo-part"
     (model / "project.json").write_text(json.dumps(payload))
-    publish(model, capsys)
+    publish_model(hub, model)
 
     assert run(model, "rename", "Renamed") == 0
     capsys.readouterr()
@@ -143,8 +135,7 @@ def test_renaming_a_project_that_was_never_pushed_still_works(hub_factory,
     assert project_json(model)["title"] == "Not yet published"
     assert "nothing published for this project yet" in out
 
-    assert run(model, "build") == 0
-    capsys.readouterr()
+    publish_model(building, model, "dev")
     assert building.builds("demo0001").json()["title"] == \
         "Not yet published"
 
@@ -157,7 +148,7 @@ def test_a_rename_survives_the_next_push_because_the_file_moved_too(
     stick, and this is the test that the client writes both."""
     building = hub_factory(build_runner=titling_builder)
     monkeypatch.setenv("HUB_URL", building.url)
-    publish(model, capsys)
+    publish_model(building, model)
 
     assert run(model, "rename", "Sticks") == 0
     capsys.readouterr()
@@ -165,14 +156,14 @@ def test_a_rename_survives_the_next_push_because_the_file_moved_too(
         "Sticks"
 
     (model / "model.py").write_text("# another revision\n")
-    publish(model, capsys)
+    publish_model(building, model)
     assert building.builds("demo0001").json()["title"] == \
         "Sticks"
 
 
 def test_a_title_the_site_would_have_to_render_verbatim_is_refused(hub, model,
                                                                    capsys):
-    publish(model, capsys)
+    publish_model(hub, model)
     assert run(model, "rename", "two\nlines") == 1
     assert "non-printable character" in capsys.readouterr().err
     assert project_json(model)["title"] == "Demo project"
@@ -188,7 +179,7 @@ def test_a_title_over_the_hubs_ceiling_is_refused_by_rename_as_well(
     inside the job, after the sources have gone up. Refusing it at the keyboard
     is the whole point of the check being in this tool at all.
     """
-    publish(model, capsys)
+    publish_model(hub, model)
     assert run(model, "rename", "x" * (limits.MAX_TEXT_CHARS + 1)) == 1
 
     error = capsys.readouterr().err
@@ -206,7 +197,7 @@ def test_an_empty_rename_is_refused_instead_of_taking_the_directorys_name(
     `write_project_title` keeps this path off that branch, so the refusal is
     about the ARGUMENT and mentions no flag at all.
     """
-    publish(model, capsys)
+    publish_model(hub, model)
     assert run(model, "rename", "") == 1
 
     error = capsys.readouterr().err
@@ -269,7 +260,7 @@ def test_each_remedy_the_create_note_names_ends_with_the_build_warning_gone(
 # -- rm ----------------------------------------------------------------------
 def test_rm_removes_the_project_after_the_id_is_typed(hub, model, capsys,
                                                       monkeypatch):
-    revision = publish(model, capsys)
+    revision = publish_model(hub, model)
     posted = hub.post_comment("demo0001", revision, payload=comment_payload())
     assert posted.status_code == 201
 
@@ -291,7 +282,7 @@ def test_rm_reports_the_proposal_it_took_with_the_project(hub, model, capsys,
     reported as the fact it is, in both directions: somebody who just confirmed
     a removal that NAMED a proposal is owed the answer to whether there was one.
     """
-    publish(model, capsys)
+    publish_model(hub, model)
     assert hub.proposal("demo0001", method="POST", payload={
         "doc": {"version": 1, "units": "mm", "nodes": []},
         "text": "units: mm\nmotor  42 × 42 × 20",
@@ -309,7 +300,7 @@ def test_rm_reports_the_proposal_it_took_with_the_project(hub, model, capsys,
 
 def test_rm_says_there_was_no_proposal_when_there_was_none(hub, model, capsys,
                                                            monkeypatch):
-    publish(model, capsys)
+    publish_model(hub, model)
     monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
 
     assert run(model, "rm") == 0
@@ -320,7 +311,7 @@ def test_rm_says_there_was_no_proposal_when_there_was_none(hub, model, capsys,
 
 def test_rm_does_nothing_until_the_id_is_typed(hub, model, capsys, monkeypatch):
     """Not a y/n: a y/n is answered by reflex, and this cannot be undone."""
-    revision = publish(model, capsys)
+    revision = publish_model(hub, model)
 
     for answer in ("y", "yes", "", "demo000"):
         monkeypatch.setattr("builtins.input", lambda _prompt, a=answer: a)
@@ -331,7 +322,7 @@ def test_rm_does_nothing_until_the_id_is_typed(hub, model, capsys, monkeypatch):
 
 
 def test_rm_yes_skips_the_prompt(hub, model, capsys, monkeypatch):
-    publish(model, capsys)
+    publish_model(hub, model)
 
     def refuse(_prompt):
         raise AssertionError("--yes must not ask")
@@ -345,7 +336,7 @@ def test_rm_yes_skips_the_prompt(hub, model, capsys, monkeypatch):
 def test_rm_with_nothing_to_read_refuses_rather_than_assuming_yes(hub, model,
                                                                   capsys,
                                                                   monkeypatch):
-    publish(model, capsys)
+    publish_model(hub, model)
 
     def eof(_prompt):
         raise EOFError
@@ -362,7 +353,7 @@ def test_rm_with_nothing_to_read_refuses_rather_than_assuming_yes(hub, model,
 
 def test_rm_leaves_the_local_checkout_alone(hub, model, capsys, monkeypatch):
     """The one thing it must never do. `rm` is a command about the hub."""
-    publish(model, capsys)
+    publish_model(hub, model)
     monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
 
     assert run(model, "rm") == 0
@@ -375,7 +366,7 @@ def test_rm_leaves_the_local_checkout_alone(hub, model, capsys, monkeypatch):
 
 def test_rm_says_what_it_is_about_to_remove_before_asking(hub, model, capsys):
     """The prompt is only a safety if what it is confirming has been read."""
-    publish(model, capsys)
+    publish_model(hub, model)
     asked = {}
 
     def answer(prompt):
@@ -417,7 +408,7 @@ def test_rm_of_a_project_the_hub_never_had_is_a_failure(hub, tmp_path, capsys,
 
 
 def test_rm_needs_the_right_secret(hub, model, capsys, monkeypatch):
-    publish(model, capsys)
+    publish_model(hub, model)
     monkeypatch.setenv("EDIT_TOKEN", "not-the-token")
     monkeypatch.setattr("builtins.input", lambda _prompt: "demo0001")
 

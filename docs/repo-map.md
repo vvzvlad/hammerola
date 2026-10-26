@@ -4,9 +4,10 @@
 
 ## Project structure
 - `src/` — application code (`settings.py` is the single config entry point)
-- `src/archive.py` — reading the pushed tarball: the ceilings, the alphabet each
-  path COMPONENT is held to, and the unpack that refuses a member before it
-  becomes a file. It was a third of `src/store.py` and knows nothing about
+- `src/archive.py` — reading a tarball of sources: the ceilings, the alphabet
+  each path COMPONENT is held to, and the unpack that refuses a member before it
+  becomes a file. Its one reader now is the import, which turns the archives of
+  builds published before git into commits (`Store._import_build`). It was a third of `src/store.py` and knows nothing about
   projects, builds or pointers, which is why it could leave. The import edge
   runs `store → archive` and only that way, so it raises `PublishError` from
   `src/errors.py` rather than from `store`. **Every name here is re-exported by
@@ -38,7 +39,8 @@
   `tests/cadbuild/test_naming.py` is what holds the two equal
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
-  `log.txt` beside it), `BuildTask` is what the request hands over, `BuildQueue`
+  `log.txt` beside it), `BuildTask` is what the pre-receive hook hands over
+  (`src/prereceive.py`), `BuildQueue`
   is the bounded queue and the worker threads that build and then publish. At
   start a record that does not parse, names another directory or carries an
   unknown state is logged and skipped, its directory left where it is; jobs a
@@ -86,20 +88,35 @@
   so it changes with the image and no repository on the volume needs a
   migration. A client that goes away does not stop the backend: the rest of
   its answer is read and dropped, so a push the hub has started finishes.
-  `end_of_request` runs after the backend exits and before the connection
-  closes; it is empty for now. The repository itself is the store's: created
-  by `ensure_repo` on the first git request, under a lock of its own; swept of
-  ref locks, push quarantine and unrenamed staging at startup with no age
+  The backend and its hook also get the way back to the hub: the loopback
+  address of `/internal/pre-receive` and the secret the process made at start
+  (`hook_environment`). `end_of_request` runs after the backend exits and
+  before the connection closes: after a push it moves `latest`, `builds.json`
+  and the index after the branch git has just written (`Store.recompute`). The
+  repository itself is the store's: created by `ensure_repo` on the first git
+  request or by the start, under a lock of its own — for a project with builds
+  published before git, as the import of those builds (`Store._import`); swept
+  of ref locks, push quarantine and unrenamed staging at startup with no age
   threshold (`_sweep_repos`); removed with the project
+- `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
+  #128): the ref updates of one push, checked in two passes. The first refuses
+  without building — a deleted ref, a branch other than `main`, a forced push,
+  no `project.json` with the project's id, a symlink or a submodule; the second
+  builds the newest commit of the branch that touched the project's directory,
+  and the draft (`refs/drafts/main`), in the ordinary queue, and streams the
+  log back to the hook. The build publishes before git moves the ref, so a
+  build that fails refuses the push and a push that loses a race leaves its
+  revision published, to join the branch by the next merge
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
-  in a model's directory (issue #26). `build` fills the `dev` slot, `commit`
-  publishes an immutable revision; around them sit `login`, `create`, `status`,
-  `source`, `artifacts`, `diff`, `log`, `comments`, `proposal`, `rename`, `rm`,
-  `skill` and `update`. The verb table with what each one may and may not do is the
+  in a model's directory (issue #26). A version is published by git itself
+  (`git push hammerola-<pid> main`); `connect` sets a repository up for it and
+  `build` pushes the working copy as the draft (`hammerola/repo.py`); around
+  them sit `login`, `create`, `status`, `artifacts`, `diff`, `log`, `comments`,
+  `proposal`, `rename`, `rm`, `skill` and `update`. The verb table with what each one may and may not do is the
   docstring of `hammerola/cli.py`, next to the parser that defines them — read it
   there rather than here.
   IT IS IN THIS REPOSITORY ON PURPOSE: the client and the hub share one contract —
-  the archive shape, the path alphabet, the ceilings, the codes, the job states —
+  the routes, the ceilings, the codes, the job states —
   and publication once broke precisely because the two halves lived in two
   repositories where no test could see both. `tests/client/` drives the real hub
   over a real socket, and `tests/client/test_limits.py` compares the client's copy
@@ -109,16 +126,14 @@
   has, so it imports nothing from `requirements.txt` and talks HTTP with
   `urllib.request`. `tests/client/test_stdlib_only.py` enforces it, since the test
   environment has every dependency installed and would never notice on its own.
-  THE REVISION IS NAMED BY THE HUB, not by the client and not by git (SPEC §7.7):
-  the id is the digest of the sources, so `commit` means "publish a version of
-  this", and a directory that is not a repository publishes exactly like one that
-  is. git is touched once, afterwards: `gitsuggest` PRINTS a `git commit` line for
-  a person to run or ignore — the tool never stages and never commits.
-  Two things are worth knowing before reaching for them: "the last build job"
+  THE REVISION IS A COMMIT (SPEC §7.7): the hub names it by the sha of the
+  commit it built, and the client never stages or commits in the author's
+  history — the draft is a commit made through an index of its own.
+  One thing is worth knowing before reaching for it: "the last build job"
   cannot be shown at all, because a job is addressable only by its id and job order
-  is stored nowhere (see `src/jobs.py`); and `hammerola source dev` refuses, while
-  `hammerola log dev` is answered — the slot's `meta.json` carries a `job` field
-  naming the build that filled it (issue #79)
+  is stored nowhere (see `src/jobs.py`); `hammerola log dev` is answered all the
+  same — the slot's `meta.json` carries a `job` field naming the build that
+  filled it (issue #79)
 - `hammerola/buildnames.py` — what a build file may be CALLED, and the ONE place
   that decides it. Three sides ask: the file server (`app._safe_build_path` for a
   build's files, every segment of the path; `app._safe_name` for `/_v/`), the
@@ -237,8 +252,10 @@
 - `githooks/` — the hooks git runs for a push to a project's repository on the
   hub, found through `core.hooksPath`, which `src/githttp.py` derives from its
   own location (`/app/githooks` in the image, `/src/githooks` in CI's test
-  container). One today: `pre-receive`, which refuses every push with
-  `this hub does not publish over git yet`. THE EXECUTABLE BIT IS LOAD-BEARING:
+  container). One today: `pre-receive`, which decides nothing — it posts the
+  ref updates to the hub over loopback (`HAMMEROLA_HOOK_URL`, with the
+  process's secret), prints the answer as it comes and exits on its last line,
+  the verdict (`src/prereceive.py`). THE EXECUTABLE BIT IS LOAD-BEARING:
   a hook git cannot run, or cannot find, is skipped, and the push is then
   ACCEPTED without a word. So the file is committed executable, the Dockerfile
   copies the directory with `COPY --chmod=0755`, and smoke check (j) fails the
@@ -383,11 +400,11 @@
   the references by name, and opens the archive it serves to find the entry
   document in it. What the skill exists to say, and what nothing else
   says anywhere: `build` fills the draft slot and leaves the project off the
-  front page, `commit` is what makes a version exist, and finished work is
-  committed. The rest is the model contract (pointing at `model_template/` as the
-  example rather than restating it) and the four rules whose breach refuses a
-  push — the path alphabet, a `checklib.py` of one's own, dependencies, and the
-  fact that `model.py` is executed by the hub. It carries no address: the reader
+  front page, `git push` of a commit is what makes a version exist, and finished
+  work is pushed. The rest is the model contract (pointing at `model_template/`
+  as the example rather than restating it) and the four rules whose breach
+  breaks a push — only what is committed is published, a `checklib.py` of one's
+  own, dependencies, and the fact that `model.py` is executed by the hub. It carries no address: the reader
   substitutes their own hub
 - `ui/` — the React sources for the browser UI, and one of the three places node
   is used here (`viewer/` and `ecad-viewer/` below are the others). Built

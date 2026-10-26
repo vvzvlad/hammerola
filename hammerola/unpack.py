@@ -1,7 +1,7 @@
-"""Reading a revision's archive back: in memory for `diff`, onto disk for `source`.
+"""Reading an archive the hub serves: the skill and the starter template.
 
 Members are checked again here although the hub refused the same things on
-the way in (`Store._unpack`, SPEC 7.1): this writes onto the author's machine,
+the way in (`src/archive.py`, SPEC 7.1): this writes onto the author's machine,
 and a compromised or wrong hub must not be able to write
 `../.ssh/authorized_keys`.
 

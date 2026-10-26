@@ -8,8 +8,7 @@ built from it. `title` is changed by `hammerola rename`; `project` (the slug)
 only by hand, since nothing recomputes it. `create_project` refuses to write
 over an existing file; `write_project_title` rewrites only the title.
 
-The revision is not asked here, nor of git: the hub mints it from the sources
-(`Store.mint_revision`). git is consulted only afterwards, by `gitsuggest`.
+The revision is not asked here: it is the commit `git push` publishes.
 """
 
 import json
@@ -50,24 +49,10 @@ def find_project_root(start=None) -> Path:
     )
 
 
-def optional_project_root(start=None):
-    """The project root, or None when there is none. Never raises.
-
-    For commands that address something by its own globally unique id
-    (`source <revision>`, `log <revision>`, `diff <a> <b>`), which need no
-    project. When present, the root is what `latest` resolves against and whose
-    `.env` may override settings (`config.resolve`).
-    """
-    try:
-        return find_project_root(start)
-    except ProjectError:
-        return None
-
-
 def read_project_id(root: Path) -> str:
     """The `id` out of project.json, checked against the hub's alphabet.
 
-    Checked here so the refusal arrives before the upload. An empty id means a
+    Checked here so the refusal arrives before anything is sent. An empty id means a
     hand-written file: `hammerola create` always mints one, and
     `model_template/` carries no `project.json` (`tests/test_template.py`).
     """
@@ -154,7 +139,8 @@ def _project_slug(root: Path, title: str) -> str:
     """The latin name this project publishes under, or "" when it has none.
 
     Written at `create` time because only this machine knows the directory
-    name: on the hub a push is unpacked into `.src-<uuid4 hex>`.
+    name: on the hub a pushed commit's tree is checked out into
+    `.src-<uuid4 hex>`.
 
     The directory before the title's brackets, matching the order
     `cadbuild.project.load_project` reads (the `project` key, then the

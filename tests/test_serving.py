@@ -884,10 +884,6 @@ def test_unknown_paths_are_404(hub):
         assert hub.get(path).status_code == 404, path
 
 
-def test_publish_route_rejects_get(hub):
-    assert hub.get("/api/v1/publish/proj1/abc123").status_code == 404
-
-
 def test_index_json_lists_projects_after_pushes(hub):
     hub.publish("proj1", "abc123", good_build())
     hub.publish("proj2", "def456", good_build())

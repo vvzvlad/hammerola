@@ -19,9 +19,9 @@ from types import SimpleNamespace
 
 import pytest
 from harness import TOKEN
-from modeldir import make_model
+from modeldir import make_model, push_version
 
-from hammerola import config, limits, pack, project, setup
+from hammerola import config, limits, project, setup
 from hammerola import hub as hub_module
 from hammerola.cli import main
 
@@ -271,7 +271,8 @@ def test_create_names_the_project_after_the_directory_it_is_made_in(
     """The `project` key, written by the only machine able to write it.
 
     The slug is the name of the author's directory and of their repository. On
-    the hub a push is unpacked into `.src-<uuid4 hex>`, so the hub cannot work
+    the hub the project's directory is exported from the pushed commit into
+    `.src-<uuid4 hex>`, so the hub cannot work
     it out; it travels in project.json because this is where the question has
     an answer.
 
@@ -536,8 +537,8 @@ def test_a_created_project_is_one_the_hub_accepts(hub, tmp_path, monkeypatch):
                  "--title", "Fresh"]) == 0
 
     pid = json.loads((root / "project.json").read_text(encoding="utf-8"))["id"]
-    assert main(["-C", str(root), "build", "--timeout", "60"]) == 0
-    assert (hub.project_dir(pid) / "dev" / "model.py").is_file()
+    revision = push_version(hub, root)
+    assert (hub.project_dir(pid) / revision / "model.py").is_file()
 
 
 # -- create, and the template it fetches -------------------------------------
@@ -806,29 +807,3 @@ def test_without_a_hub_address_the_flag_is_what_starts_a_project(
     assert main(["-C", str(root), "create", "--no-template"]) == 0
     assert (root / "project.json").is_file()
     assert not (root / "model.py").exists()
-
-
-def test_what_create_unpacked_is_a_tree_that_can_be_pushed_again(
-        hub, tmp_path, monkeypatch):
-    """The round trip: what the hub served, unpacked, packs back up.
-
-    The claim the template makes is that it builds AS IT STANDS, and the first
-    half of that is that it can be sent at all — the names have to survive the
-    hub's own path alphabet on the way up, and `.gitignore` has to be DROPPED
-    rather than refuse the push. (The build itself is `tests/test_template.py`,
-    which needs a CAD kernel; this does not, and runs everywhere.)
-
-    Not driven through `hammerola build`, and the reason is the suite rather
-    than the tool: the stand-in builder publishes the pushed tree unchanged
-    (`harness.copying_builder`), so a SOURCE tree with no meta.json in it is
-    refused at publication for want of one — which says nothing about the
-    template.
-    """
-    monkeypatch.setenv("HUB_URL", hub.url)
-    root = tmp_path / "fresh-part"
-    assert main(["-C", str(root), "create"]) == 0
-
-    packed = pack.pack(root)
-    assert "model.py" in packed.names
-    assert "project.json" in packed.names
-    assert ".gitignore" not in packed.names

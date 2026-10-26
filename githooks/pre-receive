@@ -1,12 +1,64 @@
 #!/usr/bin/env python3
-"""Refuse every push to a project's repository on the hub.
+"""Ask the hub whether a push to a project's repository may go in.
 
 git runs this hook (`core.hooksPath`, set in src/githttp.py) once the pushed
 objects have arrived and before any ref moves. A non-zero exit refuses the whole
 push, and what the hook prints reaches the pusher as `remote: ...`.
+
+The hook decides nothing: it posts the ref updates to the hub
+(`HAMMEROLA_HOOK_URL`, with `HAMMEROLA_HOOK_SECRET`; both are in the environment
+the hub gives `git http-backend`), prints the answer line by line as it comes
+and exits on its last line, `hammerola-verdict: ok` or `...: refused`
+(src/prereceive.py). No read timeout: the answer takes as long as the build,
+and the hub bounds that itself. Standard library only.
 """
 
+import json
+import os
 import sys
+import urllib.request
 
-sys.stderr.write("this hub does not publish over git yet\n")
-sys.exit(1)
+VERDICT = "hammerola-verdict: "
+QUARANTINE_VARIABLES = ("GIT_QUARANTINE_PATH", "GIT_OBJECT_DIRECTORY",
+                        "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+UNREACHABLE = "hook could not reach the hub"
+
+
+def main() -> int:
+    # Run inside the bare repository, `<pid>.git`, where `$GIT_DIR` is `.`.
+    pid = os.path.basename(os.getcwd()).removesuffix(".git")
+    count = int(os.environ.get("GIT_PUSH_OPTION_COUNT") or 0)
+    body = json.dumps({
+        "pid": pid,
+        "lines": [line.strip() for line in sys.stdin if line.strip()],
+        "quarantine": {name: os.environ[name] for name in QUARANTINE_VARIABLES
+                       if name in os.environ},
+        "options": [os.environ.get(f"GIT_PUSH_OPTION_{index}", "")
+                    for index in range(count)],
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        os.environ.get("HAMMEROLA_HOOK_URL", ""), data=body, method="POST",
+        headers={"Content-Type": "application/json",
+                 "X-Hammerola-Hook-Secret":
+                     os.environ.get("HAMMEROLA_HOOK_SECRET", "")})
+    verdict = None
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request) as answer:
+            for raw in answer:
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if line.startswith(VERDICT):
+                    verdict = line[len(VERDICT):]
+                    continue
+                sys.stderr.write(line + "\n")
+                sys.stderr.flush()
+    except (OSError, ValueError):
+        verdict = None
+    if verdict is None:
+        sys.stderr.write(UNREACHABLE + "\n")
+        return 1
+    return 0 if verdict == "ok" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

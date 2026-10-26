@@ -1,8 +1,8 @@
 """Which project — the one answer the working directory has to give.
 
-The hub names a revision out of the sources it receives, so the client derives
-only the project: `project.json`, and not the directory name, decides where a
-push lands.
+A revision is the commit the hub built, so the client derives only the
+project: `project.json`, and not the directory name, decides where a push
+lands.
 """
 
 import json

@@ -1,8 +1,9 @@
 """One request, two ways of saying how long its body is. Every route says 411.
 
-`_body_length` in `src/app.py` opens the preamble all five body-taking routes
-share, and refuses a chunked body like a missing length on all five. This file
-holds that rule.
+`_body_length` in `src/app.py` opens the preamble the five routes that read their
+body by its length share, and refuses a chunked body like a missing length on all
+five. This file holds that rule. The git route is not one of them: it takes a
+chunked push and decodes it itself (`githttp.copy_chunked`).
 
 It differs from `test_a_body_of_unknown_length_is_411`, which sends chunked and no
 Content-Length (the length parse refuses that on its own): here the request carries
@@ -21,6 +22,9 @@ import pytest
 
 from harness import TOKEN, comment_payload, good_build
 
+from src import githttp
+from src.app import HOOK_SECRET_HEADER
+
 PID = "proj1"
 COMMIT = "abc123"
 
@@ -28,7 +32,8 @@ COMMIT = "abc123"
 # is the one that enters the preamble conditionally -- its body is optional, so
 # a request with no framing at all is a resolve with no note -- and it is here
 # because the framing it does carry is still framing this service cannot read.
-ROUTES = ("comment", "proposal", "publish", "resolve", "title")
+# `pre-receive` is the git hook's, behind the secret of this process.
+ROUTES = ("comment", "pre-receive", "proposal", "resolve", "title")
 
 
 def _setup(hub):
@@ -41,7 +46,7 @@ def _setup(hub):
     assert hub.publish(PID, COMMIT, good_build()).status_code == 201
     cid = hub.post_comment(PID, COMMIT, comment_payload()).json()["id"]
     return {
-        "publish": f"/api/v1/publish/{PID}/{COMMIT}",
+        "pre-receive": githttp.HOOK_PATH,
         "title": f"/api/v1/projects/{PID}/title",
         "comment": f"/api/v1/comments/{PID}/{COMMIT}",
         "resolve": f"/api/v1/comments/{cid}/resolve",
@@ -56,7 +61,8 @@ def _post(hub, path, framing):
     the length any Content-Length here declares. A hub that took either framing at
     its word therefore has a complete request, and the reply is a verdict on the
     framing rather than on a truncated read (without the refusal, a request with a
-    length gets a 422 about the content).
+    length gets a 422 about the content). Both secrets go with it, so no route
+    refuses it at the door before the framing is looked at.
     """
     host, port = hub.server.server_address[:2]
     with socket.create_connection((host, port), timeout=10) as sock:
@@ -64,7 +70,8 @@ def _post(hub, path, framing):
             f"POST {path} HTTP/1.1\r\n".encode()
             + b"Host: hub\r\n"
             b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
-            b"Content-Type: application/json\r\n"
+            + f"{HOOK_SECRET_HEADER}: {hub.server.hook_secret}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
             + framing
             + b"\r\n"
             b"0\r\n\r\n")

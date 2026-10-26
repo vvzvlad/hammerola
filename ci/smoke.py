@@ -32,7 +32,7 @@ carries the code, starts on its own and is packaged as this repo says.
       runs it on a checkout and strips ceilings the workstation refuses
       (`tests/buildproc/probes.py`), so it cannot answer this.
 * (j) the git server answers in the image — 200 with the token, 403 without — and the hook
-      that refuses a push is there and executable. The suite runs its own git and takes the
+      that decides a push is there and executable. The suite runs its own git and takes the
       hook from the checkout, so it sees neither git nor the hook missing from the image.
 
 Constraints of this runner
@@ -1643,7 +1643,7 @@ def check_build_ceilings(name, blocked=None):
 
 
 def check_git_server(name):
-    """(j) The git server answers in the image, and the hook that refuses a push is in it.
+    """(j) The git server answers in the image, and the hook that decides a push is in it.
 
     Asked of the `-cmd` container, so the hub that answers is the program production runs. Two
     faults of the IMAGE show only here: `git` dropped from the Dockerfile's apt list, after which

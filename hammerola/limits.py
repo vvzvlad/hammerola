@@ -5,19 +5,19 @@ and `src.store` pulls in the service. Every constant is compared against the
 module that enforces it in `tests/client/test_limits.py`, so the two cannot
 drift silently.
 
-The ceilings are enforced before anything is sent, naming the offending file.
-The hub remains the authority: it re-checks every one.
+The ceilings hold what this client reads back from the hub (`unpack.py`) and
+what it writes into `project.json`.
 """
 
 import re
 
-# `<pid>` from project.json and the revision the hub mints from the sources
-# (SPEC 7.7); both become path segments. Authority: `src.store.SAFE_ID`.
+# `<pid>` from project.json and a revision's name (SPEC 7.7); both become path
+# segments. Authority: `src.store.SAFE_ID`.
 SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
 # One `/`-separated component of a member path. Authority:
-# `src.store.SAFE_COMPONENT`. It forbids a leading dot, which is why `pack.py`
-# drops hidden entries (`.git`, `.venv`, `.env`) rather than refusing them.
+# `src.store.SAFE_COMPONENT`. It forbids a leading dot; `unpack.py` holds the
+# archives this client reads to it.
 SAFE_COMPONENT = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # Components in one member's path, the file name included. Authority:
@@ -28,8 +28,8 @@ MAX_PATH_DEPTH = 8
 MAX_MEMBERS = 1024
 
 # Reserved build names: `latest` is a symlink the store moves, `dev` is the
-# local slot. Authority: `src.store.RESERVED_BUILD_NAMES`. Revisions are 64 hex
-# characters minted by the hub, so they cannot collide; the names are used for
+# local slot. Authority: `src.store.RESERVED_BUILD_NAMES`. Revisions are commit
+# shas, 40 hex characters, so they cannot collide; the names are used for
 # addressing.
 DEV_SLOT = "dev"
 RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})

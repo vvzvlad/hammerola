@@ -11,12 +11,12 @@ WHAT EACH IS ALLOWED TO TOUCH IS THE SUBJECT HERE, more than the mechanics.
     for the same reason turned around: that would break a permanent URL while
     the project went on standing.
 
-AND THE PART THAT IS EASY TO GET WRONG: the stored code is addressed by the
-digest of a source tree and not by project (SPEC 7.8), so the same tree published
-in two projects is ONE directory serving both. Removing a project may not take
-code another project's revision still points at, and may not leave behind code
-nothing points at — the store's invariant is "an archive exists exactly when a
-published revision does", in both directions.
+AND THE PART THAT IS EASY TO GET WRONG: the archive a revision published before
+git was built from is kept in `sources/`, addressed by the digest of its source
+tree and not by project, so the same tree published in two projects is ONE
+directory serving both. Removing a project may not take an archive another
+project's revision still points at, and may not leave behind one nothing points
+at.
 """
 
 import json
@@ -28,7 +28,11 @@ from src.store import SOURCE_ARCHIVE_NAME, SOURCES_DIR_NAME
 
 
 def _publish(hub, pid="proj1", body=None):
-    """Publish on the minting route. -> the revision the hub named."""
+    """Publish under the name a hub before git minted. -> that name.
+
+    The name is the digest of the tree (`Hub.publish` with no commit), and the
+    archive is filed in `sources/` under it.
+    """
     reply = hub.publish(pid, None, good_build() if body is None else body)
     assert reply.status_code == 201, reply.text
     return reply.record["commit"]
@@ -157,9 +161,7 @@ def test_removing_a_project_takes_everything_it_had(hub):
     assert hub.get(f"/project/proj1/{revision}/meta.json").status_code == 404
     assert hub.get("/project/proj1/").status_code == 404
     # And the code is gone from behind the secret too, not merely unlisted.
-    assert hub.get(f"/api/v1/sources/{revision}",
-                   headers={"X-Hammerola-Token": TOKEN}
-                   ).status_code == 404
+    assert not hub.store.repo_dir("proj1").exists()
 
 
 def test_code_another_project_still_points_at_is_kept(hub):
@@ -174,9 +176,6 @@ def test_code_another_project_still_points_at_is_kept(hub):
     assert removed.json()["sources"] == 0
 
     assert (_sources(hub, revision) / SOURCE_ARCHIVE_NAME).is_file()
-    assert hub.get(f"/api/v1/sources/{revision}",
-                   headers={"X-Hammerola-Token": TOKEN}
-                   ).status_code == 200
     # And proj2 is untouched in every other way.
     assert hub.get(f"/project/proj2/{revision}/meta.json").status_code == 200
 

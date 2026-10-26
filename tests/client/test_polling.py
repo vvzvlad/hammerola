@@ -254,9 +254,9 @@ def test_a_hub_that_never_comes_back_gives_up_and_says_which_budget_ran_out(
     honest message.
 
     The message has to say three things: that the HUB
-    stopped answering rather than that the build failed, where to look
-    afterwards, and that `--timeout` is not the knob — it is the budget for the
-    build, not for the hub being unreachable.
+    stopped answering rather than that the job failed, where to look
+    afterwards, and that what ran out is the tolerance for an unreachable hub,
+    not the job's own budget.
     """
     hub, seen = scripted([EDGE_404])
     started = time.monotonic()
@@ -268,10 +268,10 @@ def test_a_hub_that_never_comes_back_gives_up_and_says_which_budget_ran_out(
     message = str(raised.value)
     assert "M4emizPYJlKnvtyIlLu3RQ" in message
     assert f"{hub.url}/api/v1/jobs/M4emizPYJlKnvtyIlLu3RQ" in message
-    assert "--timeout" in message
-    assert "THE BUILD DID NOT FAIL" in message, (
-        "the message reads as the build having failed, which is the exact "
-        "wrong conclusion — the push was accepted and the build may be running")
+    assert "tolerance for the hub being unreachable" in message
+    assert "THE JOB DID NOT FAIL" in message, (
+        "the message reads as the job having failed, which is the exact "
+        "wrong conclusion — the job was accepted and may be running")
     assert elapsed < 5, (
         f"gave up after {elapsed:.1f}s, so the grace it honoured is not the "
         f"one it was given")
@@ -511,8 +511,8 @@ def test_the_DEADLINE_running_out_is_not_reported_as_the_hub_going_away(
 
     An opening failure has `now - streak_began == 0`, so a single condition over
     both budgets would give every failed poll at or after the deadline the
-    streak's message — "a longer --timeout does not help with this one" — at the
-    exact moment a longer --timeout is what would help.
+    streak's message — the hub gone away — at the exact moment the job's own
+    budget is what ran out.
 
     The state has to be named as what was last SEEN, with the failed poll
     admitted: reporting `'building'` without saying the last look failed hands
@@ -531,9 +531,9 @@ def test_the_DEADLINE_running_out_is_not_reported_as_the_hub_going_away(
     message = str(raised.value)
     assert "still 'building'" in message, message
     assert "The last poll failed as well" in message, message
-    assert "pass a longer --timeout" in message
-    assert "does not help" not in message, (
-        "the deadline's message denies the knob that is exactly the fix for it")
+    assert "is not cancelled by giving up here" in message
+    assert "tolerance for the hub" not in message, (
+        "the deadline's message blames the hub for the job's own budget")
 
 
 def test_a_deadline_reached_with_no_poll_EVER_answering_says_that(
@@ -548,7 +548,7 @@ def test_a_deadline_reached_with_no_poll_EVER_answering_says_that(
 
     message = str(raised.value)
     assert "never seen in any state" in message, message
-    assert "pass a longer --timeout" in message
+    assert "is not cancelled by giving up here" in message
 
 
 def test_the_grace_window_is_WALL_CLOCK_and_not_a_count_of_returned_polls(
@@ -556,13 +556,13 @@ def test_the_grace_window_is_WALL_CLOCK_and_not_a_count_of_returned_polls(
     """A poll that is accepted and then answered by nobody must not eat the
     window whole.
 
-    The streak is measured only when a poll RETURNS, and the Hub's own timeout
-    is `HTTP_TIMEOUT` (300 s) — sized for pushing an archive up a domestic
-    uplink. A poll inheriting that turns a promised minute of tolerance into ten
-    the moment a socket is accepted and goes silent: a dropped VPN, a wifi
-    handover, a black hole on the path. `QUERY_TIMEOUT` is the constant that
-    already exists for this, and it is passed per request so the PUSH keeps its
-    own budget.
+    The streak is measured only when a poll RETURNS, and a Hub's own timeout
+    is whatever it was made with — `HTTP_TIMEOUT` (300 s) by default. A poll
+    inheriting that turns a promised minute of tolerance into ten the moment a
+    socket is accepted and goes silent: a dropped VPN, a wifi handover, a black
+    hole on the path. `QUERY_TIMEOUT` is the constant that already exists for
+    this, and it is passed per request, so the poll does not depend on the
+    budget of the Hub that waits.
 
     Staged with a server that accepts and never answers, which is the only way
     to observe a socket timeout at all.
@@ -581,8 +581,7 @@ def test_the_grace_window_is_WALL_CLOCK_and_not_a_count_of_returned_polls(
                               kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     monkeypatch.setattr(hub_module, "QUERY_TIMEOUT", 0.2)
-    # The HUB's timeout stays long — that is the push's, and this is what a real
-    # `hammerola build` holds while it waits.
+    # The HUB's own timeout stays long, as a Hub made with the default has it.
     hub = Hub(f"http://127.0.0.1:{server.server_address[1]}", "token",
               timeout=30)
     started = time.monotonic()
@@ -593,7 +592,7 @@ def test_the_grace_window_is_WALL_CLOCK_and_not_a_count_of_returned_polls(
         assert "stopped answering" in str(raised.value)
         assert elapsed < 5, (
             f"{elapsed:.1f}s for a 0.3s window — the poll is waiting on the "
-            f"PUSH's budget, so the window is only as short as the far end "
+            f"Hub's own budget, so the window is only as short as the far end "
             f"chooses to make it")
     finally:
         release.set()
@@ -638,7 +637,7 @@ def test_a_throttled_notice_is_DEFERRED_and_not_lost(monkeypatch, scripted):
 
     assert "stopped answering" in str(raised.value)
     assert len(notices) >= 2, notices
-    assert "still waiting, the build may be running" in notices[-1], (
+    assert "still waiting, the job may be running" in notices[-1], (
         f"the last thing said about the connection was {notices[-1]!r}, and "
         f"then the command gave up — the fatal outage was never announced")
 
@@ -675,53 +674,6 @@ def test_a_deferred_line_is_the_LATEST_transition_and_not_a_healed_outage(
         f"the last thing said about the connection was {notices[-1]!r}, while "
         f"the hub was answering and the build finished — a superseded line was "
         f"kept instead of being overwritten")
-
-
-class _Reply:
-    """The least a response has to be for `_exchange` to read it."""
-
-    def __init__(self, body):
-        self.status = 200
-        self._body = body
-
-    def read(self, count=None):
-        return self._body[:count]
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def test_the_POLL_gets_the_short_budget_and_the_PUSH_keeps_the_long_one(
-        monkeypatch):
-    """The per-request override is not the DEFAULT.
-
-    `budget = QUERY_TIMEOUT if timeout is None else timeout` would silently cut
-    every push from 300 s to 30 s — a push of a real archive up a domestic
-    uplink would then die part-way with `cannot reach`.
-
-    Asserted where the number actually lands, on the opener, which is below the
-    computation and above the socket. No server: a fake opener is the only thing
-    that can see the effective budget at all.
-    """
-    class Opener:
-        def __init__(self):
-            self.budgets = []
-
-        def open(self, request, timeout=None):
-            self.budgets.append(timeout)
-            return _Reply(b'{"state": "done"}')
-
-    hub = Hub("http://hub.example", "token", timeout=300)
-    opener = Opener()
-    monkeypatch.setattr(hub, "_opener", opener)
-
-    hub.publish("demo0001", b"an archive")
-    hub.await_job("job-1", timeout=10)
-
-    assert opener.budgets == [300, hub_module.QUERY_TIMEOUT], opener.budgets
 
 
 def test_notices_are_floored_so_a_FLAPPING_endpoint_cannot_fill_the_terminal(
@@ -942,9 +894,9 @@ def test_when_BOTH_budgets_expire_at_once_the_streak_is_what_is_reported(
 
     message = str(raised.value)
     assert "stopped answering" in message, f"{shape}: {message}"
-    assert "pass a longer --timeout" not in message, (
+    assert "is not cancelled by giving up here" not in message, (
         f"{shape}: the deadline's message won, so a reader with an unreachable "
-        f"hub is sent to raise a budget that is not the one that ran out")
+        f"hub is told the job's budget ran out")
 
 
 def test_a_200_WITHOUT_a_state_is_not_reported_as_never_having_answered(

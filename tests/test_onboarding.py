@@ -519,31 +519,6 @@ def test_the_skill_states_the_same_python_floor(hub):
 
 
 # -- what the skill promises about the contract ------------------------------
-def test_the_skill_quotes_the_contract_numbers_that_are_actually_enforced(hub):
-    """The skill quotes the contract numbers that are actually enforced.
-
-    The skill's "four rules that break a push" spells the path alphabet, the depth
-    and the file count as LITERALS, and a reader acts on them (rule 1 while
-    renaming files). They are the client's own constants, so they are compared
-    rather than trusted.
-
-    The alphabet is compared without its anchors: the skill quotes the pattern
-    a person matches a FILE NAME against, and `\\A`/`\\Z` are how a regex says
-    "the whole string".
-    """
-    from hammerola.limits import MAX_MEMBERS, MAX_PATH_DEPTH, SAFE_COMPONENT
-
-    text = one_text(served_skill_files(hub))
-    alphabet = SAFE_COMPONENT.pattern[2:-2]
-    assert alphabet in text, (
-        f"the skill does not quote the alphabet it tells people to rename "
-        f"files to match: {alphabet}")
-    assert f"{MAX_PATH_DEPTH} components" in text, (
-        f"the skill does not say a path may be {MAX_PATH_DEPTH} components deep")
-    assert f"{MAX_MEMBERS} files" in text, (
-        f"the skill does not say a push may carry {MAX_MEMBERS} files")
-
-
 # What a model may import, and the ONE place the answer is settled: the image is
 # built from `requirements.txt`, so that file is the authority and the two
 # documents quote it. Named here rather than derived from the file because most
@@ -625,18 +600,16 @@ def test_the_skill_names_no_checklib_helper_that_does_not_exist(hub):
 SKILL_WORKERS = re.compile(r"drains\s+the\s+queue\s+across\s+(\w+)\s+worker\s+processes")
 SKILL_BUDGET = re.compile(r"its\s+own\s+budget:\s+(\d+)\s+seconds")
 
-# The BUILD ceilings, and ALL FOUR sentences that carry them. The wall is stated
+# The BUILD ceiling, and ALL THREE sentences that carry it. The wall is stated
 # three times on purpose (in minutes as the heading an author reads first, in
-# seconds where the four clocks are laid out, and in minutes again where a hung
-# check is costed); pinning two would leave the third to go stale alone.
+# seconds where the clocks over a push are laid out, and in minutes again where
+# a hung check is costed); pinning two would leave the third to go stale alone.
 #
 # The document states the wall nowhere else, and that is a property to preserve:
-# prose that recomputes a ceiling (e.g. off the slow-build threshold) belongs on
-# this side of the HTTP boundary.
+# prose that recomputes a ceiling belongs on this side of the HTTP boundary.
 SKILL_WALL_MINUTES = re.compile(r"A\s+build\s+has\s+(\w+)\s+minutes\s+of\s+wall\s+clock")
 SKILL_WALL = re.compile(r"kills\s+a\s+build\s+at\s+(\d+)\s+seconds")
 SKILL_WALL_WHOLE = re.compile(r"whole\s+(\w+)-minute\s+wall\s+clock")
-SKILL_CLIENT_CEILING = re.compile(r"its\s+own\s+ceiling\s+is\s+(\d+)\s+seconds")
 
 # Read for the worker count and for the wall in minutes alike.
 SPELLED = {"two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
@@ -674,21 +647,18 @@ def test_the_skill_quotes_the_unit_ceilings_the_hub_actually_runs(hub):
 
 
 def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
-    """The wall an author sizes `checks()` against, and the client's own wait.
+    """The wall an author sizes `checks()` against.
 
     A stale wall is not a document error an author can catch: they calibrate
     `checks()` against the ceiling they were handed and the build is killed on a
     lower number with a timeout naming nothing, while the instructions live in a
     directory nobody edits alongside `limits.py`.
 
-    The client's ceiling is pinned for the reason `test_build_ceilings.py` gives:
-    `hammerola/` is stdlib-only and cannot import the wall, so the skill's copy of
-    that literal is a copy of a copy.
-
     Not covered: the skill also quotes the hub's concurrency ("four builds at a
     time", `MAX_CONCURRENT_BUILDS`) and the slow-build threshold ("past three
-    minutes", `SLOW_BUILD_SECONDS`), and nothing reads those copies back;
-    `tests/test_build_ceilings.py` asserts the constants, not this document.
+    minutes", `prereceive.SLOW_BUILD_SECONDS`), and nothing reads those copies
+    back; `tests/test_build_ceilings.py` asserts the constants, not this
+    document.
     """
     skill = one_text(served_skill_files(hub))
 
@@ -726,14 +696,6 @@ def test_the_skill_quotes_the_build_ceilings_the_hub_actually_enforces(hub):
     assert whole_minutes * 60 == DEFAULT_LIMITS.wall_seconds, (
         f"the skill costs a hung check at {whole.group(1)} minutes and "
         f"wall_seconds is {DEFAULT_LIMITS.wall_seconds}")
-
-    ceiling = SKILL_CLIENT_CEILING.search(skill)
-    assert ceiling, (
-        "the skill no longer states the client's own ceiling in the words this "
-        "reads it by — reword the pattern with the sentence")
-    assert int(ceiling.group(1)) == hub_client.JOB_TIMEOUT, (
-        f"the skill tells an author the client waits {ceiling.group(1)}s "
-        f"and JOB_TIMEOUT is {hub_client.JOB_TIMEOUT}")
 
 
 def test_the_downloaded_client_refuses_an_interpreter_that_is_too_old():

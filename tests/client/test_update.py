@@ -37,18 +37,19 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from modeldir import make_model
+from harness import TOKEN
+from modeldir import git, git_repo, make_model
 
 from src import onboarding
-from hammerola import VERSION, changelog, config, update
+from hammerola import VERSION, changelog, config, repo, update
 from hammerola import hub as hub_module
 from hammerola.cli import main
 from hammerola.errors import ClientError
 
-# The address and the token, from tests/client/conftest.py. The
-# token is for the publishing half of this file only: `update` itself presents
-# none — `/start` and the client it names are public on purpose, and a machine
-# whose tool is too old to publish may be one that was never logged in.
+# The address, from tests/client/conftest.py. `update` presents no token —
+# `/start` and the client it names are public on purpose, and a machine whose
+# tool is too old to publish may be one that was never logged in. The
+# publishing half of this file hands git the token itself (`model` below).
 pytestmark = pytest.mark.usefixtures("configured")
 
 ROOT = Path(update.__file__).resolve().parent.parent
@@ -376,29 +377,42 @@ def test_update_refuses_a_zipapp_that_states_no_version(monkeypatch, target,
 
 
 # -- the refusal to publish --------------------------------------------------
-def publish(model, *args):
-    return main(["-C", str(model), *args, "--timeout", "60"])
+def publish(model):
+    return main(["-C", str(model), "build"])
 
 
 @pytest.fixture
-def model(tmp_path):
-    return make_model(tmp_path / "demo")
+def model(tmp_path, hub):
+    """A model in a repository `hammerola build` can push a draft from.
+
+    What `hammerola connect` leaves, set up directly: the remote
+    `hammerola-<pid>` at the hub's repository and the token header git sends
+    there. With an identity, because the draft is a commit.
+    """
+    root = make_model(tmp_path / "demo")
+    git_repo(root)
+    git(root, "remote", "add", repo.remote_name("demo0001"),
+        f"{hub.url}/git/demo0001.git")
+    for key, value in (("http.extraHeader", f"X-Hammerola-Token: {TOKEN}"),
+                       ("user.name", "hammerola tests"),
+                       ("user.email", "tests@example.invalid")):
+        git(root, "config", key, value)
+    return root
 
 
-@pytest.mark.parametrize("verb", ["build", "commit"])
 def test_a_client_older_than_the_hub_refuses_to_publish(hub, monkeypatch, model,
-                                                        capsys, verb):
+                                                        capsys):
     """BOTH VERSIONS ARE NAMED, because the reader has to be able to tell this
     from "the hub is down" and from "the push was rejected" — and because a
     number it can see is what makes the next line, `hammerola update`, worth
     running rather than worth retrying.
 
-    Nothing is published and nothing is even packed: the question is asked
-    before the tree is walked.
+    Nothing is published and nothing is even committed: the question is asked
+    before the draft is made.
     """
     monkeypatch.setattr(onboarding, "CLIENT_VERSION", "9.9.9")
 
-    assert publish(model, verb) == 1
+    assert publish(model) == 1
 
     error = capsys.readouterr().err
     assert f"version {VERSION}" in error
@@ -414,7 +428,7 @@ def test_a_client_newer_than_the_hub_publishes(monkeypatch, model):
     machine that builds the hub."""
     monkeypatch.setattr(onboarding, "CLIENT_VERSION", "0.0.1")
 
-    assert publish(model, "build") == 0
+    assert publish(model) == 0
 
 
 def test_a_hub_that_states_no_client_version_does_not_stop_a_push(monkeypatch,
@@ -428,7 +442,7 @@ def test_a_hub_that_states_no_client_version_does_not_stop_a_push(monkeypatch,
         key: value for key, value in real(empty=empty).items()
         if key != onboarding.CLIENT_VERSION_KEY})
 
-    assert publish(model, "build") == 0
+    assert publish(model) == 0
 
 
 def test_only_the_verbs_that_publish_ask_the_hub_about_the_client(monkeypatch,
@@ -438,13 +452,11 @@ def test_only_the_verbs_that_publish_ask_the_hub_about_the_client(monkeypatch,
     only a WRITE can get wrong. Counted on the request itself rather than on the
     call site, so moving the call somewhere convenient does not pass.
 
-    AND ON WHAT BUDGET, which is the same argument one step further. The Hub the
-    push builds carries `HTTP_TIMEOUT`, five minutes, because the request that
-    matters is uploading an archive; asking an 80-byte question with it hangs
-    the terminal for five silent minutes on an address that black-holes packets
-    — before any output at all, since this runs ahead of `pack()` — and then
-    hangs it again on the push. Reusing the caller's Hub is the one-word edit
-    that brings that back, and it would pass every other test in this file.
+    AND ON WHAT BUDGET, which is the same argument one step further. A Hub
+    made with the default `HTTP_TIMEOUT` waits five minutes; asking an 80-byte
+    question with it hangs the terminal for five silent minutes on an address
+    that black-holes packets — before any output at all, since this runs ahead
+    of the push.
     """
     asked = []
     real = hub_module.Hub.start
@@ -455,7 +467,7 @@ def test_only_the_verbs_that_publish_ask_the_hub_about_the_client(monkeypatch,
 
     monkeypatch.setattr(hub_module.Hub, "start", counted)
 
-    assert publish(model, "build") == 0
+    assert publish(model) == 0
     assert asked == [(config.hub_url(model), hub_module.QUERY_TIMEOUT)], (
         "the question a push asks about the client's own version was not sent "
         "to the project's hub on a query's budget")

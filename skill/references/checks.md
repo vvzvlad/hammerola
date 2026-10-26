@@ -80,7 +80,8 @@ calls its own builders and runs to the end about parts the build no longer has.
 `checks: 12 passed`, every section but the last measuring a box and a lid that
 were gone.) Gutting it fails the empty-checks gate, and deleting it throws away
 every complaint ever turned into an assertion, so commit the product's
-`checks()` to git first: `hammerola source <gauge>` brings back the gauge's.
+`checks()` to git first: the gauge's stays in its commit (`git show
+<gauge>:model.py`).
 The person names a step, the number goes into the part, the next commit is the
 product, and the gauge's revision stays as the record of what won.
 
@@ -99,8 +100,9 @@ mid-run: a timeout instead of an answer. What gets there is rarely geometry and
 usually `checks()`, which grows with everything the part teaches you.
 
 The kernel lives in the hub's image, so you cannot time this locally: calibrate
-against the hub. After every `build` and `commit` that rebuilt something,
-failed ones included, the client prints one line off the hub's clock:
+against the hub. After every `git push` and `hammerola build` that rebuilt
+something, failed ones included, the hub prints one line off its clock, under
+the build's log:
 
 ```
 built in 4m12s (queued 8s)
@@ -112,15 +114,14 @@ section's fixes; it is not a refusal, and a slow build publishes. A push the hub
 answers with `unchanged` rebuilt nothing and prints no line. Judge a fix by this
 line against the build before it, not by guessing.
 
-**Four clocks run over one push, and the one that stops you first is your
+**Three clocks run over one push, and the one that stops you first is your
 own.** The hub kills a build at 300 seconds of wall clock and runs four builds
-at a time. The client waits out the queue and the build, and its own ceiling is
-2700 seconds (`--timeout SECONDS` on `build` and `commit` moves it; nothing
-moves the hub's). Act on the three-minute warning the first time. What you WILL
-hit is the timeout of the tool you launched `hammerola build` with: a two-minute
-shell call cuts the command off, the build goes on and publishes, and its log,
-on that command's stdout, is lost. Run a slow push with that timeout raised past
-the hub's ceiling, or in the background.
+at a time; `git push` and `hammerola build` wait out the queue and the build,
+with no ceiling of their own. Act on the three-minute warning the first time.
+What you WILL hit is the timeout of the tool you launched the push with: a
+two-minute shell call cuts the command off, the build goes on and publishes,
+and its log, on that command's output, is lost. Run a slow push with that
+timeout raised past the hub's ceiling, or in the background.
 
 **When it is slow, mark `checks()` up with `checklib.section("...")`** and read
 the table the hub prints, on a failed build too. Measure before cutting: in one

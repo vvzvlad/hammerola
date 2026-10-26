@@ -257,22 +257,6 @@ def test_a_revision_digest_that_will_not_read_keeps_the_chip(hub):
     assert _card(hub, "proj1")["dev"] is True
 
 
-def test_a_slot_with_no_latest_to_compare_against_keeps_the_chip(hub):
-    """`latest` gone is the other way the comparison has nothing to compare.
-
-    The slot is still full and its digest still reads; what is missing is the
-    revision to hold it against, and the answer is the same one for the same
-    reason. The state is reachable — a publish that failed after the mirror and
-    before the symlink leaves exactly this.
-    """
-    hub.publish("proj1", "abc123", _build("c1"))
-    assert _card(hub, "proj1")["dev"] is False
-
-    (hub.project_dir("proj1") / "latest").unlink()
-    _refresh_the_index(hub)
-    assert _card(hub, "proj1")["dev"] is True
-
-
 def test_a_project_with_only_a_local_build_has_no_latest(hub):
     """Nothing has been published from a commit, so there is nothing to promise.
 
@@ -340,8 +324,8 @@ def test_the_slot_is_never_cached_on_any_path(hub):
 def test_dev_is_still_a_reserved_build_name(hub):
     """The slot owns the name, and the URL is the reason.
 
-    `/project/<pid>/dev/` is the slot and `/api/v1/publish/<pid>/dev` is the
-    route into it, so a build directory could never live there anyway.
+    `/project/<pid>/dev/` is the slot, so a build directory could never live
+    there.
     """
     from src.store import Store
     assert Store.valid_build_id("dev") is False
@@ -478,15 +462,8 @@ def test_a_project_whose_only_build_is_a_commit_still_offers_the_slot(hub):
 
 
 # -- the ordinary publish path still applies ---------------------------------
-def test_a_local_push_needs_the_token_like_any_other(hub):
-    assert hub.publish_dev("proj1", _build("v1"), token=None).status_code == 403
-    assert hub.publish_dev("proj1", _build("v1"), token="wrong").status_code == 403
-    assert _dirs_on_disk(hub, "proj1") == []
-
-
-def test_a_broken_local_archive_is_refused_like_any_other(hub):
-    """Validation is the ordinary path: the route only decides where it lands."""
-    assert hub.publish_dev("proj1", b"not a tarball").status_code == 422
+def test_a_broken_local_build_is_refused_like_any_other(hub):
+    """Validation is the ordinary path: a draft differs only in where it lands."""
     no_view = tar_gz({"meta.json": meta_bytes(views=[]), **DEFAULT_EXPORTS})
     assert hub.publish_dev("proj1", no_view).status_code == 422
     assert _dirs_on_disk(hub, "proj1") == []
@@ -499,7 +476,6 @@ def test_a_refused_push_leaves_the_slot_showing_what_it_had(hub):
     blanked the page would be the worst possible moment for it.
     """
     hub.publish_dev("proj1", _build("good"))
-    assert hub.publish_dev("proj1", b"not a tarball").status_code == 422
     assert hub.publish_dev(
         "proj1", tar_gz({"meta.json": meta_bytes(views=[]),
                          **DEFAULT_EXPORTS})).status_code == 422

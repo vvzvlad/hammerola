@@ -77,16 +77,16 @@ def run(args) -> int:
 def refuse_if_behind(hub_url: str, root=None) -> None:
     """Stop a client the hub has outgrown before it publishes anything.
 
-    Asked only by `build` and `commit`: reading verbs fail loudly on their own,
-    while a stale client's writes are what nobody undoes.
+    Asked only by `build`: reading verbs fail loudly on their own, while a
+    stale client's writes are what nobody undoes.
 
     A hub that cannot answer (unreachable, or no `client_version` in an older
     image) does not stop the push. Only BEHIND is refused, never ahead: a
     checkout newer than the hub is normal.
 
-    Takes an address and uses `sources.public_hub` (`QUERY_TIMEOUT`), not the
-    push's Hub with its five-minute `HTTP_TIMEOUT`. `root` is the project being
-    published, where `public_hub` also looks for `HUB_BASIC_AUTH`.
+    Takes an address and uses `sources.public_hub` (`QUERY_TIMEOUT`). `root`
+    is the project being published, where `public_hub` also looks for
+    `HUB_BASIC_AUTH`.
     """
     try:
         manifest = public_hub(hub_url, root).start()

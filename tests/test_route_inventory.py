@@ -6,8 +6,7 @@ table promises and no dispatcher answers, and a route a dispatcher answers that 
 table never mentions.
 
 Both halves are IMPORTED: the docstring is `src.app.__doc__`, and the routes are
-the three tables the dispatchers walk plus `PUBLISH_PREFIX`, the one route
-`_handle_post` answers below its table. Whether a row falls under an entry is
+the three tables the dispatchers walk. Whether a row falls under an entry is
 asked of `_route_rest`, the matcher the dispatchers use, so this file holds no
 second reading of a pattern.
 
@@ -34,11 +33,8 @@ TABLES = {"GET": "GET_ROUTES", "POST": "POST_ROUTES",
 
 
 def dispatched(verb: str) -> list:
-    """Every pattern that verb dispatches on, publish included for POST."""
-    patterns = [pattern for pattern, _ in getattr(app, TABLES[verb])]
-    if verb == "POST":
-        patterns.append((app.PUBLISH_PREFIX, None))
-    return patterns
+    """Every pattern that verb dispatches on."""
+    return [pattern for pattern, _ in getattr(app, TABLES[verb])]
 
 
 def documented_path(url: str) -> list[str]:
@@ -148,8 +144,7 @@ def test_each_entry_answers_its_own_path(verb, hub, monkeypatch):
         row = documented_path(url)
         owner = next((index for index, (pattern, _) in enumerate(table)
                       if answers(pattern, row)), None)
-        if owner is None:
-            continue  # publish: `_handle_post` answers it below the table
+        assert owner is not None, f"no entry of {TABLES[verb]} claims {url}"
         fired.clear()
         path = re.sub(r"<[^>]+>", "probe", url.split("?", 1)[0])
         reply = hub.request(verb, path,

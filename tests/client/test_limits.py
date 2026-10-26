@@ -46,22 +46,16 @@ def test_the_text_ceiling_is_the_hubs():
     assert limits.MAX_TEXT_CHARS == MAX_TITLE_CHARS
 
 
-def test_the_two_headers_are_spelled_the_same_on_both_sides():
-    """The names of the headers a revision's message and the token travel on.
+def test_the_token_header_is_spelled_the_same_on_both_sides():
+    """The name of the header the token travels on.
 
     Spelled twice for the reason everything in this file is: the client must
-    import under a bare python3 and cannot see `src`. The message one would
-    break QUIETLY, because a header
-    nobody reads is not an error: the push succeeds, the build publishes, and the
-    message is simply gone from every row.
+    import under a bare python3 and cannot see `src`.
     """
-    from src.app import MESSAGE_HEADER as hub_header
     from src.app import TOKEN_HEADER as hub_token_header
 
-    from hammerola.hub import MESSAGE_HEADER as client_header
     from hammerola.hub import TOKEN_HEADER as client_token_header
 
-    assert client_header == hub_header
     assert client_token_header == hub_token_header
 
 
@@ -73,11 +67,11 @@ def test_the_states_a_poller_stops_on_are_the_hubs():
     client's copy is a copy for the reason everything in this file is one — it
     has to import under a bare python3.
 
-    Drift is a green suite and a broken push. A word this side does not
-    recognise is not an error anywhere: the build runs, publishes and is served,
-    while `await_job` goes on polling a record that will never change again
-    until `--timeout` runs out. Every `build` and every `commit` then reports a
-    timeout on a build that is on the hub, with a URL nobody printed.
+    Drift is a green suite and a broken wait. A word this side does not
+    recognise is not an error anywhere: the job runs and ends, while
+    `await_job` goes on polling a record that will never change again until its
+    deadline runs out. `diff --material` then reports a timeout on a comparison
+    the hub finished.
     """
     from src.jobs import TERMINAL_STATES as hub_states
 
@@ -88,7 +82,8 @@ def test_the_states_a_poller_stops_on_are_the_hubs():
     assert set(client_states) == set(hub_states), (
         f"the client stops polling on {sorted(client_states)} and the hub ends "
         f"a job in {sorted(hub_states)} — a state missing from this side is a "
-        f"`build` that reports a timeout on a build that actually published")
+        f"`diff --material` that reports a timeout on a comparison that "
+        f"finished")
 
 
 def test_the_attachment_kinds_are_the_hubs():

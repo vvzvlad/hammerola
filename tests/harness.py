@@ -11,23 +11,26 @@ publication rather than about geometry.
 
 `copying_builder` replaces `src.buildproc.run_build`: it publishes the pushed
 tree unchanged. Most tests push a FINISHED artefact — a meta.json and a view —
-so the archive is the thing under test. The suite has no CadQuery, and a real
+so the tree is the thing under test. The suite has no CadQuery, and a real
 build would be minutes per test.
 
-`Hub.publish` posts and then WAITS, turning the asynchronous push back into one
-synchronous answer (SPEC 8A.2 step 5). Almost every test in this
-suite is about what ends up on disk, not about the handover; making each of them
-poll a job would be two hundred copies of the same loop. The handover itself —
-the 202, the job record, the log, the queue — is tested through `publish_async`
-and the job helpers below, in test_jobs.py.
+`Hub.publish` publishes an archive the way a hub did before git, under a name
+the test chooses: the tree is built in the ordinary queue, the archive is filed
+in `sources/`, and the import takes it into the project's repository, which is
+what moves `latest`. Almost every test in this suite is about what ends up on
+disk, not about the transport; `git push` itself is tested in
+test_git_publish.py.
 """
 
 import io
 import json
+import os
 import shutil
+import subprocess
 import tarfile
 import threading
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,8 +38,12 @@ import httpx
 
 from src import onboarding
 from src.app import create_server
+from src.archive import unpack
 from src.buildproc import STATUS_CRASHED, STATUS_FAILED, STATUS_OK, BuildOutcome
-from src.jobs import STATE_DONE, STATE_FAILED
+from src.errors import PublishError
+from src.jobs import STATE_DONE, STATE_FAILED, SUBMIT_ACCEPTED, BuildTask
+from src.store import (DEV_LINK, SOURCE_ARCHIVE_NAME, SOURCES_DIR_NAME,
+                       _payload_digest, _read_digest)
 
 # The one secret of the whole system. A test that wants "a token the hub does
 # not know" spells one out on the spot rather than reaching for a second constant.
@@ -137,48 +144,79 @@ class Hub:
         kw.setdefault("timeout", 10)
         return httpx.request(method, self.url + path, **kw)
 
-    def publish(self, pid, commit, body, token=TOKEN, headers=None):
-        """Push, wait for the build, and answer synchronously.
+    def publish(self, pid, commit, body, force=False, message=None):
+        """Publish one archive's tree as `<pid>/<commit>`, and wait. -> a reply.
 
-        201/200/409/422/403 come back as they are. A 202 is
-        followed to its job and turned back into the answer that job reached,
-        which is the one nearly every test in this suite is asking about. Use
-        `publish_async` when the handover itself is the subject.
+        `commit` is `dev` for a draft, and None for the name a hub before git
+        minted, the digest of the tree. A revision's archive is filed in
+        `sources/` as a hub before git kept it, and the import takes it into the
+        project's repository, after which `latest` follows `main`
+        (`Store.ensure_repo`, `Store.recompute`).
 
-        `commit=None` posts to the MINTING route — the URL with no name in it,
-        where the hub makes one out of the sources. The reply of a finished job
-        carries the name it chose in `record["commit"]`; the reply of the PUSH
-        carries it in `revision`, which only `publish_async` can show.
-
-        `headers` are sent alongside the two this always sends, for the tests
-        whose subject is a header the route reads, such as
-        `X-Hammerola-Message`.
+        The archive is filed BEFORE the build is handed over, and taken away
+        again if the build is refused: a build on disk without its archive is
+        an import that fails, and of two publishes running at once, the one
+        finishing first imports the other's build too.
         """
-        reply = self.publish_async(pid, commit, body, token=token,
-                                   headers=headers)
-        if reply.status_code != 202:
+        submitted = self._submit(pid, commit, body, force, message, keep=True)
+        if submitted.status_code != 202:
+            return submitted
+        reply = self.await_job(submitted.payload["job"])
+        if submitted.name == DEV_LINK:
             return reply
-        return self.await_job(reply.json()["job"], token=token)
+        if reply.status_code in (200, 201):
+            self.store.ensure_repo(pid)
+            self.store.recompute(pid)
+        elif submitted.kept is not None:
+            shutil.rmtree(submitted.kept, ignore_errors=True)
+        return reply
 
-    def publish_async(self, pid, commit, body, token=TOKEN, query="",
-                      headers=None):
-        """POST the push and return whatever the endpoint said, 202 included.
+    def publish_async(self, pid, commit, body, force=False, message=None):
+        """Hand one archive's tree to the build queue, as the hook hands a
+        commit's. -> 202 `{"job"}`, or the answer given instead of a job.
 
-        `query` is appended verbatim, `?` and all, for the tests that are about
-        what the route reads out of one — `?force=1` is the only such parameter
-        today.
+        The archive is unpacked by the rules the import reads old archives
+        with, and a refusal is the answer (422). A draft whose tree the slot
+        already holds is answered 200 with no job, as the hook answers it; a
+        full or stopped queue is 503. Nothing is filed in `sources/`, so a
+        later `publish` to the same project would fail to import this build.
         """
-        sent = {"Content-Type": "application/gzip"}
-        if token is not None:
-            sent["X-Hammerola-Token"] = token
-        sent.update(headers or {})
-        path = f"/api/v1/publish/{pid}"
-        if commit is not None:
-            path = f"{path}/{commit}"
-        path = f"{path}{query}"
-        return httpx.post(f"{self.url}{path}",
-                          content=body, headers=sent, timeout=30,
-                          trust_env=self.TRUST_ENV)
+        return self._submit(pid, commit, body, force, message, keep=False)
+
+    def _submit(self, pid, commit, body, force, message, keep):
+        """`publish_async`, and with `keep` the archive filed first."""
+        spool = self.data / f".wip-body-{uuid.uuid4().hex}"
+        sources = self.data / f".src-{uuid.uuid4().hex}"
+        spool.write_bytes(body)
+        try:
+            sources.mkdir()
+            try:
+                digest = _payload_digest(unpack(spool, sources))
+            except PublishError as error:
+                shutil.rmtree(sources, ignore_errors=True)
+                return Submitted(error.status, {"error": error.message})
+        finally:
+            spool.unlink(missing_ok=True)
+        name = digest if commit is None else commit
+        if name == DEV_LINK and digest == _read_digest(
+                self.store.build_dir(pid, DEV_LINK)):
+            shutil.rmtree(sources, ignore_errors=True)
+            return Submitted(200, {"url": f"/project/{pid}/dev/"})
+        kept = None
+        archive = self.data / SOURCES_DIR_NAME / digest / SOURCE_ARCHIVE_NAME
+        if keep and name != DEV_LINK and not archive.exists():
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(body)
+            kept = archive.parent
+        job_id = self.server.jobs.create(pid, name)["id"]
+        verdict = self.server.builds.submit(BuildTask(
+            job_id=job_id, pid=pid, commit=name, sources=sources,
+            digest=digest, force=force, message=message))
+        if verdict != SUBMIT_ACCEPTED:
+            if kept is not None:
+                shutil.rmtree(kept, ignore_errors=True)
+            return Submitted(503, {"error": verdict})
+        return Submitted(202, {"job": job_id}, name, kept)
 
     def job(self, job_id, token=TOKEN):
         headers = {"X-Hammerola-Token": token} if token else {}
@@ -202,15 +240,9 @@ class Hub:
         raise AssertionError(
             f"job {job_id} never finished within {timeout}s: {record}")
 
-    def publish_dev(self, pid, body, token=TOKEN):
-        """POST /api/v1/publish/<pid>/dev — into the local slot (SPEC 7.6).
-
-        Deliberately routed through `publish` with the literal segment rather
-        than given its own URL builder: the whole claim is that `dev` is an
-        ordinary last path segment which the router treats specially, and a test
-        that bypassed the router could not observe that.
-        """
-        return self.publish(pid, "dev", body, token=token)
+    def publish_dev(self, pid, body, force=False):
+        """A draft: the tree into the local slot (SPEC 7.6)."""
+        return self.publish(pid, DEV_LINK, body, force=force)
 
     def project_dir(self, pid):
         return self.store.projects_dir / pid
@@ -344,13 +376,30 @@ def comment_payload(**extra):
     return payload
 
 
+class Submitted:
+    """What `Hub.publish_async` answered: a status and a JSON body.
+
+    `name` is what the build is published under; `kept` is the directory in
+    `sources/` this submission filed, or None.
+    """
+
+    def __init__(self, status, payload, name=None, kept=None):
+        self.status_code = status
+        self.payload = payload
+        self.text = json.dumps(payload)
+        self.name = name
+        self.kept = kept
+
+    def json(self):
+        return self.payload
+
+
 class PublishReply:
     """A finished job, shaped like a synchronous publish reply.
 
     Not an httpx response and deliberately not pretending to be one: it carries
     the three things a test asks a publish reply for — the status, the JSON body
-    and its text — and nothing else, so a test that wants a HEADER off the push
-    has to use `publish_async` and look at the real one.
+    and its text — and nothing else.
     """
 
     def __init__(self, record):
@@ -377,11 +426,9 @@ def copying_builder(project_dir, out_dir, *, pid, **_kw):
     when it is done, and a build that consumed its own input would hide the fact
     that the two directories are separate on purpose.
 
-    It reports what the copy actually took. `duration_seconds` reaches the
-    client, which prints it after every build (`cli._print_duration`), so a
-    hard zero here would be a stand-in deciding what the thing under test does
-    — a truthiness test on it would pass this suite with the line never
-    printed.
+    It reports what the copy actually took: `duration_seconds` goes into the
+    job record, and a hard zero here would be a stand-in deciding what the
+    thing under test does.
     """
     started = time.monotonic()
     shutil.copytree(project_dir, out_dir)
@@ -406,6 +453,26 @@ def failing_builder(status=STATUS_FAILED, log="build failed: no printables\n",
         return BuildOutcome(
             status=status, pid=pid, files=(), log=log, log_truncated=False,
             exit_code=exit_code, signal=None, duration_seconds=0.25)
+    return run
+
+
+# The file whose presence makes `picky_builder` fail a build.
+BROKEN = "BROKEN"
+
+
+def picky_builder(delay=0.0):
+    """`copying_builder`, unless the tree holds a file named BROKEN.
+
+    For the tests of `git push`, where a commit that breaks the build is one
+    more commit. `delay` holds every build that long, for races.
+    """
+    fail = failing_builder()
+
+    def run(project_dir, out_dir, *, pid, **kw):
+        time.sleep(delay)
+        if (Path(project_dir) / BROKEN).exists():
+            return fail(project_dir, out_dir, pid=pid, **kw)
+        return copying_builder(project_dir, out_dir, pid=pid, **kw)
     return run
 
 
@@ -466,6 +533,9 @@ def start_hub(data_dir, build_runner=None, compare_runner=None,
     thread = threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
+    # A hub on a fresh volume has nothing to catch up on; one restarted on a
+    # used one is asked about only once the import is through.
+    server.catching_up.join(timeout=30)
     hub = Hub(server)
     hub._thread = thread
     return hub
@@ -475,6 +545,64 @@ def stop_hub(hub):
     hub.server.shutdown()
     hub.server.server_close()
     hub._thread.join(timeout=5)
+
+
+# -- a git client -------------------------------------------------------------
+# The real `git` of the test image, because what has to work is what that client
+# sends. Its own configuration: none from the system or the user, an identity
+# for the commits the tests make, and no prompt for a password the hub never
+# asks for.
+TOKEN_CONFIG = f"http.extraHeader=X-Hammerola-Token: {TOKEN}"
+GIT_CLIENT_ENV = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "test@example.invalid",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "test@example.invalid",
+}
+
+
+def git(*args, env=None, check=True, timeout=120):
+    return subprocess.run(
+        ["git", *map(str, args)],
+        env={**os.environ, **GIT_CLIENT_ENV, **(env or {})},
+        capture_output=True, text=True, check=check, timeout=timeout)
+
+
+def project_files(pid, marker="a", **extra) -> dict:
+    """A project's directory as a test commits it: project.json and a build.
+
+    The build is the finished artefact `good_build` carries, which
+    `copying_builder` publishes as it is.
+    """
+    return {"project.json": json.dumps({"id": pid, "title": "Demo project"}
+                                       ).encode("utf-8"),
+            "meta.json": meta_bytes(**extra),
+            "assembled.json": view_bytes(marker),
+            **DEFAULT_EXPORTS}
+
+
+def write_files(directory, files: dict) -> None:
+    for name, data in files.items():
+        path = Path(directory) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+
+def commit_all(work, message="change") -> str:
+    """Commit everything in the working copy. -> the commit's sha."""
+    git("-C", work, "add", "-A")
+    git("-C", work, "commit", "--quiet", "--allow-empty", "-m", message)
+    return git("-C", work, "rev-parse", "HEAD").stdout.strip()
+
+
+def push(hub, work, pid, *refspecs, extra=()):
+    """`git push` of the working copy to the project's repository on `hub`."""
+    return git("-C", work, "-c", TOKEN_CONFIG, "push", *extra,
+               f"{hub.url}/git/{pid}.git", *(refspecs or ("main",)),
+               check=False)
 
 
 # -- the skill, which is a DIRECTORY -----------------------------------------

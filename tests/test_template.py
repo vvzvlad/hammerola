@@ -10,8 +10,7 @@ the one comparing the stubbed kernel with the real one.
 
 Everything else runs on every push, the provenance guard included: it imports
 the template with the kernel stubbed and asks the hub's own rule. Most tests ask
-whether the template is a tree the hub would accept (a name the path alphabet
-refuses breaks the push of every project made from it).
+whether the template is a tree the client unpacks and the hub would publish.
 
 Two pins are about a document: the skill quotes this template (the number of
 checks a run reports, and the wording of an assertion its `checks()` emits).
@@ -46,8 +45,7 @@ from src.cadbuild.modelchecks import count_checks
 from src.cadbuild.parts import KIND_PRINTABLE, KINDS, RESERVED_STEMS
 from src.buildproc.limits import DEFAULT_LIMITS, memory_limit_supported
 from src.buildproc.runner import STATUS_OK
-from hammerola import pack
-from hammerola.limits import MAX_MEMBERS, SAFE_COMPONENT
+from hammerola.limits import MAX_MEMBERS
 from hammerola.errors import ClientError
 from hammerola.project import PROJECT_FILE
 from hammerola.unpack import TEMPLATE_RULES, check_name
@@ -145,29 +143,6 @@ def test_every_path_in_the_template_is_one_the_client_will_unpack():
         f"the template holds paths the client would refuse to unpack: "
         f"{offenders}")
     assert len(template_files()) <= MAX_MEMBERS
-
-
-def test_the_visible_half_of_the_template_is_one_the_hub_would_accept():
-    """Everything not hidden has to satisfy the PUSH's alphabet as well.
-
-    The two rules differ by one character — a leading dot — and only for the
-    trip DOWN. `.gitignore` is dropped by `pack.py` on the way back up, but
-    anything else in here is packed, and a name the hub refuses fails the whole
-    push of every project made from this template.
-    """
-    offenders = [str(path.relative_to(TEMPLATE_DIR))
-                 for path in template_files()
-                 for part in path.relative_to(TEMPLATE_DIR).parts
-                 if not part.startswith(".") and not SAFE_COMPONENT.match(part)]
-    assert offenders == []
-
-
-def test_the_template_packs_into_a_push_carrying_the_model():
-    """`pack` is what a `hammerola build` in a fresh project would send."""
-    packed = pack.pack(TEMPLATE_DIR)
-    assert "model.py" in packed.names
-    # Hidden entries never travel: the hub's path alphabet cannot carry them.
-    assert ".gitignore" not in packed.names
 
 
 def test_the_template_carries_no_project_json():

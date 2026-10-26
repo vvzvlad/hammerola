@@ -14,15 +14,17 @@ looked at last because an env var or a project's `.env` is more specific.
 
 NEITHER `HUB_URL` NOR `EDIT_TOKEN` HAS A DEFAULT: the address of our own service
 is never guessed (AGENTS.md). A missing one is an error naming the file to
-write, raised before the tree is walked or packed.
+write.
 
 THE TOKEN IS NEVER PRINTED — not in an error, a banner or a traceback; only its
 length and where it was found. It is the whole system's one secret
 (`EDIT_TOKEN`, used for pushes, the comment queue and every write), which is
-also why `pack.py` drops `.env`, `login` reads it with `getpass` rather than an
-argument, and the file is created 0600. The hub compares it for equality, so
-"logging in" means storing it and nothing more. It travels in the hub's own
-header, `X-Hammerola-Token`.
+also why the template's `.gitignore` keeps `.env` out of every commit, `login`
+reads it with `getpass` rather than an argument, and the file is created 0600.
+The hub compares it for equality, so "logging in" means storing it and nothing
+more. It travels in the hub's own header, `X-Hammerola-Token`; for git, `login`
+also writes it into `~/.config/hammerola/gitconfig` (`write_git_settings`),
+0600 as well.
 
 `HUB_BASIC_AUTH` (`login:password`) is OPTIONAL: it is for a password proxy in
 front of the hub (Traefik basicAuth and the like), which wants the
@@ -195,6 +197,9 @@ def hub_basic_auth(project_dir=None) -> str:
 FILE_MODE = 0o600
 DIRECTORY_MODE = 0o700
 
+# The file git reads the hub's headers from (`write_git_settings`).
+GIT_SETTINGS_NAME = "gitconfig"
+
 
 def write_settings(values: dict, path: Path = None) -> Path:
     """Store `KEY -> value` in the machine's env file. Returns where it landed.
@@ -246,6 +251,31 @@ def write_settings(values: dict, path: Path = None) -> Path:
 
     _write_private(path, merged)
     return path
+
+
+def git_settings_file() -> Path:
+    """`~/.config/hammerola/gitconfig`, beside the machine's env file."""
+    return machine_env_file().parent / GIT_SETTINGS_NAME
+
+
+def write_git_settings(url: str, headers) -> Path:
+    """The headers git sends to the hub, in git's config format. -> the path.
+
+    The whole file is rewritten: it holds only what the last `login` stored,
+    so an earlier hub's password does not go on travelling. `hammerola
+    connect` writes it when it is missing and includes it from a repository's
+    own config. Values are quoted, so a `#` or `;` in the password is not read
+    as a comment.
+    """
+    lines = [f'[http "{_git_quoted(url)}"]']
+    lines += [f'\textraHeader = "{_git_quoted(header)}"' for header in headers]
+    path = git_settings_file()
+    _write_private(path, "\n".join(lines) + "\n")
+    return path
+
+
+def _git_quoted(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def check_storable(name: str, value) -> None:

@@ -61,6 +61,21 @@ ENTRIES = {
         "view of that build; a point without the mark is in the world of the "
         "view named.",
     ),
+    "0.5.0": (
+        "A version is a git commit: `git commit`, then `git push "
+        "hammerola-<pid> main`, which ends once the hub has built the commit "
+        "and fails with the build log when the build fails. `hammerola "
+        "commit` is gone.",
+        "`hammerola connect` is run once per project, in its git repository: "
+        "it adds the remote `hammerola-<pid>` and joins the hub's history of "
+        "the project into the local `main`.",
+        "`hammerola build` pushes the working copy, files git ignores left "
+        "out, as the draft of `main`, needs `hammerola connect` first, and "
+        "takes no `--timeout`.",
+        "`hammerola source` is gone: the code of a revision is its commit in "
+        "git. `hammerola diff` reads it from the local repository, after "
+        "`git fetch hammerola-<pid>`.",
+    ),
 }
 
 

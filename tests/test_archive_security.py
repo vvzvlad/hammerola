@@ -1,8 +1,12 @@
 """Malformed archives (SPEC 7.1).
 
-Every test sends a malformed archive, built member by member with explicit TarInfo
-objects, and asserts twice: the push was refused, and nothing was written outside the
-build directory. The second assertion is the one that matters.
+An archive is read by `src/archive.py`: the import takes the archives of revisions
+published before git into the project's repository with it (`Store._import_build`),
+and `Hub.publish` unpacks a test's archive with it too, so its refusal is the 422
+seen here. Every test builds a malformed archive member by member with explicit
+TarInfo objects and asserts twice: the archive was refused, and nothing was written
+outside the directory it was unpacked into. The second assertion is the one that
+matters.
 """
 
 import errno
@@ -10,15 +14,14 @@ import gzip
 import io
 import json
 import os
-import socket
 import subprocess
 import tarfile
 import uuid
 
 import pytest
-from harness import (DEFAULT_EXPORTS, TOKEN, chardev_entry, dir_entry,
-                     fifo_entry, file_entry, hardlink_entry, meta_bytes,
-                     raw_tar_gz, symlink_entry, view_bytes)
+from harness import (DEFAULT_EXPORTS, chardev_entry, dir_entry, fifo_entry,
+                     file_entry, hardlink_entry, meta_bytes, raw_tar_gz,
+                     symlink_entry, view_bytes)
 from loguru import logger
 
 # A monkeypatch rebinds a name in one module's globals, and the reader in
@@ -47,13 +50,22 @@ def _payload_build() -> bytes:
     return raw_tar_gz(_payload())
 
 
-def _leftovers(hub, pid):
-    """Every transient a refused push could have left behind, by name.
+def _unpacked(tmp_path, body: bytes):
+    """`archive.unpack` of `body` into a new directory. -> (files, directory)."""
+    body_path = tmp_path / "body.tar.gz"
+    body_path.write_bytes(body)
+    dest = tmp_path / "staging"
+    dest.mkdir()
+    return archive_module.unpack(body_path, dest), dest
 
-    Two places: `.src-<uuid>` at the root of the data directory, where a push is
-    unpacked, and `.tmp-<commit>-<uuid>` inside the project, where a build writes
-    its output. A missing project directory counts as clean: a push refused before
-    its build was queued never creates one.
+
+def _leftovers(hub, pid):
+    """Every transient a refused archive could have left behind, by name.
+
+    Two places: `.src-<uuid>` at the root of the data directory, where an archive
+    is unpacked, and `.tmp-<commit>-<uuid>` inside the project, where a build
+    writes its output. A missing project directory counts as clean: an archive
+    refused before its build was queued never creates one.
     """
     found = [p.name for p in hub.data.iterdir()
              if p.name.startswith(store_module.LEFTOVER_PREFIXES)]
@@ -221,8 +233,7 @@ def test_the_number_of_names_a_refusal_repeats_is_capped(hub):
     """The count is what keeps a 422 readable when a tar packed by hand carries
     hundreds of bad names.
 
-    The TOTAL is still reported, so the pusher knows the list was cut — and the
-    side that names every one of them is the client, before anything is sent.
+    The TOTAL is still reported, so the reader knows the list was cut.
     """
     over = 7
     count = store_module.MAX_REFUSED_NAMES_REPORTED + over
@@ -278,21 +289,18 @@ def _longest_legal_member_name() -> str:
     return "./" + deepest
 
 
-def test_the_longest_legal_member_name_is_unpacked(hub, tmp_path):
+def test_the_longest_legal_member_name_is_unpacked(tmp_path):
     """The longest name the path rules admit, `./` prefix included, is unpacked.
 
-    Driven at `_unpack` rather than through a publish: the fake builder copies the
-    tree with `shutil.copytree`, which dies with ENAMETOOLONG on macOS (PATH_MAX
-    1024) for a 1031-character member. The hub walks one component at a time
-    against a directory descriptor, so no long path reaches the kernel.
+    Driven at `archive.unpack` rather than through a publish: the fake builder
+    copies the tree with `shutil.copytree`, which dies with ENAMETOOLONG on macOS
+    (PATH_MAX 1024) for a 1031-character member. The reader walks one component
+    at a time against a directory descriptor, so no long path reaches the kernel.
     """
     longest = _longest_legal_member_name()
-    body_path = tmp_path / "body.tar.gz"
-    body_path.write_bytes(raw_tar_gz(_payload() + [file_entry(longest, b"{}")]))
-    dest = tmp_path / "staging"
-    dest.mkdir()
 
-    files = hub.store._unpack(body_path, dest)
+    files, _ = _unpacked(
+        tmp_path, raw_tar_gz(_payload() + [file_entry(longest, b"{}")]))
 
     assert longest[len("./"):] in files
 
@@ -302,7 +310,7 @@ def _octal(value, width):
 
 
 def test_the_gzip_stream_is_closed_even_when_the_archive_is_refused(
-        hub, tmp_path, monkeypatch):
+        tmp_path, monkeypatch):
     """The file object is ours now, so releasing it is ours too.
 
     A TarFile closes only a fileobj it opened itself. Handing one in moved this
@@ -324,14 +332,14 @@ def test_the_gzip_stream_is_closed_even_when_the_archive_is_refused(
     dest.mkdir()
     good = tmp_path / "good.tar.gz"
     good.write_bytes(_payload_build())
-    hub.store._unpack(good, dest)
+    archive_module.unpack(good, dest)
 
     bad = tmp_path / "bad.tar.gz"
     bad.write_bytes(gzip.compress(b"not a tar at all" * 100))
     refused = tmp_path / "refused"
     refused.mkdir()
     with pytest.raises(store_module.PublishError):
-        hub.store._unpack(bad, refused)
+        archive_module.unpack(bad, refused)
 
     assert len(opened) == 2, "the archives did not go through gzip.open"
     assert [stream.closed for stream in opened] == [True, True]
@@ -457,7 +465,7 @@ def test_a_malformed_sparse_map_is_a_refusal_and_not_a_crash(hub):
     assert "\x1b" not in error and "\r" not in error
 
 
-def test_a_sparse_member_with_data_is_unpacked_hole_and_all(hub, tmp_path):
+def test_a_sparse_member_with_data_is_unpacked_hole_and_all(tmp_path):
     """A sparse member is `tarfile`'s to expand, and it comes out byte for byte.
 
     pax `GNU.sparse` 1.0, the format bsdtar writes, unasked, for a file with a
@@ -484,12 +492,7 @@ def test_a_sparse_member_with_data_is_unpacked_hole_and_all(hub, tmp_path):
         tar.addfile(info, io.BytesIO(stored))
         for entry, content in _payload():
             tar.addfile(entry, io.BytesIO(content))
-    body_path = tmp_path / "body.tar.gz"
-    body_path.write_bytes(buffer.getvalue())
-    dest = tmp_path / "staging"
-    dest.mkdir()
-
-    files = hub.store._unpack(body_path, dest)
+    files, dest = _unpacked(tmp_path, buffer.getvalue())
 
     assert (dest / "holey.bin").read_bytes() == b"\0" * hole + data
     assert sorted(files) == sorted(
@@ -498,7 +501,7 @@ def test_a_sparse_member_with_data_is_unpacked_hole_and_all(hub, tmp_path):
 
 @pytest.mark.parametrize("member", [0, 1], ids=["at-open", "during-the-walk"])
 def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
-        hub, tmp_path, monkeypatch, member):
+        tmp_path, monkeypatch, member):
     """A disk read error inside `tarfile` is not reported as a corrupt archive.
 
     Both broad catches refuse by where the failure happened rather than by type,
@@ -510,7 +513,7 @@ def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
     so a failure at the head is consumed at open and one behind a valid member
     during the walk (armed on the second member's header, read inside
     `_members_of`). The log line naming `dest` and the filesystem is asserted for
-    both, since the status is a 500 either way.
+    both, since the caller sees an OSError either way.
     """
     body_path = tmp_path / "body.tar.gz"
     body_path.write_bytes(_payload_build())
@@ -544,7 +547,7 @@ def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
     sink = logger.add(said.append, level="ERROR")
     try:
         with pytest.raises(OSError) as caught:
-            hub.store._unpack(body_path, dest)
+            archive_module.unpack(body_path, dest)
     finally:
         logger.remove(sink)
 
@@ -556,20 +559,20 @@ def test_a_read_error_from_the_disk_is_not_dressed_up_as_a_corrupt_archive(
     assert caught.value.errno == errno.EIO
     assert len(said) == 1, (
         f"a read failure at member {member} wrote {len(said)} error lines; "
-        f"without this one all that is left is app.py's traceback, which records "
-        f"the failure but does not say the filesystem is what refused")
+        f"without this one all that is left is the caller's report of an "
+        f"OSError, which does not say the filesystem is what refused")
     assert "failed on the filesystem" in said[0]
 
 
 def test_a_body_that_cannot_be_opened_is_attributed_to_the_filesystem(
-        hub, tmp_path):
+        tmp_path):
     """A body `gzip.open` cannot open is attributed to the filesystem.
 
     `gzip.open` sits outside the arm because it creates the stream the `finally`
-    closes, but it is the first filesystem touch in `_unpack` and fails in ordinary
-    ways (EMFILE/ENFILE under concurrent publishes, EIO, ENOENT); this test uses a
-    missing spool. Asserted on the log line naming the file and the filesystem,
-    since the status is a 500 either way.
+    closes, but it is the first filesystem touch in `unpack` and fails in ordinary
+    ways (EMFILE/ENFILE, EIO, ENOENT); this test uses a missing archive. Asserted
+    on the log line naming the file and the filesystem, since the caller sees an
+    OSError either way.
     """
     dest = tmp_path / "staging"
     dest.mkdir()
@@ -579,7 +582,7 @@ def test_a_body_that_cannot_be_opened_is_attributed_to_the_filesystem(
     sink = logger.add(said.append, level="ERROR")
     try:
         with pytest.raises(OSError) as caught:
-            hub.store._unpack(missing, dest)
+            archive_module.unpack(missing, dest)
     finally:
         logger.remove(sink)
 
@@ -587,8 +590,8 @@ def test_a_body_that_cannot_be_opened_is_attributed_to_the_filesystem(
     assert caught.value.errno == errno.ENOENT
     assert len(said) == 1, (
         f"opening the body wrote {len(said)} error lines; this is the one call "
-        f"in `_unpack` the OSError arm cannot cover, so without a line of its "
-        f"own the only record is app.py's traceback")
+        f"in `unpack` the OSError arm cannot cover, so without a line of its "
+        f"own the only record is the caller's report of an OSError")
     # The same phrase the arm below it uses, deliberately: one grep finds every
     # way unpacking failed on the disk rather than on the archive.
     assert "failed on the filesystem" in said[0]
@@ -898,7 +901,7 @@ def test_a_member_repeated_in_another_case_is_refused(hub):
 
 
 def test_no_member_and_no_directory_of_one_is_opened_through_a_symlink(
-        hub, monkeypatch):
+        tmp_path, monkeypatch):
     # The open flags are why a member cannot land on a planted symlink or a name
     # already written, and no other test gets two members to one name, so they are
     # asserted at the syscall. Calls are selected by O_CREAT, because members are
@@ -913,8 +916,8 @@ def test_no_member_and_no_directory_of_one_is_opened_through_a_symlink(
         return original(path, flags, *args, **kw)
 
     monkeypatch.setattr(store_module.os, "open", recording_open)
-    body = raw_tar_gz(_payload() + [file_entry("scripts/gen.py", b"# x\n")])
-    assert hub.publish("proj1", "abc123", body).status_code == 201
+    _unpacked(tmp_path,
+              raw_tar_gz(_payload() + [file_entry("scripts/gen.py", b"# x\n")]))
 
     created = [(path, flags) for path, flags, _ in opened if flags & os.O_CREAT]
     assert created, "no archive member was created through os.open at all"
@@ -987,30 +990,25 @@ def test_the_realpath_check_holds_on_its_own_when_the_whitelist_is_relaxed(
 
 
 def test_containment_is_by_path_component_and_not_by_string_prefix(
-        hub, monkeypatch):
+        tmp_path, monkeypatch):
     """`<staging>-evil/` is not inside `<staging>/`, and only the separator says so.
 
     `realpath(target).startswith(real_dest)` also accepts every sibling whose name
-    begins with the staging directory's name. Such an escape lands in the project
-    directory under a dot-prefixed `.tmp-` name, invisible to `builds_of`, the file
-    server and retention until the next startup sweep. The uuid is pinned for the
-    request so the sibling can be named.
+    begins with the name of the directory the archive is unpacked into. Driven at
+    `archive.unpack`, which is told that directory, so the sibling can be named.
     """
     import re
-    import uuid as uuid_module
 
-    pinned = uuid_module.UUID(int=0x5EC0DE)
-    monkeypatch.setattr(store_module.uuid, "uuid4", lambda: pinned)
     monkeypatch.setattr(
         archive_module, "SAFE_COMPONENT", re.compile(r"\A.*\Z", re.S))
-
-    sibling = f"{store_module.STAGING_PREFIX}abc123-{pinned.hex}-evil"
     body = raw_tar_gz(_payload() + [
-        file_entry(f"../{sibling}/escaped.txt", b"pwned")])
-    r = hub.publish("proj1", "abc123", body)
+        file_entry("../staging-evil/escaped.txt", b"pwned")])
 
-    assert r.status_code == 422, r.text
-    assert not (hub.project_dir("proj1") / sibling).exists()
+    with pytest.raises(store_module.PublishError) as refused:
+        _unpacked(tmp_path, body)
+
+    assert refused.value.status == 422
+    assert not (tmp_path / "staging-evil").exists()
 
 
 # -- damaged archives -------------------------------------------------------
@@ -1049,13 +1047,11 @@ def test_a_body_of_random_bytes_is_refused(hub):
     assert r.status_code == 422, r.text
 
 
-def test_a_full_disk_is_not_reported_as_a_bad_archive(hub, monkeypatch):
+def test_a_full_disk_is_not_reported_as_a_bad_archive(tmp_path, monkeypatch):
     # The other half of the rule above. Widening the corrupt-archive catch until
     # it swallows OSError too would be easy and wrong: ENOSPC is the volume
-    # filling up, and telling CI its archive is broken sends somebody to debug a
-    # file that is fine while the disk quietly stays full. It stays a 500.
-    from src import store as store_module
-
+    # filling up, and calling the archive broken sends somebody to debug a file
+    # that is fine while the disk quietly stays full. It stays an OSError.
     real_fdopen = os.fdopen
     wrote = []
 
@@ -1067,8 +1063,8 @@ def test_a_full_disk_is_not_reported_as_a_bad_archive(hub, monkeypatch):
 
             `fileno` is required: the extractor calls `os.fchmod(out.fileno(),
             0o644)` before its first write, and without it the test dies of
-            AttributeError, which also answers 500. `wrote` below fails the test if
-            the write loop is not reached. It delegates to the real staging file's
+            AttributeError, which is not a refusal either. `wrote` below fails the
+            test if the write loop is not reached. It delegates to the real staging file's
             descriptor, so `fchmod` acts on the file the extractor expects.
             """
 
@@ -1089,18 +1085,19 @@ def test_a_full_disk_is_not_reported_as_a_bad_archive(hub, monkeypatch):
         return Full()
 
     monkeypatch.setattr(store_module.os, "fdopen", fdopen_on_a_full_disk)
-    r = hub.publish("proj1", "abc123", raw_tar_gz(_payload()))
+    with pytest.raises(OSError) as caught:
+        _unpacked(tmp_path, raw_tar_gz(_payload()))
     assert wrote, "the write loop was never reached, so no ENOSPC was raised"
-    assert r.status_code == 500, r.text
-    assert not (hub.project_dir("proj1") / "abc123").exists()
+    assert not isinstance(caught.value, store_module.PublishError)
+    assert caught.value.errno == errno.ENOSPC
 
 
 def test_a_full_disk_during_the_directory_walk_is_not_a_bad_archive(
-        hub, monkeypatch):
+        tmp_path, monkeypatch):
     """The same rule, one call earlier: the walk that creates the DIRECTORIES.
 
     `_open_member_dir` classifies the errno from `openat`: a symlink, a regular
-    file or an over-long name mid-path is the pusher's fault (422), and anything
+    file or an over-long name mid-path is the archive's fault (422), and anything
     outside `LAYOUT_ERRNOS` stays an OSError, so a full volume must not become
     "your archive cannot be unpacked". Injected at `openat` because that is the
     call whose handler consults `LAYOUT_ERRNOS`.
@@ -1120,90 +1117,18 @@ def test_a_full_disk_during_the_directory_walk_is_not_a_bad_archive(
 
     monkeypatch.setattr(store_module.os, "open", open_on_a_full_disk)
     body = raw_tar_gz(_payload() + [file_entry("scripts/gen.py", b"print(1)\n")])
-    r = hub.publish("proj1", "abc123", body)
+    with pytest.raises(OSError) as caught:
+        _unpacked(tmp_path, body)
 
     assert refused, "the directory walk never opened 'scripts'"
-    assert r.status_code == 500, r.text
-    assert not (hub.project_dir("proj1") / "abc123").exists()
+    assert not isinstance(caught.value, store_module.PublishError)
+    assert caught.value.errno == errno.ENOSPC
 
 
 def test_a_corrupt_archive_leaves_no_staging_tree(hub):
     whole = raw_tar_gz(_payload() + [file_entry("big.json", b"{}" + b" " * 200_000)])
     hub.publish("proj1", "abc123", whole[: len(whole) // 2])
     assert _leftovers(hub, "proj1") == []
-
-
-def _record_spools_at_reply_time(hub, monkeypatch):
-    """Every reply this hub writes, as (status, spool files present right then).
-
-    The snapshot is taken in the server thread just before the status line is
-    sent, which keeps the test deterministic: looking at the volume after the
-    client has its answer races the handler's own `finally`. Wrapped at `_send`,
-    the single funnel every reply goes through (`_json` and `_error` end here),
-    which runs before `end_headers`.
-    """
-    handler = hub.server.RequestHandlerClass
-    original = handler._send
-    seen = []
-
-    def recording_send(self, status, body, content_type, *args, **kw):
-        seen.append((status, sorted(
-            p.name for p in hub.data.iterdir()
-            if p.name.startswith(store_module.UPLOAD_PREFIX))))
-        return original(self, status, body, content_type, *args, **kw)
-
-    monkeypatch.setattr(handler, "_send", recording_send)
-    return seen
-
-
-def test_a_refusal_is_answered_only_after_the_spool_is_gone(hub, monkeypatch):
-    """The spooled body is unlinked BEFORE the refusal is written, on every path.
-
-    Otherwise a client just told 400, 422 or 500 can still find its own
-    `.upload-<uuid>` in the data directory. All three refusal exits are driven: the
-    problem `_spool_body` reports, the PublishError the store raises, and an
-    unexpected exception. BrokenPipeError answers nobody, so it is not here.
-    """
-    seen = _record_spools_at_reply_time(hub, monkeypatch)
-
-    # (1) The store's own refusal: a truncated archive, the case CI failed on.
-    whole = raw_tar_gz(_payload() + [file_entry("big.json", b"{}" + b" " * 200_000)])
-    assert hub.publish_async(
-        "proj1", "abc123", whole[: len(whole) // 2]).status_code == 422
-
-    # (2) The body itself ending early, reported by `_spool_body` rather than
-    # raised. Over a raw socket because httpx cannot under-deliver a body it has
-    # already announced, and under-delivering is the whole point.
-    host, port = hub.server.server_address[:2]
-    with socket.create_connection((host, port), timeout=30) as sock:
-        sock.sendall(
-            b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
-            b"Host: hub\r\n"
-            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
-            b"Content-Length: 100000\r\n"
-            b"\r\n" + b"\0" * 4096)
-        sock.shutdown(socket.SHUT_WR)  # EOF long before the declared length
-        reply = sock.recv(4096)
-    assert reply.startswith(b"HTTP/1.1 400"), reply[:200]
-
-    # (3) The hub's own fault, which must not be answered any sloppier. Last,
-    # because the patch stays on for the rest of the test — `monkeypatch.undo()`
-    # would take the recorder off with it.
-    def boom(*args, **kw):
-        raise RuntimeError("the volume went away mid-accept")
-
-    monkeypatch.setattr(hub.store, "accept_sources", boom)
-    assert hub.publish_async(
-        "proj1", "abc123", _payload_build()).status_code == 500
-
-    # The recorder has to have SEEN all three, or the assertion below is an
-    # assertion about an empty list — the failure this suite counts verdicts to
-    # avoid everywhere else.
-    assert {status for status, _ in seen} >= {400, 422, 500}, seen
-    late = [(status, spools) for status, spools in seen if spools]
-    assert late == [], (
-        f"these replies were written while the pushed body was still spooled on "
-        f"the volume: {late}")
 
 
 def _tar_blocks(info, data: bytes) -> bytes:

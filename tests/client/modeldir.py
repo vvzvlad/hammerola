@@ -9,8 +9,9 @@ three of them in this suite. A uniquely named module cannot be confused.
 
 import json
 import subprocess
+from pathlib import Path
 
-from harness import DEFAULT_EXPORTS, meta_bytes, view_bytes
+from harness import DEFAULT_EXPORTS, meta_bytes, push, tar_gz, view_bytes
 
 MODEL_SOURCE = """\
 import cadquery as cq
@@ -29,8 +30,8 @@ def make_model(root, pid="demo0001", title="Demo project", extra=None):
     UNCHANGED: with no CAD kernel here there is nothing to turn source into
     artefacts, so the tree that is pushed has to already be the tree that can be
     published. What is under test is the CLIENT's half of the contract — what it
-    packs, what it refuses, what it does with a 202 — and that half does not care
-    which of the files is source and which is output.
+    reads back and what it refuses — and that half does not care which of the
+    files is source and which is output.
     """
     root.mkdir(parents=True, exist_ok=True)
     (root / "project.json").write_text(
@@ -76,3 +77,54 @@ def git_repo(root, message="initial"):
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", message)
     return git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def project_id(root) -> str:
+    return json.loads(
+        (Path(root) / "project.json").read_text(encoding="utf-8"))["id"]
+
+
+def model_archive(root) -> bytes:
+    """The model directory's regular files as one gzipped tar.
+
+    Hidden entries (`.git`, `.hammerola`) are left out: the hub's path alphabet
+    refuses a leading dot, and neither is part of the model.
+    """
+    root = Path(root)
+    files = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if path.is_file() and not path.is_symlink():
+            files[relative.as_posix()] = path.read_bytes()
+    return tar_gz(files)
+
+
+def publish_model(hub, root, commit=None) -> str:
+    """Publish a model directory through the harness. -> the build's name.
+
+    `harness.Hub.publish` builds the tree in the hub's queue as a hub before
+    git did and imports it into the project's repository. `commit=None` names
+    the revision by the digest of its tree; `dev` fills the draft slot.
+    """
+    reply = hub.publish(project_id(root), commit, model_archive(root))
+    assert reply.status_code in (200, 201), reply.text
+    return reply.json()["url"].rstrip("/").rsplit("/", 1)[1]
+
+
+def push_version(hub, root, message="version") -> str:
+    """Commit the model directory and publish it with `git push`. -> the commit.
+
+    The repository is made on the first call. The push is `harness.push`,
+    straight to the hub's address with the token; the hub's hook builds the
+    commit and names the revision by it.
+    """
+    if not (Path(root) / ".git").exists():
+        git(root, "init", "-q", "-b", "main")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", message)
+    sha = git(root, "rev-parse", "HEAD").stdout.strip()
+    pushed = push(hub, root, project_id(root))
+    assert pushed.returncode == 0, pushed.stderr
+    return sha

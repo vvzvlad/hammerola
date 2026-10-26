@@ -29,8 +29,8 @@ only when showing the form.
 Every field has a reader: `hammerola create` follows `template`; the sign-in
 screen reads `empty` and renders `client`, the one address its block hands over;
 `hammerola skill` follows `skill` to the archive it installs and compares
-`skill_digest` with the installed copy; `hammerola build` and
-`hammerola commit` refuse to publish from a client older than `client_version`.
+`skill_digest` with the installed copy; `hammerola build` refuses to publish
+from a client older than `client_version`.
 Both are constants of the image, not of the deployment, and `client_version`
 can already be read out of the client served here.
 
@@ -84,7 +84,7 @@ SKILL_DIGEST_KEY = "skill_digest"
 # ...and the same for the client this image serves at `/start/hammerola`. The
 # number is imported from `hammerola/__init__.py`, so the manifest and the
 # served archive agree. `hammerola/update.py` reads this key to decide whether
-# a `build` or a `commit` may go ahead.
+# a `build` may go ahead.
 CLIENT_VERSION_KEY = "client_version"
 
 # The whole skill is served, not only its entry document: `SKILL.md` names the
@@ -491,9 +491,8 @@ def _import_closure(members):
 def template_bytes() -> bytes:
     """The starter model directory, as a .tar.gz the client unpacks.
 
-    One hidden file is in it, `.gitignore`, which a push could not carry (the
-    hub's alphabet has no leading dot, `src/store.SAFE_COMPONENT`; `pack.py`
-    drops hidden entries). The client unpacks under `unpack.TEMPLATE_RULES`,
+    One hidden file is in it, `.gitignore`, off the hub's alphabet, which has
+    no leading dot (`src/store.SAFE_COMPONENT`). The client unpacks under `unpack.TEMPLATE_RULES`,
     which allows that one name in the last component; `_refuse_unservable`
     holds this side to the same rule.
     """
@@ -517,8 +516,7 @@ def _archive(members) -> bytes:
                 data = path.read_bytes()
                 info.size = len(data)
                 # Nothing about the machine that built the image: no owner, no
-                # mtime, one mode for every file. The same scrubbing `pack.py`
-                # applies in the other direction, for the same reasons.
+                # mtime, one mode for every file.
                 info.mode = 0o644
                 info.mtime = 0
                 info.uid = info.gid = 0
@@ -530,8 +528,7 @@ def _archive(members) -> bytes:
 def template_members() -> list:
     """(member path, path on disk) for the template, sorted, files only.
 
-    Directory entries are left out deliberately, exactly as `pack.py` leaves
-    them out: the unpacker creates the directories it needs from the member
+    Directory entries are left out deliberately: the unpacker creates the directories it needs from the member
     paths, so a tar's own directory entries would only carry modes nobody asked
     for.
     """

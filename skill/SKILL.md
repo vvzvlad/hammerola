@@ -5,7 +5,7 @@ description: Design a 3D-printable part in CadQuery and publish it to a hammerol
 
 # hammerola
 
-The hub builds CAD models from code: you push a source tree, it runs `model.py`
+The hub builds CAD models from code: you push a git commit, it runs `model.py`
 in its own image, gates the geometry and serves a viewer with STL/STEP/3MF
 downloads on a permanent URL. You drive it with `hammerola` and need no CAD
 kernel.
@@ -116,49 +116,62 @@ Say it can be printed, and stop.
 ## The working cycle
 
 ```sh
-hammerola build            # -> the dev slot: YOUR eyes; the next push overwrites it
-hammerola commit -m "..."  # -> an immutable revision; `latest` moves to it
+hammerola connect                # once per project, in its git repository
+hammerola build                  # the working copy -> the dev slot: YOUR eyes
+git commit -m "..."              # a version is a commit on main
+git push hammerola-<pid> main    # -> an immutable revision; `latest` moves to it
 ```
 
-**`build` is what YOU look at, `commit` is what the PERSON looks at** — split by
-audience, not by how finished the part is. Never hand over a `dev` URL, not
-even as "have a look meanwhile": the next push replaces it. `dev` keeps no
-history, source or log, and a `dev`-only project is not on the front page.
+**`build` is what YOU look at, a pushed commit is what the PERSON looks at** —
+split by audience, not by how finished the part is. Never hand over a `dev`
+URL, not even as "have a look meanwhile": the next `build` replaces it. `dev`
+keeps no history, and a `dev`-only project is not on the front page.
 
 **Push after every change that moves a number.** Nothing rations `build`, and
 with no kernel here an unpushed model is one nobody has looked at. A brief that
 forbids pushing blinds you.
 
-`commit` makes a version exist: the hub names the revision by the sources'
-digest (not git), keeps code and log, moves `latest`, and the project gets its
-card. A session ending on a `build` published nothing. **Everything a person is
-shown is a commit**, the block preview included. **Hand over the commit's URL
-every time**, not once at the end, or the person waits or prints something
-superseded.
+`git push hammerola-<pid> main` makes a version exist: the hub builds the newest
+pushed commit that touched the project's directory, names the revision by that
+commit, keeps its log, moves `latest`, and the project gets its card. A commit
+that touched only another directory of the repository builds nothing. A
+session ending on a `build` published nothing. **Everything a person is shown
+is a pushed commit**, the block preview included. **Hand over its URL every
+time** — `published: /project/<pid>/<sha>/` in the push's output, under the
+hub's address — not once at the end, or the person waits or prints something
+superseded. The commit's subject is what a person picks a revision by.
 
-`-m` (`--message`) is `commit`'s alone (`build -m` is exit 2) and is what a
-person picks a revision by. A `git commit` line is suggested afterwards;
-nothing is staged.
+It pushes the local branch `main` from any worktree: there is no need to switch
+to it. Only `main` is published for now — a variant of a project is the name of
+a branch, and the hub refuses any other one. `build` writes the draft of `main`
+whatever branch it runs on.
 
-Both verbs print the build log and **exit non-zero unless a build was
-published**: that is "did not ship", not a warning.
+**The push waits for the whole build** and exits non-zero unless the commit was
+published: the hook refusing it is the build failing, with its log in the
+output — "did not ship", not a warning. `build` likewise prints the log and
+exits with `git push`'s code. A quarter of the hub's builds take over two
+minutes: raise the timeout of the tool you push with, or push in the background
+(`references/checks.md`).
+
+**Rejected without the hook refusing** (`! [remote rejected]`, or `rejected
+(fetch first)`): somebody published in between. `git pull --no-rebase
+hammerola-<pid> main`, then push again. The flag is required: a bare `git pull`
+on diverged branches refuses, and `--rebase` gives your commit a new sha, so its
+published build drops out of the history and is built again. A push that broke
+off and was then rejected on retry: first `git ls-remote hammerola-<pid> main`
+— if your commit is there, the version is published.
 
 **`-C DIR` (`--directory`) goes BEFORE the verb** —
-`hammerola -C ../bracket commit -m "..."` — and is exit 2 after it; the verb
-then runs as if started in that directory.
+`hammerola -C ../bracket build` — and is exit 2 after it; the verb then runs as
+if started in that directory.
 
 ## Four rules that break a push
 
-**1. File names.** Every path component must match
-`[A-Za-z0-9][A-Za-z0-9._-]{0,127}`: ASCII, a letter or digit first, so no
-spaces, Cyrillic, `×`, `Ø` or leading underscore. One bad name refuses the
-**whole push** — `детали.py` beside `model.py` stops the project publishing.
-The alphabet is a security boundary, not relaxed. Hidden entries (`.git`,
-`.env`, `.venv`) are dropped, not refused, and so is what an open KiCad keeps
-beside a design: any file starting with `~` (its `~*.lck` locks), `_autosave-*`
-and any directory named `*-backups`. At most 8 components deep and
-1024 files; there is no size limit, but the upload has to arrive within 300 s
-(`408` otherwise).
+**1. Only what is committed is published.** The hub takes the project's
+directory from the commit as it is. A file the model reads and a document
+`project.json` names have to be in git; what `.gitignore` lists is not
+published, by a push or by `build`. `git status --ignored` shows what will not
+be. A symlink or a submodule in the project's directory refuses the push.
 
 **2. No `checklib.py` at a model's root.** The model's directory is first on
 `sys.path`, so your copy shadows the image's: interference volumes go into one
@@ -193,14 +206,15 @@ itself; the file beside each names the rest.
   the bodies: green whatever the geometry did (`references/checks.md`).
 * **A `checks()` that meshes or exports.** It breaks the numbers it then
   measures, and the build is killed for time (`references/checks.md`).
-* **The tool's own timeout.** `hammerola build` run under a timeout shorter than
-  the build publishes the build and loses the log (`references/checks.md`).
+* **The tool's own timeout.** `git push` or `hammerola build` run under a
+  timeout shorter than the build publishes the build and loses the log
+  (`references/checks.md`).
 * **A number with no provenance**, or an `estimated` quoted back afterwards as
   a measurement (`references/brief.md`).
 
 ## When a build fails
 
-The log `build` and `commit` print is the whole account. **Read it from the
+The log `build` and `git push` print is the whole account. **Read it from the
 top**: the gate refuses in a fixed order, so the first complaint is the real
 one.
 
@@ -212,13 +226,14 @@ hammerola status         # latest, whether dev is occupied, the revisions (-n/--
 ```
 
 **Never rebuild to read a log you already have**: `log dev` serves it, its
-header naming the push, and jobs are kept forever. A `dev` build's SOURCE is
-not kept: `hammerola source dev` refuses.
+header naming the push, and jobs are kept forever.
 
 * `build failed: ...` — your model or a gate said no; what it names is in `model.py`.
 * a traceback — `model.py` raised; the bottom frame is yours.
 * `timeout` / `cpu_exhausted` — past a ceiling; usually a boolean out of hand.
-* `422` on the push — rule 1, by a path; no build ran.
+* a refusal with no log — the push itself was refused before any build: a
+  branch other than `main`, a forced push, no `project.json` with this id, a
+  symlink (rule 1).
 
 **When what is wrong is your own `checks()`, `--force` publishes anyway.** It
 skips `checks()` and nothing else: every gate of the hub still refuses. The log
