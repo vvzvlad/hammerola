@@ -35,12 +35,6 @@ import { KCBoardAppElement } from "../kicanvas/elements/kc-board/app";
 import { KCSchematicAppElement } from "../kicanvas/elements/kc-schematic/app";
 import { BomApp } from "../kicanvas/elements/bom/app";
 import { KicadPCB, KicadSch } from "../kicad";
-import {
-    ArcSegment,
-    Footprint,
-    LineSegment,
-    Via,
-} from "../kicad/board";
 import { type SchematicInstanceContext } from "../kicad/schematic";
 
 import { area_items, type AreaDocument } from "./area-items";
