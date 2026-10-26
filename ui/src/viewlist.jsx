@@ -105,10 +105,12 @@ export function menuGroups(views, documents) {
   return [...groups];
 }
 
-/** The button. A view's name is the model's own sentence and can be any
- *  length; the button sits in a bar that must not grow past the window, so it
- *  is capped and the name is cut rather than allowed to push. */
-export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
+/** The button. One width whatever it names, so that the bar keeps its size
+ *  and place from view to view (AGENTS.md): a view's name is the model's own
+ *  sentence and can be any length, so a longer one is cut, a shorter one
+ *  leaves the chevron at the right end. Where the bar is short of room the
+ *  wrapper shrinks (`viewList`) and the button with it. */
+export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;width:220px;max-width:100%;box-sizing:border-box;`
   + (open ? TAB_ON : TAB_OFF);
 
 /**
@@ -296,7 +298,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
   return (
     <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
-        <span style={css(ELLIPSIS)}>{label}</span>
+        <span style={css(`${ELLIPSIS};flex:1`)}>{label}</span>
         {CHEVRON}
       </div>
       <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, wide))}>
