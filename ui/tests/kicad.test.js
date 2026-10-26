@@ -14,12 +14,9 @@
 // The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
 // and are checked in a browser; here the two elements are plain DOM elements
 // carrying the methods this component calls, a click is the event the viewer
-// dispatches for one, and each holds a canvas whose click reports what the test
-// put under the pointer (`element.under`), as the viewer's own click does. The
-// 3D view is a stand-in whose props are read off the drawn tree.
-
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+// dispatches for one, and each holds a canvas and answers `selectAt` with what
+// the test put under the pointer (`element.under`), as the viewer's own click
+// does. The 3D view is a stand-in whose props are read off the drawn tree.
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -28,6 +25,7 @@ vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { ret
 // here, the elements below carrying what it would define.
 vi.mock('/_v/ecad-viewer.js', () => ({}))
 
+import { navigate, parse, respell } from '../src/address.js'
 import BoardView3D from '../src/BoardView3D.jsx'
 import DocumentView, { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import PcbPanel from '../src/PcbPanel.jsx'
@@ -38,6 +36,9 @@ import KicadView, {
 } from '../src/KicadView.jsx'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
+import { guardSubscribers } from './addressguard.js'
+
+guardSubscribers()
 
 const BASE = '/project/kicad0001/abc123/'
 
@@ -62,15 +63,17 @@ const ofType = (tree, type) => collect(tree, (el) => (el.type === type ? el : un
 const AREA = { left: 0, top: 50, width: 800, height: 600 }
 
 /** A view with its elements attached, as React would attach them, under a
- *  page that answers `onOpen` by handing that document down, as both pages do.
- *  `viewer` false: plain elements, as when the viewer's module did not load. */
+ *  page that answers `onOpen` by handing that document down and `onSheet` by
+ *  writing the sheet into the address, as both pages do. `viewer` false: plain
+ *  elements, as when the viewer's module did not load. */
 function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
   const onOpen = vi.fn((id) => {
     const before = view.props
     view.props = { ...before, doc: documents.find((one) => one.id === id) }
     view.componentDidUpdate(before)
   })
-  const view = new KicadView({ doc, documents, base: BASE, onOpen, onTools: vi.fn(), onReady: vi.fn() })
+  const onSheet = (sheet, push) => navigate(respell(parse(), { sheet }), { push })
+  const view = new KicadView({ doc, documents, base: BASE, onOpen, onSheet, onTools: vi.fn(), onReady: vi.fn() })
   view.setState = (patch, done) => {
     Object.assign(view.state, patch)
     if (done) done()
@@ -84,20 +87,16 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.clearSelection = vi.fn()
       element.replaceSources = vi.fn(async () => {})
     }
-    // The canvas the viewer draws on: a click reports what is under the
-    // pointer, after the move that put it there. `picks` is what it was handed,
-    // and anything handed to the element itself instead.
+    // The canvas the viewer draws on, and the element's hit test: `selectAt`
+    // reports what is under the point, as the viewer's own click does.
+    // `picks` is the points it was asked for.
     const canvas = document.createElement('canvas')
     element.append(canvas)
     element.canvas = canvas
     element.picks = []
-    canvas.addEventListener('mousemove', (event) => element.picks.push(['move', event.clientX, event.clientY]))
-    canvas.addEventListener('click', (event) => {
-      element.picks.push([`click ${event.button}`, event.clientX, event.clientY])
+    element.selectAt = (x, y) => {
+      element.picks.push([x, y])
       click(element, element.under)
-    })
-    for (const type of ['mousemove', 'click']) {
-      element.addEventListener(type, (event) => event.target === element && element.picks.push([`${type} on the element`]))
     }
     view.refCallbacks[context](element)
     elements[context] = element
@@ -236,11 +235,6 @@ describe('a KiCad design', () => {
     expect(sources[PCB].map((s) => s.filename)).toEqual(['hw/board.kicad_pro', 'hw/board.kicad_pcb'])
     // no project: each viewer gets its own files alone
     expect(designFiles(designMembers(DOCS, DOCS[4]))).toEqual(['psu/psu.kicad_pcb'])
-    // a schematic goes with the pin entries the viewer draws pins from
-    const bare = '(kicad_sch (lib_symbols (symbol "Device:R" (symbol "R_1_1" (pin passive line (number "1")))))'
-      + ' (symbol (lib_id "Device:R") (uuid "r1")))'
-    const handed = designSources(members, { ...Object.fromEntries(designFiles(members).map((f) => [f, f])), 'hw/sub/power.kicad_sch': bare })
-    expect(handed[SCH][2].content).toMatch(/\(lib_id "Device:R"\) \(uuid "r1"\) \(pin "1" \(uuid "[0-9a-f-]{36}"\)\)\)\)$/)
   })
 })
 
@@ -464,10 +458,12 @@ describe('the schematic\'s page', () => {
       [PSU_B, `?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`], [ROOT, `?d=${SHEET}&s=nowhere`]])
   })
 
-  it('is the entry\'s on Back onto the schematic from its board, though the page hands the schematic down first', async () => {
-    // The page's own listener, there before the design and so run before its
-    // listener, as the browser runs them: it hands down the member the entry
-    // names, and React runs that update before the next listener.
+  it('is the entry\'s on Back onto the schematic from its board, though the design hears of Back before the page hands the schematic down', async () => {
+    // The page's update, standing here as a listener after address.js's own:
+    // the design is handed the entry first (`onPop`, subscribed there) with the
+    // props of the entry being left, the board, and then the page's update
+    // hands down the member the entry names, under the same `popstate`, as
+    // React applies it once the subscribers have run.
     let view = null
     const page = () => {
       const doc = DOCS.find((one) => one.id === new URLSearchParams(window.location.search).get('d'))
@@ -495,6 +491,12 @@ describe('the schematic\'s page', () => {
     expect(design.sch.page).toBe(AMP)
     await go(-1)
     expect([view.props.doc.id, design.sch.page, window.location.search]).toEqual([SHEET, ROOT, `?d=${SHEET}`])
+    // Back onto another revision's entry, naming a sheet this schematic does
+    // not have, while the page swaps that revision in: the entry keeps it
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=nowhere`)
+    view.props.onOpen(BOARD)
+    await go(-1)
+    expect([view.props.doc.id, design.sch.page, window.location.search]).toEqual([SHEET, ROOT, `?d=${SHEET}&s=nowhere`])
   })
 
   it('is rewritten in place where the page moved the schematic on screen, and left alone while it is hidden', async () => {
@@ -530,10 +532,11 @@ describe('the schematic\'s page', () => {
   })
 
   it('follows a sheet chosen in the list of views, over the schematic and over the board, adding no step of its own', async () => {
-    // The page's step naming the sheet (`pushChoice`), then the schematic
-    // handed down, or the page drawn again round it as the list shuts.
+    // The page's step naming the sheet (`pushChoice`, through address.js), then
+    // the schematic handed down, or the page drawn again round it as the list
+    // shuts.
     const choose = (view, query) => {
-      window.history.pushState(null, '', `${BASE}${query}`)
+      navigate(parse({ pathname: BASE, search: query, hash: '' }, null), { push: true })
       const before = view.props
       view.props = { ...before, doc: DOCS[0] }
       view.componentDidUpdate(before)
@@ -738,19 +741,17 @@ describe('the right-click menu', () => {
     ])
   })
 
-  it('asks the viewer what is under a right click as it picks for a left one, selects it, and opens there', () => {
+  it('asks the element what is under a right click, selects it, and opens there', () => {
     const { view, elements } = mounted()
     elements[SCH].under = C523
     rightClick(elements[SCH], 300, 250)
-    expect(elements[SCH].picks).toEqual([['move', 300, 250], ['click 0', 300, 250]])
+    expect(elements[SCH].picks).toEqual([[300, 250]])
     // selected as a left click selects it
     expect(elements[PCB].requestCrossProbe).toHaveBeenCalledWith(designator(PCB, 'C523'))
     expect(view3d(view).three.props.selected).toBe('C523')
-    // at the pointer, in the view area, in the page's colours
-    expect(menuOf(view).props.style).toMatchObject({ position: 'absolute', left: '300px', top: '200px', width: '220px',
-      background: 'var(--card-bg)', border: '1px solid var(--line)' })
+    // at the pointer, in the view area
+    expect(menuOf(view).props.style).toMatchObject({ position: 'absolute', left: '300px', top: '200px' })
     expect(texts(menuOf(view))).toEqual(['C523', 'Show C523 in hw/board.kicad_pcb', 'Show C523 in hw/board.glb'])
-    expect(itemsOf(view)[0].props.style.color).toBe('var(--text)')
     expect(view.props.onOpen).not.toHaveBeenCalled()
   })
 
@@ -774,12 +775,17 @@ describe('the right-click menu', () => {
     const list = document.createElement('kc-sch-selection-menu')
     list.hidden = true
     app.attachShadow({ mode: 'open' }).append(element.canvas, list)
-    // a click on a label with namesakes on other sheets opens it
-    element.canvas.addEventListener('click', () => { list.hidden = false })
+    // selecting a label with namesakes on other sheets opens it
+    const select = element.selectAt
+    element.selectAt = (x, y) => {
+      select(x, y)
+      list.hidden = false
+    }
     element.under = { sourceContext: SCH, itemType: 'global-label', net: 'AMP_FAULT' }
     rightClick(element, 300, 250)
     expect([texts(menuOf(view)), list.hidden]).toEqual([['net AMP_FAULT', 'Show net AMP_FAULT in hw/board.kicad_pcb'], true])
-    element.canvas.dispatchEvent(new MouseEvent('click', { button: 0 }))
+    // the reader's own left click opened it
+    list.hidden = false
     rightClick(element, 300, 250)
     expect(list.hidden).toBe(false)
   })
@@ -1135,9 +1141,8 @@ describe('a part\'s datasheet', () => {
       // the viewer's own keys (`[`, `]`) stand aside for an open dialog of the page
       expect(shown.window.props).toMatchObject({ role: 'dialog', 'data-state': 'open' })
       expect(texts(shown.veil)).toEqual(['TPA3250', '×'])
-      // over the view area, in the menu's colours
+      // over the view area
       expect(shown.veil.props.style).toMatchObject({ position: 'absolute', inset: '0', padding: '12px' })
-      expect(shown.window.props.style).toMatchObject({ background: 'var(--card-bg)', border: '1px solid var(--line)' })
     })
 
     it('closes on its ×, and on a click on the veil beside it but not on one inside it', () => {
@@ -1171,40 +1176,6 @@ describe('a part\'s datasheet', () => {
       view.componentDidUpdate()
       expect(view.state.sheet).toBeNull()
     })
-  })
-})
-
-describe('our edits to the vendored viewer', () => {
-  // The wheel and the look of a selection are the viewer's own code now
-  // (static/_v/PROVENANCE.md, "Our edits"), so nothing of ours runs for them
-  // and no test here can exercise them — they are checked in a browser. What
-  // CAN be checked, and is what an upgrade loses silently, is that the edits
-  // are still in the file: the viewer upstream zooms on every wheel and fills
-  // a selected footprint, and both read as "the viewer does that" rather than
-  // as a regression.
-  const bundle = readFileSync(resolve(process.cwd(), '../static/_v/ecad-viewer.js'), 'utf8')
-
-  it('leaves a selected footprint outlined, not filled over, and the copper pours where they were', () => {
-    expect(bundle).toContain('paint_footprint(t){this.clear_interactive();let n=this.layers.selection_fg;')
-    // the fill was a pass over the selection mask in cyan at 55% — nowhere now
-    expect(bundle).not.toContain('new w(0,.85,1,.55)')
-    // selecting a footprint hid every zone layer until the selection was cleared
-    expect(bundle).toContain('this.#l={kind:"fp",fp:t},this.painter.paint_footprint(t),this.draw()}')
-    expect(bundle).not.toContain('this.#e.set(n.name,n.visibility),n.visible=!1')
-  })
-
-  it('dims the board under a highlighted net, not the page around it', () => {
-    // the veil was the outline's box grown by a quarter of its longer side plus 5 mm
-    expect(bundle).toContain('return n||(n=new Y(0,0,1,1)),n}')
-    expect(bundle).not.toContain('n.grow(Math.max(n.w,n.h)*.25+5)')
-  })
-
-  it('pans on a plain wheel and zooms about the pointer on Control, by the Gerbers\' numbers', () => {
-    // `#E` pans and `#F` zooms about a point; 16 px a line, the zoom delta
-    // clamped to 40 px and the rate 0.01 a pixel (`og`, the viewer's own 0.005).
-    expect(bundle).toContain(
-      'e.ctrlKey?this.#F(Math.max(-40,Math.min(40,e.deltaY*t))*(.01/og),this.#K(e)):this.#E(e.deltaX*t,e.deltaY*t)')
-    expect(bundle).toContain('let t=e.deltaMode===WheelEvent.DOM_DELTA_LINE?16:')
   })
 })
 

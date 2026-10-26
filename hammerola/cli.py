@@ -246,8 +246,8 @@ def build_parser() -> argparse.ArgumentParser:
     # `skill.py` for why there is no automatic check).
     instructions = commands.add_parser(
         "skill",
-        help="the agent instructions: which version is installed here, and "
-             "which the hub serves")
+        help="the agent instructions: whether the copy installed here is the "
+             "one the hub serves")
     instructions.add_argument(
         "--path", default=None, metavar="DIR",
         help=f"the directory the skill is installed in (default: "

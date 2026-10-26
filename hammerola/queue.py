@@ -166,7 +166,9 @@ def _print_comment(record: dict) -> None:
     print(f"{cid}  {stamp}")
 
     # Where, on one line: build, then the optional part, view, point and the
-    # face normal.
+    # face normal. With `frame: "part"` the point and the normal are in the
+    # part's own frame, which every view of the build shares; without it, in
+    # the world of the view named.
     where = [f"build {record.get('commit')}"]
     if record.get("part"):
         where.append(f"part {record['part']}")
@@ -174,7 +176,8 @@ def _print_comment(record: dict) -> None:
         where.append(f"view {record['view']}")
     point = record.get("point")
     if isinstance(point, list) and len(point) == 3:
-        where.append("at " + " ".join(f"{float(v):.1f}" for v in point))
+        frame = " (part coords)" if record.get("frame") == "part" else ""
+        where.append("at " + " ".join(f"{float(v):.1f}" for v in point) + frame)
     # The outward normal of the face that was clicked: which side of the part
     # the comment is on.
     normal = record.get("normal")

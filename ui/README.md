@@ -157,9 +157,8 @@ of the last click;
 `src/kicadsheets.js` reads each part's `Datasheet` field, and the part's menu
 has an item that opens the listed document it names in a window over the view;
 `src/kicadnets.js` reads where each sheet names a net and what the board calls
-it, and a net's menu has an item per other sheet the same net is on;
-`src/kicadpins.js` gives each schematic the pin entries the viewer
-draws pins from. `src/GerberView.jsx` draws a listed `.zip` of Gerbers (`src/gerber.js`
+it, and a net's menu has an item per other sheet the same net is on; both
+read the texts with `src/sexpr.js`. `src/GerberView.jsx` draws a listed `.zip` of Gerbers (`src/gerber.js`
 reads the zip and the layers; the renderer is the vendored `static/_v/wasm_gerber_processor.js`,
 imported by URL on first use), beside the board's own view. The viewer is the vendored `static/_v/ecad-viewer.js`, imported by
 URL when a design is opened, as `src/viewport/library.js` imports

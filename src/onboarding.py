@@ -5,8 +5,9 @@ Everything else on this service assumes `hammerola` on PATH, a model directory
 and the secret. A first run has none of them, so the hub serves the three
 things it needs, and one document that names them.
 
-    GET /start                    the manifest: the three paths, the versions
-                                  of the skill and of the client, and `empty`
+    GET /start                    the manifest: the three paths, the digest of
+                                  the skill, the version of the client, and
+                                  `empty`
     GET /start/skill.tar.gz       the agent instructions: `SKILL.md` and the
                                   `references/` it sends its reader to
     GET /start/hammerola          the client, one executable file
@@ -28,10 +29,10 @@ only when showing the form.
 Every field has a reader: `hammerola create` follows `template`; the sign-in
 screen reads `empty` and renders `client`, the one address its block hands over;
 `hammerola skill` follows `skill` to the archive it installs and compares
-`skill_version` with the installed copy; `hammerola build` and
+`skill_digest` with the installed copy; `hammerola build` and
 `hammerola commit` refuse to publish from a client older than `client_version`.
-Both versions are constants of the image, not of the deployment, and
-`client_version` can already be read out of the client served here.
+Both are constants of the image, not of the deployment, and `client_version`
+can already be read out of the client served here.
 
 What counts as empty is "no project directory with anything in it"
 (`Store.empty`). Not "no cards on the front page": a project with only a `dev`
@@ -46,13 +47,13 @@ repository never carries a deployment's address (AGENTS.md).
 import ast
 import gzip
 import io
-import re
 import tarfile
 import zipfile
 from functools import lru_cache
 from pathlib import Path
 
 from hammerola import VERSION as CLIENT_VERSION
+from hammerola.skill import tree_digest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -74,11 +75,11 @@ TEMPLATE_URL = f"/{START_SEGMENT}/{TEMPLATE_NAME}"
 # in this repository and a test compares them.
 TEMPLATE_KEY = "template"
 
-# ...and the key carrying the version of the skill THIS image ships, which the
+# ...and the key carrying the digest of the skill THIS image ships, which the
 # client compares against the copy installed on a laptop (`hammerola skill`).
 # Same arrangement, same reason: `hammerola/skill.py` names it too and a test
 # holds the two strings together.
-SKILL_VERSION_KEY = "skill_version"
+SKILL_DIGEST_KEY = "skill_digest"
 
 # ...and the same for the client this image serves at `/start/hammerola`. The
 # number is imported from `hammerola/__init__.py`, so the manifest and the
@@ -86,22 +87,14 @@ SKILL_VERSION_KEY = "skill_version"
 # a `build` or a `commit` may go ahead.
 CLIENT_VERSION_KEY = "client_version"
 
-# The skill's version lives in its frontmatter. Two tight patterns rather than a
-# YAML parser (none in the standard library; the value is one integer). The
-# client carries a copy (`hammerola/skill.py`), and a test checks both agree on
-# the shipped file.
-_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
-_VERSION_LINE = re.compile(r"^version:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
-
 # The whole skill is served, not only its entry document: `SKILL.md` names the
 # files under `references/` and a reader that had only the entry would follow
 # those names to files it has not got.
 SKILL_DIR = ROOT / "skill"
-# The one member of that directory this half opens: the version is in its
-# frontmatter, and the client looks for it under this same name after unpacking
-# (`hammerola/skill.py`, which spells its own copy; a test compares the two).
+# The entry document of that directory: the client looks for it under this same
+# name after unpacking (`hammerola/skill.py`, which spells its own copy; a test
+# compares the two).
 SKILL_ENTRY = "SKILL.md"
-SKILL_FILE = SKILL_DIR / SKILL_ENTRY
 # `model_template/`, not `template/`: one letter from `templates/` (the page
 # templates), which is copied into the image next to it.
 TEMPLATE_DIR = ROOT / "model_template"
@@ -178,12 +171,13 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 def manifest(*, empty: bool) -> dict:
     """The document a first run is made of, and the door's block is drawn from.
 
-    Six keys, checked by a test: three relative paths and two versions, all
-    constants of the image, plus the one boolean about this deployment. Adding
-    a field adds an unauthenticated statement; see the module docstring.
+    Six keys, checked by a test: three relative paths, the skill's digest and
+    the client's version, all constants of the image, plus the one boolean
+    about this deployment. Adding a field adds an unauthenticated statement;
+    see the module docstring.
 
-    It reads the shipped `SKILL.md` for `skill_version`, so it can fail like
-    the artefact routes; `src/app.py` answers that with a logged 404.
+    It reads every file of the shipped skill for `skill_digest`, so it can fail
+    like the artefact routes; `src/app.py` answers that with a logged 404.
     `client_version` is imported at startup and adds no such failure.
     """
     return {
@@ -191,7 +185,7 @@ def manifest(*, empty: bool) -> dict:
         "skill": SKILL_URL,
         "client": CLIENT_URL,
         TEMPLATE_KEY: TEMPLATE_URL,
-        SKILL_VERSION_KEY: skill_version(),
+        SKILL_DIGEST_KEY: skill_digest(),
         CLIENT_VERSION_KEY: CLIENT_VERSION,
     }
 
@@ -232,35 +226,19 @@ def skill_members() -> list:
 
 
 @lru_cache(maxsize=1)
-def skill_version() -> int:
-    """The version of the instructions this image ships. Off the file itself.
+def skill_digest() -> str:
+    """The digest of the instructions this image ships: `tree_digest(SKILL_DIR)`.
 
-    The skill is versioned because a stale one fails silently: it keeps
-    teaching renamed commands and old ceilings. The file states its version,
-    the manifest repeats it, and `hammerola skill` compares them.
+    A stale skill fails silently: it keeps teaching renamed commands and old
+    ceilings. The manifest states this digest and `hammerola skill` computes
+    the same one over the installed copy, with the same function, so any change
+    to any file of the skill reads as a different skill on every laptop.
 
-    In the frontmatter of the entry document, where Claude Code skills already
-    accept extra keys, so the number travels with the file. One version for the
-    whole set: `SKILL.md` and its references move together.
-
-    Strictly parsed, with no default: a missing version must not read as the
-    first one. Cached; the file cannot change while the process runs.
+    It covers the files `skill_members` packs, hidden ones aside, which
+    `skill_bytes` refuses to serve; a test holds the two together. Cached; the
+    files cannot change while the process runs.
     """
-    text = SKILL_FILE.read_text(encoding="utf-8")
-    block = _FRONTMATTER.match(text)
-    if block is None:
-        raise ValueError(
-            f"{SKILL_FILE} has no frontmatter block, so it names no version — "
-            f"and a Claude Code skill without one does not install either")
-    found = _VERSION_LINE.search(block.group(1))
-    if found is None:
-        raise ValueError(
-            f"{SKILL_FILE} names no `version:` in its frontmatter. It is one "
-            f"integer, raised by hand whenever any file of the skill changes "
-            f"(tests/test_onboarding.py holds it); "
-            f"there is no default, because a missing version would read as the "
-            f"first one")
-    return int(found.group(1))
+    return tree_digest(SKILL_DIR)
 
 
 @lru_cache(maxsize=1)

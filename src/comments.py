@@ -191,6 +191,12 @@ def validate_payload(raw, max_text_chars: int) -> dict:
     # arrow on. Checked exactly like the point it belongs to.
     normal = raw.get("normal")
     payload["normal"] = None if normal is None else _numbers(normal, "normal", 3)
+    # "part": the point and the normal are in the frame of the solid `part`
+    # names, which every view of the build shares. Absent: a world coordinate
+    # of the view the comment was left in.
+    if "frame" in raw and raw["frame"] != "part":
+        raise CommentError(422, '`frame` must be "part" or absent')
+    payload["frame"] = raw.get("frame")
     payload["camera"] = _camera(raw.get("camera"))
     return payload
 
@@ -311,6 +317,7 @@ class CommentStore:
             "key": payload["key"],
             "point": payload["point"],
             "normal": payload["normal"],
+            "frame": payload["frame"],
             "camera": payload["camera"],
             "text": payload["text"],
             PHOTO_KIND: None,

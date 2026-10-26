@@ -12,9 +12,30 @@
 //
 // Component layout is checked from Python against the source
 // (tests/test_ui_source.py).
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // tests/schematicpins.test.js imports the KiCad viewer's own source from
+  // ecad-viewer/, which needs two things its build gives it
+  // (ecad-viewer/packages/ecad-viewer-app/scripts/build.js and bundle.js):
+  // `kicad-parser` is the parser package's source, and a `.kicad_wks` file is
+  // imported as its text.
+  resolve: {
+    alias: [{
+      find: /^kicad-parser$/,
+      replacement: fileURLToPath(new URL('../ecad-viewer/packages/kicad-parser/src/index.ts', import.meta.url)),
+    }],
+  },
+  plugins: [{
+    name: 'kicad-wks-text',
+    enforce: 'pre',
+    load(id) {
+      if (id.endsWith('.kicad_wks')) return `export default ${JSON.stringify(readFileSync(id, 'utf8'))}`
+    },
+  }],
   test: {
     // jsdom rather than the default `node`: holdkey.js listens on `window` and
     // reads `document.activeElement` and `document.visibilityState`, and the

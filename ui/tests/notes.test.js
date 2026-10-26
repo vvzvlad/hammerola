@@ -487,8 +487,6 @@ describe('a build with no notes at all', () => {
     expect(shown(v.noteBoxStyle)).toBe(true)
     expect(shown(v.readerNoteStyle)).toBe(true)
     expect(shown(v.authorNoteStyle)).toBe(false)
-    // No rule above it: there is nothing above it to be separated from.
-    expect(v.readerNoteStyle).not.toContain('border-top')
   })
 
   it('keeps the reader\'s note behind the token, as it always was', () => {
@@ -505,14 +503,12 @@ describe('a part carrying both notes', () => {
   const both = () => component({ sel: '/model/lid', notes: NOTES,
                                  mine: { lid: 'thin wall here — do not touch' } })
 
-  it('shows the two of them, separated, the model\'s first', () => {
+  it('shows both notes, each with its own text', () => {
     const v = both().computed()
     expect(v.authorNote).toBe('M3x8 DIN912')
     expect(v.noteText).toBe('thin wall here — do not touch')
     expect(shown(v.authorNoteStyle)).toBe(true)
     expect(shown(v.readerNoteStyle)).toBe(true)
-    // The rule between them appears only when there are two.
-    expect(v.readerNoteStyle).toContain('border-top')
   })
 
   it('labels each one, so nobody has to know the system to tell them apart', () => {

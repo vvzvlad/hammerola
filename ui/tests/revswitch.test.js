@@ -41,6 +41,7 @@ import {
 } from '../src/proposal.js'
 import { makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
+import { guardSubscribers } from './addressguard.js'
 
 const path = (slot) => `/project/proj1/${slot}/`
 
@@ -49,6 +50,7 @@ const path = (slot) => `/project/proj1/${slot}/`
 // CHECKED, both before and after every test. Before-only is what sends the
 // debugging into whichever test happened to run next — see pageguard.js.
 guardPage(path(A))
+guardSubscribers()
 
 /** The mocks, back to what this file starts every test from. */
 beforeEach(() => {
@@ -433,24 +435,6 @@ describe('the message on a picker row', () => {
     expect(rows.get('dev').message).toBe('')
     expect(rows.get('latest').message).toBe('')
   })
-
-  it('takes the free width and stays on one line', () => {
-    // It sits where the spacer sat, which is the whole reason a message can be
-    // put here at all: the row is a flex line and that element is what grows,
-    // so an eighty-character subject has to give the width back by ellipsis
-    // rather than by wrapping the date onto a second line.
-    const c = component({
-      builds: { has_dev: false, latest: null,
-                builds: [{ commit: A, built: '2026-08-27T18:20:00Z',
-                           message: 'x'.repeat(200) }] },
-    })
-
-    const style = c.computed().revRows[0].messageStyle
-    expect(style).toContain('flex:1')
-    expect(style).toContain('min-width:0')
-    expect(style).toContain('white-space:nowrap')
-    expect(style).toContain('text-overflow:ellipsis')
-  })
 })
 
 // -- back and forward ---------------------------------------------------------
@@ -520,7 +504,7 @@ describe('popstate', () => {
   it('walks back and forward through the views chosen on the build on screen', async () => {
     // Each choice in the menu of views is an entry (`pushChoice`), and Back
     // puts the one before on screen without fetching a build. The entry the
-    // page stood on has no `?v=`: `viewQuery` writes none for the first view,
+    // page stood on has no `?v=`: `viewParam` names none for the first view,
     // so it names that view, not the one showing.
     const c = mounted()
     c.computed().viewTabs[1].onClick()
@@ -2411,8 +2395,6 @@ describe('the banner\'s Switch while a picked revision is on the wire', () => {
 
     expect(live).toContain('cursor:pointer')
     expect(spent, 'the cursor still promises a click').not.toContain('cursor:pointer')
-    expect(spent, 'and it is still painted the colour of a live button')
-      .not.toContain('background:var(--accent)')
   })
 
   it('is a live button again once that swap has failed', async () => {

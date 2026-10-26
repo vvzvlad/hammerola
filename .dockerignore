@@ -14,7 +14,7 @@ venv/
 data/
 tests/
 .gitea/
-# ROOT-LEVEL .md files only — AGENTS.md, CLAUDE.md, README.md — because `*` does
+# ROOT-LEVEL .md files only — AGENTS.md, CLAUDE.md, README.md, README.ru.md — because `*` does
 # not cross a `/` here (see the note at the top). `skill/SKILL.md` and the reference
 # files in `skill/references/` are therefore NOT excluded, and must not be: the hub
 # packs that whole directory into /start/skill.tar.gz, and
@@ -82,3 +82,5 @@ static/_v/hammerola*
 # image has any use for — what it serves is the built bundle, which arrives
 # through the static/ COPY line like every other asset.
 viewer/
+# The vendored KiCad viewer, for the same reason.
+ecad-viewer/

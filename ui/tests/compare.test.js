@@ -72,8 +72,10 @@ import {
 } from '../src/hub.js'
 import { drained as settled, makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
+import { guardSubscribers } from './addressguard.js'
 
 guardPage(`/project/proj1/${A}/`)
+guardSubscribers()
 
 beforeEach(() => {
   loadCompareReport.mockReset()
@@ -1696,7 +1698,7 @@ describe('a comparison opened by its own URL', () => {
 
   it('opens the view a build page would, since THIS address names none', () => {
     // A comparison address carries `?v=` exactly as a build address does — the
-    // same `viewQuery`, written by `moveAddress`, and dropped for the build's
+    // same `viewParam`, written by `moveAddress`, and dropped for the build's
     // first view — so a link with nothing after the path is a link to the
     // default view, and the page opens on the one `/project/<pid>/<a>/` opens
     // on. The other half is pinned further down, by `carries the view query the
@@ -1787,7 +1789,7 @@ describe('a comparison entered in the page', () => {
   })
 
   it('carries the view query the page itself would write', () => {
-    // `viewQuery`, the same reading `switchBuild` writes an address with: '' for
+    // `viewParam`, the same reading `switchBuild` writes an address with: none for
     // the build's first view, so the ordinary comparison is a link with nothing
     // after the path, and a comparison of another tab reopens on that tab.
     loadCompareReport.mockResolvedValue(REPORT)

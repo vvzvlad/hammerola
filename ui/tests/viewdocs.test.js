@@ -191,30 +191,31 @@ describe('the documents in the list of views', () => {
     expect(strip({})).toEqual([[], 0])
   })
 
-  it('spell Download and Copy link where the words fit beside the centred bar, and draw icons where not', () => {
-    // The owner's "ну вот если не поместятся, то тогда преврати их в иконки".
+  it('download the open one\'s file and copy its link, the word Download in the link\'s title', () => {
+    // Words or icons is CSS's to decide (`DocFile`), and how it looks is
+    // checked by eye: here only where every copy of the row points.
     const href = `${PAGE.base}ref/terr-raspil.svg`
-    const file = new DocFile({ href })
-    file.setState = (patch) => Object.assign(file.state, patch)
-    // a strip `strip` px wide, the bar `bar` px wide in its middle, the row of buttons `row` px wide
-    const fit = (strip, bar, row) => {
-      file.side = { current: { parentElement: { clientWidth: strip }, nextElementSibling: { offsetWidth: bar } } }
-      file.row = { current: { offsetWidth: row } }
-      file.fit()
-      const drawn = file.render()
-      const [a] = links(drawn)
-      const [copy] = collect(drawn, (el) => (el.type === CopyLink ? el : undefined))
-      // `download`: a PDF, HTML or SVG at the same address would open in the tab instead
-      return [texts(a), a.props.href, a.props.title, a.props.download, copy.props.href, !!copy.props.words]
+    const drawn = DocFile({ href })
+    // `download`: a PDF, HTML or SVG at the same address would open in the tab instead
+    expect(new Set(links(drawn).map((a) => `${a.props.href} ${a.props.title} ${a.props.download}`)))
+      .toEqual(new Set([`${href} Download true`]))
+    expect(new Set(collect(drawn, (el) => (el.type === CopyLink ? el.props.href : undefined)))).toEqual(new Set([href]))
+    // One row the reader can press; the two the layout is sized by are hidden,
+    // which takes them out of clicks, focus and what is read out.
+    const unseen = []
+    const walk = (node, hidden) => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) {
+        node.forEach((child) => walk(child, hidden))
+        return
+      }
+      if (!node.props) return
+      const under = hidden || node.props.style?.visibility === 'hidden'
+      if (node.type === 'a') unseen.push(under)
+      walk(node.props.children, under)
     }
-    const WORDS = 180 // the row of the two buttons with their words
-    expect(fit(1440, 700, WORDS)).toEqual([['Download'], href, 'Download', true, href, true])
-    // 150 px each side of the bar: short of the words and the side's padding
-    expect(fit(1000, 700, WORDS)).toEqual([[], href, 'Download', true, href, false])
-    // the icons alone would fit in those 150 px, and the words still do not
-    expect(fit(1000, 700, 60)[0]).toEqual([])
-    // the window widens: the words come back, by the width they were measured at
-    expect(fit(1440, 700, 60)[0]).toEqual(['Download'])
+    walk(drawn, false)
+    expect(unseen.sort()).toEqual([false, true, true])
   })
 
   it('drive Fit and Frame through the view of a document that can, and save the frame named after the build', async () => {
@@ -424,6 +425,21 @@ describe('the documents in the list of views', () => {
     // another design is another view
     c.computed().docRows[2].onClick()
     expect(shownDocs(c)[0].key).not.toBe(before.key)
+  })
+
+  it('write the sheet the schematic reports as `s=`, a step of history for the reader\'s, in place otherwise', () => {
+    // The schematic's view tells the page its sheet (`onSheet`), and the page
+    // writes it beside the `d=` naming the schematic; the root sheet is none.
+    window.history.replaceState({ hmr: 'latest' }, '', `/?d=${KICAD[0].id}`)
+    const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
+    const push = vi.spyOn(window.history, 'pushState')
+    const rewrite = vi.spyOn(window.history, 'replaceState')
+    onTestFinished(() => { push.mockRestore(); rewrite.mockRestore() })
+    const written = () => [push.mock.calls.length, rewrite.mock.calls.length, window.location.search]
+    shownDocs(c)[0].props.onSheet('amp', true)
+    expect(written()).toEqual([1, 0, `?d=${KICAD[0].id}&s=amp`])
+    shownDocs(c)[0].props.onSheet('', false)
+    expect(written()).toEqual([1, 1, `?d=${KICAD[0].id}`])
   })
 
   it('show the model for a document this revision does not list', () => {

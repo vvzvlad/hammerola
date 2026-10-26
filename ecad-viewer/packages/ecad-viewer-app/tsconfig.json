@@ -1,0 +1,42 @@
+{
+    "compilerOptions": {
+        "target": "es2022",
+        "moduleResolution": "bundler",
+        "experimentalDecorators": true,
+        "useDefineForClassFields": false,
+        "module": "es2022",
+        "verbatimModuleSyntax": true,
+        "allowArbitraryExtensions": true,
+        "allowJs": true,
+        "checkJs": true,
+        "outDir": "./dist",
+        "declaration": true,
+        "forceConsistentCasingInFileNames": true,
+        "noImplicitAny": true,
+        "strictNullChecks": true,
+        "strictFunctionTypes": true,
+        "strictBindCallApply": true,
+        "noImplicitThis": true,
+        "useUnknownInCatchVariables": true,
+        "alwaysStrict": true,
+        "noUnusedLocals": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUncheckedIndexedAccess": true,
+        "noImplicitOverride": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "allowUnusedLabels": false,
+        "allowUnreachableCode": false,
+        // Only the DOM libs this app actually runs against. Left unrestricted,
+        // TypeScript pulls in every @types/* package in the tree, and the
+        // workspace carries both @types/jest and @types/mocha — two conflicting
+        // sets of the same test globals, which reported seven errors from
+        // inside node_modules that no source change could ever fix.
+        "types": [],
+        "paths": {
+            "kicad-parser": ["../kicad-parser/src"],
+        },
+    },
+    "include": ["./src/**/*"],
+    "exclude": ["./node_modules", "./**/node_modules/*"],
+}

@@ -23,8 +23,8 @@
 // Texts in, a list out: a root file that does not parse gives no sheets.
 
 import { resolved } from './kicadnets.js';
-import { children, head, parseSexpr, valueOf } from './kicadpins.js';
 import { property } from './kicadsheets.js';
+import { children, head, parseSexpr, valueOf } from './sexpr.js';
 
 /** The page number the sheet symbol `symbol` holds for its placement under
  *  the sheet at `path`, or NaN. */

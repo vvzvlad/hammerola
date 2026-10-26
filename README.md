@@ -1,5 +1,7 @@
 # hammerola
 
+**English** · [Русский](README.ru.md)
+
 A build system and a viewer for parts that an agent models in code. The agent
 writes a `model.py` in CadQuery and pushes the source; the hub computes the
 geometry and shows the part in a browser — turn it, hide what is in the way, cut
@@ -166,11 +168,11 @@ the token. The addresses in it are built from the browser's own origin and the
 manifest's paths, so nothing here names a deployment; the request is made only
 when the form is what is on the screen, and every failure of it is silence.
 `hammerola create` is the other reader, and it follows `template`. The manifest
-also states two VERSIONS — of the skill this image ships, which is what
-`hammerola skill` compares a laptop's copy against, and of the client it serves,
-which is what `build` and `commit` compare themselves against before they
-publish; like the three paths both are constants of the image and say nothing
-about the deployment.
+also states the DIGEST of the skill this image ships, a sha256 over its files
+that `hammerola skill` compares with the same digest of a laptop's copy, and the
+VERSION of the client it serves, which is what `build` and `commit` compare
+themselves against before they publish; like the three paths both are constants
+of the image and say nothing about the deployment.
 `src/onboarding.py` carries the argument for the boolean and for why it is
 never a count.
 
@@ -221,12 +223,12 @@ hammerola update                 # replace THIS TOOL with the hub's copy
 ```
 
 `skill` and `update` are the odd ones out: they ask about this MACHINE rather
-than about a project. `skill` exists because the skill is the only versioned
-thing here that goes stale in silence — a client that is behind is refused by
-its own `build` and told what to run, while a stale skill goes on confidently
-teaching a command that no longer exists. It compares the version in the
-installed file's frontmatter against the one the hub states in `/start`, and
-only ever writes when `update` was typed.
+than about a project. `skill` exists because the skill is the only thing here
+that goes stale in silence — a client that is behind is refused by its own
+`build` and told what to run, while a stale skill goes on confidently teaching a
+command that no longer exists. It compares a digest of the installed files
+against the one the hub states in `/start`, so any change to any file of the
+skill shows, and only ever writes when `update` was typed.
 
 `hammerola update` is the same move one level down: it fetches the client the
 hub serves and writes it over the file it is running from — checked first, since

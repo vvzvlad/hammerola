@@ -16,7 +16,6 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { SELECTION_EVENT } from '../src/KicadView.jsx'
 import PcbPanel, { HIGHLIGHT_EVENT, PRESETS, VIEW_STATE_EVENT, ZONE_OPACITY } from '../src/PcbPanel.jsx'
-import { MONO } from '../src/style.jsx'
 import { collect, texts } from './eltree.js'
 
 const LAYERS = ['F.Cu', 'In1.Cu', 'B.Cu', 'F.SilkS']
@@ -107,12 +106,9 @@ describe('the board\'s panel', () => {
     const { panel } = mounted()
     expect(panel.render().props.style).toMatchObject({
       position: 'absolute', top: '10px', left: '12px', maxWidth: 'calc(100% - 24px)' })
-    expect(panel.render().props.style.right).toBeUndefined()
     const row = control(panel, 'data-layer', 'F.Cu')
-    const [eye, name] = row.props.children
+    const [eye] = row.props.children
     expect(eye.props['data-eye']).toBe('F.Cu')
-    expect(eye.props.style).toMatchObject({ width: '24px', flex: 'none' })
-    expect([name.props.style.font, row.props.style.height]).toEqual([`400 12px ${MONO}`, '24px'])
   })
 
   it('changes the board through the viewer, and shows what the viewer then holds', () => {

@@ -10,11 +10,13 @@ reading (plugin, project copy, ...). Nothing blocks a push on a stale skill.
 
 No token: `/start` and the skill archive are public (`src/onboarding.py`).
 
-The version is read from the frontmatter with a copy of the hub's two patterns
-(this package imports nothing from the service); `tests/test_onboarding.py`
-runs both parsers over the shipped `SKILL.md` and compares.
+The installed copy and the hub's are compared by `tree_digest`, a digest of
+every file of the skill. The hub imports this same function for the manifest's
+`skill_digest` (this package imports nothing from the service), so both sides
+compute it one way and any change to any file of the skill changes it.
 """
 
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -30,18 +32,20 @@ from hammerola.unpack import extract, read_members
 # references by relative path, so they land together or not at all.
 DEFAULT_PATH = "~/.claude/skills/hammerola"
 
-# The document the version is in, under that directory. The hub spells it too
-# (`onboarding.SKILL_ENTRY`) and a test compares the two.
+# The entry document under that directory, whose frontmatter names the skill.
+# The hub spells it too (`onboarding.SKILL_ENTRY`) and a test compares the two.
 ENTRY = "SKILL.md"
 
 # Manifest keys; a test compares them with `src/onboarding.py`.
 SKILL_KEY = "skill"
-VERSION_KEY = "skill_version"
+DIGEST_KEY = "skill_digest"
 
-# The frontmatter and its version integer (no YAML parser in the stdlib).
-# Kept identical to the hub's; see the module docstring.
+# How many hex digits of a digest are printed: enough to tell two copies apart
+# by eye, short enough to read.
+SHOWN = 12
+
+# The frontmatter block (no YAML parser in the stdlib).
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
-_VERSION_LINE = re.compile(r"^version:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
 
 # What makes an installed document OURS rather than somebody else's skill with
 # the same file name: the `name:` a Claude Code skill is addressed by, which is
@@ -66,41 +70,41 @@ def run(args) -> int:
 
 
 def show(args) -> int:
-    """Say which version is here and which the hub serves. -> exit code.
+    """Say which copy is here and which the hub serves. -> exit code.
 
     Zero whenever the question is answered, stale or not installed included.
     Unreachable hub, missing address or unreadable file raise.
     """
     path = _path(args)
     text = _read(path / ENTRY)
-    local = version_of(text)
     # Asked before anything is printed: it touches no network, and a document
     # that is not ours must not first be reported as our installation.
     refused = why_not_here(path, text)
+    # Only our own installation is read whole: a refused `--path` may be
+    # `~/.claude/skills` or somebody's folder.
+    local = None if refused is not None or text is None else tree_digest(path)
 
     # The local half is printed before the network is touched.
     if refused is not None:
         print(f"found at {config.display_path(path)}, not an installation of "
               f"this skill")
-    elif text is None:
-        print(f"not installed: nothing at {config.display_path(path / ENTRY)}")
     elif local is None:
-        print(f"installed at {config.display_path(path)}, naming no version — "
-              f"a copy from before the skill was versioned")
+        print(f"not installed: nothing at {config.display_path(path / ENTRY)}")
     else:
-        print(f"version {local} installed at {config.display_path(path)}")
+        print(f"digest {local[:SHOWN]} installed at "
+              f"{config.display_path(path)}")
     sys.stdout.flush()
 
     hub_url = config.hub_url(None)
-    served = _served_version(hub_url)
-    print(f"version {served} served by {hub_url}")
+    served = _served_digest(hub_url)
+    print(f"digest {served[:SHOWN]} served by {hub_url}")
 
     if refused is not None:
         # `update` refuses this directory, so do not send anybody at it.
         print(f"`{UPDATE_HINT}` will not write here: {refused}")
     elif local == served:
         print("up to date")
-    elif text is None:
+    elif local is None:
         print(f"`{UPDATE_HINT}` installs it")
     else:
         print(f"out of date. `{UPDATE_HINT}` writes the hub's copy over it")
@@ -111,9 +115,9 @@ def update(args) -> int:
     """Fetch the hub's copy and write it where a skill is read from. -> exit code.
 
     Overwrites the whole directory; the destination is printed and can be moved
-    with `--path`. What comes back must be an archive carrying an `ENTRY` with a
-    version in its frontmatter before anything is written, so a proxy's login
-    page never lands as the agent's instructions.
+    with `--path`. What comes back must be an archive carrying an `ENTRY`
+    before anything is written, so a proxy's login page never lands as the
+    agent's instructions.
 
     ONLY AN EMPTY DIRECTORY OR OUR OWN INSTALLATION IS WRITTEN INTO, anything
     else refused. Writing into somebody else's directory gains nothing, and the
@@ -123,8 +127,8 @@ def update(args) -> int:
     """
     path = _path(args)
     before_text = _read(path / ENTRY)
-    before = version_of(before_text)
     _refuse_a_place_of_somebody_elses(path, before_text)
+    before = None if before_text is None else tree_digest(path)
 
     hub_url = config.hub_url(None)
     hub = public_hub(hub_url)
@@ -145,16 +149,6 @@ def update(args) -> int:
         raise ClientError(
             f"{hub_url} served an archive with no {ENTRY} in it, so it is not a "
             f"skill this can install.\n  Nothing was written.")
-    try:
-        served = version_of(entry.decode("utf-8"))
-    except UnicodeDecodeError as error:
-        raise ClientError(
-            f"{hub_url} served a {ENTRY} that is not utf-8 text: {error}\n"
-            f"  Nothing was written.") from error
-    if served is None:
-        raise ClientError(
-            f"{hub_url} served a document with no version in its frontmatter, "
-            f"so it is not a skill this can install.\n  Nothing was written.")
 
     try:
         path.mkdir(parents=True, exist_ok=True)
@@ -163,7 +157,6 @@ def update(args) -> int:
     written = extract(body, path, served_from)
 
     print(f"wrote {len(written)} files to {config.display_path(path)}")
-    print(f"  {_before(before_text, before, served)} -> version {served}")
 
     # Only an installation of OURS is swept, decided by the name in the document
     # that was there BEFORE this write. `--path` one level up
@@ -176,6 +169,8 @@ def update(args) -> int:
     if removed:
         print(f"  removed {', '.join(removed)}, which this version "
               f"does not have")
+    # Read once the sweep is done, so it is the digest `hammerola skill` finds.
+    print(f"  {_moved(before, tree_digest(path))}")
     return 0
 
 
@@ -307,9 +302,7 @@ def is_ours(text) -> bool:
     """Whether an installed document is THIS skill's. Never raises.
 
     False for no text, no frontmatter and any other `name:`, so a directory
-    holding somebody else's skill is never swept. A copy from before the skill
-    was versioned still says `name: hammerola`, so an old install upgrades and
-    is tidied like any other.
+    holding somebody else's skill is never swept.
     """
     if text is None:
         return False
@@ -319,22 +312,37 @@ def is_ours(text) -> bool:
     return _NAME_LINE.search(block.group(1)) is not None
 
 
-def version_of(text):
-    """The version in a skill's frontmatter, or None. Never raises.
+def tree_digest(directory) -> str:
+    """sha256 hex over every file `tree_files` lists under `directory`.
 
-    None for no text, no frontmatter or no `version:` line. The hub parses
-    strictly and raises (`onboarding.skill_version`): there a missing version
-    is a broken image, here an old installed copy.
+    Each file goes in as `<relative path>\\0<sha256 hex of its bytes>\\n`, in
+    path order, so an edited, added, removed or renamed file changes the
+    digest. The hub computes the manifest's `skill_digest` with this function
+    over `skill/`, and `skill` over the installed copy.
     """
-    if text is None:
-        return None
-    block = _FRONTMATTER.match(text)
-    if block is None:
-        return None
-    found = _VERSION_LINE.search(block.group(1))
-    if found is None:
-        return None
-    return int(found.group(1))
+    digest = hashlib.sha256()
+    for name, path in tree_files(directory):
+        content = hashlib.sha256(path.read_bytes()).hexdigest()
+        digest.update(f"{name}\0{content}\n".encode("utf-8"))
+    return digest.hexdigest()
+
+
+def tree_files(directory) -> list:
+    """(relative POSIX path, path) for every file `tree_digest` covers, sorted.
+
+    Regular files only, never a symlink, and nothing under a name that starts
+    with `.`: macOS leaves `.DS_Store` in an installed directory, and the hub
+    refuses to serve a hidden file in the skill (`onboarding.skill_bytes`).
+    """
+    root = Path(directory)
+    found = []
+    for path in root.rglob("*"):
+        name = path.relative_to(root).as_posix()
+        if (not path.is_file() or path.is_symlink()
+                or any(part.startswith(".") for part in name.split("/"))):
+            continue
+        found.append((name, path))
+    return sorted(found)
 
 
 def _path(args) -> Path:
@@ -382,27 +390,20 @@ def _read(path: Path):
         raise ClientError(f"cannot read {path}: {error}") from error
 
 
-def _served_version(hub_url: str) -> int:
-    """The version the hub says it ships. NO TOKEN — `/start` is public."""
-    manifest = public_hub(hub_url).start()
-    version = manifest.get(VERSION_KEY)
-    # `bool` is an `int`; the manifest also carries a boolean (`empty`).
-    if isinstance(version, bool) or not isinstance(version, int):
+def _served_digest(hub_url: str) -> str:
+    """The digest of the skill the hub ships. NO TOKEN — `/start` is public."""
+    digest = public_hub(hub_url).start().get(DIGEST_KEY)
+    if not isinstance(digest, str) or not digest:
         raise HubError(
-            f"{hub_url} answered the start manifest without a skill version, "
-            f"so this cannot say whether the installed copy is current.\n"
-            f"  A hub older than this tool does not carry one; "
-            f"`{UPDATE_HINT}` needs no version and writes what that hub "
-            f"serves over this machine's copy.")
-    return version
+            f"{hub_url} answered the start manifest without `{DIGEST_KEY}`, "
+            f"so this cannot say whether the installed copy is current.")
+    return digest
 
 
-def _before(text, version, served) -> str:
-    """What the file WAS, said in the same breath as what it now is."""
-    if text is None:
-        return "nothing installed"
-    if version is None:
-        return "a copy from before versioning"
-    if version == served:
-        return f"version {version}, unchanged"
-    return f"version {version}"
+def _moved(before, after) -> str:
+    """What the directory WAS, said in the same breath as what it now is."""
+    if before is None:
+        return f"nothing installed -> digest {after[:SHOWN]}"
+    if before == after:
+        return f"digest {before[:SHOWN]}, unchanged"
+    return f"digest {before[:SHOWN]} -> digest {after[:SHOWN]}"

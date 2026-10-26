@@ -18,8 +18,8 @@
  * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
  * come from ui/src/panelstyle.js.
  */
-import { DOC_QUERY, docUrl, docViewKey } from './DocumentView.jsx';
-import { SHEET_QUERY } from './KicadView.jsx';
+import { format, fresh, parse, viewParam } from './address.js';
+import { docUrl, docViewKey } from './DocumentView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -43,7 +43,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, viewQuery, cameraQuery, pushChoice,
+    refreshBuilds, cameraParam, pushChoice,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -115,28 +115,27 @@ export function chromeView(s, props, deps) {
     && Object.prototype.hasOwnProperty.call(shareKeys, share.id)
     && typeof shareKeys[share.id] === 'string' ? shareKeys[share.id] : '';
   const shareFiles = !!(share && share.files && shareKey);
-  // On the view on screen, as every address this page writes (`viewQuery`). A
-  // revision without that view opens on its first one, as a fresh load with
-  // an unknown `?v=` does. And on the document over it, when one is open: a
-  // revision that does not list it opens on the model, as a fresh load with
-  // an unknown `?d=` does. With no document open and the Current view box
-  // ticked, from the camera's angle too (`cameraQuery`), read as this window
-  // renders; a document covers the model, so its link carries no frame and
-  // the window offers no box. A schematic open on a sheet below its root
-  // carries the sheet the address names (`SHEET_QUERY` in KicadView.jsx).
+  // On the view on screen, as every address this page writes (`viewParam` in
+  // address.js). A revision without that view opens on its first one, as a
+  // fresh load with an unknown `?v=` does. And on the document over it, when
+  // one is open: a revision that does not list it opens on the model, as a
+  // fresh load with an unknown `?d=` does. With no document open and the
+  // Current view box ticked, from the camera's angle too (`cameraParam`), read
+  // as this window renders; a document covers the model, so its link carries
+  // no frame and the window offers no box. A schematic open on a sheet below
+  // its root carries the sheet the address names (`s=`).
   const shareCamera = !!(share && share.camera && !docOpen);
-  const shareView = share ? viewQuery(s.view, views) : '';
-  const shareSheet = docOpen && new URLSearchParams(location.search).get(SHEET_QUERY);
-  const shareQuery = !share ? '' : docOpen
-    ? `${shareView}${shareView ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(docOpen.id)}`
-      + (shareSheet ? `&${SHEET_QUERY}=${encodeURIComponent(shareSheet)}` : '')
-    : shareCamera ? cameraQuery(shareView) : shareView;
   const shareBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;'
     + `align-items:center;justify-content:center;font:600 10px ${MONO};`
     + (on ? ON_ACCENT : BLANK_BOX);
   const shareLink = !share ? ''
-    : `${location.origin}${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/${shareQuery}`
-      + (shareFiles ? `${shareQuery ? '&' : '?'}files=${encodeURIComponent(shareKey)}` : '');
+    : `${location.origin}${format(fresh(`${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/`, {
+      view: viewParam(s.view, views),
+      doc: docOpen ? docOpen.id : null,
+      sheet: docOpen ? parse().sheet : null,
+      camera: shareCamera ? cameraParam() : null,
+      files: shareFiles ? shareKey : null,
+    }))}`;
 
   return {
     // -- the header row ------------------------------------------------------

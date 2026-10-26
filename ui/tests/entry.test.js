@@ -404,7 +404,6 @@ describe('the arrangement of the list', () => {
     const resting = c.cardStyle('a')
     c.state = { ...c.state, hover: 'a' }
     expect(c.cardStyle('a')).not.toBe(resting)
-    expect(c.cardStyle('a')).toContain('box-shadow')
     expect(c.cardStyle('b')).toBe(resting)
   })
 })

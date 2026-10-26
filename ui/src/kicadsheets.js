@@ -4,7 +4,7 @@
 //
 // THE LINK IS KICAD'S OWN `Datasheet` FIELD: a placed symbol carries one in the
 // schematic, a footprint one on the board. Both are read from the texts
-// KicadView already fetches for its viewers, with kicadpins.js's reader. Where
+// KicadView already fetches for its viewers, with sexpr.js's reader. Where
 // both name one the schematic's wins: it is where a part's fields are edited,
 // and the board holds what the last update from it carried over. A field left
 // empty names none — `""`, or `~`, which KiCad writes for an empty one — and
@@ -24,7 +24,7 @@
 // Text in, a map out: a file that does not parse gives no entries and throws
 // nothing.
 
-import { children, head, parseSexpr, valueOf } from './kicadpins.js';
+import { children, head, parseSexpr, valueOf } from './sexpr.js';
 
 const EMPTY = new Set(['', '~']);
 

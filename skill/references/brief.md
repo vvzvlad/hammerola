@@ -148,7 +148,14 @@ hammerola comments resolve <id> -m "..." # close it, saying what was done
 
 A comment is a note a **person** left on a build in the browser: a point on the
 model, their camera angle, usually a photo of the printed part — the strongest
-evidence you get. Read the queue when you start, do the work, resolve it with
+evidence you get. In its place line, `at x y z (part coords)` and `facing` are
+the clicked point and the face's outward normal in the part's own coordinates:
+its solid as `parts()` returns it, unmoved by any view (a location the solid
+carries itself is not applied either), so they hold in every view of that build —
+except on a part a view shows `deformed`: there the point is on the shape that
+view brought, and in other views it lands on the undeformed solid only roughly.
+Without `(part coords)` they are world coordinates of the view named. Read the
+queue when you start, do the work, resolve it with
 `-m` (`--note`) saying what was done; an unresolved one gets done twice. It is
 a request, not a literal instruction. Fetch the photo with `comments files`
 (its route is behind the secret), and before the next push into that area turn

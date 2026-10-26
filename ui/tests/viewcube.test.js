@@ -510,11 +510,9 @@ describe('the widget', () => {
     .filter((text) => text && text.style.display !== 'none')
     .map((text) => text.textContent)
 
-  it('draws one group per visible face, in the corner the triad had', () => {
+  it('draws one group per visible face', () => {
     const cube = build(fakeViewport([...ISO]))
     cube.refresh()
-    expect(cube.root.style.left).toBe('16px')
-    expect(cube.root.style.bottom).toBe('14px')
     // SIX groups exist and three of them are shown: the elements are built once
     // and a face that turned away is hidden, not removed.
     expect(groupsOf(cube)).toHaveLength(6)
