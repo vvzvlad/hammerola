@@ -555,6 +555,11 @@ describe('the schematic\'s page', () => {
     expect(seen).toEqual([[`?d=${SHEET}&s=amp`, AMP], [`?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`, PSU_B],
       [`?d=${SHEET}`, ROOT]])
     expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([3, 0])
+    // a sheet chosen, the reader's own step off it, which the page draws
+    // nothing for, and the same sheet chosen again
+    choose(view, `?d=${SHEET}&s=amp`)
+    sch.switchPage(PSU_B)
+    expect([choose(view, `?d=${SHEET}&s=amp`), sch.page]).toEqual([`?d=${SHEET}&s=amp`, AMP])
     window.history.replaceState(null, '', `${BASE}?d=${BOARD}`)
     const board = await opened(DOCS[1])
     replace.mockClear()

@@ -510,7 +510,8 @@ export default class KicadView extends React.Component {
     // address asked for while the element switches to it (`followPage`).
     this.page = null;
     this.pageFromHistory = null;
-    // The address last seen, Back's and Forward's included (`componentDidUpdate`).
+    // The address this component last saw: its last update's, its own
+    // (`tellSheet`), Back's and Forward's (`componentDidUpdate`).
     this.seen = addressNow();
     this.onPop = () => {
       this.seen = addressNow();
@@ -652,9 +653,11 @@ export default class KicadView extends React.Component {
   /** The sheet on screen told to the page as `s=` says it ('' for the root
    *  sheet, which has none), which writes it into the address (`onSheet`):
    *  as a step of history for a step of the reader's (`push`), else in place
-   *  of the entry on screen. */
+   *  of the entry on screen. The page draws nothing for it, so the address it
+   *  writes is noted as seen here (`componentDidUpdate`). */
   tellSheet(push) {
     this.props.onSheet(sheetQueryValue(this.pages(), this.page), push);
+    this.seen = addressNow();
   }
 
   /** The schematic's element reported a change of its view. A change of page
@@ -957,32 +960,28 @@ export default class KicadView extends React.Component {
     this.activate();
     this.report();
     // The schematic on screen under an address naming it, the address changed
-    // since the last update and not by Back or Forward, which `onPop` follows
-    // and notes as seen: an update the page makes later — a click, a revision
-    // it swaps in — leaves alone an entry Back put back, another revision's
-    // `s=` included. Just come on screen by a choice that wrote its `d=` with
+    // since the one this component last saw: its last update's, its own
+    // (`tellSheet`), and Back's and Forward's, which `onPop` follows —
+    // address.js hands it the entry before React runs the page's update for
+    // it. An update the page makes later — a click, a revision it swaps in —
+    // so leaves alone an entry Back put back, another revision's `s=`
+    // included: what is followed here is an address the page has just written
+    // for a choice. Just come on screen by a choice that wrote its `d=` with
     // no `s=` — its row in the list of views, `Show in …` from the board — the
     // address takes up the sheet it is on, which may be another than the root
     // (`paged`), in the entry the choice wrote. Otherwise it goes to the sheet
     // the address names (`followPage`, which does nothing where that sheet is
     // on screen): a sheet chosen in the list of views, over the schematic or
-    // over another member, and Back or Forward where the page's update runs
-    // before `onPop`. On Back and Forward the page and this component are
-    // handed the entry in one round (`subscribe` in address.js), and React runs
-    // the update for the page's answer after it, while `window.event` is still
-    // the `popstate`: the round itself is over by then, so `window.event` is
-    // what says the update is Back's or Forward's.
-    // An address the page has just written for a choice, not one put back by
-    // Back or Forward, is this build's own and is spelled as `tellSheet` says
-    // it once the sheet is put (`followPage`'s `normalize`): the root's row
-    // names the root by its path (`SheetRows` in viewlist.jsx).
+    // over another member. Such an address is this build's own and is spelled
+    // as `tellSheet` says it once the sheet is put (`followPage`'s
+    // `normalize`): the root's row names the root by its path (`SheetRows` in
+    // viewlist.jsx).
     const address = addressNow();
     const moved = address !== this.seen;
     this.seen = address;
     if (moved && this.page && this.side() === SCH && this.addressed()) {
-      const popped = Boolean(window.event && window.event.type === 'popstate');
-      if (viewOf(before.doc) !== SCH && !parse().sheet && !popped) this.tellSheet(false);
-      else this.followPage(!popped);
+      if (viewOf(before.doc) !== SCH && !parse().sheet) this.tellSheet(false);
+      else this.followPage(true);
     }
     // The menu and the datasheet's window go with their view off the screen.
     if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
