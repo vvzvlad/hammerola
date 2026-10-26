@@ -352,7 +352,7 @@ describe('the page of a build with no model', () => {
 
   it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can', async () => {
     const TOOLS = ['Measure', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
-    const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word))
+    const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word) || word === 'Contents')
     expect(drawn({})).toEqual(TOOLS)
     // a narrow window keeps the list and Fit, as the model's page does
     expect(drawn({ narrow: true })).toEqual(['Fit'])
@@ -366,6 +366,12 @@ describe('the page of a build with no model', () => {
     expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, false, false, true])
     live.fitView()
     expect(tools.fit).toHaveBeenCalledTimes(1)
+    // a schematic below its root sheet adds Contents ahead of the tools, which a narrow window keeps
+    const sheet = { ...tools, contents: vi.fn() }
+    expect([drawn({ tools }), drawn({ tools: sheet }), drawn({ tools: sheet, narrow: true })])
+      .toEqual([TOOLS, ['Contents', ...TOOLS], ['Contents', 'Fit']])
+    bar({ tools: sheet }).toContents()
+    expect(sheet.contents).toHaveBeenCalledTimes(1)
     const saved = []
     // jsdom has neither; the page hands the blob over by an object URL.
     Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:frame'), revokeObjectURL: vi.fn() })

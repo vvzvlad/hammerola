@@ -8,8 +8,8 @@
 // The page holds which document is open — `Show in …` of a KiCad design's
 // right-click menu opens the other member through the same door a row does
 // (`onPick`) — what the bar's Fit and Frame can do with it (`tools`), and
-// whether the window is narrow, which takes the bar down to the list and Fit
-// as on the model's page.
+// whether the window is narrow, which takes the bar down to the list, Contents
+// on a schematic below its root sheet, and Fit, as on the model's page.
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
 // `?v=<id>`; the default document — the first one not listed `hidden` — needs
@@ -71,8 +71,10 @@ const BAR = `${BAR_LAYER}18`;
  * service, as they are over a document there, and Comment and Add primitive
  * are hidden from a reader without a token (`viewer`), as they are there; Fit
  * and Frame act on the document when its view can do them (`tools`, `onTools`
- * in DocumentView.jsx) and are out of service when it cannot. A narrow window
- * keeps the list and Fit. Pure.
+ * in DocumentView.jsx) and are out of service when it cannot; Contents, which
+ * puts a schematic on a sheet below its root back on the root sheet, is there
+ * while its view says it can. A narrow window keeps the list, Contents and
+ * Fit. Pure.
  */
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }) {
   return {
@@ -90,6 +92,7 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
     grabFrame: tools ? () => tools.frame().then((blob) => blob && savePng(blob, meta))
       .catch((error) => console.warn('frame', error)) : undefined,
     frameBtnStyle: quietBtn(!tools),
+    toContents: tools && tools.contents ? () => tools.contents() : undefined,
   };
 }
 

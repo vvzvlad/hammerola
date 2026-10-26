@@ -218,6 +218,12 @@ describe('the documents in the list of views', () => {
     expect(live()).toEqual([true, true])
     c.computed().fitView()
     expect(tools.fit).toHaveBeenCalledTimes(1)
+    // Contents, for a view that says it, as a schematic below its root sheet does
+    expect(c.computed().toContents).toBeUndefined()
+    const contents = vi.fn()
+    shownDocs(c)[0].props.onTools({ ...tools, contents })
+    c.computed().toContents()
+    expect(contents).toHaveBeenCalledTimes(1)
     const saved = []
     // jsdom has neither; the page hands the blob over by an object URL.
     Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:frame'), revokeObjectURL: vi.fn() })
