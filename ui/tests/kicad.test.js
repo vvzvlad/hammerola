@@ -1379,3 +1379,32 @@ describe('a comment on a design', () => {
     expect(elements[PCB].zoomToLocation.mock.calls).toEqual([[6, 6]])
   })
 })
+
+describe('a comment on the design\'s 3D model', () => {
+  const page = () => ({
+    on: true, focus: null, onArea: vi.fn(), onMarker: vi.fn(), onFocused: vi.fn(), onLost: vi.fn(),
+    marks: [
+      { id: 'c1', doc: 'hw/board.glb', part: 'R1' },
+      { id: 'draft', doc: 'hw/board.glb', part: 'C2' },
+      { id: 'c2', doc: 'hw/board.kicad_pcb', area: [0, 0, 1, 1] },
+    ],
+  })
+
+  it('hands the model its arrows and keeps the draft out of what the page hears back', () => {
+    const comment = page()
+    const view = new KicadView({ doc: DOCS[2], documents: DOCS, base: BASE, comment })
+    const told = view.comment3D()
+    expect(told.on).toBe(true)
+    expect(told.marks.map((one) => one.id)).toEqual(['c1', 'draft'])
+    told.onMarker('draft')
+    told.onMarker('c1')
+    expect(comment.onMarker.mock.calls).toEqual([['c1']])
+    told.onLost(['draft', 'c1'])
+    expect(comment.onLost.mock.calls).toEqual([['hw/board.glb', ['c1']]])
+  })
+
+  it('arms the model only while it is on screen', () => {
+    const view = new KicadView({ doc: DOCS[1], documents: DOCS, base: BASE, comment: page() })
+    expect(view.comment3D().on).toBe(false)
+  })
+})
