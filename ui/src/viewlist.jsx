@@ -190,16 +190,16 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
 // the mark of a row with a submenu.
 const SUBMENU_MARK = 'flex:none;display:flex;color:var(--text-muted);transform:rotate(-90deg)';
 // The submenu of a schematic's sheets: the card's look, as wide as its longest
-// name within bounds, scrolling where it is taller than the window; unseen
-// until it has been placed once (`SheetRows`).
-const sheetsFlyout = (placed) => 'position:fixed;box-sizing:border-box;min-width:160px;max-width:260px;'
-  + `max-height:calc(100dvh - 16px);overflow:auto;${CARD_LOOK}` + (placed ? '' : 'visibility:hidden');
+// name within bounds, no taller than the card and scrolling past that
+// (`SheetRows`); `height` is the card's, null until it is measured.
+const sheetsFlyout = (height) => 'position:fixed;box-sizing:border-box;min-width:160px;max-width:260px;'
+  + `overflow:auto;${CARD_LOOK}` + (height ? `max-height:${height}px` : '');
 // The one quiet row while the sheets' files come in, set in as a sheet's row.
 const SHEETS_LOADING = `padding:7px 14px 7px 22px;${FAINT_MONO}`;
 // How long the submenu outlives the pointer leaving the row or the submenu: the
 // way from one to the other may cross a gap or a corner of the next row.
 const SHEETS_LINGER_MS = 200;
-// How far the submenu stands from the row, and at least from the window's edges.
+// How far the submenu stands from the card, and at least from the window's edges.
 const FLYOUT_GAP = 4;
 const FLYOUT_MARGIN = 8;
 
@@ -208,14 +208,17 @@ const FLYOUT_MARGIN = 8;
  * kicadpages.js), for a row that carries `chooseSheet` (`documentRows`); `open`
  * is whether the card is. The row opens the schematic as any row does; the
  * chevron at its right end points right, the mark of a submenu. The submenu
- * stands beside the card, its top at the row's, raised where its bottom would
- * pass the card's and cover the bar below. The mouse shows it by resting
- * on the row, and it goes a moment (`SHEETS_LINGER_MS`) after the pointer has
- * left the row and the submenu both, so that the way from one to the other
- * keeps it. A touch screen has no hover: there a tap on the chevron shows or
- * hides it, a tap that is not the row's. Hidden until shown, the schematic on
- * screen or not; drawn only in an open card, and hidden again when the card
- * closes, so that the next opening starts without it.
+ * stands beside the card and within its height, its top at the row's, raised
+ * where its bottom would pass the card's: below the card is the bar, whose
+ * controls it would cover, and the card's own cap keeps it clear of the page's
+ * header above (`viewMenuStyle`). The mouse shows it on entering the row, and
+ * it goes a moment (`SHEETS_LINGER_MS`) after the pointer has left the row and
+ * the submenu both, so that the way from one to the other keeps it; a click on
+ * the chevron shows it too. A touch screen has no hover: there a tap on the
+ * chevron shows or hides it, a tap that is not the row's. Hidden until shown,
+ * the schematic on screen or not; drawn only in an open card, and hidden again
+ * when the card closes, so that the next opening starts without it. Not drawn
+ * where the sheets' files failed: there are no sheets to show.
  *
  * `position:fixed`, so that the card's `overflow:auto` does not cut it off at
  * the card's edge. The bar's `contain:layout` makes the bar, not the window,
@@ -223,8 +226,7 @@ const FLYOUT_MARGIN = 8;
  * placed by measuring (`place`): the bar's corner in the window is where the
  * submenu stands less the offsets it was given. Kept inside the window: on a
  * narrow one, with no room beside the card, it lies over the card at the
- * window's right edge. Unseen until placed the first time, so that it is not
- * drawn at the bar's corner first.
+ * window's right edge.
  *
  * The sheets are read from the schematic's files the first time the submenu
  * is shown in an open card, not at every opening: they are the files its viewer
@@ -245,9 +247,9 @@ export class SheetRows extends React.Component {
   constructor(props) {
     super(props);
     // `shown`: whether the submenu is. `pages`: the sheets once read, null
-    // before. `left` and `top`: the submenu's offsets from the bar, measured
-    // once `placed`.
-    this.state = { shown: false, pages: null, left: 0, top: 0, placed: false };
+    // before. `left` and `top`: the submenu's offsets from the bar, and
+    // `height` the card's, as `place` measures them.
+    this.state = { shown: false, pages: null, left: 0, top: 0, height: null };
     this.asked = false;
     this.rowBox = React.createRef();
     this.flyoutBox = React.createRef();
@@ -264,10 +266,16 @@ export class SheetRows extends React.Component {
       this.timer = setTimeout(() => this.setState({ shown: false }), SHEETS_LINGER_MS);
     };
     this.keep = () => clearTimeout(this.timer);
-    // Not the row's click, which opens the schematic.
+    // The chevron's pointer, told on its press. A mouse's click only shows the
+    // submenu, which entering the row has shown already; a touch's shows or
+    // hides it. Not the row's click, which opens the schematic.
+    this.pressed = (event) => {
+      this.pointer = event.pointerType;
+    };
     this.toggle = (event) => {
       event.stopPropagation();
-      this.setState({ shown: !this.state.shown });
+      this.keep();
+      this.setState({ shown: this.pointer === 'mouse' || !this.state.shown });
     };
   }
 
@@ -285,21 +293,21 @@ export class SheetRows extends React.Component {
     this.keep();
   }
 
-  /** The submenu beside the row, inside the window and above the bar, moved
-   *  only where it is off by more than a rounding, so that the move does not
-   *  call for another. */
+  /** The submenu beside the card (the row's parent), inside the window and
+   *  within the card's height, moved only where it is off by more than a
+   *  rounding, so that the move does not call for another. */
   place() {
     const flyout = this.flyoutBox.current;
     if (!flyout) return;
     const row = this.rowBox.current.getBoundingClientRect();
+    const card = this.rowBox.current.parentElement.getBoundingClientRect();
     const box = flyout.getBoundingClientRect();
-    const { left, top, placed } = this.state;
-    const inside = (at, size, room) => Math.max(FLYOUT_MARGIN, Math.min(at, room - size - FLYOUT_MARGIN));
-    const x = inside(row.right + FLYOUT_GAP, box.width, window.innerWidth) - (box.left - left);
-    // No lower than the card: under it is the bar, whose controls it would cover.
-    const floor = this.rowBox.current.parentElement.getBoundingClientRect().bottom;
-    const y = Math.max(FLYOUT_MARGIN, Math.min(row.top, floor - box.height)) - (box.top - top);
-    if (!placed || Math.abs(x - left) > 0.5 || Math.abs(y - top) > 0.5) this.setState({ left: x, top: y, placed: true });
+    const { left, top, height } = this.state;
+    const x = Math.max(FLYOUT_MARGIN, Math.min(card.right + FLYOUT_GAP, window.innerWidth - box.width - FLYOUT_MARGIN))
+      - (box.left - left);
+    const y = Math.max(card.top, Math.min(row.top, card.bottom - box.height)) - (box.top - top);
+    const off = (a, b) => b === null || Math.abs(a - b) > 0.5;
+    if (off(x, left) || off(y, top) || off(card.height, height)) this.setState({ left: x, top: y, height: card.height });
   }
 
   /** The sheets read once, when the submenu is first shown in an open card. */
@@ -320,7 +328,7 @@ export class SheetRows extends React.Component {
 
   render() {
     const { row, open } = this.props;
-    const { pages, shown, left, top, placed } = this.state;
+    const { pages, shown, left, top, height } = this.state;
     const named = row.on && pages && sheetFromQuery(pages, parse().sheet);
     return (
       <>
@@ -328,11 +336,11 @@ export class SheetRows extends React.Component {
              style={css(row.rowStyle)}>
           <span style={css(DOC_LABEL)}>{row.label}</span>
           <span style={css(DOC_HINT)}>{row.hint}</span>
-          <span onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
+          <span onPointerDown={this.pressed} onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
         </div>
-        {open && shown && (
+        {open && shown && !(pages && !pages.length) && (
           <div ref={this.flyoutBox} onPointerEnter={this.keep} onPointerLeave={this.leave}
-               style={{ ...css(sheetsFlyout(placed)), left, top }}>
+               style={{ ...css(sheetsFlyout(height)), left, top }}>
             {pages ? pages.map((page) => (
               <div key={page.projectPath} onClick={() => row.chooseSheet(page.parentProjectPath || page.projectPath === named
                 ? sheetQueryValue(pages, page.projectPath) : page.projectPath)}

@@ -525,17 +525,29 @@ describe('a schematic\'s sheets in a submenu beside its row', () => {
     expect(under(one)).toEqual([])
   })
 
-  it('show and hide on a click of the chevron, which is not the row\'s', () => {
+  it('show and hide on a tap of the chevron, which is not the row\'s, the finger leaving taking nothing; a mouse\'s click only shows', () => {
+    vi.useFakeTimers()
     vi.stubGlobal('fetch', pending)
     const choose = vi.fn()
     const one = sheets(rows(null, choose)[0])
     const stop = vi.fn()
-    chevronOf(one).props.onClick({ stopPropagation: stop })
-    one.componentDidUpdate()
+    const TOUCH = { pointerType: 'touch' }
+    const press = (how) => {
+      chevronOf(one).props.onPointerDown(how)
+      chevronOf(one).props.onClick({ stopPropagation: stop })
+      one.componentDidUpdate()
+    }
+    press(TOUCH)
+    // the finger leaving the row once lifted, before the click, as a touch screen reports it
+    point(one, rowOf(one), 'onPointerLeave', TOUCH)
+    vi.advanceTimersByTime(1000)
     expect([stop.mock.calls.length, under(one)]).toEqual([1, ['loading…']])
-    chevronOf(one).props.onClick({ stopPropagation: stop })
-    one.componentDidUpdate()
+    press(TOUCH)
     expect([stop.mock.calls.length, under(one), choose.mock.calls]).toEqual([2, [], []])
+    // the mouse has shown it on entering the row; a click of the chevron keeps it
+    point(one, rowOf(one), 'onPointerEnter')
+    press(MOUSE)
+    expect(under(one)).toEqual(['loading…'])
   })
 
   it('are drawn only in an open card, hidden again once it closes', () => {
@@ -598,7 +610,8 @@ describe('a schematic\'s sheets in a submenu beside its row', () => {
     const one = sheets(rows(MAIN.id)[0])
     point(one, rowOf(one), 'onPointerEnter')
     await vi.waitFor(() => expect(one.state.pages).toEqual([]))
-    expect(under(one)).toEqual([])
+    // no submenu at all, not an empty one
+    expect(flyout(one)).toBeUndefined()
   })
 })
 
