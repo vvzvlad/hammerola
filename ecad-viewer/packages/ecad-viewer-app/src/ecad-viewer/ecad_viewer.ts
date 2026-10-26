@@ -41,12 +41,9 @@ import {
     LineSegment,
     Via,
 } from "../kicad/board";
-import {
-    Label,
-    SchematicSymbol,
-    type SchematicInstanceContext,
-} from "../kicad/schematic";
+import { type SchematicInstanceContext } from "../kicad/schematic";
 
+import { area_items, type AreaDocument } from "./area-items";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
     BoardContentReady,
@@ -2619,73 +2616,30 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     /**
-     * What a comment's area holds, as its words: the designators of the
-     * symbols or footprints whose painted box meets `bounds` (`[x, y, w, h]`
-     * in the document's millimetres), power symbols and flags (`#…`) left
-     * out, and the names of the nets there — the schematic's labels and the
-     * net a power symbol (`#PWR…`) names by its value, the board's pads,
-     * tracks and vias, without the names KiCad makes up for an unnamed net.
-     * A pad is painted inside its footprint and has no painted box of its
-     * own, so a footprint met by the area gives the nets of those of its pads
-     * whose box on the board (`Pad.bbox`, what a click on a pad tests) meets
-     * it. Sorted as people sort designators (R2 before R10), each once; empty
+     * What a comment's area holds, as its words (`area_items`): what each
+     * layer of the viewer has painted, with the box it painted it in, named
+     * against `bounds` (`[x, y, w, h]` in the document's millimetres). Empty
      * before the viewer has drawn.
      */
     public itemsInArea(
         context: EcadCommentContext,
         bounds: [number, number, number, number],
     ): string[] {
-        const [x, y, w, h] = bounds;
-        const meets = (box: BBox) =>
-            Math.min(box.x, box.x2) <= x + w &&
-            Math.max(box.x, box.x2) >= x &&
-            Math.min(box.y, box.y2) <= y + h &&
-            Math.max(box.y, box.y2) >= y;
-        const found = new Set<string>();
-        const designator = (reference: string | undefined) => {
-            if (reference && !reference.startsWith("#")) found.add(reference);
-        };
-        const net = (name: string | undefined) => {
-            if (name && !/^(Net|unconnected)-\(/.test(name)) found.add(name);
-        };
         const viewer = this.#viewer_for_context(context);
-        for (const layer of viewer?.layers?.in_order() ?? []) {
-            for (const [item, box] of layer.bboxes) {
-                if (!meets(box)) continue;
-                if (context === "SCH") {
-                    const schematic = viewer as SchematicViewer;
-                    if (item instanceof SchematicSymbol) {
-                        const instance = schematic.instance_context;
-                        const reference =
-                            instance?.reference(item) ?? item.reference;
-                        if (reference.startsWith("#PWR")) {
-                            net(instance?.value(item) ?? item.value);
-                        } else {
-                            designator(reference);
-                        }
-                    } else if (item instanceof Label) {
-                        net(item.shown_text);
-                    }
-                } else {
-                    const board = (viewer as BoardViewer).board;
-                    if (item instanceof Footprint) {
-                        designator(item.reference);
-                        for (const pad of item.pads) {
-                            if (meets(pad.bbox)) net(pad.net?.name);
-                        }
-                    } else if (
-                        item instanceof LineSegment ||
-                        item instanceof ArcSegment ||
-                        item instanceof Via
-                    ) {
-                        net(board.getNetName(item.net));
-                    }
-                }
+        if (!viewer) return [];
+        const painted = function* () {
+            for (const layer of viewer.layers?.in_order() ?? []) {
+                yield* layer.bboxes;
             }
-        }
-        return [...found].sort((a, b) =>
-            a.localeCompare(b, undefined, { numeric: true }),
-        );
+        };
+        const on: AreaDocument =
+            context === "SCH"
+                ? {
+                      context,
+                      instance: (viewer as SchematicViewer).instance_context,
+                  }
+                : { context, board: (viewer as BoardViewer).board };
+        return area_items(on, bounds, painted());
     }
 
     public clearCommentOverlays(context?: EcadCommentContext): void {
