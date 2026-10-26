@@ -36,7 +36,9 @@
 // by handing the page `{ fit, frame }` once it can — `fit()` moves the view,
 // `frame()` answers a promise of a PNG blob — and the page greys both while it
 // holds none. The Gerbers, the board and the schematic, and the board's 3D
-// model can; a markdown page, an image and a file in a frame cannot. The view
+// model can; a markdown page, an image and a file in a frame cannot. The
+// schematic on a sheet below its root adds `contents`, the bar's Contents,
+// which puts the root sheet back (KicadView.jsx). The view
 // on screen of a KiCad design says it again for each member (KicadView.jsx);
 // this component says null as it goes, so the next document starts grey. A
 // document drawn where no bar is — the datasheet's window in KicadView.jsx —
