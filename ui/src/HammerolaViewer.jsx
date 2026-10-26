@@ -1045,8 +1045,7 @@ export default class HammerolaViewer extends React.Component {
       // -- what the reader is doing
       // `doc`: the document laid over the model, or null (`docOpen`).
       // `docTools`: what the bar's Fit and Frame do with it, `{ fit, frame }`
-      // once its view says it can (`onTools` in DocumentView.jsx), with
-      // `contents` for a schematic below its root sheet, else null.
+      // once its view says it can (`onTools` in DocumentView.jsx), else null.
       view: null, doc: null, docTools: null, tool: null, held: false, sel: null, selName: '',
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
@@ -4877,22 +4876,23 @@ export default class HammerolaViewer extends React.Component {
    * has chosen, as fields of address.js: `view` (none for the first,
    * `viewParam`), then document `doc`, or with no document the frame on screen
    * (`cameraParam`). Never both: the frame describes the model, which a
-   * document covers. The document the address already names keeps the
-   * schematic's sheet it names (`s=`), which is the one on screen; another
-   * revision without that sheet opens on the root one, as a fresh load with an
-   * unknown `?s=` does.
+   * document covers. A schematic's sheet given as `chosen` is named as `s=`,
+   * '' — the root sheet — as none; without one the document the address
+   * already names keeps the schematic's sheet it names (`s=`), which is the
+   * one on screen; another revision without that sheet opens on the root one,
+   * as a fresh load with an unknown `?s=` does.
    *
    * Every address this page writes whole names these: the push that lands a
    * swap, the replace that calls one off, the moves onto and off a comparison,
    * and a choice in the menu of views (`pushChoice`, which leaves another
    * view's frame to `onModel`).
    */
-  screenParams(view, views, doc) {
+  screenParams(view, views, doc, chosen) {
     const at = parse();
     return {
       view: viewParam(view, views),
       doc,
-      sheet: doc && doc === at.doc ? at.sheet : null,
+      sheet: chosen !== undefined ? chosen : doc && doc === at.doc ? at.sheet : null,
       camera: doc ? null : this.cameraParam(),
     };
   }
@@ -4957,34 +4957,40 @@ export default class HammerolaViewer extends React.Component {
    * `sheet` the value of `s=`, '' for the root sheet, which has none. A step of
    * history for the reader's own change of sheet (`push`), the entry on screen
    * rewritten for one the page made; the path and every other parameter stay.
+   * With the list of views open the page is drawn again, so that the sheet lit
+   * under the schematic's row (`SheetRows` in viewlist.jsx) follows a step
+   * the reader took in the viewer meanwhile, by a key: nothing else redraws it.
    */
   writeSheet(sheet, push) {
     navigate(respell(parse(), { sheet }), { push });
+    if (this.state.viewsOpen) this.forceUpdate();
   }
 
   /**
    * A choice in the menu of views — `view` with no document, or document
-   * `doc` over it — made a step of the browser's history, so Back returns to
-   * the choice before it (`followEntry`). Nothing is pushed for the choice the
-   * entry already names: the row already shown.
+   * `doc` over it, a schematic on its `sheet` where a row of its sheets was
+   * chosen (`SheetRows` in viewlist.jsx) — made a step of the browser's
+   * history, so Back returns to the choice before it (`followEntry`). Nothing
+   * is pushed for the choice the entry already names: the row already shown.
    *
    * The path and every other parameter stay as written (`files=` among them);
    * `v=`, `d=`, `s=` and `c=` are written anew (`respell`) as `screenParams`
-   * names them, which keeps the schematic's sheet only for the document
-   * already named: a design chosen after another document opens on its root
-   * sheet, while its schematic chosen after its own board, the element kept,
-   * writes back the sheet it is on (`writeSheet`). Another view gets no `c=`:
-   * the frame on screen is the view being left's, and `onModel` writes the new
+   * names them, which names the `sheet` given as `s=`, none for the root, and
+   * without one keeps the schematic's sheet only for the document already
+   * named: a design chosen after another document opens on its root sheet,
+   * while its schematic chosen after its own board, the element kept, writes
+   * back the sheet it is on (`writeSheet`). Another view gets no `c=`: the
+   * frame on screen is the view being left's, and `onModel` writes the new
    * one's once it is drawn. The entry keeps the state object of the one it
    * follows, the build not having moved.
    */
-  pushChoice(view, doc) {
+  pushChoice(view, doc, sheet) {
     const views = (this.state.meta && this.state.meta.views) || [];
     const at = parse();
-    if (view === this.entryView(views) && doc === at.doc) return;
+    if (view === this.entryView(views) && doc === at.doc && (sheet === undefined || sheet === (at.sheet || ''))) return;
     const fields = !doc && view !== this.state.view
       ? { view: viewParam(view, views), doc: null, sheet: null, camera: null }
-      : this.screenParams(view, views, doc);
+      : this.screenParams(view, views, doc, sheet);
     navigate(respell(at, fields), { push: true });
   }
 

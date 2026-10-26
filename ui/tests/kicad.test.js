@@ -445,7 +445,7 @@ describe('the schematic\'s page', () => {
   it('is the root sheet for an `s=` naming no sheet of the schematic, or a name two sheets share, which the address opened drops and Back and Forward keep', async () => {
     // a link naming a sheet this revision does not have
     window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=nowhere`)
-    const { sch } = await opened()
+    const { view, sch } = await opened()
     const seen = [[sch.page, window.location.search]]
     // Back onto another revision's entry, this design still mounted while the
     // page swaps that revision in: the entry keeps its sheet for it
@@ -454,8 +454,11 @@ describe('the schematic\'s page', () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
       seen.push([sch.page, window.location.search])
     }
+    // and through an update the page makes later, while that revision comes in
+    view.componentDidUpdate(view.props)
+    seen.push([sch.page, window.location.search])
     expect(seen).toEqual([[ROOT, `?d=${SHEET}`], [AMP, `?d=${SHEET}&s=amp`], [ROOT, `?d=${SHEET}&s=psu`],
-      [PSU_B, `?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`], [ROOT, `?d=${SHEET}&s=nowhere`]])
+      [PSU_B, `?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`], [ROOT, `?d=${SHEET}&s=nowhere`], [ROOT, `?d=${SHEET}&s=nowhere`]])
   })
 
   it('is the entry\'s on Back onto the schematic from its board, though the design hears of Back before the page hands the schematic down', async () => {
@@ -491,6 +494,13 @@ describe('the schematic\'s page', () => {
     expect(design.sch.page).toBe(AMP)
     await go(-1)
     expect([view.props.doc.id, design.sch.page, window.location.search]).toEqual([SHEET, ROOT, `?d=${SHEET}`])
+    // Back onto another revision's entry, naming a sheet this schematic does
+    // not have, while the page swaps that revision in: the entry keeps it
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=nowhere`)
+    view.props.onOpen(BOARD)
+    await go(-1)
+    view.componentDidUpdate(view.props)
+    expect([view.props.doc.id, design.sch.page, window.location.search]).toEqual([SHEET, ROOT, `?d=${SHEET}&s=nowhere`])
   })
 
   it('is rewritten in place where the page moved the schematic on screen, and left alone while it is hidden', async () => {
@@ -525,6 +535,61 @@ describe('the schematic\'s page', () => {
     expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([1, 1])
   })
 
+  it('follows a sheet chosen in the list of views, over the schematic and over the board, adding no step of its own', async () => {
+    // The page's step naming the sheet (`pushChoice`, through address.js), then
+    // the schematic handed down, or the page drawn again round it as the list
+    // shuts.
+    const choose = (view, query) => {
+      navigate(parse({ pathname: BASE, search: query, hash: '' }, null), { push: true })
+      const before = view.props
+      view.props = { ...before, doc: DOCS[0] }
+      view.componentDidUpdate(before)
+      return window.location.search
+    }
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
+    const { view, sch } = await opened()
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const push = vi.spyOn(window.history, 'pushState')
+    const seen = [`?d=${SHEET}&s=amp`, `?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`, `?d=${SHEET}`]
+      .map((query) => [choose(view, query), sch.page])
+    expect(seen).toEqual([[`?d=${SHEET}&s=amp`, AMP], [`?d=${SHEET}&s=${encodeURIComponent(PSU_B)}`, PSU_B],
+      [`?d=${SHEET}`, ROOT]])
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([3, 0])
+    // a sheet chosen, the reader's own step off it, which the page draws
+    // nothing for, and the same sheet chosen again
+    choose(view, `?d=${SHEET}&s=amp`)
+    sch.switchPage(PSU_B)
+    expect([choose(view, `?d=${SHEET}&s=amp`), sch.page]).toEqual([`?d=${SHEET}&s=amp`, AMP])
+    window.history.replaceState(null, '', `${BASE}?d=${BOARD}`)
+    const board = await opened(DOCS[1])
+    replace.mockClear()
+    push.mockClear()
+    expect([choose(board.view, `?d=${SHEET}&s=amp`), board.sch.page]).toEqual([`?d=${SHEET}&s=amp`, AMP])
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([1, 0])
+    // the root, by its path, over the board, the hidden schematic moved to the
+    // amp sheet by a part clicked there: put, and the address spelled with no `s=`
+    window.history.replaceState(null, '', `${BASE}?d=${BOARD}`)
+    const moved = await opened(DOCS[1])
+    click(moved.elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
+    replace.mockClear()
+    push.mockClear()
+    expect([moved.sch.page, choose(moved.view, `?d=${SHEET}&s=${encodeURIComponent(ROOT)}`), moved.sch.page])
+      .toEqual([AMP, `?d=${SHEET}`, ROOT])
+    expect([push.mock.calls.length, replace.mock.calls.length]).toEqual([1, 1])
+  })
+
+  it('puts out the selection of the sheet left on the reader\'s change and on Back, not on a probe\'s', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
+    const { sch, elements } = await opened()
+    sch.clearSelection.mockClear()
+    // a part clicked on the board, its symbol on the amp sheet
+    click(elements[PCB], { sourceContext: PCB, itemType: 'footprint', reference: 'U7' })
+    expect([sch.page, sch.clearSelection.mock.calls]).toEqual([AMP, []])
+    sch.switchPage(PSU_B)
+    await go(-1)
+    expect([sch.page, sch.clearSelection.mock.calls]).toEqual([AMP, [[{ keepHighlights: true }], [{ keepHighlights: true }]]])
+  })
+
   it('moves with `Show … · <sheet>` from the board inside the one entry that opens the schematic', async () => {
     window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
     const { view, sch } = await opened(DOCS[1])
@@ -538,31 +603,15 @@ describe('the schematic\'s page', () => {
     expect(window.location.search).toBe(`?d=${BOARD}`)
   })
 
-  it('is the reader\'s step on a `… · <sheet>` item of the schematic on screen', async () => {
+  it('is the reader\'s step on a `… · <sheet>` item of the schematic on screen, which keeps the selection it makes', async () => {
     window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
     const { view, sch } = await opened()
     const push = vi.spyOn(window.history, 'pushState')
+    sch.clearSelection.mockClear()
     view.setState({ menu: { from: SCH } })
     view.choose(SHOW_FAULT)
-    expect([sch.page, push.mock.calls]).toEqual([AMP, [[null, '', `${BASE}?d=${SHEET}&s=amp`]]])
-  })
-
-  it('is the root on the bar\'s Contents, told to the bar below the root alone, a step Back undoes', async () => {
-    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
-    const { view, sch } = await opened()
-    const told = () => view.props.onTools.mock.lastCall[0]
-    expect(told().contents).toBeUndefined()
-    // two sheets down, the root not this sheet's parent
-    sch.switchPage(PSU_B)
-    const { contents } = told()
-    const push = vi.spyOn(window.history, 'pushState')
-    contents()
-    expect([sch.page, push.mock.calls, told().contents]).toEqual([ROOT, [[null, '', `${BASE}?d=${SHEET}`]], undefined])
-    await go(-1)
-    expect([sch.page, told().contents]).toEqual([PSU_B, contents])
-    // the board on screen, the schematic behind it below its root
-    view.props.onOpen(BOARD)
-    expect(told().contents).toBeUndefined()
+    expect([sch.page, push.mock.calls, sch.clearSelection.mock.calls])
+      .toEqual([AMP, [[null, '', `${BASE}?d=${SHEET}&s=amp`]], []])
   })
 })
 

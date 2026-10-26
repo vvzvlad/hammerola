@@ -30,7 +30,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta } from '../src/hub.js'
 import { STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
-import { DocFile, toolBar, viewMenuStyle } from '../src/viewlist.jsx'
+import { DocFile, documentRows, menuRow, SheetRows, toolBar, viewList, viewMenuStyle } from '../src/viewlist.jsx'
 import { makeComponent, replaceState } from './component.js'
 import { collect, links, texts } from './eltree.js'
 
@@ -53,6 +53,17 @@ const KICAD = [kicad('hw/main', 'schematic', 'Главная · схема'), ki
   kicad('hw/psu', 'schematic', 'БП · схема'), kicad('hw/psu', 'board', 'БП · плата')]
 const DATASHEET = { id: 'ds__ne555.pdf', name: 'ds/ne555.pdf', type: 'pdf', file: 'ds/ne555.pdf',
   bytes: 9, hidden: true }
+
+// A schematic of three files, its root placing the other two, and their texts
+// as the build serves them.
+const placed = (uuid, name, file, page) => `(sheet (uuid "${uuid}") (property "Sheetname" "${name}")`
+  + ` (property "Sheetfile" "${file}") (instances (project "p" (path "/r" (page "${page}")))))`
+const SHEET_FILES = {
+  'hw/main.kicad_sch': `(kicad_sch (uuid "r") ${placed('a', 'amp', 'amp.kicad_sch', '2')} ${placed('b', 'psu', 'psu.kicad_sch', '3')})`,
+  'hw/amp.kicad_sch': '(kicad_sch (uuid "x"))',
+  'hw/psu.kicad_sch': '(kicad_sch (uuid "y"))',
+}
+const MAIN = { ...KICAD[0], kicad: { ...KICAD[0].kicad, schematics: Object.keys(SHEET_FILES) } }
 
 // Two views: few enough that without documents the views are a strip of tabs.
 const VIEWS = [
@@ -219,12 +230,6 @@ describe('the documents in the list of views', () => {
     expect(live()).toEqual([true, true])
     c.computed().fitView()
     expect(tools.fit).toHaveBeenCalledTimes(1)
-    // Contents, for a view that says it, as a schematic below its root sheet does
-    expect(c.computed().toContents).toBeUndefined()
-    const contents = vi.fn()
-    shownDocs(c)[0].props.onTools({ ...tools, contents })
-    c.computed().toContents()
-    expect(contents).toHaveBeenCalledTimes(1)
     const saved = []
     // jsdom has neither; the page hands the blob over by an object URL.
     Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:frame'), revokeObjectURL: vi.fn() })
@@ -276,6 +281,25 @@ describe('the documents in the list of views', () => {
     c.computed().viewTabs[1].onClick()
     expect(entries()).toEqual([3, '?files=K&v=open'])
     c.computed().viewTabs[1].onClick()
+    expect(push).toHaveBeenCalledTimes(3)
+  })
+
+  it('make a sheet chosen under a schematic a step whose address names it, the root none, on the schematic on screen too', () => {
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    const c = component({ meta: meta([MAIN]), viewsOpen: true })
+    const push = vi.spyOn(window.history, 'pushState')
+    onTestFinished(() => push.mockRestore())
+    const choose = (value) => c.computed().docRows[0].chooseSheet(value)
+    choose('amp')
+    expect([push.mock.calls.length, window.location.search, c.state.doc, c.state.viewsOpen])
+      .toEqual([1, `?files=K&d=${MAIN.id}&s=amp`, MAIN.id, false])
+    // another sheet of the schematic on screen, then its root
+    choose('hw/psu.kicad_sch:/r/b')
+    expect(window.location.search).toBe(`?files=K&d=${MAIN.id}&s=${encodeURIComponent('hw/psu.kicad_sch:/r/b')}`)
+    choose('')
+    expect(window.location.search).toBe(`?files=K&d=${MAIN.id}`)
+    // the sheet the entry already names
+    choose('')
     expect(push).toHaveBeenCalledTimes(3)
   })
 
@@ -422,6 +446,96 @@ describe('the documents in the list of views', () => {
     const v = component({ doc: 'gone.md' }).computed()
     expect(v.docOpen).toBeNull()
     expect(v.viewLabel).toBe('closed')
+  })
+})
+
+describe('a schematic\'s sheets under its row', () => {
+  // The rows a page hands the list, and the sheets' component as `viewList`
+  // draws it, driven on an instance whose `setState` writes into its state.
+  const rows = (open, choose = vi.fn(), build = 'c1') => documentRows([MAIN, KICAD[1], KICAD[2], ...DOCS], open, choose, PAGE.base, build)
+  const sheets = (row, open = true) => {
+    const one = new SheetRows({ row, open })
+    one.setState = (patch) => Object.assign(one.state, patch)
+    one.componentDidMount()
+    onTestFinished(() => one.componentWillUnmount())
+    return one
+  }
+  /** The rows under the schematic's own, by what they say. */
+  const under = (one) => collect(one.render(), (el) => (el.type === 'div' && el.props.style !== css(one.props.row.rowStyle)
+    ? texts(el).join('') : undefined))
+  const served = vi.fn(async (url) => new Response(SHEET_FILES[decodeURIComponent(url.slice(PAGE.base.length))]))
+  afterEach(() => {
+    served.mockClear()
+    vi.unstubAllGlobals()
+  })
+
+  it('are there for a schematic of several files alone, its row opening it and a chevron at its end showing and hiding them', () => {
+    vi.stubGlobal('fetch', served)
+    const choose = vi.fn()
+    const listed = rows(null, choose)
+    const drawn = (documents) => collect(viewList({ label: '', open: true, onToggle: () => {}, documents }),
+      (el) => (el.type === SheetRows ? [el.props.row.key, el.key] : undefined))
+    // keyed by the build too: another revision of the same document id, swapped
+    // in on the page, is a new component that reads its own sheets
+    expect([drawn(listed), drawn(rows(null, choose, 'c2'))]).toEqual([[[MAIN.id, `c1:${MAIN.id}`]], [[MAIN.id, `c2:${MAIN.id}`]]])
+    const one = sheets(listed[0])
+    const [row] = collect(one.render(), (el) => (el.props.style === css(listed[0].rowStyle) ? el : undefined))
+    expect([texts(row), collect(row, (el) => (el.type === 'svg' ? el : undefined)).length]).toEqual([['Главная · схема', '3 sheets'], 1])
+    row.props.onClick()
+    expect(choose.mock.calls).toEqual([[MAIN.id]])
+    // the chevron, whose click is not the row's
+    const [chevron] = collect(row, (el) => (el.type === 'span' && el.props.onClick ? el : undefined))
+    const stop = vi.fn()
+    chevron.props.onClick({ stopPropagation: stop })
+    one.componentDidUpdate()
+    expect([stop.mock.calls.length, under(one), served.mock.calls.length]).toEqual([1, ['loading…'], 3])
+    chevron.props.onClick({ stopPropagation: stop })
+    expect(under(one)).toEqual([])
+  })
+
+  it('are shown while the schematic is on screen, read from its files once, when the card is open', async () => {
+    vi.stubGlobal('fetch', served)
+    const one = sheets(rows(MAIN.id)[0], false)
+    expect(served).not.toHaveBeenCalled()
+    one.props = { ...one.props, open: true }
+    one.componentDidUpdate()
+    expect(under(one)).toEqual(['loading…'])
+    await vi.waitFor(() => expect(under(one)).toEqual(['Root', 'amp', 'psu']))
+    one.componentDidUpdate()
+    expect(served.mock.calls.map(([url]) => url)).toEqual(Object.keys(SHEET_FILES).map((file) => `${PAGE.base}${file}`))
+  })
+
+  it('light the sheet the address names, the root for none, and hand a sheet\'s click to the page with its `s=`', async () => {
+    vi.stubGlobal('fetch', served)
+    const choose = vi.fn()
+    const one = sheets(rows(MAIN.id, choose)[0])
+    await vi.waitFor(() => expect(under(one)).toEqual(['Root', 'amp', 'psu']))
+    const lit = () => collect(one.render(), (el) => (el.props.style === css(menuRow(true, 30)) ? texts(el).join('') : undefined))
+    window.history.replaceState(null, '', `/?d=${MAIN.id}&s=psu`)
+    expect(lit()).toEqual(['psu'])
+    window.history.replaceState(null, '', `/?d=${MAIN.id}`)
+    expect(lit()).toEqual(['Root'])
+    const own = (el) => el.type === 'div' && el.props.onClick && el.props.style !== css(one.props.row.rowStyle)
+    for (const row of collect(one.render(), (el) => (own(el) ? el : undefined))) row.props.onClick()
+    expect(choose.mock.calls).toEqual([[MAIN.id, ''], [MAIN.id, 'amp'], [MAIN.id, 'psu']])
+    // none lit while another document is on screen, the chevron showing them
+    one.props = { ...one.props, row: rows(KICAD[1].id, choose)[0] }
+    const [chevron] = collect(one.render(), (el) => (el.type === 'span' && el.props.onClick ? el : undefined))
+    chevron.props.onClick({ stopPropagation() {} })
+    expect([under(one), lit()]).toEqual([['Root', 'amp', 'psu'], []])
+    // the root's row not lit names the root by its path
+    choose.mockClear()
+    collect(one.render(), (el) => (own(el) ? el : undefined))[0].props.onClick()
+    expect([choose.mock.calls, one.state.pages[0].name]).toEqual([[[MAIN.id, one.state.pages[0].projectPath]], 'Root'])
+  })
+
+  it('are none where the files do not come', async () => {
+    // a refusal whose body would read as the files: its status alone keeps the sheets out
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(SHEET_FILES[decodeURIComponent(url.slice(PAGE.base.length))],
+      { status: 404 })))
+    const one = sheets(rows(MAIN.id)[0])
+    await vi.waitFor(() => expect(one.state.pages).toEqual([]))
+    expect(under(one)).toEqual([])
   })
 })
 

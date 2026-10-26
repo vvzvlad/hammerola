@@ -17,7 +17,9 @@
 //
 // Every listed document is one row, a KiCad schematic, board and 3D model as
 // much as a PDF, except one listed `hidden`: it has no row and is still opened
-// by its address (`?d=`) or by a link from another document.
+// by its address (`?d=`) or by a link from another document. A schematic of
+// more than one file has its sheets under its row, inside the card
+// (`SheetRows`).
 //
 // THE ROWS STAND IN GROUPS, each under a heading, as the Downloads menu's do:
 // the views first, then the documents a group per kind (`docGroup`), so the
@@ -27,14 +29,17 @@
 //
 // `viewList` and `toolBar` are the drawing and take everything as arguments,
 // so a test reads the tree they return without mounting anything
-// (ui/tests/viewmenu.test.js, viewdocs.test.js, docshell.test.js).
+// (ui/tests/viewmenu.test.js, viewdocs.test.js, docshell.test.js); the sheets'
+// rows are a component of their own (`SheetRows`).
 
 import React from 'react';
 
+import { parse } from './address.js';
 import CopyLink, { WORDS_CLASS } from './copylink.jsx';
 import { docExt, docHint, docSize, FILE_TYPE } from './DocumentView.jsx';
 import { shortId } from './hub.js';
-import { viewOf } from './KicadView.jsx';
+import { schematicSheets } from './kicadpages.js';
+import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.jsx';
 import {
   DIALOG_BTN, ELLIPSIS, FAINT_MONO, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
@@ -42,8 +47,9 @@ import { css, MONO, SANS } from './style.jsx';
 
 /** One row of the list, a view's or a document's: the same shape for both, so
  *  the two halves read as one list. Set in from its group's heading
- *  (`GROUP_HEAD`), as a file row of the Downloads menu is. */
-export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px 7px 22px;font:400 12px ${SANS};cursor:pointer;`
+ *  (`GROUP_HEAD`), as a file row of the Downloads menu is, by `left` px; a
+ *  schematic's sheet one step further (`SheetRows`). */
+export const menuRow = (on, left = 22) => `display:flex;align-items:center;gap:10px;padding:7px 14px 7px ${left}px;font:400 12px ${SANS};cursor:pointer;`
   + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
 
 /** A group's heading: the Downloads menu's (`headStyle` in downloadsview.js). */
@@ -70,12 +76,19 @@ const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
  * The build's documents as rows, one per document not listed `hidden`, in the
  * order the project lists them: the name (its `title`, else its path in the
  * tree), its heading (`docGroup`) and its hint. `open` is the id of the
- * document on screen, or null; `choose(id)` is what a row does.
+ * document on screen, or null; `choose(id)` is what a row does. A KiCad
+ * schematic of more than one file carries what its sheets need (`SheetRows`):
+ * itself as `doc`, `base`, the address the build's files are served under,
+ * `build`, the build's key (`buildKey` in hub.js), whether it is `on` screen,
+ * and `chooseSheet(value)`, which is `choose(id, value)` with a sheet's `s=`
+ * value.
  */
-export function documentRows(documents, open, choose) {
+export function documentRows(documents, open, choose, base, build) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
     key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
+    ...(doc.type === 'schematic' && doc.kicad.schematics.length > 1
+      ? { doc, base, build, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
   }));
 }
 
@@ -93,10 +106,12 @@ export function menuGroups(views, documents) {
   return [...groups];
 }
 
-/** The button. A view's name is the model's own sentence and can be any
- *  length; the button sits in a bar that must not grow past the window, so it
- *  is capped and the name is cut rather than allowed to push. */
-export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
+/** The button. One width whatever it names, so that the bar keeps its size
+ *  and place from view to view (AGENTS.md): a view's name is the model's own
+ *  sentence and can be any length, so a longer one is cut, a shorter one
+ *  leaves the chevron at the right end. Where the bar is short of room the
+ *  wrapper shrinks (`viewList`) and the button with it. */
+export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;width:220px;max-width:100%;box-sizing:border-box;`
   + (open ? TAB_ON : TAB_OFF);
 
 /**
@@ -165,12 +180,115 @@ export const DOC_LAYER = 'position:absolute;top:0;left:0;right:0;bottom:0;overfl
 
 const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 6l4 4 4-4" /></svg>;
 
+// The chevron at the right end of a schematic's row, which shows or hides its
+// sheets: pointing down while they are shown, right while not.
+const sheetsToggle = (shown) => `flex:none;display:flex;color:var(--text-muted);transform:rotate(${shown ? 0 : -90}deg)`;
+// The one quiet row while the sheets' files come in, set in as a sheet's row.
+const SHEETS_LOADING = `padding:7px 14px 7px 30px;${FAINT_MONO}`;
+
+/**
+ * A KiCad schematic's row with its sheets under it (`schematicSheets` in
+ * kicadpages.js), for a row that carries `chooseSheet` (`documentRows`); `open`
+ * is whether the card is. The row opens the schematic as any row does; the
+ * chevron at its right end shows or hides the sheets, shown by default while
+ * the schematic is on screen and hidden otherwise. Inside the card, set in a
+ * step further than a row, not beside it: on a narrow window the card is
+ * 260px (`viewMenuStyle`), and a second one beside it would leave the window.
+ *
+ * The sheets are read from the schematic's files the first time they are
+ * shown in an open card, not at every opening: they are the files its viewer
+ * reads, about a megabyte for a real design. Read once for each build: a
+ * document keeps its id from revision to revision, so the list keys this
+ * component by the build too (`viewList`), and a revision switched to in place
+ * reads its own sheets. While they come in, one quiet row
+ * says so; where they fail there are no sheets. A sheet's row is the page's
+ * choice of it (`chooseSheet` with its `s=` value, `sheetQueryValue` in
+ * KicadView.jsx); with the schematic on screen the sheet the address names is
+ * lit (`sheetFromQuery`), no `s=` naming the root, as the open document's row is.
+ * The root's row, unless it is the one lit, names the root by its path rather
+ * than by no `s=`: an address with none is also what the schematic's own row
+ * writes, which takes up the sheet the hidden schematic is on (KicadView.jsx
+ * `componentDidUpdate`); the schematic then drops the path from the address.
+ */
+export class SheetRows extends React.Component {
+  constructor(props) {
+    super(props);
+    // `shown`: what the chevron last made of the sheets, null until it is
+    // pressed. `pages`: the sheets once read, null before.
+    this.state = { shown: null, pages: null };
+    this.asked = false;
+    // Not the row's click, which opens the schematic.
+    this.toggle = (event) => {
+      event.stopPropagation();
+      this.setState({ shown: !this.shown() });
+    };
+  }
+
+  componentDidMount() {
+    this.read();
+  }
+
+  componentDidUpdate() {
+    this.read();
+  }
+
+  componentWillUnmount() {
+    this.gone = true;
+  }
+
+  shown() {
+    return this.state.shown === null ? this.props.row.on : this.state.shown;
+  }
+
+  /** The sheets read once, when they are first shown in an open card. */
+  read() {
+    if (this.asked || !this.props.open || !this.shown()) return;
+    this.asked = true;
+    const { doc, base } = this.props.row;
+    const files = doc.kicad.schematics;
+    Promise.all(files.map((file) => fetch(fileUrl(base, file)).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.text();
+    })))
+      .then((texts) => schematicSheets(Object.fromEntries(files.map((file, i) => [file, texts[i]])), files[0]), () => [])
+      .then((pages) => {
+        if (!this.gone) this.setState({ pages });
+      });
+  }
+
+  render() {
+    const { row } = this.props;
+    const { pages } = this.state;
+    const shown = this.shown();
+    const named = row.on && pages && sheetFromQuery(pages, parse().sheet);
+    return (
+      <>
+        <div onClick={row.onClick} style={css(row.rowStyle)}>
+          <span style={css(DOC_LABEL)}>{row.label}</span>
+          <span style={css(DOC_HINT)}>{row.hint}</span>
+          <span onClick={this.toggle} style={css(sheetsToggle(shown))}>{CHEVRON}</span>
+        </div>
+        {shown && !pages && <div style={css(SHEETS_LOADING)}>loading…</div>}
+        {shown && pages && pages.map((page) => (
+          <div key={page.projectPath} onClick={() => row.chooseSheet(page.parentProjectPath || page.projectPath === named
+            ? sheetQueryValue(pages, page.projectPath) : page.projectPath)}
+               style={css(menuRow(page.projectPath === named, 30))}>
+            <span style={css(DOC_LABEL)}>{page.name}</span>
+          </div>
+        ))}
+      </>
+    );
+  }
+}
+
 /**
  * The button and its card, as elements. `views` and `documents` are rows
- * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`),
- * drawn in their groups (`menuGroups`), the documents under the views; `wide`
- * is whether the bar holds the tools (`viewMenuStyle`). `onToggle` must stop
- * the click: the pages shut their menus on a click that reaches the root. Pure.
+ * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
+ * a schematic's of several files with what its sheets need), drawn in their
+ * groups (`menuGroups`), the documents under the views; `wide` is whether the
+ * bar holds the tools (`viewMenuStyle`). `onToggle` must stop the click: the
+ * pages shut their menus on a click that reaches the root. Pure, but for the
+ * sheets' rows (`SheetRows`).
  *
  * The wrapper is `position:relative` so that the card is anchored to the
  * BUTTON: the bar carries `contain:layout` and is therefore already a
@@ -184,7 +302,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
   return (
     <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
-        <span style={css(ELLIPSIS)}>{label}</span>
+        <span style={css(`${ELLIPSIS};flex:1`)}>{label}</span>
         {CHEVRON}
       </div>
       <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, wide))}>
@@ -192,12 +310,12 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
             are siblings of different arrays rather than of one. */}
         {menuGroups(views, documents).map(([head, rows]) => [
           <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
-          ...rows.map((t) => (
+          ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
             <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
               <span style={css(DOC_LABEL)}>{t.label}</span>
               <span style={css(DOC_HINT)}>{t.hint}</span>
             </div>
-          )),
+          ))),
         ])}
       </div>
     </div>
@@ -300,16 +418,13 @@ export function DocFile({ href }) {
  *                Download (a link that takes the file) and Copy link for it,
  *                drawn outside the bar at the left end of the strip
  *                (`DocFile`), and with none open not at all;
- *   the sheet    `toContents`, set while a schematic is on screen on a sheet
- *                below its root: Contents, which puts the root sheet back,
- *                drawn right after the views; unset, it is not drawn;
- *   the tools    `showTools` (false on a narrow window, which keeps the views,
- *                Contents and Fit), and each tool's style and handler:
- *                `measureBtnStyle` and `tMeasure`, `commentBtnStyle` and
- *                `tComment`, `proposalBtnStyle` and `tProposal`, `fitBtnStyle`
- *                and `fitView`, `frameBtnStyle` and `grabFrame`,
- *                `settingsBtnStyle` and `tSettings`. A tool out of service is
- *                drawn `OFF` and takes no click, so its handler may be absent.
+ *   the tools    `showTools` (false on a narrow window, which keeps the views
+ *                and Fit), and each tool's style and handler: `measureBtnStyle`
+ *                and `tMeasure`, `commentBtnStyle` and `tComment`,
+ *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
+ *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
+ *                and `tSettings`. A tool out of service is drawn `OFF` and
+ *                takes no click, so its handler may be absent.
  * `menus` are the cards `Add primitive` and Settings open (`proposal`,
  * `settings`), which only the model's page has. Pure. What it returns goes
  * straight into the layer (`BAR_LAYER`): the bar alone, or with a document
@@ -344,16 +459,7 @@ function floatBar(b, menus) {
           ))}
         </div>
       )}
-      {b.toContents && (
-        <>
-          <div style={css(RULE)} />
-          <div onClick={b.toContents} title="back to the root sheet" style={css(quietBtn(false))}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 7.5L8 2l6 5.5" /><path d="M3.5 6.2V14h9V6.2M6.5 14v-3.5h3V14" /></svg>
-            Contents
-          </div>
-        </>
-      )}
-      {/* Everything else between the views and Fit belongs to a pointer and a
+      {/* Everything between the views and Fit belongs to a pointer and a
           canvas with room to aim in — see `showTools`. */}
       {b.showTools && (
         <>

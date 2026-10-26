@@ -104,7 +104,7 @@ function hierarchicalNets(found, paths, onBoard) {
 
 /** The path of the file a sheet of the schematic `from` names as `file`,
  *  resolved against that schematic's directory. */
-function resolved(from, file) {
+export function resolved(from, file) {
   const parts = from.split('/').slice(0, -1);
   for (const part of file.split('/')) {
     if (part === '..') parts.pop();

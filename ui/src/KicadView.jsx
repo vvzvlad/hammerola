@@ -40,7 +40,8 @@
 // says it (`onSheet`, `sheetQueryValue`), which writes it into the address
 // beside the `d=` of the schematic, as a view is `v=`, and nothing here
 // writes the address itself. Back and Forward (`subscribe` in address.js), a
-// reload and a link put the sheet the address names on screen
+// reload, a link and a sheet chosen in the list of views (`SheetRows` in
+// viewlist.jsx) put the sheet the address names on screen
 // (`followPage`), opened whole as the viewer opens a sheet itself, not at the
 // camera it was left at. The root sheet has no `s=`, so a design opened from
 // the list of views after another document starts on it (`pushChoice`, and
@@ -127,8 +128,7 @@
 // (`drawingOf`): Fit is the viewer's own reset (`zoom_fit_top_item`, what its
 // toolbar's reset button calls and what it opens a sheet with), Frame draws a
 // frame and reads the canvas in the same task. The 3D view says its own
-// (BoardView3D.jsx). The schematic on a sheet below its root adds Contents,
-// which puts its root sheet back (`toContents`).
+// (BoardView3D.jsx).
 //
 // A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
 // when the part's KiCad `Datasheet` field names a document of the build, listed
@@ -192,6 +192,12 @@ export function sheetFromQuery(pages, value) {
   return page ? page.projectPath : null;
 }
 
+/** The address on screen as far as what it names goes: its path and query. */
+function addressNow() {
+  const at = parse();
+  return `${at.path}?${at.params.join('&')}`;
+}
+
 /** The views of a design: the two by the names the viewer gives them
  *  (`targetContext`), and the 3D model of the board. */
 export const SCH = 'SCH';
@@ -249,7 +255,7 @@ export function loadEcadViewer() {
 export const drawnViews = (members) => DRAWN.filter((view) => members[view]);
 
 /** Where a file of the build is served from. */
-const fileUrl = (base, file) => `${base}${file.split('/').map(encodeURIComponent).join('/')}`;
+export const fileUrl = (base, file) => `${base}${file.split('/').map(encodeURIComponent).join('/')}`;
 
 const project = (doc) => (doc.kicad.project ? [doc.kicad.project] : []);
 
@@ -487,12 +493,9 @@ export default class KicadView extends React.Component {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
       tools3d: null, received: 0, got: false,
     };
-    // What the bar can do with a drawn view on screen, one object for both; the
-    // same with Contents for the schematic on a sheet below its root, one object
-    // too, as `report` tells the page of a change by identity; and the last
-    // thing the page was told.
+    // What the bar can do with a drawn view on screen, one object for both, and
+    // the last thing the page was told (`report`).
     this.drawnTools = { fit: () => this.fitDrawn(), frame: () => this.frameDrawn() };
-    this.sheetTools = { ...this.drawnTools, contents: () => this.toContents() };
     this.reported = undefined;
     this.onTools3D = (tools) => this.setState({ tools3d: tools });
     // A selection waiting for the page to hand down the member it is on:
@@ -507,9 +510,17 @@ export default class KicadView extends React.Component {
     // address asked for while the element switches to it (`followPage`).
     this.page = null;
     this.pageFromHistory = null;
-    this.onPop = () => this.followPage();
-    // Set while the page itself probes an element (`pageProbe`).
+    // The address this component last saw: its last update's, its own
+    // (`tellSheet`), Back's and Forward's (`componentDidUpdate`).
+    this.seen = addressNow();
+    this.onPop = () => {
+      this.seen = addressNow();
+      this.followPage();
+    };
+    // Set while the page itself probes an element (`pageProbe`), and while
+    // the reader's own item of the menu moves the schematic on screen (`choose`).
     this.probing = false;
+    this.choosing = false;
     this.elements = {};
     this.shell = null;
     this.menuNode = null;
@@ -587,22 +598,11 @@ export default class KicadView extends React.Component {
     return new Promise((resolve) => drawing.canvas.toBlob(resolve, 'image/png'));
   }
 
-  /** The bar's Contents: the schematic put on its root sheet, the one with the
-   *  sheet symbols (`sheetFromQuery` with no `s=`). A step of the reader's, so
-   *  `paged` pushes it into the address, and Back returns to the sheet left. */
-  toContents() {
-    const element = this.elements[SCH];
-    if (element && typeof element.switchPage === 'function') element.switchPage(sheetFromQuery(this.pages(), ''));
-  }
-
   /** What the bar can do with the view on screen: a drawn one once its files
-   *  are in, with Contents for the schematic on a sheet below its root; the 3D
-   *  model once it is loaded. */
+   *  are in, the 3D model once it is loaded. */
   toolsOnScreen() {
     if (this.side() === BOARD3D) return this.state.tools3d;
-    if (!this.state.ready || this.state.error) return null;
-    const page = this.side() === SCH && this.pages().find((one) => one.projectPath === this.page);
-    return page && page.parentProjectPath ? this.sheetTools : this.drawnTools;
+    return this.state.ready && !this.state.error ? this.drawnTools : null;
   }
 
   /** The page told what the bar can do (`onTools`), when that has changed. */
@@ -653,9 +653,12 @@ export default class KicadView extends React.Component {
   /** The sheet on screen told to the page as `s=` says it ('' for the root
    *  sheet, which has none), which writes it into the address (`onSheet`):
    *  as a step of history for a step of the reader's (`push`), else in place
-   *  of the entry on screen. */
+   *  of the entry on screen. The page need not draw anything for it (it does
+   *  only while the list of views is open), so the address it writes is noted
+   *  as seen here (`componentDidUpdate`). */
   tellSheet(push) {
     this.props.onSheet(sheetQueryValue(this.pages(), this.page), push);
+    this.seen = addressNow();
   }
 
   /** The schematic's element reported a change of its view. A change of page
@@ -669,14 +672,27 @@ export default class KicadView extends React.Component {
    *  (`componentDidUpdate`), and Back or Forward put the entry's own back.
    *  Not for the page the address asked for (`followPage`), which it already
    *  names, nor for the first page the element shows, which is only
-   *  remembered. Every change of page is told to the bar, whose Contents
-   *  depends on it (`toolsOnScreen`). */
+   *  remembered.
+   *
+   *  A change that is not a probe of the page's own — the reader's, and the
+   *  one the address asks for (`followPage`) — puts out the selection kept
+   *  from the page left: the viewer keeps the box of its last selection
+   *  across a change of page and paints it again whenever the element is
+   *  made active (`activate`), so the sheet symbol whose double click enters
+   *  a sheet would stand selected over the sheet it opens. A probe keeps the
+   *  selection it made, and so does the reader's `… · <sheet>` item over the
+   *  schematic on screen (`choose`): the viewer focuses its target once the
+   *  sheet is open, and a selection put out meanwhile cancels that. The
+   *  highlighted nets stay. */
   paged() {
     const now = this.activePage();
     if (!now || now === this.page) return;
     const before = this.page;
     this.page = now;
-    this.report();
+    const element = this.elements[SCH];
+    if (!this.probing && !this.choosing && typeof element.clearSelection === 'function') {
+      element.clearSelection({ keepHighlights: true });
+    }
     if (now === this.pageFromHistory) {
       this.pageFromHistory = null;
       return;
@@ -863,7 +879,12 @@ export default class KicadView extends React.Component {
       const element = this.elements[item.view];
       if (!element) return;
       if (item.view === menu.from) {
-        element.requestCrossProbe(item.request);
+        this.choosing = true;
+        try {
+          element.requestCrossProbe(item.request);
+        } finally {
+          this.choosing = false;
+        }
         return;
       }
       this.probe = { to: item.view, request: item.request };
@@ -921,13 +942,12 @@ export default class KicadView extends React.Component {
       })
       .then(() => {
         // The schematic goes to the sheet the address names, from the page it
-        // opened on, which the bar is told of. A part selected in the 3D view
-        // while the files came in is selected in the viewers now: they had
-        // nothing to select it in then.
+        // opened on. A part selected in the 3D view while the files
+        // came in is selected in the viewers now: they had nothing to select
+        // it in then.
         if (!this._gone) {
           this.setState({ ready: true }, () => {
             this.page = this.activePage();
-            this.report();
             this.followPage(true);
             this.select(BOARD3D, this.state.selected);
           });
@@ -940,18 +960,29 @@ export default class KicadView extends React.Component {
   componentDidUpdate(before) {
     this.activate();
     this.report();
-    // The schematic come on screen. Put there by Back or Forward, it goes to
-    // the sheet the entry names (`followPage`): the page and this component
-    // are handed the entry in one round (`subscribe` in address.js), and React
-    // runs the update for the page's answer after it, while `window.event` is
-    // still the `popstate`; `onPop` has put the sheet already where it ran
-    // first, and then this call does nothing. Put there by a choice, which
-    // wrote its `d=` with no `s=`, the address takes up the sheet it is on,
-    // which may be another than the root (`paged`), in the entry the choice
-    // wrote.
-    if (this.page && this.side() === SCH && viewOf(before.doc) !== SCH && this.addressed()) {
-      if (window.event && window.event.type === 'popstate') this.followPage();
-      else this.tellSheet(false);
+    // The schematic on screen under an address naming it, the address changed
+    // since the one this component last saw: its last update's, its own
+    // (`tellSheet`), and Back's and Forward's, which `onPop` follows —
+    // address.js hands it the entry before React runs the page's update for
+    // it. An update the page makes later — a click, a revision it swaps in —
+    // so leaves alone an entry Back put back, another revision's `s=`
+    // included: what is followed here is an address the page has just written
+    // for a choice. Just come on screen by a choice that wrote its `d=` with
+    // no `s=` — its row in the list of views, `Show in …` from the board — the
+    // address takes up the sheet it is on, which may be another than the root
+    // (`paged`), in the entry the choice wrote. Otherwise it goes to the sheet
+    // the address names (`followPage`, which does nothing where that sheet is
+    // on screen): a sheet chosen in the list of views, over the schematic or
+    // over another member. Such an address is this build's own and is spelled
+    // as `tellSheet` says it once the sheet is put (`followPage`'s
+    // `normalize`): the root's row names the root by its path (`SheetRows` in
+    // viewlist.jsx).
+    const address = addressNow();
+    const moved = address !== this.seen;
+    this.seen = address;
+    if (moved && this.page && this.side() === SCH && this.addressed()) {
+      if (viewOf(before.doc) !== SCH && !parse().sheet) this.tellSheet(false);
+      else this.followPage(true);
     }
     // The menu and the datasheet's window go with their view off the screen.
     if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();

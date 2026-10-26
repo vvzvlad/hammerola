@@ -8,8 +8,8 @@
 // The page holds which document is open — `Show in …` of a KiCad design's
 // right-click menu opens the other member through the same door a row does
 // (`onPick`) — what the bar's Fit and Frame can do with it (`tools`), and
-// whether the window is narrow, which takes the bar down to the list, Contents
-// on a schematic below its root sheet, and Fit, as on the model's page.
+// whether the window is narrow, which takes the bar down to the list and Fit
+// as on the model's page.
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
 // `?v=<id>`; the default document — the first one not listed `hidden` — needs
@@ -28,7 +28,7 @@ import React from 'react';
 
 import { navigate, parse, respell, subscribe, unsubscribe } from './address.js';
 import DocumentView, { docUrl, docViewKey } from './DocumentView.jsx';
-import { PAGE, shortId } from './hub.js';
+import { buildKey, PAGE, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, WORDMARK } from './panelstyle.js';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
@@ -62,15 +62,13 @@ const BAR = `${BAR_LAYER}18`;
  * service, as they are over a document there, and Comment and Add primitive
  * are hidden from a reader without a token (`viewer`), as they are there; Fit
  * and Frame act on the document when its view can do them (`tools`, `onTools`
- * in DocumentView.jsx) and are out of service when it cannot; Contents, which
- * puts a schematic on a sheet below its root back on the root sheet, is there
- * while its view says it can. A narrow window keeps the list, Contents and
- * Fit. Pure.
+ * in DocumentView.jsx) and are out of service when it cannot. A narrow window
+ * keeps the list and Fit. Pure.
  */
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }) {
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
-    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick),
+    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta)),
     docHref: docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),
@@ -83,19 +81,20 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
     grabFrame: tools ? () => tools.frame().then((blob) => blob && savePng(blob, meta))
       .catch((error) => console.warn('frame', error)) : undefined,
     frameBtnStyle: quietBtn(!tools),
-    toContents: tools && tools.contents ? () => tools.contents() : undefined,
   };
 }
 
 /**
  * The whole page, from what the shell holds. Pure. `onPick(id)` opens a
  * document: what a row of the list does, and `Show in …` of a KiCad design's
- * right-click menu; `viewsOpen` says the list is open, `onToggle` opens or shuts
- * it and `onClose` shuts it, from a click anywhere else on the page. `tools`
- * is what the open document's view told the bar it can do through `onTools`;
- * `narrow` and `viewer` are `docBar`'s. `addressDoc` reads which document an
- * address names, for a schematic's sheet in it (KicadView.jsx), and
- * `onSheet` writes the sheet a schematic reports into the address.
+ * right-click menu; `onPick(id, sheet)` a schematic on a sheet, what a row of
+ * its sheets does (`SheetRows` in viewlist.jsx); `viewsOpen` says the list is
+ * open, `onToggle` opens or shuts it and `onClose` shuts it, from a click
+ * anywhere else on the page. `tools` is what the open document's view told
+ * the bar it can do through `onTools`; `narrow` and `viewer` are `docBar`'s.
+ * `addressDoc` reads which document an address names, for a schematic's sheet
+ * in it (KicadView.jsx), and `onSheet` writes the sheet a schematic reports
+ * into the address.
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
@@ -166,16 +165,20 @@ export default class DocShell extends React.Component {
     unsubscribe(this.onPop);
   }
 
-  /** Document `id` on screen, a step of history; the list shuts. The address
-   *  names no `?d=` for the default document, and no place in the document
-   *  left: the hash goes. The schematic's sheet (`s=`) goes too: a design
-   *  picked after another document opens on its root sheet, while its
-   *  schematic picked after its own board, the element kept, writes back the
-   *  sheet it is on (`writeSheet`). */
-  pick(id) {
-    if (id !== this.state.active) {
+  /** Document `id` on screen, a schematic on its `sheet` where one is given
+   *  (its `s=` value, '' for the root), a step of history; the list shuts. A
+   *  sheet given that differs from the address's is a step on the document on
+   *  screen too. The address names no `?d=` for the default document, and no
+   *  place in the document left: the hash goes. The schematic's sheet (`s=`)
+   *  is the one given, which the schematic follows (`followPage` in
+   *  KicadView.jsx), else it goes too: a design picked after another document
+   *  opens on its root sheet, while its schematic picked after its own board,
+   *  the element kept, writes back the sheet it is on (`writeSheet`). */
+  pick(id, sheet) {
+    const at = parse();
+    if (id !== this.state.active || (sheet !== undefined && sheet !== (at.sheet || ''))) {
       const fallback = defaultDocument(this.props.meta.documents);
-      const next = respell(parse(), { doc: fallback && fallback.id === id ? null : id, sheet: null });
+      const next = respell(at, { doc: fallback && fallback.id === id ? null : id, sheet: sheet || null });
       navigate({ ...next, hash: '' }, { push: true });
     }
     this.setState({ active: id, viewsOpen: false });
@@ -183,14 +186,17 @@ export default class DocShell extends React.Component {
 
   /** The schematic's sheet on screen as KicadView reports it (`onSheet`):
    *  `sheet` the value of `s=`, '' for the root sheet. A step of history for
-   *  the reader's own change (`push`), else the entry on screen rewritten. */
+   *  the reader's own change (`push`), else the entry on screen rewritten.
+   *  With the list of views open the page is drawn again, as the model's page
+   *  is (`writeSheet` in HammerolaViewer.jsx). */
   writeSheet(sheet, push) {
     navigate(respell(parse(), { sheet }), { push });
+    if (this.state.viewsOpen) this.forceUpdate();
   }
 
   render() {
     return <DocPage meta={this.props.meta} active={this.state.active}
-                    base={PAGE.base} onPick={(id) => this.pick(id)}
+                    base={PAGE.base} onPick={(id, sheet) => this.pick(id, sheet)}
                     narrow={this.state.narrow} viewer={this.viewer}
                     tools={this.state.tools} onTools={this.onTools} addressDoc={this.addressDoc}
                     onSheet={this.onSheet} viewsOpen={this.state.viewsOpen}

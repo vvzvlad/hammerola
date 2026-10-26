@@ -6,7 +6,7 @@
 // two components are driven on instances whose `setState` writes straight into
 // their state.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 // The KiCad viewer's module, imported by its address on the hub: a module of
 // nothing here, the schematic's element below carrying what it would define.
@@ -337,7 +337,7 @@ describe('the page of a build with no model', () => {
 
   it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can', async () => {
     const TOOLS = ['Measure', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
-    const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word) || word === 'Contents')
+    const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word))
     expect(drawn({})).toEqual(TOOLS)
     // a narrow window keeps the list and Fit, as the model's page does
     expect(drawn({ narrow: true })).toEqual(['Fit'])
@@ -351,12 +351,6 @@ describe('the page of a build with no model', () => {
     expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, false, false, true])
     live.fitView()
     expect(tools.fit).toHaveBeenCalledTimes(1)
-    // a schematic below its root sheet adds Contents ahead of the tools, which a narrow window keeps
-    const sheet = { ...tools, contents: vi.fn() }
-    expect([drawn({ tools }), drawn({ tools: sheet }), drawn({ tools: sheet, narrow: true })])
-      .toEqual([TOOLS, ['Contents', ...TOOLS], ['Contents', 'Fit']])
-    bar({ tools: sheet }).toContents()
-    expect(sheet.contents).toHaveBeenCalledTimes(1)
     const saved = []
     // jsdom has neither; the page hands the blob over by an object URL.
     Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:frame'), revokeObjectURL: vi.fn() })
@@ -548,6 +542,27 @@ describe('the shell', () => {
       shell.componentWillUnmount()
       push.mockRestore()
     }
+  })
+
+  it('makes a sheet picked under the schematic a step whose address names it, on the schematic on screen too', () => {
+    window.history.replaceState(null, '', `${BASE}?x=1`)
+    rereadPage(BASE)
+    shell = new DocShell({ meta: WITH_KICAD })
+    shell.setState = (patch) => Object.assign(shell.state, patch)
+    const push = vi.spyOn(window.history, 'pushState')
+    onTestFinished(() => push.mockRestore())
+    const pick = (id, sheet) => shell.render().props.onPick(id, sheet)
+    // the default schematic, on screen with no `?d=`, then its root
+    pick(SCHEMATIC.id, 'amp')
+    pick(SCHEMATIC.id, 'amp')
+    expect([push.mock.calls.length, window.location.search]).toEqual([1, '?x=1&s=amp'])
+    pick(SCHEMATIC.id, '')
+    expect(window.location.search).toBe('?x=1')
+    // from the board
+    pick(BOARD.id)
+    pick(SCHEMATIC.id, 'hw/psu.kicad_sch:/r/b')
+    expect([push.mock.calls.length, window.location.search, shell.state.active])
+      .toEqual([4, `?x=1&s=${encodeURIComponent('hw/psu.kicad_sch:/r/b')}`, SCHEMATIC.id])
   })
 
   it('names the default schematic\'s sheet as `?s=` with no `?d=`: a link opens on it, each change is a step Back undoes', async () => {

@@ -94,13 +94,16 @@ export function chromeView(s, props, deps) {
   // Opening a document: what its row does, what `Show in …` of a KiCad
   // design's right-click menu does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
-  // says it as `?d=` (`pushChoice`).
-  const openDoc = (id) => {
+  // says it as `?d=` (`pushChoice`). Given a schematic's `sheet` — a row of
+  // its sheets in the list (`SheetRows` in viewlist.jsx) — the address names
+  // that sheet as `s=`, the root none, and the schematic follows it
+  // (`followPage` in KicadView.jsx).
+  const openDoc = (id, sheet) => {
     setState({ doc: id, viewsOpen: false });
-    pushChoice(s.view, id);
+    pushChoice(s.view, id, sheet);
   };
   // A document listed `hidden` has no row (viewlist.jsx).
-  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc);
+  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta));
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -535,8 +538,8 @@ export function chromeView(s, props, deps) {
     // model back opens over both.
     toolbarStyle: BAR_LAYER
       + (docOpen ? '18' : s.viewsOpen || s.opsOpen || s.settingsOpen ? '17' : '12'),
-    // At phone width the toolbar keeps the view tabs, Contents on a schematic
-    // below its root sheet, and Fit, the controls for looking. Measure and Comment want a pointer and room to aim,
+    // At phone width the toolbar keeps the view tabs and Fit, the controls for
+    // looking at the model. Measure and Comment want a pointer and room to aim,
     // Frame saves a PNG a phone has nowhere to put, the theme toggle is a
     // preference; the dividers go with them.
     //
@@ -648,10 +651,6 @@ export function chromeView(s, props, deps) {
     fitBtnStyle: quietBtn(!!docOpen && !s.docTools),
     grabFrame: docOpen ? (s.docTools ? () => saveFrame(s.docTools.frame()) : undefined) : () => saveFrame(),
     frameBtnStyle: quietBtn(!!docOpen && !s.docTools),
-    // CONTENTS puts a schematic on a sheet below its root back on the root
-    // sheet, there while its view says it can (`contents` in `docTools`,
-    // KicadView.jsx); without a handler the bar does not draw it.
-    toContents: docOpen && s.docTools && s.docTools.contents ? () => s.docTools.contents() : undefined,
     // OFF `armed` AND NOT OFF `s.tool`, so the strip stops instructing the
     // reader to click a model that will not answer: a tool armed before a
     // comparison opened stays armed and stops firing, and this line is the
