@@ -210,8 +210,8 @@ const SCREEN = ['view', 'doc', 'sheet'];
  *     of history the page follows as it follows Back (`follow` in address.js),
  *     none where the address already names that screen; one naming a view and
  *     no document opens nothing on the page of a build with no model, which has
- *     no `views`. Only with a door to the page (`onOpen`); without one it
- *     stays a plain link.
+ *     no `views`. Without a door to the page (`onOpen`) it is that address
+ *     alone, which the browser opens with a reload.
  *   * A link to another document of this build, by its path: that document's
  *     `?d=`, and a plain click opens it through `onOpen`, as its row in the
  *     list does. Without a door to open one it stays a link to the file.
@@ -229,15 +229,17 @@ export function docLinks(base, documents, onOpen, views) {
   return (href) => {
     const url = urlOf(href);
     if (!url || url.origin !== window.location.origin) return null;
-    // Only where the holder handed a door to the page (`onOpen`): a document
-    // drawn without one — the datasheet's window over a KiCad design — asks
-    // the page for nothing, and its link stays a plain one.
-    if (onOpen && url.pathname === window.location.pathname && !href.startsWith('#')) {
+    if (url.pathname === window.location.pathname && !href.startsWith('#')) {
       const named = parse(url, null);
       const fields = Object.fromEntries(SCREEN.map((field) => [field, named[field]]));
       const screen = (at) => ({ ...respell(at, fields), hash: '' });
+      const to = format(screen(parse()));
+      // A document drawn with no door to the page (`onOpen`) — the datasheet's
+      // window over a KiCad design — asks the page for nothing: its link is
+      // that address alone, opened by the browser with a reload.
+      if (!onOpen) return { href: to };
       return {
-        href: format(screen(parse())),
+        href: to,
         onClick: (event) => {
           if (browsersClick(event)) return;
           event.preventDefault();

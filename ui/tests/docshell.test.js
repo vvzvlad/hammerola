@@ -231,7 +231,7 @@ describe('one document, as both pages draw it', () => {
         + '[p](/project/docs0001/abc123/) [h](#top) [l](/project/docs0001/latest/?v=open)'
       // drawn with no door to the page — the datasheet's window — it is a plain link
       const [loose] = ofType(documentBody(cutList, BASE, note, ''), 'a')
-      expect([loose.props.href, loose.props.onClick]).toEqual(['?v=open', undefined])
+      expect([loose.props.href, loose.props.onClick]).toEqual([`${BASE}?files=k1&x=2&v=open`, undefined])
       const tree = documentBody(cutList, BASE, note, '', [], vi.fn())
       const [open, sheet, full, plain, here, other] = ofType(tree, 'a')
       expect([open, sheet, full, plain].map((a) => a.props.href)).toEqual([`${BASE}?files=k1&x=2&v=open`,

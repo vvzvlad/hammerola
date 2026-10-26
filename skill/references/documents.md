@@ -45,8 +45,8 @@ view `open`, `[the amplifier](?d=hw__main.kicad_sch&s=amp)` the schematic's shee
 `amp`, on the same page, and Back returns to the note (`v=` a view's id, `d=` a
 document's id — its path with `/` as `__` — and `s=` a sheet's name, or its path
 where two sheets share the name). Write the bare query: a full address works the
-same only on the very page it was copied from, and a reader on another revision
-gets a reload onto that one. A picture markdown shows must be a file of
+same only on the very page it was copied from, and on another revision it opens
+that one in a new tab. A picture markdown shows must be a file of
 the build, because an image from another site is not loaded (the page allows
 `img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
 the link without a key, whatever its extension — that is how a revision is sent to
