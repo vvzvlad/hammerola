@@ -192,6 +192,12 @@ export function sheetFromQuery(pages, value) {
   return page ? page.projectPath : null;
 }
 
+/** The address on screen as far as what it names goes: its path and query. */
+function addressNow() {
+  const at = parse();
+  return `${at.path}?${at.params.join('&')}`;
+}
+
 /** The views of a design: the two by the names the viewer gives them
  *  (`targetContext`), and the 3D model of the board. */
 export const SCH = 'SCH';
@@ -504,9 +510,16 @@ export default class KicadView extends React.Component {
     // address asked for while the element switches to it (`followPage`).
     this.page = null;
     this.pageFromHistory = null;
-    this.onPop = () => this.followPage();
-    // Set while the page itself probes an element (`pageProbe`).
+    // The address last seen, Back's and Forward's included (`componentDidUpdate`).
+    this.seen = addressNow();
+    this.onPop = () => {
+      this.seen = addressNow();
+      this.followPage();
+    };
+    // Set while the page itself probes an element (`pageProbe`), and while
+    // the reader's own item of the menu moves the schematic on screen (`choose`).
     this.probing = false;
+    this.choosing = false;
     this.elements = {};
     this.shell = null;
     this.menuNode = null;
@@ -663,14 +676,19 @@ export default class KicadView extends React.Component {
    *  across a change of page and paints it again whenever the element is
    *  made active (`activate`), so the sheet symbol whose double click enters
    *  a sheet would stand selected over the sheet it opens. A probe keeps the
-   *  selection it made. The highlighted nets stay. */
+   *  selection it made, and so does the reader's `… · <sheet>` item over the
+   *  schematic on screen (`choose`): the viewer focuses its target once the
+   *  sheet is open, and a selection put out meanwhile cancels that. The
+   *  highlighted nets stay. */
   paged() {
     const now = this.activePage();
     if (!now || now === this.page) return;
     const before = this.page;
     this.page = now;
     const element = this.elements[SCH];
-    if (!this.probing && typeof element.clearSelection === 'function') element.clearSelection({ keepHighlights: true });
+    if (!this.probing && !this.choosing && typeof element.clearSelection === 'function') {
+      element.clearSelection({ keepHighlights: true });
+    }
     if (now === this.pageFromHistory) {
       this.pageFromHistory = null;
       return;
@@ -857,7 +875,12 @@ export default class KicadView extends React.Component {
       const element = this.elements[item.view];
       if (!element) return;
       if (item.view === menu.from) {
-        element.requestCrossProbe(item.request);
+        this.choosing = true;
+        try {
+          element.requestCrossProbe(item.request);
+        } finally {
+          this.choosing = false;
+        }
         return;
       }
       this.probe = { to: item.view, request: item.request };
@@ -933,25 +956,30 @@ export default class KicadView extends React.Component {
   componentDidUpdate(before) {
     this.activate();
     this.report();
-    // The schematic on screen under an address naming it. Just come on screen
-    // by a choice that wrote its `d=` with no `s=` — its row in the list of
-    // views, `Show in …` from the board — the address takes up the sheet it is
-    // on, which may be another than the root (`paged`), in the entry the
-    // choice wrote. Otherwise it goes to the sheet the address names
-    // (`followPage`, which does nothing where that sheet is on screen): a
-    // sheet chosen in the list of views, over the schematic or over another
-    // member, and Back or Forward. On Back and Forward the page and this
-    // component are handed the entry in one round (`subscribe` in address.js),
-    // and React runs the update for the page's answer after it, while
-    // `window.event` is still the `popstate`: the round itself is over by
-    // then, so `window.event` is what says the update is Back's or Forward's.
-    // `onPop` has put the sheet already where it ran first, and then this call
-    // does nothing.
+    // The schematic on screen under an address naming it, the address changed
+    // since the last update and not by Back or Forward, which `onPop` follows
+    // and notes as seen: an update the page makes later — a click, a revision
+    // it swaps in — leaves alone an entry Back put back, another revision's
+    // `s=` included. Just come on screen by a choice that wrote its `d=` with
+    // no `s=` — its row in the list of views, `Show in …` from the board — the
+    // address takes up the sheet it is on, which may be another than the root
+    // (`paged`), in the entry the choice wrote. Otherwise it goes to the sheet
+    // the address names (`followPage`, which does nothing where that sheet is
+    // on screen): a sheet chosen in the list of views, over the schematic or
+    // over another member, and Back or Forward where the page's update runs
+    // before `onPop`. On Back and Forward the page and this component are
+    // handed the entry in one round (`subscribe` in address.js), and React runs
+    // the update for the page's answer after it, while `window.event` is still
+    // the `popstate`: the round itself is over by then, so `window.event` is
+    // what says the update is Back's or Forward's.
     // An address the page has just written for a choice, not one put back by
     // Back or Forward, is this build's own and is spelled as `tellSheet` says
     // it once the sheet is put (`followPage`'s `normalize`): the root's row
     // names the root by its path (`SheetRows` in viewlist.jsx).
-    if (this.page && this.side() === SCH && this.addressed()) {
+    const address = addressNow();
+    const moved = address !== this.seen;
+    this.seen = address;
+    if (moved && this.page && this.side() === SCH && this.addressed()) {
       const popped = Boolean(window.event && window.event.type === 'popstate');
       if (viewOf(before.doc) !== SCH && !parse().sheet && !popped) this.tellSheet(false);
       else this.followPage(!popped);
