@@ -73,6 +73,24 @@
   no process, `"kind": "documents"` in meta.json), answering with the same
   `BuildOutcome` a model's build does, so `publish_built`, `latest`,
   `builds.json` and the card are the ordinary path
+- `src/githttp.py` — the git server (issue #127): each project's bare
+  repository, `data/repos/<pid>.git`, served under `/git/<pid>.git/` by
+  `git http-backend` behind EDIT_TOKEN. The hub checks the token and hosts the
+  CGI; git answers. Only the three requests of the smart protocol reach the
+  backend (`smart_request`), so the dumb protocol's files are a 404. The
+  stdlib's `CGIHTTPRequestHandler` does not fit: it neither decodes a chunked
+  body, which is how git sends a big push, nor streams the answer. The backend
+  gets a CLEAN environment — `PATH` and `HOME` (`store.git_environment`) plus
+  the CGI variables, so EDIT_TOKEN reaches no git process and no hook — and the
+  server's git configuration as `GIT_CONFIG_COUNT` variables (`SERVER_CONFIG`),
+  so it changes with the image and no repository on the volume needs a
+  migration. A client that goes away does not stop the backend: the rest of
+  its answer is read and dropped, so a push the hub has started finishes.
+  `end_of_request` runs after the backend exits and before the connection
+  closes; it is empty for now. The repository itself is the store's: created
+  by `ensure_repo` on the first git request, under a lock of its own; swept of
+  ref locks, push quarantine and unrenamed staging at startup with no age
+  threshold (`_sweep_repos`); removed with the project
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). `build` fills the `dev` slot, `commit`
   publishes an immutable revision; around them sit `login`, `create`, `status`,
@@ -216,6 +234,16 @@
   FIRST on `sys.path` (so a project may deliberately shadow it) and the name
   then has to resolve on the path behind it — `/app` in the image. Smoke check
   (g) is what proves it reached the image
+- `githooks/` — the hooks git runs for a push to a project's repository on the
+  hub, found through `core.hooksPath`, which `src/githttp.py` derives from its
+  own location (`/app/githooks` in the image, `/src/githooks` in CI's test
+  container). One today: `pre-receive`, which refuses every push with
+  `this hub does not publish over git yet`. THE EXECUTABLE BIT IS LOAD-BEARING:
+  a hook git cannot run, or cannot find, is skipped, and the push is then
+  ACCEPTED without a word. So the file is committed executable, the Dockerfile
+  copies the directory with `COPY --chmod=0755`, and smoke check (j) fails the
+  gate when the hook is missing from the image or not executable by `app` —
+  which the suite cannot see, since it takes the hook from the checkout
 - `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
   of its own: its `isolated_project` fixture is autouse and would otherwise
   chdir every hub test into a scratch project. `tests/client/` has one too, and
@@ -521,7 +549,7 @@
   same three that make up its build context — which is what makes reuse on the
   runner's persistent daemon safe: a stale image cannot answer to a current name.
   `tests/test_ci_kernel_libs.py` holds its library list to the Dockerfile's
-- `ci/smoke.py` — the gate between build and publish: nine checks (a)–(i) the
+- `ci/smoke.py` — the gate between build and publish: ten checks (a)–(j) the
   test suite structurally cannot make, because it runs against a checkout and
   never looks at the artefact. (b) proves the startup guard fires and NAMES the
   missing variable. It used to prove more — that the guard names EVERY missing
@@ -530,7 +558,8 @@
   `tests/test_config_errors.py`, which can hand the guard a settings class with
   several required fields. Read `REQUIRED_VARIABLES` there before assuming the
   gate still covers it.
-  (h) is the only check here that makes a REQUEST — it asks the running
+  (h) and (j) are the checks here that make a REQUEST. (j) asks the git route
+  with the token and without and looks for the push hook; (h) asks the running
   container for the three `/start` files, two of which are assembled when the
   request arrives and so cannot be checked by naming a path at all. It is a
   witness for the whole client only because the assembly REFUSES when a module

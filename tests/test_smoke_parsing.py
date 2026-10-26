@@ -7,14 +7,15 @@ nobody here controls: OpenCASCADE and VTK print during interpreter finalisation 
 `docker()` folds stderr into stdout, so noise lands on both sides of the payload.
 The number of targets is not spelled out: it derives from CAD_IMPORTS and PINS.
 
-`parse_marked_verdicts()` is what checks (h) and (i) read their answers with, and
+`parse_marked_verdicts()` is what checks (h), (i) and (j) read their answers with, and
 it must never read a key the probe said nothing about as a key that answered (the
 gate would print `ok` about a question it never asked). It is exercised through
 `parse_start_routes()`, which binds check (h)'s mark, and separately with check
 (i)'s mark.
 
-Two of the gate's constants are held here too, at the bottom: the routes check (h)
-asks for and the port it asks on. They are literals in `ci/smoke.py` because that
+The gate's copies of the hub's constants are held here too, at the bottom: the
+routes check (h) asks for and the port it asks on, and check (j)'s token header,
+git route and hook directory. They are literals in `ci/smoke.py` because that
 file imports nothing from the application, and a drifted copy would be a FALSE RED
 on a healthy image.
 
@@ -29,11 +30,12 @@ import json
 from urllib.parse import urlsplit
 
 from ci.smoke import (BUILD_MARK, BUILD_PROBE_SOURCE, BUILD_TARGETS, CAD_SENTINEL,
-                      EXPECTED_TARGETS, SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
+                      EXPECTED_TARGETS, GIT_HOOK, GIT_MARK, GIT_PROBE_SOURCE,
+                      GIT_TARGETS, GIT_URL, SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
                       START_MARK, START_ORIGIN, START_PROBE_SOURCE,
-                      START_ROUTES, parse_cad_verdicts, parse_marked_verdicts,
-                      parse_start_routes)
-from src import onboarding
+                      START_ROUTES, TOKEN_HEADER, parse_cad_verdicts,
+                      parse_marked_verdicts, parse_start_routes)
+from src import app, githttp, onboarding
 from src.settings import Settings
 
 # What a real probe run answers with: the same shape CAD_PROBE_SOURCE builds — one key per
@@ -330,3 +332,39 @@ def test_another_probes_verdicts_are_not_read_as_this_one_s():
 
     assert parse_marked_verdicts(output, BUILD_MARK) == {"force": None}
     assert parse_marked_verdicts(output, START_MARK) == {"/start/skill.tar.gz": None}
+
+
+# -- check (j): the git server -----------------------------------------------------------------
+# The same FALSE RED as (h)'s when a copy drifts: the gate holds its own literals of the hub's
+# header, route and hook directory.
+def test_the_git_probe_the_image_runs_is_valid_python():
+    """Same reason as check (h)'s: a syntax error here is a red gate about a healthy image."""
+    ast.parse(GIT_PROBE_SOURCE)
+
+
+def test_the_git_probe_presents_the_token_in_the_hubs_own_header():
+    assert TOKEN_HEADER == app.TOKEN_HEADER
+
+
+def test_the_git_probe_asks_for_a_request_the_hub_answers():
+    """A renamed route or a request the hub refuses would turn the 200 row red."""
+    path, _, query = GIT_URL.partition("?")
+    assert path.startswith(f"/{githttp.ROUTE}/")
+    rest = [segment for segment in path.split("/") if segment][1:]
+    assert githttp.smart_request("GET", rest, query) is not None
+
+
+def test_the_git_probe_looks_for_the_hook_where_the_hub_points_git():
+    assert GIT_HOOK.endswith(f"/{githttp.HOOKS_DIR.name}/pre-receive")
+
+
+def test_the_git_probe_answers_every_question_the_gate_declares():
+    """As in check (i): a key renamed on one side only is a verdict that never comes back."""
+    for key, _target in GIT_TARGETS:
+        assert f'report("{key}"' in GIT_PROBE_SOURCE, (
+            f"GIT_TARGETS declares {key!r} and the probe never reports it")
+
+
+def test_the_git_probe_has_a_mark_of_its_own():
+    """One parser reads all three, so a shared mark would let another probe's lines answer."""
+    assert GIT_MARK not in (START_MARK, BUILD_MARK)

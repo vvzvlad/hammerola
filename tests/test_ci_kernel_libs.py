@@ -21,11 +21,9 @@ TEST_DOCKERFILE = ROOT / "ci" / "Dockerfile.test"
 # The shipped image's own runtime tools, on its line and deliberately not in the
 # test one: `curl` is the healthcheck's, `gosu` the entrypoint's, and nothing in
 # the suite runs either; `fonts-dejavu-core` is the font the picture of a DXF draws
-# its text with, and no test looks at that text. `git` is the other way round — the
-# test image installs it for tests/test_no_conflict_markers.py, and the shipped one
-# has no use for it.
+# its text with, and no test looks at that text. `git` is on both lines: the hub
+# serves its repositories with it, and the suite runs it.
 RUNTIME_ONLY = {"curl", "gosu", "fonts-dejavu-core"}
-TEST_ONLY = {"git"}
 
 # `apt-get install -y --no-install-recommends` followed by the packages, a
 # backslash-continued block in both files, so the package list is whatever stands
@@ -60,7 +58,7 @@ def packages(path):
 
 
 def test_the_two_images_install_the_same_kernel_libraries():
-    """One list, two files, equal apart from the two named exceptions.
+    """One list, two files, equal apart from the named exception.
 
     Compared as sets rather than as text: order and indentation are each file's
     own business. A missing file raises in `packages()`, and the libgl1 row guards
@@ -71,7 +69,7 @@ def test_the_two_images_install_the_same_kernel_libraries():
         "the Dockerfile no longer installs libgl1 by a line this test can read; "
         "`import cadquery` fails without it, so check the install command rather "
         "than this expectation")
-    suite = packages(TEST_DOCKERFILE) - TEST_ONLY
+    suite = packages(TEST_DOCKERFILE)
     assert suite == image, (
         f"ci/Dockerfile.test and the shipped image install different kernel "
         f"libraries. Only in the image: {sorted(image - suite)}; only in the "

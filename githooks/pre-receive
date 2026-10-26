@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Refuse every push to a project's repository on the hub.
+
+git runs this hook (`core.hooksPath`, set in src/githttp.py) once the pushed
+objects have arrived and before any ref moves. A non-zero exit refuses the whole
+push, and what the hook prints reaches the pusher as `remote: ...`.
+"""
+
+import sys
+
+sys.stderr.write("this hub does not publish over git yet\n")
+sys.exit(1)
