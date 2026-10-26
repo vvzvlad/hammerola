@@ -190,8 +190,8 @@ const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stro
 // the mark of a row with a submenu.
 const SUBMENU_MARK = 'flex:none;display:flex;color:var(--text-muted);transform:rotate(-90deg)';
 // The submenu of a schematic's sheets: the card's look, as wide as its longest
-// name within bounds, no taller than the card and scrolling past that
-// (`SheetRows`); `height` is the card's, null until it is measured.
+// name within bounds, no taller than the card's cap and scrolling past that
+// (`SheetRows`); `height` is the cap, null until it is measured.
 const sheetsFlyout = (height) => 'position:fixed;box-sizing:border-box;min-width:160px;max-width:260px;'
   + `overflow:auto;${CARD_LOOK}` + (height ? `max-height:${height}px` : '');
 // The one quiet row while the sheets' files come in, set in as a sheet's row.
@@ -208,10 +208,11 @@ const FLYOUT_MARGIN = 8;
  * kicadpages.js), for a row that carries `chooseSheet` (`documentRows`); `open`
  * is whether the card is. The row opens the schematic as any row does; the
  * chevron at its right end points right, the mark of a submenu. The submenu
- * stands beside the card and within its height, its top at the row's, raised
- * where its bottom would pass the card's: below the card is the bar, whose
- * controls it would cover, and the card's own cap keeps it clear of the page's
- * header above (`viewMenuStyle`). The mouse shows it on entering the row, and
+ * stands beside the card, its top at the row's, raised where its bottom would
+ * pass the card's: below the card is the bar, whose controls it would cover.
+ * It reaches no higher than the card may — the card's cap (`viewMenuStyle`)
+ * keeps clear of the page's header — and is no taller than that, so that a
+ * short card does not squeeze it. The mouse shows it on entering the row, and
  * it goes a moment (`SHEETS_LINGER_MS`) after the pointer has left the row and
  * the submenu both, so that the way from one to the other keeps it; a click on
  * the chevron shows it too. A touch screen has no hover: there a tap on the
@@ -248,7 +249,7 @@ export class SheetRows extends React.Component {
     super(props);
     // `shown`: whether the submenu is. `pages`: the sheets once read, null
     // before. `left` and `top`: the submenu's offsets from the bar, and
-    // `height` the card's, as `place` measures them.
+    // `height` the card's cap, as `place` measures them.
     this.state = { shown: false, pages: null, left: 0, top: 0, height: null };
     this.asked = false;
     this.rowBox = React.createRef();
@@ -294,20 +295,22 @@ export class SheetRows extends React.Component {
   }
 
   /** The submenu beside the card (the row's parent), inside the window and
-   *  within the card's height, moved only where it is off by more than a
+   *  within the card's reach, moved only where it is off by more than a
    *  rounding, so that the move does not call for another. */
   place() {
     const flyout = this.flyoutBox.current;
     if (!flyout) return;
     const row = this.rowBox.current.getBoundingClientRect();
-    const card = this.rowBox.current.parentElement.getBoundingClientRect();
+    const cardBox = this.rowBox.current.parentElement;
+    const card = cardBox.getBoundingClientRect();
+    const cap = parseFloat(getComputedStyle(cardBox).maxHeight);
     const box = flyout.getBoundingClientRect();
     const { left, top, height } = this.state;
     const x = Math.max(FLYOUT_MARGIN, Math.min(card.right + FLYOUT_GAP, window.innerWidth - box.width - FLYOUT_MARGIN))
       - (box.left - left);
-    const y = Math.max(card.top, Math.min(row.top, card.bottom - box.height)) - (box.top - top);
+    const y = Math.max(card.bottom - cap, Math.min(row.top, card.bottom - box.height)) - (box.top - top);
     const off = (a, b) => b === null || Math.abs(a - b) > 0.5;
-    if (off(x, left) || off(y, top) || off(card.height, height)) this.setState({ left: x, top: y, height: card.height });
+    if (off(x, left) || off(y, top) || off(cap, height)) this.setState({ left: x, top: y, height: cap });
   }
 
   /** The sheets read once, when the submenu is first shown in an open card. */
