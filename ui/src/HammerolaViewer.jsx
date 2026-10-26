@@ -73,7 +73,7 @@ import React from 'react';
 
 import {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
-  PLACE, PIN, MODEL, ERROR, TOOL, CAMERA, VIEWPORT_TAG,
+  PLACE, PIN, MODEL, ERROR, TOOL, VIEWPORT_TAG,
 } from './events.js';
 // The page's address and its history, every read of them and every write.
 import {
@@ -302,11 +302,6 @@ const NUDGE_QUIET_MS = 100;
 // tab has already been saved. `saveProposal` says what the guards around it are
 // for, and who calls it.
 const PROPOSAL_SAVE_MS = 800;
-
-// HOW LONG THE CAMERA HAS TO STAND STILL before the address is rewritten with
-// it (`writeCamera`). An orbit reports every frame, so the address is written
-// once the hand stops, not per frame.
-export const CAMERA_WRITE_MS = 400;
 
 // WHAT THE PROPOSAL'S BRANCH IS EXPANDED AND COLLAPSED UNDER, in the same
 // `expanded` map the parts tree keys by node id. It cannot collide with one of
@@ -994,11 +989,13 @@ export default class HammerolaViewer extends React.Component {
     const opened = parse();
     this._linkKey = { slot: PAGE.slot, key: opened.files || '' };
     // The camera frame the ADDRESS carried when the page loaded (`?c=`), or
-    // null. Read here, before anything rewrites the address, and spent by the
-    // first model event (`onModel`); on a comparison link by the comparison
-    // scene's, or put on the own view when the comparison ends without one
-    // (`sceneNeverCame`).
+    // null, spent by the first model event (`onModel`); on a comparison link
+    // by the comparison scene's, or put on the own view when the comparison
+    // ends without one (`sceneNeverCame`). `c=` is taken out of the address
+    // here and now: the address bar never carries the frame, which goes into
+    // a link only through the Share window's Current view box (`cameraParam`).
     this._linkCamera = decodeCamera(opened.camera);
+    if (opened.camera !== null) navigate(respell(opened, { camera: null }));
     // The rest of this page's instance fields, declared in one place because
     // `componentWillUnmount` must know every one: it removes the listeners and
     // clears the timers, and a field it misses is a leaked listener or a timer
@@ -1027,7 +1024,6 @@ export default class HammerolaViewer extends React.Component {
     this._tt = undefined;           // the toast's own life
     this._proposalSave = undefined; // the debounce on writing the document to the hub
     this._cmpWaits = undefined;     // every gap between two polls of a comparison job
-    this._camWrite = undefined;     // the debounce on writing the camera into the address
     // -- what the model event and the stored proposal leave for each other
     this._refit = undefined;        // the next model event refits the camera
     this._modelSeen = undefined;    // a model event has landed at all
@@ -1427,8 +1423,6 @@ export default class HammerolaViewer extends React.Component {
         this.setState({ held: !!d.held });
         if (d.escape) this.set({ tool: null });
       },
-      // The camera moved. A method, for the reason `onModel` is one.
-      [CAMERA]: () => this.onCamera(),
     };
     Object.keys(this._h).forEach((k) => window.addEventListener(k, this._h[k]));
 
@@ -1565,8 +1559,6 @@ export default class HammerolaViewer extends React.Component {
     // And the proposal's save, for the same reason one step further out: it
     // would wake up and POST on behalf of a page nobody is looking at.
     clearTimeout(this._proposalSave);
-    // And the camera's write into the address of a page that is gone.
-    clearTimeout(this._camWrite);
     // The deferred swap goes with them: it holds `this` and would come back on a
     // component that is gone, to `setState` on it.
     clearTimeout(this._swap);
@@ -2689,20 +2681,11 @@ export default class HammerolaViewer extends React.Component {
       if (forScene) this._linkCamera = null;
       const el = this.el();
       if (opened && !d.live && el && typeof el.setCamera === 'function') el.setCamera(opened);
-      // A scene drawn afresh fitted the camera afresh, so the address is
-      // rewritten from the camera rather than left naming the frame of the
-      // scene that went — and with the view on screen, since `showView` moves
-      // no address (the banner's build can land on another view without one)
-      // and a frame under another view's `v=` would aim at the wrong layout.
-      // Nothing is written under an open document (`writeCamera`), whose
-      // address names no frame. Here and not in the debounce: a timer firing
-      // during a `popstate` switch would rewrite `v=` before `switchBuild`
-      // reads the entry's own (`entryView`). A comparison's view is `cmpView`.
-      //
-      // A live one kept the reader's frame. On Back and Forward the restored
-      // entry carries its own older `c=`; the library's end-of-render camera
-      // report (`onCamera`) rewrites it to the frame that was kept.
-      if (!d.live) this.writeCamera(compared ? this.state.cmpView : this.state.view);
+      // A scene drawn afresh: the address names the view on screen, since
+      // `showView` moves no address (the banner's build can land on another
+      // view without one). Nothing is written under an open document
+      // (`writeView`). A comparison's view is `cmpView`.
+      if (!d.live) this.writeView(compared ? this.state.cmpView : this.state.view);
       this._refit = false;
       // The stored document is adopted here, in the callback, because only now
       // are both preconditions true: a view has rendered (`meta` is in) and the
@@ -3165,7 +3148,6 @@ export default class HammerolaViewer extends React.Component {
     this._linkCamera = null;
     const el = this.el();
     if (el && typeof el.setCamera === 'function') el.setCamera(opened);
-    this.writeCamera();
   }
 
   /** Is this still the comparison the reader is looking at? */
@@ -3936,8 +3918,6 @@ export default class HammerolaViewer extends React.Component {
       return;
     }
     el.setCamera(this.home);
-    // `setCamera` raises no camera event, so the address is told here.
-    this.writeCamera();
   }
 
   frameBlob() {
@@ -4950,10 +4930,10 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * The frame on screen as `c=` says it, so an address opens on the angle the
-   * reader is looking from; null while there is no frame to read. Read by
-   * `screenParams` with no document open, by `writeCamera` and `writeDoc`, and
-   * by the Share window's link with its Current view box ticked.
+   * The frame on screen as `c=` says it, so a link opens on the angle the
+   * reader is looking from; null while there is no frame to read. Read only by
+   * the Share window's link with its Current view box ticked: the address bar
+   * never carries the frame (`_linkCamera`).
    */
   cameraParam() {
     return encodeCamera(this.frameCamera());
@@ -4962,18 +4942,15 @@ export default class HammerolaViewer extends React.Component {
   /**
    * What an address names so that opening it lands on what the menu of views
    * has chosen, as fields of address.js: `view` (none for the first,
-   * `viewParam`), then document `doc`, or with no document the frame on screen
-   * (`cameraParam`). Never both: the frame describes the model, which a
-   * document covers. A schematic's sheet given as `chosen` is named as `s=`,
-   * '' — the root sheet — as none; without one the document the address
-   * already names keeps the schematic's sheet it names (`s=`), which is the
-   * one on screen; another revision without that sheet opens on the root one,
-   * as a fresh load with an unknown `?s=` does.
+   * `viewParam`), then document `doc`. A schematic's sheet given as `chosen`
+   * is named as `s=`, '' — the root sheet — as none; without one the document
+   * the address already names keeps the schematic's sheet it names (`s=`),
+   * which is the one on screen; another revision without that sheet opens on
+   * the root one, as a fresh load with an unknown `?s=` does.
    *
    * Every address this page writes whole names these: the push that lands a
    * swap, the replace that calls one off, the moves onto and off a comparison,
-   * and a choice in the menu of views (`pushChoice`, which leaves another
-   * view's frame to `onModel`).
+   * and a choice in the menu of views (`pushChoice`).
    */
   screenParams(view, views, doc, chosen) {
     const at = parse();
@@ -4981,7 +4958,6 @@ export default class HammerolaViewer extends React.Component {
       view: viewParam(view, views),
       doc,
       sheet: chosen !== undefined ? chosen : doc && doc === at.doc ? at.sheet : null,
-      camera: doc ? null : this.cameraParam(),
     };
   }
 
@@ -4998,46 +4974,29 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * The camera moved: the address follows once it has stood still for
-   * `CAMERA_WRITE_MS`. Only a timer per event, since one comes every frame of
-   * an orbit.
-   */
-  onCamera() {
-    clearTimeout(this._camWrite);
-    this._camWrite = setTimeout(() => this.writeCamera(), CAMERA_WRITE_MS);
-  }
-
-  /**
-   * Rewrite `c=` in the address bar with the frame on screen, keeping the path
-   * and every other parameter as written (`respell`). Given a `view`, `v=` is
-   * rewritten too, in front (none for the first view); without one it stays
-   * as it stands. Nothing is written while a document is open (`shownDoc`):
-   * the frame describes the model, which the document covers
-   * (`screenParams`).
+   * Rewrite `v=` in the address bar with the view on screen, in front (none
+   * for the first view), keeping the path and every other parameter as
+   * written (`respell`). Nothing is written while a document is open
+   * (`shownDoc`), whose address names the document instead.
    *
-   * A replace, never a push: moving the camera is not somewhere the reader
-   * went, and Back must not walk through every angle.
+   * A replace, never a push: a scene drawn afresh is not somewhere the reader
+   * went.
    */
-  writeCamera(view) {
+  writeView(view) {
     if (this.shownDoc()) return;
-    const frame = this.cameraParam();
-    if (!frame) return;
     const views = (this.state.meta && this.state.meta.views) || [];
-    const fields = view === undefined ? { camera: frame } : { view: viewParam(view, views), camera: frame };
-    navigate(respell(parse(), fields, view !== undefined));
+    navigate(respell(parse(), { view: viewParam(view, views) }, true));
   }
 
   /**
    * Rewrite `d=` in the address bar: the document now laid over the model, or
-   * none, so a copied address opens on what is on screen. `c=` and the
-   * schematic's sheet (`s=`) go with it, and with no document `c=` comes back
-   * as the frame on screen, as `screenParams` names an address. A replace
-   * like `writeCamera`, every other parameter kept as written: for the
-   * document the banner's build does not list (`takePending`), whose address
-   * does not move.
+   * none, so a copied address opens on what is on screen. The schematic's
+   * sheet (`s=`) goes with it. A replace, every other parameter kept as
+   * written: for the document the banner's build does not list
+   * (`takePending`), whose address does not move.
    */
   writeDoc(id) {
-    navigate(respell(parse(), { doc: id, sheet: null, camera: id ? null : this.cameraParam() }));
+    navigate(respell(parse(), { doc: id, sheet: null }));
   }
 
   /**
@@ -5062,24 +5021,19 @@ export default class HammerolaViewer extends React.Component {
    * is pushed for the choice the entry already names: the row already shown.
    *
    * The path and every other parameter stay as written (`files=` among them);
-   * `v=`, `d=`, `s=` and `c=` are written anew (`respell`) as `screenParams`
-   * names them, which names the `sheet` given as `s=`, none for the root, and
+   * `v=`, `d=` and `s=` are written anew (`respell`) as `screenParams` names
+   * them, which names the `sheet` given as `s=`, none for the root, and
    * without one keeps the schematic's sheet only for the document already
    * named: a design chosen after another document opens on its root sheet,
    * while its schematic chosen after its own board, the element kept, writes
-   * back the sheet it is on (`writeSheet`). Another view gets no `c=`: the
-   * frame on screen is the view being left's, and `onModel` writes the new
-   * one's once it is drawn. The entry keeps the state object of the one it
-   * follows, the build not having moved.
+   * back the sheet it is on (`writeSheet`). The entry keeps the state object
+   * of the one it follows, the build not having moved.
    */
   pushChoice(view, doc, sheet) {
     const views = (this.state.meta && this.state.meta.views) || [];
     const at = parse();
     if (view === this.entryView(views) && doc === at.doc && (sheet === undefined || sheet === (at.sheet || ''))) return;
-    const fields = !doc && view !== this.state.view
-      ? { view: viewParam(view, views), doc: null, sheet: null, camera: null }
-      : this.screenParams(view, views, doc, sheet);
-    navigate(respell(at, fields), { push: true });
+    navigate(respell(at, this.screenParams(view, views, doc, sheet)), { push: true });
   }
 
   /**

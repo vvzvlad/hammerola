@@ -1,21 +1,22 @@
-// The camera in the model page's address: `c=`, eleven numbers, so a copied
-// address or a Share link opens on the angle its sender was looking from.
+// The camera in a link to the model page: `c=`, eleven numbers, so a Share
+// link with its Current view box ticked opens on the angle its sender was
+// looking from.
 //
-// Under test is the chain from the address to the viewport and back: the pair
-// of functions that write and read the value (hub.js), the frame an opened
+// Under test is the chain from the address to the viewport: the pair of
+// functions that write and read the value (hub.js), the frame an opened
 // address carries put on screen by the first model event (on a comparison
-// link, the comparison scene's), and the address following the camera: once
-// the reader's hand stops, after Fit, and after a scene drawn afresh, which
-// also writes the view on screen. The viewport is a stub
-// that answers `getCamera` and takes `setCamera`; what the library does with a
-// frame is element.test.js's subject.
+// link, the comparison scene's), and the address bar, which never carries the
+// frame: the page takes `c=` out as it opens, a scene drawn afresh writes the
+// view on screen, and nothing writes the frame back. The viewport is a stub that answers `getCamera`
+// and takes `setCamera`; what the library does with a frame is
+// element.test.js's subject.
 //
 // Nothing is rendered: the instance is the real prototype with the state
 // spelled out (component.js), and the real methods run over it.
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import HammerolaViewer, { CAMERA_WRITE_MS } from '../src/HammerolaViewer.jsx'
+import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { decodeCamera, encodeCamera, rereadPage } from '../src/hub.js'
 import { makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
@@ -27,8 +28,8 @@ const HOME = `/project/proj1/${A}/`
 // Every test here writes the address; the guard puts it back around each one.
 guardPage(HOME)
 
-// `history.replaceState` and `pushState` are spied on below, and they are the
-// real object's methods: a spy left standing would count the next test's calls.
+// `linkOf` silences `console.warn` with a spy: one left standing would swallow
+// the next test's warnings.
 afterEach(() => { vi.restoreAllMocks() })
 
 /** A frame as the library reports one, with more digits than the address keeps. */
@@ -44,9 +45,6 @@ const TEXT = '12.35,-7.89,100,0.12346,-0.65432,0.5,0.54322,1.23,0,-4,1.235'
 
 /** The same frame unrounded, as a hand-edited link could carry it. */
 const RAW = '12.3456,-7.891,99.9999,0.123456,-0.654321,0.5,0.543219,1.234,0,-3.999,1.234567'
-
-/** A frame the address held before, which every rewrite below replaces. */
-const STALE = '1,2,3,0,0,0,1,0,0,0,1'
 
 /** The library's own fit, before any frame from the address is put on screen. */
 const FITTED = { position: [0, 0, 500], quaternion: [0, 0, 0, 1], target: [0, 0, 0], zoom: 1 }
@@ -67,7 +65,6 @@ const viewport = (start) => {
   return {
     getCamera: () => shown,
     setCamera: vi.fn((frame) => { shown = frame }),
-    aim: (frame) => { shown = frame },
   }
 }
 
@@ -107,6 +104,16 @@ const linkOf = (address) => {
 }
 
 describe('an address that carries c=', () => {
+  it('is taken out of the address as the page opens, before anything is drawn', () => {
+    // A document opened or Back pressed before the model is drawn finds no
+    // frame in the address to carry along: the page holds it (`_linkCamera`).
+    window.history.replaceState({ hmr: 'kept' }, '', `${HOME}?v=print&c=${RAW}&files=K`)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(new HammerolaViewer({})._linkCamera).toEqual(decodeCamera(RAW))
+    expect(location.search).toBe('?v=print&files=K')
+    expect(history.state).toEqual({ hmr: 'kept' })
+  })
+
   it('opens on that frame, set once by the first model event, with Fit left on the library\'s', () => {
     const el = viewport(FITTED)
     // What the constructor read off the address, handed to a page built by
@@ -119,9 +126,9 @@ describe('an address that carries c=', () => {
     expect(el.setCamera).toHaveBeenCalledTimes(1)
     expect(el.setCamera).toHaveBeenCalledWith(decodeCamera(RAW))
     expect(c.home).toEqual(FITTED)
-    // And the address names what is on screen: the view, and the frame as
-    // `c=` spells it.
-    expect(location.search).toBe(`?v=print&c=${TEXT}`)
+    // And the address names the view on screen and no frame: the one the
+    // link came with is spent.
+    expect(location.search).toBe('?v=print')
 
     c.onModel({ tree: TREE, view: 'print', live: false })
     expect(el.setCamera).toHaveBeenCalledTimes(1)
@@ -151,12 +158,14 @@ describe('an address that carries c=', () => {
 
     c.onModel({ tree: TREE, view: 'assembled', live: false })
     expect(el.setCamera).not.toHaveBeenCalled()
+    // Out of the address already: the frame waits in the page, not there.
+    expect(location.search).toBe('')
 
     c.setState({ cmpStage: 'ready' })
     c.onModel({ tree: TREE, view: 'compare:assembled', live: false })
     expect(el.setCamera).toHaveBeenCalledTimes(1)
     expect(el.setCamera).toHaveBeenCalledWith(decodeCamera(TEXT))
-    expect(location.search).toBe(`?c=${TEXT}`)
+    expect(location.search).toBe('')
   })
 
   /** A page opened on a comparison link carrying `c=`, before any model event. */
@@ -190,7 +199,7 @@ describe('an address that carries c=', () => {
     expect(c.state.cmpStage).toBe('locked')
     expect(el.setCamera).toHaveBeenCalledTimes(1)
     expect(el.setCamera).toHaveBeenCalledWith(decodeCamera(TEXT))
-    expect(location.search).toBe(`?c=${TEXT}`)
+    expect(location.search).toBe('')
   })
 
   it('on a comparison link whose job failed, is put on the build\'s own view', async () => {
@@ -203,7 +212,7 @@ describe('an address that carries c=', () => {
     expect(c.state.cmpStage).toBe('failed')
     expect(el.setCamera).toHaveBeenCalledTimes(1)
     expect(el.setCamera).toHaveBeenCalledWith(decodeCamera(TEXT))
-    expect(location.search).toBe(`?c=${TEXT}`)
+    expect(location.search).toBe('')
   })
 
   it('on a comparison link locked before any view rendered, is taken by the own view', async () => {
@@ -215,85 +224,46 @@ describe('an address that carries c=', () => {
     c.onModel({ tree: TREE, view: 'assembled', live: false })
     expect(el.setCamera).toHaveBeenCalledTimes(1)
     expect(el.setCamera).toHaveBeenCalledWith(decodeCamera(TEXT))
-    expect(location.search).toBe(`?c=${TEXT}`)
+    expect(location.search).toBe('')
   })
 })
 
 describe('the address bar', () => {
-  it('names the view on screen and its frame after a view tab, keeping the rest', () => {
-    // `showView` moves no address, so the scene it draws is what writes the
-    // `v=` beside the frame fitted to it.
-    window.history.replaceState({ hmr: 'kept' }, '', `${HOME}?d=docs__a.md&files=K&c=${STALE}`)
-    const el = viewport(FRAME)
-    const c = page(el, { state: { meta: META, view: 'assembled' } })
+  it('names the view on screen after a view tab and no frame, keeping the rest', () => {
+    // `showView` moves no address, so the scene it draws is what writes `v=`.
+    window.history.replaceState({ hmr: 'kept' }, '', `${HOME}?d=docs__a.md&files=K`)
+    const c = page(viewport(FRAME), { state: { meta: META, view: 'assembled' } })
 
     c.onModel({ tree: TREE, view: 'print', live: false })
-    expect(location.search).toBe(`?v=print&d=docs__a.md&files=K&c=${TEXT}`)
+    expect(location.search).toBe('?v=print&d=docs__a.md&files=K')
     expect(history.state).toEqual({ hmr: 'kept' })
 
     // Back on the first view, which the path already implies: no `v=`.
-    el.aim({ ...FRAME, zoom: 2 })
     c.onModel({ tree: TREE, view: 'assembled', live: false })
-    expect(location.search)
-      .toBe('?d=docs__a.md&files=K&c=12.35,-7.89,100,0.12346,-0.65432,0.5,0.54322,1.23,0,-4,2')
+    expect(location.search).toBe('?d=docs__a.md&files=K')
   })
 
-  it('names no frame while a document is open, and the frame again once it closes', () => {
-    window.history.replaceState(null, '', `${HOME}?d=docs__a.md&files=K&c=${STALE}`)
+  it('is left alone under an open document, and gets no frame once it closes', () => {
+    window.history.replaceState(null, '', `${HOME}?d=docs__a.md&files=K`)
     const listing = { ...META, documents: [
       { id: 'docs__a.md', name: 'docs/a.md', type: 'markdown', file: 'docs/a.md', bytes: 9 }] }
     const c = page(viewport(FRAME), { state: { meta: listing, view: 'assembled', doc: 'docs__a.md' } })
-    c.writeCamera('print')
-    expect(location.search).toBe(`?d=docs__a.md&files=K&c=${STALE}`)
-    // A `d=` this build does not list (an old link) leaves the model on screen.
-    c.setState({ meta: META })
-    c.writeCamera()
-    expect(location.search).toBe(`?d=docs__a.md&files=K&c=${TEXT}`)
-    // `writeDoc` names the address as `screenParams` does: `d=` or `c=`, and
-    // no sheet of the schematic open before.
+    c.writeView('print')
+    expect(location.search).toBe('?d=docs__a.md&files=K')
+    // `writeDoc` names `d=` and no sheet of the schematic open before.
     window.history.replaceState(null, '', `${HOME}?d=hw__a.kicad_sch&files=K&s=amp`)
     c.writeDoc('docs__a.md')
     expect(location.search).toBe('?files=K&d=docs__a.md')
     c.writeDoc(null)
-    expect(location.search).toBe(`?files=K&c=${TEXT}`)
+    expect(location.search).toBe('?files=K')
   })
 
-  it('follows Fit to the frame it went back to', () => {
-    window.history.replaceState(null, '', `${HOME}?files=K&c=${STALE}`)
+  it('gets no frame from Fit', () => {
+    window.history.replaceState(null, '', `${HOME}?files=K`)
     const el = viewport({ ...FRAME, zoom: 5 })
     const c = page(el, { home: FRAME })
     c.fitView()
-    expect(location.search).toBe(`?files=K&c=${TEXT}`)
-  })
-
-  it('rewrites c= once the camera stops, keeping the path and every other parameter', () => {
-    vi.useFakeTimers()
-    onTestFinished(() => { vi.useRealTimers() })
-    // `v=print` is not a view this build has: the timer leaves `v=` as it
-    // stands, and only the scene drawn afresh rewrites it.
-    window.history.replaceState({ hmr: 'kept' }, '', `${HOME}?v=print&files=K`)
-    let shown = FRAME
-    const c = makeComponent(HammerolaViewer, { host: { current: { getCamera: () => shown } } })
-    const replace = vi.spyOn(history, 'replaceState')
-    const push = vi.spyOn(history, 'pushState')
-
-    // An orbit is an event per frame, and each one restarts the wait.
-    c.onCamera()
-    vi.advanceTimersByTime(CAMERA_WRITE_MS - 1)
-    c.onCamera()
-    vi.advanceTimersByTime(CAMERA_WRITE_MS - 1)
-    expect(replace).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(1)
-    expect(replace).toHaveBeenCalledTimes(1)
-    expect(`${location.pathname}${location.search}`).toBe(`${HOME}?v=print&files=K&c=${TEXT}`)
-    expect(history.state).toEqual({ hmr: 'kept' })
-
-    // Moved again: the value is replaced, not added beside the old one.
-    shown = { ...FRAME, zoom: 2 }
-    c.onCamera()
-    vi.advanceTimersByTime(CAMERA_WRITE_MS)
-    expect(location.search)
-      .toBe('?v=print&files=K&c=12.35,-7.89,100,0.12346,-0.65432,0.5,0.54322,1.23,0,-4,2')
-    expect(push).not.toHaveBeenCalled()
+    expect(el.setCamera).toHaveBeenCalledWith(FRAME)
+    expect(location.search).toBe('?files=K')
   })
 })
