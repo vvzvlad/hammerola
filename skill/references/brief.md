@@ -96,8 +96,7 @@ your context: take the newest `*.jsonl` by mtime, and if nothing matches, list
 the directory and find the one holding your work. One JSON object per line, up
 to 100 MB, so read it a line at a time. Images sit in `user` records **and** in
 the `attachment.prompt` of `type: "attachment"` records (what was pasted while
-you worked), which `message.content` alone misses. A name taken from
-`media_type` keeps the `+` of `image/svg+xml` and refuses the push by rule 1.
+you worked), which `message.content` alone misses.
 
 **Every number has a provenance, and `ref/measurements.md` is the log of raw
 measurements**: date, what was measured, with what, the number. A constant that
@@ -127,10 +126,9 @@ which, ask them in the same turn, before it reaches geometry. Answered, a
 measurement goes into `ref/measurements.md` with the person and the date as its
 source. Unanswered, it is an estimate — never a `measured` assumed for them.
 
-**`ref/` is published with every build**, so its names obey rule 1 — a
+**`ref/` is published with every build** — commit what is in it; a
 designation goes inside the file, never into its name
-(`ref/hardware/m6x30-din912-a2.md`) — and every file in it counts against the
-push limits each time.
+(`ref/hardware/m6x30-din912-a2.md`).
 
 **A size the person names for the space is a ceiling, not a target.** "About",
 "could be smaller", "maximum" mark one; quote the words next to the number. The

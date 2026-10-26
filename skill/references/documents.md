@@ -28,7 +28,7 @@ model's build page also offers it in Downloads under its extension (DXF, CSV),
 beside the STL. A `.dxf` is that kind of file too, with one addition: the hub
 draws a picture of it at publish time and the page shows that picture. The picture is published as `<path>.svg` (`cut/glass.dxf.svg`),
 so nothing else may be listed at that path; a DXF the hub cannot read, or one
-with nothing drawn in it, refuses the push with a 422 naming it, and
+with nothing drawn in it, refuses the push, naming it, and
 `"download": true` on its entry publishes it with no picture. The build page lists them in its view menu, after
 the views, one row each: choosing one shows it over the model, choosing a view brings the
 model back, and `?d=<id>` in the address (the path with `/` written as `__`)
@@ -53,7 +53,7 @@ the link without a key, whatever its extension — that is how a revision is sen
 a workshop as the complete set. Whatever document is open, Download and Copy link
 for its file stand at the bottom left of the page.
 A path that is not a file, is listed twice or would
-overwrite what the model's build wrote refuses the push with a 422 naming it.
+overwrite what the model's build wrote refuses the push, naming it.
 
 `"download": true` publishes an entry as a plain file whatever its extension, so a
 zip of stand logs is taken rather than read as a board's Gerbers, which share the

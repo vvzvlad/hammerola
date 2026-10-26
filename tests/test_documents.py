@@ -32,7 +32,7 @@ from ci.smoke import REQUIRED_PATHS
 from src import docsbuild, render
 from src.app import BUILD_CONTENT_TYPES, OPEN_SUFFIXES, _safe_build_path
 from src.buildproc import STATUS_OK, BuildOutcome
-from src.store import FILE_DIGESTS_FILE, PAYLOAD_DIGEST_FILE
+from src.store import BUILD_LOG_FILE, FILE_DIGESTS_FILE, PAYLOAD_DIGEST_FILE
 from hammerola import buildnames
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -124,7 +124,10 @@ def model_hub(hub_factory):
 
 
 def published(hub, body=None) -> str:
-    """Publish under a minted name. -> the revision."""
+    """Publish under the digest of the tree (`Hub.publish` with no name).
+
+    -> the revision.
+    """
     reply = hub.publish("docs0001", None, body or documents_tree())
     assert reply.status_code == 201, reply.text
     return reply.json()["url"].rstrip("/").rsplit("/", 1)[1]
@@ -247,8 +250,8 @@ def test_a_model_that_lists_no_documents_publishes_what_it_always_did(
     """Nothing of this change reaches a model's build that lists nothing.
 
     The two documents paths are made to fail the job if they run at all, and
-    what was published is held to the build's own files and the document a
-    model's build always produced.
+    what was published is held to the build's own files, the document a
+    model's build always produced and the hub's own records beside them.
     """
     def untouched(*_args, **_kwargs):
         raise AssertionError("the documents path ran for a model listing none")
@@ -264,7 +267,7 @@ def test_a_model_that_lists_no_documents_publishes_what_it_always_did(
     assert set(meta) == {"pid", "project", "title", "commit", "dev", "built",
                          "published", "views", "parts"}
     assert sorted(path.name for path in build.iterdir()) == sorted(
-        {*ARTEFACTS, PAYLOAD_DIGEST_FILE, FILE_DIGESTS_FILE})
+        {*ARTEFACTS, PAYLOAD_DIGEST_FILE, FILE_DIGESTS_FILE, BUILD_LOG_FILE})
     assert hub.job_log(record["id"]).text == (
         f"copying builder: {len(ARTEFACTS)} files\n")
 

@@ -3,12 +3,12 @@
 The verbs, and what each one may not do, are documented in `hammerola/cli.py`
 next to `build_parser`. What is below holds for the package as a whole.
 
-Nothing here reads git to decide what to publish: `commit` publishes the sources
-of the directory, git repository or not. `gitsuggest` only prints a `git commit`
-line recording what was published.
+A version is a git commit, published with `git push` to the project's
+repository on the hub; `build` pushes a draft of the uncommitted tree the same
+way (`repo.py`). What git ignores is not published.
 
-The client lives in the hub's repository because both share a contract (archive
-shape, path alphabet, ceilings, status codes, job states): `tests/client/` drives
+The client lives in the hub's repository because both share a contract (routes,
+ceilings, status codes, job states): `tests/client/` drives
 the real hub over a real socket, so a contract change that breaks the client fails
 at the commit that makes it. The hub also serves this package to clients (`COPY
 hammerola/ hammerola/`), which is how the tool updates itself.
@@ -18,7 +18,7 @@ presents. The hub only compares it for equality, so `login` means "remember the
 system's password on this machine"; there are no per-person keys.
 
 `VERSION` below is what both sides compare: the hub states it as `client_version`
-in its manifest, and `build` and `commit` refuse to publish from an older client.
+in its manifest, and `build` refuses to publish from an older client.
 There are two ways to run the tool: `python3 -m hammerola -C <model dir>` from a
 checkout (see `__main__.py`), and the zipapp the hub serves. Only the zipapp can
 be replaced by `hammerola update`; a checkout is updated with git.
@@ -34,4 +34,4 @@ them; `hammerola/metricsdiff.py` is shared with the build instead of duplicated.
 # out of the served archive by an older client before it replaces itself
 # (`update._member_value`), and imported by the hub for its manifest
 # (`src/onboarding.py`).
-VERSION = "0.4.0"
+VERSION = "0.5.0"

@@ -1,21 +1,22 @@
-"""The publish protocol: SPEC 7 status codes, atomicity and immutability."""
+"""Publishing a build: what the hub accepts, the 200 and 409 of a name,
+atomicity and immutability (SPEC 7).
+
+The tree reaches the hub the way `Hub.publish` hands it over (tests/harness.py);
+`git push` itself is tests/test_git_publish.py's.
+"""
 
 import inspect
 import json
 import os
-import socket
-import time
-from pathlib import Path
-from urllib.parse import quote
 
 import pytest
 
-from harness import (DEFAULT_EXPORTS, TOKEN, copying_builder, good_build,
-                     meta_bytes, tar_gz, view_bytes)
+from harness import (DEFAULT_EXPORTS, commit_all, copying_builder, git,
+                     good_build, meta_bytes, project_files, push, tar_gz,
+                     view_bytes, write_files)
 
-from src import app, render
-from src import store as store_module
-from src.store import DEV_LINK, PublishError, Store
+from src import app, prereceive, render
+from src.store import PublishError, Store
 
 
 def test_publish_creates_the_build_and_points_latest_at_it(hub):
@@ -180,16 +181,6 @@ def test_identical_retry_is_200_not_409(hub):
     assert again.json() == {"url": "/project/proj1/abc123/"}
 
 
-def _message(text):
-    """A message on the wire, encoded the way the client encodes one.
-
-    `hammerola.hub` percent-encodes it because a header value is latin-1 and a
-    message is not, and the route unquotes it — so a test that sent the raw
-    string would be exercising a wire format nothing produces.
-    """
-    return {app.MESSAGE_HEADER: quote(text, safe="")}
-
-
 def test_a_revision_pushed_without_a_message_is_the_document_it_always_was(hub):
     """The message field is written only when there is one.
 
@@ -208,186 +199,27 @@ def test_a_revision_pushed_without_a_message_is_the_document_it_always_was(hub):
     assert [sorted(row) for row in picker["builds"]] == [["built", "commit"]]
 
 
-def test_a_message_longer_than_the_cap_is_refused(hub):
-    """The rule every displayed field on this hub is held to, and the same
-    reason: a subject that is really a paragraph is a picker one revision can
-    push every other row of off the screen (`render.MAX_TEXT`).
+@pytest.mark.parametrize("subject, message", [
+    ("first cut of the bracket", "first cut of the bracket"),
+    # U+202E reverses the text around whatever it is smuggled into.
+    ("safe \u202egnihtemos", "safe gnihtemos"),
+    # The other half of the part-name rule (`render._check_part_name`): the
+    # picker escapes what it renders, so nothing else keeps markup out.
+    ("clearance < 0.2 mm", "clearance  0.2 mm"),
+    ("x" * (render.MAX_TEXT + 1), "x" * render.MAX_TEXT),
+    ("   ", None),
+])
+def test_a_commit_subject_reaches_the_document_cleaned(subject, message):
+    """A revision's message is its commit's subject, cleaned rather than refused.
 
-    Refused rather than trimmed — the push is the author's to correct, and a
-    message quietly cut in half is worse than one that was not accepted."""
-    r = hub.publish("proj1", "abc123", good_build(),
-                    headers=_message("x" * (render.MAX_TEXT + 1)))
-    assert r.status_code == 400
-    assert not (hub.project_dir("proj1") / "abc123").exists()
-
-
-def test_a_message_with_a_control_character_in_it_is_refused(hub):
-    """A newline is what turns one line of a log into two, and U+202E reverses
-    the text around whatever it is smuggled into. `_plain_text` keeps both out
-    of every other caption a push can write; a message is no different."""
-    for text in ("first line\nsecond line", "safe ‮gnihtemos"):
-        r = hub.publish("proj1", "abc123", good_build(),
-                        headers=_message(text))
-        assert r.status_code == 400, text
-        assert not (hub.project_dir("proj1") / "abc123").exists()
-
-
-def test_a_message_with_an_angle_bracket_is_refused(hub):
-    """The other half of the part-name rule `revision_message` reuses.
-
-    `clearance < 0.2 mm` is a sentence somebody would really type, and it is
-    refused: the message is held to the rule every free-text field a push can put
-    on a page is held to, rather than to a weaker one written just for it
-    (`render._check_part_name`). Worth a test of its own because the branch is
-    invisible from the outside — the picker escapes what it renders, so deleting
-    this refusal breaks no page and no other test in the suite.
+    The commit is in git already and the hub only shows its subject, so what the
+    rule for every displayed field refuses is dropped instead
+    (`prereceive.revision_message`): characters Unicode files under C, and angle
+    brackets; then the cut to `render.MAX_TEXT`, which keeps one revision from
+    pushing every other row of the picker off the screen. A subject of nothing
+    but spaces is no message rather than an empty one.
     """
-    for text in ("clearance < 0.2 mm", "the bracket is <b>thicker</b>"):
-        r = hub.publish("proj1", "abc123", good_build(),
-                        headers=_message(text))
-        assert r.status_code == 400, text
-        assert not (hub.project_dir("proj1") / "abc123").exists()
-
-
-def test_a_message_of_nothing_but_spaces_is_refused(hub):
-    """`-m "   "` asked for a subject and gave none.
-
-    Stripped to "" it would evaporate at every `if message:` between here and the
-    document. Refused instead, as `project_title` refuses a blank title: this
-    route may not take a message and lose it.
-    """
-    r = hub.publish("proj1", "abc123", good_build(), headers=_message("   "))
-    assert r.status_code == 400
-    assert not (hub.project_dir("proj1") / "abc123").exists()
-
-
-def test_a_repeat_push_restates_the_message_and_mints_nothing(hub):
-    """The same tree is the same revision, and its message is the one thing
-    about it a second push can still change.
-
-    `Store.settled` answers 200 out of the request thread and never queues a
-    build, so this update happens there or nowhere. It has to reach the PICKER:
-    `builds.json` is what every surface showing a message reads.
-
-    A push with no message leaves the stored one standing: there is no way to
-    clear a message, and an ordinary re-push is not one.
-    """
-    body = good_build()
-    assert hub.publish("proj1", "abc123", body,
-                       headers=_message("first cut")).status_code == 201
-    assert hub.publish("proj1", "abc123", body,
-                       headers=_message("actually, the pin moved")
-                       ).status_code == 200
-
-    meta = json.loads(
-        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
-    assert meta["message"] == "actually, the pin moved"
-    picker = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
-    assert [row["message"] for row in picker["builds"]] == \
-        ["actually, the pin moved"]
-    # The 200 path wrote the message and NOTHING ELSE: one build directory
-    # where there was one before.
-    #
-    # This is not the minting claim: on the NAMED route the directory is called
-    # what the URL called it, whatever the digest did. That the message stays out
-    # of a minted name is tested where the hub does the naming:
-    # `tests/client/test_publishing.py`,
-    # `test_a_second_push_of_the_same_tree_restates_it_without_minting_a_revision`.
-    assert [entry.name for entry in hub.project_dir("proj1").iterdir()
-            if entry.is_dir() and not entry.is_symlink()
-            and entry.name != DEV_LINK] == ["abc123"]
-
-    assert hub.publish("proj1", "abc123", body).status_code == 200
-    meta = json.loads(
-        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
-    assert meta["message"] == "actually, the pin moved"
-
-
-def _build_contents(build):
-    """Every file of a published build except meta.json, by path and bytes."""
-    return {str(path.relative_to(build)): path.read_bytes()
-            for path in sorted(build.rglob("*"))
-            if path.is_file() and path.name != "meta.json"}
-
-
-def test_a_restate_writes_its_temporary_where_the_startup_sweep_looks(
-        hub, monkeypatch):
-    """`_sweep_leftovers` is the only thing that collects a `.wip-`, and it
-    walks `data/` plus ONE level of `data/project/` — never inside a build.
-
-    So a restate writing its temporary beside the target, which is the default
-    and what every other `_atomic_write_json` wants, would put the one
-    uncollectable transient in the store inside a published revision's own
-    directory. It takes a SIGKILL between the write and the rename to orphan one,
-    which is rare and is exactly the case the sweep exists for.
-
-    Asserted at the call rather than by hunting for a file afterwards, because on
-    every path that does not crash the temporary is renamed or unlinked before
-    anything could look: what has to hold is WHERE it would have been.
-
-    And asserted for EVERY write the store makes here, not just the restate's:
-    the rule is about the store's temporaries, not about `meta.json`, so a new
-    write landing somewhere unswept should fail this whether or not anyone
-    remembers to come back and add its name.
-    """
-    written = []
-    real = store_module.atomic_write_bytes
-
-    def recording(path, data, *, tmp_dir=None):
-        # The EFFECTIVE directory: `atomic_write_bytes` falls back to the
-        # target's own parent, so `None` here means "beside the target".
-        written.append((path, Path(tmp_dir) if tmp_dir else path.parent))
-        return real(path, data, tmp_dir=tmp_dir)
-
-    monkeypatch.setattr(store_module, "atomic_write_bytes", recording)
-
-    body = good_build()
-    assert hub.publish("proj1", "abc123", body,
-                       headers=_message("first cut")).status_code == 201
-    assert hub.publish("proj1", "abc123", body,
-                       headers=_message("the pin moved")).status_code == 200
-
-    swept = (hub.data, hub.project_dir("proj1"))
-    assert any(path.name == "meta.json" for path, _ in written), (
-        "the restate did not rewrite meta.json at all")
-    for target, tmp in written:
-        assert tmp in swept, (
-            f"a .wip- for {target} would land in {tmp}, which the startup "
-            f"sweep does not walk")
-
-
-def test_a_restate_moves_the_message_and_leaves_the_build_untouched(hub):
-    """SPEC 3.2's "everything else is immutable" as a test, not a claim.
-
-    The document says a repeat push may rewrite exactly ONE field of exactly one
-    file, and that the build behind that permanent URL is otherwise the build it
-    was. The test above does not say that: it checks the message changed and that
-    no second directory appeared, which a rewrite that also moved `published`,
-    reordered `views`, dropped a part or rewrote a view file would pass just as
-    happily.
-
-    So this compares the whole build across a restate — every other key of
-    meta.json, and the bytes of every other file in the directory,
-    `.payload.sha256` included. That digest is the one worth naming: it is what
-    `settled` compares the NEXT push against, so a restate that disturbed it
-    would turn the following identical push into a 409 on a revision nobody
-    changed.
-    """
-    body = good_build()
-    build = hub.project_dir("proj1") / "abc123"
-    assert hub.publish("proj1", "abc123", body,
-                       headers=_message("first cut")).status_code == 201
-    before = json.loads((build / "meta.json").read_text())
-    contents_before = _build_contents(build)
-
-    assert hub.publish("proj1", "abc123", body,
-                       headers=_message("the pin moved")).status_code == 200
-
-    after = json.loads((build / "meta.json").read_text())
-    assert before["message"] == "first cut" and after["message"] == "the pin moved"
-    assert {k: v for k, v in after.items() if k != "message"} == \
-           {k: v for k, v in before.items() if k != "message"}
-    assert _build_contents(build) == contents_before
+    assert prereceive.revision_message(subject) == message
 
 
 def test_identical_retry_ignores_tar_framing(hub):
@@ -410,25 +242,6 @@ def test_different_content_for_the_same_commit_is_409(hub):
     assert stored == view_bytes("a")
 
 
-def test_missing_token_is_403(hub):
-    r = hub.publish("proj1", "abc123", good_build(), token=None)
-    assert r.status_code == 403
-    assert not (hub.project_dir("proj1") / "abc123").exists()
-
-
-def test_wrong_token_is_403(hub):
-    r = hub.publish("proj1", "abc123", good_build(), token="not-the-token")
-    assert r.status_code == 403
-    assert not (hub.project_dir("proj1") / "abc123").exists()
-
-
-def test_token_prefix_is_not_accepted(hub):
-    # A prefix of the real token must fail exactly like garbage does. This is what
-    # would break if compare_digest were replaced by a `startswith`-ish check.
-    r = hub.publish("proj1", "abc123", good_build(), token="test-publish-toke")
-    assert r.status_code == 403
-
-
 def test_a_push_has_no_size_ceiling(hub):
     """A tree that unpacks to 65 MiB publishes like any other.
 
@@ -441,68 +254,6 @@ def test_a_push_has_no_size_ceiling(hub):
     assert r.status_code == 201, r.text
     published = hub.project_dir("proj1") / "abc123" / "ref" / "big.bin"
     assert published.stat().st_size == len(big)
-
-
-def test_a_declared_length_of_any_size_is_read_rather_than_refused(hub):
-    """The other half: a body announced at a terabyte is read, not answered
-    with a refusal before the first byte. It ends early here, so the answer is
-    the 400 of a short body — which a hub that refused by length never gives.
-    Over a raw socket because httpx cannot under-deliver a body it announced.
-    """
-    host, port = hub.server.server_address[:2]
-    with socket.create_connection((host, port), timeout=30) as sock:
-        sock.sendall(
-            b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
-            b"Host: hub\r\n"
-            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
-            b"Content-Length: " + str(1 << 40).encode() + b"\r\n"
-            b"\r\n" + b"\0" * 4096)
-        sock.shutdown(socket.SHUT_WR)
-        reply = sock.recv(4096)
-    assert reply.startswith(b"HTTP/1.1 400"), reply[:200]
-
-
-def test_a_dribbling_client_cannot_hold_a_publish_slot(hub, monkeypatch):
-    """The body has a deadline of its own, not just a gap-between-packets one.
-
-    `HubHandler.timeout` is a SOCKET timeout: it is rearmed by every packet, so a
-    client sending one byte every 29 seconds never trips it. Four of those own
-    every one of MAX_CONCURRENT_PUBLISHES and CI gets 503s until somebody
-    restarts the container — for the price of four sockets and no bandwidth.
-
-    Driven from a raw socket because that is the only way to be a bad client:
-    httpx sends a body as fast as it can, which is exactly what this is not.
-    """
-    monkeypatch.setattr(app, "BODY_DEADLINE_SECONDS", 0.5)
-    host, port = hub.server.server_address[:2]
-    with socket.create_connection((host, port), timeout=30) as sock:
-        sock.sendall(
-            b"POST /api/v1/publish/proj1/abc123 HTTP/1.1\r\n"
-            b"Host: hub\r\n"
-            b"X-Hammerola-Token: " + TOKEN.encode() + b"\r\n"
-            b"Content-Length: 100000\r\n"
-            b"\r\n")
-        # One byte at a time, slowly, and never anywhere near the declared length.
-        deadline = time.monotonic() + 10
-        reply = b""
-        while time.monotonic() < deadline:
-            try:
-                sock.sendall(b"\0")
-            except OSError:
-                break  # the hub hung up on us, which is the point
-            time.sleep(0.1)
-            sock.settimeout(0.1)
-            try:
-                chunk = sock.recv(4096)
-            except (TimeoutError, OSError):
-                continue
-            if not chunk:
-                break
-            reply += chunk
-            break
-
-    assert reply.startswith(b"HTTP/1.1 408"), reply[:200]
-    assert not (hub.project_dir("proj1") / "abc123").exists()
 
 
 def test_broken_meta_json_is_422(hub):
@@ -928,148 +679,14 @@ def test_two_views_under_one_id_are_refused(hub):
     assert not (hub.project_dir("proj1") / "abc123").exists()
 
 
-def test_body_that_is_not_a_gzipped_tar_is_422(hub):
-    assert hub.publish("proj1", "abc123", b"just some bytes").status_code == 422
+# -- force -------------------------------------------------------------------
+def test_only_the_force_push_option_turns_force_on(hub_factory, tmp_path):
+    """Only the push option `force` turns force on.
 
-
-# -- the route where the HUB names the revision ------------------------------
-# `POST /api/v1/publish/<pid>`, with no id in the URL at all. Everything below
-# is about the one thing that route adds: the name, where it comes from, and
-# what follows from it being the content rather than a counter.
-def test_a_push_with_no_name_is_published_under_its_payload_digest(hub):
-    reply = hub.publish_async("proj1", None, good_build())
-    assert reply.status_code == 202
-
-    revision = reply.json()["revision"]
-    assert len(revision) == 64
-    assert hub.await_job(reply.json()["job"]).status_code == 201
-
-    build = hub.project_dir("proj1") / revision
-    # The name IS the digest, so the build carries its own name in the file the
-    # store compares pushes with. Nothing has to be remembered anywhere else.
-    assert (build / ".payload.sha256").read_text().strip() == revision
-    assert hub.get(f"/project/proj1/{revision}/").status_code == 200
-
-
-def test_the_minted_name_reaches_the_job_record_too(hub):
-    """The 202 and the job agree about which revision this build publishes —
-    the pusher can get it from either, and neither is the JOB id."""
-    reply = hub.publish_async("proj1", None, good_build())
-    payload = reply.json()
-    record = hub.await_job(payload["job"]).record
-
-    assert record["commit"] == payload["revision"]
-    assert record["commit"] != payload["job"]
-    assert record["build_url"] == f"/project/proj1/{payload['revision']}/"
-
-
-def test_the_same_sources_mint_the_same_revision(hub):
-    """Idempotence and identity are the same fact here: an unchanged tree
-    cannot be given a second address, so the retry is 200 and there is exactly
-    one directory.
-
-    And the two archives are built SEPARATELY, so their member order and their
-    mtimes differ — which is the property the address depends on. The digest is
-    over `{path: sha256 of content}` sorted by path, so nothing about the
-    machine that packed the tree reaches the name; two laptops publishing the
-    same sources land on the same URL."""
-    first = hub.publish_async("proj1", None, good_build())
-    assert hub.await_job(first.json()["job"]).status_code == 201
-
-    again = hub.publish_async("proj1", None, good_build())
-    assert again.status_code == 200
-    assert again.json()["revision"] == first.json()["revision"]
-    assert again.json()["url"] == f"/project/proj1/{first.json()['revision']}/"
-
-    # The slot is not a second address for the sources: it is the same build
-    # mirrored into the one name that is rewritten in place.
-    builds = [entry.name for entry in (hub.project_dir("proj1")).iterdir()
-              if entry.is_dir() and not entry.is_symlink()
-              and entry.name != DEV_LINK]
-    assert builds == [first.json()["revision"]]
-
-
-def test_force_is_not_part_of_the_name_the_sources_are_given(hub):
-    """`?force=1` changes how a build RUNS, never what it is called.
-
-    `src/app.py` flags this as a line somebody would be tempted to change. A flag
-    folded into the digest would give one tree two permanent addresses, and the
-    same tree pushed again would rebuild instead of answering "unchanged". Today
-    `accept_sources` is not passed `force` at all; this pins it.
-    """
-    first = hub.publish_async("proj1", None, good_build())
-    assert hub.await_job(first.json()["job"]).status_code == 201
-
-    forced = hub.publish_async("proj1", None, good_build(), query="?force=1")
-    assert forced.status_code == 200, (
-        "a forced push of sources already published started a second build; "
-        "the digest has grown a dependency on the flag")
-    assert forced.json()["revision"] == first.json()["revision"]
-
-
-def test_different_sources_mint_a_different_revision(hub):
-    one = hub.publish_async("proj1", None, good_build("a"))
-    two = hub.publish_async("proj1", None, good_build("DIFFERENT"))
-    assert one.json()["revision"] != two.json()["revision"]
-
-    assert hub.await_job(one.json()["job"]).status_code == 201
-    assert hub.await_job(two.json()["job"]).status_code == 201
-    # Two names, so the 409 that answers "this name, other content" on the
-    # NAMED route cannot arise here: different content is a different address.
-    assert os.readlink(hub.project_dir("proj1") / "latest") in (
-        one.json()["revision"], two.json()["revision"])
-
-
-def test_a_minted_revision_is_served_immutable_like_any_other(hub):
-    reply = hub.publish_async("proj1", None, good_build())
-    revision = reply.json()["revision"]
-    hub.await_job(reply.json()["job"])
-
-    served = hub.get(f"/project/proj1/{revision}/assembled.json")
-    assert served.status_code == 200
-    assert "immutable" in served.headers["Cache-Control"]
-
-
-def test_the_named_route_still_answers_and_reports_no_revision(hub):
-    """A caller that brings its own id gets the reply it always got — no
-    `revision` key, because it is not the hub that chose the name."""
-    reply = hub.publish_async("proj1", "abc123", good_build())
-    assert reply.status_code == 202
-    assert "revision" not in reply.json()
-
-
-def test_the_minting_route_refuses_a_bad_project_id(hub):
-    assert hub.publish_async("proj1%0A", None, good_build()).status_code == 422
-
-
-def test_the_minting_route_needs_the_token(hub):
-    r = hub.publish_async("proj1", None, good_build(), token=None)
-    assert r.status_code == 403
-
-
-def test_the_local_slot_is_still_a_named_route(hub):
-    """`dev` did not move. It is a name like any other in the URL, and the hub
-    does not mint anything for it (SPEC 7.6)."""
-    reply = hub.publish_async("proj1", "dev", good_build())
-    assert reply.status_code == 202
-    assert "revision" not in reply.json()
-    assert hub.await_job(reply.json()["job"]).status_code == 201
-    assert (hub.project_dir("proj1") / "dev" / "meta.json").is_file()
-    assert not (hub.project_dir("proj1") / "latest").exists()
-
-
-def test_only_the_publish_route_s_own_query_parameter_turns_force_on(
-        hub_factory):
-    """Only the publish route's own query parameter turns force on.
-
-    `?force=1` is the client's own spelling (`Hub.publish`) and asks the build to
-    skip the model's own checks(). Everything else in the query is ignored: an
-    unanticipated parameter must not become a boolean by being present, which is
-    what the second push checks, with the first as the control.
-
-    Two NAMED routes rather than one pushed twice: the same sources under the same
-    name are already published by the second push and `Store.settled` answers 200
-    without building anything, so there would be no call to look at.
+    `git push -o force` asks the build to skip the model's own checks(). Any
+    other push option is ignored: an unanticipated option must not become a
+    boolean by being present, which is what the second push checks, with the
+    first as the control.
     """
     seen = []
 
@@ -1078,38 +695,18 @@ def test_only_the_publish_route_s_own_query_parameter_turns_force_on(
         return copying_builder(project_dir, out_dir, pid=pid, **kw)
 
     hub = hub_factory(build_runner=recording_builder)
-    headers = {"X-Hammerola-Token": TOKEN,
-               "Content-Type": "application/gzip"}
-
-    for path in ("/api/v1/publish/proj1/c1?force=1",
-                 "/api/v1/publish/proj1/c2?nonsense=1"):
-        reply = hub.request("POST", path, content=good_build(), headers=headers)
-        assert reply.status_code == 202
-        assert hub.await_job(reply.json()["job"]).status_code == 201
+    work = tmp_path / "work"
+    git("init", "--quiet", "--initial-branch=main", work)
+    write_files(work, project_files("proj1"))
+    commit_all(work, "first")
+    pushed = push(hub, work, "proj1", extra=("-o", "force"))
+    assert pushed.returncode == 0, pushed.stderr
+    write_files(work, {"notes.md": b"second"})
+    commit_all(work, "second")
+    pushed = push(hub, work, "proj1", extra=("-o", "nonsense"))
+    assert pushed.returncode == 0, pushed.stderr
 
     assert seen == [True, False]
-
-
-def test_reserved_commit_name_is_refused(hub):
-    # `latest` is the symlink. A build allowed to take that name would either
-    # collide with it or replace it, and /latest/ would stop tracking anything.
-    assert hub.publish("proj1", "latest", good_build()).status_code == 422
-
-
-def test_a_trailing_newline_in_the_pid_is_refused(hub):
-    # `$` in a Python regexp also matches just before a trailing newline, so
-    # `^[A-Za-z0-9_-]+$` accepts "proj1\n". That would create a directory whose
-    # name contains a newline and put a bare LF into the `Location` header — a
-    # response-splitting primitive handed over by an anchor character.
-    r = hub.publish("proj1%0A", "abc123", good_build())
-    assert r.status_code == 422
-    assert [p.name for p in hub.store.projects_dir.iterdir()] == []
-
-
-def test_a_trailing_newline_in_the_commit_is_refused(hub):
-    r = hub.publish("proj1", "abc123%0A", good_build())
-    assert r.status_code == 422
-    assert not any("\n" in p.name for p in hub.store.projects_dir.rglob("*"))
 
 
 def test_a_control_character_in_the_title_is_refused(hub):
@@ -1133,7 +730,7 @@ def test_an_over_long_built_is_refused(hub):
     body = tar_gz({"meta.json": meta_bytes(built="B" * 500_000),
                    "assembled.json": view_bytes(), **DEFAULT_EXPORTS})
     assert hub.publish("proj1", "abc123", body).status_code == 422
-    assert not (hub.store.root / "index.json").exists()
+    assert json.loads((hub.store.root / "index.json").read_text()) == []
 
 
 def test_a_bidi_override_in_built_is_refused(hub):
@@ -2046,13 +1643,6 @@ def test_more_file_pointers_than_the_build_has_files_is_refused(hub, spread):
     assert not (hub.project_dir("proj1") / "def456").exists()
 
 
-def test_traversal_in_the_url_never_reaches_the_store(hub):
-    # pid and commit come from the URL, so they are attacker-controlled too.
-    r = hub.publish("..", "abc123", good_build())
-    assert r.status_code in (404, 422)
-    assert not (hub.data.parent / "abc123").exists()
-
-
 def test_a_refused_push_leaves_no_staging_directory(hub):
     hub.publish("proj1", "abc123", tar_gz({"meta.json": b"{bad"}))
     leftovers = [p for p in hub.project_dir("proj1").iterdir()
@@ -2080,8 +1670,9 @@ def test_second_build_moves_latest_and_keeps_the_old_one(hub):
 
 
 def test_latest_follows_built_not_arrival_order(hub):
-    # `latest` and the build picker order by `built`, so a build that arrives
-    # late but is OLDER must not steal `latest`.
+    # The import takes the revisions an older hub published into `main` in the
+    # order of `built` (`Store._import`), and `latest` is the tip of `main`, so a
+    # build that arrived late but is OLDER must not steal `latest`.
     hub.publish("proj1", "newer", tar_gz({
         "meta.json": meta_bytes(built="2026-08-22T10:00:00Z"),
         "assembled.json": view_bytes("newer"), **DEFAULT_EXPORTS}))

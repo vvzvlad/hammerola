@@ -82,8 +82,7 @@ MAX_MEMBERS = 1024
 # How many refused member names one 422 carries.
 #
 # The refusal counts every bad name but lists at most this many (a tar packed
-# with `.git/` has hundreds); the client lists all of them before sending
-# (`hammerola/pack.py`). Each name goes through `repr()`, so control characters
+# with `.git/` has hundreds). Each name goes through `repr()`, so control characters
 # and lone surrogates print as escapes while cyrillic stays legible.
 MAX_REFUSED_NAMES_REPORTED = 10
 

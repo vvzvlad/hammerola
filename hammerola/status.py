@@ -40,8 +40,8 @@ def run(args) -> int:
     if picker is None:
         print(f"  {hub.absolute(f'/project/{pid}/')}")
         print("  nothing published yet. `hammerola build` puts the working "
-              "copy in the dev slot,\n  `hammerola commit` publishes a "
-              "revision.")
+              "copy in the dev slot,\n  `git push hammerola-<pid> main` "
+              "publishes a revision.")
         return 0
 
     print(f"  {hub.absolute(f'/project/{pid}/')}")

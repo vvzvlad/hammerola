@@ -7,8 +7,9 @@ hub (`src/cadbuild/project.py`). Both import this one module;
 `slug_from_directory`.
 
 The slug has to travel because the directory exists only on the author's
-machine: on the hub a push is unpacked into `.src-<uuid4 hex>`
-(`store.SOURCE_PREFIX`) and the build runs there (`buildproc/child.py`).
+machine: on the hub a pushed commit's tree is checked out into
+`.src-<uuid4 hex>` (`store.SOURCE_PREFIX`) and the build runs there
+(`buildproc/child.py`).
 
 STDLIB ONLY: the client installs nothing. Enforced by
 `tests/test_projectslug.py` and `tests/client/test_stdlib_only.py`; the

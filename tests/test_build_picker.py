@@ -10,11 +10,7 @@ destination it names answers. The browser's half is checked against the UI sourc
 in tests/test_ui_source.py (`test_the_build_picker_reads_the_fields_builds_json_carries`).
 """
 
-from urllib.parse import quote
-
 from harness import DEFAULT_EXPORTS, meta_bytes, tar_gz, view_bytes
-
-from src.app import MESSAGE_HEADER
 
 
 def _build(marker, built="2026-08-21T04:16:00Z"):
@@ -45,13 +41,13 @@ def test_a_row_carries_what_its_revision_said_it_was(hub):
     """Each row carries its revision's message, from that revision's own meta.json.
 
     A digest and a timestamp tell two revisions apart without saying what either
-    is. The message travels on the push, is stored with the record, and is
-    projected here beside the id. A revision pushed without one gets no key rather
-    than an empty string, so the browser reads it as optional.
+    is. The message is the subject of the commit (`prereceive.revision_message`),
+    is stored with the record, and is projected here beside the id. A revision
+    built with none gets no key rather than an empty string, so the browser reads
+    it as optional.
     """
     hub.publish("proj1", "aaa111", _build("c1", "2026-08-01T00:00:00Z"),
-                headers={MESSAGE_HEADER: quote("first cut of the bracket",
-                                               safe="")})
+                message="first cut of the bracket")
     hub.publish("proj1", "bbb222", _build("c2", "2026-08-02T00:00:00Z"))
 
     rows = {b["commit"]: b for b in _picker(hub)["builds"]}

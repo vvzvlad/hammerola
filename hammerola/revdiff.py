@@ -5,9 +5,10 @@ Prints the measurements first (what moved) and the source diff under them
 
 The measurements come from each build's public `metrics.json`, compared by
 `hammerola/metricsdiff.metrics_diff`, the same function the build uses against
-`dev` (`src/cadbuild/metrics.report_metrics`). The source diff is `difflib` over
-the two stored archives from `/api/v1/sources/<revision>` (SPEC 7.8), behind
-the token.
+`dev` (`src/cadbuild/metrics.report_metrics`). The source diff is `git diff`
+between the project's trees of the two revisions in the local repository
+(`repo.revision_tree`): a revision is a commit, and the hub's history is
+fetched with `git fetch hammerola-<pid>`.
 
 `--material` adds a section the hub computes: fusing the two solids per part in
 the CAD kernel to say how much material was added and removed. It is a job,
@@ -18,11 +19,10 @@ source diff, and no `assembly` block, so an empty `moved` means "no part changed
 shape", not "the build is the same".
 """
 
-import difflib
 import json
 import sys
 
-from hammerola import project, unpack
+from hammerola import project, repo
 from hammerola.hub import HubError
 from hammerola.sources import SHORT_ID_CHARS, hub_for, resolve_revision
 from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,
@@ -31,8 +31,7 @@ from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,
 
 def run(args) -> int:
     """Print what moved between two revisions. -> exit code."""
-    # A project is required, unlike in `source`: metrics.json is addressed by
-    # `<pid>/<revision>`.
+    # A project is required: metrics.json is addressed by `<pid>/<revision>`.
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
     hub = hub_for(root)
@@ -60,7 +59,7 @@ def run(args) -> int:
         print()
         _print_material(hub, pid, old, new)
     print()
-    _print_code(hub, old, new)
+    _print_code(root, pid, old, new)
     return 0
 
 
@@ -96,7 +95,7 @@ def _print_material(hub, pid: str, old: str, new: str) -> None:
     """How much material each part gained and lost, measured BY THE HUB.
 
     A job like a build (the CAD kernel runs on the hub): submit, wait, print
-    its log indented. Connection notices go to stderr, as in `build`.
+    its log indented. Connection notices go to stderr.
     """
     print("material:")
     try:
@@ -151,63 +150,12 @@ def _print_geometry(before, after) -> None:
         print("    builds ran on, or the model is not deterministic.")
 
 
-def _print_code(hub, old: str, new: str) -> None:
+def _print_code(root, pid: str, old: str, new: str) -> None:
     print("code:")
-    before = unpack.read_members(hub.revision_archive(old),
-                                 where=f"the code of {old}")
-    after = unpack.read_members(hub.revision_archive(new),
-                                where=f"the code of {new}")
-
-    printed = False
-    for name in sorted(set(before) | set(after)):
-        block = _one_file(name, before.get(name), after.get(name), old, new)
-        if block:
-            printed = True
-            for line in block:
-                print(f"  {line}")
-    if not printed:
-        # Impossible for two different revisions: the id is the digest of the
-        # sources (SPEC 7.7), so this means something served the wrong code.
-        print("  no difference, which two different revisions cannot have: "
-              "their ids are the")
-        print("  digests of these trees. Something served one revision's code "
-              "under the other's name.")
-
-
-def _one_file(name: str, old_body, new_body, old: str, new: str) -> list:
-    """The diff of one member, as lines. Empty when it did not change."""
-    if old_body == new_body:
-        return []
-    if old_body is None:
-        return [f"+ {name}  (added, {len(new_body)} bytes)"]
-    if new_body is None:
-        return [f"- {name}  (removed, was {len(old_body)} bytes)"]
-
-    before, after = _text(old_body), _text(new_body)
-    if before is None or after is None:
-        # E.g. a .step or a .png in `ref/`.
-        return [f"~ {name}  (changed, not text: "
-                f"{len(old_body)} -> {len(new_body)} bytes)"]
-
-    lines = list(difflib.unified_diff(
-        before, after,
-        fromfile=f"{old[:SHORT_ID_CHARS]}/{name}",
-        tofile=f"{new[:SHORT_ID_CHARS]}/{name}",
-        lineterm=""))
-    # Bytes can differ without decoded lines differing (line endings).
-    return lines or [f"~ {name}  (changed in bytes only: line endings or a "
-                     f"trailing newline)"]
-
-
-def _text(body: bytes):
-    """The file as lines, or None when it is not text.
-
-    Strict utf-8, so a replaced byte cannot hide a change. A NUL anywhere means
-    binary (git's heuristic): many binary files are accidentally valid UTF-8.
-    """
-    if b"\0" in body:
-        return None
-    try:
-        return body.decode("utf-8").splitlines(keepends=True)
-    except UnicodeDecodeError:
-        return None
+    text = repo.code_diff(root, pid, old, new)
+    if not text.strip():
+        # Two builds of one tree, such as a build published before git under a
+        # name of its author's and its twin named by the digest.
+        print("  the same code in both.")
+    for line in text.splitlines():
+        print(f"  {line}")

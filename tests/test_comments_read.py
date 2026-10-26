@@ -12,8 +12,8 @@ difference between 403 and 404.
 import json
 from datetime import datetime, timedelta, timezone
 
-from harness import (JPEG_BYTES, PNG_BYTES, TOKEN, comment_payload,
-                     good_build)
+from harness import (JPEG_BYTES, PNG_BYTES, TOKEN, comment_payload, commit_all,
+                     git, good_build, project_files, push, write_files)
 
 READ_ENDPOINTS = ("", "?project=proj1", "/{cid}", "/{cid}/photo", "/{cid}/shot")
 
@@ -36,16 +36,19 @@ def test_every_read_endpoint_refuses_a_missing_token(hub):
         assert "WWW-Authenticate" not in r.headers
 
 
-def test_the_same_secret_opens_both_sides(hub):
+def test_the_same_secret_opens_both_sides(hub, tmp_path):
     """ONE secret for the whole system.
 
-    The value that publishes a build is the value that reads the queue and the
-    value that writes to it.
+    The value a version is pushed with (`harness.push`) is the value that reads
+    the queue and the value that writes to it.
     """
-    assert hub.publish("proj1", "abc123", good_build(), token=TOKEN
-                       ).status_code == 201
-    written = hub.post_comment("proj1", "abc123", comment_payload(),
-                               token=TOKEN)
+    work = tmp_path / "work"
+    git("init", "--quiet", "--initial-branch=main", work)
+    write_files(work, project_files("proj1"))
+    sha = commit_all(work, "first")
+    pushed = push(hub, work, "proj1")
+    assert pushed.returncode == 0, pushed.stderr
+    written = hub.post_comment("proj1", sha, comment_payload(), token=TOKEN)
     assert written.status_code == 201
     cid = written.json()["id"]
     for path in READ_ENDPOINTS:

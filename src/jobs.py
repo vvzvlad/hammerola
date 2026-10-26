@@ -2,29 +2,25 @@
 """The asynchronous half of a push: a job to follow, and a pool to build it in.
 
 The hub builds what it was pushed (SPEC 8A.2 steps 4 and 5), and a CadQuery
-build takes minutes: more than the socket timeout (30 s) or the body deadline
-(300 s), and a `ThreadingHTTPServer` holds a thread per connection. So the
-request stops at "I have your sources", and everything after that is a job.
+build takes minutes. The pre-receive hook (src/prereceive.py) checks a pushed
+commit out into a source tree, hands it over as a job and waits for the job:
+the build runs in the pool here, with every other build, and the hook only
+reads its verdict.
 
     JobStore    the registry: one directory per job under data/jobs/, with the
                 record in job.json and the build log beside it in log.txt
-    BuildTask   what the request hands over: a job id, an unpacked tree and the
-                pushed body it came out of
+    BuildTask   what the hook hands over: a job id and a source tree
     CompareTask the other kind of work on the same pool: two PUBLISHED revisions
                 to measure against each other, owning nothing and publishing
                 nothing — its product is the log
     BuildQueue  the pool: a bounded queue and N worker threads that run the
                 build and then publish its output
 
-`GET /api/v1/jobs/<id>/log` is how the pusher reads a failed build.
-
 The log is written by the parent, from `BuildOutcome.log`, never by the build
 process: nothing the child says is believed (`src/buildproc/__init__.py`), and
-what the parent captured is already capped and decoded (`runner._Drain`).
-
-A published build keeps its code: `_keep_the_code` hands the pushed body to the
-store, with a copy of the log beside it. Every other ending deletes the body;
-the sources of a failed build are not kept.
+what the parent captured is already capped and decoded (`runner._Drain`). A
+revision keeps a copy in its own directory (`store.BUILD_LOG_FILE`); its code
+is the commit it was built from, in the project's repository.
 
 A start parses what it reads back rather than rebuilding it. A record is taken
 when it is a JSON object whose `id` is its directory's name and whose `state` is
@@ -38,10 +34,6 @@ is failed with RESTART_CODE, persisted so later starts do not warn again.
 
 No job is ever deleted for its age or number (SPEC 5.3, 7.4): a record and its
 log stay until somebody removes the directory.
-
-Build parallelism is its own number, not `MAX_CONCURRENT_PUBLISHES`: accept
-slots are sized by what receiving costs, builds by memory and by how long a hung
-build holds a worker. They are independent even when they read the same value.
 
 Nothing in this module is module-level state. `JobStore` and `BuildQueue` are
 built per server, like `Store` and `CommentStore`, so two hubs in one test
@@ -79,8 +71,8 @@ from src.buildproc import (
     run_compare,
 )
 from src import docsbuild
-from src.store import (DEV_LINK, PublishError, atomic_write_bytes,
-                       utcnow_iso)
+from src.store import (BUILD_LOG_FILE, DEV_LINK, PublishError,
+                       atomic_write_bytes, utcnow_iso)
 
 # -- what a job can be -------------------------------------------------------
 # `queued` and `building` are the two states a restart can strand, which is why
@@ -202,7 +194,7 @@ STOPPED_ERROR = "the hub was stopped before this build started; push again"
 
 # ...and the third: the hub threw between creating the job and handing it to
 # the pool. A job left `queued` is otherwise reclaimed only by a restart's
-# `_load`. Used by `app._queue_build`.
+# `_load`. Used by `prereceive`.
 HANDOVER_ERROR = "the hub failed while handing this build to the pool; push again"
 
 # One line per way a build can end badly, because "the build failed" is not an
@@ -223,30 +215,26 @@ BUILD_FAILURE_REASONS = {
 
 @dataclass(frozen=True)
 class BuildTask:
-    """One push, handed from the request thread to a worker.
+    """One push, handed from the pre-receive hook to a worker.
 
-    `sources` is an unpacked tree the request already validated (SPEC 7.1) and
-    the worker OWNS: it is removed when the job ends, whichever way it ends.
-    `digest` is of those sources and travels with the task because it is what
-    tells an identical retry from a colliding one, and it has to be the same
-    number the request compared against.
-
-    `archive` is the request body the tree came out of, owned the same way,
-    except that a build that publishes gives it to the store as the code of
-    that revision. Everything else deletes it.
+    `commit` is the name it publishes under: the pushed commit's sha, or `dev`
+    for a draft. `sources` is the project's directory checked out of that
+    commit, a tree the worker OWNS: it is removed when the job ends, whichever
+    way it ends. `digest` is the git id of that directory, written beside the
+    build: it tells an identical retry from a colliding one, and a draft of the
+    same tree from a changed one.
 
     `force` asks for the model's own checks() to be skipped. It defaults to
     False, the safe direction for a forgotten argument.
 
-    `message` is what the push said this revision is. The build never reads it;
-    it is written into the published document, and the `dev` route ignores it.
+    `message` is what the commit says it is. The build never reads it; it is
+    written into the published document, and a draft has none.
     """
 
     job_id: str
     pid: str
     commit: str
     sources: Path
-    archive: Path
     digest: str
     force: bool = False
     message: str | None = None
@@ -695,6 +683,10 @@ class BuildQueue:
                 return SUBMIT_STOPPED
         return SUBMIT_ACCEPTED
 
+    def queued(self) -> int:
+        """How many tasks are waiting for a worker right now."""
+        return self._queue.qsize()
+
     def shutdown(self) -> None:
         """Stop the workers, drop what is still queued, wait for the rest.
 
@@ -702,8 +694,7 @@ class BuildQueue:
         queue would make a stop take as long as everything in it put together,
         and the container is not given that long anyway. But dropping it is a
         job of its own, not the absence of one, because each of those tasks OWNS
-        an unpacked source tree (`app._queue_build` hands ownership over with
-        the task) and the worker that would have removed it is not going to run.
+        a source tree (`prereceive` hands ownership over with the task) and the worker that would have removed it is not going to run.
         So this removes the tree and answers the job.
 
         Not left to `Store._sweep_leftovers`: it skips entries younger than
@@ -775,8 +766,6 @@ class BuildQueue:
                 # the store and stay there. Only the job has to be answered.
                 if not isinstance(task, CompareTask):
                     shutil.rmtree(task.sources, ignore_errors=True)
-                    # And the body: this task will never publish.
-                    _discard(task.archive)
                 self._jobs.finish(task.job_id, state=STATE_FAILED,
                                   code=RESTART_CODE, error=STOPPED_ERROR)
             finally:
@@ -863,12 +852,15 @@ class BuildQueue:
             if outcome.ok:
                 # The job id goes into meta.json so `hammerola log dev` can read
                 # the build's log back. Both routes fill the slot (a commit
-                # mirrors itself into it), so both carry it.
+                # mirrors itself into it), so both carry it. A revision keeps
+                # its log in its own directory, renamed into place with it.
                 if task.commit == DEV_LINK:
                     status, payload = self._store.publish_dev_built(
                         task.pid, staging, outcome.files, task.digest,
                         job=task.job_id)
                 else:
+                    (staging / BUILD_LOG_FILE).write_bytes(
+                        _capped_log(outcome.log))
                     status, payload = self._store.publish_built(
                         task.pid, task.commit, staging, outcome.files,
                         task.digest, job=task.job_id, message=task.message)
@@ -877,7 +869,6 @@ class BuildQueue:
                     f"-> {payload['url']}")
                 verdict = {"state": STATE_DONE, "code": status,
                            "build_url": payload["url"]}
-                self._keep_the_code(task, outcome)
             else:
                 reason = BUILD_FAILURE_REASONS.get(
                     outcome.status, "the build did not finish")
@@ -913,10 +904,6 @@ class BuildQueue:
             shutil.rmtree(task.sources, ignore_errors=True)
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
-            # The body too, unconditionally: on the publishing path it was
-            # already renamed into the store and this finds nothing; on every
-            # other path the sources of a build with no revision are not kept.
-            _discard(task.archive)
 
         # After the cleanup: a poller that reads `done` may assume the hub has
         # finished with the push.
@@ -1024,33 +1011,6 @@ class BuildQueue:
             logger.exception(
                 f"job {task.job_id}: could not record how the comparison ended")
 
-    def _keep_the_code(self, task: BuildTask, outcome) -> None:
-        """Keep the pushed body and the log as the code of a published revision.
-
-        Called only after a publish: the hub keeps the code of what it serves
-        and nothing else.
-
-        The local slot is skipped: `dev` is not a revision and has no history;
-        once the same tree is committed, its archive lands anyway.
-
-        Best effort, after the verdict: an exception here must not turn a
-        published build into a failed job. A volume that refuses the code costs
-        only the code.
-        """
-        if task.commit == DEV_LINK:
-            return
-        try:
-            self._store.keep_sources(task.digest, task.archive)
-            # Whether or not the archive was already there: the log is of THIS
-            # build, and the one already beside it is of an earlier build of the
-            # same sources.
-            self._store.keep_build_log(task.digest, _capped_log(outcome.log))
-        except Exception:
-            logger.exception(
-                f"job {task.job_id}: {task.pid}/{task.commit} is published, but "
-                f"its sources could not be stored; the revision is served "
-                f"without its code")
-
 
 def _capped_log(log: str) -> bytes:
     """One build log as bytes, cut to MAX_LOG_BYTES with a note if it did not fit.
@@ -1059,8 +1019,8 @@ def _capped_log(log: str) -> bytes:
     MAX_LOG_BYTES), so the cut is unreachable for a log this hub captured; it is
     what keeps the file inside the ceiling anyway on the day either number moves.
 
-    One function for both copies of the log (the job's and the one beside a
-    revision's code), so they share one ceiling.
+    One function for both copies of the log (the job's and the one in a
+    revision's directory), so they share one ceiling.
     """
     raw = log.encode("utf-8", errors="replace")
     if len(raw) <= MAX_LOG_BYTES:
@@ -1072,23 +1032,6 @@ def _capped_log(log: str) -> bytes:
     # can decode.
     return (raw[:MAX_LOG_BYTES - len(note)]
             .decode("utf-8", errors="ignore").encode("utf-8")) + note
-
-
-def _discard(path: Path) -> None:
-    """Remove one file that may already be gone. NEVER RAISES.
-
-    The file-shaped twin of `shutil.rmtree(..., ignore_errors=True)`, and it
-    exists for the same reason that call carries that flag: every caller here is
-    in a `finally` on a path whose one duty is to reach a terminal job state.
-    `Path.unlink(missing_ok=True)` covers only the missing file, and "missing" is
-    the ORDINARY outcome on the publishing path — the archive has been renamed
-    into the store — while the rest of what a volume can say still has to not
-    take a job down with it.
-    """
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
 
 
 def _record_bytes(record: dict) -> bytes:

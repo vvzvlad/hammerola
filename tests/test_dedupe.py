@@ -71,15 +71,12 @@ def test_meta_json_is_never_shared_even_when_two_builds_wrote_the_same_one(hub):
 
 
 def test_nothing_written_after_publication_reaches_a_linked_copy(hub):
-    """Every path that writes into a project after publication, run over linked
-    builds: a restated message, a draft push into the slot, the next commit
-    mirroring itself into it. Every file still hashes to what its build
-    recorded, and every meta.json still names its own directory."""
+    """The paths that write into a project after publication, run over linked
+    builds: a draft push into the slot, the next commit mirroring itself into
+    it. Every file still hashes to what its build recorded, and every meta.json
+    still names its own directory."""
     hub.publish("proj1", "c1", good_build("v1"))
     hub.publish("proj1", "c2", good_build("v2"))
-    assert hub.publish("proj1", "c1", good_build("v1"),
-                       headers={"X-Hammerola-Message": "restated"}
-                       ).status_code == 200
     assert hub.publish_dev("proj1", good_build("draft")).status_code == 201
     assert hub.publish("proj1", "c3", good_build("v3")).status_code == 201
     pdir = hub.project_dir("proj1")
@@ -93,7 +90,6 @@ def test_nothing_written_after_publication_reaches_a_linked_copy(hub):
                 f"{build.name}/{name} no longer holds the bytes its build "
                 f"published")
         assert json.loads((build / "meta.json").read_text())["commit"] == build.name
-    assert json.loads((pdir / "c1" / "meta.json").read_text())["message"] == "restated"
 
 
 def test_a_file_that_will_not_link_keeps_its_own_copy(hub, monkeypatch):

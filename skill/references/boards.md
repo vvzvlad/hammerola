@@ -33,7 +33,7 @@ other, one entry and one row each, with any caption, as many as the project has:
 A schematic is listed by its root sheet; the hub publishes with it every sheet
 the schematics name, wherever in the project they sit, and the `.kicad_pro` with
 the same path minus the extension if it is there (a `.kicad_pro` listed as a
-document is a 422). The `.glb` is made on your machine, not on the hub:
+document refuses the push). The `.glb` is made on your machine, not on the hub:
 `kicad-cli pcb export glb --subst-models --include-tracks --include-pads --include-zones
 --include-silkscreen --include-soldermask -o hw/main.glb hw/main.kicad_pcb` (about 41 MB
 for a 235-part board; without the tracks, pads and zones it is 10 MB, and the 3D view has
@@ -55,5 +55,5 @@ there. An entry without siblings is a design of one. To hang a datasheet on a pa
 brings the design back as it was). A web address in the field is not
 a link. A missing sheet, a sheet outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
-the push with a 422 naming the file. The files open to the link without a key: whoever has it can
+the push, naming the file. The files open to the link without a key: whoever has it can
 download the whole editable design.

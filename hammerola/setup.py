@@ -8,7 +8,8 @@ hub only for the public starter template and never reads the token;
 `--no-template` needs no hub at all.
 
 The password is prompted for, never an argument (shell history, `ps`); it lives
-only in the 0600 file. The address may be an argument.
+only in the two 0600 files, the settings and git's headers. The address may be
+an argument.
 """
 
 import getpass
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from hammerola import config, project, unpack
 from hammerola.errors import ClientError
-from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
+from hammerola.hub import QUERY_TIMEOUT, Hub, HubError, git_headers
 from hammerola.projectslug import slug_from_title
 from hammerola.sources import public_hub
 
@@ -85,6 +86,8 @@ def login(args) -> int:
     values = {config.HUB_URL_VAR: url, config.EDIT_TOKEN_VAR: token,
               config.HUB_BASIC_AUTH_VAR: basic_auth or None}
     path = config.write_settings(values)
+    git_settings = config.write_git_settings(url,
+                                             git_headers(token, basic_auth))
 
     print(f"saved to {config.display_path(path)} (mode 0600)")
     print(f"  {config.HUB_URL_VAR:<{_LABEL}}{url}")
@@ -95,6 +98,9 @@ def login(args) -> int:
         # The login and never the password.
         print(f"  {config.HUB_BASIC_AUTH_VAR:<{_LABEL}}stored, login "
               f"{proxy_login}")
+    print(f"git's headers for the hub saved to "
+          f"{config.display_path(git_settings)} (mode 0600);\n"
+          f"  `hammerola connect` includes them in a repository")
     for name in values:
         if os.environ.get(name, "").strip():
             print(SHADOWED.format(name=name))

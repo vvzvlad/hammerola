@@ -1,8 +1,8 @@
-"""HTTP surface: the publish endpoint and the static site it produces.
+"""HTTP surface: the git server, the pre-receive hook's answer and the site.
 
 Standard library only — `ThreadingHTTPServer` over `BaseHTTPRequestHandler`. What
-this service does is receive a tarball and then serve files off disk, and neither
-half is made simpler by a framework.
+this service does is take a push and then serve files off disk, and neither half
+is made simpler by a framework.
 
 Routing (SPEC 3, 7.4):
 
@@ -41,12 +41,6 @@ Routing (SPEC 3, 7.4):
     GET  /project/<pid>/<a>/compare/<b>/<name>?v=<view>
                                               scene.json and report.json of one
                                               computed comparison      EDIT_TOKEN
-    POST /api/v1/publish/<pid>                accept a push, 202 + a job; the
-                                              HUB names the revision and the
-                                              reply says which name
-    POST /api/v1/publish/<pid>/<commit>       same, under a name the caller
-                                              chose
-    POST /api/v1/publish/<pid>/dev            same, into the local slot
     POST /api/v1/compare/<pid>/<old>/<new>    measure two revisions
                                               against each other, 202 +
                                               a job whose LOG is the
@@ -57,9 +51,8 @@ Routing (SPEC 3, 7.4):
                                               for the page above       EDIT_TOKEN
     GET  /api/v1/jobs/<id>                    how that build is going  EDIT_TOKEN
     GET  /api/v1/jobs/<id>/log                what the build printed   EDIT_TOKEN
-
-    GET  /api/v1/sources/<revision>           the code that built it   EDIT_TOKEN
-    GET  /api/v1/sources/<revision>/log       and what it printed      EDIT_TOKEN
+    GET  /api/v1/logs/<pid>/<revision>        what the build of that
+                                              revision printed         EDIT_TOKEN
 
     POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
     DELETE /api/v1/projects/<pid>             remove it entirely       EDIT_TOKEN
@@ -68,7 +61,11 @@ Routing (SPEC 3, 7.4):
                                               the refs, for one of the
                                               two services below       EDIT_TOKEN
     POST /git/<pid>.git/git-upload-pack       clone and fetch          EDIT_TOKEN
-    POST /git/<pid>.git/git-receive-pack      push, refused for now    EDIT_TOKEN
+    POST /git/<pid>.git/git-receive-pack      push: a version or a
+                                              draft                    EDIT_TOKEN
+    POST /internal/pre-receive                the hook of that push asking
+                                              whether it may go in     the hook's
+                                                                       secret
 
     POST /api/v1/comments/<pid>/<commit>      leave a comment          EDIT_TOKEN
     GET  /api/v1/comments                     the queue                EDIT_TOKEN
@@ -108,19 +105,22 @@ reader of each manifest field (`tests/test_onboarding.py` pins the set).
 Writing a comment needs the token (SPEC 8A.1): the hub executes the code it is
 sent, and an anonymous comment could become an agent's task to edit model.py.
 
-The code of a revision opens to no key: it is behind EDIT_TOKEN and lives in
-a tree the file server cannot reach. The same holds for each project's git
-repository, which `git http-backend` serves under `/git/` (`src/githttp.py`).
+The code of a revision opens to no key: it is the commit it was built from, in
+the project's git repository, which `git http-backend` serves under `/git/`
+behind EDIT_TOKEN (`src/githttp.py`).
 
 The two project routes are the only ones that unmake something (SPEC 3.1):
 `title` renames and nothing else, since no route ever changes an id; `DELETE`
 removes the whole project, never one build, since that would break a permanent
 URL.
 
-A push is two things. Everything decidable from the upload (token, size,
-archive, whether this exact push is already published) is answered in the
-request; the build itself (minutes of CPU, while the socket timeout is 30 s)
-becomes a job (`src/jobs.py`) the 202 points at.
+A push is `git push`, and the hub publishes inside it. git receives the
+objects and runs the pre-receive hook before it moves any ref; the hook posts
+the ref updates to `/internal/pre-receive`, where `src/prereceive.py` checks
+every ref, builds what is to be built in the ordinary queue (`src/jobs.py`) and
+publishes it, streaming the build's log back as the hook's output. A failed
+build refuses the push. Once git has written the ref, the end of the request
+recomputes `latest` from the branch (`githttp.end_of_request`).
 
 Cache-Control is not a detail here, it is the load-bearing half of the URL scheme:
 a commit directory is immutable by construction, so it gets a year; `latest` and
@@ -133,7 +133,7 @@ import hashlib
 import hmac
 import json
 import os
-import shutil
+import secrets
 import stat
 import subprocess
 import threading
@@ -147,18 +147,16 @@ from loguru import logger
 from hammerola import buildnames
 # `proposals` as a module: it exports a `validate_payload` of its own, and so
 # does `src.comments`.
-from src import githttp, onboarding, proposals, render
+from src import githttp, onboarding, prereceive, proposals, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
-from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR,
-                      QUEUE_FULL_RETRY_AFTER_SECONDS,
+from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
-                      SUBMIT_QUEUE_FULL, BuildQueue, BuildTask, CompareTask,
-                      JobStore)
+                      SUBMIT_QUEUE_FULL, BuildQueue, CompareTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
 from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK,
-                       POINTER_NAMES, PROJECT_BUILDS_FILE, PublishError,
-                       SITE_INDEX_FILE, Store)
+                       POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
+                       ImportFailed, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
 # only honest because a build directory can never change: republishing the same
@@ -221,15 +219,9 @@ SOCKET_TIMEOUT = 30
 # Ceiling on how long ONE request body may take to arrive, end to end.
 #
 # The socket timeout is rearmed by every packet, so a byte every 29 s would
-# hold a publish slot forever (slowloris). A push has no size ceiling, so this
-# is also what a big one has to beat: 300 s moves ~1 GB at ~27 Mbit/s sustained.
+# hold a thread forever (slowloris). A push has no size ceiling, so this is
+# also what a big one has to beat: 300 s moves ~1 GB at ~27 Mbit/s sustained.
 BODY_DEADLINE_SECONDS = 300
-
-# How many publishes may be RECEIVED at once (a body on disk, a tar reader and
-# a staging tree each); queueing behind a permit is fine. Building has its own,
-# independent ceiling, `jobs.MAX_CONCURRENT_BUILDS`, sized by memory; that both
-# are 4 is a coincidence.
-MAX_CONCURRENT_PUBLISHES = 4
 
 # Ceiling on the body of a resolve (one optional `note`, itself capped by
 # `records.MAX_FIELD_CHARS`), so the endpoint is never handed a megabyte.
@@ -239,14 +231,13 @@ MAX_RESOLVE_BODY_BYTES = 8 * 1024
 # title past MAX_TEXT).
 MAX_TITLE_BODY_BYTES = 2 * 1024
 
-# How long a publish waits for a permit before giving up. Long enough to outlast
-# a normal push, short enough that a wedged one turns into a 503 CI can retry
-# rather than a thread parked until the socket times out.
-PUBLISH_WAIT_SECONDS = 60
+# The pre-receive hook's call: the ref lines of one push, a few quarantine
+# paths and the push options, as JSON.
+MAX_HOOK_BODY_BYTES = 1024 * 1024
 
-# The header carrying a revision's message. The client (`hammerola/hub.py`)
-# percent-encodes it so non-latin-1 text can travel; the route unquotes it.
-MESSAGE_HEADER = "X-Hammerola-Message"
+# The header the hook presents the secret in, made by this process at start
+# and handed to git's environment only (`githttp.hook_environment`).
+HOOK_SECRET_HEADER = "X-Hammerola-Hook-Secret"
 
 # The header carrying EDIT_TOKEN. Its own, so `Authorization` stays free for a
 # password proxy in front of the hub (Traefik basicAuth forwards its
@@ -427,10 +418,6 @@ def _safe_build_path(path: str) -> bool:
     return buildnames.unservable_path_reason(path) is None
 
 
-# What `_handle_post` answers itself, after `POST_ROUTES` has had its look.
-PUBLISH_PREFIX = ("api", "v1", "publish")
-
-
 def _route_rest(pattern, segments: list[str]) -> list[str] | None:
     """The segments past `pattern`'s prefix, or None when it does not match.
 
@@ -501,9 +488,9 @@ GET_ROUTES = (
     ((("api", "v1", "jobs"), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_jobs(rest, with_body)),
-    ((("api", "v1", "sources"), None),
+    ((("api", "v1", "logs"), None),
      lambda handler, rest, query, trailing_slash, with_body:
-         handler._serve_sources(rest, with_body)),
+         handler._serve_build_log(rest, with_body)),
     # HEAD reaches this entry too, and is none of the three git requests.
     (((githttp.ROUTE,), None),
      lambda handler, rest, query, trailing_slash, with_body:
@@ -511,8 +498,7 @@ GET_ROUTES = (
                             with_body)),
 )
 
-# One entry per route, tried in order. Publish is not in it: the body of
-# `_handle_post` answers it, last, after every narrower route.
+# One entry per route, tried in order.
 POST_ROUTES = (
     # Two routes share this shape: `<pid>/<commit>` to leave a
     # comment and `<id>/resolve` to close one. A build named
@@ -526,6 +512,9 @@ POST_ROUTES = (
     (((githttp.ROUTE,), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_git("POST", rest, query, with_body)),
+    ((tuple(githttp.HOOK_PATH.strip("/").split("/")), 2),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._handle_pre_receive()),
 )
 
 DELETE_ROUTES = (
@@ -1235,29 +1224,12 @@ class HubHandler(BaseHTTPRequestHandler):
                     extra, with_body=with_body)
         return False
 
-    def _revision_message(self):
-        """What this revision says it is, off the push's own header. Or None.
-
-        A header, not part of the archive whose digest names the revision.
-        Percent-decoded: the client `quote`s it (`hammerola/hub.py`) because
-        header values are latin-1. An invalid message is refused, not
-        dropped, as a PublishError; the body has been read by then, so the
-        connection stays open.
-        """
-        raw = self.headers.get(MESSAGE_HEADER)
-        if not raw:
-            return None
-        try:
-            return render.revision_message(unquote(raw))
-        except ValueError as error:
-            raise PublishError(400, str(error)) from error
-
     def do_POST(self):
         try:
             return self._handle_post()
         except (BrokenPipeError, ConnectionResetError):
             # The client went away mid-upload: ordinary, not a traceback.
-            logger.info("publish aborted: the client closed the connection")
+            logger.info("request aborted: the client closed the connection")
             self.close_connection = True
             return None
 
@@ -1269,201 +1241,66 @@ class HubHandler(BaseHTTPRequestHandler):
             rest = _route_rest(pattern, segments)
             if rest is not None:
                 return call(self, rest, query, path.endswith("/"), True)
+        return self._error(404, "not found", {"Connection": "close"})
 
-        if tuple(segments[:len(PUBLISH_PREFIX)]) != PUBLISH_PREFIX or \
-                len(segments) not in (4, 5):
-            return self._error(404, "not found", {"Connection": "close"})
+    def _handle_pre_receive(self):
+        """POST /internal/pre-receive — the hook of a push asking whether it
+        may go in (`githooks/pre-receive`).
 
-        # Auth before the body: no whole upload just to be told no.
-        if not self._authorized():
-            logger.warning(
-                f"publish refused: bad or missing token from "
-                f"{self.address_string()}")
-            return self._error(
-                TOKEN_REFUSED_STATUS, f"invalid or missing {TOKEN_HEADER}",
-                {"Connection": "close"})
-
-        length = self._body_length()
-        if length is None:
-            return None
-
-        pid = segments[3]
-        # Four segments: the hub mints the name from the sources
-        # (`Store.mint_revision`). Five: a named one; `dev` is the local slot
-        # (SPEC 7.6). Where a build lands is decided by the URL, never by the
-        # body.
-        commit = segments[4] if len(segments) == 5 else None
-        # How to build: only the exact `?force=1` the client sends counts;
-        # the rest of the query is ignored.
-        forced = (parse_qs(query).get("force") or [None])[0] == "1"
-        # For log lines before the sources are hashed.
-        target = f"{pid}/{commit}" if commit is not None else f"{pid} (new)"
-
-        # The permit is taken before the body is read, so an overloaded hub
-        # stops pulling bytes rather than accepting work it cannot do.
-        if not self.server.publish_slots.acquire(timeout=PUBLISH_WAIT_SECONDS):
-            logger.warning(
-                f"publish {target} refused: no free slot after "
-                f"{PUBLISH_WAIT_SECONDS}s")
-            return self._error(
-                503, "too many publishes in flight, retry later",
-                {"Connection": "close", "Retry-After": "30"})
-        try:
-            spool = self.server.store.upload_path()
-            # The answer is decided here and sent after the cleanup: a client
-            # that has been answered may assume the hub is done with its push.
-            refusal = None          # (status, why, extra headers)
-            accepted = None
-            message = None
-            try:
-                problem = self._spool_body(length, spool)
-                if problem is not None:
-                    # `why`, not `message`, which is the revision's message.
-                    status, why = problem
-                    logger.warning(
-                        f"publish {target} refused: {why}")
-                    # Closed: unread body bytes would be parsed as the next
-                    # request.
-                    refusal = (status, why, {"Connection": "close"})
-                else:
-                    # After the body is drained: refusing earlier would close
-                    # while the client is still writing, and it would see a
-                    # broken pipe instead of the 400.
-                    message = self._revision_message()
-                    # `<pid>/dev` goes into the project's one local slot
-                    # (SPEC 7.6), a reserved name. Both routes are accepted
-                    # identically; only the worker's last step differs.
-                    accepted = self.server.store.accept_sources(
-                        pid, commit, spool)
-            except PublishError as error:
-                logger.warning(
-                    f"publish {target} refused: {error.message}")
-                refusal = (error.status, error.message, None)
-            except (BrokenPipeError, ConnectionResetError):
-                # To `do_POST`, not `except Exception`: nobody is left to
-                # answer. The `finally` still removes the spool.
-                raise
-            except Exception:
-                logger.exception(f"publish {target} failed")
-                refusal = (500, "internal error", None)
-            finally:
-                try:
-                    spool.unlink(missing_ok=True)
-                except OSError:
-                    # Swallowed: this runs before the reply, which must
-                    # still be sent. The dot-prefixed leftover is swept by
-                    # `Store._sweep_leftovers`.
-                    logger.exception(
-                        f"publish {target}: the spooled body could not be "
-                        f"removed")
-            if refusal is not None:
-                status, why, extra = refusal
-                return self._error(status, why, extra)
-            return self._queue_build(pid, accepted, minted=commit is None,
-                                     force=forced, message=message)
-        finally:
-            self.server.publish_slots.release()
-
-    def _queue_build(self, pid: str, accepted, *, minted: bool,
-                     force: bool, message: str = None):
-        """Hand an accepted source tree to the build pool. 200, 202 or 503.
-
-        200 rather than 202 when this exact push is already published; 409 is
-        a PublishError. Both are answered on the push itself, not via a job.
-
-        The permit is still held: it bounds source trees waiting for a worker
-        by the accept slots plus the queue.
-
-        The answer is decided first and sent after the cleanup, so an answered
-        client never races an unowned source tree on the volume.
-
-        `minted` (the hub chose the name) adds `revision` to the reply. A 202
-        carries `job` (this build attempt) and `revision` (what it publishes);
-        the same sources pushed twice get two jobs and one revision.
-
-        `force` and `message` travel beside `accepted`, not in it: they are
-        not part of what was accepted. `message` reaches both endings, so an
-        already-published tree can still be re-described.
+        Behind the secret this process made at start, which only git's
+        environment carries, so a stray request on the loopback cannot
+        publish; EDIT_TOKEN never reaches git. The answer is text, written as
+        the push goes — building, the build's log, published or the refusal —
+        and its last line is the verdict (`prereceive.VERDICT`).
         """
-        commit = accepted.commit
-        # Only on the minting route: a named push already knows its id.
-        named = {"revision": commit} if minted else {}
-        handed_over = False
-        job_id = None
-        reply = None            # (status, payload, extra headers)
+        presented = self.headers.get(HOOK_SECRET_HEADER, "")
+        if not hmac.compare_digest(presented.encode("utf-8"),
+                                   self.server.hook_secret.encode("utf-8")):
+            logger.warning(f"refused: a pre-receive call without this hub's "
+                           f"secret from {self.address_string()}")
+            return self._error(TOKEN_REFUSED_STATUS, "not this hub's hook",
+                               {"Connection": "close"})
+        body = self._take_body(MAX_HOOK_BODY_BYTES,
+                               too_large="the hook's call is too large")
+        if body is None:
+            return None
         try:
-            # The digest is of the sources only; `force` is not in it. An
-            # already-published push answers 200 "unchanged", forced or not:
-            # the same sources must never become two revisions.
-            settled = self.server.store.settled(pid, commit, accepted.digest,
-                                                message=message)
-            if settled is not None:
-                status, payload = settled
-                reply = (status, {**payload, **named}, None)
-            else:
-                record = self.server.jobs.create(pid, commit)
-                job_id = record["id"]
-                outcome = self.server.builds.submit(BuildTask(
-                    job_id=job_id, pid=pid, commit=commit,
-                    sources=accepted.sources, archive=accepted.archive,
-                    digest=accepted.digest, force=force, message=message))
-                if outcome == SUBMIT_ACCEPTED:
-                    handed_over = True
-                    status_url = f"/api/v1/jobs/{job_id}"
-                    logger.info(
-                        f"publish {pid}/{commit}: queued as job {job_id}")
-                    reply = (202,
-                             {"job": job_id, "status_url": status_url,
-                              "log_url": f"{status_url}/log", **named},
-                             {"Location": status_url})
-                elif outcome == SUBMIT_QUEUE_FULL:
-                    # The job is finished as failed, not left `queued`
-                    # forever.
-                    self.server.jobs.finish(job_id, state=STATE_FAILED,
-                                            code=503, error=QUEUE_FULL_ERROR)
-                    logger.warning(
-                        f"publish {pid}/{commit} refused: the build queue "
-                        f"is full")
-                    reply = (503, {"error": QUEUE_FULL_ERROR},
-                             {"Retry-After":
-                              str(QUEUE_FULL_RETRY_AFTER_SECONDS)})
-                else:
-                    # The hub is stopping: no Retry-After, and the job has
-                    # already been answered by `shutdown` or `submit`, so it
-                    # is not overwritten.
-                    logger.warning(
-                        f"publish {pid}/{commit} refused: the hub is "
-                        f"stopping")
-                    reply = (503, {"error": STOPPED_ERROR}, None)
-        except PublishError as error:
-            logger.warning(
-                f"publish {pid}/{commit} refused: {error.message}")
-            reply = (error.status, {"error": error.message}, None)
-        except (BrokenPipeError, ConnectionResetError):
-            # The job outlives the socket, so it is failed before re-raising
-            # (see `_fail_handover`).
-            self._fail_handover(job_id, handed_over)
-            raise
-        except Exception:
-            logger.exception(f"publish {pid}/{commit} failed")
-            self._fail_handover(job_id, handed_over)
-            reply = (500, {"error": "internal error"}, None)
-        finally:
-            # The worker owns the tree and the body once submitted; on every
-            # other path (200, 409, 503) nothing is built, so both go.
-            if not handed_over:
-                shutil.rmtree(accepted.sources, ignore_errors=True)
-                try:
-                    accepted.archive.unlink(missing_ok=True)
-                except OSError:
-                    # Swallowed: a reply is still to be sent. The leftover is
-                    # swept by `Store._sweep_leftovers`.
-                    logger.exception(
-                        f"publish {pid}: the accepted body could not be "
-                        f"removed after the push was answered")
+            request = prereceive.parse(body, self.server.store)
+        except ValueError as error:
+            return self._error(400, str(error), {"Connection": "close"})
 
-        status, payload, extra = reply
-        return self._json(status, payload, CACHE_NONE, extra)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", CACHE_NONE)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        present = True
+
+        def say(line: str) -> None:
+            # The push goes on to its end whether the hook still reads or not,
+            # as `githttp.serve` lets it.
+            nonlocal present
+            if not present:
+                return
+            try:
+                self.wfile.write(line.encode("utf-8", "replace") + b"\n")
+                self.wfile.flush()
+            except OSError:
+                present = False
+
+        try:
+            accepted = prereceive.run(self.server.store, self.server.jobs,
+                                      self.server.builds, request, say)
+        except Exception:
+            logger.exception(f"push {request.pid}: the hook could not be "
+                             f"answered")
+            say("the hub failed while answering this push")
+            accepted = False
+        say(prereceive.VERDICT
+            + (prereceive.ACCEPTED if accepted else prereceive.REFUSED))
+        return None
 
     def _handle_compare(self, rest: list[str]):
         """POST /api/v1/compare/<pid>/<old>/<new> — 202 and a job.
@@ -1524,7 +1361,7 @@ class HubHandler(BaseHTTPRequestHandler):
             CompareTask(job_id=job_id, pid=pid, old=old, new=new,
                         view=view))
         if outcome == SUBMIT_QUEUE_FULL:
-            # Failed rather than left `queued`, as in `_queue_build`.
+            # Failed rather than left `queued`.
             self.server.jobs.finish(job_id, state=STATE_FAILED, code=503,
                                     error=QUEUE_FULL_ERROR)
             logger.warning(
@@ -1550,27 +1387,6 @@ class HubHandler(BaseHTTPRequestHandler):
             {"job": job_id, "status_url": status_url,
              "log_url": f"{status_url}/log"},
             CACHE_NONE, {"Location": status_url, "Connection": "close"})
-
-    def _fail_handover(self, job_id, handed_over: bool) -> None:
-        """Answer a job the handover threw underneath. Never raises.
-
-        Between `jobs.create` and `builds.submit` an exception would leave a
-        job `queued` forever (until a restart's `_load` fails it). Once
-        `submit` has accepted, the worker owns the job, so `handed_over`
-        prevents failing a running build. Recorded as a 500: the hub's fault,
-        not the push's.
-        """
-        if job_id is None or handed_over:
-            return
-        try:
-            self.server.jobs.finish(job_id, state=STATE_FAILED, code=500,
-                                    error=HANDOVER_ERROR)
-        except Exception:
-            # Runs inside an exception handler that must still reach its own
-            # `raise` or reply.
-            logger.exception(
-                f"job {job_id}: could not be failed after the handover "
-                f"threw; it stays queued until the hub restarts")
 
     # -- build jobs ------------------------------------------------
     def _serve_jobs(self, rest: list[str], with_body: bool):
@@ -1602,51 +1418,26 @@ class HubHandler(BaseHTTPRequestHandler):
         payload["log_url"] = f"/api/v1/jobs/{job_id}/log"
         return self._json(200, payload, CACHE_NONE, with_body=with_body)
 
-    # -- the code of a revision ------------------------------------
-    def _serve_sources(self, rest: list[str], with_body: bool):
-        """GET /api/v1/sources/<revision>[/log].
+    # -- the log of a revision -------------------------------------
+    def _serve_build_log(self, rest: list[str], with_body: bool):
+        """GET /api/v1/logs/<pid>/<revision> — what its build printed.
 
-        The code is not public; this is its only way out of the store. The
-        token is checked before the revision. Every miss (never published,
-        failed, removed, malformed id) is the same 404.
-
-        The archive decides existence, not the directory (`source_archive`):
-        a directory holding only a log is what an interrupted rename leaves.
+        The revision's own `.build.log`; 404 when there is none, and for every
+        malformed id. The token is checked first, as on every private route.
         """
         if not self._require_token(with_body):
             return None
-        if not rest or len(rest) > 2:
+        store = self.server.store
+        if len(rest) != 2 or not store.valid_pid(rest[0]) \
+                or not store.valid_build_id(rest[1]):
             return self._error(404, "not found", with_body=with_body)
-        if len(rest) == 2 and rest[1] != "log":
+        try:
+            raw = store.build_log_path(rest[0], rest[1]).read_bytes()
+        except OSError:
             return self._error(404, "not found", with_body=with_body)
-
-        revision = rest[0]
-        # A revision id is a build id (SPEC 7.7), so the path below is one
-        # segment deep by construction.
-        if not self.server.store.valid_build_id(revision):
-            return self._error(404, "not found", with_body=with_body)
-        archive = self.server.store.source_archive(revision)
-        if not archive.is_file():
-            return self._error(404, "not found", with_body=with_body)
-
-        if len(rest) == 2:
-            # text/plain, as for the job log. A missing log is an empty body,
-            # not a 404: the revision exists.
-            log = self.server.store.source_log(revision)
-            try:
-                raw = log.read_bytes()
-            except OSError:
-                raw = b""
-            return self._send(200, raw, "text/plain; charset=utf-8",
-                              CACHE_NONE, with_body=with_body)
-
-        # An opaque attachment. The filename is the whitelisted revision id,
-        # so nothing needs quoting.
-        return self._send_file(
-            archive, CACHE_NONE, with_body,
-            content=(OCTET_TYPE, {
-                "Content-Disposition":
-                    f'attachment; filename="{revision}.tar.gz"'}))
+        # text/plain, never HTML: output the model produced.
+        return self._send(200, raw, "text/plain; charset=utf-8", CACHE_NONE,
+                          with_body=with_body)
 
     # -- the git server --------------------------------------------
     def _serve_git(self, method: str, rest: list[str], query: str,
@@ -1656,9 +1447,10 @@ class HubHandler(BaseHTTPRequestHandler):
         The token first, before the shape of the request, as on every private
         route. Only the three requests of the smart protocol reach
         `git http-backend` (`githttp.smart_request`); everything else under
-        /git/, the dumb protocol's files included, is a 404. Every answer
-        closes the connection: a git answer has no length, and a refusal may
-        leave a body unread.
+        /git/, the dumb protocol's files included, is a 404. A project whose
+        import failed is a 503 with the reason (`Store.ensure_repo`). Every
+        answer closes the connection: a git answer has no length, and a
+        refusal may leave a body unread.
         """
         close = {"Connection": "close"}
         if not self._require_token(with_body, close=True):
@@ -1677,14 +1469,21 @@ class HubHandler(BaseHTTPRequestHandler):
                     return None
         try:
             self.server.store.ensure_repo(request.pid)
-            code = githttp.serve(self, request, self.server.store.repos_dir,
-                                 length, BODY_DEADLINE_SECONDS)
+            code = githttp.serve(
+                self, request, self.server.store.repos_dir, length,
+                BODY_DEADLINE_SECONDS,
+                githttp.hook_environment(self.server.server_address[1],
+                                         self.server.hook_secret))
+        except ImportFailed as error:
+            return self._error(
+                503, f"the import of this project's builds failed: {error}",
+                close)
         except (OSError, subprocess.CalledProcessError):
             logger.exception(f"git {request.pid}: git could not be started")
             return self._error(500, "internal error", close)
         if code != 0:
             logger.warning(f"git {request.pid}: git http-backend exited {code}")
-        githttp.end_of_request(self.server.store, request.pid)
+        githttp.end_of_request(self.server.store, request)
         return None
 
     # -- the project itself: rename, and remove ---------------------
@@ -1934,8 +1733,8 @@ class HubHandler(BaseHTTPRequestHandler):
 
         `limit` and the 413 text `too_large` (formatted with `length` and
         `limit`) are the caller's; the 413 is answered without reading. A
-        `limit` of None means the route has no ceiling: a publish, whose body
-        goes to disk (`_spool_body`).
+        `limit` of None means the route has no ceiling: a push, whose body goes
+        to `git http-backend` as it arrives.
 
         A chunked body is refused like a missing length: the length is what
         these routes read the body by. The git route alone takes a chunked
@@ -1964,8 +1763,7 @@ class HubHandler(BaseHTTPRequestHandler):
     def _take_body(self, limit: int, *, too_large: str) -> bytes | None:
         """The whole body, or None once the refusal has been written.
 
-        For the routes that read their body into memory; a publish spools to
-        disk instead (`_spool_body`).
+        For the routes that read their body into memory.
         """
         length = self._body_length(limit, too_large=too_large)
         if length is None:
@@ -1980,8 +1778,10 @@ class HubHandler(BaseHTTPRequestHandler):
     def _read_body(self, length: int):
         """Read exactly `length` bytes into memory. (bytes, problem or None).
 
-        The in-memory twin of `_spool_body`, for bodies of a few megabytes at
-        most, already bounded by the caller. `read1`, as in `_spool_body`.
+        For bodies of a few megabytes at most, already bounded by the caller.
+        `read1`, not `read`: `BufferedReader.read(n)` loops until it has all n
+        bytes, so the deadline would go unchecked; `read1` returns after one
+        syscall.
         """
         deadline = time.monotonic() + BODY_DEADLINE_SECONDS
         chunks = bytearray()
@@ -1998,39 +1798,6 @@ class HubHandler(BaseHTTPRequestHandler):
             chunks += chunk
             remaining -= len(chunk)
         return bytes(chunks), None
-
-    def _spool_body(self, length: int, path: Path):
-        """Copy exactly `length` bytes from the socket into `path`.
-
-        None when the whole body arrived; otherwise (status, message) for the
-        caller to answer with, because both ways this can fail are the
-        client's and neither should be reported as a corrupt archive:
-
-        * the client stopped early (otherwise a truncated tarball would be
-          reported as a bad archive);
-        * the body did not finish inside BODY_DEADLINE_SECONDS, which the
-          per-packet socket timeout cannot see.
-
-        Straight to disk, so a push is never held in memory, however big.
-        """
-        deadline = time.monotonic() + BODY_DEADLINE_SECONDS
-        remaining = length
-        with open(path, "wb") as out:
-            while remaining > 0:
-                if time.monotonic() > deadline:
-                    return (408,
-                            f"request body did not arrive within "
-                            f"{BODY_DEADLINE_SECONDS}s")
-                # read1, not read: BufferedReader.read(n) loops until it has
-                # all n bytes, so the deadline would go unchecked. read1
-                # returns after one syscall.
-                chunk = self.rfile.read1(min(remaining, 256 * 1024))
-                if not chunk:
-                    return 400, "request body ended early"
-                out.write(chunk)
-                remaining -= len(chunk)
-        return None
-
 
 def create_server(settings, *, build_runner=None, compare_runner=None,
                   build_workers=None,
@@ -2088,10 +1855,16 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     server.proposal_store = proposal_store
     server.jobs = job_store
     server.builds = builds
-    # One per server: two hubs in one test process must not share a
-    # concurrency budget.
-    server.publish_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PUBLISHES)
     server.edit_token = settings.edit_token
+    # What the pre-receive hook presents (`_handle_pre_receive`): 128 bits, made
+    # here and handed to git's environment only.
+    server.hook_secret = secrets.token_hex(16)
     # Last, so a bind that fails leaves no threads behind to be joined by nobody.
     builds.start()
+    # The import and the derived state of every project, off the start path
+    # (`Store.catch_up`); a test that needs it done joins this.
+    server.catching_up = threading.Thread(target=store.catch_up,
+                                          name="hammerola-catch-up",
+                                          daemon=True)
+    server.catching_up.start()
     return server

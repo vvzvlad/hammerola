@@ -1,6 +1,6 @@
 # Projects, revisions, and setting up a machine
 
-Starting a project, fetching a revision's source and artifacts back, removing
+Starting a project, fetching a revision's artifacts and code back, removing
 things, and the one-time setup of a machine.
 
 ## Starting a project
@@ -29,21 +29,41 @@ built from it, so a new id is a new project orphaning the old.
 `hammerola rename "..."` changes the title only. `project` has no command —
 edit the line, and only later builds carry it.
 
+Then, once per project, in its git repository:
+
+```sh
+git init -b main && git add -A && git commit -m "..."   # unless it is in one already
+hammerola connect
+```
+
+`connect` adds the remote `hammerola-<pid>`, includes the hub's password for
+git from `~/.config/hammerola/gitconfig` in the repository's own config,
+fetches, and — for a project published before git — joins the hub's history
+into the local `main` with one merge commit that changes no file, whichever
+branch is checked out. It refuses without a local `main` then: create one, or
+rename yours (`git branch -m <branch> main`). The project is the directory
+holding `project.json` with its id; one repository may hold several projects,
+each with its own remote, and a commit that touches only one of them builds
+only that one.
+
 ## Fetching things back
 
 ```sh
-hammerola source <revision>     # the code that produced it, into .hammerola/
 hammerola artifacts <revision>  # its STL/STEP/3MF and pictures, into .hammerola/
 hammerola diff <old> <new>      # what moved: geometry numbers, and the source
 ```
 
-Artefacts take the secret or a link that includes them; source takes the
-secret. `.hammerola/` is hidden, so the next push skips what you fetched.
-`-o DIR` (`--output`) lands it elsewhere, and a visible directory in the
-project travels with the next push.
-`source --into-working-copy` overwrites the working copy and needs a clean git
-tree. `diff --json` prints a document for code; `--material` adds material
-gained and lost per part, costing about a build; not both.
+A revision's code is its commit: `git show <revision>:<file>`, after `git fetch
+hammerola-<pid>`. A build published before git is the commit with the trailer
+`Hammerola-Import: <pid>/<revision>`, its tree the project's directory. `diff`
+reads the code from the local repository the same way, and says to fetch when a
+revision is missing.
+
+Artefacts take the secret or a link that includes them. `.hammerola/` ignores
+itself in git, so no commit picks up what you fetched; `-o DIR` (`--output`)
+lands it elsewhere, where git may not ignore it. `diff --json` prints a
+document for code; `--material` adds material gained and lost per part, costing
+about a build; not both.
 
 ## Removing things
 
@@ -73,11 +93,12 @@ file beside it — and removes what the new version no longer ships. A stale ski
 silently, teaching commands that no longer exist, and nothing checks it for
 you: ask when you start on a project. Installed somewhere else? Pass
 `--path DIR`, or both verbs act on a directory nobody reads.
-`hammerola update` replaces the client, which `build` and `commit` refuse when
-older than the hub.
+`hammerola update` replaces the client, which `build` refuses when older than
+the hub.
 
 `login` asks for the password at the terminal and stores it 0600 in
-`~/.config/hammerola/env`. **Ask the instance's owner for it.** One shared
+`~/.config/hammerola/env`, and for git, as the header it sends to the hub, 0600
+in `~/.config/hammerola/gitconfig`. **Ask the instance's owner for it.** One shared
 secret publishes, reads any project's source and deletes any project: never put
 it in a repository, a CI variable or a command line.
 

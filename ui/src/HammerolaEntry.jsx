@@ -1144,7 +1144,7 @@ export class HammerolaProjects extends React.Component {
               (SPEC 7.6, Store._refresh_index); saying so keeps "my project is
               missing" from looking like a bug. */}
           <div style={css(`font:400 11px/1.7 ${MONO};color:var(--text-faint);text-align:center;padding-top:28px`)}>
-            a project is listed from its first `hammerola commit` — never from a `dev` push
+            a project is listed from its first `git push` — never from a `dev` push
           </div>
           {this.drawBrief()}
         </div>

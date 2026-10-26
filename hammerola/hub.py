@@ -1,4 +1,7 @@
-"""Talking to the hub: one POST, then a job polled to its end.
+"""Talking to the hub over HTTP: every command but the two that push.
+
+A version and a draft are published by `git push` (`hammerola/repo.py`); this
+module is the rest of the hub's API.
 
 `urllib.request`, not httpx: the client is stdlib-only so it runs under any
 python3 and self-updates as one file. httpx stays a dev dependency for the
@@ -15,30 +18,12 @@ drops the credentials it holds for the proxy. So a 401 on any route is the
 proxy refusing its login (`PROXY_REFUSED`) and a 403 is the hub refusing its
 token (`UNAUTHORIZED`).
 
-    POST /api/v1/publish/<pid>            Token, body = tar.gz. The HUB names
-                                          the revision, out of the sources in
-                                          the body. `X-Hammerola-Message`, when
-                                          the push carries one, is what this
-                                          revision says about itself —
-                                          percent-encoded UTF-8.
-      202 {"job", "status_url", "log_url", "revision"} + Location -> queued
-      200 {"url", "revision"}                          -> this exact push is
-                                                          already published, and
-                                                          nothing was rebuilt
-      422 / 403 / 503 {"error"}                        -> refused, here is why
-    POST /api/v1/publish/<pid>/dev        the same, into the local slot, whose
-                                          name is the constant `dev` and which
-                                          therefore has no `revision` to report
-
+    POST /api/v1/compare/<pid>/<a>/<b>    Token -> 202 {"job", ...}: the hub
+                                          measures two revisions in a job
     GET  /api/v1/jobs/<id>                Token -> the record, `state` in
                                           queued|building|done|failed
-    GET  /api/v1/jobs/<id>/log            Token -> text/plain, what the build
+    GET  /api/v1/jobs/<id>/log            Token -> text/plain, what the job
                                           printed
-
-A 202 carries two identifiers: `job` is this build attempt (progress, log),
-`revision` is the permanent immutable name of what it publishes. The same
-sources pushed twice get two jobs and one revision. Never print one where the
-other is meant.
 
 The routes the read-only commands use (`status` and `comments` read what the
 browser fetches):
@@ -76,11 +61,9 @@ The one route asked for with NO token, because it is read before login:
                                           the `template` one; `skill` follows
                                           the other two.
 
-The code of a revision, and the two routes that unmake something:
+The log of a revision, and the two routes that unmake something:
 
-    GET    /api/v1/sources/<revision>     Token -> the pushed body, byte for
-                                          byte, as an opaque attachment
-    GET    /api/v1/sources/<revision>/log Token -> what that build printed
+    GET    /api/v1/logs/<pid>/<revision>  Token -> what that build printed
     POST   /api/v1/projects/<pid>/title   Token, `{"title": ...}` -> renames
     DELETE /api/v1/projects/<pid>         Token -> removes the project whole
     DELETE /api/v1/proposals/<pid>        Token -> `{"removed": true|false}`,
@@ -88,13 +71,9 @@ The code of a revision, and the two routes that unmake something:
                                           gone, and the boolean is the only
                                           thing that says whether there was one
 
-A build's files open to a link that carries their key, and its code to
-nothing but the secret, which is why `source` and `artifacts` are two verbs.
-Every guarded route checks the one secret, `EDIT_TOKEN`.
-
-A 4xx is returned to the caller rather than raised: 200, 202, 409 and 422 are
-all meaningful answers to a push and the caller is the one that knows what to do
-with each. Only "the hub could not be reached at all" is an exception.
+Every guarded route checks the one secret, `EDIT_TOKEN`. Only "the hub could
+not be reached at all" is an exception of `_call`; each method decides what the
+status codes of its route mean.
 """
 
 import base64
@@ -107,8 +86,8 @@ import urllib.request
 
 from hammerola.config import header_value_problem
 
-# One request: generous because a push carries the whole archive up a domestic
-# uplink. The wait for a build is a separate budget (`await_job`).
+# One request, when the caller names no budget of its own. The wait for a job
+# is a separate budget (`await_job`).
 HTTP_TIMEOUT = 300
 
 # For requests that upload nothing (status, comments, login check, polls), so
@@ -141,20 +120,13 @@ POLL_NOTICE_MIN_SECONDS = 30
 # How long `await_job` waits by default. The worst honest wait is a full queue:
 # MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (300) over
 # MAX_CONCURRENT_BUILDS (4) workers is twenty minutes; this is that with room to
-# spare. `--timeout` moves it.
+# spare.
 #
 # A COPY: the stdlib-only client cannot import `src.buildproc`. When
 # `wall_seconds` moves, update this (`tests/test_build_ceilings.py` checks that
 # it clears the worst wait); a stale value shows up as a client timeout on a
 # build that is still legitimately queued.
 JOB_TIMEOUT = 2700
-
-# When a build is slow enough to warn about. A judgement, not a copy of a hub
-# number (hence not in `limits.py`); `tests/test_build_ceilings.py` keeps it
-# strictly under the hub's wall clock. Printed by the client rather than the
-# build because the hub keeps only the head of a log (`buildproc.runner._Drain`)
-# and a warning at the end of a long log would be dropped.
-SLOW_BUILD_SECONDS = 180
 
 TERMINAL_STATES = ("done", "failed")
 
@@ -193,11 +165,6 @@ START_PATH = "/start"
 # lookup. `check_token`: 404 means the token was accepted, 403 that it was not.
 IMPOSSIBLE_JOB_ID = "0" * 22
 
-# The revision message travels as a header, outside the archive whose digest
-# names the revision: the same tree with two messages is one revision. Read by
-# `src/app.py`.
-MESSAGE_HEADER = "X-Hammerola-Message"
-
 # The header the token travels in, read by `src/app.py`. Its own rather than
 # `Authorization`, which a password proxy in front of the hub wants for itself.
 TOKEN_HEADER = "X-Hammerola-Token"
@@ -234,27 +201,19 @@ class Hub:
         self._origin = _origin(self.url)
         _refuse_unsendable_token(token)
         self._token = token
-        # `HUB_BASIC_AUTH`, as a password proxy in front of the hub reads it:
-        # base64 of the UTF-8 `login:password`, which is ASCII whatever the
-        # value holds. Empty means no proxy and no `Authorization` header.
-        self._proxy_authorization = ""
-        if basic_auth:
-            encoded = base64.b64encode(basic_auth.encode("utf-8"))
-            self._proxy_authorization = f"Basic {encoded.decode('ascii')}"
+        # Empty means no proxy and no `Authorization` header.
+        self._proxy_authorization = proxy_authorization(basic_auth)
         self.timeout = timeout
         self._opener = _opener_for(self._origin)
 
     # -- transport ---------------------------------------------------------
     def _call(self, path: str, *, method: str = "GET", body=None,
-              content_type=None, timeout=None, message=None):
+              content_type=None, timeout=None):
         """(status, bytes). Raises HubError only when there was no answer.
-
-        `message` (the revision message) is percent-encoded: header values are
-        latin-1 and messages are often Russian. The hub unquotes it.
 
         `timeout` overrides the Hub's for one request; the poll in `await_job`
         uses it so a silent socket does not stretch the grace window to the
-        push's 300 s.
+        Hub's own budget.
 
         No token header without a token: `create` builds a Hub with none for
         the public `/start` route. The proxy's `Authorization` goes on every
@@ -270,8 +229,6 @@ class Hub:
             headers["Content-Type"] = content_type
         if body is not None:
             headers["Content-Length"] = str(len(body))
-        if message:
-            headers[MESSAGE_HEADER] = urllib.parse.quote(message, safe="")
         try:
             request = urllib.request.Request(
                 self.url + path, data=body, method=method, headers=headers)
@@ -366,36 +323,7 @@ class Hub:
                 f"JSON: {quoted(raw)}")
         return payload
 
-    # -- the two routes ----------------------------------------------------
-    def publish(self, pid: str, body: bytes, *, slot: str = None,
-                force: bool = False, message: str = None):
-        """POST one archive. -> (status, payload dict).
-
-        `slot` is the last path segment: `dev` for the local slot, nothing for
-        a revision, which asks the hub to name it.
-
-        `force` skips the model's own checks() and travels as a query parameter:
-        it changes how the build runs, not where it lands.
-
-        `message` travels as a header and is not part of the revision's digest:
-        the same tree with a different message is the same revision, and
-        pushing it again updates the stored message.
-        """
-        path = f"/api/v1/publish/{urllib.parse.quote(pid)}"
-        if slot is not None:
-            path = f"{path}/{urllib.parse.quote(slot)}"
-        if force:
-            path = f"{path}?force=1"
-        status, raw = self._call(path, method="POST", body=body,
-                                 content_type="application/gzip",
-                                 message=message)
-        if status in (401, 403):
-            # The caller answers these two with PROXY_REFUSED and UNAUTHORIZED,
-            # and a password proxy's refusal is not JSON, so the body is not
-            # parsed.
-            return status, {}
-        return status, self._payload(status, raw)
-
+    # -- the routes a command waits on --------------------------------------
     def compare(self, pid: str, old: str, new: str) -> dict:
         """Ask the hub to measure two revisions against each other. -> payload.
 
@@ -444,14 +372,14 @@ class Hub:
         Only a 403 or 404 in the hub's own error shape (`{"error": ...}`, from
         `_error` in `src/app.py`) is final: the record is gone, or the token is
         refused. Any other refusal, a 401 included (never the hub's), is
-        transient: the push was accepted through the same doors seconds
+        transient: the job was accepted through the same doors seconds
         earlier; if it persists, the grace window ends the wait. Headers
         (`Server:`, content type) are not evidence of who wrote a body.
 
         Only `HubError` (no answer at all) becomes trouble; anything else is a
         bug and must not be swallowed by the retry loop.
         """
-        # `QUERY_TIMEOUT`, not the push's 300 s: see `_call`.
+        # `QUERY_TIMEOUT`, not the Hub's own budget: see `_call`.
         try:
             status, raw = self._call(
                 f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
@@ -466,11 +394,8 @@ class Hub:
             raise HubError(
                 f"the hub itself denies job {job_id} (HTTP 404, in its own "
                 f"words), so nothing is polling any more.\n"
-                f"  THE RECORD IS GONE, WHICH IS NOT THE BUILD FAILING: a push "
-                f"that was accepted may\n"
-                f"  still have published. Look at {self.url} for the project, "
-                f"and at `hammerola status`\n"
-                f"  for what it has.")
+                f"  THE RECORD IS GONE, WHICH IS NOT THE JOB FAILING. Look at "
+                f"{self.url} for the project.")
         if status != 200:
             return None, (f"the hub answered HTTP {status} for job {job_id}: "
                           f"{quoted(raw)}")
@@ -497,12 +422,11 @@ class Hub:
         constant. The streak clock starts when the first failed poll returns, so
         a black-holed path costs up to about `grace + 2 x QUERY_TIMEOUT`.
 
-        `timeout` (the build's budget) and `grace` (the hub's unreachability)
-        have separate messages: only the deadline one names `--timeout` as the
-        remedy. The streak is checked first.
+        `timeout` (the job's budget) and `grace` (the hub's unreachability)
+        have separate messages. The streak is checked first.
 
-        Only the read is retried, never the push: a repeated POST could start a
-        second build.
+        Only the read is retried, never the request that started the job: a
+        repeated POST could start a second one.
         """
         if grace is None:
             grace = POLL_GRACE_SECONDS
@@ -563,27 +487,26 @@ class Hub:
                 if new_streak:
                     streak_began = now
                 # The streak first, then the deadline: the streak message says
-                # `--timeout` does not help, so it must not fire for a deadline.
+                # the job's budget is not what ran out, so it must not fire for
+                # a deadline.
                 if now - streak_began >= grace:
                     raise HubError(
                         f"the hub stopped answering while job {job_id} was "
                         f"being waited for.\n"
                         f"  Last reply: {trouble}.\n"
-                        f"  THE BUILD DID NOT FAIL — the push was accepted "
-                        f"before this, and the build may\n"
-                        f"  still be running on the hub. Check "
+                        f"  THE JOB DID NOT FAIL — the hub accepted it before "
+                        f"this, and it may still be\n"
+                        f"  running there. Check "
                         f"{self.url}/api/v1/jobs/{job_id} when it is back. "
-                        f"A longer\n"
-                        f"  --timeout does not help with this one: that is the "
-                        f"budget for the BUILD, and\n"
-                        f"  what ran out is the tolerance for the hub being "
-                        f"unreachable.")
+                        f"What ran out\n"
+                        f"  is the tolerance for the hub being unreachable, not "
+                        f"the job's own budget.")
                 if now >= deadline:
                     raise self._timed_out(job_id, seen, timeout, trouble)
                 # After the give-up checks, so `grace=0` does not announce a
                 # wait it then refuses.
                 if new_streak:
-                    pending = (f"{trouble}; still waiting, the build may be "
+                    pending = (f"{trouble}; still waiting, the job may be "
                                f"running")
             # Before the terminal return, so "answering again" is printed even
             # when the next poll is `done`. The give-up branches skip it: their
@@ -603,14 +526,13 @@ class Hub:
 
     def _timed_out(self, job_id: str, state, timeout: float,
                    trouble=None) -> HubError:
-        """The BUILD's budget ran out — the ordinary deadline, either branch.
+        """The JOB's budget ran out — the ordinary deadline, either branch.
 
         Raised for a job still `queued`/`building` at the deadline, and for a
         failed poll at the deadline whose streak has not expired; the latter
         passes `trouble` so the reader knows the reported state may be stale.
         `state` is `_NEVER` when no poll ever succeeded (None is a real reply:
-        a 200 with no `state` field). Names `--timeout` as the remedy, unlike
-        the streak message.
+        a 200 with no `state` field).
         """
         if state is _NEVER:
             was = ("was never seen in any state — no poll of it ever "
@@ -625,10 +547,9 @@ class Hub:
                           "  and may be out of date.")
         return HubError(
             f"job {job_id} {was} after {timeout:.0f}s.{extra}\n"
-            f"  The build is not cancelled by giving up here — the hub kills "
+            f"  The job is not cancelled by giving up here — the hub kills "
             f"it on its own ceiling.\n"
-            f"  Check {self.url}/api/v1/jobs/{job_id} later, or pass a longer "
-            f"--timeout.")
+            f"  Check {self.url}/api/v1/jobs/{job_id} later.")
 
     # -- what the hub already knows about a project ------------------------
     def builds(self, pid: str):
@@ -681,43 +602,27 @@ class Hub:
                 f"the hub answered HTTP {code} for {name}/{filename} of {pid}")
         return raw
 
-    # -- the code of a revision --------------------------------------------
-    def revision_archive(self, revision: str) -> bytes:
-        """The body that was pushed to produce one revision (SPEC 7.8).
+    # -- the log of a revision ---------------------------------------------
+    def build_log(self, pid: str, revision: str) -> str:
+        """What the build of one revision printed.
 
-        Byte for byte what the pusher sent, so this is the code that built the
-        revision rather than a repacking of it.
+        The hub answers the same 404 for a revision it does not have and for
+        one whose build left no log, so the message names both.
         """
-        code, raw = self._call(
-            f"/api/v1/sources/{urllib.parse.quote(revision)}")
-        return self._sources_reply(code, raw, revision)
-
-    def revision_log(self, revision: str) -> str:
-        """What the build of one revision printed."""
-        code, raw = self._call(
-            f"/api/v1/sources/{urllib.parse.quote(revision)}/log")
-        return self._sources_reply(code, raw, revision).decode("utf-8", "replace")
-
-    def _sources_reply(self, code: int, raw: bytes, revision: str) -> bytes:
-        """The two answers this endpoint gives, told apart for the reader.
-
-        The hub deliberately answers the same 404 for a revision never
-        published, one whose build failed, removed code and a malformed id, so
-        the message names all of them.
-        """
+        code, raw = self._call(f"/api/v1/logs/{urllib.parse.quote(pid)}"
+                               f"/{urllib.parse.quote(revision)}")
         _refuse_unauthorized(code)
         if code == 404:
             raise HubError(
-                f"the hub has no stored code for revision {revision}.\n"
-                f"  It answers the same for a revision that was never "
-                f"published, one whose build\n"
-                f"  failed, and one published before the hub started keeping "
-                f"sources. `hammerola status`\n"
-                f"  lists the revisions this project has.")
+                f"the hub has no build log for revision {revision} of {pid}.\n"
+                f"  It answers the same for a revision it does not have and for "
+                f"one whose build left\n"
+                f"  no log. `hammerola status` lists the revisions this project "
+                f"has.", code)
         if code != 200:
             raise HubError(
-                f"the hub answered HTTP {code} for the code of {revision}")
-        return raw
+                f"the hub answered HTTP {code} for the log of {revision}", code)
+        return raw.decode("utf-8", "replace")
 
     # -- the project itself ------------------------------------------------
     def rename_project(self, pid: str, title: str, missing_ok: bool = False):
@@ -962,6 +867,30 @@ class Hub:
         return f"{self.url}{url}"
 
 
+def proxy_authorization(basic_auth: str) -> str:
+    """`Basic <base64>` for a password proxy, or "" when there is none.
+
+    `HUB_BASIC_AUTH`, as a password proxy in front of the hub reads it: base64
+    of the UTF-8 `login:password`, which is ASCII whatever the value holds.
+    """
+    if not basic_auth:
+        return ""
+    encoded = base64.b64encode(basic_auth.encode("utf-8"))
+    return f"Basic {encoded.decode('ascii')}"
+
+
+def git_headers(token: str, basic_auth: str) -> list:
+    """The headers git sends to the hub, as `config.write_git_settings` takes
+    them: the token, and the proxy's `Authorization` when there is a proxy.
+
+    `login` and `connect` both write them through this one function.
+    """
+    headers = [f"{TOKEN_HEADER}: {token}"]
+    if basic_auth:
+        headers.append(f"Authorization: {proxy_authorization(basic_auth)}")
+    return headers
+
+
 # How much far-end text goes into a message: enough to recognise a TLS alert,
 # a captive portal or a proxy's complaint.
 QUOTE_LIMIT = 200
@@ -971,7 +900,7 @@ def quoted(text, limit: int = QUOTE_LIMIT) -> str:
     """Something the other end wrote, made safe to print. Trimmed, then escaped.
 
     Nothing that came off the wire is printed raw. The exception is the build
-    log (`job_log`, `revision_log`), which the CLI prints in full and
+    log (`job_log`, `build_log`), which the CLI prints in full and
     unescaped: it is what the person asked to see.
 
     The source is cut before it is escaped (and bytes before they are

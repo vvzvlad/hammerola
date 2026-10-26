@@ -1080,7 +1080,7 @@ describe('the caption under the list', () => {
     // slot never lists one. Asserted as ONE string carrying both, so a reading
     // that found them in two strings fails.
     const drawn = texts(list({}).render())
-    const said = drawn.filter((line) => line.includes('hammerola commit'))
+    const said = drawn.filter((line) => line.includes('git push'))
     expect(said).toHaveLength(1)
     expect(said[0]).toMatch(/listed/)
     expect(said[0]).toMatch(/`dev`/)
@@ -1098,8 +1098,8 @@ describe('the block on the list', () => {
     // in the list above, and the block answers what to do next. Reversed, the
     // page offers the next step before saying what the step is about.
     const at = (needle) => drawn.findIndex((line) => line.includes(needle))
-    expect(at('hammerola commit')).toBeGreaterThan(-1)
-    expect(at('Hand this to your agent')).toBeGreaterThan(at('hammerola commit'))
+    expect(at('git push')).toBeGreaterThan(-1)
+    expect(at('Hand this to your agent')).toBeGreaterThan(at('git push'))
   })
 
   it('says what pasting it costs, beside the button that offers to', () => {

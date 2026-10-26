@@ -295,17 +295,13 @@ def test_a_failed_publish_leaves_latest_untouched(hub):
     hub.publish("proj1", "good1", _build("good", "2026-08-01T00:00:00Z"))
     before = os.readlink(hub.project_dir("proj1") / "latest")
 
-    # Every refusal path, in the order they occur during a publish.
-    assert hub.publish("proj1", "bad1", b"not a tarball").status_code == 422
-    assert hub.publish("proj1", "bad2",
+    # A build whose document the hub cannot read.
+    assert hub.publish("proj1", "bad1",
                        tar_gz({"meta.json": b"{broken"})).status_code == 422
-    assert hub.publish("proj1", "bad3", _build("x", "2026-09-01T00:00:00Z"),
-                       token="wrong").status_code == 403
 
     assert os.readlink(hub.project_dir("proj1") / "latest") == before
     assert hub.get("/project/proj1/latest/meta.json").json()["commit"] == "good1"
-    for name in ("bad1", "bad2", "bad3"):
-        assert not (hub.project_dir("proj1") / name).exists()
+    assert not (hub.project_dir("proj1") / "bad1").exists()
 
 
 def test_a_damaged_meta_on_disk_does_not_break_the_next_publish(hub):
@@ -450,8 +446,8 @@ def test_concurrent_publishes_to_one_project_all_land(hub):
 def test_stale_leftovers_are_swept_at_startup(tmp_path):
     """A SIGKILL mid-push leaves dot-prefixed debris nothing else ever removes.
 
-    `builds_of` skips it and the file server refuses it, so a whole spooled body
-    would sit on the volume indefinitely. The sweep runs in Store.__init__, the one
+    `builds_of` skips it and the file server refuses it, so a whole source tree
+    checked out of a push would sit on the volume indefinitely. The sweep runs in Store.__init__, the one
     moment no publish of ours is in flight. Every one of these names is the
     temporary half of a temporary-plus-rename publish (SPEC 7.2).
     """
@@ -461,15 +457,15 @@ def test_stale_leftovers_are_swept_at_startup(tmp_path):
     pdir.mkdir(parents=True, exist_ok=True)
 
     stale = [
-        data / ".upload-deadbeef",
         data / ".wip-index.json-deadbeef",
         pdir / ".wip-builds.json-deadbeef",
+        data / ".src-deadbeef",
         pdir / ".trash-deadbeef",
         pdir / ".tmp-abc123-deadbeef",
     ]
-    for path in stale[:3]:
+    for path in stale[:2]:
         path.write_bytes(b"x" * 16)
-    for path in stale[3:]:
+    for path in stale[2:]:
         path.mkdir()
         (path / "meta.json").write_text("{}")
     link = pdir / ".latest-deadbeef"

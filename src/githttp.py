@@ -20,7 +20,10 @@ Only the three requests of git's smart protocol reach the backend
   connection closes after it;
 * reads its output to the end even when the client has gone away and drops
   the rest, so a push the hub has started finishes on the hub;
-* logs its stderr with the project's id.
+* logs its stderr with the project's id;
+* gives git the way back to the hub for the pre-receive hook
+  (`hook_environment`): the loopback address of `/internal/pre-receive` and the
+  secret this process made at start.
 """
 
 import re
@@ -51,13 +54,19 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent / "githooks"
 REMOTE_USER = "hammerola"
 
 # Without a hook in `core.hooksPath` git accepts every push without a word;
-# ci/smoke.py checks the image carries it.
+# ci/smoke.py checks the image carries it. Push options reach the hook only
+# when they are advertised (`git push -o force`).
 SERVER_CONFIG = (
     ("receive.fsckObjects", "true"),
     ("receive.denyNonFastForwards", "true"),
     ("receive.denyDeletes", "true"),
+    ("receive.advertisePushOptions", "true"),
     ("core.hooksPath", str(HOOKS_DIR)),
 )
+
+# Where the hook posts, on the port the server really listens on: the setting
+# may say 0. The secret goes in `HOOK_SECRET_HEADER` (src/app.py).
+HOOK_PATH = "/internal/pre-receive"
 
 # The longest line read from either side: a CGI header line from the backend, or
 # the size line of one chunk of the request body.
@@ -106,9 +115,17 @@ def smart_request(method: str, rest: list[str], query: str):
     return None
 
 
-def environment(request: GitRequest, repos: Path, headers) -> dict:
-    """The whole environment of one `git http-backend`."""
+def hook_environment(port: int, secret: str) -> dict:
+    """What the pre-receive hook needs to reach this hub."""
+    return {"HAMMEROLA_HOOK_URL": f"http://127.0.0.1:{port}{HOOK_PATH}",
+            "HAMMEROLA_HOOK_SECRET": secret}
+
+
+def environment(request: GitRequest, repos: Path, headers,
+                hook: dict) -> dict:
+    """The whole environment of one `git http-backend`. The hook inherits it."""
     env = git_environment()
+    env.update(hook)
     env.update({
         "GIT_PROJECT_ROOT": str(repos),
         "GIT_HTTP_EXPORT_ALL": "1",
@@ -236,7 +253,7 @@ def _log_stderr(stream, pid: str) -> None:
 
 
 def serve(handler, request: GitRequest, repos: Path, length,
-          deadline_seconds: float) -> int:
+          deadline_seconds: float, hook: dict) -> int:
     """Run `git http-backend` for one request and stream its answer.
 
     -> the backend's exit code. `handler` is the hub's request handler: its
@@ -248,7 +265,8 @@ def serve(handler, request: GitRequest, repos: Path, length,
     the backend cannot be started, before anything has been written.
     """
     process = subprocess.Popen(
-        ["git", "http-backend"], env=environment(request, repos, handler.headers),
+        ["git", "http-backend"],
+        env=environment(request, repos, handler.headers, hook),
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     feeder = threading.Thread(
         target=_feed, daemon=True,
@@ -296,10 +314,18 @@ def serve(handler, request: GitRequest, repos: Path, length,
     return code
 
 
-def end_of_request(store: Store, pid: str) -> None:
+def end_of_request(store: Store, request: GitRequest) -> None:
     """Runs once `git http-backend` has exited, before the connection closes.
 
     The git client returns when the connection closes, so whatever is done here
-    is done by the time `git push` or `git fetch` returns. Nothing is done here
-    yet.
+    is done by the time `git push` returns: after a push, the project's `latest`
+    and `builds.json` follow the branch git has just written, and the index
+    follows them (`Store.recompute`). A push is the one request that can move a
+    ref.
     """
+    if request.path_info.endswith(f"/{RECEIVE_PACK}"):
+        try:
+            store.recompute(request.pid)
+        except Exception:
+            logger.exception(f"git {request.pid}: the project could not be "
+                             f"brought up to date after the push")

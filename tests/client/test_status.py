@@ -3,9 +3,8 @@
 Every fact this command prints is one the hub worked out — which revision
 `latest` resolves to, whether the local slot is occupied, how many revisions
 exist — so a test that fed it a hand-written `builds.json` would be checking the
-formatter and nothing else. The builds here are therefore published by the
-client itself, through the same `build` and `commit` the previous file covers,
-and `status` is asked afterwards.
+formatter and nothing else. The builds here are therefore published through
+the hub's own queue (`harness.Hub.publish`), and `status` is asked afterwards.
 
 The one thing NOT asserted anywhere below is the last build job, and its absence
 is deliberate: the hub cannot be asked for it (see the docstring of
@@ -15,7 +14,7 @@ is deliberate: the hub cannot be asked for it (see the docstring of
 import shutil
 
 import pytest
-from modeldir import make_model
+from modeldir import make_model, publish_model
 
 from hammerola import hub as hub_module
 from hammerola.cli import main
@@ -26,10 +25,6 @@ pytestmark = pytest.mark.usefixtures("configured")
 
 def run(model, *args):
     return main(["-C", str(model), *args])
-
-
-def publish(model, *args):
-    assert main(["-C", str(model), *args, "--timeout", "60"]) == 0
 
 
 def revisions_of(hub, pid="demo0001"):
@@ -66,13 +61,20 @@ def test_status_reads_through_a_password_proxy(password_proxy, model,
 
 
 # -- the ordinary case -------------------------------------------------------
+def test_the_client_runs_in_the_current_directory_too(hub, model, monkeypatch,
+                                                       capsys):
+    """-C is a convenience; the ordinary invocation has no arguments at all."""
+    monkeypatch.chdir(model)
+    assert main(["status"]) == 0
+    assert f"{hub.url}/project/demo0001/" in capsys.readouterr().out
+
+
 def test_status_shows_latest_the_dev_slot_and_every_revision(hub, model,
                                                              capsys):
-    publish(model, "commit", "-m", "first")
+    publish_model(hub, model)
     (model / "model.py").write_text("# second\n")
-    publish(model, "commit", "-m", "second")
-    publish(model, "build")
-    capsys.readouterr()
+    publish_model(hub, model)
+    publish_model(hub, model, "dev")
 
     assert run(model, "status") == 0
     out = capsys.readouterr().out
@@ -98,8 +100,7 @@ def test_status_shows_latest_the_dev_slot_and_every_revision(hub, model,
 
 
 def test_the_project_is_named_by_its_id_and_its_title(hub, model, capsys):
-    publish(model, "build")
-    capsys.readouterr()
+    publish_model(hub, model, "dev")
     assert run(model, "status") == 0
     first = capsys.readouterr().out.splitlines()[0]
     assert "demo0001" in first
@@ -110,11 +111,11 @@ def test_an_empty_dev_slot_is_said_out_loud(hub, model, capsys):
     """An empty slot is a LINE reading `empty`, not a missing line — an absent
     one reads as an absent feature.
 
-    A commit fills the slot with itself, so the state has to be made
+    A revision fills the slot with itself, so the state has to be made
     rather than published into: the slot goes off the volume, and a rename is
     what rewrites the picker without publishing anything back into it.
     """
-    publish(model, "commit")
+    publish_model(hub, model)
     shutil.rmtree(hub.project_dir("demo0001") / "dev")
     assert run(model, "rename", "Demo project") == 0
     capsys.readouterr()
@@ -126,8 +127,7 @@ def test_an_empty_dev_slot_is_said_out_loud(hub, model, capsys):
 def test_the_revision_list_is_capped_and_says_what_is_left(hub, model, capsys):
     for marker in ("a", "b", "c"):
         (model / "model.py").write_text(f"# {marker}\n")
-        publish(model, "commit")
-    capsys.readouterr()
+        publish_model(hub, model)
 
     assert run(model, "status", "-n", "2") == 0
     out = capsys.readouterr().out

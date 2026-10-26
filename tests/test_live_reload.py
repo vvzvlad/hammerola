@@ -184,8 +184,8 @@ def test_the_interface_holds_no_connection_open():
 
     The hub is a ThreadingHTTPServer: one thread per connection. A long-lived
     connection is a thread parked for as long as a tab stays open, competing with
-    publishes for the very resource MAX_CONCURRENT_PUBLISHES and SOCKET_TIMEOUT
-    exist to protect — and a forgotten tab holds it forever.
+    pushes for the very resource SOCKET_TIMEOUT exists to protect — and a
+    forgotten tab holds it forever.
     """
     for name, text in _ui_sources().items():
         for forbidden in ("EventSource", "WebSocket"):

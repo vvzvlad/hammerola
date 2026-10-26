@@ -1,7 +1,7 @@
 """`hammerola comments` and its `files` and `resolve`, against a real queue.
 
 The comments here are POSTED THE WAY A VIEWER POSTS THEM — multipart, no token,
-at a build that was published a moment earlier by the client itself — so what
+at a build the hub's own queue published a moment earlier — so what
 the command prints is a record the hub validated, stored and read back, not a
 fixture. That matters more here than anywhere else in this suite: the text comes
 from a stranger's keyboard (SPEC 7A.4), and the reason it is safe to print is
@@ -15,7 +15,7 @@ import json
 
 import pytest
 from harness import JPEG_BYTES, PNG_BYTES, TOKEN, comment_payload
-from modeldir import make_model
+from modeldir import make_model, publish_model
 
 from hammerola import queue, sources
 from hammerola.cli import main
@@ -36,13 +36,15 @@ def run(model, *args):
     return main(["-C", str(model), *args])
 
 
-def publish_dev(model):
-    assert main(["-C", str(model), "build", "--timeout", "60"]) == 0
+def publish_dev(hub, model):
+    """Fill the draft slot with the model directory, which the comments are
+    left on."""
+    publish_model(hub, model, "dev")
 
 
 def leave_comment(hub, model, pid="demo0001", commit="dev", **extra):
     """Post one comment the way the build page does, and return its id."""
-    publish_dev(model)
+    publish_dev(hub, model)
     reply = hub.post_comment(pid, commit, payload=comment_payload(**extra))
     assert reply.status_code == 201, reply.text
     return reply.json()["id"]
@@ -133,7 +135,7 @@ def test_several_comments_are_all_listed(hub, model, capsys):
 
 
 def test_an_empty_queue_is_a_success(hub, model, capsys):
-    publish_dev(model)
+    publish_dev(hub, model)
     capsys.readouterr()
     assert run(model, "comments") == 0
     out = capsys.readouterr().out
@@ -160,7 +162,7 @@ def test_an_attachment_is_reported_as_the_command_that_fetches_it(hub, model,
     """Not as the URL. The bytes are behind the same token as the queue, so a
     reader given the URL could only open it by taking the secret out of the
     configuration."""
-    publish_dev(model)
+    publish_dev(hub, model)
     reply = hub.post_comment("demo0001", "dev", payload=comment_payload(),
                              photo=("part.png", PNG_BYTES, "image/png"))
     assert reply.status_code == 201, reply.text
@@ -212,7 +214,7 @@ def with_attachments(hub, model, pid="demo0001"):
     always a PNG, so a client that took one extension for both would write the
     photo under a name nothing opens. That is the ordinary case, not an odd one.
     """
-    publish_dev(model)
+    publish_dev(hub, model)
     reply = hub.post_comment(pid, "dev", payload=comment_payload(),
                              photo=("part.jpg", JPEG_BYTES, "image/jpeg"),
                              shot=("frame.png", PNG_BYTES, "image/png"))

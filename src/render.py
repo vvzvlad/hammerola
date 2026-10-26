@@ -201,30 +201,6 @@ def project_title(value) -> str:
     return _plain_text(value.strip(), "title")
 
 
-def revision_message(value: str) -> str:
-    """What a revision says about itself, checked exactly as a part name is.
-
-    A message arrives on a header of the push, so it never goes through
-    `build_meta`; the part-name rule is called rather than restated. The part
-    that matters is `_plain_text` inside it: 200 characters, one line, no U+202E
-    and no control characters. The revision list renders it as a JSX child, so
-    React escapes the brackets.
-
-    Stripped before it is checked, so a subject with a trailing newline (from
-    `-m "$(cat subject.txt)"`) is legal; `hammerola/cli.py` measures the same
-    thing. A non-string is refused before the strip (`.strip()` would raise
-    AttributeError and the route would answer 500), and so is a message of only
-    spaces: the push asked for a subject.
-    """
-    if not isinstance(value, str):
-        raise ValueError("`message` must be a string")
-    text = value.strip()
-    if not text:
-        raise ValueError("`message` must not be empty")
-    _check_part_name(text, "message")
-    return text
-
-
 # -- the theme, which the server decides --------------------------------------
 #
 # The whole interface is painted from `data-theme` on `<html>`: the bundle draws
@@ -833,10 +809,9 @@ def measure_view(path: Path) -> tuple[int, int]:
     (SPEC 2.3: 2 MB -> 310 KB).
 
     Streamed through a counter rather than `len(gzip.compress(data))`, because
-    that spelling holds the file AND its compressed copy at once — for four
-    concurrent publishes, of files that are 2 MB each on a real model and far
-    bigger on a broken one. That is the same peak `_spool_body` went to some
-    trouble to avoid, put back one module over.
+    that spelling holds the file AND its compressed copy at once — in each of
+    the builds publishing at the same time (`jobs.MAX_CONCURRENT_BUILDS`), of
+    files that are 2 MB each on a real model and far bigger on a broken one.
     """
     counter = _ByteCounter()
     raw = 0
@@ -985,10 +960,10 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     # carry it, and None-able because a slot can be written without one.
     if dev:
         meta["job"] = job
-    # The one field that comes from the push rather than the build: what the
-    # author says this revision is. Written only when present, like `job`; the
-    # picker reads it back (`Store.builds_of`). Validated by `revision_message`
-    # at the door.
+    # The one field that comes from the push rather than the build: the
+    # subject of the commit. Written only when present, like `job`; the picker
+    # reads it back (`Store.builds_of`). Cleaned on the way in
+    # (`prereceive.revision_message`).
     if message:
         meta["message"] = message
     return meta

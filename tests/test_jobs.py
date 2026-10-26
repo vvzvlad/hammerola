@@ -1,13 +1,16 @@
-"""Taking a push asynchronously: 202, a job, a status and a log (SPEC 8A.2 step 5).
+"""Building a push in the pool: a job, a status and a log (SPEC 8A.2 step 5).
 
-The rest of the suite pushes through `Hub.publish`, which waits for the job, because
-it is about what ends up on disk. This file is about the HANDOVER, so everything
-here goes through `publish_async` and looks at the job. Two claims:
+The pre-receive hook checks a pushed commit out, hands the tree to the build pool
+as a job and waits for it (`src/prereceive.py`). The rest of the suite publishes
+through `Hub.publish`, which waits for the job, because it is about what ends up
+on disk. This file is about the HANDOVER, so most of it goes through
+`publish_async`, which hands a tree over the way the hook does, and looks at the
+job; where the hook's own answer to a refused handover is the subject, the test
+pushes with git. Two claims:
 
-  * a push is answered from what the UPLOAD says and nothing else. The token, the
-    size, the archive and "is this exact push already published" are all decided
-    in the request, so a broken archive is still a 4xx on the push. Everything
-    that needs the BUILD, and only that, moves into a job.
+  * every build is a job: queued, building, then done or failed, and a job the
+    handover could not complete is failed rather than left `queued` for a build
+    nobody runs.
   * a build that fails publishes nothing. `latest` does not move, the local slot
     is not touched, no build directory appears, and the pusher is told why with
     the log the build produced.
@@ -24,25 +27,26 @@ import threading
 import time
 from pathlib import Path
 
-import httpx
 import pytest
-from harness import (DEFAULT_EXPORTS, TOKEN, PublishReply, copying_builder,
-                     failing_builder, good_build, meta_bytes, start_hub,
-                     stop_hub, tar_gz, view_bytes)
+from harness import (DEFAULT_EXPORTS, TOKEN, PublishReply, commit_all,
+                     copying_builder, failing_builder, git, good_build,
+                     meta_bytes, project_files, push, start_hub, stop_hub,
+                     tar_gz, view_bytes, write_files)
 from loguru import logger
 
+from src import githttp
 from src import jobs as jobs_module
+from src.app import HOOK_SECRET_HEADER
 from src.buildproc import (STATUS_FAILED, STATUS_LIMITS_ERROR, STATUS_OK,
                            Limits, run_build)
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
-                      QUEUE_FULL_RETRY_AFTER_SECONDS, RESTART_CODE,
+                      QUEUE_FULL_ERROR, RESTART_CODE,
                       STATE_BUILDING, STATE_DONE, STATE_FAILED, STATE_QUEUED,
                       STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_STOPPED,
                       WORKER_THREAD_PREFIX, BuildQueue, BuildTask, JobStore,
                       build_arguments)
-from src.store import (BODY_PREFIX, DEV_LINK, LEFTOVER_PREFIXES,
-                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, PublishError, Store,
-                       utcnow_iso)
+from src.store import (DEV_LINK, LEFTOVER_PREFIXES, PAYLOAD_DIGEST_FILE,
+                       SOURCE_PREFIX, PublishError, Store, utcnow_iso)
 
 # TOKEN comes from the harness rather than being spelled again here: the hub
 # under test is built with that value, and a copy of it in this file was one
@@ -119,17 +123,12 @@ def _bare_store(data):
     return Store(data_dir=data)
 
 
-def _accepted_body(data, index):
-    """The pushed BODY a task owns beside its unpacked tree.
-
-    Not a real archive: nothing on the paths these tests drive ever reads it.
-    What matters is that the file EXISTS, because every ending in `BuildQueue`
-    promises either to remove it or to hand it to the store, and a test passing a
-    name that points at nothing could not tell a removal from a no-op.
-    """
-    body = data / f"{BODY_PREFIX}{index:032x}"
-    body.write_bytes(b"a pushed body")
-    return body
+def _push_a_version(hub, work, pid):
+    """`git push` of a new repository holding one version of `pid`. -> the run."""
+    git("init", "--quiet", "--initial-branch=main", work)
+    write_files(work, project_files(pid))
+    commit_all(work, "first")
+    return push(hub, work, pid)
 
 
 def _staged(store, pid, commit, marker):
@@ -223,20 +222,14 @@ def gated_hub(tmp_path):
 
 
 # -- the handover ------------------------------------------------------------
-def test_a_push_is_accepted_with_202_and_a_job_to_follow(hub):
+def test_a_build_is_handed_over_as_a_job_to_follow(hub):
     reply = hub.publish_async("proj1", "abc123", good_build())
     assert reply.status_code == 202
-    body = reply.json()
-    assert set(body) == {"job", "status_url", "log_url"}
-
-    job_id = body["job"]
+    job_id = reply.json()["job"]
     # Unguessable, not sequential: the id is the only thing between one pusher's
     # build log and another's, and a counter would let anyone walk the lot.
     assert len(job_id) == 22
-    assert body["status_url"] == f"/api/v1/jobs/{job_id}"
-    assert body["log_url"] == f"/api/v1/jobs/{job_id}/log"
-    # `Location` says the same thing in the header the status code is about.
-    assert reply.headers["Location"] == body["status_url"]
+    assert hub.job(job_id).status_code == 200
 
     second = hub.publish_async("proj1", "def456", good_build("second"))
     assert second.json()["job"] != job_id
@@ -276,8 +269,7 @@ def test_the_job_goes_queued_then_building_then_done(gated_hub):
 
 
 def test_a_successful_build_publishes_exactly_as_it_used_to(hub):
-    reply = hub.publish_async("proj1", "abc123", good_build())
-    record = hub.await_job(reply.json()["job"]).record
+    record = hub.publish("proj1", "abc123", good_build()).record
 
     assert record["state"] == STATE_DONE
     build = hub.project_dir("proj1") / "abc123"
@@ -318,36 +310,6 @@ def test_the_local_slot_goes_through_the_same_job(hub):
     assert picker["latest"] is None
 
 
-def test_an_answer_that_needs_no_build_is_given_on_the_push(hub):
-    """200 and 409 stay on the push, and cost no build at all.
-
-    Rebuilding a commit that is already on disk would spend minutes of CPU to
-    arrive at an answer that was on disk all along — and CI, which retries, is
-    exactly the caller that would pay for it.
-    """
-    body = good_build()
-    assert hub.publish("proj1", "abc123", body).status_code == 201
-
-    retry = hub.publish_async("proj1", "abc123", body)
-    assert retry.status_code == 200
-    assert retry.json() == {"url": "/project/proj1/abc123/"}
-    assert "job" not in retry.json()
-
-    clash = hub.publish_async("proj1", "abc123", good_build("different"))
-    assert clash.status_code == 409
-
-    # Neither of them left an unpacked tree waiting for a worker.
-    assert _leftovers(hub, "proj1") == []
-
-
-def test_a_broken_archive_is_refused_on_the_push_and_never_becomes_a_job(hub):
-    """An archive that is not an archive needs no build to be refused."""
-    before = len(list((hub.data / "jobs").iterdir()))
-    assert hub.publish_async("proj1", "abc123", b"not a tarball").status_code == 422
-    assert len(list((hub.data / "jobs").iterdir())) == before
-    assert _leftovers(hub, "proj1") == []
-
-
 # -- what the build is handed ------------------------------------------------
 def test_the_build_gets_the_sources_and_a_separate_output_directory(hub_factory):
     """The tree the model wrote into may not be the tree that gets published.
@@ -379,12 +341,12 @@ def test_the_build_gets_the_sources_and_a_separate_output_directory(hub_factory)
 
 
 def test_build_parallelism_is_its_own_number(gated_hub):
-    """Accepting is not building, and the two ceilings are separate.
+    """Queueing is not building, and the two ceilings are separate.
 
-    Four pushes are accepted while ONE build runs: the accept slots are sized by
-    a body on disk and a tar reader, the build pool by cores. A test that only
-    counted accepted pushes could not tell the two apart, so this counts how many
-    builds were inside the builder at once.
+    Four builds are queued while ONE runs: the queue is sized by how many source
+    trees may wait, the build pool by cores. A test that only counted handed-over
+    builds could not tell the two apart, so this counts how many builds were
+    inside the builder at once.
     """
     hub = gated_hub
     accepted = [hub.publish_async("proj1", f"c{n}", good_build(f"v{n}"))
@@ -400,12 +362,12 @@ def test_build_parallelism_is_its_own_number(gated_hub):
         assert hub.await_job(reply.json()["job"]).status_code == 201
 
 
-def test_a_full_queue_is_refused_with_503_and_a_retry_after(tmp_path):
+def test_a_full_queue_refuses_the_push_and_fails_its_job(tmp_path):
     """A bounded queue, because an unbounded one lies about capacity.
 
-    A hub that accepts everything and gets to it in an hour has told CI the push
-    succeeded while holding an unpacked tree per entry. 503 is the truth and CI
-    already knows what to do with it.
+    A hub that accepts everything and gets to it in an hour has told the pusher
+    the push went in while holding a source tree per entry. The hook refuses the
+    push instead, saying the hub is busy.
     """
     builder = GatedBuilder()
     hub = start_hub(tmp_path / "data", build_runner=builder, build_workers=1,
@@ -418,53 +380,46 @@ def test_a_full_queue_is_refused_with_503_and_a_retry_after(tmp_path):
         second = hub.publish_async("proj1", "c2", good_build("two"))
         assert second.status_code == 202          # ...and now the queue is full
 
-        third = hub.publish_async("proj1", "c3", good_build("three"))
-        assert third.status_code == 503
-        assert third.headers["Retry-After"] == str(QUEUE_FULL_RETRY_AFTER_SECONDS)
-        assert "queue is full" in third.json()["error"]
+        third = _push_a_version(hub, tmp_path / "work", "proj2")
+        assert third.returncode != 0
+        assert "remote: hub is busy: 1 builds queued" in third.stderr
 
-        # The refused push left no tree behind and no job pretending to wait: a
-        # job nothing will ever pick up is a status that never changes its answer.
-        states = [json.loads(p.read_text())["state"]
-                  for p in sorted((hub.data / "jobs").glob("*/job.json"))]
-        assert states.count(STATE_FAILED) == 1, states
+        # No job pretending to wait: a job nothing will ever pick up is a status
+        # that never changes its answer.
+        failed = [(record["pid"], record["code"], record["error"])
+                  for record in _volume_records(hub.data).values()
+                  if record["state"] == STATE_FAILED]
+        assert failed == [("proj2", 503, QUEUE_FULL_ERROR)]
 
         builder.release.set()
         for reply in (first, second):
             assert hub.await_job(reply.json()["job"]).status_code == 201
+        # And the refused push left no tree behind.
+        assert _leftovers(hub, "proj2") == []
     finally:
         builder.release.set()
         stop_hub(hub)
 
 
-@pytest.mark.parametrize("blows_up", [
-    RuntimeError("the pool itself broke"),
-    BrokenPipeError(errno.EPIPE, "Broken pipe"),
-])
 def test_a_job_the_handover_threw_under_is_failed_not_left_queued(
-        tmp_path, monkeypatch, blows_up):
+        tmp_path, monkeypatch):
     """`jobs.create` has returned and `builds.submit` has not been reached.
 
-    Every way out of `_queue_build` must answer the JOB as well as the pusher;
-    otherwise the record stays `queued`, and since nothing fails a job on its own,
-    the status endpoint says `queued` about a build nobody runs until a restart.
-    Both handlers are covered; the disconnect one re-raises rather than replying,
-    which makes the missing job answer easy to overlook.
+    The hook's handover (`prereceive._build`) must answer the JOB as well as the
+    pusher; otherwise the record stays `queued`, and since nothing fails a job on
+    its own, the status endpoint says `queued` about a build nobody runs until a
+    restart.
     """
     hub = start_hub(tmp_path / "data")
     try:
         def explodes(_task):
-            raise blows_up
+            raise RuntimeError("the pool itself broke")
 
         monkeypatch.setattr(hub.server.builds, "submit", explodes)
-        try:
-            reply = hub.publish_async("proj1", "abc123", good_build())
-            # The ordinary failure is a 500; a client that has gone away gets
-            # no reply at all, which httpx reports as a protocol error.
-            assert reply.status_code == 500
-        except httpx.HTTPError:
-            assert isinstance(blows_up, BrokenPipeError)
-        monkeypatch.undo()
+        pushed = _push_a_version(hub, tmp_path / "work", "proj1")
+        assert pushed.returncode != 0
+        assert "remote: the hub failed while answering this push" \
+            in pushed.stderr
 
         issued = _job_dirs(hub.data)
         assert len(issued) == 1, issued
@@ -478,50 +433,6 @@ def test_a_job_the_handover_threw_under_is_failed_not_left_queued(
         # ...and the sources went with it, as on every path that did not hand
         # the tree over to a worker.
         assert _leftovers(hub, "proj1") == []
-    finally:
-        stop_hub(hub)
-
-
-def test_a_job_a_worker_already_owns_is_not_failed_by_a_late_throw(tmp_path,
-                                                                    monkeypatch):
-    """The other direction, which is the one that would damage a live build.
-
-    Once `submit` has returned SUBMIT_ACCEPTED the task belongs to a worker and
-    that worker is going to answer the job itself. Anything thrown after that
-    point — the log line, the reply tuple — must not fail a build that is at
-    that moment running, which is why the handover failure is conditional on
-    not having handed over.
-    """
-    hub = start_hub(tmp_path / "data")
-    try:
-        exploded = threading.Event()
-        real_info = jobs_module.logger.info
-
-        def explode_once(message, *args, **keywords):
-            if "queued as job" in str(message) and not exploded.is_set():
-                exploded.set()
-                raise RuntimeError("the log itself broke")
-            return real_info(message, *args, **keywords)
-
-        monkeypatch.setattr("src.app.logger.info", explode_once)
-        reply = hub.publish_async("proj1", "abc123", good_build())
-        monkeypatch.undo()
-        assert exploded.is_set(), "the throw never happened, so this proves nothing"
-        assert reply.status_code == 500
-
-        issued = _job_dirs(hub.data)
-        assert len(issued) == 1, issued
-        # The worker owned it and published it, and the push's own 500 did not
-        # take that away.
-        record = hub.server.jobs.get(issued[0])
-        deadline = time.monotonic() + 10
-        while record["state"] not in (STATE_DONE, STATE_FAILED):
-            assert time.monotonic() < deadline, record
-            time.sleep(0.02)
-            record = hub.server.jobs.get(issued[0])
-        assert record["state"] == STATE_DONE, record
-        assert record["error"] is None
-        assert (hub.project_dir("proj1") / "abc123").is_dir()
     finally:
         stop_hub(hub)
 
@@ -696,13 +607,15 @@ def test_a_refused_token_is_403_with_no_challenge_at_either_door(hub):
     A browser that gets a 401 without the proxy's Basic challenge drops the
     credentials it holds for that proxy and asks for them again, so a stale
     token in the interface would cost the reader the proxy's login. Two of the
-    doors here: `_require_token`, and the publish route, which refuses before
-    the body; a build's closed file is the third, in tests/test_serving.py.
+    doors here: `_require_token`, and the pre-receive hook's route, which checks
+    a secret of its own before the body; a build's closed file is the third, in
+    tests/test_serving.py.
     """
     for refused in (
             hub.get("/api/v1/jobs/" + "0" * 22,
                     headers={"X-Hammerola-Token": "nope"}),
-            hub.publish_async("proj1", "abc123", good_build(), token="nope")):
+            hub.request("POST", githttp.HOOK_PATH, content=b"{}",
+                        headers={HOOK_SECRET_HEADER: "nope"})):
         assert refused.status_code == 403
         assert "WWW-Authenticate" not in refused.headers
 
@@ -852,13 +765,7 @@ def test_the_registry_holds_nothing_a_reader_can_corrupt(tmp_path):
 
 
 def test_the_default_ceilings_are_the_documented_ones(tmp_path):
-    """Numbers other parts of the system are reasoned about with.
-
-    `MAX_CONCURRENT_BUILDS` is deliberately NOT `app.MAX_CONCURRENT_PUBLISHES`:
-    one is sized by a body on disk and a tar reader, the other by memory and by
-    how long one hung build may hold a worker, and retuning one must not move the
-    other. They may be equal; no relation between them is asserted.
-    """
+    """Numbers other parts of the system are reasoned about with."""
     assert jobs_module.MAX_CONCURRENT_BUILDS == 4
     assert jobs_module.MAX_QUEUED_JOBS >= jobs_module.MAX_CONCURRENT_BUILDS
 
@@ -1303,8 +1210,9 @@ def test_a_failure_after_the_rename_still_reports_the_build_as_published(
         hub_factory, monkeypatch):
     """The rename IS the publication; what follows it is bookkeeping.
 
-    `latest`, the picker and the index are all recomputed from disk
-    by the next publish, so a failure in them is recoverable. Reporting the job
+    `latest`, the picker and the index are all recomputed from disk at the end
+    of the push and at every start (`Store.recompute`), so a failure in them is
+    recoverable. Reporting the job
     as failed is not: the build is at its permanent URL and `latest` may already
     name it, and CI would be told to push a commit that is live.
     """
@@ -1326,7 +1234,8 @@ def test_a_failure_after_the_rename_still_reports_the_build_as_published(
 
 
 def test_a_commit_taken_while_the_build_ran_is_caught_under_the_lock(tmp_path):
-    """`settled` answers from the request; `publish_built` answers for real.
+    """The hook asks whether a commit is built already; `publish_built` answers
+    for real.
 
     A whole build runs between the two, so the recheck immediately before the
     rename is what stops two pushes of one commit from silently replacing an
@@ -1338,8 +1247,8 @@ def test_a_commit_taken_while_the_build_ran_is_caught_under_the_lock(tmp_path):
                                )[0] == 201
 
     # A second build of the same commit, finishing minutes later with different
-    # content. `settled` said nothing was there — because when it looked, there
-    # was nothing there.
+    # content. The hook found nothing built — because when it looked, there was
+    # nothing there.
     other, names = _staged(store, "proj1", "abc123", "b")
     with pytest.raises(PublishError) as refused:
         store.publish_built("proj1", "abc123", other, names, "digest-b")
@@ -1437,8 +1346,9 @@ def test_a_build_of_what_was_just_committed_is_answered_from_the_slot(hub):
     """The 200 that says the slot already holds these sources.
 
     It is what the commit put there, so the answer arrives from the push
-    itself — `settled` compares the digest before a build is queued — and the
-    author's next `build` costs nothing at all.
+    itself — the hook compares the tree with the slot's digest before a build
+    is queued (`prereceive._look`) — and the author's next `build` costs nothing
+    at all.
     """
     body = good_build("a")
     assert hub.publish("proj1", "abc123", body).status_code == 201
@@ -1491,21 +1401,16 @@ def test_stopping_the_pool_takes_the_queued_sources_with_it(tmp_path):
         sources = data / f"{SOURCE_PREFIX}{index:032x}"
         sources.mkdir(parents=True)
         (sources / "model.py").write_text("# a pushed source tree\n")
-        body = _accepted_body(data, index)
         record = jobs.create("proj1", f"c{index}")
         assert pool.submit(BuildTask(
             job_id=record["id"], pid="proj1", commit=f"c{index}",
-            sources=sources, archive=body,
-            digest=f"digest-{index}")) == SUBMIT_ACCEPTED
-        queued.append((record["id"], sources, body))
+            sources=sources, digest=f"digest-{index}")) == SUBMIT_ACCEPTED
+        queued.append((record["id"], sources))
 
     pool.shutdown()
 
-    for job_id, sources, body in queued:
-        assert not sources.exists(), "an unpacked source tree outlived the stop"
-        # And the body it came out of, which is owned exactly the same way: this
-        # task never published, so it is not the code of any revision.
-        assert not body.exists(), "a pushed body outlived the stop"
+    for job_id, sources in queued:
+        assert not sources.exists(), "a checked-out source tree outlived the stop"
         record = jobs.get(job_id)
         assert record["state"] == STATE_FAILED, job_id
         # 503 and "push again": nothing was wrong with the push.
@@ -1595,8 +1500,8 @@ def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
 
     When `submit`'s post-check drains the queue and finds nothing, the task need
     not have come back to the caller: a WORKER may be inside `_build_and_publish`
-    with it. Treating that as a refusal would make `app._queue_build` remove the
-    source tree and fail the job under a build that is reading that tree.
+    with it. Treating that as a refusal would make the hook (`prereceive._build`)
+    remove the source tree under a build that is reading that tree.
     """
     data = tmp_path / "data"
     jobs = JobStore(data)
@@ -1630,7 +1535,6 @@ def test_a_task_a_worker_already_took_is_not_torn_down_by_the_stop(tmp_path):
     try:
         assert pool.submit(BuildTask(
             job_id=record["id"], pid="proj1", commit="c2", sources=sources,
-            archive=_accepted_body(data, 2),
             digest="digest-2")) == SUBMIT_ACCEPTED, (
             "the stop reported a refusal for a task a worker already had, so "
             "the request thread is about to delete a live build's sources")
@@ -1660,9 +1564,9 @@ def test_a_push_that_lands_on_a_stopping_hub_is_told_that_and_not_queue_full(
     """One refusal code, two different reasons, and the reply must tell them apart.
 
     `submit` refuses a full queue and a stopping hub alike. For a stopping hub
-    "the build queue is full, retry later" is false (the queue is empty and
-    retrying the same hub is wrong), and the stop's drain has already written the
-    true sentence, "the hub was stopped, push again", to the job record.
+    "the hub is busy" is false (the queue is empty, and the same hub is not
+    coming back), and `submit` has already written the true sentence, "the hub
+    was stopped, push again", to the job record.
     """
     hub = start_hub(tmp_path / "data")
     try:
@@ -1671,21 +1575,19 @@ def test_a_push_that_lands_on_a_stopping_hub_is_told_that_and_not_queue_full(
         # straight through the shutdown that is happening beside them.
         hub.server.builds.shutdown()
 
-        reply = hub.publish_async("proj1", "abc123", good_build())
-        assert reply.status_code == 503
-        assert reply.json()["error"] == STOPPED_ERROR
-        # No Retry-After: nothing is going to free up here, the hub is going
-        # away. Telling CI to come back in a minute to this process is a lie.
-        assert "Retry-After" not in reply.headers
+        pushed = _push_a_version(hub, tmp_path / "work", "proj1")
+        assert pushed.returncode != 0
+        assert "remote: the hub is stopping; push again" in pushed.stderr
+        assert "busy" not in pushed.stderr
 
         # The job says the same thing, so a pusher who polls it is not told a
-        # different story from the one the reply told.
+        # different story from the one the push told.
         records = list(_volume_records(hub.data).values())
         assert len(records) == 1
         assert records[0]["state"] == STATE_FAILED
         assert records[0]["code"] == 503
         assert records[0]["error"] == STOPPED_ERROR
-        # And the tree the push unpacked went with it.
+        # And the tree the push checked out went with it.
         assert _leftovers(hub, "proj1") == []
     finally:
         stop_hub(hub)
@@ -1695,8 +1597,8 @@ def test_a_push_handed_over_after_the_stop_began_is_refused(tmp_path):
     """`daemon_threads = True`, so a request thread outlives the drain.
 
     The thread serving a push keeps running while `shutdown` empties the queue on
-    another. A task queued after that is never read: the pusher is told 202 about a
-    build nobody runs, and its unpacked tree stays on the volume
+    another. A task queued after that is never read: the hook waits on a build
+    nobody runs, and its checked-out tree stays on the volume
     (`Store._sweep_leftovers` skips everything younger than
     `store.LEFTOVER_MAX_AGE_SECONDS`, four hours).
 
@@ -1718,7 +1620,7 @@ def test_a_push_handed_over_after_the_stop_began_is_refused(tmp_path):
 
     assert pool.submit(BuildTask(
         job_id=record["id"], pid="proj1", commit="c0", sources=sources,
-        archive=_accepted_body(data, 0), digest="digest-0")) == SUBMIT_STOPPED
+        digest="digest-0")) == SUBMIT_STOPPED
     # Answered by `submit` itself: the task never entered the queue, so no drain
     # is ever going to find it and say so.
     answered = jobs.get(record["id"])
@@ -1750,19 +1652,17 @@ def test_a_push_that_races_the_drain_is_taken_back_out_of_the_queue(tmp_path):
     sources = data / f"{SOURCE_PREFIX}{1:032x}"
     sources.mkdir(parents=True)
     (sources / "model.py").write_text("# a pushed source tree\n")
-    body = _accepted_body(data, 1)
     record = jobs.create("proj1", "c1")
 
     assert pool.submit(BuildTask(
         job_id=record["id"], pid="proj1", commit="c1", sources=sources,
-        archive=body, digest="digest-1")) == SUBMIT_STOPPED
+        digest="digest-1")) == SUBMIT_STOPPED
     # And the task was answered rather than merely refused: its sources are gone
     # and its job says what happened, which is the last thing the hub can say.
     # Note WHO answered it: `shutdown`'s drain, running inside `put_nowait`, not
     # the drain `submit` runs afterwards — which by then finds an empty queue.
     # That is the case the shared record of dropped ids exists for.
     assert not sources.exists()
-    assert not body.exists()
     assert jobs.get(record["id"])["state"] == STATE_FAILED
     assert jobs.get(record["id"])["error"] == STOPPED_ERROR
 
@@ -1772,7 +1672,7 @@ def test_a_submit_whose_drain_throws_still_answers_its_job(tmp_path,
     """`submit`'s drain gets the same wrapper `shutdown`'s call to it has.
 
     The drain loops over directories and job records on a volume nothing can be
-    assumed about. If it escaped here, the pusher would get a 500 (recoverable),
+    assumed about. If it escaped here, the push would be refused (recoverable),
     and the task would stay in a queue no worker reads, leaving its job `queued`
     until a restart. A drain that threw is not read as "a worker has it": the
     task may equally be in a queue nobody will read, so the job is answered.
@@ -1802,7 +1702,7 @@ def test_a_submit_whose_drain_throws_still_answers_its_job(tmp_path,
     # The assertion is first of all that this RETURNS rather than raising.
     assert pool.submit(BuildTask(
         job_id=record["id"], pid="proj1", commit="c1", sources=sources,
-        archive=_accepted_body(data, 2), digest="digest-2")) == SUBMIT_STOPPED
+        digest="digest-2")) == SUBMIT_STOPPED
     # And that the job is terminal, so it does not leave a pusher polling a
     # status that will never change again.
     answered = jobs.get(record["id"])
@@ -1839,9 +1739,8 @@ def test_the_listening_socket_is_closed_before_the_pool_is_drained(tmp_path,
 
     The pool's shutdown drains the queue and then waits out its join budget, and
     with the socket still open every moment of that is a moment in which the hub
-    takes a connection, spools a body, unpacks a tree and hands it to a pool
-    that is stopping — work whose only possible ending is a job saying to push
-    again.
+    takes a push, checks a tree out and hands it to a pool that is stopping —
+    work whose only possible ending is a job saying to push again.
     """
     hub = start_hub(tmp_path / "data")
     seen = {}

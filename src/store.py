@@ -9,8 +9,8 @@ It grows by what changed rather than by what was pushed: after every publish
 `_dedupe` makes each file of a project's builds with the same sha256 a hard link
 to one copy, so a part that did not change between revisions is one file on
 disk. That is safe only because nothing writes into a published file in
-place — `_restate_message` replaces meta.json by rename, and the files the hub
-writes into a build itself (meta.json and the dot files) are never linked.
+place, and the files the hub writes into a build itself (meta.json and the dot
+files) are never linked.
 
 Layout under DATA_DIR (SPEC 3, 7.2). Everything here is runtime state and lives on
 the docker volume; templates and viewer assets deliberately live outside it,
@@ -18,20 +18,34 @@ because the volume would shadow them.
 
     <data>/index.json                      cards for the front page
     <data>/project/<pid>/builds.json       build picker for one project
-    <data>/project/<pid>/latest            SYMLINK -> <commit>, newest build
+    <data>/project/<pid>/latest            SYMLINK -> <commit>, the nearest built
+                                           commit on the first-parent line of `main`
     <data>/project/<pid>/dev/              THE local slot — one directory, rewritten
-                                           on every laptop push (SPEC 7.6)
+                                           by every draft (SPEC 7.6)
     <data>/project/<pid>/<commit>/         one immutable build
+    <data>/project/<pid>/<commit>/.build.log   what that build printed
     <data>/project/<pid>/.tmp-<commit>-<uuid>/   staging, never served
     <data>/jobs/<id>/                      one build job (src/jobs.py)
-    <data>/.src-<uuid>/                    one pushed SOURCE tree, being built
-    <data>/.body-<uuid>                    the BODY that tree came out of, kept
-                                           until its build says whether to store it
-    <data>/sources/<digest>/source.tar.gz  that body, kept: the code of one revision
+    <data>/.src-<uuid>/                    one SOURCE tree checked out of a pushed
+                                           commit, being built
+    <data>/sources/<digest>/source.tar.gz  the archive an older hub kept for each
+                                           revision; read only by the import
     <data>/sources/<digest>/log.txt        what the build of that revision printed
     <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison
     <data>/repos/<pid>.git/                the project's bare git repository,
                                            served by src/githttp.py
+
+A revision is published by `git push` (src/prereceive.py): the pre-receive hook
+hands the pushed commit to the hub, which builds it in the ordinary queue and
+publishes it under the commit's sha before git writes the ref. The repository
+is the canon of history; `latest`, `builds.json` and `index.json` are derived
+from it and from the build directories, at the end of every push and at start
+(`recompute`, `catch_up`).
+
+Builds published before git are taken into the repository by the import
+(`ensure_repo`): one commit per build, oldest first, out of its archive in
+`sources/`, each carrying the trailer `Hammerola-Import: <pid>/<build>` and
+checked against the build's `.payload.sha256`. The archives stay on the volume.
 
 `compare/` is outside the build directories (SPEC 8A.3) for rights — a build
 directory opens its JSON and pictures to anybody with its address and the rest
@@ -41,20 +55,10 @@ pointer moves with the pointer. It is a cache written like a build (a staging
 directory beside the entry, then one rename); recomputing costs about as much
 as a build (~1.5 s a pair), and nothing prunes it.
 
-`sources/` is the code of every published revision:
-
-  * Outside the build directory, which is served to anybody holding its
-    address (its JSON and pictures) or its key (the rest), with a year of
-    `immutable`. This tree is served only by `GET /api/v1/sources/<revision>`,
-    behind EDIT_TOKEN; the file server's `_safe_build_path` looks only inside
-    a build directory and never reaches it.
-  * Content-addressed: `<digest>` is `_payload_digest` of the sources, the same
-    string `mint_revision` names the revision after. Pushing the same tree twice
-    cannot produce a second archive, and a revision published under a name the
-    caller chose (the route that takes a `<commit>`) is stored under its digest,
-    not under the name in its URL.
-  * Written only after a publish lands; a failed build's sources are not kept.
-    A revision's code lives exactly as long as the revision (SPEC 5.3).
+`sources/` is addressed by `_payload_digest` of an archive's members, the
+`.payload.sha256` of the builds published from it. Nothing writes it, and
+nothing serves it: the file server's `_safe_build_path` looks only inside a
+build directory.
 
 `latest` and `dev` are the two names a build directory may not claim, for
 different reasons: `latest` is a symlink the store moves, and `dev` is the local
@@ -66,9 +70,9 @@ encoding nobody thought of: `<pid>` and `<commit>` come from the URL and may
 only be `[A-Za-z0-9_-]`, so they can never contain a separator or a dot
 component. `latest` and `dev` are reserved.
 
-The uploaded tar is read in `src/archive.py`, together with the ceilings and the
+An archive is read in `src/archive.py`, together with the ceilings and the
 per-component alphabet for member names. Those names are re-exported below as
-`store.<name>`, and `Store._unpack` calls into that module.
+`store.<name>`, and the import calls into that module.
 """
 
 import hashlib
@@ -77,10 +81,10 @@ import os
 import re
 import shutil
 import subprocess
+import tarfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -160,7 +164,9 @@ PROJECT_BUILDS_FILE = "builds.json"
 SITE_INDEX_FILE = "index.json"
 
 # Where the payload digest of a build is remembered, so a retry of the same commit
-# can be told apart from a different build claiming the same commit (SPEC 7).
+# can be told apart from a different build claiming the same commit (SPEC 7). For
+# a build of a pushed commit it is the git id of the project's directory in that
+# commit; for a build published before git, `_payload_digest` of its archive.
 # Dot-prefixed: the file server refuses to serve dot entries.
 PAYLOAD_DIGEST_FILE = ".payload.sha256"
 
@@ -169,26 +175,22 @@ PAYLOAD_DIGEST_FILE = ".payload.sha256"
 # Dot-prefixed for the reason the digest file above is.
 FILE_DIGESTS_FILE = ".files.sha256"
 
-# The store of pushed SOURCES, one directory per revision, named by the digest of
-# what was pushed. See the module docstring for why it is here and not inside the
-# build directory. Not dot-prefixed and it does not need to be: nothing serves
-# this tree by path, `builds_of` only ever looks inside `project/`, and a name
-# that is plainly visible in a `ls data/` is the honest one for a tree somebody
-# will one day go looking for by hand.
+# What the build of a revision printed, in the revision's own directory: one
+# commit can be a revision of several projects, so a log kept by commit would be
+# overwritten. Written into staging before the rename; dot-prefixed, so the file
+# server does not serve it and `GET /api/v1/logs/<pid>/<rev>` is its only way out.
+BUILD_LOG_FILE = ".build.log"
+
+# The archives an older hub kept, one directory per revision, named by the
+# digest of the archive's members. Only the import reads them.
 SOURCES_DIR_NAME = "sources"
-# The pushed body, byte for byte. `.tar.gz` because that is what it IS: the
-# request body of the push, unmodified, which is what makes it possible to say
-# the code of a revision is the code that built it rather than a repacking of it.
 SOURCE_ARCHIVE_NAME = "source.tar.gz"
-# The build log, beside the code. The job keeps its own copy, but that is
-# addressed by a per-attempt job id recorded against nothing, so it is not
-# reachable from the revision.
 SOURCE_LOG_NAME = "log.txt"
 
 # The comparison cache: `compare/<pid>/<a>/<b>/<view>/`, holding exactly the two
-# files below. Not dot-prefixed, for the reason `sources/` is not: nothing serves
-# this tree by path — `_serve_compare` in app.py composes the entry's path from
-# ids it has already checked.
+# files below. Not dot-prefixed: nothing serves this tree by path —
+# `_serve_compare` in app.py composes the entry's path from ids it has already
+# checked.
 #
 # The ids are nested directories rather than one joined name because no
 # separator is safe: `SAFE_ID` accepts `_`, so `x` + `y__z` and `x__y` + `z`
@@ -202,10 +204,26 @@ COMPARE_DIR_NAME = "compare"
 COMPARE_FILES = ("scene.json", "report.json")
 
 # Each project's git repository: `repos/<pid>.git`, bare, created by `ensure_repo`
-# on the first git request for the project. Not created at startup, like
-# `sources/`.
+# for the first git request to the project, or by the import.
 REPOS_DIR_NAME = "repos"
 REPO_SUFFIX = ".git"
+
+# The default branch, the only one the hub takes for now (src/prereceive.py).
+# `HEAD` of every repository is `git init --initial-branch=main` and never moves.
+MAIN_BRANCH = "main"
+MAIN_REF = f"refs/heads/{MAIN_BRANCH}"
+
+# The trailer of an imported commit: `Hammerola-Import: <pid>/<build>`. A key of
+# the hub's own, so a trailer an author writes means nothing here; the pid is in
+# the value because one history can carry the imports of several projects.
+IMPORT_TRAILER = "Hammerola-Import"
+# Who imported commits are by, set explicitly: a guessed identity can be refused
+# by git, and a fixed one keeps the import's shas the same every time it runs.
+IMPORT_NAME = "hammerola import"
+IMPORT_EMAIL = "import@hammerola"
+
+# A build named by a commit: the full sha.
+COMMIT_NAME = re.compile(r"\A[0-9a-f]{40}\Z")
 
 # The only variables a git process the hub starts inherits from the hub: enough
 # to find programs and a home directory. EDIT_TOKEN in particular never reaches
@@ -244,45 +262,33 @@ PROJECT_DRAFT_JOB_FILE = "draft.json"
 # one is left behind by a SIGKILL, and why they are swept explicitly at startup.
 STAGING_PREFIX = ".tmp-"        # a build's OUTPUT, on its way to <pid>/<commit>
 LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
-UPLOAD_PREFIX = ".upload-"      # one spooled request body
-# The `dev` slot renamed out of the way while a new one takes its name. POSIX
+# A directory renamed out of the way while a new one takes its name: the `dev`
+# slot, a comparison cache entry, a repository the import replaces. POSIX
 # cannot replace a non-empty directory under a fixed name in one step — see
-# `_swap_dev_slot`. Nothing else parks a directory: published builds are never
-# deleted.
+# `_swap_dev_slot`. Published builds are never parked: they are never deleted.
 TRASH_PREFIX = ".trash-"
 # Any atomic write this module makes, for as long as it is not yet renamed into
 # place — a rule rather than a list, because naming three of them invites the
 # fourth to be forgotten. All of them land where the sweep below looks; the ones
-# that have to ask for it are `_restate_message` and `_file_digests`, whose
+# that have to ask for it are `_file_digests` and the import's log copies, whose
 # targets live in a build directory the sweep does not walk, and `_dedupe`,
 # which makes its temporary link in the project directory for the same reason.
+# A temporary git index is one too.
 JSON_TMP_PREFIX = ".wip-"
-# One pushed SOURCE tree, from the moment it is unpacked until its build ends.
-# At the root and not inside the project directory, and that is deliberate: it is
-# not a build, it is never renamed anywhere, and a project directory that exists
-# means the project has been pushed to. It also survives the request that created
-# it — the worker owns it (src/jobs.py) — so it is the one transient here that is
-# expected to outlive its creator.
+# One SOURCE tree, from the moment it is checked out of a pushed commit (or
+# unpacked from an archive by the import) until its build ends. At the root and
+# not inside the project directory, and that is deliberate: it is not a build,
+# it is never renamed anywhere, and a project directory that exists means the
+# project has been pushed to. It also survives the request that created it — the
+# worker owns it (src/jobs.py) — so it is the one transient here that is expected
+# to outlive its creator.
 SOURCE_PREFIX = ".src-"
-# The BODY the tree above was unpacked from, from the moment the push is accepted
-# until the build says whether the revision was published. The same lifetime as
-# `.src-` and the same owner, and it is a second name rather than the spool's
-# because ownership changes at exactly that point: `.upload-` belongs to the
-# request thread, which deletes it whatever happens, and this belongs to the push.
-#
-# Kept at all only because a repacked tree is not the same artefact: what makes
-# `sources/` worth having is that it holds the bytes that were pushed, and those
-# exist only while this file does. It is NOT put beside the unpacked tree, which
-# would be the obvious place — the tree is handed to the build as its input, so an
-# archive inside it would be one more file the model gets to see and to read.
-BODY_PREFIX = ".body-"
-
-LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
-                     TRASH_PREFIX, JSON_TMP_PREFIX, SOURCE_PREFIX, BODY_PREFIX)
+LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, TRASH_PREFIX,
+                     JSON_TMP_PREFIX, SOURCE_PREFIX)
 
 # A leftover younger than this may belong to a publish running right now, in
-# this process or another one sharing the volume. `.src-` and `.body-` live from
-# the request until the build ends, so this has to exceed the worst honest queue
+# this process or another one sharing the volume. `.src-` lives from the push
+# until the build ends, so this has to exceed the worst honest queue
 # wait: jobs.MAX_QUEUED_JOBS × buildproc's `wall_seconds` / the number of
 # workers. `tests/test_build_ceilings.py` computes that from the live constants
 # and asserts this clears it. The margin is generous on purpose: a leftover only
@@ -290,33 +296,111 @@ LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, UPLOAD_PREFIX,
 LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
 
 
-@dataclass(frozen=True)
-class AcceptedPush:
-    """A pushed source tree the hub has taken responsibility for.
-
-    `sources` is unpacked and validated; whoever holds this owns that directory
-    and has to remove it. `digest` is over those sources, and is the number every
-    later "is this the same push?" question is answered with. `commit` is the
-    name it will be published under: the segment the caller put in the URL, or —
-    on the route that has no such segment — the digest itself (`mint_revision`).
-
-    `archive` is the request body those sources came out of, moved somewhere the
-    request thread does not delete. It is owned exactly like `sources` — the same
-    holder, removed at the same moment — with one extra ending: a build that
-    publishes hands it to `keep_sources` instead, and it is then the code of a
-    revision rather than a transient (see the module docstring).
-    """
-
-    sources: Path
-    archive: Path
-    digest: str
-    commit: str
+class ImportFailed(Exception):
+    """The import of a project's old builds did not go through; says which and why."""
 
 
 def git_environment() -> dict:
     """The environment every git process the hub starts begins from."""
     return {name: os.environ[name] for name in GIT_INHERITED_VARIABLES
             if name in os.environ}
+
+
+def run_git(repo, subcommand: str, *args, work_tree=None, env=None,
+            input=None, cwd=None) -> str:
+    """One git command against `repo` (None: none). -> its stdout, as it is.
+
+    Raises CalledProcessError with git's stderr on it and `cmd[1]` the
+    subcommand, for a message that names it (`git_failure`).
+    """
+    environment = git_environment()
+    if repo is not None:
+        environment["GIT_DIR"] = str(repo)
+    environment.update(env or {})
+    command = ["git"]
+    if work_tree is not None:
+        command += ["--work-tree", str(work_tree)]
+    try:
+        return subprocess.run(
+            [*command, subcommand, *args], env=environment, input=input,
+            cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=True).stdout
+    except subprocess.CalledProcessError as error:
+        error.cmd = ["git", subcommand]
+        raise
+
+
+def git_failure(error: subprocess.CalledProcessError) -> str:
+    """`git <subcommand>: <its last line of stderr>`."""
+    lines = (error.stderr or "").strip().splitlines()
+    return f"git {error.cmd[1]}: {lines[-1] if lines else f'exit {error.returncode}'}"
+
+
+# The separators of `_trailed_log`'s format: neither can occur in a sha or in
+# a trailer's value.
+_RECORD = "\x1e"
+_FIELD = "\x1f"
+
+
+def _trailed_log(repo, rev: str, *extra, env=None) -> list:
+    """`[(sha, [Hammerola-Import values]), ...]`, as `git log <rev>` lists them.
+
+    Empty when there is no such repository or revision.
+    """
+    try:
+        run_git(repo, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}",
+                env=env)
+    except subprocess.CalledProcessError:
+        return []
+    out = run_git(
+        repo, "log", *extra,
+        f"--format=%H%x1f%(trailers:key={IMPORT_TRAILER},valueonly,"
+        f"separator=%x1f)%x1e", rev, "--", env=env)
+    commits = []
+    for record in out.split(_RECORD):
+        record = record.strip("\n")
+        if not record:
+            continue
+        sha, *values = record.split(_FIELD)
+        commits.append((sha, [value.strip() for value in values
+                              if value.strip()]))
+    return commits
+
+
+def _commit_digest(repo: Path, commit: str) -> str:
+    """`_payload_digest` of a commit's regular files, read off `git archive`.
+
+    The directory entries `git archive` writes are not in it, as the archives a
+    build was published from carried none.
+    """
+    environment = git_environment()
+    environment["GIT_DIR"] = str(repo)
+    process = subprocess.Popen(["git", "archive", "--format=tar", commit],
+                               env=environment, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+    files = {}
+    try:
+        with tarfile.open(fileobj=process.stdout, mode="r|") as tar:
+            for member in tar:
+                if not member.isreg():
+                    continue
+                digest = hashlib.sha256()
+                handle = tar.extractfile(member)
+                while True:
+                    chunk = handle.read(CHUNK)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                files[member.name] = digest.hexdigest()
+    finally:
+        process.stdout.close()
+        errors = process.stderr.read().decode("utf-8", "replace")
+        process.stderr.close()
+        code = process.wait()
+    if code != 0:
+        raise subprocess.CalledProcessError(code, ["git", "archive"],
+                                            stderr=errors)
+    return _payload_digest(files)
 
 
 def utcnow_iso() -> str:
@@ -386,14 +470,10 @@ class Store:
     def __init__(self, data_dir):
         self.root = Path(data_dir).resolve()
         self.projects_dir = self.root / "project"
-        # NOT created here, unlike `projects_dir`. It is created by the first
-        # publish that puts something in it, so a hub that has never published a
-        # revision has no `sources/` at all — which is what makes "a build that
-        # failed leaves nothing behind" an observable fact rather than an empty
-        # directory somebody has to interpret.
+        # Read by the import, written by nothing.
         self.sources_dir = self.root / SOURCES_DIR_NAME
-        # NOT created here either, and for the same reason: a hub nobody has
-        # asked for a comparison on has no `compare/` at all.
+        # NOT created here, unlike `projects_dir`: a hub nobody has asked for a
+        # comparison on has no `compare/` at all.
         self.compare_root = self.root / COMPARE_DIR_NAME
         # Created by the first `ensure_repo`, for the same reason.
         self.repos_dir = self.root / REPOS_DIR_NAME
@@ -410,6 +490,10 @@ class Store:
         self._locks_guard = threading.Lock()
         # The root index spans every project, so it gets its own global lock.
         self._index_lock = threading.Lock()
+        # `{pid: why}` for every project whose import failed in this process.
+        # Its git requests are answered 503 with the reason and its `latest` is
+        # not recomputed; the next start tries again.
+        self._import_failures: dict[str, str] = {}
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self._sweep_leftovers()
 
@@ -474,8 +558,10 @@ class Store:
         startup none is running, and a ref lock a redeploy left a minute ago
         has to go — until it does, every push to that branch fails on "cannot
         lock ref". Swept: the ref locks (`refs/**/*.lock`, `packed-refs.lock`),
-        the quarantine of a push never accepted (`objects/tmp_objdir-incoming-*`)
-        and a repository `ensure_repo` never renamed into place (`.tmp-*.git`).
+        the quarantine of a push never accepted (`objects/tmp_objdir-incoming-*`),
+        a repository `ensure_repo` never renamed into place (`.tmp-*.git`) and
+        the old repository a re-import parked and never deleted (`.trash-*`,
+        `_replace_directory`).
         """
         try:
             entries = list(self.repos_dir.iterdir())
@@ -483,7 +569,7 @@ class Store:
             return
         doomed = []
         for entry in entries:
-            if entry.name.startswith(STAGING_PREFIX):
+            if entry.name.startswith((STAGING_PREFIX, TRASH_PREFIX)):
                 doomed.append(entry)
                 continue
             doomed += (entry / "refs").rglob("*.lock")
@@ -533,48 +619,6 @@ class Store:
         """
         return isinstance(name, str) and bool(SAFE_VIEW_ID.match(name))
 
-    @staticmethod
-    def mint_revision(digest: str) -> str:
-        """The name the hub gives a revision it names itself: the payload digest.
-
-        THE IDENTIFIER IS THE CONTENT, and every property the revision route
-        needs falls out of that rather than being enforced on top of it:
-
-          * "the same sources are the same revision" is an identity, not a
-            check — an unchanged tree cannot be given a second address;
-          * "this name is taken by different content" cannot arise, because
-            different content hashes to a different name (the 409 that answers
-            it survives for the reason `settled` gives, which is about a
-            directory that has lost its digest file, not about a colliding id);
-          * nothing has to be stored to hand out the next one, so two pushes
-            racing each other need no coordination at all.
-
-        NOT TRUNCATED, and that is the one number worth writing down. A sha256
-        in hex is exactly 64 characters and `SAFE_ID` allows exactly 64, so the
-        whole digest fits with nothing to spare and nothing to gain by cutting
-        it: the URL was already carrying 40 hex characters when the id came from
-        git, it is pasted rather than typed, and 24 more characters cost
-        nothing. A truncated prefix would cost something real — with n published
-        revisions and b bits kept, the chance that some pair collides is about
-        n²/2^(b+1), so a 64-bit (16-character) prefix over a million revisions is
-        ~3e-8. Small, but the FAILURE it buys is not small and not repairable:
-        two different source trees would map to one URL, the second would be
-        refused 409 for ever, and the pusher has no other name to publish under
-        because the pusher does not choose the name.
-
-        `digest` comes from `_payload_digest`, so this can only fail if that
-        function's output shape changes — base64 (`+`, `/`), a prefix, a longer
-        hash. It is checked rather than assumed because the failure would
-        otherwise be a directory created under a name the file server refuses to
-        serve, i.e. a build that publishes and then 404s.
-        """
-        if not Store.valid_build_id(digest):
-            raise PublishError(
-                500,
-                "the hub could not name this revision: its digest is not a "
-                "usable build id")
-        return digest
-
     def _lock_for(self, pid: str) -> threading.Lock:
         with self._locks_guard:
             return self._locks.setdefault(pid, threading.Lock())
@@ -586,7 +630,7 @@ class Store:
     # -- addresses on the volume -------------------------------------------
     # The one place that knows the layout: callers ask these for addresses
     # rather than assembling paths themselves, so the layout can move. None of
-    # the five below touches the disk; `resolve_inside` does, on the terms its
+    # the six below touches the disk; `resolve_inside` does, on the terms its
     # docstring states.
     def project_dir(self, pid: str) -> Path:
         """Everything this hub holds about one project."""
@@ -599,6 +643,10 @@ class Store:
     def build_meta_path(self, pid: str, name: str) -> Path:
         """The document that decides whether that build can be served."""
         return self.build_dir(pid, name) / BUILD_META_FILE
+
+    def build_log_path(self, pid: str, name: str) -> Path:
+        """What the build of one revision printed."""
+        return self.build_dir(pid, name) / BUILD_LOG_FILE
 
     def builds_json_path(self, pid: str) -> Path:
         """The project's build picker."""
@@ -613,21 +661,45 @@ class Store:
         return self.repos_dir / f"{pid}{REPO_SUFFIX}"
 
     def ensure_repo(self, pid: str) -> Path:
-        """The project's repository, created empty if it is not there yet.
+        """The project's repository: imported, created empty, or as it is.
 
-        Run by every git request before `git http-backend` starts. Under the
-        repository's own lock, so two first requests do not both create it.
-        `git init` writes into a staging name that is then renamed into place,
-        so a repository is either whole or absent; a staging directory a crash
-        leaves behind is swept at the next start (`_sweep_repos`).
+        Run by every git request before `git http-backend` starts, and at start
+        for every project with builds (`catch_up`). Under the repository's own
+        lock, so two first requests do not both create it and a request that
+        meets an import in progress waits for it.
+
+        A project with builds named otherwise than by a commit — published
+        before git — is imported (`_needs_import` says when), and every other
+        one gets an empty repository. A build named by a commit was published by
+        a push and is never imported: its commit is in the repository, or went
+        with a push git did not finish. Either repository is written under a
+        staging name and renamed into place, so a repository is whole or
+        absent; a staging directory a crash leaves behind is swept at the next
+        start (`_sweep_repos`).
+
+        Raises ImportFailed when the import fails, now or earlier in this
+        process: nothing is changed, the line `import <pid>: <build>: <why>` is
+        logged once, and the next start tries again.
         """
         repo = self.repo_dir(pid)
         with self._repo_lock_for(pid):
+            failure = self._import_failures.get(pid)
+            if failure is not None:
+                raise ImportFailed(failure)
+            builds = [meta for meta in self.builds_of(pid)
+                      if not COMMIT_NAME.match(meta["commit"])]
+            try:
+                if builds and self._needs_import(pid, repo, builds):
+                    self._import(pid, repo, builds)
+                    return repo
+            except ImportFailed as error:
+                self._import_failures[pid] = str(error)
+                logger.error(f"import {pid}: {error}")
+                raise
             if repo.is_dir():
                 return repo
             self.repos_dir.mkdir(parents=True, exist_ok=True)
-            staging = self.repos_dir / (
-                f"{STAGING_PREFIX}{pid}-{uuid.uuid4().hex}{REPO_SUFFIX}")
+            staging = self._repo_staging(pid)
             subprocess.run(
                 ["git", "init", "--quiet", "--bare", "--initial-branch=main",
                  str(staging)],
@@ -635,6 +707,255 @@ class Store:
             staging.rename(repo)
         logger.info(f"created the git repository of {pid}")
         return repo
+
+    def _repo_staging(self, pid: str) -> Path:
+        return self.repos_dir / (
+            f"{STAGING_PREFIX}{pid}-{uuid.uuid4().hex}{REPO_SUFFIX}")
+
+    def import_failure(self, pid: str) -> str | None:
+        """Why this project's import failed in this process, or None."""
+        return self._import_failures.get(pid)
+
+    def _needs_import(self, pid: str, repo: Path, builds: list) -> bool:
+        """Does a project with these builds have to be imported (again)?
+
+        `builds` are the project's builds named otherwise than by a commit
+        (`ensure_repo`), at least one. Yes when there is no repository, when
+        `main` is empty (a git request created the repository, or a push
+        published a build and git never wrote the branch), and when `main`
+        holds nothing but imported commits while one of `builds` has no import
+        commit: a hub of the previous image published it from an archive after
+        the import, and the import is redone whole. It is deterministic, so the
+        commits it made before get the same shas.
+
+        A missing import commit under commits of the author's own is an
+        ImportFailed: redoing the import would drop them, and leaving it would
+        let `latest` fall back to the old import's tip.
+        """
+        if not repo.is_dir():
+            return True
+        commits = _trailed_log(repo, MAIN_REF)
+        if not commits:
+            return True
+        imported = {value for _sha, values in commits for value in values}
+        missing = [meta["commit"] for meta in builds
+                   if f"{pid}/{meta['commit']}" not in imported]
+        if not missing:
+            return False
+        if any(not values for _sha, values in commits):
+            raise ImportFailed(
+                f"{missing[0]}: it has no import commit, and {MAIN_BRANCH} "
+                f"already has commits of the author's own")
+        return True
+
+    def _import(self, pid: str, repo: Path, builds: list) -> None:
+        """Take a project's old builds into a new repository, oldest first.
+
+        `builds` are the builds published before git: `builds_of(pid)` without
+        the builds named by a commit (`ensure_repo`), taken in reverse. That is
+        the list and order `latest` was taken from before git, so the tip of
+        `main` is the build `latest` was. One commit per build out of its
+        archive, checked against the build's `.payload.sha256`; then each
+        build's old log is copied beside it, `main` is pointed at the last
+        commit and the repository renamed into place, over an existing one.
+        Raises ImportFailed, leaving everything as it was.
+        """
+        self.repos_dir.mkdir(parents=True, exist_ok=True)
+        staging = self._repo_staging(pid)
+        try:
+            try:
+                run_git(None, "init", "--quiet", "--bare",
+                        f"--initial-branch={MAIN_BRANCH}", str(staging))
+            except subprocess.CalledProcessError as error:
+                raise ImportFailed(git_failure(error)) from error
+            parent = None
+            logs = []
+            for meta in reversed(builds):
+                name = meta["commit"]
+                digest = _read_digest(self.build_dir(pid, name))
+                if not digest:
+                    raise ImportFailed(f"{name}: it has no {PAYLOAD_DIGEST_FILE}")
+                try:
+                    parent = self._import_build(pid, staging, meta, digest,
+                                                parent)
+                except subprocess.CalledProcessError as error:
+                    raise ImportFailed(f"{name}: {git_failure(error)}") from error
+                except tarfile.TarError as error:
+                    raise ImportFailed(
+                        f"{name}: git archive gave an unreadable tar: {error}"
+                    ) from error
+                logs.append((name, self.sources_dir / digest / SOURCE_LOG_NAME))
+            try:
+                run_git(staging, "update-ref", MAIN_REF, parent)
+            except subprocess.CalledProcessError as error:
+                raise ImportFailed(git_failure(error)) from error
+            for name, log in logs:
+                try:
+                    if log.is_file():
+                        atomic_write_bytes(
+                            self.build_dir(pid, name) / BUILD_LOG_FILE,
+                            log.read_bytes(), tmp_dir=self.project_dir(pid))
+                except OSError as error:
+                    raise ImportFailed(
+                        f"{name}: its log cannot be copied: {error}") from error
+            try:
+                if repo.is_dir():
+                    self._replace_directory(repo, staging)
+                else:
+                    staging.rename(repo)
+            except OSError as error:
+                raise ImportFailed(
+                    f"the repository cannot be put in place: {error}") from error
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        logger.info(f"import {pid}: {len(builds)} commits")
+
+    def _import_build(self, pid: str, repo: Path, meta: dict, digest: str,
+                      parent: str | None) -> str:
+        """One build as one commit on top of `parent`. -> the commit's sha.
+
+        The archive is unpacked by the rules that once accepted it, added with
+        `--force` (no ignore rules apply to what was published), and the
+        commit's content checked against `digest` before it is used.
+        """
+        name = meta["commit"]
+        archive = self.sources_dir / digest / SOURCE_ARCHIVE_NAME
+        tree_dir = self.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
+        index = self.root / f"{JSON_TMP_PREFIX}index-{uuid.uuid4().hex}"
+        try:
+            tree_dir.mkdir()
+            try:
+                unpack(archive, tree_dir)
+            except PublishError as error:
+                raise ImportFailed(
+                    f"{name}: its archive cannot be read: {error.message}"
+                ) from error
+            except OSError as error:
+                raise ImportFailed(
+                    f"{name}: its archive cannot be read: {error}") from error
+            env = {"GIT_INDEX_FILE": str(index)}
+            run_git(repo, "add", "--force", "-A", work_tree=tree_dir, env=env,
+                    cwd=tree_dir)
+            tree = run_git(repo, "write-tree", env=env).strip()
+            stamp = f"@{int(_built_key(meta)[0])} +0000"
+            identity = {
+                "GIT_AUTHOR_NAME": IMPORT_NAME, "GIT_AUTHOR_EMAIL": IMPORT_EMAIL,
+                "GIT_AUTHOR_DATE": stamp,
+                "GIT_COMMITTER_NAME": IMPORT_NAME,
+                "GIT_COMMITTER_EMAIL": IMPORT_EMAIL,
+                "GIT_COMMITTER_DATE": stamp}
+            subject = meta.get("message") or f"Revision {name} imported from the hub"
+            message = f"{subject}\n\n{IMPORT_TRAILER}: {pid}/{name}\n"
+            parents = ["-p", parent] if parent else []
+            commit = run_git(repo, "commit-tree", tree, *parents,
+                             env=identity, input=message).strip()
+            found = _commit_digest(repo, commit)
+            if found != digest:
+                raise ImportFailed(
+                    f"{name}: the imported commit holds other content than the "
+                    f"build was published from ({found} against {digest})")
+            return commit
+        finally:
+            shutil.rmtree(tree_dir, ignore_errors=True)
+            try:
+                index.unlink()
+            except OSError:
+                pass
+
+    # -- what the repository says ------------------------------------------
+    def _built_name(self, pid: str, sha: str, values, names) -> str | None:
+        """The build a commit is, among `names`, or None if it is none of them.
+
+        A commit is built when a build is named by its sha, or when it is an
+        import commit of THIS project naming an existing build: an import of a
+        neighbouring project, come with an author's shared history, is not.
+        """
+        if sha in names:
+            return sha
+        for value in values:
+            owner, _, name = value.partition("/")
+            if owner == pid and name in names:
+                return name
+        return None
+
+    def built_build(self, pid: str, commit: str, env: dict = None) -> str | None:
+        """The build of `pid` this commit already is, or None.
+
+        `env` reaches the git process: the pre-receive hook passes the push's
+        quarantine, where a commit not yet accepted is found.
+        """
+        names = {meta["commit"] for meta in self.builds_of(pid)}
+        if commit in names:
+            return commit
+        commits = _trailed_log(self.repo_dir(pid), commit, "-1", env=env)
+        if not commits:
+            return None
+        sha, values = commits[0]
+        return self._built_name(pid, sha, values, names)
+
+    def _branch_latest(self, pid: str) -> str | None:
+        """The build of the nearest built commit on `main`'s first-parent line."""
+        repo = self.repo_dir(pid)
+        if not repo.is_dir():
+            return None
+        names = {meta["commit"] for meta in self.builds_of(pid)}
+        for sha, values in _trailed_log(repo, MAIN_REF, "--first-parent"):
+            name = self._built_name(pid, sha, values, names)
+            if name is not None:
+                return name
+        return None
+
+    def recompute(self, pid: str, index: bool = True) -> None:
+        """`latest` and `builds.json` from `main` as it stands, then the index.
+
+        Run at the end of every push (`githttp.end_of_request`) and at start
+        (`catch_up`). Under the project's lock, the index outside it: holding
+        one project's lock across a walk of every project is how two of them
+        would deadlock (see `publish_built`). Nothing for a project whose import
+        failed.
+        """
+        if pid in self._import_failures:
+            return
+        with self._lock_for(pid):
+            self._switch_latest(pid)
+            self._write_builds_json(pid)
+        if index:
+            self._refresh_index()
+
+    def catch_up(self) -> None:
+        """At start: import what needs it, then recompute every project.
+
+        Run on a thread of its own (`app.create_server`): neither the start nor
+        the healthcheck waits for it, and the site serves the builds off the
+        disk meanwhile. A git request to a project not yet imported does the
+        import itself, or waits for it on the repository's lock.
+        """
+        pids = set()
+        for directory in (self.projects_dir, self.repos_dir):
+            try:
+                entries = list(directory.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.name.startswith(".") or not entry.is_dir():
+                    continue
+                pid = entry.name.removesuffix(REPO_SUFFIX)
+                if self.valid_pid(pid):
+                    pids.add(pid)
+        for pid in sorted(pids):
+            try:
+                if self.builds_of(pid):
+                    self.ensure_repo(pid)
+                if self.repo_dir(pid).is_dir():
+                    self.recompute(pid, index=False)
+            except ImportFailed:
+                continue
+            except Exception:
+                logger.exception(f"start: {pid} could not be brought up to date")
+        try:
+            self._refresh_index()
+        except Exception:
+            logger.exception("start: the site index was not refreshed")
 
     def resolve_inside(self, path: Path) -> Path:
         """The path with its symlinks followed, refused unless it lands in here.
@@ -649,175 +970,6 @@ class Store:
         return resolved
 
     # -- publish -----------------------------------------------------------
-    def upload_path(self) -> Path:
-        """A private path under DATA_DIR for one request body.
-
-        On the volume rather than in /tmp: a body is as big as the build, the
-        container's writable layer is not where that belongs, and the dot prefix
-        keeps it out of `builds_of` and out of the file server. Swept by
-        `_sweep_leftovers` if the process dies before deleting it.
-
-        This name belongs to the REQUEST THREAD, which deletes it whatever
-        happens. A body that is accepted leaves under another name — see the
-        rename at the end of `accept_sources` — because from that point it is
-        owned by the push and may outlive the request by a whole build.
-        """
-        return self.root / f"{UPLOAD_PREFIX}{uuid.uuid4().hex}"
-
-    # -- accepting a push (in the request thread) ---------------------------
-    def accept_sources(self, pid: str, commit: str | None,
-                       body_path: Path) -> "AcceptedPush":
-        """Unpack one pushed SOURCE tree and hash it. Raises PublishError.
-
-        Runs in the request, because everything it can refuse is a property of
-        the upload itself — the ids and the archive — and has to be a 4xx
-        on the push, not a job to poll. It does not touch the project's
-        directory: a push that never builds leaves no trace of the project.
-
-        Takes a path, not bytes: the body is already on disk, and reading it back
-        into memory would undo the peak this avoids.
-
-        The digest is of the sources, and it tells an identical retry from a
-        colliding one. The built output stamps the wall clock (`built` in
-        `meta.json` and `metrics.json`), so hashing it would make every rebuild
-        of the same commit a 409.
-
-        `commit` is None when the URL carried no name for this push; the digest
-        computed here then becomes the name (`mint_revision`).
-        """
-        if not self.valid_pid(pid):
-            raise PublishError(422, f"invalid project id: {pid!r}")
-        # `dev` is the one commit name the URL may carry that is not a build id:
-        # it is the local slot (SPEC 7.6), and it is validated by being exactly
-        # that constant rather than by the build-id rule, which reserves it.
-        # None is not a name at all — there is nothing to validate until the
-        # sources have been hashed, further down.
-        if commit is not None and commit != DEV_LINK \
-                and not self.valid_build_id(commit):
-            raise PublishError(422, f"invalid commit id: {commit!r}")
-        sources = self.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
-        sources.mkdir()
-        try:
-            files = self._unpack(body_path, sources)
-            digest = _payload_digest(files)
-            name = self.mint_revision(digest) if commit is None else commit
-            # LAST, and the order is what decides who owns the body. Until this
-            # rename the spool is the request thread's and its `finally` deletes
-            # it, which is what every failure above wants; after it, the spool
-            # path no longer exists, that same `finally` is a no-op, and the body
-            # travels with the push. So an exception between the two can only
-            # leave the body where the request was already going to remove it.
-            archive = self.root / f"{BODY_PREFIX}{uuid.uuid4().hex}"
-            os.rename(body_path, archive)
-        except BaseException:
-            # Every way out of the block above except the ordinary one,
-            # BaseException included: a KeyboardInterrupt here would otherwise
-            # leave an unpacked tree that only the STARTUP sweep would ever
-            # remove, and only four hours later (`_sweep_leftovers`).
-            shutil.rmtree(sources, ignore_errors=True)
-            raise
-        return AcceptedPush(sources=sources, archive=archive, digest=digest,
-                            commit=name)
-
-    def settled(self, pid: str, commit: str, digest: str,
-                message: str = None) -> tuple[int, dict] | None:
-        """Has this exact push already been published? (status, body), or None.
-
-        Raises PublishError(409) when the name is taken by different content.
-
-        `message` is the one thing a repeat push can still change.
-        The tree is identical, so there is nothing to rebuild and nothing else to
-        write — but what the author says this revision is may well be the reason
-        they pushed again, and the answer to "which revision was that" lives in
-        the picker rather than in the geometry.
-
-        Asked BEFORE a build is queued, which is the whole point: rebuilding a
-        commit that is already on disk costs minutes of CPU to arrive at an
-        answer that was on disk all along, and answering 200 or 409 from the
-        request keeps both of those codes where the pusher already expects them —
-        immediately, rather than through a job it would have to poll.
-
-        Not under the project lock, on purpose. THE COMPARISON is a read whose
-        answer can only go stale in one direction — another push landing the same
-        commit between here and the rename — and `publish_built` makes exactly
-        the same comparison again, under the lock, where it is authoritative.
-        The one WRITE that can follow from it takes the lock for itself, because
-        it is not a comparison and a lost update there is a lost update
-        (`_restate_message`).
-        """
-        pdir = self.projects_dir / pid
-        if commit == DEV_LINK:
-            # The slot has no 409: every push overwrites it (SPEC 7.6). The
-            # comparison only spares an unchanged rebuild the build itself.
-            if _read_digest(pdir / DEV_LINK) == digest:
-                logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
-                return 200, _build_url(pid, DEV_LINK)
-            return None
-
-        final = pdir / commit
-        if not final.exists():
-            return None
-        existing = _read_digest(final)
-        if existing is not None and existing == digest:
-            logger.info(f"publish {pid}/{commit}: identical retry, kept")
-            self._restate_message(pid, commit, final, message)
-            return 200, _build_url(pid, commit)
-        # The build directory is immutable and was served with a one-year
-        # immutable cache, so silently replacing it would make every cached copy
-        # a lie (SPEC 7).
-        #
-        # Reachable on a minted name too, without a sha256 collision: a
-        # directory at that name whose `.payload.sha256` is missing or
-        # unreadable (`data/` is writable by every build, SPEC 8A.4) leaves
-        # nothing to compare, and answering 200 would claim a publication that
-        # may never have finished.
-        raise PublishError(
-            409, f"build {commit} already exists with different content")
-
-    def _restate_message(self, pid: str, commit: str, final: Path,
-                         message: str) -> None:
-        """Put a new message on a revision that is already published.
-
-        Only when there is one and it differs: a push without `-m` is the
-        ordinary re-push and leaves the stored message alone; there is no way to
-        clear a message.
-
-        Under the project lock, unlike the comparison that leads here, because
-        this writes the file `_write_builds_json` reads back through `builds_of`.
-
-        Readers always see the new text: every surface that shows a message reads
-        `builds.json` (`render._picker_entry`), which is served `no-cache` and
-        rewritten here. The copy inside the revision's meta.json is served
-        `immutable`, but nothing renders it; it is read only here and by
-        `builds_of`, off the disk.
-
-        Best effort: the revision is published and the answer is 200 either way,
-        so a volume that will not take this write costs the message, never the
-        push.
-        """
-        if not message:
-            return
-        try:
-            with self._lock_for(pid):
-                path = final / BUILD_META_FILE
-                meta = json.loads(path.read_text(encoding="utf-8"))
-                if meta.get("message") == message:
-                    return
-                meta["message"] = message
-                # THE TEMPORARY GOES ONE LEVEL UP, into `<pid>/`: the target
-                # sits inside a build, where the sweep cannot reach
-                # (`_file_digests` writes there too, the same way).
-                # `_atomic_write_json` explains the parameter, and
-                # `test_a_restate_writes_its_temporary_where_the_startup_sweep_looks`
-                # holds it.
-                _atomic_write_json(path, meta, tmp_dir=final.parent)
-                self._write_builds_json(pid)
-            logger.info(f"publish {pid}/{commit}: message updated")
-        except Exception:
-            logger.exception(
-                f"publish {pid}/{commit}: the revision is published, but its "
-                f"message could not be updated")
-
     def build_staging(self, pid: str, commit: str) -> Path:
         """Where a build writes: the directory that becomes `<pid>/<commit>`.
 
@@ -859,11 +1011,9 @@ class Store:
             pdir.mkdir(parents=True, exist_ok=True)
             final = pdir / commit
 
-            # The same comparison `settled` already made in the request, made
-            # again here because THIS is the one that is authoritative: it is
-            # under the project lock and immediately before the rename, so a
-            # second push of the same commit that arrived while this one was
-            # building cannot slip between the two.
+            # Under the project lock and immediately before the rename, so a
+            # second push of the same commit that was building at the same time
+            # finds this one's directory and passes as a retry.
             if final.exists():
                 existing = _read_digest(final)
                 if existing is not None and existing == digest:
@@ -893,18 +1043,16 @@ class Store:
 
             # Past the point of no return: the rename above is the publication
             # (SPEC 7.2). Everything from here on is bookkeeping derived from
-            # what is on disk — `latest`, the picker, the index — and the next
-            # publish of this project recomputes all of it, so a failure here is
-            # logged rather than reported (reporting it would mark a live
-            # build's job `failed`). Nothing else repairs it: startup recomputes
-            # none of this, so an abandoned project keeps whatever this leaves.
+            # what is on disk — `latest`, the picker, the index — and the end of
+            # the push and every start recompute it (`recompute`), so a failure
+            # here is logged rather than reported (reporting it would mark a
+            # live build's job `failed`).
             #
-            # Order: fill the slot with this revision, move `latest`, then write
-            # the picker from what is on disk. The mirror has to come before
-            # `_write_builds_json` and `_refresh_index`, which describe the slot
-            # (`has_dev`, the front-page card). `latest` moving before the picker
-            # means a reader following it is on the new build before the picker
-            # offers it.
+            # Order: fill the slot with this revision, then the picker from what
+            # is on disk. The mirror has to come before `_write_builds_json` and
+            # `_refresh_index`, which describe the slot (`has_dev`, the
+            # front-page card). `latest` follows `main`, which git has not moved
+            # yet: it stays where it was until the end of the push.
             try:
                 self._mirror_into_dev_slot(pid, pdir, final, meta, digest, job)
                 # A rename is superseded by the push that follows it: the build
@@ -956,9 +1104,9 @@ class Store:
         `immutable` untouched — the two never meet.
 
         Returns 201 when the slot changed and 200 when the same sources are
-        already in it — the second answer normally comes from `settled` before a
-        build is even queued, and is repeated here for the push that arrived
-        while an identical one was building.
+        already in it — the second answer normally comes from the pre-receive
+        hook before a build is even queued (`unchanged`), and is repeated here
+        for the draft that arrived while an identical one was building.
 
         `job` goes into the slot's meta.json: the slot is the one build no
         revision addresses, so the job that filled it is the only place its log
@@ -1055,10 +1203,11 @@ class Store:
     def _replace_directory(target: Path, source: Path) -> None:
         """The two renames `_swap_dev_slot` describes, with the target named.
 
-        One copy of the dance, because there are two names on this volume that
-        are REPLACED rather than only created — the `dev` slot and a comparison
-        cache entry — and the ordering above is the whole of what makes either
-        of them safe to read while it is being written.
+        One copy of the dance, because there are three names on this volume
+        that are REPLACED rather than only created — the `dev` slot, a
+        comparison cache entry and a repository the import redoes — and the
+        ordering above is the whole of what makes each of them safe to read
+        while it is being written.
         """
         parked = target.parent / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
         occupied = os.path.lexists(target)
@@ -1148,9 +1297,7 @@ class Store:
         A copy of the published tree, since the publishing rename emptied the
         staging directory. Nothing is validated again: at publication a
         revision's meta.json and the slot's differ in exactly `commit`, `dev` and
-        `job` (`render.build_meta`). A later repeat push can rewrite `message` on
-        the revision alone (`_restate_message`); the slot's copy then goes stale,
-        which is harmless because nothing reads the slot's `message`.
+        `job` (`render.build_meta`).
 
         The swap is unconditional, even when the slot already holds these
         sources: the slot has to carry this revision's meta.json, not the
@@ -1259,91 +1406,11 @@ class Store:
                     and not any(part.startswith(".") for part in relative.parts)):
                 names.append(str(relative))
         digests = _linkable(_hash_output(build, names))
-        # The temporary in the project directory, for the reason
-        # `_restate_message` gives: the sweep never walks a build directory.
+        # The temporary in the project directory: the sweep never walks a build
+        # directory.
         atomic_write_bytes(record, json.dumps(digests).encode("utf-8"),
                            tmp_dir=self.projects_dir / pid)
         return digests
-
-    # -- the code of a revision --------------------------------------------
-    def source_archive(self, revision: str) -> Path:
-        """Where one revision's pushed body lives. It may not be there.
-
-        Existence of THIS file is what "the hub has the code of that revision"
-        means, and the log below is not part of the question: a directory holding
-        only a log is what a rename killed half way through leaves, and it must
-        read as absent rather than as half a revision.
-        """
-        return self.sources_dir / revision / SOURCE_ARCHIVE_NAME
-
-    def source_log(self, revision: str) -> Path:
-        """Where the build log of one revision lives. It may not be there."""
-        return self.sources_dir / revision / SOURCE_LOG_NAME
-
-    def keep_sources(self, digest: str, archive: Path) -> bool:
-        """Store the body of a push as the code of the revision it published.
-
-        True when this call is what put it there. False when the archive was
-        already stored, which is the ordinary outcome of publishing the same
-        sources a second time and is not an error: the address is the digest of
-        the SOURCES, so what is already there unpacks to the very tree this body
-        does. The two bodies need not be byte-identical to each other — the same
-        tree tarred twice differs in its gzip header alone — and the one kept is
-        the one that got there first, which is the only choice that keeps a
-        stored archive from changing under a revision that is already published.
-
-        The caller still owns `archive` either way — on the False path it is
-        untouched, and on the True path it has been renamed away, so the caller's
-        unconditional cleanup finds nothing and does nothing.
-
-        NOT ATOMIC AS A PAIR, deliberately: the directory is created first and
-        the body is renamed into it second, so a hub killed between the two
-        leaves an empty directory. That reads as "no code for this revision"
-        (see `source_archive`) and the next publish of the same sources fills it
-        in, so nothing has to collect it — which is the whole reason the failure
-        is arranged this way round rather than through a staging name that would
-        need sweeping.
-        """
-        target = self.sources_dir / digest / SOURCE_ARCHIVE_NAME
-        if target.exists():
-            return False
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # On the descriptor-less path, but for the same reason `_open_member_dir`
-        # does it on one: `mkdir`'s mode is filtered through the process umask,
-        # so a hub started under `umask 077` would create a directory it can
-        # write and nothing else can read.
-        os.chmod(target.parent, 0o755)
-        os.rename(archive, target)
-        os.chmod(target, 0o644)
-        return True
-
-    def keep_build_log(self, digest: str, raw: bytes) -> None:
-        """Put the build log beside the code of a revision. Bytes, already capped.
-
-        Bytes rather than text because the ceiling belongs to whoever captured
-        the log (`jobs.MAX_LOG_BYTES`, derived from what a build is allowed to
-        print), and applying a second, different one here is how the two would
-        drift into disagreeing about the same file.
-
-        Written only into a directory that already holds the code. A log on its
-        own would be a revision this store cannot answer for — and on the one
-        path that gets here, `keep_sources` has just run.
-
-        The temporary file goes at the DATA ROOT rather than beside the target,
-        for the reason `atomic_write_bytes` spells out: `_sweep_leftovers` walks
-        the root and the project directories, so that is where a `.wip-` left by
-        a killed write is actually collected. Beside the target it would sit in
-        `sources/<digest>/` for the life of the volume.
-        """
-        directory = self.sources_dir / digest
-        if not directory.is_dir():
-            return
-        atomic_write_bytes(directory / SOURCE_LOG_NAME, raw, tmp_dir=self.root)
-
-    # -- unpacking ---------------------------------------------------------
-    def _unpack(self, body_path: Path, dest: Path) -> dict:
-        """Extract the archive into `dest`. The rules are `src/archive.py`."""
-        return unpack(body_path, dest)
 
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest,
@@ -1354,8 +1421,8 @@ class Store:
         read here is the build's own.
 
         `job` is handed on to `build_meta`, which records it in the slot's
-        document only. `message` came off a push header rather than out of the
-        tree, and is already validated (`render.revision_message`).
+        document only. `message` is the subject of the pushed commit, already
+        cleaned to what a message may be (`prereceive.revision_message`).
         """
         raw = self._read_meta(staging)
         try:
@@ -1489,17 +1556,16 @@ class Store:
             return None
 
     def _switch_latest(self, pid: str) -> None:
-        """Point `latest` at the newest build.
+        """Point `latest` at the nearest built commit of `main`, as it stands.
 
-        Every build `builds_of` returns is a commit build — the local slot is not
-        in that list — which is the whole rule `latest` exists to keep (SPEC 7.6):
-        it is the link that gets pasted into chat, and it has to go on meaning
-        "the project as of some commit".
+        Only a commit build can be one — the local slot is not in `builds_of` —
+        which is the rule `latest` exists to keep (SPEC 7.6): it is the link
+        that gets pasted into chat, and it has to go on meaning "the project as
+        of some commit". Nothing built on the branch leaves it where it is.
         """
-        metas = self.builds_of(pid)
-        if not metas:
-            return
-        self._point(pid, LATEST_LINK, metas[0]["commit"])
+        name = self._branch_latest(pid)
+        if name is not None and name != self.latest_commit(pid):
+            self._point(pid, LATEST_LINK, name)
 
     def _point(self, pid: str, name: str, target: str) -> None:
         """Move one pointer symlink, atomically.
@@ -1581,10 +1647,10 @@ class Store:
         every committed project.
 
         Answered by digest: the mirror writes the revision's own source digest
-        into the slot, so a slot whose digest equals the newest commit's holds
-        nothing that commit does not, while a `build` push of edited sources
-        lands a different one. Comparing the trees would be weaker: two builds
-        of the same sources differ in their timestamps.
+        into the slot, so a slot whose digest equals that of the build
+        `latest` points at holds nothing that build does not, while a draft of
+        edited sources lands a different one. Comparing the trees would be
+        weaker: two builds of the same sources differ in their timestamps.
 
         Errs towards True on a digest that will not read: a needless chip is
         better than the front page silently not mentioning local work.
@@ -1592,24 +1658,20 @@ class Store:
         if self._dev_meta(pid) is None:
             return False
         commit = self.latest_commit(pid)
-        if commit is None:
-            # `latest` does not read: the symlink is gone, or a previous
-            # publish did not get as far as setting it. Nothing to compare the
-            # slot against, so the chip stays (see the docstring). The only
-            # caller reaches this with the project's commit builds in hand.
-            return True
         pdir = self.projects_dir / pid
         in_slot = _read_digest(pdir / DEV_LINK)
         published = _read_digest(pdir / commit)
         return not (in_slot is not None and in_slot == published)
 
     def _refresh_index(self) -> None:
-        """Rebuild the root index.json from every project's newest COMMIT build.
+        """Rebuild the root index.json from the build each project's `latest` is.
 
         The local slot is left out for the same reason it does not move
         `latest` (SPEC 7.6): the front page must not describe uncommitted work.
-        `builds_of` already excludes it, so a project whose only build is local
-        has no card yet.
+        A project whose `latest` names no build — only a draft so far, or a
+        first push whose branch git has not written yet — has no card yet. The
+        build `latest` names and not the newest one: after two pushes raced,
+        the newest is the loser's, which is not on the branch.
 
         Two of the card's fields belong to the project rather than the build, so
         they are read here and handed over: whether the slot holds sources no
@@ -1623,12 +1685,15 @@ class Store:
                 if pdir.name.startswith(".") or not pdir.is_dir():
                     continue
                 metas = self.builds_of(pdir.name)
-                if metas:
+                latest = self.latest_commit(pdir.name)
+                head = next((meta for meta in metas
+                             if meta["commit"] == latest), None)
+                if head is not None:
                     # `builds_of` sorts newest first, so the last entry is the
                     # oldest build — and `built` is required of every meta it
                     # returns, which is what makes the subscript safe.
                     card = render.index_card(
-                        metas[0],
+                        head,
                         dev=self._uncommitted_in_slot(pdir.name),
                         first_built=metas[-1]["built"],
                     )
@@ -1785,22 +1850,13 @@ class Store:
         "I made a test project and I am done with it", and it is meant to be the
         big rare hammer rather than a tidying tool.
 
-        THE CODE OF THE REMOVED REVISIONS GOES TOO, AND ONLY IF NOTHING ELSE
-        POINTS AT IT. `sources/` is addressed by the digest of a source tree and
-        not by project (SPEC 7.8), so the same tree published in two projects is
-        one directory serving both. The invariant that store keeps is "an archive
-        exists exactly when a published revision does", so leaving these behind
-        would break it in the direction SPEC 7.8 names as the bad one: a stored
-        tree with no revision behind it is code the hub cannot answer for.
-
-        THE ORDER IS WHAT MAKES THE SCAN SAFE against a publish running at the
-        same moment. The project tree goes first, then the digests still
-        referenced by OTHER projects are collected, and only unreferenced ones
-        are deleted. A concurrent publish of the same sources elsewhere either
-        has already renamed its build directory into place — in which case the
-        scan sees it and the archive stays — or has not, in which case it has not
-        stored the archive either (`jobs._keep_the_code` runs after the publish)
-        and stores it once we are done.
+        THE ARCHIVES OF THE REMOVED REVISIONS GO TOO, AND ONLY IF NOTHING ELSE
+        POINTS AT THEM. `sources/` is addressed by the digest of a source tree
+        and not by project, so the same tree published in two projects is one
+        directory serving both. The project tree goes first, then the digests
+        still referenced by OTHER projects are collected, and only unreferenced
+        ones are deleted. Nothing writes `sources/`, so no publish can race the
+        scan.
 
         THE COMPARISONS GO WITH IT, and they are the one tree here that is
         removed rather than reasoned about: an entry under `compare/<pid>/` is
@@ -1823,6 +1879,8 @@ class Store:
         with self._repo_lock_for(pid), self._lock_for(pid):
             if not pdir.is_dir() and not repo.is_dir():
                 return None
+            # A project pushed again after this starts with nothing to import.
+            self._import_failures.pop(pid, None)
             mine = self._digests_of(pid)
             builds = len(self.builds_of(pid))
             if pdir.is_dir():
@@ -2041,18 +2099,14 @@ def _read_digest(build_dir: Path) -> str | None:
         return None
 
 
-def _atomic_write_json(path: Path, payload, *, tmp_dir: Path = None) -> None:
+def _atomic_write_json(path: Path, payload) -> None:
     """Write JSON so a reader sees the old file or the new one, never a torn one.
 
-    `tmp_dir` is passed straight through, and it exists for ONE caller:
-    `_restate_message`, whose target sits inside `<pid>/<commit>/`. Every other
-    write through this function lands in `self.root` or in `<pid>/`, the two
-    levels `_sweep_leftovers` walks — so their temporaries are collectable where
-    a build directory's would not be, the sweep never descending into one. Same
-    volume either way, so the rename stays a rename.
+    Every write through this function lands in `self.root` or in `<pid>/`, the
+    two levels `_sweep_leftovers` walks, so the temporary beside the target is
+    collectable.
     """
-    atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"),
-                       tmp_dir=tmp_dir)
+    atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"))
 
 
 def atomic_write_bytes(path: Path, data: bytes, *, tmp_dir: Path = None) -> None:

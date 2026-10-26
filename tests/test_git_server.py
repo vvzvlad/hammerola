@@ -2,8 +2,10 @@
 
 Driven with the real `git` of the test image wherever a git client is the
 subject, because what has to work is what that client sends: a chunked push, a
-gzipped fetch, the protocol header. Pushes are refused here by the hub's own
-hook (`githooks/pre-receive`), which is what proves a push reached git whole.
+gzipped fetch, the protocol header. A push here carries no project, so the hub's
+answer to its hook (`githooks/pre-receive`, `src/prereceive.py`) refuses it,
+which is what proves the push reached git whole; what a push publishes is
+test_git_publish.py's.
 """
 
 import os
@@ -19,7 +21,6 @@ from loguru import logger
 from src import githttp
 from src.store import Store
 
-REFUSAL = "remote: this hub does not publish over git yet"
 TOKEN_CONFIG = f"http.extraHeader=X-Hammerola-Token: {TOKEN}"
 
 # A git client of its own: no system or user configuration, an identity for the
@@ -102,8 +103,9 @@ def test_only_the_smart_protocol_is_answered(hub):
 def test_a_chunked_push_reaches_the_hook_whole(hub, tmp_path):
     """Past `http.postBuffer` git sends the pack chunked.
 
-    The hook runs only once `receive-pack` has unpacked the whole pack, so its
-    line in the output says the body arrived in full.
+    The hook runs only once `receive-pack` has unpacked the whole pack, so the
+    hub's refusal in the output says the body arrived in full: the commit holds
+    a blob and no project.json.
     """
     work = committed(tmp_path / "work", 2 * 1024 * 1024)
     pushed = git("-C", work, "-c", TOKEN_CONFIG, "-c", "http.postBuffer=65536",
@@ -112,7 +114,8 @@ def test_a_chunked_push_reaches_the_hook_whole(hub, tmp_path):
                  check=False)
     assert pushed.returncode != 0
     assert "Transfer-Encoding: chunked" in pushed.stderr
-    assert REFUSAL in pushed.stderr, pushed.stderr
+    assert "remote: no project.json with id push1 in refs/heads/main" \
+        in pushed.stderr, pushed.stderr
     assert git("-C", hub.store.repo_dir("push1"), "for-each-ref").stdout == ""
 
 
@@ -138,7 +141,10 @@ def test_a_fetch_git_gzips_reaches_the_backend(hub, tmp_path):
 
 
 def test_git_runs_in_a_clean_environment(monkeypatch, tmp_path):
-    """Neither EDIT_TOKEN nor a stray GIT_* of the hub's own reaches git."""
+    """Neither EDIT_TOKEN nor a stray GIT_* of the hub's own reaches git.
+
+    What does reach it, beside the request, is the way back for the hook.
+    """
     monkeypatch.setenv("EDIT_TOKEN", "the-hub-secret")
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere"))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -147,7 +153,8 @@ def test_git_runs_in_a_clean_environment(monkeypatch, tmp_path):
                "Content-Encoding": "gzip", "Git-Protocol": "version=2",
                "X-Hammerola-Token": "the-hub-secret"}
 
-    env = githttp.environment(request, tmp_path / "repos", headers)
+    hook = githttp.hook_environment(8000, "the-hook-secret")
+    env = githttp.environment(request, tmp_path / "repos", headers, hook)
 
     config = {f"GIT_CONFIG_{kind}_{index}" for kind in ("KEY", "VALUE")
               for index in range(len(githttp.SERVER_CONFIG))}
@@ -155,19 +162,26 @@ def test_git_runs_in_a_clean_environment(monkeypatch, tmp_path):
         "PATH", "HOME", "REQUEST_METHOD", "PATH_INFO", "QUERY_STRING",
         "CONTENT_TYPE", "GIT_PROJECT_ROOT", "GIT_HTTP_EXPORT_ALL",
         "REMOTE_USER", "GIT_PROTOCOL", "HTTP_CONTENT_ENCODING",
-        "GIT_CONFIG_COUNT", *config}
+        "GIT_CONFIG_COUNT", *config, *hook}
     assert "the-hub-secret" not in env.values()
+    assert env["HAMMEROLA_HOOK_URL"] == \
+        f"http://127.0.0.1:8000{githttp.HOOK_PATH}"
 
 
 def test_the_server_configuration_reaches_receive_pack(hub, monkeypatch):
-    """What `GIT_CONFIG_COUNT` carries is what `receive-pack` advertises."""
+    """What `GIT_CONFIG_COUNT` carries is what `receive-pack` advertises.
+
+    Push options are advertised because `SERVER_CONFIG` says so, and only then:
+    without them `git push -o force` cannot reach the hook.
+    """
     service = "git-receive-pack"
-    assert b"push-options" not in advertise(hub, "conf1", service).content
-    monkeypatch.setattr(githttp, "SERVER_CONFIG", githttp.SERVER_CONFIG + (
-        ("receive.advertisePushOptions", "true"),))
     answered = advertise(hub, "conf1", service)
     assert answered.status_code == 200
     assert b"push-options" in answered.content
+    monkeypatch.setattr(githttp, "SERVER_CONFIG", tuple(
+        pair for pair in githttp.SERVER_CONFIG
+        if pair[0] != "receive.advertisePushOptions"))
+    assert b"push-options" not in advertise(hub, "conf1", service).content
 
 
 def pkt_line(text):
@@ -194,7 +208,7 @@ def test_a_client_gone_mid_answer_does_not_stop_the_backend(
     monkeypatch.setattr(githttp.subprocess, "Popen", spawn)
     ended = threading.Event()
     monkeypatch.setattr(githttp, "end_of_request",
-                        lambda store, pid: ended.set())
+                        lambda store, request: ended.set())
     said = []
     sink = logger.add(said.append, level="DEBUG")
     try:
@@ -232,7 +246,8 @@ def test_a_ref_lock_left_by_a_killed_push_is_swept_at_start(tmp_path):
                  repo / "refs" / "heads" / "feature" / "x.lock",
                  repo / "packed-refs.lock",
                  repo / "objects" / "tmp_objdir-incoming-a1b2c3",
-                 store.repos_dir / ".tmp-swept1-0123abcd.git"]
+                 store.repos_dir / ".tmp-swept1-0123abcd.git",
+                 store.repos_dir / ".trash-0123abcd"]
     for path in leftovers:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix == ".lock":

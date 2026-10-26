@@ -31,30 +31,34 @@ project with no model at all publishes those on their own. The name is from
 
 ## How it works
 
-A model is a directory with a `model.py` in it. `hammerola commit` packs that
-directory and posts it; the hub unpacks it, **computes the geometry itself** —
-in a process of its own, with the CAD kernel that ships in its image — checks
-the result, exports STEP/STL/3MF and serves the whole thing at a URL. Nothing is
+A model is a directory with a `model.py` in it, in a git repository. A version
+of it is a commit: `git push` sends it to the project's own repository on the
+hub, which **computes the geometry itself** — in a process of its own, with the
+CAD kernel that ships in its image — checks the result, exports STEP/STL/3MF
+and serves the whole thing at a URL, and only then lets the push in. Nothing is
 built on the laptop, and no forge's CI is involved. A directory with no
 `model.py` that lists documents in its `project.json` is published the same way,
 except that nothing in it is executed: the documents are the whole build.
 
 Four things follow from that, and between them they are what the tool is for.
 
-**The hub names the revision, not you.** The id is the digest of the sources it
-received, so `commit` means "publish a version of this" and has nothing to do
-with git: a directory that is not a repository publishes exactly like one that
-is, and the same tree pushed twice lands at the same address instead of making a
-second one. git is consulted once, afterwards — `commit` *prints* a `git commit`
-line recording what was published, for a person to run or ignore, and never runs
-it.
+**A revision is a commit, and a failed build is a refused push.** The author
+pushes the whole repository; the project is the directory holding a
+`project.json` with its id, so one repository can carry several projects, each
+pushed to its own address. Of each push the hub builds the newest commit that
+touched the project's directory, publishes it under the commit's sha and only
+then lets git move the branch — a build that fails refuses the push, with its
+log in the output, so the branch on the hub never stands on a commit without a
+build. Builds published before the hub spoke git were imported into that
+history as commits of their own, under their old names.
 
 **A published revision never changes and never expires.** Its URL is served as
 immutable, and there is no retention anywhere on the hub — nothing ages out and
 no build can be taken back on its own — so a link pasted into a chat shows the
 same geometry a year later. `dev` is the other kind of slot: one per project,
 rewritten by every `hammerola build`, no history, never listed, and it is where
-the working copy goes while a part is still moving.
+the working copy goes while a part is still moving — uncommitted, as a draft
+the client pushes beside the branch.
 
 **Geometry that fails the gate is not published.** Every printable has to be a
 valid solid with positive volume, export a watertight mesh and come out as one
@@ -76,17 +80,17 @@ only with the one secret or with a link the owner's Share window made with the
 files included. Documents are the exception, on purpose: every file a project
 lists as one opens to the link alone, whatever its extension, because that link
 is how a revision goes to a workshop or a fab as the complete set — so whoever
-has it can download a listed KiCad design whole and edit it. The sources a
-revision was built from are kept too, but behind the secret, and so is the list
-of what exists on the hub at all.
+has it can download a listed KiCad design whole and edit it. The repository a
+revision was built from is on the hub too, but behind the secret, and so is the
+list of what exists on the hub at all.
 
 ![The same revision as it goes on the bed, and what it hands out](docs/images/print-view.png)
 
 ## Publishing a model
 
 The client is `hammerola`, and it lives in this repository on purpose: the
-client and the hub share one contract — the archive shape, the path alphabet,
-the ceilings, the job states — and it used to be split across two repositories
+client and the hub share one contract — the routes, the ceilings, the job
+states — and it used to be split across two repositories
 where no test could see both halves, which is exactly how publication came to be
 broken without anyone noticing. It imports nothing outside the standard library,
 so whatever `python3` a laptop already has is enough.
@@ -167,8 +171,8 @@ when the form is what is on the screen, and every failure of it is silence.
 `hammerola create` is the other reader, and it follows `template`. The manifest
 also states the DIGEST of the skill this image ships, a sha256 over its files
 that `hammerola skill` compares with the same digest of a laptop's copy, and the
-VERSION of the client it serves, which is what `build` and `commit` compare
-themselves against before they publish; like the three paths both are constants
+VERSION of the client it serves, which is what `build` compares itself against
+before it publishes; like the three paths both are constants
 of the image and say nothing about the deployment.
 `src/onboarding.py` carries the argument for the boolean and for why it is
 never a count.
@@ -179,8 +183,10 @@ Then, in the part's own directory — named first, because the name is what
 ```bash
 mkdir t13-ceiling-mount && cd t13-ceiling-mount                    # the directory names the project
 hammerola create --title "T13 ceiling mount (t13-ceiling-mount)"   # once: project.json + template
+git init -b main && git add -A && git commit -m "start"            # a version is a commit
+hammerola connect                                                  # once: the remote hammerola-<pid>
 hammerola build                                                    # publish the working copy into `dev`
-hammerola commit -m "thicker plate"                                # publish an immutable revision
+git commit -am "thicker plate" && git push hammerola-<pid> main    # publish an immutable revision
 ```
 
 `create` fetches the starter template from the hub and unpacks it beside the
@@ -196,19 +202,25 @@ here because here is the only machine where it exists: a push is unpacked on the
 hub under a name of the hub's own, so a build that worked the answer out for
 itself would name the project after that.
 
-Both publishing verbs do the same four things: pack the tree, post it, wait on
-the build job the hub answers with, and print what the build printed — plus, for
-`commit`, the name the hub gave the revision. The exit code is the point, because
-it replaces a forge's job status: zero means a build was published, and a refused
-push, a model that raised, a gate that said no and a hub that could not be
-reached are each non-zero with the sentence that says which.
+`connect` adds the remote `hammerola-<pid>`, includes from the repository's own
+config the file `login` wrote the hub's password into for git, and — for a
+project published before git — joins the hub's history into the local `main`
+with a merge that changes no file. Only `main` is published for now.
+
+Both ways of publishing are a `git push` that waits for the build and prints
+what the build printed: `git push hammerola-<pid> main` publishes a revision,
+and `hammerola build` commits the working copy through an index of its own —
+the author's index and history untouched, what git ignores left out — and
+pushes it as the draft. The exit code is the point, because it replaces a
+forge's job status: zero means a build was published, and a refused push, a
+model that raised, a gate that said no and a hub that could not be reached are
+each non-zero with the sentence that says which.
 
 The rest of the commands answer questions about a project that is already there:
 
 ```bash
 hammerola status                 # latest, dev, and the revisions that exist
 hammerola log <revision>         # read a build log again
-hammerola source <revision>      # the code a revision was built from
 hammerola artifacts <revision>   # its STEP/STL/3MF and its documents
 hammerola diff <rev> <rev>       # what moved, in geometry and in source
 hammerola comments               # notes left on this project's builds
@@ -536,12 +548,12 @@ placeholder values that pulls `gitea.vvzvlad.xyz/projects/hammerola:latest`. Do
 not build on the host that serves it. Four things in it are load-bearing rather
 than decorative, and each one is spelled out at length in the file itself:
 
-* **One volume at `/app/data`.** Every build, pointer, source tree, comment and
+* **One volume at `/app/data`.** Every build, pointer, repository, comment and
   job lives there; nothing ages out, so it grows monotonically and is cleared by
   hand. The volume's real name is `<stack>_<key>`, composed at deploy time —
   getting it wrong does not fail, it silently starts the service from a fresh
   empty one with all the state still sitting in the volume nothing references.
-* **One secret, `EDIT_TOKEN`.** It is what publishing, the sources, the log, the
+* **One secret, `EDIT_TOKEN`.** It is what publishing, the repositories, the log, the
   comment queue, renaming and removing all check; everything else has a default
   in `src/settings.py`. Without it the service refuses to start and says which
   variable is missing, rather than coming up half-configured.
