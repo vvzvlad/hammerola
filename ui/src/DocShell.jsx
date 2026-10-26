@@ -77,7 +77,7 @@ const BAR = `${BAR_LAYER}18`;
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools }) {
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
-    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick),
+    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base),
     docHref: docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),
@@ -96,11 +96,13 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
 /**
  * The whole page, from what the shell holds. Pure. `onPick(id)` opens a
  * document: what a row of the list does, and `Show in …` of a KiCad design's
- * right-click menu; `viewsOpen` says the list is open, `onToggle` opens or shuts
- * it and `onClose` shuts it, from a click anywhere else on the page. `tools`
- * is what the open document's view told the bar it can do through `onTools`;
- * `narrow` and `viewer` are `docBar`'s. `addressDoc` reads which document an
- * address names, for a schematic's sheet in it (KicadView.jsx).
+ * right-click menu; `onPick(id, sheet)` a schematic on a sheet, what a row of
+ * its sheets does (`SheetRows` in viewlist.jsx); `viewsOpen` says the list is
+ * open, `onToggle` opens or shuts it and `onClose` shuts it, from a click
+ * anywhere else on the page. `tools` is what the open document's view told
+ * the bar it can do through `onTools`; `narrow` and `viewer` are `docBar`'s.
+ * `addressDoc` reads which document an address names, for a schematic's sheet
+ * in it (KicadView.jsx).
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc,
@@ -171,24 +173,27 @@ export default class DocShell extends React.Component {
     window.removeEventListener('popstate', this.onPop);
   }
 
-  /** Document `id` on screen, a step of history; the list shuts. */
-  pick(id) {
-    if (id !== this.state.active) {
-      // The schematic's sheet (`SHEET_QUERY` in KicadView.jsx) is dropped: a
-      // design picked after another document opens on its root sheet, while
-      // its schematic picked after its own board, the element kept, writes
-      // back the sheet it is on.
-      const params = new URLSearchParams(window.location.search);
+  /** Document `id` on screen, a schematic on its `sheet` where one is given
+   *  (its `s=` value, '' for the root), a step of history; the list shuts. */
+  pick(id, sheet) {
+    const params = new URLSearchParams(window.location.search);
+    if (id !== this.state.active || (sheet !== undefined && sheet !== (params.get(SHEET_QUERY) || ''))) {
+      // The schematic's sheet (`SHEET_QUERY` in KicadView.jsx) is the one
+      // given, else dropped: a design picked after another document opens on
+      // its root sheet, while its schematic picked after its own board, the
+      // element kept, writes back the sheet it is on. The schematic follows a
+      // sheet given (`followPage`).
       params.delete(SHEET_QUERY);
-      window.history.pushState(window.history.state, '',
-        window.location.pathname + docQuery(params.toString(), id, this.props.meta.documents));
+      const query = docQuery(params.toString(), id, this.props.meta.documents);
+      window.history.pushState(window.history.state, '', window.location.pathname + query
+        + (sheet ? `${query ? '&' : '?'}${SHEET_QUERY}=${encodeURIComponent(sheet)}` : ''));
     }
     this.setState({ active: id, viewsOpen: false });
   }
 
   render() {
     return <DocPage meta={this.props.meta} active={this.state.active}
-                    base={PAGE.base} onPick={(id) => this.pick(id)}
+                    base={PAGE.base} onPick={(id, sheet) => this.pick(id, sheet)}
                     narrow={this.state.narrow} viewer={this.viewer}
                     tools={this.state.tools} onTools={this.onTools} addressDoc={this.addressDoc}
                     viewsOpen={this.state.viewsOpen}

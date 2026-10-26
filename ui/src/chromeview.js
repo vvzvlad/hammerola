@@ -94,13 +94,16 @@ export function chromeView(s, props, deps) {
   // Opening a document: what its row does, what `Show in …` of a KiCad
   // design's right-click menu does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
-  // says it as `?d=` (`pushChoice`).
-  const openDoc = (id) => {
+  // says it as `?d=` (`pushChoice`). Given a schematic's `sheet` — a row of
+  // its sheets in the list (`SheetRows` in viewlist.jsx) — the address names
+  // that sheet as `s=`, the root none, and the schematic follows it
+  // (`followPage` in KicadView.jsx).
+  const openDoc = (id, sheet) => {
     setState({ doc: id, viewsOpen: false });
-    pushChoice(s.view, id);
+    pushChoice(s.view, id, sheet);
   };
   // A document listed `hidden` has no row (viewlist.jsx).
-  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc);
+  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base);
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full

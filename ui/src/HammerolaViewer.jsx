@@ -4933,20 +4933,22 @@ export default class HammerolaViewer extends React.Component {
    * The query an address needs so that opening it lands on what the menu of
    * views has chosen: `viewQuery` for `view`, then `d=` naming document `doc`,
    * or with no document the frame on screen (`cameraQuery`). Never both: the
-   * frame describes the model, which a document covers. The document the
-   * address already names keeps the schematic's sheet it names (`s=`,
-   * `SHEET_QUERY` in KicadView.jsx), which is the one on screen; another
-   * revision without that sheet opens on the root one, as a fresh load with
-   * an unknown `?s=` does.
+   * frame describes the model, which a document covers. A schematic's sheet
+   * given as `chosen` is named as `s=`, '' — the root sheet — as none;
+   * without one the document the address already names keeps the sheet it
+   * names (`s=`, `SHEET_QUERY` in KicadView.jsx), which is the one on screen;
+   * another revision without that sheet opens on the root one, as a fresh
+   * load with an unknown `?s=` does.
    *
    * Every address this page writes whole is spelled here: the push that lands
    * a swap, the replace that calls one off, the moves onto and off a
    * comparison, and a choice in the menu of views (`pushChoice`, which leaves
    * another view's frame to `onModel`).
    */
-  screenQuery(view, views, doc) {
+  screenQuery(view, views, doc, chosen) {
     const query = this.viewQuery(view, views);
-    const sheet = doc && doc === this.entryDoc() && new URLSearchParams(location.search).get(SHEET_QUERY);
+    const sheet = chosen !== undefined ? chosen
+      : doc && doc === this.entryDoc() && new URLSearchParams(location.search).get(SHEET_QUERY);
     return doc ? `${query}${query ? '&' : '?'}${DOC_QUERY}=${encodeURIComponent(doc)}`
       + (sheet ? `&${SHEET_QUERY}=${encodeURIComponent(sheet)}` : '')
       : this.cameraQuery(query);
@@ -5024,27 +5026,31 @@ export default class HammerolaViewer extends React.Component {
 
   /**
    * A choice in the menu of views — `view` with no document, or document
-   * `doc` over it — made a step of the browser's history, so Back returns to
-   * the choice before it (`followEntry`). Nothing is pushed for the choice the
-   * entry already names: the row already shown.
+   * `doc` over it, a schematic on its `sheet` where a row of its sheets was
+   * chosen (`SheetRows` in viewlist.jsx) — made a step of the browser's
+   * history, so Back returns to the choice before it (`followEntry`). Nothing
+   * is pushed for the choice the entry already names: the row already shown.
    *
    * The path and every other parameter stay as written (`files=` among them);
-   * `v=`, `d=` and `c=` are spelled anew by `screenQuery`, which keeps the
-   * schematic's sheet (`s=`, `SHEET_QUERY` in KicadView.jsx) only for the
-   * document already named: a design chosen after another document opens on
-   * its root sheet, while its schematic chosen after its own board, the
-   * element kept, writes back the sheet it is on. Another view gets no `c=`: the frame on screen is the view being
-   * left's, and `onModel` writes the new one's once it is drawn. The entry
-   * keeps the state object of the one it follows, the build not having moved.
+   * `v=`, `d=` and `c=` are spelled anew by `screenQuery`, which names the
+   * `sheet` given as `s=` (`SHEET_QUERY` in KicadView.jsx), none for the root,
+   * and without one keeps the sheet only for the document already named: a
+   * design chosen after another document opens on its root sheet, while its
+   * schematic chosen after its own board, the element kept, writes back the
+   * sheet it is on. Another view gets no `c=`: the frame on screen is the
+   * view being left's, and `onModel` writes the new one's once it is drawn.
+   * The entry keeps the state object of the one it follows, the build not
+   * having moved.
    */
-  pushChoice(view, doc) {
+  pushChoice(view, doc, sheet) {
     const views = (this.state.meta && this.state.meta.views) || [];
-    if (view === this.entryView(views) && doc === this.entryDoc()) return;
+    if (view === this.entryView(views) && doc === this.entryDoc()
+      && (sheet === undefined || sheet === (new URLSearchParams(location.search).get(SHEET_QUERY) || ''))) return;
     const mine = ['v', DOC_QUERY, CAMERA_QUERY, SHEET_QUERY];
     const kept = location.search.slice(1).split('&')
       .filter((pair) => pair && !mine.includes(pair.split('=')[0]));
     const named = (!doc && view !== this.state.view ? this.viewQuery(view, views)
-      : this.screenQuery(view, views, doc)).slice(1);
+      : this.screenQuery(view, views, doc, sheet)).slice(1);
     if (named) kept.push(named);
     history.pushState(history.state, '', location.pathname
       + (kept.length ? `?${kept.join('&')}` : '') + location.hash);

@@ -93,6 +93,10 @@ PR, `image-check-publish.yml` на push в `main`/`develop`) запускает 
 - How the UI LOOKS (a colour, a border, a button or a bare label) gets no test: it is
   checked by eye on a screenshot. The owner: «какой … тест … на цвет кнопки? … это …
   внешний вид».
+- The bottom bar keeps its size and position on every view: a control that only some
+  views have goes into the view menu, never in as a button that comes and goes. The
+  owner: «ты опять мне сделал так, что меню меняет свой размер и положение на разных
+  видах».
 - An assertion that has to stay true belongs in a TEST, not in a comment: "keep X
   and Y in step" is the specification for a test.
 - Module-level mutable state (singleton, cache, registry) gets an autouse fixture
