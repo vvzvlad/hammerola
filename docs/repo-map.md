@@ -405,12 +405,14 @@
   does not name left where it stands) and `format` joins it into text,
   `navigate` is the only caller of `pushState` and `replaceState`, and its own
   listener the only one on `popstate`, handing the address to the components
-  that `subscribe`; `tests/test_ui_source.py` holds the rest of `ui/src` to
+  that `subscribe`, as `follow` hands them an address a link on the page
+  pushes; `tests/test_ui_source.py` holds the rest of `ui/src` to
   that, and `ui/tests/addressguard.js` holds a test to leaving no subscriber.
   What an address names stays each page's choice: `HammerolaViewer`
   (`screenParams`, `pushChoice`, `writeView`, `writeDoc`, `writeSheet`), the
   Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
-  to another document (`docLinks` in `DocumentView.jsx`)
+  to another document or to the page's own address (`docLinks` in
+  `DocumentView.jsx`)
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
   `HammerolaViewer.jsx`. A header, the document, and the model page's bar
@@ -438,7 +440,8 @@
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
   React elements, relative links resolved from the document's directory, a link
-  to another listed document opening it on the page through `docLinks`, short
+  to another listed document or to the page's own address (`?v=open`) opening
+  it on the page through `docLinks`, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension

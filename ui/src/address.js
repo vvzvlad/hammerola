@@ -25,7 +25,9 @@
 // the listener below the only one on `popstate`: a component that follows Back
 // and Forward subscribes (`subscribe`) and is handed the address the browser
 // moved to, in the order the subscriptions were made, as the browser runs its
-// listeners. tests/test_ui_source.py holds the rest of ui/src to both.
+// listeners. tests/test_ui_source.py holds the rest of ui/src to both. An
+// address a link on the page names is followed the same way (`follow`): a new
+// entry, handed to the subscribers as if the browser had moved there.
 
 import { pageFrom } from './hub.js';
 
@@ -135,7 +137,7 @@ export function subscribers() {
 // One that throws does not stop the rest, as one browser listener throwing does
 // not stop the next: its error is thrown again from a microtask of its own,
 // where it is reported as uncaught.
-window.addEventListener('popstate', () => {
+function handOn() {
   const at = parse();
   for (const listener of [...listeners]) {
     if (!listeners.has(listener)) continue;
@@ -145,4 +147,15 @@ window.addEventListener('popstate', () => {
       queueMicrotask(() => { throw error; });
     }
   }
-});
+}
+
+window.addEventListener('popstate', handOn);
+
+/** Address `at` as a step of the browser's history the page takes itself and
+ *  follows as it follows Back and Forward: a new entry with `at.state`, then
+ *  handed to the subscribers. What a link naming one of the page's own
+ *  addresses does (`docLinks` in DocumentView.jsx). */
+export function follow(at) {
+  navigate(at, { push: true });
+  handOn();
+}

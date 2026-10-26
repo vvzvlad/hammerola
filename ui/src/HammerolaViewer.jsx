@@ -5970,10 +5970,12 @@ export default class HammerolaViewer extends React.Component {
             {/* A document chosen in the view list, laid OVER the model rather
                 in place of it: the viewport stays mounted underneath, camera,
                 cut and hidden parts and all. Drawn by the component the
-                documents page uses (DocumentView.jsx). */}
+                documents page uses (DocumentView.jsx), handed the views for a
+                markdown link that names one. */}
             {v.docOpen && (
               <div style={css(v.docLayerStyle)}>
                 <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
+                              views={this.state.meta.views}
                               base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
                               onSheet={(sheet, push) => this.writeSheet(sheet, push)}
                               onTools={(tools) => this.setState({ docTools: tools })}

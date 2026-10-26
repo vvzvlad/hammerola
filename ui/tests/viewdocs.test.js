@@ -27,12 +27,15 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import CopyLink from '../src/copylink.jsx'
 import DocumentView from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { loadBuilds, loadMeta } from '../src/hub.js'
+import { loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
 import { STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
 import { DocFile, documentRows, menuRow, SheetRows, toolBar, viewList, viewMenuStyle } from '../src/viewlist.jsx'
+import { guardSubscribers } from './addressguard.js'
 import { makeComponent, replaceState } from './component.js'
 import { collect, links, texts } from './eltree.js'
+
+guardSubscribers()
 
 const DOCS = [
   { id: 'docs__cut-list.md', name: 'docs/cut-list.md', type: 'markdown',
@@ -668,6 +671,52 @@ describe('?d= on arrival', () => {
     const c = await arrive('?v=open')
     expect(c.state.doc).toBeNull()
     expect(c.computed().docOpen).toBeNull()
+  })
+})
+
+describe('a markdown link to an address of the page', () => {
+  /** The page mounted on the build's path with the note open, following Back
+   *  and Forward; `link(href)` is `[x](href)` as the note on it draws it. */
+  const onNote = () => {
+    // `readNotes` on mount, with no `localStorage` in this runner
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    window.history.replaceState({ hmr: 'latest' }, '', '/project/proj1/latest/?d=docs__cut-list.md&files=K')
+    const c = component({ meta: meta([...DOCS, MAIN]), doc: 'docs__cut-list.md', token: null })
+    c.load = vi.fn(async () => {})
+    c.componentDidMount()
+    onTestFinished(() => {
+      c.componentWillUnmount()
+      rereadPage('/')
+      vi.restoreAllMocks()
+    })
+    const link = (href) => {
+      const note = new DocumentView(shownDocs(c)[0].props)
+      note.state.text = `[x](${href})`
+      return links(note.render())[0]
+    }
+    return { c, link }
+  }
+  const click = (a) => a.props.onClick({ button: 0, preventDefault() {} })
+
+  it('closes the document and shows the view it names, one step of history that Back undoes', async () => {
+    const { c, link } = onNote()
+    const push = vi.spyOn(window.history, 'pushState')
+    // the screen the address already names: nothing
+    click(link('?d=docs__cut-list.md'))
+    click(link('?v=open'))
+    expect([push.mock.calls.length, window.location.search, c.state.view, c.state.doc])
+      .toEqual([1, '?files=K&v=open', 'open', null])
+    const popped = new Promise((done) => { window.addEventListener('popstate', done, { once: true }) })
+    window.history.back()
+    await popped
+    expect([window.location.search, c.state.view, c.state.doc])
+      .toEqual(['?d=docs__cut-list.md&files=K', 'closed', 'docs__cut-list.md'])
+  })
+
+  it('opens a schematic on the sheet it names', () => {
+    const { c, link } = onNote()
+    click(link(`?d=${MAIN.id}&s=amp`))
+    expect([window.location.search, c.state.doc]).toEqual([`?files=K&d=${MAIN.id}&s=amp`, MAIN.id])
   })
 })
 

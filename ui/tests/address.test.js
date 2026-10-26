@@ -4,7 +4,7 @@
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { format, parse, respell, subscribe, unsubscribe } from '../src/address.js'
+import { follow, format, parse, respell, subscribe, unsubscribe } from '../src/address.js'
 import { guardSubscribers } from './addressguard.js'
 
 guardSubscribers()
@@ -39,5 +39,24 @@ describe('Back and Forward', () => {
     expect(seen).toEqual([window.location.pathname])
     expect(later).toHaveLength(1)
     expect(() => later[0]()).toThrow(boom)
+  })
+
+  it('are how the page follows an address it moves to itself: one new entry, handed to every subscriber', () => {
+    window.history.replaceState({ hmr: 'abc123' }, '', `${BASE}?files=k`)
+    const push = vi.spyOn(window.history, 'pushState')
+    const seen = []
+    const one = (at) => seen.push([format(at), at.state])
+    const two = (at) => seen.push([at.view])
+    subscribe(one)
+    subscribe(two)
+    onTestFinished(() => {
+      unsubscribe(one)
+      unsubscribe(two)
+      push.mockRestore()
+      window.history.replaceState(null, '', '/')
+    })
+    follow(respell(parse(), { view: 'open' }))
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(seen).toEqual([[`${BASE}?files=k&v=open`, { hmr: 'abc123' }], ['open']])
   })
 })

@@ -19,7 +19,10 @@
 // history, as a choice in the model page's menu of views is: Back returns to
 // the document chosen before, and a copied link lands on what was showing. The
 // address is read and written through address.js, the schematic's sheet (`s=`)
-// too, which KicadView.jsx reports here (`writeSheet`).
+// too, which KicadView.jsx reports here (`writeSheet`). A markdown link naming
+// an address of this page is a step too, followed as Back is (`onPop`); one
+// naming a view and no document opens nothing, this page having no views
+// (`docLinks` in DocumentView.jsx).
 //
 // COMMENTS, as over a document on the model's page and by the same code
 // (comments.jsx, feedview.js): a reader with the token arms Comment over a
