@@ -11,8 +11,8 @@ import * as THREE from '../../static/_v/three.module.js'
 import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
 import { GLTFLoader } from '../../static/_v/GLTFLoader.js'
 import {
-  designatorOf, disposeModel, exportRoot, frameBox, light, loadThree, mergeByMaterial, partOf, partsOf,
-  pickedPart, plainColours, sharedGeometries,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, light, loadThree, mergeByMaterial, partOf, partPlace,
+  partsOf, pickedPart, plainColours, sharedGeometries,
 } from '../src/board3d.js'
 
 const vec3 = (count, offset) => ({ bufferView: offset, componentType: 5126, count, type: 'VEC3' })
@@ -239,6 +239,41 @@ describe('the camera', () => {
       expect(position.y).toBe(2)
       expect(Math.asin(seen / (position.z - 2)) * 180 / Math.PI).toBeCloseTo(half, 9)
     }
+  })
+})
+
+describe('a comment on a part', () => {
+  const close = (a, b) => a.forEach((value, i) => expect(value).toBeCloseTo(b[i], 6))
+
+  it('hangs in the part\'s own frame in millimetres, faces the camera, and moves with the part', async () => {
+    const { scene } = await load()
+    const root = exportRoot(scene)
+    scene.updateWorldMatrix(true, true)
+    const part = root.children[0]
+    const [mesh] = meshesOf([part])
+    // A point of C523 1, 2, 3 mm from its origin; glTF's unit is the metre.
+    const local = [1, 2, 3]
+    const world = () => new THREE.Vector3(...local).divideScalar(1000).applyMatrix4(part.matrixWorld)
+    // The mesh sits in C523's frame unturned: its face normal is C523's.
+    const faceInWorld = () => new THREE.Vector3(0, 0, 1)
+      .applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld))
+    const hit = { object: mesh, point: world(), face: { normal: new THREE.Vector3(0, 0, 1) } }
+    const place = partPlace(THREE, hit, root, faceInWorld().negate())
+    expect(place.part).toBe('C523')
+    close(place.point, local)
+    close(place.normal, [0, 0, 1])
+    // seen from behind the face, the normal is turned to the camera
+    close(partPlace(THREE, hit, root, faceInWorld()).normal, [0, 0, -1])
+    // a layer of the board is no part
+    expect(partPlace(THREE, { ...hit, object: root.children[2] }, root, faceInWorld())).toBeNull()
+
+    part.position.x += 0.01
+    part.rotateY(0.3)
+    scene.updateWorldMatrix(true, true)
+    const { p, n } = fromPart(THREE, part, place.point, place.normal)
+    close(p.toArray(), world().toArray())
+    close(n.toArray(), faceInWorld().toArray())
+    expect(fromPart(THREE, part, place.point, null).n).toBeNull()
   })
 })
 

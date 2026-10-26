@@ -33,18 +33,32 @@
 // stands. Everything the renderer holds is freed on unmount, the WebGL context
 // included: a page has few to give.
 //
+// COMMENTS (`comment`, the model's page only). With the page's Comment tool
+// armed (`on`) a drag with the left button or a finger draws an area instead
+// of panning, and a click is an area of no size; the area goes to the page
+// (`onArea`) as the place of a comment: `[x, y, w, h]` in the Gerbers' own
+// units (`boardArea`), and the side and the layers on screen (`layerNote`).
+// The open comments and the draft on this zip (`marks`) stand over the canvas
+// as their areas, dashed, with a marker at each centre, following the pan and
+// the zoom; a click on a marker names its comment to the page (`onMarker`).
+// A place the page asks to be shown (`focus`) is put at the centre of the
+// canvas, and the page told (`onFocused`).
+//
 // Props:
 //   url      the zip, fetched on mount
 //   bytes    its size in bytes, what the bar under `Loading…` fills to
 //            (loadbar.jsx)
 //   onTools  told `{ fit, frame }` once the layers are drawn (DocumentView.jsx)
 //   onReady  told once the zip has come in or failed to (DocumentView.jsx)
+//   doc      the document the zip is, which a comment's place names
+//   comment  the page's comments, as above, or none
 
 import React from 'react';
 
+import { CLICK_SLOP } from './BoardView3D.jsx';
 import {
-  fitView, HOLE_RING, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, swatch,
-  toProcessor, turned, wheelMove, zoomAt,
+  boardArea, canvasBox, centredOn, fitView, HOLE_RING, layerNote, layersOf, loadGerberRenderer, panBy, readZip,
+  shownOn, stacked, swatch, toProcessor, turned, wheelMove, zoomAt,
 } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { CHEVRON } from './PcbPanel.jsx';
@@ -60,6 +74,17 @@ const HOLDER = 'position:absolute;top:0;left:0;width:100%;height:100%';
 const CANVAS = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab';
 const NOTE = `position:absolute;top:0;left:0;right:0;box-sizing:border-box;padding:24px 28px;`
   + `font:400 12.5px ${MONO};color:var(--text-muted)`;
+// The comments over the canvas: a layer that takes no pointer but on the
+// markers, their areas and the area being drawn dashed, a marker round.
+const MARKS = 'position:absolute;inset:0;overflow:hidden;pointer-events:none';
+const MARKER_PX = 18;
+const box = ({ left, top, width, height }) => `left:${left}px;top:${top}px;width:${width}px;height:${height}px`;
+const markArea = (at, active) => `position:absolute;${box(at)};box-sizing:border-box;`
+  + `border:1.5px dashed var(${active ? '--accent-strong' : '--accent'})`;
+const marker = (at, active) => `position:absolute;left:${at.left + at.width / 2 - MARKER_PX / 2}px;`
+  + `top:${at.top + at.height / 2 - MARKER_PX / 2}px;width:${MARKER_PX}px;height:${MARKER_PX}px;`
+  + `box-sizing:border-box;border-radius:50%;border:2px solid var(--card-bg);`
+  + `background:var(${active ? '--accent-strong' : '--accent'});pointer-events:auto;cursor:pointer`;
 
 /** The sides the board is seen from, as the panel names them. */
 const SIDES = [['top', 'Top'], ['bottom', 'Bottom']];
@@ -69,15 +94,22 @@ const PLATING_MM = 0.02;
 
 const flipOf = (side) => (side === 'bottom' ? -1 : 1);
 
-/** The renderer's layers on one canvas: the WebGL half of the view. */
+/** The renderer's layers on one canvas: the WebGL half of the view.
+ *  `handlers`: `onBand`, told the area being drawn in comment mode as its two
+ *  canvas points, and null when it is done; `onArea`, the area drawn
+ *  (`boardArea`); `onDraw`, told after each frame. */
 class Stage {
-  constructor(lib, host, layers) {
+  constructor(lib, host, layers, handlers = {}) {
     this.host = host;
     this.layers = layers;
+    this.handlers = handlers;
     this.side = 'top';
     this.shown = {};
     this.frame = 0;
     this.pointers = new Map();
+    // Comment mode, and the area a pointer is drawing in it: `{ id, from, to }`.
+    this.commenting = false;
+    this.band = null;
 
     this.canvas = document.createElement('canvas');
     this.canvas.setAttribute('style', CANVAS);
@@ -166,12 +198,23 @@ class Stage {
     const { canvas } = this;
     // A mouse drags with its left button only: the right one opens the
     // browser's menu, and its release lands on that menu, not on the canvas.
+    // In comment mode the first pointer down draws an area instead.
     canvas.addEventListener('pointerdown', (event) => {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       canvas.setPointerCapture(event.pointerId);
+      if (this.commenting && !this.pointers.size && !this.band) {
+        this.band = { id: event.pointerId, from: this.at(event), to: this.at(event) };
+        this.handlers.onBand(this.band);
+        return;
+      }
       this.pointers.set(event.pointerId, this.at(event));
     });
     canvas.addEventListener('pointermove', (event) => {
+      if (this.band && this.band.id === event.pointerId) {
+        this.band = event.buttons ? { ...this.band, to: this.at(event) } : null;
+        this.handlers.onBand(this.band);
+        return;
+      }
       const was = this.pointers.get(event.pointerId);
       if (!was) return;
       // A move with nothing pressed is a press whose release went elsewhere
@@ -197,7 +240,23 @@ class Stage {
       this.pointers.set(event.pointerId, now);
       this.request();
     });
-    const up = (event) => this.pointers.delete(event.pointerId);
+    // The area drawn ends with its pointer's release, a release within
+    // `CLICK_SLOP` of the press being a click: an area of no size there.
+    const up = (event) => {
+      const { band } = this;
+      if (band && band.id === event.pointerId) {
+        this.band = null;
+        this.handlers.onBand(null);
+        const to = this.at(event);
+        const click = Math.hypot(to[0] - band.from[0], to[1] - band.from[1]) <= CLICK_SLOP;
+        if (event.type === 'pointerup') {
+          this.handlers.onArea(boardArea(this.view, band.from, click ? band.from : to, this.width, this.height,
+            flipOf(this.side)));
+        }
+        return;
+      }
+      this.pointers.delete(event.pointerId);
+    };
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
     canvas.addEventListener('wheel', (event) => {
@@ -219,6 +278,12 @@ class Stage {
    *  asked for. */
   snapshot() {
     return new Promise((resolve) => this.canvas.toBlob(resolve, 'image/png'));
+  }
+
+  /** The board point (`u`, `v`) put at the centre of the canvas. */
+  centre(u, v) {
+    this.view = centredOn(this.view, u, v, flipOf(this.side));
+    this.request();
   }
 
   /** The layers drawn and the side they are seen from. */
@@ -261,6 +326,7 @@ class Stage {
       new Uint32Array(ids), new Float32Array(colours), new Uint8Array(modes),
       view.zoomX, view.zoomY, view.offsetX, view.offsetY, 1, true,
     );
+    if (this.handlers.onDraw) this.handlers.onDraw();
   }
 
   dispose() {
@@ -291,17 +357,97 @@ export default class GerberView extends React.Component {
     super(props);
     // `received`: the bytes of the zip in so far; `got`: all of them, the
     // layers being read.
+    // `band`: the two canvas points of the area being drawn in comment mode.
     this.state = {
-      layers: null, failed: {}, shown: {}, side: 'top', open: true, error: '', received: 0, got: false,
+      layers: null, failed: {}, shown: {}, side: 'top', open: true, error: '', received: 0, got: false, band: null,
     };
     this.host = null;
     this.stage = null;
+    // The page's focus last put on screen.
+    this.focused = null;
     this.setHost = (element) => {
       this.host = element;
     };
     this.toggle = () => this.setState({ open: !this.state.open });
     // What the page's bar does with this view (`onTools` in DocumentView.jsx).
-    this.tools = { fit: () => this.stage.fit(), frame: () => this.stage.snapshot() };
+    this.tools = { fit: () => this.stage.fit(), frame: () => this.frame() };
+    // What the stage tells this view (`Stage`): the marks follow each frame.
+    this.handlers = {
+      onBand: (band) => this.setState({ band }),
+      onArea: (area) => this.area(area),
+      onDraw: () => {
+        if (this.marks().length) this.forceUpdate();
+      },
+    };
+  }
+
+  /** The open comments and the draft on this zip (`comment.marks`). */
+  marks() {
+    const { comment, doc } = this.props;
+    return ((comment && comment.marks) || []).filter((one) => doc && one.doc === doc.file && Array.isArray(one.area));
+  }
+
+  /** The frame as a PNG blob: the canvas with the marks drawn on it as they
+   *  stand over it. The marks are elements over the canvas, not in it, and a
+   *  comment's frame (its `shot`) has to show the area it is about, as the
+   *  schematic's and the board's do, whose markers are in their canvas. */
+  frame() {
+    const { stage } = this;
+    const marks = this.marks();
+    if (!marks.length) return stage.snapshot();
+    const out = document.createElement('canvas');
+    out.width = stage.canvas.width;
+    out.height = stage.canvas.height;
+    const pen = out.getContext('2d');
+    pen.drawImage(stage.canvas, 0, 0);
+    // Canvas pixels per CSS pixel, which is what `canvasBox` answers in.
+    const k = stage.canvas.width / stage.width;
+    const style = getComputedStyle(this.host);
+    const ink = (name) => style.getPropertyValue(name).trim();
+    for (const mark of marks) {
+      const at = canvasBox(stage.view, mark.area, stage.width, stage.height, flipOf(stage.side));
+      const accent = ink(mark.active ? '--accent-strong' : '--accent');
+      pen.setLineDash([4 * k, 3 * k]);
+      pen.lineWidth = 1.5 * k;
+      pen.strokeStyle = accent;
+      pen.strokeRect(at.left * k, at.top * k, at.width * k, at.height * k);
+      pen.setLineDash([]);
+      pen.beginPath();
+      // The ring's 2 px inside the marker's 18, as `border-box` draws it on
+      // screen: a stroke is centred on its line.
+      pen.arc((at.left + at.width / 2) * k, (at.top + at.height / 2) * k, (MARKER_PX / 2 - 1) * k, 0, 2 * Math.PI);
+      pen.fillStyle = accent;
+      pen.fill();
+      pen.lineWidth = 2 * k;
+      pen.strokeStyle = ink('--card-bg');
+      pen.stroke();
+    }
+    return new Promise((resolve) => out.toBlob(resolve, 'image/png'));
+  }
+
+  /** An area drawn in comment mode, handed to the page with what was on
+   *  screen. */
+  area(area) {
+    const { comment, doc } = this.props;
+    const { layers, shown, failed, side } = this.state;
+    if (comment && doc) comment.onArea(doc, { frame: 'board', area, layer: layerNote(layers || [], shown, failed, side) });
+  }
+
+  /** The stage in line with `comment`: comment mode and its cursor while the
+   *  tool is armed, and a focus on this zip not yet shown put at the centre. */
+  comments() {
+    const { comment, doc } = this.props;
+    const { stage } = this;
+    if (!stage) return;
+    stage.commenting = Boolean(comment && comment.on);
+    stage.canvas.style.cursor = stage.commenting ? 'crosshair' : 'grab';
+    const focus = comment && comment.focus;
+    if (focus && focus !== this.focused && doc && focus.doc === doc.file && Array.isArray(focus.area)) {
+      this.focused = focus;
+      const [x, y, w, h] = focus.area;
+      stage.centre(x + w / 2, y + h / 2);
+      comment.onFocused();
+    }
   }
 
   componentDidMount() {
@@ -325,12 +471,13 @@ export default class GerberView extends React.Component {
         if (this._gone || !this.host) return;
         const layers = layersOf(files);
         if (!layers.length) throw new Error('the zip holds no Gerber or drill file');
-        this.stage = new Stage(lib, this.host, layers);
+        this.stage = new Stage(lib, this.host, layers, this.handlers);
         const shown = shownFrom(layers, 'top');
         this.stage.show(shown, 'top');
         // The panel lists the board from its top down, whichever side is shown.
         this.setState({ layers: stacked(layers, 'top').reverse(), failed: this.stage.failed, shown });
         this.props.onTools(this.tools);
+        this.comments();
       })
       .catch((error) => {
         if (!this._gone) this.setState({ error: `The Gerbers did not load: ${(error && error.message) || error}` });
@@ -340,6 +487,7 @@ export default class GerberView extends React.Component {
   componentDidUpdate(prev, before) {
     const { shown, side } = this.state;
     if (this.stage && (shown !== before.shown || side !== before.side)) this.stage.show(shown, side);
+    this.comments();
   }
 
   componentWillUnmount() {
@@ -360,13 +508,33 @@ export default class GerberView extends React.Component {
   }
 
   render() {
-    const { bytes } = this.props;
-    const { layers, failed, shown, side, open, error, received, got } = this.state;
+    const { bytes, comment } = this.props;
+    const { layers, failed, shown, side, open, error, received, got, band } = this.state;
     const note = error || (!layers && loadBar(received, bytes, got));
+    const { stage } = this;
+    // Where an area lands on the canvas as the stage's view stands.
+    const at = (area) => canvasBox(stage.view, area, stage.width, stage.height, flipOf(stage.side));
     return (
       <div style={css(SHELL)}>
         <div ref={this.setHost} style={css(HOLDER)} />
         {note && <div style={css(NOTE)}>{note}</div>}
+        {Boolean(stage && stage.width) && (
+          <div data-marks="gerbers" style={css(MARKS)}>
+            {this.marks().map((mark) => (
+              <React.Fragment key={mark.id}>
+                <div style={css(markArea(at(mark.area), mark.active))} />
+                <div data-mark={mark.id} style={css(marker(at(mark.area), mark.active))}
+                     onClick={() => comment.onMarker(mark.id)} />
+              </React.Fragment>
+            ))}
+            {band && (
+              <div style={css(markArea({
+                left: Math.min(band.from[0], band.to[0]), top: Math.min(band.from[1], band.to[1]),
+                width: Math.abs(band.to[0] - band.from[0]), height: Math.abs(band.to[1] - band.from[1]),
+              }, true))} />
+            )}
+          </div>
+        )}
         {layers && (
           <div data-panel="gerbers" style={css(LAYER_PANEL)}>
             <div onClick={this.toggle} title={open ? 'Hide the layers' : 'Show the layers'} style={css(LAYER_PANEL_HEAD)}>

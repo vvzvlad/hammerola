@@ -18,7 +18,8 @@ vi.mock('../src/gerber.js', async (importOriginal) => ({ ...(await importOrigina
 import CopyLink from '../src/copylink.jsx'
 import { documentBody } from '../src/DocumentView.jsx'
 import {
-  fitView, layerOf, layersOf, loadGerberRenderer, panBy, readZip, shownOn, stacked, toProcessor, turned, zoomAt,
+  boardArea, boardAt, canvasAt, canvasBox, centredOn, fitView, LAYER_NOTE_CHARS, layerNote, layerOf, layersOf,
+  loadGerberRenderer, panBy, readZip, shownOn, stacked, toProcessor, turned, zoomAt,
 } from '../src/gerber.js'
 import GerberView from '../src/GerberView.jsx'
 import { drained, runFrames, stubFrames } from './component.js'
@@ -199,13 +200,34 @@ describe('the view', () => {
       close(onCanvas(turned(view), -flip, [120, -40]), [W - x, y])
     }
   })
+
+  it('takes a comment\'s area between two canvas points in board units, lands it back where it was drawn, and centres it', () => {
+    for (const flip of [1, -1]) {
+      const view = panBy(fitView(BOARD, W, H, flip), 30, -12)
+      close(canvasAt(view, 120, -40, W, H, flip), onCanvas(view, flip, [120, -40]))
+      close(boardAt(view, ...onCanvas(view, flip, [120, -40]), W, H, flip), [120, -40])
+      const area = boardArea(view, [600, 100], [200, 300], W, H, flip)
+      expect(boardArea(view, [200, 300], [600, 100], W, H, flip)).toEqual(area)
+      const { left, top, width, height } = canvasBox(view, area, W, H, flip)
+      close([left, top, width, height], [200, 100, 400, 200])
+      close(onCanvas(centredOn(view, 120, -40, flip), flip, [120, -40]), [W / 2, H / 2])
+    }
+  })
+
+  it('names the side and the layers on screen for a comment, cut to the hub\'s one-line ceiling', () => {
+    const layers = ['F.Cu', 'F.Mask', 'B.Cu', 'Edge.Cuts'].map((label, i) => ({ file: `f${i}`, label }))
+    expect(layerNote(layers, { f0: true, f1: true, f3: true }, { f1: 'unreadable' }, 'top')).toBe('top: F.Cu, Edge.Cuts')
+    const many = Array.from({ length: 40 }, (_, i) => ({ file: `f${i}`, label: `User.${i}` }))
+    const note = layerNote(many, Object.fromEntries(many.map(({ file }) => [file, true])), {}, 'bottom')
+    expect([note.length, note.startsWith('bottom: User.0, '), note.endsWith('…')]).toEqual([LAYER_NOTE_CHARS, true, true])
+  })
 })
 
 describe('the drawing of a document', () => {
   it('draws a zip of Gerbers with the view, handing it the file and its size', () => {
     const doc = { id: 'fab__board.zip', name: 'Gerbers', type: 'gerbers', file: 'fab/board.zip', bytes: 776_479 }
     const [view] = collect(documentBody(doc, '/project/p1/abc/', null, ''), (el) => (el.type === GerberView ? el : undefined))
-    expect(view.props).toEqual({ url: '/project/p1/abc/fab/board.zip', bytes: 776_479 })
+    expect(view.props).toEqual({ url: '/project/p1/abc/fab/board.zip', bytes: 776_479, doc })
   })
 })
 
@@ -311,9 +333,9 @@ describe('the view on the page', () => {
     return (zip) => calls.shift()(zip)
   }
 
-  /** The view mounted on a holder WIDE x TALL. */
-  function opened() {
-    const view = new GerberView({ url: ZIP_URL, bytes: 776_500, onTools: vi.fn(), onReady: vi.fn() })
+  /** The view mounted on a holder WIDE x TALL, with props `extra` besides. */
+  function opened(extra = {}) {
+    const view = new GerberView({ url: ZIP_URL, bytes: 776_500, onTools: vi.fn(), onReady: vi.fn(), ...extra })
     view.setState = (patch) => Object.assign(view.state, typeof patch === 'function' ? patch(view.state) : patch)
     const host = document.createElement('div')
     Object.defineProperty(host, 'clientWidth', { value: WIDE })
@@ -339,9 +361,9 @@ describe('the view on the page', () => {
   }
 
   /** The view with the board's zip drawn once. */
-  async function loaded() {
+  async function loaded(extra) {
     const answer = fetching()
-    const { view, host } = opened()
+    const { view, host } = opened(extra)
     answer(BOARD_ZIP)
     await settle()
     runFrames()
@@ -482,6 +504,34 @@ describe('the view on the page', () => {
     close(pixelOf(last(processor), spot), [210, 195])
   })
 
+  it('with Comment armed, draws an area where a drag would pan and a spot on a click, and centres an area asked for', async () => {
+    const doc = { file: 'fab/dionis_speaker_gerber.zip' }
+    const comment = { on: true, marks: [], focus: null, onArea: vi.fn(), onMarker: vi.fn(), onFocused: vi.fn() }
+    const { view, canvas, processor } = await loaded({ doc, comment })
+    const fitted = last(processor)
+    pointer(canvas, 'pointerdown', { x: 100, y: 300 })
+    pointer(canvas, 'pointermove', { x: 300, y: 200 })
+    expect(view.state.band).toEqual({ id: 1, from: [100, 300], to: [300, 200] })
+    pointer(canvas, 'pointerup', { x: 300, y: 200, buttons: 0 })
+    pointer(canvas, 'pointerdown', { x: 400, y: 250 })
+    pointer(canvas, 'pointerup', { x: 402, y: 251, buttons: 0 })
+    runFrames()
+    expect([last(processor), view.state.band]).toEqual([fitted, null])
+    const [low, high, spot] = [[100, 300], [300, 200], [400, 250]].map((at) => pointAt(fitted, at))
+    const [[onDoc, drawn], [, clicked]] = comment.onArea.mock.calls
+    expect([onDoc, drawn.frame, drawn.layer.startsWith('top: ')]).toEqual([doc, 'board', true])
+    close(drawn.area, [low[0], low[1], high[0] - low[0], high[1] - low[1]])
+    close(clicked.area, [...spot, 0, 0])
+
+    // the area asked for goes to the centre, once
+    view.props = { ...view.props, comment: { ...comment, focus: { doc: doc.file, area: drawn.area } } }
+    view.componentDidUpdate(view.props, view.state)
+    view.componentDidUpdate(view.props, view.state)
+    runFrames()
+    close(pixelOf(last(processor), [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2]), [WIDE / 2, TALL / 2])
+    expect(comment.onFocused).toHaveBeenCalledTimes(1)
+  })
+
   it('tells the bar it can fit and frame once the board is drawn, and does both on the canvas', async () => {
     const answer = fetching()
     const { view, host } = opened()
@@ -505,5 +555,37 @@ describe('the view on the page', () => {
     const blob = new Blob(['png'], { type: 'image/png' })
     canvas.toBlob = vi.fn((done, type) => done(type === 'image/png' ? blob : null))
     await expect(tools.frame()).resolves.toBe(blob)
+  })
+
+  it('frames the canvas with a comment\'s area drawn on it where it stands, in the canvas\'s own pixels', async () => {
+    // Two canvas pixels to a CSS pixel, which is what the marks are placed in.
+    vi.stubGlobal('devicePixelRatio', 2)
+    const doc = { file: 'fab/dionis_speaker_gerber.zip' }
+    const comment = { on: false, marks: [], focus: null, onArea: vi.fn(), onMarker: vi.fn(), onFocused: vi.fn() }
+    const { view, canvas, processor } = await loaded({ doc, comment })
+    const [[tools]] = view.props.onTools.mock.calls
+    // jsdom draws nothing: the 2D context records what it is told, and each
+    // canvas's PNG says which canvas it is.
+    const pen = {
+      drawImage: vi.fn(), strokeRect: vi.fn(), setLineDash() {}, beginPath() {}, arc() {}, fill() {}, stroke() {},
+    }
+    HTMLCanvasElement.prototype.getContext.mockImplementation((kind) => (kind === '2d' ? pen : { getExtension: () => ({ loseContext }) }))
+    const [bare, framed] = [new Blob(['the board']), new Blob(['the board and its marks'])]
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (done, type) {
+      done(type === 'image/png' ? (this === canvas ? bare : framed) : null)
+    })
+
+    // with no mark on the zip, the canvas as it stands
+    await expect(tools.frame()).resolves.toBe(bare)
+    expect(pen.drawImage).not.toHaveBeenCalled()
+
+    // an area that stands between the CSS points (100, 200) and (300, 300)
+    const [low, high] = [[100, 300], [300, 200]].map((at) => pointAt(last(processor), at))
+    const area = [low[0], low[1], high[0] - low[0], high[1] - low[1]]
+    view.props = { ...view.props, comment: { ...comment, marks: [{ id: 'c1', doc: doc.file, area, active: true }] } }
+    await expect(tools.frame()).resolves.toBe(framed)
+    expect(pen.drawImage.mock.calls).toEqual([[canvas, 0, 0]])
+    expect(pen.strokeRect).toHaveBeenCalledTimes(1)
+    close(pen.strokeRect.mock.calls[0], [200, 400, 400, 200])
   })
 })

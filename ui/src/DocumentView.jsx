@@ -60,17 +60,43 @@
 import React from 'react';
 
 import { format, parse, respell } from './address.js';
-import { markdownElements, NOWRAP_CLASS } from './docmd.js';
+import {
+  findQuote, markdownElements, NOWRAP_CLASS, offsetOf, quoteOf, rangeOf, textIndex,
+} from './docmd.js';
 import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
 import { mb } from './hub.js';
-import KicadView, { designKey, viewOf } from './KicadView.jsx';
+import KicadView, { designKey, DRAFT_MARK, viewOf } from './KicadView.jsx';
 import { fetchBody, loadBar, meter } from './loadbar.jsx';
 import { css, MONO, SANS } from './style.jsx';
 
 /** A document the page does not draw, whatever its extension (`FILE_TYPE` in
  *  src/render.py, held to this spelling by tests/test_documents.py). */
 export const FILE_TYPE = 'file';
+
+/** The types of document the model's page leaves a comment on, each with
+ *  what arming the Comment tool over it says to do: the tool is in service
+ *  over one of them (chromeview.js) and takes its place there — an area of a
+ *  schematic's sheet or a board (KicadView.jsx) or of the Gerbers
+ *  (GerberView.jsx), a part of the board's 3D model (BoardView3D.jsx), a
+ *  passage of markdown (`quoting` below). */
+export const COMMENTABLE = new Map([
+  ['schematic', 'Drag an area on the drawing to pin the task'],
+  ['board', 'Drag an area on the drawing to pin the task'],
+  ['board3d', 'Click a part to pin the task'],
+  ['markdown', 'Select a passage to pin the task'],
+  ['gerbers', 'Drag an area, or click a spot, to pin the task'],
+]);
+
+/** The two highlights a markdown document's quotes are drawn in (the CSS
+ *  Custom Highlight API: the text the page drew is left as React drew it):
+ *  the open comments', and the one the rail has open and the draft's. */
+const QUOTE_HIGHLIGHT = 'hmr-quote';
+const OPEN_HIGHLIGHT = 'hmr-quote-open';
+
+/** The page's highlights, or null in a browser without them. */
+const highlights = () => (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function'
+  ? CSS.highlights : null);
 
 const encodePath = (path) => path.split('/').map(encodeURIComponent).join('/');
 
@@ -154,7 +180,11 @@ const PREVIEW = 'flex:1;min-height:0;width:100%;object-fit:contain';
 // A table cell short enough to read as one value (`495.0 × 428.5`) keeps it on
 // one line (`docmd.js` marks it). A class and not an inline style, so that the
 // rule is one line in one place rather than a property on every short cell.
-const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`;
+// The comments' quotes are underlined over a wash of the accent, the open one
+// in a stronger one.
+const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`
+  + `::highlight(${QUOTE_HIGHLIGHT}){background-color:var(--accent-bg);text-decoration:underline var(--accent)}`
+  + `::highlight(${OPEN_HIGHLIGHT}){background-color:var(--accent-muted);text-decoration:underline var(--accent)}`;
 
 /** What a markdown link to another document of this build becomes (`links` in
  *  docmd.js): the page's own address with that document's `?d=` and no hash,
@@ -196,16 +226,20 @@ export function docLinks(base, documents, onOpen) {
  *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
  *  the file, `received` the bytes of a markdown text in so far, `addressDoc`
  *  the page's reading of which document an address names, for a schematic's
- *  sheet in it (KicadView.jsx), and `onSheet` the page's door for writing
- *  that sheet. Pure but for that link's address, which is the page's current
- *  one (`docLinks`). */
+ *  sheet in it (KicadView.jsx), `onSheet` the page's door for writing
+ *  that sheet, `comment` what a KiCad design and the Gerbers need for the
+ *  page's comments (KicadView.jsx, GerberView.jsx), and `quoting` what a
+ *  markdown article does for them (`DocumentView`): its ref, its pointer's
+ *  handlers, and whether the pointer is over a quote. Pure but for that
+ *  link's address, which is the page's current one (`docLinks`). */
 export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc,
-  onSheet) {
+  onSheet, comment, quoting) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
+    const { pointing, ...hooks } = quoting || {};
     return (
-      <article style={css(ARTICLE)}>
+      <article style={css(ARTICLE + (pointing ? ';cursor:pointer' : ''))} {...hooks}>
         <style>{DOC_CSS}</style>
         {markdownElements(text, docBase(base, doc), docLinks(base, documents, onOpen))}
       </article>
@@ -216,10 +250,11 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   }
   if (viewOf(doc)) {
     return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady}
-                      addressDoc={addressDoc} onSheet={onSheet} />;
+                      addressDoc={addressDoc} onSheet={onSheet} comment={comment} />;
   }
   if (doc.type === GERBERS_TYPE) {
-    return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady} />;
+    return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady}
+                       doc={doc} comment={comment} />;
   }
   // Before the frame: a browser handed a type it does not render downloads the
   // file from inside the frame, which leaves an empty page behind and no way
@@ -242,13 +277,123 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   return <iframe src={docUrl(base, doc)} title={doc.name} style={css(FRAME)} onLoad={onReady} />;
 }
 
-/** One document, holding the text of a markdown one while it is fetched. */
+/**
+ * One document, holding the text of a markdown one while it is fetched.
+ *
+ * A markdown one takes the model page's comments (`comment`) itself. With the
+ * Comment tool armed (`on`) a selection made in the article is the place of a
+ * comment, handed to the page (`onArea`) as its quote (`quoteOf`, docmd.js).
+ * The quotes of the open comments and the draft on it (`marks`) are found in
+ * the text (`findQuote`) and highlighted; a click on one names its comment to
+ * the page (`onMarker`), and the ids of those not found go back to it
+ * (`onLost`) as that changes. A quote the page asks to be shown (`focus`) is
+ * scrolled to, and the page told (`onFocused`).
+ */
 export default class DocumentView extends React.Component {
   static defaultProps = { onTools: () => {}, onReady: () => {} };
 
   constructor(props) {
     super(props);
-    this.state = { text: null, error: '', received: 0 };
+    // `pointing`: the pointer is over a quote it can open.
+    this.state = { text: null, error: '', received: 0, pointing: false };
+    // The article, the quotes found in it `{ id, active, range }`, what they
+    // were found for (the marks and the text), the ids last told lost, and
+    // the focus last shown.
+    this.article = null;
+    this.quotes = [];
+    this.quoted = null;
+    this.lost = undefined;
+    this.focused = null;
+    this.quoting = {
+      ref: (node) => {
+        this.article = node;
+      },
+      onPointerUp: (event) => this.textUp(event),
+      onPointerMove: (event) => {
+        const pointing = this.quoteAt(event.clientX, event.clientY) !== null;
+        if (pointing !== this.state.pointing) this.setState({ pointing });
+      },
+    };
+  }
+
+  /** The comment whose quote is under the client point (`x`, `y`), the
+   *  draft's being none, or null. */
+  quoteAt(x, y) {
+    for (const { id, range } of this.quotes) {
+      if (id === DRAFT_MARK) continue;
+      for (const at of range.getClientRects()) {
+        if (x >= at.left && x <= at.right && y >= at.top && y <= at.bottom) return id;
+      }
+    }
+    return null;
+  }
+
+  /** A release over the article: a selection in it with the tool armed is a
+   *  comment's place; a click on a quote names its comment. */
+  textUp(event) {
+    const { comment, doc } = this.props;
+    if (!comment || event.button !== 0 || !this.article) return;
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount && !selection.isCollapsed) {
+      const range = selection.getRangeAt(0);
+      if (!comment.on || !this.article.contains(range.startContainer) || !this.article.contains(range.endContainer)) {
+        return;
+      }
+      const index = textIndex(this.article);
+      const quote = quoteOf(index.text, offsetOf(index, range.startContainer, range.startOffset),
+        offsetOf(index, range.endContainer, range.endOffset));
+      if (quote) comment.onArea(doc, { frame: 'text', quote });
+      return;
+    }
+    const id = this.quoteAt(event.clientX, event.clientY);
+    if (id !== null) comment.onMarker(id);
+  }
+
+  /** The article in line with `comment` (see the class): its quotes found
+   *  and highlighted again when the marks or the text changed, and a focus on
+   *  it scrolled to. */
+  markText() {
+    const { comment, doc } = this.props;
+    const { text } = this.state;
+    if (!comment || !this.article || text === null) return;
+    const marks = (comment.marks || []).filter((one) => one.doc === doc.file && one.quote);
+    const key = JSON.stringify(marks);
+    if (!this.quoted || this.quoted.key !== key || this.quoted.text !== text) {
+      this.quoted = { key, text };
+      const index = textIndex(this.article);
+      const lost = [];
+      this.quotes = [];
+      for (const mark of marks) {
+        const found = findQuote(index.text, mark.quote);
+        if (found) this.quotes.push({ id: mark.id, active: mark.active, range: rangeOf(index, ...found) });
+        else if (mark.id !== DRAFT_MARK) lost.push(mark.id);
+      }
+      const registry = highlights();
+      if (registry) {
+        for (const [name, active] of [[QUOTE_HIGHLIGHT, false], [OPEN_HIGHLIGHT, true]]) {
+          registry.set(name, new Highlight(...this.quotes.filter((one) => Boolean(one.active) === active)
+            .map((one) => one.range)));
+        }
+      }
+      const told = JSON.stringify(lost);
+      if (told !== this.lost) {
+        this.lost = told;
+        comment.onLost(doc.file, lost);
+      }
+    }
+    const focus = comment.focus;
+    if (focus && focus !== this.focused && focus.doc === doc.file && focus.quote) {
+      this.focused = focus;
+      const index = textIndex(this.article);
+      const found = findQuote(index.text, focus.quote);
+      const block = found && rangeOf(index, ...found).startContainer.parentElement;
+      if (block && typeof block.scrollIntoView === 'function') block.scrollIntoView({ block: 'center' });
+      comment.onFocused();
+    }
+  }
+
+  componentDidUpdate() {
+    this.markText();
   }
 
   componentDidMount() {
@@ -273,11 +418,17 @@ export default class DocumentView extends React.Component {
   componentWillUnmount() {
     this._gone = true;
     this.props.onTools(null);
+    const registry = this.quoted && highlights();
+    if (registry) {
+      registry.delete(QUOTE_HIGHLIGHT);
+      registry.delete(OPEN_HIGHLIGHT);
+    }
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet } = this.props;
-    const { text, error, received } = this.state;
-    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet);
+    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment } = this.props;
+    const { text, error, received, pointing } = this.state;
+    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet,
+      comment, comment ? { ...this.quoting, pointing } : null);
   }
 }

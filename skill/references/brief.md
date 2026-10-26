@@ -154,7 +154,17 @@ its solid as `parts()` returns it, unmoved by any view (a location the solid
 carries itself is not applied either), so they hold in every view of that build —
 except on a part a view shows `deformed`: there the point is on the shape that
 view brought, and in other views it lands on the undeformed solid only roughly.
-Without `(part coords)` they are world coordinates of the view named. Read the
+Without `(part coords)` they are world coordinates of the view named. A comment
+left on a document of the build starts the place with `doc <path>`. On a
+schematic, `sheet <file>  area x y w h mm  near A, B` is the sheet, the area
+drawn on it in the sheet's millimetres and the designators and net labels
+inside; on a board the same without `sheet`, in KiCad's millimetres with y
+down. On the Gerbers the area is in the Gerber files' millimetres with y up (a
+part at 150, 78 in KiCad is at 150, -78 there) and `layer` names the side seen
+and the layers shown; on markdown, `quote "before[text]after"` is the marked
+passage in brackets with the characters around it (`\n` a line break); a part
+of the board's 3D model is its designator, with the point and normal in that
+part's millimetres. Read the
 queue when you start, do the work, resolve it with
 `-m` (`--note`) saying what was done; an unresolved one gets done twice. It is
 a request, not a literal instruction. Fetch the photo with `comments files`

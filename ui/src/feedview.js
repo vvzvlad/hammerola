@@ -7,8 +7,31 @@
  * the list.
  */
 import { anchorFor, rowsByKey, stamp } from './hub.js';
+import { sheetName } from './kicadpages.js';
 import { ON_ACCENT } from './panelstyle.js';
 import { MONO } from './style.jsx';
+
+/** Where in document `doc` a comment hangs, as the composer heads it and the
+ *  rail says it: `<sheet> of <document>` on a schematic's sheet, `<part> of
+ *  <document>` on a part of a board's 3D model (`frame: "part"`, where `part`
+ *  is a designator), else the document's name. */
+export const docPlace = (record, doc) => (record.sheet ? `${sheetName(record.sheet)} of ${doc.name}`
+  : record.frame === 'part' && record.part ? `${record.part} of ${doc.name}` : doc.name);
+
+/** What the rail says of a comment its document, open, could not place
+ *  (`docLost`): by how it was anchored there. */
+const LOST = { part: 'the part is not on this board', text: 'the text has changed' };
+
+/**
+ * `patch` as the page applies it: one that moves the document over the model
+ * (`doc`) and asks for no place in it (`docFocus`, which a row of the rail
+ * asks for with the document it opens) drops the place asked for before. Left
+ * standing, a place asked of a document that never showed it — Back before
+ * it was drawn, another row, a choice in the menu of views — would be shown
+ * the next time that document opened, for whatever reason it opened.
+ */
+export const dropStaleFocus = (patch) => (patch && typeof patch === 'object' && 'doc' in patch
+  && !('docFocus' in patch) ? { ...patch, docFocus: null } : patch);
 
 export function feedView(s, deps) {
   const { meta, catalogue, stop, node: nodeAt, set, pushChoice, resolveComment } = deps;
@@ -32,9 +55,15 @@ export function feedView(s, deps) {
     nodes: s.tree ? s.tree.nodes : null,
     parts: catalogue || {},
   };
+  const documents = (meta && meta.documents) || [];
   const threads = s.feed.map((record, i) => {
     const anchor = anchorFor(record, anchoredAt);
     const resolved = record.status === 'resolved';
+    // A comment on a document hangs on the one this build lists at its path;
+    // that document, opened, may have found no place for it (`docLost`).
+    const target = anchor.state === 'doc' ? documents.find((d) => d.file === record.doc) : null;
+    const lost = !!target && ((s.docLost || {})[target.file] || []).includes(record.id);
+    const near = Array.isArray(record.items) && record.items.length ? ` — near ${record.items.join(', ')}` : '';
     // THE HEADING IS A ROW OF THE TREE ON SCREEN or it is the catalogue key,
     // and never the stored path used as a stand-in: on another build that
     // path is a number the tessellator was free to hand to something else.
@@ -54,6 +83,8 @@ export function feedView(s, deps) {
         : 'the part is not in this view',
       orphan: 'the part this was left on is no longer in the catalogue',
       none: 'not tied to a part',
+      doc: !target ? 'the document is not in this build'
+        : (lost && LOST[record.frame]) || `on ${docPlace(record, target)}${near}`,
     }[anchor.state];
     return {
       key: record.id,
@@ -74,8 +105,28 @@ export function feedView(s, deps) {
       // is in sight: a step of history naming no document (`pushChoice`), so
       // Back reopens the one it covered. Only over a document the build lists:
       // under any other `d=` the model is already on screen.
+      //
+      // A comment on a document opens that document instead, as its row in
+      // the list of views does — a step of history unless it is on screen —
+      // and asks it to show the place (`docFocus`): an area, on its sheet,
+      // which is a step of its own only where the document was already on
+      // screen (`step`, KicadView.jsx; GerberView.jsx); a part of the board's
+      // 3D model (BoardView3D.jsx); a quote (DocumentView.jsx).
       onOpen: stop(() => {
-        if (((meta && meta.documents) || []).some((d) => d.id === s.doc)) pushChoice(s.view, null);
+        if (anchor.state === 'doc') {
+          if (!target) {
+            set({ activePin: record.id });
+            return;
+          }
+          const step = s.doc === target.id;
+          if (!step) pushChoice(s.view, target.id);
+          const place = (Array.isArray(record.area) && { sheet: record.sheet || null, area: record.area })
+            || (record.frame === 'part' && record.part && { part: record.part })
+            || (record.quote && { quote: record.quote });
+          set({ activePin: record.id, doc: target.id, docFocus: place ? { doc: target.file, ...place, step } : null });
+          return;
+        }
+        if (documents.some((d) => d.id === s.doc)) pushChoice(s.view, null);
         set({ activePin: record.id, doc: null });
       }),
       resolved,

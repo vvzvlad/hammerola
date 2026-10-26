@@ -35,8 +35,9 @@ import { KCBoardAppElement } from "../kicanvas/elements/kc-board/app";
 import { KCSchematicAppElement } from "../kicanvas/elements/kc-schematic/app";
 import { BomApp } from "../kicanvas/elements/bom/app";
 import { KicadPCB, KicadSch } from "../kicad";
-import type { SchematicInstanceContext } from "../kicad/schematic";
+import { type SchematicInstanceContext } from "../kicad/schematic";
 
+import { area_items, type AreaDocument } from "./area-items";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
     BoardContentReady,
@@ -2606,6 +2607,33 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         return resolve_comment_overlays(request, (anchor) =>
             viewer.resolve_overlay_anchor_for_host(anchor),
         );
+    }
+
+    /**
+     * What a comment's area holds, as its words (`area_items`): what each
+     * layer of the viewer has painted, with the box it painted it in, named
+     * against `bounds` (`[x, y, w, h]` in the document's millimetres). Empty
+     * before the viewer has drawn.
+     */
+    public itemsInArea(
+        context: EcadCommentContext,
+        bounds: [number, number, number, number],
+    ): string[] {
+        const viewer = this.#viewer_for_context(context);
+        if (!viewer) return [];
+        const painted = function* () {
+            for (const layer of viewer.layers?.in_order() ?? []) {
+                yield* layer.bboxes;
+            }
+        };
+        const on: AreaDocument =
+            context === "SCH"
+                ? {
+                      context,
+                      instance: (viewer as SchematicViewer).instance_context,
+                  }
+                : { context, board: (viewer as BoardViewer).board };
+        return area_items(on, bounds, painted());
     }
 
     public clearCommentOverlays(context?: EcadCommentContext): void {

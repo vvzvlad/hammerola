@@ -1,9 +1,12 @@
 // The 3D view of a board (ui/src/BoardView3D.jsx): when it fetches the model,
 // what it does with a model that arrives too late, when it draws, what counts
-// as a click and a right click, and what the page's bar does with it.
+// as a click and a right click, what the page's bar does with it, and the
+// page's comments on it.
 //
 // No GPU here. `loadThree` hands over three itself with the two parts that need
-// one replaced — a renderer whose canvas is a plain one, and a trackball that
+// one replaced — a renderer whose canvas is a plain one and which, as three's
+// does before it draws, brings the scene's world matrices up to date, so a
+// click is aimed at an arrow where the frame drew it; and a trackball that
 // only holds a target and what it was set to, and, as the model's own does in
 // its non-tumbling mode, leaves the camera's turn alone on `update` — and a
 // loader whose model is a small scene built in the test: a board layer and one
@@ -24,6 +27,7 @@ import { resolve } from 'node:path'
 import BoardView3D, { CLICK_SLOP, TRACKBALL_SPEEDS } from '../src/BoardView3D.jsx'
 import { loadThree, TRACKBALL_URL } from '../src/board3d.js'
 import { VIEWER_MODULE_URL } from '../src/viewport/library.js'
+import { PIN_PX } from '../src/viewport/options.js'
 import { drained, runFrames, stubFrames } from './component.js'
 import { texts } from './eltree.js'
 
@@ -33,7 +37,8 @@ let renderers = []
 class Renderer {
   constructor() {
     this.domElement = document.createElement('canvas')
-    for (const name of ['setPixelRatio', 'setSize', 'render', 'dispose', 'forceContextLoss']) this[name] = vi.fn()
+    for (const name of ['setPixelRatio', 'setSize', 'dispose', 'forceContextLoss']) this[name] = vi.fn()
+    this.render = vi.fn((scene) => scene.updateMatrixWorld())
     renderers.push(this)
   }
 }
@@ -120,9 +125,9 @@ function mounted(props) {
 }
 
 /** The view with its model loaded and on screen. */
-async function loaded() {
+async function loaded(props) {
   const net = fetching()
-  const { view, update } = mounted({ active: true })
+  const { view, update } = mounted({ active: true, ...props })
   net.answer()
   await arrived()
   const canvas = renderers[0].domElement
@@ -370,5 +375,97 @@ describe('the 3D view of a board', () => {
     expect(camera.position.distanceTo(controls.target)).toBeCloseTo(distance / Math.exp(0.2), 6)
     expect(under().distanceTo(point)).toBeCloseTo(0, 6)
     expect(trackball).not.toHaveBeenCalled()
+  })
+})
+
+describe('comments on the 3D view of a board', () => {
+  /** The part's place: lifted off the board, where a pointer on its centre picks it. */
+  const LIFTED = new THREE.Vector3(0, 3, 0)
+  beforeEach(() => {
+    model.children[0].children[1].position.copy(LIFTED)
+  })
+
+  /** What the model's page hands the view for its comments (`comment`). */
+  const commenting = (extra) => ({ on: false, marks: [], focus: null, onPoint: vi.fn(), onMarker: vi.fn(),
+    onLost: vi.fn(), onFocused: vi.fn(), ...extra })
+  /** A comment on `part`, on the top face of `C1`'s box in that part's frame. */
+  const markOn = (id, part) => ({ id, part, point: [0, 400, 0], normal: [0, 1, 0], active: false })
+  /** Where a world point is drawn on the 200 px canvas `loaded` gives. */
+  const onCanvas = (view, point) => {
+    const at = point.clone().project(view.stage.camera)
+    return [(at.x + 1) * 100, (1 - at.y) * 100]
+  }
+  const clickAt = (canvas, [x, y]) => {
+    pointer(canvas, 'pointerdown', x, y)
+    pointer(canvas, 'pointerup', x, y)
+  }
+
+  it('takes a click on a part with the tool armed for a comment\'s place, in the part\'s own millimetres, selecting nothing', async () => {
+    const comment = commenting({ on: true })
+    const { view, update, canvas } = await loaded({ comment })
+    clickAt(canvas, onCanvas(view, LIFTED))
+    expect(comment.onPoint).toHaveBeenCalledTimes(1)
+    const [[{ part, point, normal }]] = comment.onPoint.mock.calls
+    // The top face of the part's box, 0.4 m over the part's origin and 3.4 m
+    // over the world's, facing up; to the float32 the geometry is held in.
+    expect(part).toBe('C1')
+    expect([point[0], point[1]]).toEqual([expect.closeTo(0, 3), expect.closeTo(400, 3)])
+    expect(point[2]).toBeGreaterThan(0)
+    expect(point[2]).toBeLessThan(400)
+    expect(new THREE.Vector3(...normal).distanceTo(new THREE.Vector3(0, 1, 0))).toBeCloseTo(0, 6)
+    expect(view.stage.selected).toBeNull()
+    // off the part, on the board: no place, and still no selection
+    clickAt(canvas, [100, 100])
+    // the tool put away, the same click on the part selects it
+    update({ comment: { ...comment, on: false } })
+    clickAt(canvas, onCanvas(view, LIFTED))
+    expect(comment.onPoint).toHaveBeenCalledTimes(1)
+    expect(view.props.onSelect.mock.calls).toEqual([['C1']])
+  })
+
+  it('opens the comment whose arrow is clicked, the tool armed or not, selecting and placing nothing', async () => {
+    const comment = commenting({ marks: [markOn('c1', 'C1')] })
+    const { view, update, canvas } = await loaded({ comment })
+    runFrames()
+    // the arrow's tip on the mark's point, put in the world through the part
+    const [arrow] = view.stage.pins.children
+    expect(arrow.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(0, 3.4, 0))).toBeCloseTo(0, 6)
+    // on its shaft, which stands up off the part's top face
+    const shaft = onCanvas(view, arrow.localToWorld(new THREE.Vector3(0, PIN_PX * 0.75, 0)))
+    clickAt(canvas, shaft)
+    update({ comment: { ...comment, on: true } })
+    clickAt(canvas, shaft)
+    expect(comment.onMarker.mock.calls).toEqual([['c1'], ['c1']])
+    expect([view.props.onSelect.mock.calls, comment.onPoint.mock.calls]).toEqual([[], []])
+  })
+
+  it('tells the page which comments stand on a part the model lacks, only as that set changes', async () => {
+    const comment = commenting({ marks: [markOn('c1', 'C1'), markOn('c2', 'R9')] })
+    const { update } = await loaded({ comment })
+    expect(comment.onLost.mock.calls).toEqual([[['c2']]])
+    // drawn again, and with a comment the model has: the same set, nothing told
+    update({ selected: 'C1' })
+    update({ comment: { ...comment, marks: [...comment.marks, markOn('c3', 'C1')] } })
+    expect(comment.onLost).toHaveBeenCalledTimes(1)
+    // the lost one gone from the page: an empty set
+    update({ comment: { ...comment, marks: [markOn('c1', 'C1')] } })
+    expect(comment.onLost.mock.calls).toEqual([[['c2']], [[]]])
+  })
+
+  it('frames a part the page asks to be shown, once for each ask, and says it is done', async () => {
+    const comment = commenting({ focus: { part: 'C1' } })
+    const { view, update } = await loaded({ comment })
+    const { controls } = view.stage
+    expect(controls.target.distanceTo(LIFTED)).toBeCloseTo(0, 6)
+    expect(comment.onFocused).toHaveBeenCalledTimes(1)
+    // the reader looks elsewhere; drawn again with the same ask, the camera stays
+    controls.target.set(9, 9, 9)
+    update({ comment: { ...comment } })
+    expect(controls.target.toArray()).toEqual([9, 9, 9])
+    expect(comment.onFocused).toHaveBeenCalledTimes(1)
+    // the row clicked again: a new ask
+    update({ comment: { ...comment, focus: { part: 'C1' } } })
+    expect(controls.target.distanceTo(LIFTED)).toBeCloseTo(0, 6)
+    expect(comment.onFocused).toHaveBeenCalledTimes(2)
   })
 })

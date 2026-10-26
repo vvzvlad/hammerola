@@ -131,7 +131,9 @@ import { chromeView } from './chromeview.js';
 // the view list; drawn as the documents page draws it.
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
-import DocumentView, { docExt, FILE_TYPE } from './DocumentView.jsx';
+import DocumentView, { COMMENTABLE, docExt, FILE_TYPE } from './DocumentView.jsx';
+// The id the composer's draft stands under among a KiCad design's markers.
+import { DRAFT_MARK } from './KicadView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -144,7 +146,7 @@ import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
 // The Copy link at the end of each file row of both menus.
 import CopyLink from './copylink.jsx';
-import { feedView } from './feedview.js';
+import { docPlace, dropStaleFocus, feedView } from './feedview.js';
 import { comparePanel } from './compareview.js';
 // The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
@@ -1098,7 +1100,14 @@ export default class HammerolaViewer extends React.Component {
       notePop: null, noteDraft: '', notes: {},
       // The project's whole comment queue, as the hub answers it (`loadFeed`),
       // in the records' own shape — oldest first, as SPEC 7A.2 sorts them.
-      feed: [], activePin: null, composer: null,
+      // `docFocus`: the place in a document a row of the rail asked to be
+      // shown, `{ doc, sheet, area, step }`, `{ doc, part, step }` or `{ doc,
+      // quote, step }` (`feedView`), until the document has shown it
+      // (KicadView.jsx, BoardView3D.jsx, GerberView.jsx, DocumentView.jsx) or
+      // anything else moves the document over the model (`dropStaleFocus`).
+      // `docLost`: by a document's file, the ids of the comments on it that
+      // it, open, found no place for, as it last said (`onLost`).
+      feed: [], activePin: null, composer: null, docFocus: null, docLost: {},
       // A comment is on the wire. The same idea as `swapping` above and for the
       // same two reasons: `sendComment` refuses on it, and `compSendStyle`
       // draws it, so the button that has stopped taking clicks stops looking
@@ -1466,8 +1475,10 @@ export default class HammerolaViewer extends React.Component {
                      notePop: null, tokenPop: false, tool: null, share: null };
       // An armed tool is not on screen under an open document — the document
       // covers the model and the tool's button is out of service — so it does
-      // not count as something this Escape closed.
-      const seen = (key) => this.state[key] && !(key === 'tool' && this.state.doc);
+      // not count as something this Escape closed; the Comment tool over a
+      // document that takes a comment does, being armed on its drawing.
+      const seen = (key) => this.state[key] && !(key === 'tool' && this.state.doc
+        && !(this.state.tool === 'comment' && this.docCommentable()));
       if (Object.keys(shut).some(seen)) e.preventDefault();
       this.set(shut);
     };
@@ -1584,6 +1595,35 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ composer, tool: null }, () => {
       this.sync();
       if (this.compBox.current) this.compBox.current.focus();
+    });
+  }
+
+  /** Does the document over the model take a comment (`COMMENTABLE`)? */
+  docCommentable() {
+    const meta = this.state.meta;
+    const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
+    const doc = documents.find((d) => d.id === this.state.doc);
+    return !!doc && COMMENTABLE.has(doc.type);
+  }
+
+  /**
+   * A place taken on document `doc` with the Comment tool: the composer's
+   * draft hangs there — `place`, in the comment's own fields (SPEC 7A.1):
+   * `frame`, and `sheet`, `area` and the `items` in it on a KiCad design
+   * (KicadView.jsx), `area` and `layer` on the Gerbers (GerberView.jsx), the
+   * part's designator, `point` and `normal` on the board's 3D model
+   * (BoardView3D.jsx), `quote` on markdown (DocumentView.jsx) — headed with
+   * where that is (`docPlace`), which takes `part`: the designator is kept as
+   * `designator`. Over a draft already standing it replaces where that one
+   * hangs and keeps what the reader wrote and attached.
+   */
+  docArea(doc, place) {
+    if (this.viewer()) return;
+    const c = this.state.composer;
+    this.openComposer({
+      ...place, doc: doc.file, part: docPlace(place, doc), designator: place.part || null,
+      partId: null, key: null, p: null, n: null, meas: null,
+      text: c ? c.text : '', photo: c ? c.photo : null,
     });
   }
 
@@ -2070,6 +2110,9 @@ export default class HammerolaViewer extends React.Component {
         // that lists it.
         doc: next && Array.isArray(next.documents)
           && next.documents.some((d) => d.id === doc) ? doc : null,
+        // A place asked of a document, and what the documents could not
+        // place, were the build's being left.
+        docFocus: null, docLost: {},
         // The comparison goes too: the panel stands where the tree stands and
         // the scene is the comparison's, so keeping it would change nothing the
         // reader sees. The picker's ticks (`cmp`) stay: they are the reader's
@@ -2130,6 +2173,8 @@ export default class HammerolaViewer extends React.Component {
           ? {
             ...this.state.composer,
             part: '', partId: null, key: null, p: null, n: null, meas: null,
+            doc: null, frame: null, sheet: null, area: null, items: null,
+            layer: null, quote: null, designator: null, point: null, normal: null,
           }
           : null,
         // The toast that `clearTimeout(this._tt)` above disarmed.
@@ -3183,9 +3228,10 @@ export default class HammerolaViewer extends React.Component {
     // Where the queue hangs on the build on screen. `anchorFor` uses the stored
     // coordinate only on the build it was taken on; on others it follows the
     // catalogue key to the row drawing the part, and `partPoint` asks the
-    // viewport where that row is now. The other three answers (in the catalogue
-    // but not this view, key names nothing, record predates the field) draw no
-    // pin: the rail says those in words rather than guessing a position.
+    // viewport where that row is now. The other answers (in the catalogue
+    // but not this view, key names nothing, record predates the field, a
+    // comment on a document) draw no pin: the rail says those in words rather
+    // than guessing a position.
     const el = this.el();
     const at = {
       published: (meta && meta.published) || null,
@@ -3315,7 +3361,7 @@ export default class HammerolaViewer extends React.Component {
     }));
   }
 
-  set(patch, extra) { this.setState(patch, () => this.sync(extra)); }
+  set(patch, extra) { this.setState(dropStaleFocus(patch), () => this.sync(extra)); }
 
   /** The document laid over the model has its file (`onReady` in
    *  DocumentView.jsx): the model `sync` held back goes to the viewport. Sent
@@ -3903,6 +3949,17 @@ export default class HammerolaViewer extends React.Component {
     });
   }
 
+  /** The open document's frame, as `frameBlob` gives the model's: what its
+   *  view told the page it can do (`docTools`), else null. */
+  docFrameBlob() {
+    const tools = this.state.docTools;
+    if (!tools) return Promise.resolve(null);
+    return Promise.resolve().then(() => tools.frame()).catch((error) => {
+      console.warn('frame', error);
+      return null;
+    });
+  }
+
   frameCamera() {
     const el = this.el();
     if (!el || typeof el.getCamera !== 'function') return null;
@@ -4478,7 +4535,8 @@ export default class HammerolaViewer extends React.Component {
     this.setState({ sending: true });
     try {
       // The hub's comment schema is closed — src/comments.py keeps `text`, `view`,
-      // `part`, `key`, `published`, `point`, `normal`, `frame` and `camera` and
+      // `part`, `key`, `published`, `point`, `normal`, `frame`, `camera` and a
+      // document's place (`doc`, `sheet`, `area`, `items`, `layer`, `quote`) and
       // DROPS everything else without saying so — so the measurement rides in the
       // text, where the agent will actually read it, rather than in a field
       // discarded on the way in.
@@ -4496,9 +4554,28 @@ export default class HammerolaViewer extends React.Component {
                    + '— `hammerola proposal` reads it');
       }
 
+      const body = extra.length ? `${text}\n\n${extra.join('\n')}` : text;
       const form = new FormData();
-      form.append('comment', JSON.stringify({
-        text: extra.length ? `${text}\n\n${extra.join('\n')}` : text,
+      // A draft on a document (`docArea`) hangs on its place there and on no
+      // view or camera of the model; the place's fields its kind does not
+      // have are undefined, and left out.
+      form.append('comment', JSON.stringify(c.doc ? {
+        text: body,
+        doc: c.doc,
+        frame: c.frame,
+        sheet: c.sheet,
+        area: c.area,
+        items: c.items,
+        layer: c.layer,
+        quote: c.quote,
+        part: c.designator || undefined,
+        point: c.point,
+        normal: c.normal,
+        published: meta.published || null,
+        view: null,
+        camera: null,
+      } : {
+        text: body,
         view: this.state.view,
         part: c.partId || null,
         // The anchor that outlives this build: `part` is a path in this
@@ -4534,7 +4611,9 @@ export default class HammerolaViewer extends React.Component {
                                    { maxSide: PHOTO_MAX_SIDE, quality: PHOTO_QUALITY });
         form.append('photo', photo, named('photo', photo));
       }
-      const frame = await this.frameBlob();
+      // The frame on screen: the document's own for a draft on a document,
+      // the model's otherwise.
+      const frame = await (c.doc ? this.docFrameBlob() : this.frameBlob());
       if (frame) {
         const shot = await shrink(frame,
                                   { maxSide: SHOT_MAX_SIDE, quality: SHOT_QUALITY });
@@ -5298,7 +5377,8 @@ export default class HammerolaViewer extends React.Component {
       revRows, downloadGroups, dlShown, threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
-      setState: this.setState.bind(this),
+      // Opening a document from the menu of views moves it without `set`.
+      setState: (patch, done) => this.setState(dropStaleFocus(patch), done),
       // THE STATE AS IT STANDS WHEN THE HANDLER RUNS, and not as it stood when
       // this object was built: both readers of it are inside a `setState`
       // callback, where the point is that the update has landed. See the token
@@ -5556,13 +5636,51 @@ export default class HammerolaViewer extends React.Component {
       },
       measClear: () => this.set({ measure: null }, { __clearMeasure: true }),
 
-      // Hidden, not unmounted, while a document covers the model: the draft is
-      // about the model and comes back with it, sentence and all.
-      composerStyle: 'position:absolute;right:16px;bottom:16px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:' + (s.composer && !viewer && !chrome.docOpen ? 'block' : 'none'),
+      // Shown over what the draft is about — the model, or the document it was
+      // drawn on (`docArea`) — and hidden, not unmounted, over anything else:
+      // the draft comes back with it, sentence and all. Over a document it
+      // stands above the bar's strip, which the bar's layer (18) keeps over it.
+      composerStyle: `position:absolute;right:16px;bottom:${chrome.docOpen ? 72 : 16}px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:`
+        + (s.composer && !viewer && (s.composer.doc ? !!chrome.docOpen && chrome.docOpen.file === s.composer.doc : !chrome.docOpen)
+          ? 'block' : 'none'),
+      // What a document over the model needs for comments (`COMMENTABLE`):
+      // whether the Comment tool is armed on it, the marks of the open
+      // comments on documents and of the draft, each with its place in the
+      // comment's own fields and lit (`active`) when it is the draft or the
+      // rail has it open, and the doors back. The draft's mark names no
+      // comment (`onMarker`).
+      docComment: {
+        on: s.tool === 'comment' && !viewer && !this.toolsOff(),
+        marks: [
+          ...s.feed.filter((r) => r.status !== 'resolved' && r.doc),
+          ...(s.composer && s.composer.doc ? [{ ...s.composer, part: s.composer.designator, id: DRAFT_MARK }] : []),
+        ].map(({ id, doc, sheet, area, part, point, normal, quote }) => ({
+          id, doc, sheet: sheet || null, area: area || null, part: part || null, point: point || null,
+          normal: normal || null, quote: quote || null, active: id === DRAFT_MARK || id === s.activePin,
+        })),
+        onArea: (doc, place) => this.docArea(doc, place),
+        onMarker: (id) => {
+          if (id !== DRAFT_MARK) this.set({ activePin: id, rail: true });
+        },
+        focus: s.docFocus || null,
+        onFocused: () => this.setState({ docFocus: null }),
+        // Set by assignment: a computed key in this file reads as a handler's
+        // event (tests/test_ui_source.py).
+        onLost: (file, ids) => this.setState((now) => {
+          const docLost = { ...now.docLost };
+          docLost[file] = ids;
+          return { docLost };
+        }),
+      },
       nextLabel: String(s.feed.length + 1),
       composerPart: s.composer ? s.composer.part : '',
       composerText: s.composer ? s.composer.text : '',
       compType: (e) => this.setState({ composer: { ...s.composer, text: e.target.value } }),
+      // The frame rides along wherever `sendComment` can take one: the model's
+      // always, a document's only when its view can draw a frame (`docTools`);
+      // a markdown page has none.
+      compFrameChipStyle: 'display:' + (s.composer && s.composer.doc && !s.docTools ? 'none' : 'flex')
+        + `;align-items:center;gap:5px;padding:4px 8px;background:var(--sunken-bg);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-soft)`,
       compMeasChipStyle: 'display:' + (s.composer && s.composer.meas ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMeasText: (s.composer && s.composer.meas) || '',
       compMeasRemove: stop(() => this.setState({ composer: { ...s.composer, meas: null } })),
@@ -6172,7 +6290,7 @@ export default class HammerolaViewer extends React.Component {
             {v.docOpen && (
               <div style={css(v.docLayerStyle)}>
                 <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
-                              base={PAGE.base} onOpen={v.onDocOpen}
+                              base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
                               onSheet={(sheet, push) => this.writeSheet(sheet, push)}
                               onTools={(tools) => this.setState({ docTools: tools })}
                               onReady={() => this.docReady()} />
@@ -6313,7 +6431,7 @@ export default class HammerolaViewer extends React.Component {
                 style={css(`width:100%;box-sizing:border-box;border:none;outline:none;resize:none;padding:10px 12px;font:400 12.5px/1.5 ${SANS};color:var(--text);height:64px;background:transparent`)}
               />
               <div style={css('display:flex;align-items:center;gap:6px;padding:0 12px 10px;flex-wrap:wrap')}>
-                <span style={css(`display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--sunken-bg);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-soft)`)}>
+                <span style={css(v.compFrameChipStyle)}>
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                   camera frame &mdash; attached automatically
                 </span>

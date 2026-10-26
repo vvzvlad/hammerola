@@ -32,6 +32,10 @@ the key to find the part again, and says so in the feed when the key names
 nothing in the current catalogue — the entity is gone and the comment is
 orphaned. Older records may have no `key`.
 
+A comment left on a DOCUMENT of the build names it by its path, `doc`, and
+hangs on a place in it: a sheet and an area of a schematic, an area of a board,
+a quoted passage of markdown (`frame` says which). It has no `key`.
+
 The text of a comment IS rendered: the build page shows the project's queue in
 its rail. It reaches the DOM as text and never as markup; this module keeps the
 stored text plain (`_body_text` refuses the control characters).
@@ -73,9 +77,14 @@ IMAGE_MAGIC = (
 SNIFF_BYTES = 16
 
 # Ceiling on the parts of a comment that are not text or an image: the coordinate,
-# its normal and the camera. Fixed shapes, so this is only here to keep a
-# hand-written request from asking for a hundred-element "quaternion".
+# its normal, the camera and a document's area. Fixed shapes, so this is only here
+# to keep a hand-written request from asking for a hundred-element "quaternion".
 MAX_VECTOR_LEN = 4
+
+# What `point`, `normal` and `area` are in (SPEC 7A.1): "part", the frame of the
+# solid `part` names; "sheet" and "board", the millimetres of a schematic's sheet
+# or of a board; "text", a markdown document, where the anchor is `quote`.
+FRAMES = ("part", "sheet", "board", "text")
 
 
 # -- attachments ------------------------------------------------------------
@@ -176,12 +185,55 @@ def _camera(value) -> dict | None:
     return camera
 
 
+def _area(value) -> list:
+    """`[x, y, w, h]` in the document's millimetres; a width or height < 0 is
+    no area."""
+    area = _numbers(value, "area", 4)
+    if area[2] < 0 or area[3] < 0:
+        raise CommentError(422, "`area` must have a width and height >= 0")
+    return area
+
+
+def _items(value) -> list:
+    """What the area holds — designators and net names, one line each."""
+    if not isinstance(value, list):
+        raise CommentError(422, "`items` must be a list of strings")
+    return [one_line(item, "items", CommentError) for item in value]
+
+
+def _quote(value, max_text_chars: int) -> dict:
+    """A passage of a markdown document: `text`, and the characters `before`
+    and `after` it, which may be empty. All three are kept as sent — the page
+    finds the passage again by its text between its two sides, which a trimmed
+    or re-joined `text` would no longer sit between — and only checked: as a
+    body is for its characters, and `text` for not being blank and for the
+    comment's own ceiling."""
+    if not isinstance(value, dict):
+        raise CommentError(422, "`quote` must be an object")
+    quote = {}
+    for field in ("text", "before", "after"):
+        side = value.get(field)
+        if not isinstance(side, str):
+            raise CommentError(422, f"`quote.{field}` must be a string")
+        check_body_printable(side, CommentError, f"quote.{field}")
+        quote[field] = side
+    if not quote["text"].strip():
+        raise CommentError(422, "`quote.text` is empty")
+    if len(quote["text"]) > max_text_chars:
+        raise CommentError(
+            413, f"`quote.text` is longer than {max_text_chars} characters")
+    return quote
+
+
 def validate_payload(raw, max_text_chars: int) -> dict:
     """The `comment` field of the form, parsed and checked. Never trusted twice."""
     if not isinstance(raw, dict):
         raise CommentError(422, "the comment must be a JSON object")
     payload = {"text": _body_text(raw.get("text"), max_text_chars)}
-    for field in ("view", "part", "key", "published"):
+    # `doc` is the path of a document of the build the comment was left on
+    # (`kicad/board.kicad_sch`), `sheet` the file of a schematic's sheet and
+    # `layer` a board's layer; none of them for a comment on the model.
+    for field in ("view", "part", "key", "published", "doc", "sheet", "layer"):
         value = raw.get(field)
         payload[field] = (None if value is None
                           else one_line(value, field, CommentError))
@@ -191,13 +243,18 @@ def validate_payload(raw, max_text_chars: int) -> dict:
     # arrow on. Checked exactly like the point it belongs to.
     normal = raw.get("normal")
     payload["normal"] = None if normal is None else _numbers(normal, "normal", 3)
-    # "part": the point and the normal are in the frame of the solid `part`
-    # names, which every view of the build shares. Absent: a world coordinate
-    # of the view the comment was left in.
-    if "frame" in raw and raw["frame"] != "part":
-        raise CommentError(422, '`frame` must be "part" or absent')
+    # Absent: a world coordinate of the view the comment was left in.
+    if "frame" in raw and raw["frame"] not in FRAMES:
+        raise CommentError(
+            422, f"`frame` must be one of {', '.join(FRAMES)} or absent")
     payload["frame"] = raw.get("frame")
     payload["camera"] = _camera(raw.get("camera"))
+    area = raw.get("area")
+    payload["area"] = None if area is None else _area(area)
+    items = raw.get("items")
+    payload["items"] = None if items is None else _items(items)
+    quote = raw.get("quote")
+    payload["quote"] = None if quote is None else _quote(quote, max_text_chars)
     return payload
 
 
@@ -319,6 +376,12 @@ class CommentStore:
             "normal": payload["normal"],
             "frame": payload["frame"],
             "camera": payload["camera"],
+            "doc": payload["doc"],
+            "sheet": payload["sheet"],
+            "area": payload["area"],
+            "items": payload["items"],
+            "layer": payload["layer"],
+            "quote": payload["quote"],
             "text": payload["text"],
             PHOTO_KIND: None,
             SHOT_KIND: None,

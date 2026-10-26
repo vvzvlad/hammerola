@@ -139,6 +139,25 @@
 // selection and its camera, and closing the window is the way back. One window
 // at a time; it goes on its `×`, a click beside it and Escape — which then
 // closes the window only — and when its view leaves the screen.
+//
+// COMMENTS (`comment`, the model's page only; DocShell.jsx hands none). With
+// the page's Comment tool armed (`on`) the drawn view on screen is in the
+// viewer's comment mode, where a drag draws a rubber band; the area drawn goes
+// to the page (`onArea`) as the place of a comment — its sheet's file on the
+// schematic, `[x, y, w, h]` in the document's millimetres, and what is inside
+// it as the element reads it (`itemsInArea`). The open comments of each drawn
+// member and the draft (`marks`) stand on it as the viewer's markers, each with
+// its area dashed, on the schematic those of the sheet on screen only
+// (`commentMarks`); a click on one names its comment to the page
+// (`onMarker`). A place the page asks to be shown (`focus`, a comment's row in
+// its rail) is put on screen once the member it is on is: the schematic goes
+// to its sheet — as the reader's own step of history where the page took none
+// for it (`step`), else rewriting the entry the page wrote — and the view is
+// moved to the area's centre (`zoomToLocation`), after the sheet has loaded;
+// the page is then told (`onFocused`). The 3D model takes the same, its own
+// way (`comment3D`, BoardView3D.jsx): a click on a part is the place, the
+// marks are arrows on parts, the focus frames a part, and the ids of comments
+// on parts the model does not have go back to the page (`onLost`).
 
 import React from 'react';
 
@@ -146,6 +165,7 @@ import { parse, subscribe, unsubscribe } from './address.js';
 import BoardView3D from './BoardView3D.jsx';
 import DocumentView from './DocumentView.jsx';
 import { netIndex } from './kicadnets.js';
+import { sheetName } from './kicadpages.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
@@ -170,6 +190,33 @@ export const SELECTION_EVENT = 'ecad-viewer:selection';
  *  inside `switchPage` and every other change of the schematic's page, and
  *  for other changes of its project too, so the page itself is compared. */
 export const PAGE_EVENT = 'ecad-viewer:view-state-change';
+
+/** The events of the viewer's comment mode and markers: an area drawn
+ *  (`{ context, bounds, page }`), a marker clicked (`{ commentId }`), and a
+ *  sheet of the schematic loaded and drawn. */
+export const AREA_EVENT = 'ecad-viewer:comment-area';
+export const MARKER_EVENT = 'ecad-viewer:comment-overlay-click';
+export const SHEET_LOADED_EVENT = 'kicanvas:sheet:loaded';
+
+/** The id the draft's marker stands under among `marks`. */
+export const DRAFT_MARK = 'draft';
+
+/**
+ * The markers of `marks` (`{ id, doc, sheet, area }`) on the document `file`,
+ * as the element's `setCommentOverlays` takes them: one at the centre of each
+ * area, the area dashed around it. `sheet`, where given, keeps those on that
+ * sheet's file alone: the viewer draws every marker it holds on whichever
+ * sheet is on screen.
+ */
+export function commentMarks(marks, file, sheet) {
+  return (marks || []).filter((one) => one.doc === file && Array.isArray(one.area)
+    && (sheet === undefined || one.sheet === sheet))
+    .map(({ id, sheet: page, area: [x, y, w, h] }) => ({
+      id,
+      anchor: { kind: 'world', x: x + w / 2, y: y + h / 2, ...(page ? { page } : {}) },
+      areaBounds: [x, y, w, h],
+    }));
+}
 
 /** What `s=` says for the sheet `projectPath` among the schematic's `pages`
  *  (`getSchematicPages`): the sheet's `name` where no other sheet has it,
@@ -314,9 +361,6 @@ function netSheets(nets, board, own) {
   }
   return [...first.values()];
 }
-
-/** A sheet as a menu names it: its file's name, without the directory and `.kicad_sch`. */
-const sheetName = (path) => path.slice(path.lastIndexOf('/') + 1).replace(/\.kicad_sch$/, '');
 
 /**
  * The right-click menu for what view `from` reported selected (`detail`; the
@@ -521,6 +565,13 @@ export default class KicadView extends React.Component {
     // the reader's own item of the menu moves the schematic on screen (`choose`).
     this.probing = false;
     this.choosing = false;
+    // Comments: what each element was last told — its comment mode and its
+    // markers, by view — the page's `focus` last put on screen, and the
+    // centre to move to once the sheet a focus switched to has loaded.
+    this.commenting = {};
+    this.overlaid = {};
+    this.focused = null;
+    this.zoomTo = null;
     this.elements = {};
     this.shell = null;
     this.menuNode = null;
@@ -564,7 +615,7 @@ export default class KicadView extends React.Component {
   }
 
   /** The ref callback of one view's element: holds it and listens to it, the
-   *  schematic's to its page changes too (`paged`). */
+   *  schematic's to its page changes and loads too (`paged`, `sheetLoaded`). */
   attach(context) {
     const listeners = {
       [SELECTION_EVENT]: (event) => this.picked(context, event.detail),
@@ -572,7 +623,9 @@ export default class KicadView extends React.Component {
         this.pressed = event.button === 2 ? { context, x: event.clientX, y: event.clientY } : null;
       },
       pointerup: (event) => this.release(context, event),
-      ...(context === SCH ? { [PAGE_EVENT]: () => this.paged() } : {}),
+      [AREA_EVENT]: (event) => this.area(context, event.detail),
+      [MARKER_EVENT]: (event) => this.marker(event.detail),
+      ...(context === SCH ? { [PAGE_EVENT]: () => this.paged(), [SHEET_LOADED_EVENT]: () => this.sheetLoaded() } : {}),
     };
     return (element) => {
       const old = this.elements[context];
@@ -683,7 +736,11 @@ export default class KicadView extends React.Component {
    *  selection it made, and so does the reader's `… · <sheet>` item over the
    *  schematic on screen (`choose`): the viewer focuses its target once the
    *  sheet is open, and a selection put out meanwhile cancels that. The
-   *  highlighted nets stay. */
+   *  highlighted nets stay.
+   *
+   *  Every change of page hands the element the new sheet's comment markers
+   *  at once (`overlay`): the element may still be loading that sheet, and
+   *  draws them with it once it is drawn. */
   paged() {
     const now = this.activePage();
     if (!now || now === this.page) return;
@@ -693,6 +750,7 @@ export default class KicadView extends React.Component {
     if (!this.probing && !this.choosing && typeof element.clearSelection === 'function') {
       element.clearSelection({ keepHighlights: true });
     }
+    this.overlay();
     if (now === this.pageFromHistory) {
       this.pageFromHistory = null;
       return;
@@ -892,6 +950,113 @@ export default class KicadView extends React.Component {
     if (this.props.onOpen) this.props.onOpen(item.id);
   }
 
+  /** The viewer's comment mode on the drawn view on screen while the page's
+   *  tool is armed, off on the others, each told only of a change. */
+  armComment() {
+    const on = Boolean(this.props.comment && this.props.comment.on) && this.state.ready && !this.state.error;
+    for (const context of drawnViews(this.members())) {
+      const element = this.elements[context];
+      const want = on && context === this.side();
+      if (!element || typeof element.setCommentMode !== 'function' || this.commenting[context] === want) continue;
+      this.commenting[context] = want;
+      element.setCommentMode(want);
+    }
+  }
+
+  /** Each drawn member's markers (`commentMarks`), the schematic's for the
+   *  sheet on screen, each element told only of a change. Not before the
+   *  viewers have drawn: a viewer without its layers drops the markers it is
+   *  handed. */
+  overlay() {
+    if (!this.state.ready || this.state.error) return;
+    const marks = (this.props.comment && this.props.comment.marks) || [];
+    const members = this.members();
+    for (const context of drawnViews(members)) {
+      const element = this.elements[context];
+      if (!element || typeof element.setCommentOverlays !== 'function') continue;
+      const page = context === SCH && element.getActiveSchematicPage();
+      const comments = commentMarks(marks, members[context].file,
+        context === SCH ? (page && page.filename) || '' : undefined);
+      const key = JSON.stringify(comments);
+      if (this.overlaid[context] === key) continue;
+      this.overlaid[context] = key;
+      element.setCommentOverlays({ context, comments });
+    }
+  }
+
+  /** An area drawn on view `context` in comment mode, handed to the page with
+   *  what is inside it. */
+  area(context, detail) {
+    const { comment } = this.props;
+    const doc = this.members()[context];
+    if (!comment || !doc || !detail || !Array.isArray(detail.bounds)) return;
+    const element = this.elements[context];
+    comment.onArea(doc, {
+      frame: context === SCH ? 'sheet' : 'board',
+      sheet: context === SCH ? detail.page || null : null,
+      area: detail.bounds,
+      items: typeof element.itemsInArea === 'function' ? element.itemsInArea(context, detail.bounds) : [],
+    });
+  }
+
+  /** A marker clicked: its comment named to the page; the draft's is no
+   *  comment yet. */
+  marker(detail) {
+    const { comment } = this.props;
+    if (comment && detail && detail.commentId && detail.commentId !== DRAFT_MARK) comment.onMarker(detail.commentId);
+  }
+
+  /** What the 3D model needs for comments (BoardView3D.jsx): the tool armed
+   *  while it is on screen, the marks and the focus on its file, and the
+   *  doors back, the draft's arrow naming nothing (`marker`) and never lost. */
+  comment3D() {
+    const { comment } = this.props;
+    const model = this.members()[BOARD3D];
+    if (!comment || !model) return null;
+    return {
+      on: Boolean(comment.on) && this.side() === BOARD3D,
+      marks: (comment.marks || []).filter((one) => one.doc === model.file && one.part),
+      focus: comment.focus && comment.focus.doc === model.file ? comment.focus : null,
+      onPoint: (place) => comment.onArea(model, { frame: 'part', ...place }),
+      onMarker: (id) => this.marker({ commentId: id }),
+      onFocused: comment.onFocused,
+      onLost: (ids) => comment.onLost(model.file, ids.filter((id) => id !== DRAFT_MARK)),
+    };
+  }
+
+  /** The area the page asks to be shown (`focus`), once the drawn member it
+   *  is on is on screen and drawn, the schematic on the sheet it opened on. */
+  followFocus() {
+    const { comment } = this.props;
+    const focus = comment && comment.focus;
+    const side = this.side();
+    const member = this.members()[side];
+    if (!focus || focus === this.focused || !this.state.ready || !member || member.file !== focus.doc
+      || !Array.isArray(focus.area) || (side === SCH && !this.page)) return;
+    this.focused = focus;
+    const [x, y, w, h] = focus.area;
+    this.zoomTo = { x: x + w / 2, y: y + h / 2 };
+    const element = this.elements[side];
+    const target = side === SCH && this.pages().find((one) => one.filename === focus.sheet);
+    const run = () => element.switchPage(target.projectPath);
+    if (!target || target.projectPath === this.page || !(focus.step ? run() : this.pageProbe(run))) this.sheetLoaded();
+    comment.onFocused();
+  }
+
+  /** A sheet of the schematic is loaded and drawn: the view goes to the
+   *  centre a focus is waiting to show. Also the end of a focus that switched
+   *  no sheet. It waits a task: the viewer fits the sheet to the screen once
+   *  its load returns, after this event. */
+  sheetLoaded() {
+    const at = this.zoomTo;
+    this.zoomTo = null;
+    if (!at) return;
+    setTimeout(() => {
+      const element = this.elements[this.side()];
+      if (!this._gone && element && typeof element.zoomToLocation === 'function') element.zoomToLocation(at.x, at.y);
+    }, 0);
+  }
+
   componentDidMount() {
     this.listen(true);
     this.report();
@@ -944,12 +1109,13 @@ export default class KicadView extends React.Component {
         // The schematic goes to the sheet the address names, from the page it
         // opened on. A part selected in the 3D view while the files
         // came in is selected in the viewers now: they had nothing to select
-        // it in then.
+        // it in then. A place the page asked to show comes after both.
         if (!this._gone) {
           this.setState({ ready: true }, () => {
             this.page = this.activePage();
             this.followPage(true);
             this.select(BOARD3D, this.state.selected);
+            this.followFocus();
           });
         }
       }, (error) => {
@@ -960,6 +1126,8 @@ export default class KicadView extends React.Component {
   componentDidUpdate(before) {
     this.activate();
     this.report();
+    this.armComment();
+    this.overlay();
     // The schematic on screen under an address naming it, the address changed
     // since the one this component last saw: its last update's, its own
     // (`tellSheet`), and Back's and Forward's, which `onPop` follows —
@@ -1003,6 +1171,9 @@ export default class KicadView extends React.Component {
         this.pageProbe(() => target.requestCrossProbe(probe.request));
       }
     }
+    // After the address has taken up the sheet on screen, above: a focus's
+    // own switch of sheet rewrites what it wrote.
+    this.followFocus();
   }
 
   componentWillUnmount() {
@@ -1039,7 +1210,7 @@ export default class KicadView extends React.Component {
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
             <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={side === BOARD3D}
                          selected={selected} onSelect={this.onSelect3D} onMenu={this.onMenu3D}
-                         onTools={this.onTools3D} onFetched={this.onFetched3D} />
+                         onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
           </div>
         )}
         {note && <div style={css(NOTE)}>{note}</div>}

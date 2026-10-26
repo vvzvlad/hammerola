@@ -728,3 +728,58 @@ describe('the model under a document opened on arrival', () => {
     expect(seen).toEqual([null, 'open'])
   })
 })
+
+describe('a comment on a KiCad design', () => {
+  /** A stored comment on the amp sheet of the first design's schematic. */
+  const comment = {
+    id: 'c1', pid: 'proj1', commit: 'abc1234', view: null, part: null, key: null, point: null, camera: null,
+    text: 'too hot', status: 'open', created: '2026-08-27T18:20:00Z', resolved: null, note: null,
+    doc: 'hw/main.kicad_sch', frame: 'sheet', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], items: ['C1'],
+  }
+
+  it('has the Comment tool in service over a schematic and a board, and out of it over a datasheet', () => {
+    const takes = (doc) => css(component({ token: 'secret', meta: meta([...KICAD, DATASHEET]), doc })
+      .computed().commentBtnStyle).pointerEvents !== 'none'
+    expect([KICAD[0].id, KICAD[1].id, DATASHEET.id].map(takes)).toEqual([true, true, false])
+  })
+
+  it('opens the document of a row in the rail as a step of history and asks it to show the place, its sheet the reader\'s step where it was on screen', () => {
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    const c = component({ meta: meta(KICAD), feed: [comment] })
+    const push = vi.spyOn(window.history, 'pushState')
+    onTestFinished(() => push.mockRestore())
+    const open = () => c.computed().threads[0].onOpen({ stopPropagation() {} })
+    open()
+    expect([push.mock.calls.length, window.location.search, c.state.doc, c.state.activePin])
+      .toEqual([1, `?files=K&d=${KICAD[0].id}`, KICAD[0].id, 'c1'])
+    expect(c.state.docFocus).toEqual({ doc: 'hw/main.kicad_sch', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], step: false })
+    open()
+    expect([push.mock.calls.length, c.state.docFocus.step]).toEqual([1, true])
+  })
+
+  it('drops the place a row asked for at any other change of document, so a later opening of it is the reader\'s own', () => {
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    const onModel = { ...comment, id: 'c2', doc: null, frame: null, sheet: null, area: null, items: null }
+    const c = component({ meta: meta([MAIN, ...KICAD.slice(1)]), feed: [comment, onModel] })
+    const row = (i) => c.computed().threads[i].onOpen({ stopPropagation() {} })
+    const asked = () => [c.state.docFocus, shownDocs(c).map((el) => el.props.comment.focus)]
+    // Back before the schematic was ready to show the area
+    row(0)
+    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
+    c.followEntry()
+    expect([c.state.doc, ...asked()]).toEqual([null, null, []])
+    // then opened from the menu on another sheet: nothing moves it
+    const choose = (value) => c.computed().docRows[0].chooseSheet(value)
+    choose('hw/psu.kicad_sch:/r/b')
+    expect([c.state.doc, ...asked()]).toEqual([MAIN.id, null, [null]])
+    // a choice in the menu before the area was shown
+    row(0)
+    expect(c.state.docFocus).not.toBeNull()
+    choose('')
+    expect(asked()).toEqual([null, [null]])
+    // a row of a comment on the model
+    row(0)
+    row(1)
+    expect([c.state.doc, c.state.docFocus]).toEqual([null, null])
+  })
+})

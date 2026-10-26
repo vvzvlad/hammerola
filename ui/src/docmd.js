@@ -165,3 +165,95 @@ function elements(tokens, base, prefix, links) {
 export function markdownElements(text, base, links) {
   return elements(parser.parse(String(text || ''), {}), base, 'md', links || null);
 }
+
+// -- a comment's quote ---------------------------------------------------------
+//
+// A comment on a markdown document hangs on a passage of it as the page draws
+// it (SPEC 7A.1, `quote`): the text selected and up to `QUOTE_CONTEXT`
+// characters on either side. The text is the drawn one — every text node of
+// the article in order, a `<style>` left out — because that is what a
+// selection selects; the source's markdown is not on the page. Found again
+// by its text, and among several of them by the one whose sides agree most
+// with what was around it.
+
+/** How many characters of the drawn text on either side a quote carries. */
+export const QUOTE_CONTEXT = 30;
+
+/** The drawn text under `root`, `{ text, nodes }`: each text node with the
+ *  offset it starts at, in document order. */
+export function textIndex(root) {
+  const nodes = [];
+  let text = '';
+  const walker = root.ownerDocument.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.parentNode && node.parentNode.localName === 'style') continue;
+    nodes.push({ node, start: text.length });
+    text += node.data;
+  }
+  return { text, nodes };
+}
+
+/** The offset in `index` of the boundary point (`container`, `offset`) of a
+ *  selection: within a text node, or before the first text node at or after
+ *  a point between elements. */
+export function offsetOf(index, container, offset) {
+  const at = index.nodes.find(({ node }) => node === container);
+  if (at) return at.start + offset;
+  const point = container.ownerDocument.createRange();
+  point.setStart(container, offset);
+  const next = index.nodes.find(({ node }) => point.comparePoint(node, 0) >= 0);
+  return next ? next.start : index.text.length;
+}
+
+/** The DOM range of `[start, end)` in `index`. The start is in the node that
+ *  holds its first character and the end in the node that holds its last, so
+ *  a passage starting a node does not begin at the end of the node before it. */
+export function rangeOf(index, start, end) {
+  const range = index.nodes[0].node.ownerDocument.createRange();
+  const at = (offset, after) => {
+    const one = index.nodes.find(({ node, start: from }) => (after
+      ? offset > from && offset <= from + node.data.length
+      : offset >= from && offset < from + node.data.length));
+    return [one.node, offset - one.start];
+  };
+  range.setStart(...at(start, false));
+  range.setEnd(...at(end, true));
+  return range;
+}
+
+/** The quote of `[start, end)` of `text`, `{ text, before, after }`, its
+ *  blanks at either end moved out into the sides, so that the highlight and
+ *  the rail's line do not start or end on a blank (the hub keeps all three as
+ *  sent); null for nothing but blanks, which the hub refuses as empty. */
+export function quoteOf(text, start, end) {
+  let from = start;
+  let to = end;
+  while (from < to && /\s/.test(text[from])) from += 1;
+  while (to > from && /\s/.test(text[to - 1])) to -= 1;
+  if (from === to) return null;
+  return {
+    text: text.slice(from, to),
+    before: text.slice(Math.max(0, from - QUOTE_CONTEXT), from),
+    after: text.slice(to, to + QUOTE_CONTEXT),
+  };
+}
+
+/** `[start, end)` of `quote` in `text`, or null where its text is nowhere:
+ *  of the places it is, the one whose characters before and after agree with
+ *  the quote's sides for longest, the first of equals. */
+export function findQuote(text, quote) {
+  const agree = (a, b, backward) => {
+    let n = 0;
+    while (n < a.length && n < b.length
+      && (backward ? a[a.length - 1 - n] === b[b.length - 1 - n] : a[n] === b[n])) n += 1;
+    return n;
+  };
+  let best = null;
+  for (let at = text.indexOf(quote.text); at >= 0 && quote.text; at = text.indexOf(quote.text, at + 1)) {
+    const end = at + quote.text.length;
+    const score = agree(text.slice(Math.max(0, at - QUOTE_CONTEXT), at), quote.before || '', true)
+      + agree(text.slice(end, end + QUOTE_CONTEXT), quote.after || '', false);
+    if (!best || score > best.score) best = { at, end, score };
+  }
+  return best && [best.at, best.end];
+}

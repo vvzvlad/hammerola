@@ -107,6 +107,49 @@ export function partOf(object, root) {
  *  nearest thing decides, so the board in front of a part hides it. */
 export const pickedPart = (hits, root) => (hits.length ? partOf(hits[0].object, root) : null);
 
+/** Millimetres in a unit of the model: glTF's unit is the metre, and a
+ *  comment's point is in millimetres, as the model page's are. */
+export const MM_PER_UNIT = 1000;
+
+/**
+ * Where a comment hangs on the part a raycaster's `hit` is on, in that part's
+ * own frame (SPEC 7A.1, `frame: "part"`): `{ part, point, normal }`, or null
+ * for a hit on a layer of the board. The node is the part's top-level node
+ * the hit is under — its transform is the footprint's placement, which
+ * `mergeByMaterial` leaves alone — and the point is taken out of the world
+ * through the inverse of its world matrix at the click, in millimetres
+ * (`MM_PER_UNIT`). The normal is the hit face's, in the world through its
+ * mesh's normal matrix, turned toward the camera along whose ray `toward` the
+ * click looked, and taken into the part's frame by the inverse's normal
+ * matrix: a rotation, a scale on the way being divided out, not applied.
+ */
+export function partPlace(THREE, hit, root, toward) {
+  let node = hit.object;
+  while (node && node.parent !== root) node = node.parent;
+  const part = node ? designatorOf(node) : null;
+  if (!part) return null;
+  node.updateWorldMatrix(true, false);
+  const inverse = node.matrixWorld.clone().invert();
+  let normal = null;
+  if (hit.face) {
+    const world = hit.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld));
+    if (world.dot(toward) > 0) world.negate();
+    normal = world.applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(inverse)).toArray();
+  }
+  return { part, point: hit.point.clone().applyMatrix4(inverse).multiplyScalar(MM_PER_UNIT).toArray(), normal };
+}
+
+/** A point and a normal of part `node`'s own frame (`partPlace`) in the world
+ *  as it stands: `{ p, n }`, three vectors, `n` null where `normal` is. */
+export function fromPart(THREE, node, point, normal) {
+  node.updateWorldMatrix(true, false);
+  return {
+    p: new THREE.Vector3(...point).divideScalar(MM_PER_UNIT).applyMatrix4(node.matrixWorld),
+    n: normal ? new THREE.Vector3(...normal).applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(node.matrixWorld))
+      : null,
+  };
+}
+
 /**
  * Turn a node's meshes into one mesh per material, under the node itself.
  *

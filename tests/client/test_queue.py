@@ -19,7 +19,7 @@ from modeldir import make_model
 
 from hammerola import queue, sources
 from hammerola.cli import main
-from src import app
+from src import app, comments
 
 
 @pytest.fixture
@@ -81,6 +81,43 @@ def test_a_point_in_the_parts_frame_says_so(hub, model, capsys):
     assert run(model, "comments") == 0
     assert ("at 1.0 2.0 3.5 (part coords)  facing 0.00 -1.00 0.00"
             in capsys.readouterr().out)
+
+
+ON_SHEET = {"doc": "kicad/board.kicad_sch", "frame": "sheet",
+            "sheet": "kicad/amp.kicad_sch", "area": [10, 20.5, 30, 4],
+            "items": ["C502", "OUT_C", "R501"]}
+
+
+@pytest.mark.parametrize("place, line", [
+    (ON_SHEET,
+     "build dev  doc kicad/board.kicad_sch  sheet kicad/amp.kicad_sch  "
+     "area 10.0 20.5 30.0 4.0 mm  near C502, OUT_C, R501"),
+    ({**ON_SHEET, "doc": "kicad/board.kicad_pcb", "frame": "board",
+      "sheet": None, "layer": "F.Cu"},
+     "build dev  doc kicad/board.kicad_pcb  layer F.Cu  "
+     "area 10.0 20.5 30.0 4.0 mm  near C502, OUT_C, R501"),
+    ({"doc": "notes/note.md", "frame": "text",
+      "quote": {"text": "the gap", "before": "so ", "after": "\nis 2"}},
+     'build dev  doc notes/note.md  quote "so [the gap]\\nis 2"'),
+    ({"doc": "kicad/board.glb", "frame": "part", "part": "R501",
+      "normal": [0.0, 0.0, 1.0]},
+     "build dev  doc kicad/board.glb  part R501  view assembled  "
+     "at 1.0 2.0 3.5 (part coords)  facing 0.00 0.00 1.00"),
+])
+def test_the_place_in_a_document_is_printed(hub, model, capsys, place, line):
+    """The document a comment was left on, then the place in it by the kind
+    of anchor; a part's point in a document reads as on the model."""
+    leave_comment(hub, model, **place)
+    capsys.readouterr()
+
+    assert run(model, "comments") == 0
+    assert f"\n  {line}\n" in capsys.readouterr().out
+
+
+def test_the_client_prints_every_document_frame_the_hub_takes():
+    """`DOCUMENT_FRAMES` is the hub's `FRAMES` but the part's, whose place is a
+    point and prints as on the model."""
+    assert set(queue.DOCUMENT_FRAMES) == set(comments.FRAMES) - {"part"}
 
 
 def test_several_comments_are_all_listed(hub, model, capsys):

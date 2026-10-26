@@ -19,7 +19,7 @@
  * come from ui/src/panelstyle.js.
  */
 import { format, fresh, parse, viewParam } from './address.js';
-import { docUrl, docViewKey } from './DocumentView.jsx';
+import { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
 import {
   PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -59,7 +59,9 @@ export function chromeView(s, props, deps) {
 
   const setTool = (t) => () => {
     set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, viewsOpen: false, menu: null });
-    if (t === 'comment' && s.tool !== 'comment') toast('Click a spot on the model to pin the task');
+    if (t === 'comment' && s.tool !== 'comment') {
+      toast(docCommentable ? COMMENTABLE.get(docOpen.type) : 'Click a spot on the model to pin the task');
+    }
     if (t === 'measure' && s.tool !== 'measure') toast('Click a part for its size, or two for the gap between them');
   };
 
@@ -91,6 +93,9 @@ export function chromeView(s, props, deps) {
   // that does not list `s.doc` shows its model.
   const documents = (meta && Array.isArray(meta.documents)) ? meta.documents : [];
   const docOpen = documents.find((d) => d.id === s.doc) || null;
+  // A document over the model that takes a comment (`COMMENTABLE`): a place
+  // taken on it is the comment's place, which arming the tool says how to take.
+  const docCommentable = !!docOpen && COMMENTABLE.has(docOpen.type);
   // Opening a document: what its row does, what `Show in …` of a KiCad
   // design's right-click menu does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
@@ -553,11 +558,13 @@ export function chromeView(s, props, deps) {
     // A document over the model takes none of them away: the bar is the same
     // on every page and over every view (`toolBar` in viewlist.jsx). The four
     // about the model — Measure, Comment, Add primitive, Settings — are out of
-    // service under it, Fit and Frame are too unless its view can do them. The
+    // service under it, Comment except over a document that takes a comment
+    // (`docCommentable`), Fit and Frame unless its view can do them. The
     // document's Download and Copy link (`docHref`) stay on a narrow window.
     showTools: !narrow,
     // Both are out of service while the scene is a comparison's, and under a
-    // document, which covers the model. That differs from `viewer`: that one
+    // document, which covers the model — Comment not under one that takes a
+    // comment, whose own drawing it pins to. That differs from `viewer`: that one
     // is about who the reader is, this about what is under the cursor.
     // `toolsOff()` documents why it is not `s.compare`. The buttons are the
     // visible half; the handlers stop a tool armed before the panel opened.
@@ -568,7 +575,7 @@ export function chromeView(s, props, deps) {
     tMeasure: setTool('measure'),
     measureBtnStyle: btn(s.tool === 'measure', false, toolsOff() || !!docOpen),
     tComment: setTool('comment'),
-    commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff() || !!docOpen),
+    commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff() || (!!docOpen && !docCommentable)),
     // Not one of `s.tool`: the two buttons above arm a canvas gesture, this
     // one drops a menu of primitives and arms nothing. The bodies it adds can be
     // dragged with the Move tool (armed from any row menu), since a staged body
