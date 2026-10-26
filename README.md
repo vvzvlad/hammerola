@@ -4,27 +4,24 @@
 
 A build system and a viewer for parts that an agent models in code. The agent
 writes a `model.py` in CadQuery and pushes the source; the hub computes the
-geometry and shows the part in a browser — turn it, hide what is in the way, cut
-a section through it, measure it, download it as STEP/STL/3MF. The person looks,
+geometry and shows the part in a browser. The person turns it, hides what is in
+the way, cuts a section through it, measures it, downloads it as STEP/STL/3MF,
 clicks a spot on the model and leaves a note there; the agent reads the notes
 with `hammerola comments`, fixes the code and pushes the next revision. No CAD
 application is needed anywhere: the model is Python, and the kernel that
 computes it is in the hub.
 
-It came out of teaching an agent to model. What such an agent hands back is an
-STL, and an STL is an unpleasant thing to review — Fusion is pleasant, with each
-part in its own colour, a section through anything and a part you can drag
-aside. Telling the agent in words what to fix is worse still; what you want is
-to point at a place on the model. So a comment is taken at the point clicked,
-with the camera angle it was written from and, when there is one, a photo of
-the printed part. The other reason is sharing: a revision's URL shows the same
-geometry a year later, so showing someone a part is a link, and so is "make it
-like this" sent with a board. 3D models came first; KiCad projects, PDFs and
-Markdown were added after, and what goes with the part publishes on the same
-page — a schematic and board with the board's Gerbers, a cut list, a PDF, the
-DXF a glass shop cuts from, or a file of any other kind. A project with no model
-at all publishes those on their own. The name is from "pianola" — a mechanism
-that plays itself.
+The viewer is there because an STL an agent hands back is a poor thing to
+review, and words are a poor way to say what to fix. The page gives what a CAD
+gives — each part in its own colour, a section through anything, parts you can
+drag aside — and a place to point at: the comment is pinned to that point, with
+the camera angle it was written from and, when there is one, a photo of the
+printed part. A revision's URL never changes and never expires, so a link is
+how a part is shown to someone or sent to a workshop. What goes with the part
+publishes on the same page — a KiCad schematic and board with the board's
+Gerbers, a PDF, a drawing, a Markdown note, or a file of any other kind — and a
+project with no model at all publishes those on their own. The name is from
+"pianola" — a mechanism that plays itself.
 
 <!-- Screenshots live in docs/images/ rather than in static/. static/ is the
      viewer payload that ships INSIDE the image, and its `hammerola*` names are
