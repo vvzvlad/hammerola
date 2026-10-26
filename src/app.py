@@ -64,6 +64,12 @@ Routing (SPEC 3, 7.4):
     POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
     DELETE /api/v1/projects/<pid>             remove it entirely       EDIT_TOKEN
 
+    GET  /git/<pid>.git/info/refs?service=<service>
+                                              the refs, for one of the
+                                              two services below       EDIT_TOKEN
+    POST /git/<pid>.git/git-upload-pack       clone and fetch          EDIT_TOKEN
+    POST /git/<pid>.git/git-receive-pack      push, refused for now    EDIT_TOKEN
+
     POST /api/v1/comments/<pid>/<commit>      leave a comment          EDIT_TOKEN
     GET  /api/v1/comments                     the queue                EDIT_TOKEN
     GET  /api/v1/comments/<id>                one comment              EDIT_TOKEN
@@ -103,7 +109,8 @@ Writing a comment needs the token (SPEC 8A.1): the hub executes the code it is
 sent, and an anonymous comment could become an agent's task to edit model.py.
 
 The code of a revision opens to no key: it is behind EDIT_TOKEN and lives in
-a tree the file server cannot reach.
+a tree the file server cannot reach. The same holds for each project's git
+repository, which `git http-backend` serves under `/git/` (`src/githttp.py`).
 
 The two project routes are the only ones that unmake something (SPEC 3.1):
 `title` renames and nothing else, since no route ever changes an id; `DELETE`
@@ -128,6 +135,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -139,7 +147,7 @@ from loguru import logger
 from hammerola import buildnames
 # `proposals` as a module: it exports a `validate_payload` of its own, and so
 # does `src.comments`.
-from src import onboarding, proposals, render
+from src import githttp, onboarding, proposals, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
 from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR,
@@ -496,6 +504,11 @@ GET_ROUTES = (
     ((("api", "v1", "sources"), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_sources(rest, with_body)),
+    # HEAD reaches this entry too, and is none of the three git requests.
+    (((githttp.ROUTE,), None),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._serve_git("GET" if with_body else "HEAD", rest, query,
+                            with_body)),
 )
 
 # One entry per route, tried in order. Publish is not in it: the body of
@@ -510,6 +523,9 @@ POST_ROUTES = (
     ((("api", "v1", "compare"), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._handle_compare(rest)),
+    (((githttp.ROUTE,), None),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._serve_git("POST", rest, query, with_body)),
 )
 
 DELETE_ROUTES = (
@@ -1632,6 +1648,45 @@ class HubHandler(BaseHTTPRequestHandler):
                 "Content-Disposition":
                     f'attachment; filename="{revision}.tar.gz"'}))
 
+    # -- the git server --------------------------------------------
+    def _serve_git(self, method: str, rest: list[str], query: str,
+                   with_body: bool):
+        """Everything under /git/: each project's repository, by git itself.
+
+        The token first, before the shape of the request, as on every private
+        route. Only the three requests of the smart protocol reach
+        `git http-backend` (`githttp.smart_request`); everything else under
+        /git/, the dumb protocol's files included, is a 404. Every answer
+        closes the connection: a git answer has no length, and a refusal may
+        leave a body unread.
+        """
+        close = {"Connection": "close"}
+        if not self._require_token(with_body, close=True):
+            return None
+        request = githttp.smart_request(method, rest, query)
+        if request is None:
+            return self._error(404, "not found", close, with_body=with_body)
+        length = 0
+        if method == "POST":
+            if self.headers.get("Transfer-Encoding", "").strip().lower() \
+                    == "chunked":
+                length = None
+            else:
+                length = self._body_length()
+                if length is None:
+                    return None
+        try:
+            self.server.store.ensure_repo(request.pid)
+            code = githttp.serve(self, request, self.server.store.repos_dir,
+                                 length, BODY_DEADLINE_SECONDS)
+        except (OSError, subprocess.CalledProcessError):
+            logger.exception(f"git {request.pid}: git could not be started")
+            return self._error(500, "internal error", close)
+        if code != 0:
+            logger.warning(f"git {request.pid}: git http-backend exited {code}")
+        githttp.end_of_request(self.server.store, request.pid)
+        return None
+
     # -- the project itself: rename, and remove ---------------------
     def _handle_rename(self, pid: str):
         """POST /api/v1/projects/<pid>/title — the TITLE and nothing else.
@@ -1882,8 +1937,9 @@ class HubHandler(BaseHTTPRequestHandler):
         `limit` of None means the route has no ceiling: a publish, whose body
         goes to disk (`_spool_body`).
 
-        A chunked body is refused like a missing length: nothing here decodes
-        chunked, and the length is what the body is read by.
+        A chunked body is refused like a missing length: the length is what
+        these routes read the body by. The git route alone takes a chunked
+        body, and decodes it itself (`githttp.copy_chunked`).
         """
         if self.headers.get("Transfer-Encoding"):
             self._error(411, "Content-Length is required",

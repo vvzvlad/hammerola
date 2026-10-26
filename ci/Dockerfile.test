@@ -38,10 +38,12 @@
 # and an image running another — so change one, change both.
 FROM python:3.11-slim
 
-# GIT, for exactly one test: tests/test_no_conflict_markers.py enumerates the tracked files with
-# `git ls-files`, and python:3.11-slim carries no git at all. The workspace arrives as a tar with
-# `.git` inside it precisely so that test can ask the index rather than the working tree; without
-# git the test does not check less, it dies with FileNotFoundError.
+# GIT, as in the shipped image: the hub serves each project's repository with it, and
+# tests/test_git_server.py drives that with a real git client. tests/test_no_conflict_markers.py
+# also enumerates the tracked files with `git ls-files`, and python:3.11-slim carries no git at
+# all. The workspace arrives as a tar with `.git` inside it precisely so that test can ask the
+# index rather than the working tree; without git those tests do not check less, they die with
+# FileNotFoundError.
 #
 # THE CAD KERNEL'S SYSTEM LIBRARIES are the rest of the line, and they are the same list the
 # root Dockerfile installs — read the derivation THERE and do not repeat it here; the two lists

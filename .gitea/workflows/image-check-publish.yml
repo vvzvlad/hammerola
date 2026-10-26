@@ -186,7 +186,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: test                          # no green tests → no image is built
-    # The three step bounds below sum to 49 minutes (20 build + 14 smoke + 15 push); the job
+    # The three step bounds below sum to 50 minutes (20 build + 15 smoke + 15 push); the job
     # bound must exceed the sum, because act_runner kills the whole job when it fires and the
     # `if: always()` cleanup steps are then not guaranteed to run.
     timeout-minutes: 55
@@ -285,11 +285,11 @@ jobs:
       # The gate holds no credential and reaches no external service, which is what lets
       # the identical step run on pull requests in tests.yml.
       # The timeout is set against ci/smoke.py's own worst case, which the script documents and
-      # sums from its individual per-call bounds: 810 s, if every docker call runs out its
+      # sums from its individual per-call bounds: 840 s, if every docker call runs out its
       # budget (in practice a few seconds). If the timeout kills the script, its own cleanup
       # does not run and the `if: always()` step below catches that. Raise this number
       # whenever that sum grows past it, in BOTH workflows.
-      timeout-minutes: 14
+      timeout-minutes: 15
       env:
         # SMOKE_NAME comes from the job-level env.
         SMOKE_IMAGE: ${{ steps.tags.outputs.smoke }}

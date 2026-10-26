@@ -30,6 +30,8 @@ because the volume would shadow them.
     <data>/sources/<digest>/source.tar.gz  that body, kept: the code of one revision
     <data>/sources/<digest>/log.txt        what the build of that revision printed
     <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison
+    <data>/repos/<pid>.git/                the project's bare git repository,
+                                           served by src/githttp.py
 
 `compare/` is outside the build directories (SPEC 8A.3) for rights — a build
 directory opens its JSON and pictures to anybody with its address and the rest
@@ -74,6 +76,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -198,6 +201,17 @@ COMPARE_DIR_NAME = "compare"
 # is spelled three times and `tests/test_compare.py` holds the three equal.
 COMPARE_FILES = ("scene.json", "report.json")
 
+# Each project's git repository: `repos/<pid>.git`, bare, created by `ensure_repo`
+# on the first git request for the project. Not created at startup, like
+# `sources/`.
+REPOS_DIR_NAME = "repos"
+REPO_SUFFIX = ".git"
+
+# The only variables a git process the hub starts inherits from the hub: enough
+# to find programs and a home directory. EDIT_TOKEN in particular never reaches
+# git or a hook.
+GIT_INHERITED_VARIABLES = ("PATH", "HOME")
+
 # The project's own title, when somebody has renamed it (`hammerola rename`).
 # PROJECT-LEVEL STATE, beside `builds.json` and for the same reason: a title is a
 # property of the PROJECT, not of any one build (SPEC 3.1 separates the id from
@@ -299,6 +313,12 @@ class AcceptedPush:
     commit: str
 
 
+def git_environment() -> dict:
+    """The environment every git process the hub starts begins from."""
+    return {name: os.environ[name] for name in GIT_INHERITED_VARIABLES
+            if name in os.environ}
+
+
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -375,12 +395,18 @@ class Store:
         # NOT created here either, and for the same reason: a hub nobody has
         # asked for a comparison on has no `compare/` at all.
         self.compare_root = self.root / COMPARE_DIR_NAME
+        # Created by the first `ensure_repo`, for the same reason.
+        self.repos_dir = self.root / REPOS_DIR_NAME
         # Publication is serialized per project: builds.json and the `latest`
         # symlink are both derived from the full set of builds, so two concurrent
         # pushes to the SAME project could interleave into a builds.json and a
         # pointer that describe different moments. Different projects never touch
         # each other's state and are free to run in parallel.
         self._locks: dict[str, threading.Lock] = {}
+        # A project's repository has a lock of its own (`ensure_repo`), so
+        # creating one never waits behind a publish. Where both are held, the
+        # repository's is taken first.
+        self._repo_locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         # The root index spans every project, so it gets its own global lock.
         self._index_lock = threading.Lock()
@@ -400,7 +426,8 @@ class Store:
         block at its definition says what fixes that figure — are touched,
         because a concurrent publish in this very process is using names of
         exactly the same shape. This runs from `Store.__init__` and from nowhere
-        else, so it is a sweep at startup rather than a periodic one.
+        else, so it is a sweep at startup rather than a periodic one. The git
+        repositories are swept last and with no age at all (`_sweep_repos`).
         """
         cutoff = time.time() - LEFTOVER_MAX_AGE_SECONDS
         directories = [self.root]
@@ -438,6 +465,42 @@ class Store:
                     logger.warning(f"could not sweep leftover {entry}: {error}")
                     continue
                 logger.info(f"swept leftover {entry}")
+        self._sweep_repos()
+
+    def _sweep_repos(self) -> None:
+        """Delete what a git process killed mid-request left under `repos/`.
+
+        No age threshold: every git process is a child of the hub, so at
+        startup none is running, and a ref lock a redeploy left a minute ago
+        has to go — until it does, every push to that branch fails on "cannot
+        lock ref". Swept: the ref locks (`refs/**/*.lock`, `packed-refs.lock`),
+        the quarantine of a push never accepted (`objects/tmp_objdir-incoming-*`)
+        and a repository `ensure_repo` never renamed into place (`.tmp-*.git`).
+        """
+        try:
+            entries = list(self.repos_dir.iterdir())
+        except OSError:
+            return
+        doomed = []
+        for entry in entries:
+            if entry.name.startswith(STAGING_PREFIX):
+                doomed.append(entry)
+                continue
+            doomed += (entry / "refs").rglob("*.lock")
+            doomed.append(entry / "packed-refs.lock")
+            doomed += (entry / "objects").glob("tmp_objdir-incoming-*")
+        for path in doomed:
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                logger.warning(f"could not sweep leftover {path}: {error}")
+                continue
+            logger.info(f"swept leftover {path}")
 
     # -- naming ------------------------------------------------------------
     @staticmethod
@@ -516,6 +579,10 @@ class Store:
         with self._locks_guard:
             return self._locks.setdefault(pid, threading.Lock())
 
+    def _repo_lock_for(self, pid: str) -> threading.Lock:
+        with self._locks_guard:
+            return self._repo_locks.setdefault(pid, threading.Lock())
+
     # -- addresses on the volume -------------------------------------------
     # The one place that knows the layout: callers ask these for addresses
     # rather than assembling paths themselves, so the layout can move. None of
@@ -540,6 +607,34 @@ class Store:
     def site_index_path(self) -> Path:
         """The front page's cards. Absent until the first push."""
         return self.root / SITE_INDEX_FILE
+
+    def repo_dir(self, pid: str) -> Path:
+        """The project's bare git repository."""
+        return self.repos_dir / f"{pid}{REPO_SUFFIX}"
+
+    def ensure_repo(self, pid: str) -> Path:
+        """The project's repository, created empty if it is not there yet.
+
+        Run by every git request before `git http-backend` starts. Under the
+        repository's own lock, so two first requests do not both create it.
+        `git init` writes into a staging name that is then renamed into place,
+        so a repository is either whole or absent; a staging directory a crash
+        leaves behind is swept at the next start (`_sweep_repos`).
+        """
+        repo = self.repo_dir(pid)
+        with self._repo_lock_for(pid):
+            if repo.is_dir():
+                return repo
+            self.repos_dir.mkdir(parents=True, exist_ok=True)
+            staging = self.repos_dir / (
+                f"{STAGING_PREFIX}{pid}-{uuid.uuid4().hex}{REPO_SUFFIX}")
+            subprocess.run(
+                ["git", "init", "--quiet", "--bare", "--initial-branch=main",
+                 str(staging)],
+                env=git_environment(), stdout=subprocess.DEVNULL, check=True)
+            staging.rename(repo)
+        logger.info(f"created the git repository of {pid}")
+        return repo
 
     def resolve_inside(self, path: Path) -> Path:
         """The path with its symlinks followed, refused unless it lands in here.
@@ -1716,17 +1811,25 @@ class Store:
         and nothing else; `ignore_errors` because a project with no comparisons
         has no such directory at all.
 
+        THE GIT REPOSITORY GOES TOO, and a project EXISTS when it has either its
+        directory under `project/` or its repository: a repository a git request
+        to a mistyped pid created has no directory, and must still be removable.
+
         The comment queue is NOT removed here: it lives under `data/comments/`,
         which belongs to CommentStore, and app.py removes both.
         """
         pdir = self.projects_dir / pid
-        with self._lock_for(pid):
-            if not pdir.is_dir():
+        repo = self.repo_dir(pid)
+        with self._repo_lock_for(pid), self._lock_for(pid):
+            if not pdir.is_dir() and not repo.is_dir():
                 return None
             mine = self._digests_of(pid)
             builds = len(self.builds_of(pid))
-            shutil.rmtree(pdir)
+            if pdir.is_dir():
+                shutil.rmtree(pdir)
             shutil.rmtree(self.compare_root / pid, ignore_errors=True)
+            if repo.is_dir():
+                shutil.rmtree(repo)
 
         referenced = set()
         try:

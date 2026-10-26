@@ -36,12 +36,15 @@ ENV PYTHONUNBUFFERED=1
 # fonts-dejavu-core is for the picture of a DXF (`docsbuild._draw_dxf`): ezdxf draws text
 # with the system's TrueType fonts, and python:3.11-slim has none, so every text in the
 # drawing would come out as an empty box.
+# git serves each project's repository (`git http-backend`, src/githttp.py); without it the
+# hub answers no git request at all.
 # One RUN with `--no-install-recommends` and the apt lists removed in the same layer; the X
 # libraries' recommends would pull in desktop packages.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         fonts-dejavu-core \
+        git \
         gosu \
         libgl1 \
         libx11-6 \
@@ -82,6 +85,10 @@ COPY static/ static/
 # them the image passes everything else and the routes 404.
 COPY skill/ skill/
 COPY model_template/ model_template/
+# The hooks git runs for a push to a project's repository (`core.hooksPath`, src/githttp.py).
+# --chmod because git skips a hook that is not executable and then accepts the push without a
+# word; check (j) in ci/smoke.py fails the gate when the hook is missing or not executable.
+COPY --chmod=0755 githooks/ githooks/
 # The browser bundle, compiled by the `ui` stage above.
 # It lands flat in static/_v because the hub serves `/_v/<one path component>` only
 # (`_serve_asset`/`_safe_name` in src/app.py, a path-traversal defence).

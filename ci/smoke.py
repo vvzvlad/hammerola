@@ -31,6 +31,9 @@ carries the code, starts on its own and is packaged as this repo says.
       push) resolves from /app as the `app` account and its rlimits really go on. The suite
       runs it on a checkout and strips ceilings the workstation refuses
       (`tests/buildproc/probes.py`), so it cannot answer this.
+* (j) the git server answers in the image — 200 with the token, 403 without — and the hook
+      that refuses a push is there and executable. The suite runs its own git and takes the
+      hook from the checkout, so it sees neither git nor the hook missing from the image.
 
 Constraints of this runner
 --------------------------
@@ -71,8 +74,9 @@ NAME_ENV = "SMOKE_NAME"
 #   ""      the long-lived one checks (c), (d), (f), (g) and (i) `docker exec` into, started with
 #           a sleeping command; its `sleep` has to outlast the last exec (see IDLE_COMMAND).
 #   -guard  the short-lived one started with NO environment for check (b).
-#   -cmd    the one started with the image's REAL command for check (e), which check (h) execs
-#           into afterwards. No `--rm`: check (e) reads its logs and state after it exits.
+#   -cmd    the one started with the image's REAL command for check (e), which checks (h) and
+#           (j) exec into afterwards. No `--rm`: check (e) reads its logs and state after it
+#           exits.
 # All three are named because a subprocess timeout kills the docker client, not the container;
 # an unnamed survivor could never be removed and would pin the image on the shared daemon.
 # Kept in step with the suffix list in both workflows' cleanup steps.
@@ -598,6 +602,84 @@ if not verified:
 report("force", "; ".join(problems) if problems else None)
 """
 
+# --- check (j): the git server -------------------------------------------------------------
+# One project's ref advertisement asked of the hub in the `-cmd` container twice, with the token
+# and without, and the hook git runs for a push looked at on disk, as the `app` account git runs
+# as. The pid is made up: the first git request for a project creates its empty repository.
+GIT_MARK = "git-route"
+GIT_URL = "/git/smoke-git.git/info/refs?service=git-upload-pack"
+GIT_ADVERTISEMENT = "application/x-git-upload-pack-advertisement"
+GIT_HOOK = APP_DIR + "/githooks/pre-receive"
+# The header the hub reads its token from (`TOKEN_HEADER` in src/app.py).
+TOKEN_HEADER = "X-Hammerola-Token"
+GIT_TARGETS = (
+    ("token", "GET {} with the token answers 200 and {}".format(GIT_URL, GIT_ADVERTISEMENT)),
+    ("no-token", "...and without the token answers 403"),
+    ("hook", "{} is in the image and executable by the `{}` account".format(GIT_HOOK, APP_USER)),
+)
+
+# Run by the image's own interpreter, as `app`, in the `-cmd` container; stdlib only, with the
+# marked-line output of checks (h) and (i). No retry: check (h) has already waited for the hub.
+GIT_PROBE_SOURCE = r"""
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+request = json.loads(sys.argv[1])
+
+
+def one_line(text):
+    return " | ".join(part.strip() for part in str(text).splitlines() if part.strip())
+
+
+def report(key, reason):
+    if reason is None:
+        print("{} ok {}".format(request["mark"], key))
+    else:
+        print("{} bad {} {}".format(request["mark"], key, one_line(reason) or "(no detail)"))
+
+
+# (status, content type) of one ask, or (None, reason) when the hub did not answer.
+def ask(headers):
+    try:
+        with urllib.request.urlopen(
+                urllib.request.Request(request["origin"] + request["url"], headers=headers),
+                timeout=request["read"]) as reply:
+            return reply.status, reply.headers.get("Content-Type")
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers.get("Content-Type")
+    except Exception as error:
+        return None, "no answer: {}: {}".format(type(error).__name__, error)
+
+
+status, detail = ask({request["header"]: request["token"]})
+if status is None:
+    report("token", detail)
+elif status != 200:
+    report("token", "the hub answered {}".format(status))
+elif detail != request["type"]:
+    report("token", "the hub answered 200 with Content-Type {}".format(detail))
+else:
+    report("token", None)
+
+status, detail = ask({})
+if status is None:
+    report("no-token", detail)
+elif status != 403:
+    report("no-token", "the hub answered {}".format(status))
+else:
+    report("no-token", None)
+
+if not os.path.isfile(request["hook"]):
+    report("hook", "there is no such file")
+elif not os.access(request["hook"], os.X_OK):
+    report("hook", "it is not executable")
+else:
+    report("hook", None)
+"""
+
 # How many verdicts each probe MUST return, checked before anything is reported. Every probe
 # returns exactly one row per target on every path, including when its container could not
 # start, so these numbers are a property of the source. A probe that quietly stops probing
@@ -619,13 +701,15 @@ EXPECTED_TARGETS = (
     # One row per route, plus the one about what is inside the skill archive.
     ("(h) onboarding routes", len(START_ROUTES) + 1),
     ("(i) build ceilings", len(BUILD_TARGETS)),
+    ("(j) git server", len(GIT_TARGETS)),
 )
 
 # The environment the probe and real-command containers run with. The value is invented and
 # reaches nothing, so the gate runs on pull requests too; EDIT_TOKEN is only compared for
-# equality, so any non-empty string starts the image.
+# equality, so any non-empty string starts the image. Check (j) presents it.
+SMOKE_TOKEN = "fake-smoke-token-not-real-0123456789abc"
 SMOKE_ENV = [
-    "EDIT_TOKEN=fake-smoke-token-not-real-0123456789abc",
+    "EDIT_TOKEN=" + SMOKE_TOKEN,
 ]
 
 # The command the probe container runs instead of the image's own. It still goes through
@@ -661,10 +745,11 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 30 (exec: required-path sweep)
 #  + 45 (exec: /start routes and the skill archive, into the -cmd container)
 #  + 30 (exec: build wrapper and its ceilings)
+#  + 30 (exec: the git route and the push hook, into the -cmd container)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 810 s, over 13 minutes. Both workflows allow 14 (840 s); the remaining 30 s is
-# what a further exec would spend, so adding one means raising `timeout-minutes` in both
-# workflows. tests/test_workflow_steps.py reads this line.
+#  = 840 s, 14 minutes. Both workflows allow 15 (900 s); one further exec of 30 s still
+# fits below that, a second means raising `timeout-minutes` in both workflows.
+# tests/test_workflow_steps.py reads this line.
 # Three of the `rm`s are pre-run cleanups: a re-run from the Gitea UI keeps the same run id,
 # hence the same $SMOKE_NAME.
 INSPECT_TIMEOUT = 30
@@ -1388,7 +1473,7 @@ def parse_marked_verdicts(output, mark):
     """Pull a probe's line-marked verdicts out of a container's stdout.
 
     The wire format is `<mark> ok <key>` and `<mark> bad <key> <one-line reason>`, shared by
-    checks (h) and (i). Returns {key: None or reason} for every key reported; a missing key is
+    checks (h), (i) and (j). Returns {key: None or reason} for every key reported; a missing key is
     a third answer that every caller treats as a failure. Unmarked lines (warnings folded in
     from stderr) are ignored.
     """
@@ -1412,9 +1497,9 @@ def parse_start_routes(output):
 def check_start_routes(name):
     """(h) The `/start` routes answer, asked of the container running the image's own command.
 
-    The only check that makes a request; all three files are assembled from `hammerola/`,
-    `model_template/` and `skill/` per request, so this is the only way to check them. The last
-    row is about the CONTENTS of one of them (SKILL_ARCHIVE_TARGET).
+    One of the two checks that make a request, (j) being the other; all three files are
+    assembled from `hammerola/`, `model_template/` and `skill/` per request, so this is the only
+    way to check them. The last row is about the CONTENTS of one of them (SKILL_ARCHIVE_TARGET).
 
     No `blocked` parameter: it execs into check (e)'s container, and if that container is gone
     `docker exec` fails every row on its own.
@@ -1557,6 +1642,68 @@ def check_build_ceilings(name, blocked=None):
     return rows
 
 
+def check_git_server(name):
+    """(j) The git server answers in the image, and the hook that refuses a push is in it.
+
+    Asked of the `-cmd` container, so the hub that answers is the program production runs. Two
+    faults of the IMAGE show only here: `git` dropped from the Dockerfile's apt list, after which
+    the hub answers no git request, and the `COPY … githooks/` line dropped, after which git
+    finds no hook in `core.hooksPath` and accepts every push without a word.
+
+    No `blocked` parameter, as in check (h): if that container is gone, `docker exec` fails
+    every row on its own.
+    """
+    targets = [target for _key, target in GIT_TARGETS]
+
+    request = json.dumps({
+        "mark": GIT_MARK,
+        "origin": START_ORIGIN,
+        "url": GIT_URL,
+        "read": START_READ,
+        "header": TOKEN_HEADER,
+        "token": SMOKE_TOKEN,
+        "type": GIT_ADVERTISEMENT,
+        "hook": GIT_HOOK,
+    })
+
+    status, output = docker(
+        ["exec", "-u", APP_USER, name, "python", "-c", GIT_PROBE_SOURCE, request],
+        EXEC_TIMEOUT)
+    if status is None:
+        return [(target, "not attempted: " + output) for target in targets]
+    if status != 0:
+        reason = (
+            "the git probe could not be run (docker exec exited {}). Either the container the "
+            "image's own command was started in is gone — check (e) above says whether it ever "
+            "came up — or the probe itself died:\n{}".format(status, excerpt(output)))
+        return [(target, reason) for target in targets]
+
+    seen = parse_marked_verdicts(output, GIT_MARK)
+
+    rows = []
+    for key, target in GIT_TARGETS:
+        if key not in seen:
+            rows.append((target, (
+                "the probe returned no verdict for this one. Full container output:\n"
+                "{}".format(excerpt(output)))))
+        elif seen[key] is None:
+            rows.append((target, None))
+        elif key == "hook":
+            rows.append((target, (
+                "{}.\n"
+                "  git looks for this hook in `core.hooksPath` (src/githttp.py) and, finding "
+                "none it can run, accepts every push to the hub without a word: the Dockerfile's "
+                "`COPY --chmod=0755 githooks/ githooks/` is gone or no longer runs".format(
+                    seen[key]))))
+        else:
+            rows.append((target, (
+                "{}.\n"
+                "  Every project's repository is served by `git http-backend` behind the token; "
+                "an image without `git` answers no git request at all, and the suite cannot see "
+                "that, because it runs the test image's own git".format(seen[key]))))
+    return rows
+
+
 def main():
     image = os.environ.get(IMAGE_ENV)
     name = os.environ.get(NAME_ENV)
@@ -1613,6 +1760,9 @@ def main():
         # The last exec into the probe container, so its `sleep` must outlast this call (see
         # IDLE_COMMAND).
         build_rows = check_build_ceilings(probe_name, blocked=blocked)
+
+        # Into the `-cmd` container, like (h).
+        git_rows = check_git_server(cmd_name)
     finally:
         # The workflow removes these again under `if: always()` in case this process is killed.
         remove_container(probe_name)
@@ -1621,7 +1771,7 @@ def main():
     # SAME ORDER AS EXPECTED_TARGETS: the pairing is positional, and groups with equal arity
     # could be swapped without any check below noticing.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
-                cad_rows, required_rows, start_rows, build_rows)
+                cad_rows, required_rows, start_rows, build_rows, git_rows)
 
     # Three self-checks, each catching a break the others cannot. `wiring` holds free-text
     # findings about this file's own consistency; `miscounted` holds one entry per probe
