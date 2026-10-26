@@ -101,7 +101,9 @@ PR, `image-check-publish.yml` на push в `main`/`develop`) запускает 
   сделал так, что меню меняет свой размер и положение на разных видах». For the sheets
   of a schematic he chose a submenu: «сделай лучше подменю для тех пунктов меню, где
   есть несколько страниц». Agent's inference: a control that only some views have goes
-  into the view menu, not in as a button that comes and goes.
+  into the view menu, not in as a button that comes and goes. The one exception is the
+  view button, as wide as its name: a fixed width left empty space after a short name
+  («почему такое пустое пространство теперь»), and the owner chose «По длине названия».
 - An assertion that has to stay true belongs in a TEST, not in a comment: "keep X
   and Y in step" is the specification for a test.
 - Module-level mutable state (singleton, cache, registry) gets an autouse fixture
