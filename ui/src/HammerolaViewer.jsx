@@ -5676,6 +5676,11 @@ export default class HammerolaViewer extends React.Component {
       composerPart: s.composer ? s.composer.part : '',
       composerText: s.composer ? s.composer.text : '',
       compType: (e) => this.setState({ composer: { ...s.composer, text: e.target.value } }),
+      // The frame rides along wherever `sendComment` can take one: the model's
+      // always, a document's only when its view can draw a frame (`docTools`);
+      // a markdown page has none.
+      compFrameChipStyle: 'display:' + (s.composer && s.composer.doc && !s.docTools ? 'none' : 'flex')
+        + `;align-items:center;gap:5px;padding:4px 8px;background:var(--sunken-bg);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-soft)`,
       compMeasChipStyle: 'display:' + (s.composer && s.composer.meas ? 'flex' : 'none') + `;align-items:center;gap:5px;padding:4px 8px;background:var(--warn-bg);border-radius:5px;font:500 10.5px ${MONO};color:var(--warn)`,
       compMeasText: (s.composer && s.composer.meas) || '',
       compMeasRemove: stop(() => this.setState({ composer: { ...s.composer, meas: null } })),
@@ -6426,7 +6431,7 @@ export default class HammerolaViewer extends React.Component {
                 style={css(`width:100%;box-sizing:border-box;border:none;outline:none;resize:none;padding:10px 12px;font:400 12.5px/1.5 ${SANS};color:var(--text);height:64px;background:transparent`)}
               />
               <div style={css('display:flex;align-items:center;gap:6px;padding:0 12px 10px;flex-wrap:wrap')}>
-                <span style={css(`display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--sunken-bg);border-radius:5px;font:400 10.5px ${MONO};color:var(--text-soft)`)}>
+                <span style={css(v.compFrameChipStyle)}>
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
                   camera frame &mdash; attached automatically
                 </span>
