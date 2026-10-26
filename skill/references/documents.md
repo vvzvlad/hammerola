@@ -39,7 +39,12 @@ rows). With no `model.py` the documents are the whole build,
 chosen in the same menu at the bottom of the page. Markdown is drawn with its relative links resolved from its own
 directory, web links open in a new tab, and a link to another listed document
 (`[glass vendors](glass-vendors.md)`) opens that document on the page — so name a
-neighbouring document with a link rather than in backticks; a picture it shows must be a file of
+neighbouring document with a link rather than in backticks. A link may also be an
+address of the build page itself, a bare query or the full address copied from
+the browser: `[the case open](?v=open)` shows the view `open`,
+`[the amplifier](?d=hw__main.kicad_sch&s=amp)` the schematic's sheet `amp`, on the
+same page, and Back returns to the note (`v=` a view's id, `d=` a document's id —
+its path with `/` as `__` — and `s=` a sheet's name); a picture it shows must be a file of
 the build, because an image from another site is not loaded (the page allows
 `img-src 'self' data: blob:`). HTML and SVG run as written; every document opens to
 the link without a key, whatever its extension — that is how a revision is sent to

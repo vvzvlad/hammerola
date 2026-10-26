@@ -125,10 +125,12 @@ describe('markdown', () => {
     expect(img.props.alt).toBe('p')
   })
 
-  it('leaves a link with a scheme or a root path alone', () => {
+  it('leaves a link with a scheme, a root path or a bare query alone', () => {
     expect(resolveHref('mailto:a@b', BASE)).toBe('mailto:a@b')
     expect(resolveHref('/project/x/latest/', BASE)).toBe('/project/x/latest/')
     expect(resolveHref('list.md?x=1', BASE)).toBe(`${BASE}list.md?x=1`)
+    // the page's own address, which the browser resolves against the page
+    expect(resolveHref('?v=open', `${BASE}docs/`)).toBe('?v=open')
   })
 
   it('keeps a table cell\'s alignment', () => {
@@ -216,6 +218,38 @@ describe('one document, as both pages draw it', () => {
       // Without a door to open one, a link is a link to the file.
       expect(ofType(documentBody(cutList, BASE, '[v](glass-vendors.md)', '', [vendors]), 'a')[0].props.href)
         .toBe(`${BASE}docs/glass-vendors.md`)
+    })
+  })
+
+  describe('a link to the page\'s own address', () => {
+    afterEach(() => window.history.replaceState(null, '', '/'))
+
+    it('is that address with the screen the link names, the key and what it does not name kept', () => {
+      window.history.replaceState({ hmr: 'abc123' }, '', `${BASE}?v=glass&files=k1&x=2&s=psu#top`)
+      const copied = `${window.location.origin}${BASE}?v=print&c=1,2#x`
+      const tree = documentBody(cutList, BASE, `[o](?v=open) [s](?d=hw__board.kicad_sch&s=amp) [c](${copied}) `
+        + '[p](/project/docs0001/abc123/) [h](#top) [l](/project/docs0001/latest/?v=open)', '')
+      const [open, sheet, full, plain, here, other] = ofType(tree, 'a')
+      expect([open, sheet, full, plain].map((a) => a.props.href)).toEqual([`${BASE}?files=k1&x=2&v=open`,
+        `${BASE}?files=k1&x=2&d=hw__board.kicad_sch&s=amp`, `${BASE}?files=k1&x=2&v=print`, `${BASE}?files=k1&x=2`])
+      // a place in the document, and the page of another build, are plain links
+      expect([here, other].map((a) => [a.props.href, a.props.onClick]))
+        .toEqual([['#top', undefined], ['/project/docs0001/latest/?v=open', undefined]])
+      const push = vi.spyOn(window.history, 'pushState')
+      onTestFinished(() => push.mockRestore())
+      const click = (a, extra) => {
+        const event = { button: 0, preventDefault: vi.fn(), ...extra }
+        a.props.onClick(event)
+        return event.preventDefault.mock.calls.length
+      }
+      // a modified or middle click is the browser's
+      expect([{ ctrlKey: true }, { metaKey: true }, { button: 1 }].map((extra) => click(sheet, extra))).toEqual([0, 0, 0])
+      // a plain one is a step of history, none for the screen the address names
+      expect(click(sheet)).toBe(1)
+      expect([push.mock.calls.length, window.location.search, window.history.state])
+        .toEqual([1, '?files=k1&x=2&d=hw__board.kicad_sch&s=amp', { hmr: 'abc123' }])
+      click(sheet)
+      expect(push).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -665,6 +699,34 @@ describe('the shell', () => {
       shell.componentWillUnmount()
       push.mockRestore()
     }
+  })
+
+  it('follows a markdown link to its own address as a step of history, and one naming only a view nowhere', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=list.md&files=k1`)
+    rereadPage(BASE)
+    shell = new DocShell({ meta: WITH_KICAD })
+    shell.setState = (patch) => Object.assign(shell.state, patch)
+    shell.componentDidMount()
+    onTestFinished(() => shell.componentWillUnmount())
+    const [shown] = collect(DocPage(shell.render().props), (el) => (el.type === DocumentView ? el : undefined))
+    const note = new DocumentView(shown.props)
+    note.state.text = `[open](?v=open) [amp](?d=${SCHEMATIC.id}&s=amp)`
+    const [view, sheet] = ofType(note.render(), 'a')
+    const push = vi.spyOn(window.history, 'pushState')
+    onTestFinished(() => push.mockRestore())
+    const click = (a) => {
+      const event = { button: 0, preventDefault: vi.fn() }
+      a.props.onClick(event)
+      return event.preventDefault.mock.calls.length
+    }
+    // this page has no views: no step, and no load of the page either
+    expect(click(view)).toBe(1)
+    expect([push.mock.calls.length, window.location.search, shell.state.active]).toEqual([0, '?d=list.md&files=k1', 'list.md'])
+    click(sheet)
+    expect([push.mock.calls.length, window.location.search, shell.state.active])
+      .toEqual([1, `?files=k1&d=${SCHEMATIC.id}&s=amp`, SCHEMATIC.id])
+    await go(-1)
+    expect([window.location.search, shell.state.active]).toEqual(['?d=list.md&files=k1', 'list.md'])
   })
 
   it('makes a sheet picked under the schematic a step whose address names it, on the schematic on screen too', () => {

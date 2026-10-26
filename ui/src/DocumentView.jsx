@@ -7,7 +7,8 @@
 //
 //   markdown   fetched and drawn here (`docmd.js`), its relative links
 //              resolved from its own directory in the build; a link to
-//              another document of the build opens it on the page (`docLinks`)
+//              another document of the build opens it on the page, and one
+//              to an address of the page shows what it names (`docLinks`)
 //   pdf, html,
 //   svg        the file itself in an <iframe>: the hub serves it as its own
 //              type, and an HTML page runs as its author wrote it
@@ -59,7 +60,7 @@
 
 import React from 'react';
 
-import { format, parse, respell } from './address.js';
+import { follow, format, parse, respell } from './address.js';
 import {
   findQuote, markdownElements, NOWRAP_CLASS, offsetOf, quoteOf, rangeOf, textIndex,
 } from './docmd.js';
@@ -186,33 +187,70 @@ const DOC_CSS = `.${NOWRAP_CLASS}{white-space:nowrap}`
   + `::highlight(${QUOTE_HIGHLIGHT}){background-color:var(--accent-bg);text-decoration:underline var(--accent)}`
   + `::highlight(${OPEN_HIGHLIGHT}){background-color:var(--accent-muted);text-decoration:underline var(--accent)}`;
 
-/** What a markdown link to another document of this build becomes (`links` in
- *  docmd.js): the page's own address with that document's `?d=` and no hash,
- *  which names a place in the document on screen, so a new tab or a copied
- *  link lands on it too; and a plain click that opens it through `onOpen`, as
- *  its row in the list does. Null without a door to open one. */
-export function docLinks(base, documents, onOpen) {
-  if (!onOpen || !Array.isArray(documents)) return null;
-  const { origin } = window.location;
-  const pathOf = (href) => {
+/** A modified or middle click, which is the browser's: a new tab or window. */
+const browsersClick = (event) => event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey
+  || event.altKey;
+
+/** The fields of an address a link to the page's own address names: the whole
+ *  screen, so a field it leaves out is none. */
+const SCREEN = ['view', 'doc', 'sheet'];
+
+/**
+ * What a markdown link becomes where it opens something on the page (`links`
+ * in docmd.js), else null. Its address is the page's own with what the link
+ * names, so a new tab or a copied link lands on that too; a place in the
+ * document on screen (the hash) it does not keep.
+ *
+ *   * A link to the page's own address — a bare query (`?v=open`,
+ *     `?d=<id>&s=<sheet>`) or this page's full address copied from the
+ *     browser, the same origin and path, but not a bare `#…`: it names a whole
+ *     screen, so its `v=`, `d=` and `s=` replace the page's, a field it leaves
+ *     out going, while `files=` and the parameters it does not name, `c=`
+ *     among them, stay as the address has them. A plain click makes it a step
+ *     of history the page follows as it follows Back (`follow` in address.js),
+ *     none where the address already names that screen; one naming a view and
+ *     no document opens nothing on the page of a build with no model, which has
+ *     no `views`.
+ *   * A link to another document of this build, by its path: that document's
+ *     `?d=`, and a plain click opens it through `onOpen`, as its row in the
+ *     list does. Without a door to open one it stays a link to the file.
+ */
+export function docLinks(base, documents, onOpen, views) {
+  const urlOf = (href) => {
     // `resolveHref` passes an address with a scheme through as written, and a
     // half-typed one (`https://`, `http://host:PORT/`) does not parse.
     try {
-      const url = new URL(href, origin);
-      return url.origin === origin ? url.pathname : null;
+      return new URL(href, window.location.href);
     } catch {
       return null;
     }
   };
   return (href) => {
-    const path = pathOf(href);
-    const hit = path && documents.find((d) => pathOf(docUrl(base, d)) === path);
+    const url = urlOf(href);
+    if (!url || url.origin !== window.location.origin) return null;
+    if (url.pathname === window.location.pathname && !href.startsWith('#')) {
+      const named = parse(url, null);
+      const fields = Object.fromEntries(SCREEN.map((field) => [field, named[field]]));
+      const screen = (at) => ({ ...respell(at, fields), hash: '' });
+      return {
+        href: format(screen(parse())),
+        onClick: (event) => {
+          if (browsersClick(event)) return;
+          event.preventDefault();
+          if (fields.view && !fields.doc && !(views && views.length)) return;
+          const at = parse();
+          if (SCREEN.every((field) => at[field] === fields[field])) return;
+          follow(screen(at));
+        },
+      };
+    }
+    if (!onOpen || !Array.isArray(documents)) return null;
+    const hit = documents.find((d) => urlOf(docUrl(base, d)).pathname === url.pathname);
     if (!hit) return null;
     return {
       href: format({ ...respell(parse(), { doc: hit.id }), hash: '' }),
       onClick: (event) => {
-        // A modified or middle click is the browser's: a new tab or window.
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (browsersClick(event)) return;
         event.preventDefault();
         onOpen(hit.id);
       },
@@ -230,10 +268,12 @@ export function docLinks(base, documents, onOpen) {
  *  that sheet, `comment` what a KiCad design and the Gerbers need for the
  *  page's comments (KicadView.jsx, GerberView.jsx), and `quoting` what a
  *  markdown article does for them (`DocumentView`): its ref, its pointer's
- *  handlers, and whether the pointer is over a quote. Pure but for that
- *  link's address, which is the page's current one (`docLinks`). */
+ *  handlers, and whether the pointer is over a quote; `views` the build's,
+ *  none on the page of a build with no model, for a markdown link naming one.
+ *  Pure but for a link's address, which is the page's current one
+ *  (`docLinks`). */
 export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc,
-  onSheet, comment, quoting) {
+  onSheet, comment, quoting, views) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
@@ -241,7 +281,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
     return (
       <article style={css(ARTICLE + (pointing ? ';cursor:pointer' : ''))} {...hooks}>
         <style>{DOC_CSS}</style>
-        {markdownElements(text, docBase(base, doc), docLinks(base, documents, onOpen))}
+        {markdownElements(text, docBase(base, doc), docLinks(base, documents, onOpen, views))}
       </article>
     );
   }
@@ -427,9 +467,9 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment } = this.props;
+    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment, views } = this.props;
     const { text, error, received, pointing } = this.state;
     return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet,
-      comment, comment ? { ...this.quoting, pointing } : null);
+      comment, comment ? { ...this.quoting, pointing } : null, views);
   }
 }

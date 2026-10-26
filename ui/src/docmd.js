@@ -9,13 +9,16 @@
 //
 // A relative link or picture points INTO THE SAME BUILD: it is resolved against
 // the document's own directory in the build (`docBase` in DocumentView.jsx), since
-// a document keeps its path in the tree. Absolute addresses, `/…`, `#…` and
-// anything with a scheme are left as written. A link to `http:` or `https:`
-// opens in a new tab, `noopener`, so the reader keeps the document.
+// a document keeps its path in the tree. Absolute addresses, `/…`, `#…`, a bare
+// query `?…` and anything with a scheme are left as written: a bare query names
+// the page's own address (`?v=open`), which the browser resolves against the
+// page, not the document. A link to `http:` or `https:` opens in a new tab,
+// `noopener`, so the reader keeps the document.
 //
 // A link that lands on ANOTHER DOCUMENT of the build opens that document on the
-// page, as its row in the list of views does, rather than the raw file. Which
-// address is a document is the holder's knowledge, so it hands in `links`
+// page, as its row in the list of views does, rather than the raw file, and one
+// that names an address of the page itself shows what that address names.
+// Which address is which is the holder's knowledge, so it hands in `links`
 // (`docLinks` in DocumentView.jsx): given a resolved href, the props the link
 // takes instead, or null.
 
@@ -53,7 +56,7 @@ const TAG_STYLE = {
 
 /** `href` as the page should follow it: relative means "in this build". */
 export function resolveHref(href, base) {
-  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || /^[/#]/.test(href)) return href;
+  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || /^[/#?]/.test(href)) return href;
   const origin = window.location.origin;
   const url = new URL(href, origin + base);
   return url.origin === origin ? url.pathname + url.search + url.hash : href;
@@ -160,7 +163,8 @@ function elements(tokens, base, prefix, links) {
 
 /** The whole document, as an array of elements; `base` is the document's
  *  directory in the build (`docBase` in DocumentView.jsx), `links` the lookup
- *  that turns a link to another document into one that opens it (optional).
+ *  that turns a link to another document or to the page's own address into one
+ *  that opens it on the page (optional).
  *  Short table cells carry `NOWRAP_CLASS`. */
 export function markdownElements(text, base, links) {
   return elements(parser.parse(String(text || ''), {}), base, 'md', links || null);
