@@ -35,8 +35,9 @@ because the volume would shadow them.
     <data>/jobs/<id>/                      one build job (src/jobs.py)
     <data>/.src-<uuid>/                    one SOURCE tree checked out of a pushed
                                            commit, being built
-    <data>/sources/<digest>/source.tar.gz  the archive an older hub kept for each
-                                           revision; read only by the import
+    <data>/sources/<digest>/source.tar.gz  the archive an older hub kept for a
+                                           revision published before git, until
+                                           the pass at start deletes it
     <data>/sources/<digest>/log.txt        what the build of that revision printed
     <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison
     <data>/repos/<pid>.git/                the project's bare git repository,
@@ -52,13 +53,12 @@ every push and at start (`recompute`, `catch_up`).
 A variant is a branch, named as the author's local branch is (SPEC §4). The
 default one, `main`, keeps the old places; every other lives in
 `.variants/<b>/`. The dot keeps it out of every walk that takes a directory of
-the project for a build (`builds_of`, `_dedupe`, `_digests_of`); `_dedupe` and
-the sweep are told about it on purpose.
+the project for a build (`builds_of`, `_dedupe`, `_imported_builds`); `_dedupe`
+and the sweep are told about it on purpose.
 
-Builds published before git are taken into the repository by the import
-(`ensure_repo`): one commit per build, oldest first, out of its archive in
-`sources/`, each carrying the trailer `Hammerola-Import: <pid>/<build>` and
-checked against the build's `.payload.sha256`. The archives stay on the volume.
+A build published before git is a commit of `main` carrying the trailer
+`Hammerola-Import: <pid>/<build>`, one per build, oldest first, and its log is
+its `.build.log` like any other build's.
 
 `compare/` is outside the build directories (SPEC 8A.3) for rights — a build
 directory opens its JSON and pictures to anybody with its address and the rest
@@ -71,7 +71,8 @@ as a build (~1.5 s a pair), and nothing prunes it.
 `sources/` is addressed by `_payload_digest` of an archive's members, the
 `.payload.sha256` of the builds published from it. Nothing writes it, and
 nothing serves it: the file server's `_safe_build_path` looks only inside a
-build directory.
+build directory. At start `drop_sources` deletes each archive whose builds'
+import commits give its digest back, and keeps every other one.
 
 `latest`, `dev` and `v` are the names a build directory may not claim, for
 different reasons: `latest` is a symlink the store moves, `dev` is the local
@@ -83,10 +84,6 @@ rather than by blacklist, because a whitelist cannot be walked around by an
 encoding nobody thought of: `<pid>` and `<commit>` come from the URL and may
 only be `[A-Za-z0-9_-]`, so they can never contain a separator or a dot
 component. `latest` and `dev` are reserved.
-
-An archive is read in `src/archive.py`, together with the ceilings and the
-per-component alphabet for member names. Those names are re-exported below as
-`store.<name>`, and the import calls into that module.
 """
 
 import hashlib
@@ -110,19 +107,10 @@ from loguru import logger
 # second copy of the string is exactly the drift that module exists to prevent.
 from hammerola.metricsdiff import METRICS_NAME
 from src import render
-# The archive reader. Re-exported rather than merely imported, because these
-# names are reached as `store.<name>` from outside: `app.py` and
-# `onboarding.py` quote `store.SAFE_COMPONENT`, `tests/client/test_limits.py`
-# holds the client's copies of three of the ceilings against this module's, and
-# `CHUNK` is the buffer `_hash_output` below reads with. One import here and no
-# caller of any of them has to know where they are defined.
-from src.archive import (ALPHABET_FAULT, CHUNK, CORRUPT_ARCHIVE_ERRORS,
-                         LAYOUT_ERRNOS, MAX_COMPONENT_CHARS, MAX_MEMBERS,
-                         MAX_PATH_DEPTH, MAX_REFUSED_NAMES_REPORTED,
-                         SAFE_COMPONENT, _create_member_file, _is_the_disk,
-                         _member_parts, _members_of, _open_member_dir,
-                         _refused_names_error, unpack)
 from src.errors import PublishError
+
+# The read buffer of `_commit_digest` and `_hash_output`.
+CHUNK = 64 * 1024
 
 # Identifiers that arrive in the URL. No dot at all: that keeps a build directory
 # from ever colliding with `builds.json`, and keeps it from being a dot-entry the
@@ -141,8 +129,9 @@ SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 # class holds no `/`, no backslash, no NUL and nothing outside ASCII. Written out
 # rather than imported because the serving half does not import the build half;
 # `tests/test_compare.py` holds the two patterns equal. Kept separate from
-# `SAFE_COMPONENT` in `src/archive.py`, the alphabet of archive member paths (see
-# `hammerola/buildnames.py`). `\Z` and not `$` for the reason `SAFE_ID` gives.
+# `SAFE_COMPONENT` in `hammerola/limits.py`, the alphabet of the member paths of
+# an archive the client reads (see `hammerola/buildnames.py`). `\Z` and not `$`
+# for the reason `SAFE_ID` gives.
 SAFE_VIEW_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # The two moving names of a project. Neither may ever be cached, and that is the
@@ -207,9 +196,9 @@ FILE_DIGESTS_FILE = ".files.sha256"
 BUILD_LOG_FILE = ".build.log"
 
 # The archives an older hub kept, one directory per revision, named by the
-# digest of the archive's members. Only the import reads them.
+# digest of the archive's members, with the log of its build beside the archive.
+# Only `drop_sources` looks at them, and the archive itself it never reads.
 SOURCES_DIR_NAME = "sources"
-SOURCE_ARCHIVE_NAME = "source.tar.gz"
 SOURCE_LOG_NAME = "log.txt"
 
 # The comparison cache: `compare/<pid>/<a>/<b>/<view>/`, holding exactly the two
@@ -229,7 +218,7 @@ COMPARE_DIR_NAME = "compare"
 COMPARE_FILES = ("scene.json", "report.json")
 
 # Each project's git repository: `repos/<pid>.git`, bare, created by `ensure_repo`
-# for the first git request to the project, or by the import.
+# for the first git request to the project.
 REPOS_DIR_NAME = "repos"
 REPO_SUFFIX = ".git"
 
@@ -243,10 +232,6 @@ MAIN_REF = f"{BRANCH_PREFIX}{MAIN_BRANCH}"
 # the hub's own, so a trailer an author writes means nothing here; the pid is in
 # the value because one history can carry the imports of several projects.
 IMPORT_TRAILER = "Hammerola-Import"
-# Who imported commits are by, set explicitly: a guessed identity can be refused
-# by git, and a fixed one keeps the import's shas the same every time it runs.
-IMPORT_NAME = "hammerola import"
-IMPORT_EMAIL = "import@hammerola"
 
 # A build named by a commit: the full sha.
 COMMIT_NAME = re.compile(r"\A[0-9a-f]{40}\Z")
@@ -289,25 +274,24 @@ PROJECT_DRAFT_JOB_FILE = "draft.json"
 STAGING_PREFIX = ".tmp-"        # a build's OUTPUT, on its way to <pid>/<commit>
 LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
 # A directory renamed out of the way while a new one takes its name: the `dev`
-# slot, a comparison cache entry, a repository the import replaces. POSIX
-# cannot replace a non-empty directory under a fixed name in one step — see
-# `_swap_dev_slot`. Published builds are never parked: they are never deleted.
+# slot or a comparison cache entry. POSIX cannot replace a non-empty directory
+# under a fixed name in one step — see `_swap_dev_slot`. Published builds are
+# never parked: they are never deleted.
 TRASH_PREFIX = ".trash-"
 # Any atomic write this module makes, for as long as it is not yet renamed into
 # place — a rule rather than a list, because naming three of them invites the
 # fourth to be forgotten. All of them land where the sweep below looks; the ones
-# that have to ask for it are `_file_digests` and the import's log copies, whose
-# targets live in a build directory the sweep does not walk, and `_dedupe`,
-# which makes its temporary link in the project directory for the same reason.
+# that have to ask for it are `_file_digests`, whose target lives in a build
+# directory the sweep does not walk, and `_dedupe`, which makes its temporary
+# link in the project directory for the same reason.
 # A temporary git index is one too.
 JSON_TMP_PREFIX = ".wip-"
-# One SOURCE tree, from the moment it is checked out of a pushed commit (or
-# unpacked from an archive by the import) until its build ends. At the root and
-# not inside the project directory, and that is deliberate: it is not a build,
-# it is never renamed anywhere, and a project directory that exists means the
-# project has been pushed to. It also survives the request that created it — the
-# worker owns it (src/jobs.py) — so it is the one transient here that is expected
-# to outlive its creator.
+# One SOURCE tree, from the moment it is checked out of a pushed commit until
+# its build ends. At the root and not inside the project directory, and that is
+# deliberate: it is not a build, it is never renamed anywhere, and a project
+# directory that exists means the project has been pushed to. It also survives
+# the request that created it — the worker owns it (src/jobs.py) — so it is the
+# one transient here that is expected to outlive its creator.
 SOURCE_PREFIX = ".src-"
 LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, TRASH_PREFIX,
                      JSON_TMP_PREFIX, SOURCE_PREFIX)
@@ -322,10 +306,6 @@ LEFTOVER_PREFIXES = (STAGING_PREFIX, LATEST_LINK_PREFIX, TRASH_PREFIX,
 LEFTOVER_MAX_AGE_SECONDS = 4 * 3600
 
 
-class ImportFailed(Exception):
-    """The import of a project's old builds did not go through; says which and why."""
-
-
 def git_environment() -> dict:
     """The environment every git process the hub starts begins from."""
     return {name: os.environ[name] for name in GIT_INHERITED_VARIABLES
@@ -333,22 +313,21 @@ def git_environment() -> dict:
 
 
 def run_git(repo, subcommand: str, *args, work_tree=None, env=None,
-            input=None, cwd=None) -> str:
-    """One git command against `repo` (None: none). -> its stdout, as it is.
+            cwd=None) -> str:
+    """One git command against `repo`. -> its stdout, as it is.
 
     Raises CalledProcessError with git's stderr on it and `cmd[1]` the
     subcommand, for a message that names it (`git_failure`).
     """
     environment = git_environment()
-    if repo is not None:
-        environment["GIT_DIR"] = str(repo)
+    environment["GIT_DIR"] = str(repo)
     environment.update(env or {})
     command = ["git"]
     if work_tree is not None:
         command += ["--work-tree", str(work_tree)]
     try:
         return subprocess.run(
-            [*command, subcommand, *args], env=environment, input=input,
+            [*command, subcommand, *args], env=environment,
             cwd=cwd, capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=True).stdout
     except subprocess.CalledProcessError as error:
@@ -512,7 +491,7 @@ class Store:
     def __init__(self, data_dir):
         self.root = Path(data_dir).resolve()
         self.projects_dir = self.root / "project"
-        # Read by the import, written by nothing.
+        # Pruned by `drop_sources`, written by nothing.
         self.sources_dir = self.root / SOURCES_DIR_NAME
         # NOT created here, unlike `projects_dir`: a hub nobody has asked for a
         # comparison on has no `compare/` at all.
@@ -532,10 +511,6 @@ class Store:
         self._locks_guard = threading.Lock()
         # The root index spans every project, so it gets its own global lock.
         self._index_lock = threading.Lock()
-        # `{pid: why}` for every project whose import failed in this process.
-        # Its git requests are answered 503 with the reason and its `latest` is
-        # not recomputed; the next start tries again.
-        self._import_failures: dict[str, str] = {}
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self._sweep_leftovers()
 
@@ -606,8 +581,7 @@ class Store:
         lock ref". Swept: the ref locks (`refs/**/*.lock`, `packed-refs.lock`),
         the quarantine of a push never accepted (`objects/tmp_objdir-incoming-*`),
         a repository `ensure_repo` never renamed into place (`.tmp-*.git`) and
-        the old repository a re-import parked and never deleted (`.trash-*`,
-        `_replace_directory`).
+        a directory parked out of the way and never deleted (`.trash-*`).
         """
         try:
             entries = list(self.repos_dir.iterdir())
@@ -729,44 +703,21 @@ class Store:
         return self.repos_dir / f"{pid}{REPO_SUFFIX}"
 
     def ensure_repo(self, pid: str) -> Path:
-        """The project's repository: imported, created empty, or as it is.
+        """The project's repository, created empty if it is not there yet.
 
-        Run by every git request before `git http-backend` starts, and at start
-        for every project with builds (`catch_up`). Under the repository's own
-        lock, so two first requests do not both create it and a request that
-        meets an import in progress waits for it.
-
-        A project with builds named otherwise than by a commit — published
-        before git (`_import_builds`) — is imported (`_needs_import` says
-        when), and every other one gets an empty repository. A build named by
-        a commit was published by a push and is never imported: its commit is
-        in the repository, or went with a push git did not finish. Either
-        repository is written under a staging name and renamed into place, so
-        a repository is whole or absent; a staging directory a crash leaves
-        behind is swept at the next start (`_sweep_repos`).
-
-        Raises ImportFailed when the import fails, now or earlier in this
-        process: nothing is changed, the line `import <pid>: <build>: <why>` is
-        logged once, and the next start tries again.
+        Run by every git request before `git http-backend` starts. Under the
+        repository's own lock, so two first requests do not both create it.
+        `git init` writes into a staging name that is then renamed into place,
+        so a repository is either whole or absent; a staging directory a crash
+        leaves behind is swept at the next start (`_sweep_repos`).
         """
         repo = self.repo_dir(pid)
         with self._repo_lock_for(pid):
-            failure = self._import_failures.get(pid)
-            if failure is not None:
-                raise ImportFailed(failure)
-            builds = self._import_builds(pid)
-            try:
-                if builds and self._needs_import(pid, repo, builds):
-                    self._import(pid, repo, builds)
-                    return repo
-            except ImportFailed as error:
-                self._import_failures[pid] = str(error)
-                logger.error(f"import {pid}: {error}")
-                raise
             if repo.is_dir():
                 return repo
             self.repos_dir.mkdir(parents=True, exist_ok=True)
-            staging = self._repo_staging(pid)
+            staging = self.repos_dir / (
+                f"{STAGING_PREFIX}{pid}-{uuid.uuid4().hex}{REPO_SUFFIX}")
             subprocess.run(
                 ["git", "init", "--quiet", "--bare", "--initial-branch=main",
                  str(staging)],
@@ -774,194 +725,6 @@ class Store:
             staging.rename(repo)
         logger.info(f"created the git repository of {pid}")
         return repo
-
-    def _import_builds(self, pid: str) -> list[dict]:
-        """The builds the import takes, newest first (`_built_key`).
-
-        Every build named otherwise than by a commit: the ones `builds_of`
-        lists, and the ones whose meta.json is of an older format it skips.
-        No list of the hub shows those, but they are versions of the project
-        all the same, still served by their URL, and their code goes into git
-        like the rest. Such a directory without a `.payload.sha256` was never
-        published (a restore that ran out halfway) and is left out, so it does
-        not fail the whole import; a missing archive fails it as it does for
-        any build (`_import`).
-        """
-        metas = {meta["commit"]: meta for meta in self.builds_of(pid)}
-        pdir = self.projects_dir / pid
-        for entry in (pdir.iterdir() if pdir.is_dir() else ()):
-            if (entry.name in metas or entry.name.startswith(".")
-                    or entry.name in RESERVED_BUILD_NAMES
-                    or entry.is_symlink() or not entry.is_dir()):
-                continue
-            try:
-                meta = json.loads(
-                    (entry / BUILD_META_FILE).read_text(encoding="utf-8"))
-            except (ValueError, OSError, RecursionError):
-                continue
-            if (isinstance(meta, dict) and meta.get("commit") == entry.name
-                    and _read_digest(entry)):
-                metas[entry.name] = meta
-        builds = [meta for meta in metas.values()
-                  if not COMMIT_NAME.match(meta["commit"])]
-        builds.sort(key=_built_key, reverse=True)
-        return builds
-
-    def _repo_staging(self, pid: str) -> Path:
-        return self.repos_dir / (
-            f"{STAGING_PREFIX}{pid}-{uuid.uuid4().hex}{REPO_SUFFIX}")
-
-    def import_failure(self, pid: str) -> str | None:
-        """Why this project's import failed in this process, or None."""
-        return self._import_failures.get(pid)
-
-    def _needs_import(self, pid: str, repo: Path, builds: list) -> bool:
-        """Does a project with these builds have to be imported (again)?
-
-        `builds` are the project's builds named otherwise than by a commit
-        (`_import_builds`), at least one. Yes when there is no repository, when
-        `main` is empty (a git request created the repository, or a push
-        published a build and git never wrote the branch), and when `main`
-        holds nothing but imported commits while one of `builds` has no import
-        commit: a hub of the previous image published it from an archive after
-        the import, or it is of the older format an earlier import skipped.
-        The import is redone whole. It is deterministic: the commits older
-        than the first build it adds get the same shas, every later one a new
-        sha.
-
-        A missing import commit under commits of the author's own is an
-        ImportFailed: redoing the import would drop them, and leaving it would
-        let `latest` fall back to the old import's tip.
-        """
-        if not repo.is_dir():
-            return True
-        commits = _trailed_log(repo, MAIN_REF)
-        if not commits:
-            return True
-        imported = {value for _sha, values in commits for value in values}
-        missing = [meta["commit"] for meta in builds
-                   if f"{pid}/{meta['commit']}" not in imported]
-        if not missing:
-            return False
-        if any(not values for _sha, values in commits):
-            raise ImportFailed(
-                f"{missing[0]}: it has no import commit, and {MAIN_BRANCH} "
-                f"already has commits of the author's own")
-        return True
-
-    def _import(self, pid: str, repo: Path, builds: list) -> None:
-        """Take a project's old builds into a new repository, oldest first.
-
-        `builds` are the builds published before git (`_import_builds`), taken
-        in reverse: oldest first. The tip of `main` is the newest of them, and
-        `latest` the nearest to it that `builds_of` serves (`_branch_latest`):
-        the build `latest` was before git. One commit per build out of its
-        archive, checked against the build's `.payload.sha256`; then each
-        build's old log is copied beside it, `main` is pointed at the last
-        commit and the repository renamed into place, over an existing one.
-        Raises ImportFailed, leaving everything as it was.
-        """
-        self.repos_dir.mkdir(parents=True, exist_ok=True)
-        staging = self._repo_staging(pid)
-        try:
-            try:
-                run_git(None, "init", "--quiet", "--bare",
-                        f"--initial-branch={MAIN_BRANCH}", str(staging))
-            except subprocess.CalledProcessError as error:
-                raise ImportFailed(git_failure(error)) from error
-            parent = None
-            logs = []
-            for meta in reversed(builds):
-                name = meta["commit"]
-                digest = _read_digest(self.build_dir(pid, name))
-                if not digest:
-                    raise ImportFailed(f"{name}: it has no {PAYLOAD_DIGEST_FILE}")
-                try:
-                    parent = self._import_build(pid, staging, meta, digest,
-                                                parent)
-                except subprocess.CalledProcessError as error:
-                    raise ImportFailed(f"{name}: {git_failure(error)}") from error
-                except tarfile.TarError as error:
-                    raise ImportFailed(
-                        f"{name}: git archive gave an unreadable tar: {error}"
-                    ) from error
-                logs.append((name, self.sources_dir / digest / SOURCE_LOG_NAME))
-            try:
-                run_git(staging, "update-ref", MAIN_REF, parent)
-            except subprocess.CalledProcessError as error:
-                raise ImportFailed(git_failure(error)) from error
-            for name, log in logs:
-                try:
-                    if log.is_file():
-                        atomic_write_bytes(
-                            self.build_dir(pid, name) / BUILD_LOG_FILE,
-                            log.read_bytes(), tmp_dir=self.project_dir(pid))
-                except OSError as error:
-                    raise ImportFailed(
-                        f"{name}: its log cannot be copied: {error}") from error
-            try:
-                if repo.is_dir():
-                    self._replace_directory(repo, staging)
-                else:
-                    staging.rename(repo)
-            except OSError as error:
-                raise ImportFailed(
-                    f"the repository cannot be put in place: {error}") from error
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-        logger.info(f"import {pid}: {len(builds)} commits")
-
-    def _import_build(self, pid: str, repo: Path, meta: dict, digest: str,
-                      parent: str | None) -> str:
-        """One build as one commit on top of `parent`. -> the commit's sha.
-
-        The archive is unpacked by the rules that once accepted it, added with
-        `--force` (no ignore rules apply to what was published), and the
-        commit's content checked against `digest` before it is used.
-        """
-        name = meta["commit"]
-        archive = self.sources_dir / digest / SOURCE_ARCHIVE_NAME
-        tree_dir = self.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
-        index = self.root / f"{JSON_TMP_PREFIX}index-{uuid.uuid4().hex}"
-        try:
-            tree_dir.mkdir()
-            try:
-                unpack(archive, tree_dir)
-            except PublishError as error:
-                raise ImportFailed(
-                    f"{name}: its archive cannot be read: {error.message}"
-                ) from error
-            except OSError as error:
-                raise ImportFailed(
-                    f"{name}: its archive cannot be read: {error}") from error
-            env = {"GIT_INDEX_FILE": str(index)}
-            run_git(repo, "add", "--force", "-A", work_tree=tree_dir, env=env,
-                    cwd=tree_dir)
-            tree = run_git(repo, "write-tree", env=env).strip()
-            stamp = f"@{int(_built_key(meta)[0])} +0000"
-            identity = {
-                "GIT_AUTHOR_NAME": IMPORT_NAME, "GIT_AUTHOR_EMAIL": IMPORT_EMAIL,
-                "GIT_AUTHOR_DATE": stamp,
-                "GIT_COMMITTER_NAME": IMPORT_NAME,
-                "GIT_COMMITTER_EMAIL": IMPORT_EMAIL,
-                "GIT_COMMITTER_DATE": stamp}
-            subject = meta.get("message") or f"Revision {name} imported from the hub"
-            message = f"{subject}\n\n{IMPORT_TRAILER}: {pid}/{name}\n"
-            parents = ["-p", parent] if parent else []
-            commit = run_git(repo, "commit-tree", tree, *parents,
-                             env=identity, input=message).strip()
-            found = _commit_digest(repo, commit)
-            if found != digest:
-                raise ImportFailed(
-                    f"{name}: the imported commit holds other content than the "
-                    f"build was published from ({found} against {digest})")
-            return commit
-        finally:
-            shutil.rmtree(tree_dir, ignore_errors=True)
-            try:
-                index.unlink()
-            except OSError:
-                pass
 
     # -- what the repository says ------------------------------------------
     def _built_name(self, pid: str, sha: str, values, names) -> str | None:
@@ -1046,11 +809,8 @@ class Store:
         Run at the end of every push (`githttp.end_of_request`) and at start
         (`catch_up`). Under the project's lock, the index outside it: holding
         one project's lock across a walk of every project is how two of them
-        would deadlock (see `publish_built`). Nothing for a project whose import
-        failed.
+        would deadlock (see `publish_built`).
         """
-        if pid in self._import_failures:
-            return
         with self._lock_for(pid):
             self._derive(pid)
         if index:
@@ -1122,12 +882,11 @@ class Store:
         return max(1, len(listed)) if isinstance(listed, list) else 1
 
     def catch_up(self) -> None:
-        """At start: import what needs it, then recompute every project.
+        """At start: recompute every project, then `drop_sources`.
 
         Run on a thread of its own (`app.create_server`): neither the start nor
         the healthcheck waits for it, and the site serves the builds off the
-        disk meanwhile. A git request to a project not yet imported does the
-        import itself, or waits for it on the repository's lock.
+        disk meanwhile.
         """
         pids = set()
         for directory in (self.projects_dir, self.repos_dir):
@@ -1143,18 +902,138 @@ class Store:
                     pids.add(pid)
         for pid in sorted(pids):
             try:
-                if self.builds_of(pid):
-                    self.ensure_repo(pid)
                 if self.repo_dir(pid).is_dir():
                     self.recompute(pid, index=False)
-            except ImportFailed:
-                continue
             except Exception:
                 logger.exception(f"start: {pid} could not be brought up to date")
         try:
             self._refresh_index()
         except Exception:
             logger.exception("start: the site index was not refreshed")
+        try:
+            self.drop_sources()
+        except Exception:
+            logger.exception("start: the pass over sources/ stopped")
+
+    # -- the archives of the builds published before git --------------------
+    def drop_sources(self) -> None:
+        """Delete each archive in `sources/` that its import commits give back.
+
+        `sources/<d>/` goes whole when every build carrying `d` as its
+        `.payload.sha256` (`_imported_builds`, across every project) has its
+        import commit in its project's `main`, and its `.build.log` if the
+        directory holds a `log.txt`, and when the content of at least one of
+        those commits has the digest `d` (`_commit_digest`). The digest is the
+        build's and not its name: a build named otherwise shares it with the
+        build of the same tree.
+
+        Everything else stays: a directory whose digest no such build carries
+        silently, as not imported, because there is nothing to check it against;
+        one that fails the check with the line `sources <d>: <why>` at ERROR.
+        One line sums the pass up. Builds, logs and repositories are only read.
+        """
+        try:
+            directories = sorted(entry for entry in self.sources_dir.iterdir()
+                                 if entry.is_dir() and not entry.is_symlink())
+        except FileNotFoundError:
+            return
+        owners = {}
+        # An empty `sources/`, as every pass after the first finds it, has no
+        # reason to read the builds of every project.
+        for pid in (self._pids() if directories else ()):
+            for meta in self._imported_builds(pid):
+                name = meta["commit"]
+                digest = _read_digest(self.build_dir(pid, name))
+                if digest:
+                    owners.setdefault(digest, []).append((pid, name))
+        commits = {}
+        deleted = kept = unowned = 0
+        for directory in directories:
+            builds = owners.get(directory.name)
+            if not builds:
+                unowned += 1
+                continue
+            try:
+                why = self._unverified(directory, builds, commits)
+                if why is None:
+                    shutil.rmtree(directory)
+            except subprocess.CalledProcessError as error:
+                why = git_failure(error)
+            except tarfile.TarError as error:
+                why = f"git archive gave an unreadable tar: {error}"
+            except OSError as error:
+                why = str(error)
+            if why is None:
+                deleted += 1
+            else:
+                kept += 1
+                logger.error(f"sources {directory.name}: {why}")
+        logger.info(f"sources: deleted {deleted}, kept {kept}, "
+                    f"not imported {unowned}")
+
+    def _pids(self) -> list:
+        """Every project with a directory under `project/`, by id."""
+        return sorted(entry.name for entry in self.projects_dir.iterdir()
+                      if not entry.name.startswith(".") and entry.is_dir()
+                      and self.valid_pid(entry.name))
+
+    def _imported_builds(self, pid: str) -> list[dict]:
+        """The builds of `pid` published before git.
+
+        Every build named otherwise than by a commit, each of which has an
+        import commit to answer for: the ones `builds_of` lists, and the ones
+        whose meta.json is of an older format it skips. No list of the hub
+        shows those, but they are versions of the project all the same, still
+        served by their URL, and their code is in git like the rest. Such a
+        directory without a `.payload.sha256` was never published (a restore
+        that ran out halfway), has no import commit and is left out.
+        """
+        metas = {meta["commit"]: meta for meta in self.builds_of(pid)}
+        pdir = self.projects_dir / pid
+        for entry in (pdir.iterdir() if pdir.is_dir() else ()):
+            if (entry.name in metas or entry.name.startswith(".")
+                    or entry.name in RESERVED_BUILD_NAMES
+                    or entry.is_symlink() or not entry.is_dir()):
+                continue
+            try:
+                meta = json.loads(
+                    (entry / BUILD_META_FILE).read_text(encoding="utf-8"))
+            except (ValueError, OSError, RecursionError):
+                continue
+            if (isinstance(meta, dict) and meta.get("commit") == entry.name
+                    and _read_digest(entry)):
+                metas[entry.name] = meta
+        return [meta for meta in metas.values()
+                if not COMMIT_NAME.match(meta["commit"])]
+
+    def _unverified(self, directory: Path, builds: list, commits: dict):
+        """Why `directory` in `sources/` may not go yet, or None if it may.
+
+        `builds` are the `(pid, build)` carrying its digest; `commits` caches
+        each project's import commits, `{pid: {"<pid>/<build>": [sha, ...]}}`.
+        """
+        log = (directory / SOURCE_LOG_NAME).is_file()
+        found = []
+        for pid, name in builds:
+            if pid not in commits:
+                imports = {}
+                for sha, values in _trailed_log(self.repo_dir(pid), MAIN_REF):
+                    for value in values:
+                        imports.setdefault(value, []).append(sha)
+                commits[pid] = imports
+            shas = commits[pid].get(f"{pid}/{name}")
+            if not shas:
+                return f"{pid}/{name} has no import commit in {MAIN_BRANCH}"
+            if log and not self.build_log_path(pid, name).is_file():
+                return f"{pid}/{name} has no {BUILD_LOG_FILE}"
+            found += [(pid, name, sha) for sha in shas]
+        others = []
+        for pid, name, sha in found:
+            digest = _commit_digest(self.repo_dir(pid), sha)
+            if digest == directory.name:
+                return None
+            others.append(f"{pid}/{name} {sha} gives {digest}")
+        return "no import commit gives this digest: " + "; ".join(others)
 
     def resolve_inside(self, path: Path) -> Path:
         """The path with its symlinks followed, refused unless it lands in here.
@@ -1418,11 +1297,10 @@ class Store:
     def _replace_directory(target: Path, source: Path) -> None:
         """The two renames `_swap_dev_slot` describes, with the target named.
 
-        One copy of the dance, because there are three names on this volume
-        that are REPLACED rather than only created — the `dev` slot, a
-        comparison cache entry and a repository the import redoes — and the
-        ordering above is the whole of what makes each of them safe to read
-        while it is being written.
+        One copy of the dance, because there are two names on this volume
+        that are REPLACED rather than only created — the `dev` slot and a
+        comparison cache entry — and the ordering above is the whole of what
+        makes each of them safe to read while it is being written.
         """
         parked = target.parent / f"{TRASH_PREFIX}{uuid.uuid4().hex}"
         occupied = os.path.lexists(target)
@@ -2085,14 +1963,6 @@ class Store:
         "I made a test project and I am done with it", and it is meant to be the
         big rare hammer rather than a tidying tool.
 
-        THE ARCHIVES OF THE REMOVED REVISIONS GO TOO, AND ONLY IF NOTHING ELSE
-        POINTS AT THEM. `sources/` is addressed by the digest of a source tree
-        and not by project, so the same tree published in two projects is one
-        directory serving both. The project tree goes first, then the digests
-        still referenced by OTHER projects are collected, and only unreferenced
-        ones are deleted. Nothing writes `sources/`, so no publish can race the
-        scan.
-
         THE COMPARISONS GO WITH IT, and they are the one tree here that is
         removed rather than reasoned about: an entry under `compare/<pid>/` is
         derived from two of this project's revisions and is addressed by that
@@ -2107,78 +1977,24 @@ class Store:
         to a mistyped pid created has no directory, and must still be removable.
 
         The comment queue is NOT removed here: it lives under `data/comments/`,
-        which belongs to CommentStore, and app.py removes both.
+        which belongs to CommentStore, and app.py removes both. Nor is an
+        archive in `sources/`: it is `drop_sources`'s, and with its builds gone
+        it counts as not imported.
         """
         pdir = self.projects_dir / pid
         repo = self.repo_dir(pid)
         with self._repo_lock_for(pid), self._lock_for(pid):
             if not pdir.is_dir() and not repo.is_dir():
                 return None
-            # A project pushed again after this starts with nothing to import.
-            self._import_failures.pop(pid, None)
-            mine = self._digests_of(pid)
             builds = len(self.builds_of(pid))
             if pdir.is_dir():
                 shutil.rmtree(pdir)
             shutil.rmtree(self.compare_root / pid, ignore_errors=True)
             if repo.is_dir():
                 shutil.rmtree(repo)
-
-        referenced = set()
-        try:
-            for other in self.projects_dir.iterdir():
-                if other.name.startswith(".") or not other.is_dir():
-                    continue
-                referenced |= self._digests_of(other.name)
-        except OSError as error:
-            # Nothing may be deleted on a scan that did not finish: an
-            # incomplete answer to "what else points at this" is indistinguishable
-            # from "nothing does", and acting on it removes the code of somebody
-            # else's live revision.
-            logger.warning(
-                f"remove {pid}: the source store was left alone, because the "
-                f"scan for other projects' revisions failed: {error}")
-            mine = set()
-
-        removed_sources = 0
-        for digest in sorted(mine - referenced):
-            try:
-                shutil.rmtree(self.sources_dir / digest)
-            except FileNotFoundError:
-                continue
-            except OSError as error:
-                logger.warning(f"remove {pid}: could not remove the code of "
-                               f"revision {digest}: {error}")
-                continue
-            removed_sources += 1
-
         self._refresh_index()
-        logger.info(f"removed project {pid}: {builds} builds, "
-                    f"{removed_sources} stored source trees")
-        return {"pid": pid, "builds": builds, "sources": removed_sources}
-
-    def _digests_of(self, pid: str) -> set:
-        """Every payload digest recorded in one project's build directories.
-
-        The `dev` slot is included. Usually its digest is a published
-        revision's (a commit fills the slot with itself), so including it
-        changes no answer; a slot filled by a `build` push has a digest nothing
-        in `sources/` matches.
-        """
-        digests = set()
-        try:
-            entries = list((self.projects_dir / pid).iterdir())
-        except OSError:
-            return digests
-        for entry in entries:
-            if entry.name.startswith(".") or not entry.is_dir():
-                continue
-            if entry.is_symlink():
-                continue
-            digest = _read_digest(entry)
-            if digest:
-                digests.add(digest)
-        return digests
+        logger.info(f"removed project {pid}: {builds} builds")
+        return {"pid": pid, "builds": builds}
 
 
 def _contents(meta: dict) -> str:
@@ -2235,17 +2051,13 @@ def _usable_meta(meta, dir_name: str) -> bool:
 
 
 def _payload_digest(files: dict) -> str:
-    """A digest of WHAT WAS UPLOADED, independent of tar order and timestamps.
+    """A digest of a SOURCE tree, given `{relative path: sha256}` of its files.
 
-    What is uploaded is the model's SOURCE tree (SPEC 8A.2 step 5), so this is a
-    digest of the source and not of the build: the same commit pushed twice is
-    the same push, whatever wall clock the two builds happened to stamp into
-    their output.
-
-    Deliberately covers only the archive's own members, not the meta.json the
-    hub rewrites from the build. That one is normalized by code which changes
-    when the service is updated, so hashing it would turn a hub release into a
-    spurious 409 on every retry of an already-published commit.
+    The `.payload.sha256` of a build published before git, taken over the
+    members of the archive it was published from — independent of their order
+    and timestamps — and the name of that archive's directory in `sources/`.
+    `_commit_digest` takes it over a commit, which is how `drop_sources` holds
+    an import commit to its build.
     """
     digest = hashlib.sha256()
     for name in sorted(files):
@@ -2259,7 +2071,7 @@ def _payload_digest(files: dict) -> str:
 def _hash_output(directory: Path, names) -> dict:
     """`{relative path: sha256}` for the files a build declared it ships.
 
-    The same shape `_unpack` produces, but a different consumer: `_unpack`'s
+    The same shape `_commit_digest` collects, but a different consumer: that
     mapping goes to `_payload_digest` alone, while this one is the only mapping
     `render.build_meta` reads — a pointer is valid when its name is a key here.
 
@@ -2323,9 +2135,8 @@ def _linkable(files: dict) -> dict:
 def _read_digest(build_dir: Path) -> str | None:
     """The payload digest of one build directory, or None if there is not one.
 
-    `_digests_of` sweeps EVERY project's directories to decide what a removal
-    may delete, so one unreadable digest here does not cost the caller's own
-    project: it costs the removal of any project at all.
+    None rather than an error: `drop_sources` reads the digest of every
+    project's builds, and one unreadable file must not stop the pass.
     """
     try:
         return (build_dir / PAYLOAD_DIGEST_FILE).read_text(

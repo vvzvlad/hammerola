@@ -19,7 +19,8 @@ single builds cannot be removed. There is no retention on this service (SPEC 5.3
 so this is the only thing that frees space on the volume.
 
 It asks first, and the id has to be typed, because this cannot be undone: builds,
-comments, proposals and stored sources go together. `--yes` exists for scripts.
+comments, proposals and the project's git repository go together. `--yes` exists
+for scripts.
 
 Nothing local is ever deleted: `rm` acts on the hub only.
 """
@@ -115,16 +116,8 @@ def remove(args) -> int:
     # in both directions, because "no proposal" is an answer somebody who just
     # confirmed a removal that named one is owed.
     print(f"  {removed.get('builds', 0)} builds, "
-          f"{removed.get('comments', 0)} comments, "
-          f"{removed.get('sources', 0)} stored source trees, and "
+          f"{removed.get('comments', 0)} comments, and "
           f"{'the proposal' if removed.get('proposal') else 'no proposal'}")
-    # The stored code is addressed by the digest of a source tree rather than by
-    # project (SPEC 7.8), so a tree published in two projects is one directory
-    # serving both. The hub removes only what nothing else points at, and the
-    # difference between that count and the number of builds is exactly the
-    # shared ones — worth saying, since otherwise it reads like a miscount.
-    print("  code shared with another project was kept: it is stored by "
-          "content, not by project.")
     print(f"  {root / project.PROJECT_FILE} was NOT touched. Pushing from here "
           f"again recreates the\n"
           f"  project under the same id, empty. Delete the file by hand if that "

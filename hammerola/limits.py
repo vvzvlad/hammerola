@@ -1,12 +1,14 @@
-"""What the hub will accept, as the client knows it.
+"""What the hub will accept, as the client knows it, and what the client reads.
 
-A COPY: this file must import on a bare python3 (see `hammerola/__init__.py`)
-and `src.store` pulls in the service. Every constant is compared against the
-module that enforces it in `tests/client/test_limits.py`, so the two cannot
-drift silently.
+The hub's rules are COPIES: this file must import on a bare python3 (see
+`hammerola/__init__.py`) and `src.store` pulls in the service. Each one is
+compared against the module that enforces it in `tests/client/test_limits.py`,
+so the two cannot drift silently.
 
-The ceilings hold what this client reads back from the hub (`unpack.py`) and
-what it writes into `project.json`.
+The member rules — `SAFE_COMPONENT`, `MAX_PATH_DEPTH`, `MAX_MEMBERS` — are this
+client's own: they hold the archives it reads back from the hub (`unpack.py`),
+and the hub holds the archives it serves to them by importing them
+(`src/onboarding.py`, `_refuse_unservable`).
 """
 
 import re
@@ -15,16 +17,14 @@ import re
 # segments. Authority: `src.store.SAFE_ID`.
 SAFE_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
-# One `/`-separated component of a member path. Authority:
-# `src.store.SAFE_COMPONENT`. It forbids a leading dot; `unpack.py` holds the
-# archives this client reads to it.
+# One `/`-separated component of a member path. It forbids a leading dot;
+# `unpack.py` holds the archives this client reads to it.
 SAFE_COMPONENT = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
-# Components in one member's path, the file name included. Authority:
-# `src.store.MAX_PATH_DEPTH`.
+# Components in one member's path, the file name included.
 MAX_PATH_DEPTH = 8
 
-# Files in one archive. Authority: `src.store.MAX_MEMBERS`.
+# Files in one archive.
 MAX_MEMBERS = 1024
 
 # Reserved build names: `latest` is a symlink the store moves, `dev` is the

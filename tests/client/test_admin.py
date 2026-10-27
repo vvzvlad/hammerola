@@ -270,7 +270,6 @@ def test_rm_removes_the_project_after_the_id_is_typed(hub, model, capsys,
 
     assert not hub.project_dir("demo0001").exists()
     assert not hub.comment_dir("demo0001").exists()
-    assert not (hub.data / "sources" / revision).exists()
     assert "removed demo0001" in out
 
 

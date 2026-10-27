@@ -1,16 +1,16 @@
 """Reading an archive the hub serves: the skill and the starter template.
 
-Members are checked again here although the hub refused the same things on
-the way in (`src/archive.py`, SPEC 7.1): this writes onto the author's machine,
-and a compromised or wrong hub must not be able to write
+Members are checked here although the hub holds what it serves to the same
+rules (`src/onboarding.py`, `_refuse_unservable`): this writes onto the
+author's machine, and a compromised or wrong hub must not be able to write
 `../.ssh/authorized_keys`.
 
 Not `tarfile.extractall(filter="data")`: `filter=` needs Python 3.11.4+, and
 the client must run on older ones (`hammerola/__init__.py`). The rules below
-(the hub's alphabet) are stricter anyway.
+(the member alphabet) are stricter anyway.
 
-The ceilings are the push's (`limits.py`), checked against the member headers
-before anything is written. A member that yields more bytes than its header
+The ceilings are in `limits.py`, checked against the member headers before
+anything is written. A member that yields more bytes than its header
 declares is a damaged archive, and it is refused rather than written past the
 size the header promised.
 """
@@ -44,8 +44,8 @@ class Rules(NamedTuple):
     hidden_leaves: frozenset = frozenset()
 
 
-# What a pushed archive may hold, and the default everywhere: the hub's own
-# alphabet, applied to every component, with no exceptions at all.
+# What an archive may hold, and the default everywhere: the member alphabet,
+# applied to every component, with no exceptions at all.
 PUSH_RULES = Rules(SAFE_COMPONENT)
 
 # The starter template `hammerola create` fetches from
@@ -160,7 +160,8 @@ def _checked(tar, where: str, rules: Rules = PUSH_RULES) -> list:
 
     for info in files:
         if not info.isfile():
-            # Links, devices, fifos: the hub refuses them on the way in.
+            # Links, devices, fifos: the hub packs regular files only
+            # (`src/onboarding.py`, `skill_members` and `template_members`).
             raise ClientError(
                 f"{where} holds {info.name!r}, which is not a regular file; "
                 f"only regular files are unpacked")
@@ -187,7 +188,7 @@ def check_name(name: str, where: str = "the archive",
     if not name or len(parts) > MAX_PATH_DEPTH:
         raise ClientError(
             f"{where} holds {name!r}, whose path is deeper than the "
-            f"{MAX_PATH_DEPTH} components a push may carry")
+            f"{MAX_PATH_DEPTH} components an archive may hold")
     last = len(parts) - 1
     for index, part in enumerate(parts):
         if rules.component.match(part):

@@ -14,14 +14,16 @@ tree unchanged. Most tests push a FINISHED artefact — a meta.json and a view �
 so the tree is the thing under test. The suite has no CadQuery, and a real
 build would be minutes per test.
 
-`Hub.publish` publishes an archive the way a hub did before git, under a name
-the test chooses: the tree is built in the ordinary queue, the archive is filed
-in `sources/`, and the import takes it into the project's repository, which is
-what moves `latest`. Almost every test in this suite is about what ends up on
-disk, not about the transport; `git push` itself is tested in
+`Hub.publish` publishes an archive's tree the way a hub did before git, under a
+name the test chooses: the tree is built in the ordinary queue, and the
+project's `main` is then made of one import commit per such build, oldest
+first, which is what moves `latest` — the repository a hub of today holds for
+builds published before git. Almost every test in this suite is about what ends
+up on disk, not about the transport; `git push` itself is tested in
 test_git_publish.py.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -38,12 +40,10 @@ import httpx
 
 from src import onboarding
 from src.app import create_server
-from src.archive import unpack
 from src.buildproc import STATUS_CRASHED, STATUS_FAILED, STATUS_OK, BuildOutcome
-from src.errors import PublishError
 from src.jobs import STATE_DONE, STATE_FAILED, SUBMIT_ACCEPTED, BuildTask
-from src.store import (DEV_LINK, SOURCE_ARCHIVE_NAME, SOURCES_DIR_NAME,
-                       _payload_digest, _read_digest)
+from src.store import (COMMIT_NAME, DEV_LINK, IMPORT_TRAILER, MAIN_REF,
+                       _built_key, _payload_digest, _read_digest, _trailed_log)
 
 # The one secret of the whole system. A test that wants "a token the hub does
 # not know" spells one out on the spot rather than reaching for a second constant.
@@ -98,6 +98,8 @@ class Hub:
         self.data = server.store.root
         host, port = server.server_address[:2]
         self.url = f"http://{host}:{port}"
+        # `{payload digest: git tree}` of every tree `publish` wrote.
+        self._trees = {}
 
     # The hub under test is on 127.0.0.1, so the machine's proxy settings are
     # never right for it and reading them can be actively fatal: httpx parses
@@ -148,75 +150,103 @@ class Hub:
         """Publish one archive's tree as `<pid>/<commit>`, and wait. -> a reply.
 
         `commit` is `dev` for a draft, and None for the name a hub before git
-        minted, the digest of the tree. A revision's archive is filed in
-        `sources/` as a hub before git kept it, and the import takes it into the
-        project's repository, after which `latest` follows `main`
-        (`Store.ensure_repo`, `Store.recompute`).
-
-        The archive is filed BEFORE the build is handed over, and taken away
-        again if the build is refused: a build on disk without its archive is
-        an import that fails, and of two publishes running at once, the one
-        finishing first imports the other's build too.
+        minted, the digest of the tree. A revision's tree is written into the
+        project's repository, and once the build is published `main` is made
+        again of every build published this way, after which `latest` follows
+        it (`Store.recompute`). The tree is written BEFORE the build is handed
+        over: of two publishes running at once, the one finishing first gives
+        the other's build its commit too.
         """
         submitted = self._submit(pid, commit, body, force, message, keep=True)
         if submitted.status_code != 202:
             return submitted
         reply = self.await_job(submitted.payload["job"])
-        if submitted.name == DEV_LINK:
-            return reply
-        if reply.status_code in (200, 201):
-            self.store.ensure_repo(pid)
+        if submitted.name != DEV_LINK and reply.status_code in (200, 201):
+            self._import(pid)
             self.store.recompute(pid)
-        elif submitted.kept is not None:
-            shutil.rmtree(submitted.kept, ignore_errors=True)
         return reply
 
     def publish_async(self, pid, commit, body, force=False, message=None):
         """Hand one archive's tree to the build queue, as the hook hands a
         commit's. -> 202 `{"job"}`, or the answer given instead of a job.
 
-        The archive is unpacked by the rules the import reads old archives
-        with, and a refusal is the answer (422). A draft whose tree the slot
-        already holds is answered 200 with no job, as the hook answers it; a
-        full or stopped queue is 503. Nothing is filed in `sources/`, so a
-        later `publish` to the same project would fail to import this build.
+        A draft whose tree the slot already holds is answered 200 with no job,
+        as the hook answers it; a full or stopped queue is 503. No tree is
+        written into the repository, so a later `publish` to the same project
+        cannot give this build its import commit.
         """
         return self._submit(pid, commit, body, force, message, keep=False)
 
     def _submit(self, pid, commit, body, force, message, keep):
-        """`publish_async`, and with `keep` the archive filed first."""
-        spool = self.data / f".wip-body-{uuid.uuid4().hex}"
+        """`publish_async`, and with `keep` the tree written into git first."""
         sources = self.data / f".src-{uuid.uuid4().hex}"
-        spool.write_bytes(body)
-        try:
-            sources.mkdir()
-            try:
-                digest = _payload_digest(unpack(spool, sources))
-            except PublishError as error:
-                shutil.rmtree(sources, ignore_errors=True)
-                return Submitted(error.status, {"error": error.message})
-        finally:
-            spool.unlink(missing_ok=True)
+        sources.mkdir()
+        digest = _payload_digest(unpack_tree(body, sources))
         name = digest if commit is None else commit
         if name == DEV_LINK and digest == _read_digest(
                 self.store.build_dir(pid, DEV_LINK)):
             shutil.rmtree(sources, ignore_errors=True)
             return Submitted(200, {"url": f"/project/{pid}/dev/"})
-        kept = None
-        archive = self.data / SOURCES_DIR_NAME / digest / SOURCE_ARCHIVE_NAME
-        if keep and name != DEV_LINK and not archive.exists():
-            archive.parent.mkdir(parents=True, exist_ok=True)
-            archive.write_bytes(body)
-            kept = archive.parent
+        if keep and name != DEV_LINK:
+            self._trees[digest] = write_tree(self.store.ensure_repo(pid),
+                                             sources)
         job_id = self.server.jobs.create(pid, name)["id"]
         verdict = self.server.builds.submit(BuildTask(
             job_id=job_id, pid=pid, commit=name, sources=sources,
             digest=digest, force=force, message=message))
         if verdict != SUBMIT_ACCEPTED:
-            if kept is not None:
-                shutil.rmtree(kept, ignore_errors=True)
             return Submitted(503, {"error": verdict})
-        return Submitted(202, {"job": job_id}, name, kept)
+        return Submitted(202, {"job": job_id}, name)
+
+    def _import(self, pid):
+        """Make `main` one import commit per build `builds_of` lists that is
+        named otherwise than by a commit, oldest first, as such a repository
+        stands. A build `builds_of` skips gets none: in this suite that is a
+        damaged meta.json a test wrote, with no tree behind it.
+
+        Each commit is the build's tree with the trailer
+        `Hammerola-Import: <pid>/<build>`, by `hammerola import`, dated by its
+        `built`. A tree is found by the build's `.payload.sha256` among those
+        `publish` wrote, or in the import commit `main` already has for it.
+        """
+        repo = self.store.repo_dir(pid)
+        with self.store._repo_lock_for(pid):
+            commits = _trailed_log(repo, MAIN_REF)
+            trees = {}
+            for sha, values in commits:
+                tree = git("--git-dir", repo, "rev-parse",
+                           f"{sha}^{{tree}}").stdout.strip()
+                trees.update((value, tree) for value in values)
+            builds = [meta for meta in reversed(self.store.builds_of(pid))
+                      if not COMMIT_NAME.match(meta["commit"])]
+            if all(f"{pid}/{meta['commit']}" in trees for meta in builds):
+                return
+            assert all(values for _sha, values in commits), (
+                f"{pid}: main has commits of the author's own, and "
+                f"`Hub.publish` would drop them")
+            parent = None
+            for meta in builds:
+                name = meta["commit"]
+                key = f"{pid}/{name}"
+                digest = _read_digest(self.store.build_dir(pid, name))
+                tree = self._trees.get(digest) or trees.get(key)
+                assert tree, f"{key} was not published by `Hub.publish`"
+                stamp = f"@{int(_built_key(meta)[0])} +0000"
+                identity = {
+                    "GIT_AUTHOR_NAME": "hammerola import",
+                    "GIT_AUTHOR_EMAIL": "import@hammerola",
+                    "GIT_AUTHOR_DATE": stamp,
+                    "GIT_COMMITTER_NAME": "hammerola import",
+                    "GIT_COMMITTER_EMAIL": "import@hammerola",
+                    "GIT_COMMITTER_DATE": stamp}
+                subject = (meta.get("message")
+                           or f"Revision {name} imported from the hub")
+                parent = git(
+                    "--git-dir", repo, "commit-tree", tree,
+                    *(["-p", parent] if parent else []), "-m", subject,
+                    "-m", f"{IMPORT_TRAILER}: {key}", env=identity
+                ).stdout.strip()
+            git("--git-dir", repo, "update-ref", MAIN_REF, parent)
 
     def job(self, job_id, token=TOKEN):
         headers = {"X-Hammerola-Token": token} if token else {}
@@ -379,16 +409,14 @@ def comment_payload(**extra):
 class Submitted:
     """What `Hub.publish_async` answered: a status and a JSON body.
 
-    `name` is what the build is published under; `kept` is the directory in
-    `sources/` this submission filed, or None.
+    `name` is what the build is published under.
     """
 
-    def __init__(self, status, payload, name=None, kept=None):
+    def __init__(self, status, payload, name=None):
         self.status_code = status
         self.payload = payload
         self.text = json.dumps(payload)
         self.name = name
-        self.kept = kept
 
     def json(self):
         return self.payload
@@ -534,7 +562,7 @@ def start_hub(data_dir, build_runner=None, compare_runner=None,
         target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     # A hub on a fresh volume has nothing to catch up on; one restarted on a
-    # used one is asked about only once the import is through.
+    # used one is asked about only once `Store.catch_up` is through.
     server.catching_up.join(timeout=30)
     hub = Hub(server)
     hub._thread = thread
@@ -569,6 +597,40 @@ def git(*args, env=None, check=True, timeout=120):
         ["git", *map(str, args)],
         env={**os.environ, **GIT_CLIENT_ENV, **(env or {})},
         capture_output=True, text=True, check=check, timeout=timeout)
+
+
+def unpack_tree(body: bytes, dest: Path) -> dict:
+    """Write the files of a gzipped tar under `dest`. -> `{path: sha256}`.
+
+    The mapping `_payload_digest` names a build published before git by.
+    Directory entries are skipped; any member other than a regular file is a
+    mistake of the test that packed it.
+    """
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as tar:
+        for member in tar:
+            if member.isdir():
+                continue
+            assert member.isreg(), f"{member.name!r} is not a regular file"
+            name = member.name.removeprefix("./")
+            data = tar.extractfile(member).read()
+            path = dest / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            files[name] = hashlib.sha256(data).hexdigest()
+    return files
+
+
+def write_tree(repo, directory) -> str:
+    """Write every file under `directory` into `repo`. -> the git tree's id."""
+    index = Path(directory).parent / f".wip-index-{uuid.uuid4().hex}"
+    env = {"GIT_INDEX_FILE": str(index)}
+    try:
+        git("-C", directory, "--git-dir", repo, "--work-tree", ".", "add",
+            "--force", "-A", env=env)
+        return git("--git-dir", repo, "write-tree", env=env).stdout.strip()
+    finally:
+        index.unlink(missing_ok=True)
 
 
 def project_files(pid, marker="a", **extra) -> dict:

@@ -459,8 +459,8 @@ def _check_map_size(value, field: str, files: dict) -> None:
 
     It does not bound the input: `Store._read_meta` reads meta.json without a
     size cap of its own, held only by `limits.file_bytes`. `files` here is always
-    `_hash_output(staging, names)` from `Store._finish_staging`, never archive
-    members, so MAX_MEMBERS plays no part.
+    `_hash_output(staging, names)` from `Store._finish_staging`: the files the
+    build wrote, and nothing of the source tree.
     """
     if len(value) > len(files):
         raise ValueError(

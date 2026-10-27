@@ -174,7 +174,7 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
 from src.multipart import MultipartError, parse_multipart
 from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, MAIN_BRANCH,
                        POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
-                       VARIANT_SEGMENT, VARIANTS_FILE, ImportFailed, Store)
+                       VARIANT_SEGMENT, VARIANTS_FILE, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
 # only honest because a build directory can never change: republishing the same
@@ -1533,8 +1533,7 @@ class HubHandler(BaseHTTPRequestHandler):
         The token first, before the shape of the request, as on every private
         route. Only the three requests of the smart protocol reach
         `git http-backend` (`githttp.smart_request`); everything else under
-        /git/, the dumb protocol's files included, is a 404. A project whose
-        import failed is a 503 with the reason (`Store.ensure_repo`). Every
+        /git/, the dumb protocol's files included, is a 404. Every
         answer closes the connection: a git answer has no length, and a
         refusal may leave a body unread.
         """
@@ -1560,10 +1559,6 @@ class HubHandler(BaseHTTPRequestHandler):
                 BODY_DEADLINE_SECONDS,
                 githttp.hook_environment(self.server.server_address[1],
                                          self.server.hook_secret))
-        except ImportFailed as error:
-            return self._error(
-                503, f"the import of this project's builds failed: {error}",
-                close)
         except (OSError, subprocess.CalledProcessError):
             logger.exception(f"git {request.pid}: git could not be started")
             return self._error(500, "internal error", close)
@@ -1958,8 +1953,8 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     server.hook_secret = secrets.token_hex(16)
     # Last, so a bind that fails leaves no threads behind to be joined by nobody.
     builds.start()
-    # The import and the derived state of every project, off the start path
-    # (`Store.catch_up`); a test that needs it done joins this.
+    # The derived state of every project and the pass over `sources/`, off the
+    # start path (`Store.catch_up`); a test that needs it done joins this.
     server.catching_up = threading.Thread(target=store.catch_up,
                                           name="hammerola-catch-up",
                                           daemon=True)

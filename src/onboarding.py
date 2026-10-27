@@ -491,10 +491,10 @@ def _import_closure(members):
 def template_bytes() -> bytes:
     """The starter model directory, as a .tar.gz the client unpacks.
 
-    One hidden file is in it, `.gitignore`, off the hub's alphabet, which has
-    no leading dot (`src/store.SAFE_COMPONENT`). The client unpacks under `unpack.TEMPLATE_RULES`,
-    which allows that one name in the last component; `_refuse_unservable`
-    holds this side to the same rule.
+    One hidden file is in it, `.gitignore`, off the member alphabet, which has
+    no leading dot (`hammerola/limits.SAFE_COMPONENT`). The client unpacks
+    under `unpack.TEMPLATE_RULES`, which allows that one name in the last
+    component; `_refuse_unservable` holds this side to the same rule.
     """
     members = template_members()
     _refuse_unservable(members, TEMPLATE_DIR, hidden_leaves=True)
@@ -548,7 +548,7 @@ def _refuse_unservable(members, directory, hidden_leaves: bool = False) -> None:
 
     `hidden_leaves` picks the client's `TEMPLATE_RULES`, which allow the one
     hidden file the template carries; the skill is held to `PUSH_RULES`, the
-    hub's own alphabet with no exception at all.
+    member alphabet with no exception at all.
 
     It calls the client's own check rather than repeating it. The one ceiling
     on the set rather than one name, `MAX_MEMBERS`, is checked here, since

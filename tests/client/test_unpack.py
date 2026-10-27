@@ -7,11 +7,10 @@ service — over a token that whoever holds the hub also holds. "The server
 validated it" is a statement about the server, not a control on the client, and
 a member named `../.ssh/authorized_keys` costs nothing to refuse.
 
-The archives below are built by hand for the same reason
-`tests/test_archive_security.py` builds its own: `tarfile` will happily WRITE a
-member named `../escape` or a symlink, and no convenience wrapper can ask for
-one. These are genuinely hostile archives rather than descriptions of hostile
-archives.
+The archives below are built by hand (`harness.raw_tar_gz`): `tarfile` will
+happily WRITE a member named `../escape` or a symlink, and no convenience
+wrapper can ask for one. These are genuinely hostile archives rather than
+descriptions of hostile archives.
 
 EVERY REFUSAL IS ALL-OR-NOTHING, and each test checks that too: the members are
 walked and checked before a single byte is written, so a rejected archive leaves
