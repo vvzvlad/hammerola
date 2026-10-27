@@ -714,8 +714,10 @@ class Store:
         lists, and the ones whose meta.json is of an older format it skips.
         No list of the hub shows those, but they are versions of the project
         all the same, still served by their URL, and their code goes into git
-        like the rest. A missing digest or archive fails the import as it does
-        for any build (`_import`).
+        like the rest. Such a directory without a `.payload.sha256` was never
+        published (a restore that ran out halfway) and is left out, so it does
+        not fail the whole import; a missing archive fails it as it does for
+        any build (`_import`).
         """
         metas = {meta["commit"]: meta for meta in self.builds_of(pid)}
         pdir = self.projects_dir / pid
@@ -729,7 +731,8 @@ class Store:
                     (entry / BUILD_META_FILE).read_text(encoding="utf-8"))
             except (ValueError, OSError, RecursionError):
                 continue
-            if isinstance(meta, dict) and meta.get("commit") == entry.name:
+            if (isinstance(meta, dict) and meta.get("commit") == entry.name
+                    and _read_digest(entry)):
                 metas[entry.name] = meta
         builds = [meta for meta in metas.values()
                   if not COMMIT_NAME.match(meta["commit"])]
