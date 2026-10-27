@@ -8,18 +8,22 @@ order is stored nowhere (SPEC §5.3, `src/jobs.py`). The dev slot's `meta.json`
 names the job that filled it (`render.build_meta`), but only on success, so a
 failed or in-flight build is absent from it.
 
-THE THREE THINGS IT ANSWERS, in the order somebody asks them:
+THE THREE THINGS IT ANSWERS, in the order somebody asks them, all of the
+variant of the branch checked out (`variant.variant_of`):
 
     latest    which revision the permanent name resolves to right now
     dev       whether the local slot is occupied, and when it was last written
     builds    the revisions that exist, newest first
+
+and then the project's variants (`variants.json`), the current one marked.
 """
 
-from hammerola import project
+from hammerola import project, repo
 from hammerola.errors import ClientError
-from hammerola.hub import Hub
-from hammerola.limits import DEV_SLOT
+from hammerola.hub import Hub, build_path
+from hammerola.limits import DEFAULT_VARIANT, DEV_SLOT
 from hammerola.sources import hub_for
+from hammerola.variant import current_branch, unfit, variant_of
 
 # How many revisions are listed before the tail is summarised as a count.
 DEFAULT_LIMIT = 10
@@ -35,19 +39,26 @@ def run(args) -> int:
 
     title = project.read_project_title(root)
     print(f"{pid}  {title or '(no title)'}")
+    branch = current_branch(root)
+    variant = variant_of(branch)
+    page = (f"/project/{pid}/" if variant == DEFAULT_VARIANT
+            else build_path(pid, "latest", variant))
+    print(f"  {hub.absolute(page)}")
+    print(f"  variant {variant}")
 
-    picker = hub.builds(pid)
-    if picker is None:
-        print(f"  {hub.absolute(f'/project/{pid}/')}")
-        print("  nothing published yet. `hammerola build` puts the working "
-              "copy in the dev slot,\n  `git push hammerola-<pid> main` "
-              "publishes a revision.")
-        return 0
-
-    print(f"  {hub.absolute(f'/project/{pid}/')}")
-    print()
-    _print_pointers(hub, pid, picker)
-    _print_builds(picker, limit)
+    picker = hub.builds(pid, variant)
+    if picker is None and unfit(branch):
+        # No advice: the hub refuses this branch's draft and its push alike.
+        print("  nothing published yet.")
+    elif picker is None:
+        print(f"  nothing published yet. `hammerola build` puts the working "
+              f"copy in the dev slot,\n  `git push {repo.remote_name(pid)} "
+              f"{variant}` publishes a revision.")
+    else:
+        print()
+        _print_pointers(hub, pid, picker, variant)
+        _print_builds(picker, limit)
+    _print_variants(hub.variants(pid), variant)
     return 0
 
 
@@ -67,7 +78,7 @@ def _limit(given) -> int:
     return given
 
 
-def _print_pointers(hub: Hub, pid: str, picker: dict) -> None:
+def _print_pointers(hub: Hub, pid: str, picker: dict, variant: str) -> None:
     """`latest` and `dev` — the two names that move (SPEC 3.2)."""
     latest = picker.get("latest")
     print(f"  latest  {latest}" if latest else
@@ -78,7 +89,7 @@ def _print_pointers(hub: Hub, pid: str, picker: dict) -> None:
         return
     # The slot's timestamp lives only in its own meta (SPEC 7.6). Best effort:
     # a slot being overwritten must not fail the command.
-    meta = hub.build_meta(pid, DEV_SLOT) or {}
+    meta = hub.build_meta(pid, DEV_SLOT, variant) or {}
     built = meta.get("built") or meta.get("published")
     print(f"  dev     occupied, built {built}" if built else
           "  dev     occupied")
@@ -100,3 +111,18 @@ def _print_builds(picker: dict, limit: int) -> None:
     remaining = len(builds) - limit
     if remaining > 0:
         print(f"  ... and {remaining} older")
+
+
+def _print_variants(listing, current: str) -> None:
+    """The project's variants as `variants.json` lists them, the default
+    first, `*` at the one this directory's branch is."""
+    variants = [v for v in (listing or {}).get("variants") or []
+                if isinstance(v, dict) and v.get("name")]
+    if not variants:
+        return
+    print()
+    print(f"  variants  {len(variants)}")
+    width = max(len(v["name"]) for v in variants)
+    for entry in variants:
+        mark = "*" if entry["name"] == current else " "
+        print(f"  {mark} {entry['name']:<{width}}  {entry.get('label', '')}")

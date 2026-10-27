@@ -3,8 +3,8 @@
     login                     store the hub's address and the one password
     create                    start a project: a fresh id, and the template
     connect                   make this git repository publish to the hub
-    build                     push the working copy as the draft: the dev slot
-    status                    latest, dev, and the revisions that exist
+    build                     push the working copy as the draft of this branch
+    status                    latest, dev, the revisions, and the variants
     artifacts <revision>      fetch the STL/STEP/3MF, which a link can open
     diff <rev> <rev>          what moved: the geometry, and the source
     log [dev|<revision>]      read a build log again
@@ -34,11 +34,14 @@ like.
     rename (`update.py`). `build` refuses to publish from a client older than
     the one the hub serves.
 
-A VERSION IS A GIT COMMIT. It is published by `git push hammerola-<pid> main`,
-which the hub answers once the commit is built, and refuses when the build
-fails; `connect` sets that remote up. `build` pushes a draft of the uncommitted
-tree into the dev slot the same way, and its exit code is `git push`'s: zero
-means the draft was published or was already there.
+A VERSION IS A GIT COMMIT. It is published by `git push hammerola-<pid>
+<branch>`, which the hub answers once the commit is built, and refuses when the
+build fails; `connect` sets that remote up. A branch is a variant of the
+project, `main` the default one. `build` pushes a draft of the uncommitted tree
+into the dev slot of the branch checked out the same way, and its exit code is
+`git push`'s: zero means the draft was published or was already there.
+`status`, `log`, `artifacts` and `diff` read `latest` and `dev` of that
+branch's variant too.
 """
 
 import argparse
@@ -107,8 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
              "into main")
 
     dev = commands.add_parser(
-        "build", help="push the working copy as the draft, into the project's "
-                      "dev slot")
+        "build", help="push the working copy as the draft of the branch "
+                      "checked out, into its variant's dev slot")
     # Skips only the model's own `checks()` (most of a build's time). The hub's
     # gates — provenance, catalogue, view gates, per-part gates in
     # `export_printables` — still run and refuse a forced push like any other.
@@ -118,7 +121,8 @@ def build_parser() -> argparse.ArgumentParser:
              "gates still run and still refuse")
 
     state = commands.add_parser(
-        "status", help="what the hub has for this project: latest, dev, builds")
+        "status", help="what the hub has for this branch's variant: latest, "
+                       "dev, builds; and the project's variants")
     state.add_argument(
         "-n", "--limit", type=int, default=status.DEFAULT_LIMIT, metavar="COUNT",
         help=f"how many revisions to list (default: {status.DEFAULT_LIMIT})")

@@ -22,6 +22,12 @@
 //     /project/<pid>/<slot>/meta.json   this build: title, views, part catalogue
 //     /project/<pid>/builds.json        the picker: pointers plus the history
 //                                       -- EDIT_TOKEN
+//     /project/<pid>/variants.json      the project's variants, its branches:
+//                                       the default first -- PUBLIC
+//     /project/<pid>/v/<variant>/...    `builds.json`, `latest/` and `dev/` of
+//                                       a variant other than the default; a
+//                                       revision has one address whichever
+//                                       variants hold it (`buildPath`)
 //     /project/<pid>/<slot>/<view file> the geometry, ~2 MB of it
 //     /project/<pid>/<a>/compare/<b>/   the two documents of one comparison --
 //                                       EDIT_TOKEN, both of them; see the
@@ -42,6 +48,12 @@
 /** The two moving names. Same list as static/_v/pointer_pref.js. */
 export const POINTER_NAMES = ['latest', 'dev'];
 
+/** The variant whose pointers keep the project's own addresses, and the
+ *  segment that begins every other variant's. `src/store.py` spells them
+ *  `MAIN_BRANCH` and `VARIANT_SEGMENT`; tests/test_ui_source.py compares. */
+export const DEFAULT_VARIANT = 'main';
+export const VARIANT_SEGMENT = 'v';
+
 /**
  * The id of the view a model is assembled in.
  *
@@ -55,31 +67,65 @@ export const POINTER_NAMES = ['latest', 'dev'];
  */
 export const ASSEMBLED_VIEW_ID = 'assembled';
 
-/** The four fields, read off one pathname. Pure, and the only place that
+/** The five fields, read off one pathname. Pure, and the only place that
  *  arithmetic is written — `PAGE` and `rereadPage` both use it.
  *
  *  Exported for `parse` in address.js, which reads an address the browser
  *  moved to before anything of it has been fetched. */
 export function pageFrom(pathname) {
   const parts = String(pathname).split('/');
+  // `/project/<pid>/v/<variant>/<slot>/` is a pointer of a variant other than
+  // the default. `v` is no build id (`RESERVED_BUILD_NAMES` in src/store.py),
+  // so the segment cannot be a build's, and a comparison is never under it.
+  const variant = parts[3] === VARIANT_SEGMENT ? (parts[4] || '') : '';
+  const at = parts[3] === VARIANT_SEGMENT ? 5 : 3;
   // `/project/<pid>/<a>/compare/<b>/` IS THE PAGE OF BUILD `<a>`, COMPARING
   // AGAINST `<b>`. Everything but the scene belongs to `<a>` (meta.json,
   // builds.json, picker, downloads, comment rail), so the base is the build's
   // own directory, not the address bar's. The word sits in the fourth segment
   // because `compare` is a legal build id (src/app.py): on
   // `/project/<pid>/compare/` `parts[4]` is the trailing ''.
-  const comparing = parts[4] === 'compare';
+  const comparing = at === 3 && parts[4] === 'compare';
   return {
     pid: parts[2] || '',
     // HOW the page was reached, which is not the same question as which build
     // answered: on `/latest/` the slot is `latest` and meta.commit is a hash.
-    slot: parts[3] || '',
+    slot: parts[at] || '',
+    // The variant the address names, '' where it names none: the default
+    // variant's pointers and every revision (`pageVariant`).
+    variant,
     base: comparing ? `${parts.slice(0, 4).join('/')}/`
                     : String(pathname).replace(/[^/]*$/, ''),
     // The other end of the pair, '' on an ordinary page. The first load reads
     // it to boot straight into the comparison (`load`).
     cmp: comparing ? (parts[5] || '') : '',
   };
+}
+
+/** `/project/<pid>/` for the default variant, `/project/<pid>/v/<variant>/`
+ *  for any other: where a variant's `builds.json` and pointers are. */
+export const variantRoot = (pid, variant) => (
+  !variant || variant === DEFAULT_VARIANT
+    ? `/project/${encodeURIComponent(pid)}/`
+    : `/project/${encodeURIComponent(pid)}/${VARIANT_SEGMENT}/${encodeURIComponent(variant)}/`);
+
+/** The address of build `slot`: a pointer of `variant`, or a revision, which
+ *  has one address whichever variant it was reached from. */
+export const buildPath = (pid, slot, variant) => (
+  POINTER_NAMES.includes(slot)
+    ? `${variantRoot(pid, variant)}${slot}/`
+    : `/project/${encodeURIComponent(pid)}/${encodeURIComponent(slot)}/`);
+
+/**
+ * The variant page `page` is of: on `latest` and `dev` the one its address
+ * names, on a revision the branch it was published from (`variant` in its
+ * meta.json), and the default variant where either says none. The picker
+ * lists this variant's builds and Share gives its `latest`.
+ */
+export function pageVariant(page, meta) {
+  if (POINTER_NAMES.includes(page.slot)) return page.variant || DEFAULT_VARIANT;
+  const named = meta && meta.variant;
+  return typeof named === 'string' && named ? named : DEFAULT_VARIANT;
 }
 
 /** Where this page sits, read off its own URL and nothing else.
@@ -113,6 +159,10 @@ export function rereadPage(pathname) {
 
 /** True on the two URLs whose content can be rewritten under the reader. */
 export const isPointerPage = () => POINTER_NAMES.includes(PAGE.slot);
+
+/** True on `latest` or `dev` of the default variant: the two the project's
+ *  own address remembers (SPEC 9), which it never sends to a variant. */
+export const isDefaultPointerPage = () => isPointerPage() && !PAGE.variant;
 
 /**
  * A camera frame `{position, quaternion, target, zoom}` as the value of `c=`
@@ -182,8 +232,19 @@ export const loadMeta = (fresh, base) =>
  * `builds`, and `dev` while the slot is occupied). Absent when the hub could
  * not read its own file.
  */
-export const loadBuilds = (token) =>
-  getJson(`/project/${PAGE.pid}/builds.json`, { headers: tokenHeader(token) });
+export const loadBuilds = (token, variant) =>
+  getJson(`${variantRoot(PAGE.pid, variant)}builds.json`, { headers: tokenHeader(token) });
+
+/**
+ * The project's variants, `{default, variants: [{name, label}]}`, or null.
+ *
+ * Without the token, which this list does not need: a reader holding a link
+ * sees and switches every variant. Null for any failure, since the page is
+ * whole without a switcher.
+ */
+export const loadVariants = (pid) =>
+  getJson(`/project/${encodeURIComponent(pid)}/variants.json`, { cache: 'no-store' })
+    .catch((error) => { console.warn('variants', error); return null; });
 
 // -- the front page ---------------------------------------------------------
 
@@ -273,6 +334,9 @@ export function projectCard(card) {
     meta: card.documents == null
       ? `${card.printables} printables · ${card.views} views · ${card.mb} MB`
       : `${card.documents} documents · ${card.mb} MB`,
+    // The card is the default variant's; a project with others says how many
+    // it has, and one with none says nothing.
+    variants: card.variants > 1 ? `${card.variants} variants` : '',
     rev: shortId(card.commit),
     dev: !!card.dev,
     status: card.status,

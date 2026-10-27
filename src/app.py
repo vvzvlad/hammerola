@@ -19,12 +19,25 @@ Routing (SPEC 3, 7.4):
     GET  /start/template.tar.gz               a model directory that builds
     GET  /favicon.ico                         the site icon, as SVG bytes
     GET  /project/<pid>/                      picks the pointer this reader last
-                                              opened (SPEC 9); the URL without
-                                              the slash 302s to this one
-    GET  /project/<pid>/builds.json           build picker, and the key to
-                                              each build's files       EDIT_TOKEN
+                                              opened (SPEC 9) of the default
+                                              variant; the URL without the
+                                              slash 302s to this one
+    GET  /project/<pid>/builds.json           the default variant's build
+                                              picker, and the key to each
+                                              build's files            EDIT_TOKEN
+    GET  /project/<pid>/variants.json         the project's variants — its
+                                              branches — the default first,
+                                              each with its label
     GET  /project/<pid>/latest/<file>         newest build of a commit, no-cache
     GET  /project/<pid>/dev/<file>            the local slot, no-cache
+    GET  /project/<pid>/v/<variant>/builds.json
+                                              another variant's picker  EDIT_TOKEN
+    GET  /project/<pid>/v/<variant>/latest/<file>
+                                              that variant's `latest`, no-cache
+    GET  /project/<pid>/v/<variant>/dev/<file>
+                                              and its local slot, no-cache;
+                                              the default variant has its own
+                                              addresses above and none here
     GET  /project/<pid>/<commit>/<file>       one build's files, immutable forever;
                                               of these three, every file but
                                               `.json` and a document's own
@@ -68,6 +81,9 @@ Routing (SPEC 3, 7.4):
                                                                        secret
 
     POST /api/v1/comments/<pid>/<commit>      leave a comment          EDIT_TOKEN
+    POST /api/v1/comments/<pid>/v/<variant>/dev
+                                              one on another variant's
+                                              draft                    EDIT_TOKEN
     GET  /api/v1/comments                     the queue                EDIT_TOKEN
     GET  /api/v1/comments/<id>                one comment              EDIT_TOKEN
     GET  /api/v1/comments/<id>/photo          its photo                EDIT_TOKEN
@@ -91,9 +107,11 @@ not list as a document and whose extension is outside `OPEN_SUFFIXES`, so the
 STEP, STL and 3MF — leave only to the token or to a link carrying the key of
 that address (`files_key`), which the owner's Share window adds or leaves out.
 THE ENUMERATION is not public at all: `/index.json` (what is on this hub) and
-`builds.json` (every revision of a project, and whether a draft exists) need
+`builds.json` (every revision of a variant, and whether a draft exists) need
 the token. A link gets you that build, and its files only if it says so;
-nothing gets you the list.
+nothing gets you the list. The list of a project's variants is the exception
+the owner chose (SPEC §4): `variants.json` is open to anybody holding a link,
+so a reader without the token switches variants as the owner does.
 
 `/start` is the one exception, at the width of a single boolean: it is read
 before login and says whether the hub is empty, so the sign-in page
@@ -154,9 +172,9 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
                       SUBMIT_QUEUE_FULL, BuildQueue, CompareTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
-from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK,
+from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, MAIN_BRANCH,
                        POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
-                       Store)
+                       VARIANT_SEGMENT, VARIANTS_FILE, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
 # only honest because a build directory can never change: republishing the same
@@ -343,12 +361,14 @@ FILES_REFUSED_ERROR = "this link does not include the files of this build"
 def files_key(token: str, pid: str, build: str) -> str:
     """The key that opens the files of one build address, `<pid>/<build>`.
 
-    The ONLY place a key is derived. `build` is the URL segment as asked for —
-    `latest`, `dev` or a revision — so a key opens exactly the address it was
-    made for: the key of `latest` opens whatever `latest` is now and later, a
-    revision's key that revision only. Derived from EDIT_TOKEN and stored
+    The ONLY place a key is derived. `build` is the address past
+    `/project/<pid>/` as asked for — `latest`, `dev`, a revision, or
+    `v/<variant>/latest` and `v/<variant>/dev` — so a key opens exactly the
+    address it was made for: the key of `latest` opens whatever `latest` is
+    now and later, a revision's key that revision only, and one variant's
+    `latest` key no other variant's. Derived from EDIT_TOKEN and stored
     nowhere, so there is no second secret and no table of links, and changing
-    the token revokes every key at once. Neither id can hold a `/`
+    the token revokes every key at once. No id can hold a `/`
     (`store.SAFE_ID`), so the joined message is unambiguous. 32 hex
     characters, 128 bits.
     """
@@ -439,6 +459,12 @@ def _route_comment(handler, rest, query, trailing_slash, with_body):
             else handler._handle_comment_post(rest[0], rest[1]))
 
 
+def _route_variant_comment(handler, rest, query, trailing_slash, with_body):
+    return (handler._handle_comment_post(rest[0], rest[3], variant=rest[2])
+            if rest[1] == VARIANT_SEGMENT
+            else handler._error(404, "not found", {"Connection": "close"}))
+
+
 def _route_proposal(handler, rest, query, trailing_slash, with_body):
     return (handler._handle_proposal_post(rest[0])
             if len(rest) == 1
@@ -504,6 +530,7 @@ POST_ROUTES = (
     # comment and `<id>/resolve` to close one. A build named
     # `resolve` can be published and served but not commented on.
     ((("api", "v1", "comments"), 5), _route_comment),
+    ((("api", "v1", "comments"), 7), _route_variant_comment),
     ((("api", "v1", "proposals"), None), _route_proposal),
     ((("api", "v1", "projects"), None), _route_project),
     ((("api", "v1", "compare"), None),
@@ -856,33 +883,39 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
         return self._serve_page(render.pointer_page_html, with_body)
 
-    def _serve_builds_json(self, pid: str, with_body: bool):
-        """The build picker, with the key to each build's files — EDIT_TOKEN.
+    def _serve_builds_json(self, pid: str, with_body: bool,
+                           variant: str = MAIN_BRANCH):
+        """A variant's build picker, with the key to each build's files —
+        EDIT_TOKEN.
 
         `files_keys` maps every address the picker offers to its key
         (`files_key`): `latest`, each revision of `builds`, and `dev` while the
-        slot is occupied. The owner's page puts them into its download links and
-        its Share window's links, because a browser download cannot carry the
-        token. Added here and never written: a key is derived from the secret
-        and does not belong on the volume (the file is `render.builds_json`'s).
+        slot is occupied — another variant's `latest` and `dev` by the key of
+        its own address, under the same two names. The owner's page puts them
+        into its download links and its Share window's links, because a
+        browser download cannot carry the token. Added here and never written:
+        a key is derived from the secret and does not belong on the volume (the
+        file is `render.builds_json`'s).
 
         A file that does not parse is served as it is, without keys, with a log
         line: the picker still works and only the downloads are lost.
         """
         try:
             path = self.server.store.resolve_inside(
-                self.server.store.builds_json_path(pid))
+                self.server.store.builds_json_path(pid, variant))
             raw = path.read_bytes()
         except (OSError, ValueError):
             return self._error(404, "not found", with_body=with_body)
         token = self.server.edit_token
+        prefix = ("" if variant == MAIN_BRANCH
+                  else f"{VARIANT_SEGMENT}/{variant}/")
         try:
             picker = json.loads(raw)
-            keys = {"latest": files_key(token, pid, "latest")}
+            keys = {"latest": files_key(token, pid, f"{prefix}latest")}
             for entry in picker["builds"]:
                 keys[entry["commit"]] = files_key(token, pid, entry["commit"])
             if picker.get("has_dev"):
-                keys["dev"] = files_key(token, pid, "dev")
+                keys["dev"] = files_key(token, pid, f"{prefix}dev")
             picker["files_keys"] = keys
         except (ValueError, TypeError, KeyError) as error:
             logger.warning(
@@ -893,7 +926,8 @@ class HubHandler(BaseHTTPRequestHandler):
         return self._json(200, picker, CACHE_NONE, with_body=with_body)
 
     def _presents_files_key(self, pid: str, build: str, query: str) -> bool:
-        """Does `?files=` carry the key of `<pid>/<build>`?
+        """Does `?files=` carry the key of `<pid>/<build>`, `build` being the
+        address past the project (`files_key`)?
 
         Constant time over bytes, for the reason `_authorized` gives.
         """
@@ -965,6 +999,18 @@ class HubHandler(BaseHTTPRequestHandler):
             if not self._require_token(with_body):
                 return None
             return self._serve_builds_json(pid, with_body)
+        if second == VARIANTS_FILE and len(rest) == 2:
+            # Public: the owner chose that a reader without the token sees
+            # and switches every variant (SPEC §4).
+            return self._send_file(self.server.store.variants_json_path(pid),
+                                   CACHE_NONE, with_body)
+
+        # Another variant's address. Before the comparison below, which reads
+        # `compare` in the fourth position: `/v/compare/latest/` is the
+        # `latest` of the variant `compare`.
+        if second == VARIANT_SEGMENT:
+            return self._serve_variant(pid, rest[2:], trailing_slash,
+                                       with_body, query)
 
         # A comparison of two revisions. `compare` is in the fourth position
         # because it is a valid build id, so `/project/<pid>/compare/` could
@@ -987,18 +1033,58 @@ class HubHandler(BaseHTTPRequestHandler):
             cache = CACHE_IMMUTABLE
         else:
             return self._error(404, "not found", with_body=with_body)
+        return self._serve_build(pid, second,
+                                 self.server.store.build_dir(pid, second),
+                                 rest[2:], cache, trailing_slash, with_body,
+                                 query)
 
-        build_dir = self.server.store.build_dir(pid, second)
-        if len(rest) == 2:
+    def _serve_variant(self, pid: str, rest: list[str], trailing_slash: bool,
+                       with_body: bool, query: str):
+        """`/project/<pid>/v/<variant>/…`: another variant's `latest`, `dev`
+        and `builds.json`, from `.variants/<variant>/`.
+
+        The default variant has one address, its old one, so `v/main/` is a
+        404, as is a variant with nothing there. A draft's variant whose
+        branch the hub does not have yet answers for its `dev`.
+        """
+        store = self.server.store
+        if len(rest) == 2 and rest[1] == PROJECT_BUILDS_FILE:
+            if not self._require_token(with_body):
+                return None
+        if (len(rest) < 2 or not store.valid_variant(rest[0])
+                or rest[0] == MAIN_BRANCH):
+            return self._error(404, "not found", with_body=with_body)
+        variant = rest[0]
+        if len(rest) == 2 and rest[1] == PROJECT_BUILDS_FILE:
+            return self._serve_builds_json(pid, with_body, variant)
+        if rest[1] not in POINTER_NAMES:
+            return self._error(404, "not found", with_body=with_body)
+        return self._serve_build(
+            pid, f"{VARIANT_SEGMENT}/{variant}/{rest[1]}",
+            store.pointer_dir(pid, variant, rest[1]), rest[2:], CACHE_NONE,
+            trailing_slash, with_body, query)
+
+    def _serve_build(self, pid: str, address: str, build_dir: Path,
+                     tail: list[str], cache: str, trailing_slash: bool,
+                     with_body: bool, query: str):
+        """One build's page or one of its files.
+
+        `address` is the build's address past `/project/<pid>/` — a revision,
+        `latest`, `dev` or `v/<variant>/latest` — which a redirect repeats and
+        whose key opens its closed files (`files_key`); `tail` is the path
+        under it. `cache` is the year for a revision and `no-cache` for a
+        pointer, which a key never makes private.
+        """
+        if not tail:
             # The viewer fetches relative to its directory, so the slash
             # matters.
             if not trailing_slash:
-                return self._redirect(f"/project/{pid}/{second}/", with_body)
+                return self._redirect(f"/project/{pid}/{address}/", with_body)
             return self._serve_build_page(build_dir, with_body)
 
         # The rest of the address is one file of the build: a name at the top,
         # or a document's path in the tree.
-        name = "/".join(rest[2:])
+        name = "/".join(tail)
         if not _safe_build_path(name):
             return self._error(404, "not found", with_body=with_body)
         # Generated, never read from the build directory.
@@ -1018,8 +1104,8 @@ class HubHandler(BaseHTTPRequestHandler):
         # extension opens it, so there is nothing for a shared cache to leak.
         if Path(name).suffix.lower() not in OPEN_SUFFIXES:
             if (self._authorized()
-                    or self._presents_files_key(pid, second, query)):
-                if second not in POINTER_NAMES:
+                    or self._presents_files_key(pid, address, query)):
+                if cache == CACHE_IMMUTABLE:
                     cache = CACHE_IMMUTABLE_PRIVATE
             elif not self._listed_document(build_dir, name):
                 logger.warning(
@@ -1608,8 +1694,11 @@ class HubHandler(BaseHTTPRequestHandler):
         logger.info(f"comment {cid} resolved")
         return self._json(200, record)
 
-    def _handle_comment_post(self, pid: str, commit: str):
-        """POST /api/v1/comments/<pid>/<commit> — EDIT_TOKEN (SPEC 7A.2).
+    def _handle_comment_post(self, pid: str, commit: str,
+                             variant: str = None):
+        """POST /api/v1/comments/<pid>/<commit> — EDIT_TOKEN (SPEC 7A.2) —
+        and /api/v1/comments/<pid>/v/<variant>/dev, on another variant's
+        draft, with `variant`.
 
         The token is checked first, before the route and Content-Length, so
         no unauthenticated caller makes the hub read and parse a body (SPEC
@@ -1619,15 +1708,22 @@ class HubHandler(BaseHTTPRequestHandler):
         if not self._require_token(close=True):
             return None
 
+        store = self.server.store
         # Commits and the local slot can be commented on (SPEC 7.6); `latest`
-        # cannot, since it will name a different build tomorrow.
-        if not self.server.store.valid_pid(pid) or not (
-                self.server.store.valid_build_id(commit)
-                or commit == DEV_LINK):
+        # cannot, since it will name a different build tomorrow. Another
+        # variant has only its slot here: its revisions are revisions.
+        if variant is None:
+            known = store.valid_build_id(commit) or commit == DEV_LINK
+            meta = store.build_meta_path(pid, commit)
+        else:
+            known = (store.valid_variant(variant) and variant != MAIN_BRANCH
+                     and commit == DEV_LINK)
+            meta = store.pointer_dir(pid, variant, DEV_LINK) / BUILD_META_FILE
+        if not store.valid_pid(pid) or not known:
             return self._error(404, "not found", {"Connection": "close"})
         # The build has to exist at write time; a comment whose build is
         # later removed stays in the queue (SPEC 7A.3).
-        if not self.server.store.build_meta_path(pid, commit).is_file():
+        if not meta.is_file():
             return self._error(404, "not found", {"Connection": "close"})
 
         # No rate limit (SPEC 7A.4): the only caller holds EDIT_TOKEN.
@@ -1639,7 +1735,7 @@ class HubHandler(BaseHTTPRequestHandler):
             return None
 
         try:
-            return self._store_comment(pid, commit, body)
+            return self._store_comment(pid, commit, body, variant)
         except CommentError as error:
             logger.warning(
                 f"comment on {pid}/{commit} refused: {error.message}")
@@ -1650,7 +1746,8 @@ class HubHandler(BaseHTTPRequestHandler):
             logger.exception(f"comment on {pid}/{commit} failed")
             return self._error(500, "internal error")
 
-    def _store_comment(self, pid: str, commit: str, body: bytes):
+    def _store_comment(self, pid: str, commit: str, body: bytes,
+                       variant: str = None):
         """Parse one multipart body and put the comment in the queue."""
         try:
             parts = parse_multipart(body,
@@ -1680,7 +1777,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 attachments[kind] = part.data
 
         record = self.server.comment_store.add(pid, commit, payload,
-                                               attachments)
+                                               attachments, variant=variant)
         # Only the id comes back; the text is never echoed (SPEC 7A.4). The
         # build page renders the queue as text, never markup
         # (`ui/tests/feed.test.js`); `_body_text` refuses control characters.

@@ -22,7 +22,7 @@
 import React from 'react';
 
 import { docPlace } from './feedview.js';
-import { askHub, HUB_UNREACHABLE, hubBody, hubTrouble, PAGE } from './hub.js';
+import { askHub, HUB_UNREACHABLE, hubBody, hubTrouble, PAGE, VARIANT_SEGMENT } from './hub.js';
 import { DRAFT_MARK } from './KicadView.jsx';
 import { btn, FAINT_CLICK, FILL, HEAD_SANS, IDLE, META_MONO, ON_ACCENT, ROW, DIM_CLICK } from './panelstyle.js';
 // The two attachments a comment carries, made small enough to send. Imported
@@ -132,6 +132,17 @@ export function docFrame(tools) {
     return null;
   });
 }
+
+/**
+ * What a comment on `build` (its meta.json) is posted under, after the
+ * project: its commit, and on the draft of a variant other than the default
+ * that variant's slot, `v/<variant>/dev` — a bare `dev` is the default
+ * variant's. The slot of a variant is reached only by its address, so the
+ * address says which (`PAGE.variant`).
+ */
+export const commentTarget = (build) => (
+  build.commit === 'dev' && PAGE.variant
+    ? `${VARIANT_SEGMENT}/${encodeURIComponent(PAGE.variant)}/dev` : build.commit);
 
 /**
  * The composer's draft, sent: the one Send of both pages. `build` is the
@@ -256,7 +267,7 @@ export async function sendDraft(page, { build, token, frame, camera }) {
     // is checked there before the body is parsed at all — so it is what makes
     // this a comment rather than a 403, with the whole upload already spent.
     const { response, error } = await askHub(
-      `/api/v1/comments/${PAGE.pid}/${build.commit}`, token,
+      `/api/v1/comments/${PAGE.pid}/${commentTarget(build)}`, token,
       { method: 'POST', body: form });
     if (error) {
       console.error('comment', error);

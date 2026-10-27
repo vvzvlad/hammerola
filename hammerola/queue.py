@@ -169,12 +169,15 @@ def _print_comment(record: dict) -> None:
              else f"open, written {record.get('created')}")
     print(f"{cid}  {stamp}")
 
-    # Where, on one line: build, then the document a comment was left on, if
-    # any, and the place in it (`_document_place`); else the optional part,
-    # view, point and the face normal. With `frame: "part"` the point and the
-    # normal are in the part's own frame, which every view of the build
-    # shares; without it, in the world of the view named.
+    # Where, on one line: build, the variant of a comment on a variant's dev
+    # slot (none for the default one), then the document a comment was left
+    # on, if any, and the place in it (`_document_place`); else the optional
+    # part, view, point and the face normal. With `frame: "part"` the point
+    # and the normal are in the part's own frame, which every view of the
+    # build shares; without it, in the world of the view named.
     where = [f"build {record.get('commit')}"]
+    if record.get("variant"):
+        where.append(f"variant {record['variant']}")
     if record.get("doc"):
         where.append(f"doc {record['doc']}")
     if record.get("doc") and record.get("frame") in DOCUMENT_FRAMES:

@@ -288,15 +288,17 @@ def test_the_interface_records_the_pointer_the_page_was_opened_under():
 
     Not the build picker's click: reaching /dev/ by the picker, by a pasted link
     or by the back button is the same thing, and all three are a page load. And
-    only on a pointer page — a pinned commit is not a choice between the two
-    moving names, so recording one there would be remembering a build.
+    only on a pointer page of the default variant — a pinned commit is not a
+    choice between the two moving names, so recording one there would be
+    remembering a build, and `/project/<pid>/` never opens another variant.
     """
     code = _code(COMPONENT)
-    assert re.search(r"if \(isPointerPage\(\)\)\s*rememberPointer\(PAGE\.pid, "
+    assert re.search(r"if \(isDefaultPointerPage\(\)\)\s*rememberPointer\(PAGE\.pid, "
                      r"PAGE\.slot\);", code), (
         "the interface no longer records the pointer it was opened under, or no "
-        "longer guards the write with isPointerPage() — the first leaves "
-        "/project/<pid>/ on `latest` forever, the second remembers commit ids")
+        "longer guards the write with isDefaultPointerPage() — the first leaves "
+        "/project/<pid>/ on `latest` forever, the second remembers commit ids "
+        "or another variant's pointer")
 
 
 def test_the_index_links_to_the_project_and_not_to_a_pointer():

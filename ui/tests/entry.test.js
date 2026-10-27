@@ -115,6 +115,7 @@ describe('a card of /index.json', () => {
       title: 'Ventilation controller case',
       slug: 'vent_ctrl_case',
       meta: '14 printables · 3 views · 1.2 MB',
+      variants: '',
       rev: 'c0ffee1',
       dev: false,
       status: 'idle',

@@ -1218,10 +1218,12 @@ def test_a_failure_after_the_rename_still_reports_the_build_as_published(
     """
     hub = hub_factory()
 
-    def broken(_pid):
-        raise OSError(errno.EIO, "the pointer could not be written")
+    def broken(*_args):
+        raise OSError(errno.EIO, "the picker could not be written")
 
-    monkeypatch.setattr(hub.store, "_switch_latest", broken)
+    # The picker, because every publish writes it: `latest` moves only for a
+    # branch, and this publish has no repository.
+    monkeypatch.setattr(hub.store, "_write_builds_json", broken)
 
     job_id = hub.publish_async("proj1", "abc123", good_build()).json()["job"]
     record = hub.await_job(job_id, timeout=10).record

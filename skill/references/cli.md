@@ -46,6 +46,12 @@ holding `project.json` with its id; one repository may hold several projects,
 each with its own remote, and a commit that touches only one of them builds
 only that one.
 
+`connect` prints the push for the branch checked out: a branch is a variant
+(`SKILL.md`). `status`, `log [latest|dev]`, `artifacts latest|dev` and
+`latest` in `diff` are of that branch's variant too, and `status` lists the variants. On a
+branch whose name the hub refuses (`feat/x`) they read `main` and say so in one
+line, and neither `connect` nor `status` advises a push.
+
 ## Fetching things back
 
 ```sh

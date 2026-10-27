@@ -76,24 +76,30 @@
   address of `/internal/pre-receive` and the secret the process made at start
   (`hook_environment`). `end_of_request` runs after the backend exits and
   before the connection closes: after a push it moves `latest`, `builds.json`
-  and the index after the branch git has just written (`Store.recompute`). The
+  and the index after the branch git has just written (`Store.recompute`), for
+  every branch: each is a variant, its `latest`, draft slot and `builds.json`
+  in `data/project/<pid>/.variants/<branch>/` (`main`'s where they always were)
+  and the list of them in `variants.json` (`Store._derive`). The
   repository itself is the store's: created empty by `ensure_repo` on the
   first git request, under a lock of its own; swept of ref locks, push
   quarantine and unrenamed staging at startup with no age threshold
   (`_sweep_repos`); removed with the project
 - `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
   #128): the ref updates of one push, checked in two passes. The first refuses
-  without building — a deleted ref, a branch other than `main`, a forced push,
-  no `project.json` with the project's id, a symlink or a submodule; the second
-  builds the newest commit of the branch that touched the project's directory,
-  and the draft (`refs/drafts/main`), in the ordinary queue, and streams the
-  log back to the hook. The build publishes before git moves the ref, so a
+  without building — a deleted ref, a branch or draft whose name is no variant
+  (`SAFE_ID`), a forced push, no `project.json` with the project's id, a
+  symlink or a submodule; the second builds the newest commit of each branch
+  that touched the project's directory, and each draft (`refs/drafts/<branch>`),
+  in the ordinary queue, into that branch's variant (issue #129), and streams
+  the log back to the hook. The build publishes before git moves the ref, so a
   build that fails refuses the push and a push that loses a race leaves its
   revision published, to join the branch by the next merge
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). A version is published by git itself
-  (`git push hammerola-<pid> main`); `connect` sets a repository up for it and
-  `build` pushes the working copy as the draft (`hammerola/repo.py`); around
+  (`git push hammerola-<pid> <branch>`, a branch being a variant); `connect`
+  sets a repository up for it and `build` pushes the working copy as the draft
+  of the branch checked out (`hammerola/repo.py`; the branch is read by
+  `hammerola/variant.py`, which `status`, `log` and `artifacts` read too); around
   them sit `login`, `create`, `status`, `artifacts`, `diff`, `log`, `comments`,
   `proposal`, `rename`, `rm`, `skill` and `update`. The verb table with what each one may and may not do is the
   docstring of `hammerola/cli.py`, next to the parser that defines them — read it
@@ -416,6 +422,14 @@
   Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
   to another document or to the page's own address (`docLinks` in
   `DocumentView.jsx`)
+- `ui/src/variants.jsx` — the switcher of the project's variants beside the
+  title on both pages (issue #129): `variantChoices` turns `variants.json`
+  (`loadVariants` in `ui/src/hub.js`, no token) into rows that link to each
+  variant's `latest`, none for a project of one variant. Which variant a page
+  is of is `pageVariant` in `hub.js`: the address on `latest` and `dev`
+  (`/project/<pid>/v/<branch>/…`, `pageFrom`), the revision's `variant` in
+  meta.json elsewhere; the picker, Share's `latest` and a comment on a
+  variant's draft (`commentTarget` in `comments.jsx`) follow it
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
   `HammerolaViewer.jsx`. A header, the document, and the model page's bar

@@ -17,11 +17,13 @@ Two passes over the refs:
   first failed build refuses the push; what published before it stays a
   revision.
 
-A branch publishes the newest commit of its first-parent line after the old tip
-that touched the project's directory, under its sha, unless that commit is built
-already. `latest` follows the branch once git has written it
-(`githttp.end_of_request`). A draft, `refs/drafts/<variant>`, publishes its
-commit into the `dev` slot. Only `main` is taken for now.
+A branch is a variant of the project. It publishes the newest commit of its
+first-parent line after the old tip that touched the project's directory,
+under its sha, unless that commit is built already; its `latest` follows the
+branch once git has written it (`githttp.end_of_request`). A draft,
+`refs/drafts/<variant>`, publishes its commit into that variant's `dev` slot,
+whether or not the hub has the branch yet. A variant's name is the branch's,
+held to `SAFE_ID`: it is a segment of the variant's address.
 
 No lock of its own: git writes the ref, and of two pushes racing for one branch
 the loser gets `! [remote rejected]` with its revision already published.
@@ -43,15 +45,18 @@ from src.buildproc import STATUS_CPU_EXHAUSTED, STATUS_TIMEOUT
 from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR, STATE_DONE,
                       STATE_FAILED, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
                       BuildTask)
-from src.store import (DEV_LINK, JSON_TMP_PREFIX, MAIN_BRANCH,
-                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, Store, git_failure,
-                       run_git)
+from src.store import (BRANCH_PREFIX, DEV_LINK, JSON_TMP_PREFIX,
+                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, Store, build_path,
+                       git_failure, run_git)
 
 # What git writes for a ref that does not exist on one side of an update.
 ZERO = "0" * 40
 
-BRANCH_PREFIX = "refs/heads/"
 DRAFT_PREFIX = "refs/drafts/"
+
+# The refusal of a branch or a draft whose name cannot be a variant's.
+VARIANT_NAME_REFUSAL = ("variant (branch) name must be letters, digits, - and "
+                        "_, up to 64")
 
 PROJECT_FILE = "project.json"
 
@@ -125,6 +130,7 @@ class Plan:
     draft: bool
     directory: str       # the project's directory in the commit, "" for the root
     target: str | None   # the commit to build, None for nothing
+    variant: str         # the branch, or the variant of the draft
     unchanged: bool = False
 
 
@@ -176,8 +182,13 @@ def run(store: Store, jobs, builds, request: HookRequest, say) -> bool:
         force = FORCE_OPTION in request.options
         for plan in plans:
             if plan.unchanged:
-                say(f"unchanged: /project/{request.pid}/{DEV_LINK}/")
-            elif plan.target is not None:
+                say(f"unchanged: "
+                    f"{build_path(request.pid, DEV_LINK, plan.variant)}")
+            elif plan.target is not None and (
+                    plan.draft
+                    or store.built_build(request.pid, plan.target, env) is None):
+                # Asked again for a branch: an earlier ref of this push, a
+                # second branch at the same commit, may have built it.
                 _build(store, jobs, builds, repo, request.pid, env, plan, force,
                        say)
     except Refused as refusal:
@@ -198,8 +209,8 @@ def _look(store: Store, repo, pid: str, env: dict, old: str, new: str,
         draft, name = True, ref[len(DRAFT_PREFIX):]
     else:
         return None
-    if name != MAIN_BRANCH:
-        raise Refused(ref, f"this hub takes only {MAIN_BRANCH} for now")
+    if not store.valid_variant(name):
+        raise Refused(ref, VARIANT_NAME_REFUSAL)
     if not draft and old != ZERO and not _is_ancestor(repo, old, new, env):
         raise Refused(ref, "non-fast-forward: pull first")
     try:
@@ -207,13 +218,13 @@ def _look(store: Store, repo, pid: str, env: dict, old: str, new: str,
         if draft:
             tree = run_git(repo, "rev-parse", f"{new}:{directory}",
                            env=env).strip()
-            slot = store.build_dir(pid, DEV_LINK) / PAYLOAD_DIGEST_FILE
+            slot = store.pointer_dir(pid, name, DEV_LINK) / PAYLOAD_DIGEST_FILE
             try:
                 in_slot = slot.read_text(encoding="utf-8").strip()
             except OSError:
                 in_slot = None
             if tree == in_slot:
-                return Plan(ref, draft, directory, None, unchanged=True)
+                return Plan(ref, draft, directory, None, name, unchanged=True)
             target = new
         else:
             since = [f"^{old}"] if old != ZERO else []
@@ -227,7 +238,7 @@ def _look(store: Store, repo, pid: str, env: dict, old: str, new: str,
             _refuse_links(repo, target, directory, ref, env)
     except subprocess.CalledProcessError as error:
         raise Refused(ref, git_failure(error)) from error
-    return Plan(ref, draft, directory, target)
+    return Plan(ref, draft, directory, target, name)
 
 
 def _is_ancestor(repo, old: str, new: str, env: dict) -> bool:
@@ -318,7 +329,8 @@ def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
         try:
             outcome = builds.submit(BuildTask(
                 job_id=job_id, pid=pid, commit=name, sources=sources,
-                digest=digest, force=force, message=message))
+                digest=digest, force=force, message=message,
+                variant=plan.variant))
         except Exception:
             jobs.finish(job_id, state=STATE_FAILED, code=500,
                         error=HANDOVER_ERROR)

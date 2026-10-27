@@ -9,6 +9,9 @@ revision:
     hammerola log dev          what is in the local slot — see `_dev_log`, which
                                reaches the log through the JOB the slot names
 
+`latest` and `dev` are those of the variant of the branch checked out
+(`variant.current_variant`), as everywhere in the client.
+
 The code of a revision is in git: a revision is a commit, and a build
 published before git is the commit the hub's import made of it
 (`repo.revision_tree`).
@@ -20,6 +23,7 @@ from hammerola import config, project
 from hammerola.errors import ClientError
 from hammerola.hub import QUERY_TIMEOUT, Hub, HubError
 from hammerola.limits import DEV_SLOT, SAFE_ID
+from hammerola.variant import current_variant
 
 # The moving name a revision argument may be spelled with. `dev` is a slot,
 # not a revision.
@@ -104,18 +108,19 @@ def resolve_revision(hub: Hub, root, name: str) -> str:
 
 
 def _latest_of(hub: Hub, root) -> str:
-    """What `latest` points at for the project in this directory."""
+    """What `latest` of this directory's variant points at."""
     pid = project.read_project_id(root)
-    picker = hub.builds(pid)
+    variant = current_variant(root)
+    picker = hub.builds(pid, variant)
     if picker is None:
         raise ClientError(
-            f"the hub has nothing for project {pid} yet — nothing has been "
-            f"published from here.")
+            f"the hub has nothing for variant {variant} of project {pid} yet — "
+            f"nothing has been published from here.")
     latest = picker.get(LATEST)
     if not latest:
         raise ClientError(
-            f"project {pid} has no published revision yet: `{LATEST}` points at "
-            f"nothing.\n"
+            f"variant {variant} of project {pid} has no published revision "
+            f"yet: `{LATEST}` points at nothing.\n"
             f"  `hammerola build` fills the dev slot without publishing one; "
             f"`git push` publishes.")
     return latest
@@ -144,7 +149,8 @@ def run_log(args) -> int:
 
 
 def _dev_log(hub: Hub, root) -> int:
-    """The log of the build that last filled the local slot.
+    """The log of the build that last filled the local slot of this
+    directory's variant.
 
     Logs are stored per revision (SPEC 7.8), so the slot's meta.json names the
     job that filled it, and that job serves the log.
@@ -154,11 +160,12 @@ def _dev_log(hub: Hub, root) -> int:
     revision.
     """
     pid = project.read_project_id(root)
-    meta = hub.build_meta(pid, DEV_SLOT)
+    variant = current_variant(root)
+    meta = hub.build_meta(pid, DEV_SLOT, variant)
     if meta is None:
         raise ClientError(
-            f"project {pid} has no `{DEV_SLOT}` slot on {hub.url}: nothing has "
-            f"filled it yet.\n"
+            f"variant {variant} of project {pid} has no `{DEV_SLOT}` slot on "
+            f"{hub.url}: nothing has filled it yet.\n"
             f"  `hammerola build` fills it with the working copy as it stands, "
             f"and `git push`\n"
             f"  fills it with the revision it publishes.")
