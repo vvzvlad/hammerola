@@ -28,11 +28,21 @@ MAX_PATH_DEPTH = 8
 MAX_MEMBERS = 1024
 
 # Reserved build names: `latest` is a symlink the store moves, `dev` is the
-# local slot. Authority: `src.store.RESERVED_BUILD_NAMES`. Revisions are commit
-# shas, 40 hex characters, so they cannot collide; the names are used for
-# addressing.
+# local slot, `v` begins a variant's address. Authority:
+# `src.store.RESERVED_BUILD_NAMES`. Revisions are commit shas, 40 hex
+# characters, so they cannot collide; the names are used for addressing.
 DEV_SLOT = "dev"
-RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT})
+VARIANT_SEGMENT = "v"
+RESERVED_BUILD_NAMES = frozenset({"latest", DEV_SLOT, VARIANT_SEGMENT})
+
+# The default variant: the branch whose pointers keep the project's own
+# addresses. Authority: `src.store.MAIN_BRANCH`.
+DEFAULT_VARIANT = "main"
+
+# The hook's refusal of a branch whose name fails `SAFE_ID`, so that it cannot
+# be a variant. Authority: `src.prereceive.VARIANT_NAME_REFUSAL`.
+VARIANT_NAME_REFUSAL = ("variant (branch) name must be letters, digits, - and "
+                        "_, up to 64")
 
 # What ONE piece of text the hub SHOWS may be, in characters. Authority:
 # `src.render.MAX_TEXT`, which `_plain_text` measures every field of a meta.json

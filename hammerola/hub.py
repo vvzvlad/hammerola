@@ -35,6 +35,9 @@ browser fetches):
                                           `files_keys` is added by the hub as
                                           it answers: the key that opens each
                                           build's files in a link.
+    GET  /project/<pid>/variants.json     PUBLIC. `{default, variants:
+                                          [{name, label}]}`: the project's
+                                          variants, the default first.
     GET  /project/<pid>/<name>/meta.json  PUBLIC. One build's own record;
                                           `<name>` is `dev`, `latest` or a
                                           revision.
@@ -44,6 +47,10 @@ browser fetches):
                                           Token for the rest — the STL, STEP
                                           and 3MF a part's `files` names in
                                           meta.json, and the overview meshes.
+
+    A variant other than the default has its `builds.json`, `latest` and
+    `dev` under `/project/<pid>/v/<variant>/` (`build_path`).
+
     GET  /api/v1/comments?project=<pid>   Token -> `{"comments": [...]}`
     POST /api/v1/comments/<id>/resolve    Token, `{"note": ...}` -> the record
     GET  /api/v1/proposals/<pid>          Token -> `{"pid", "doc", "text",
@@ -85,6 +92,27 @@ import urllib.parse
 import urllib.request
 
 from hammerola.config import header_value_problem
+from hammerola.limits import DEFAULT_VARIANT, DEV_SLOT, VARIANT_SEGMENT
+
+# The two moving names, which a variant other than the default has under its
+# own prefix.
+POINTER_NAMES = ("latest", DEV_SLOT)
+
+
+def variant_prefix(pid: str, variant: str = DEFAULT_VARIANT) -> str:
+    """`/project/<pid>/` for the default variant, `/project/<pid>/v/<b>/`
+    for any other: where a variant's `builds.json`, `latest` and `dev` are."""
+    quote = urllib.parse.quote
+    if variant in (None, DEFAULT_VARIANT):
+        return f"/project/{quote(pid)}/"
+    return f"/project/{quote(pid)}/{VARIANT_SEGMENT}/{quote(variant, safe='')}/"
+
+
+def build_path(pid: str, name: str, variant: str = DEFAULT_VARIANT) -> str:
+    """The address of one build: a revision, or a pointer of `variant`."""
+    if name in POINTER_NAMES:
+        return f"{variant_prefix(pid, variant)}{urllib.parse.quote(name)}/"
+    return f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}/"
 
 # One request, when the caller names no budget of its own. The wait for a job
 # is a separate budget (`await_job`).
@@ -552,25 +580,30 @@ class Hub:
             f"  Check {self.url}/api/v1/jobs/{job_id} later.")
 
     # -- what the hub already knows about a project ------------------------
-    def builds(self, pid: str):
-        """`builds.json`, or None when the hub has nothing under this id.
+    def builds(self, pid: str, variant: str = DEFAULT_VARIANT):
+        """A variant's `builds.json`, or None when the hub has nothing there.
 
         None because "never pushed" is an answer to `hammerola status`, not a
         failure. The same file the project page fetches, so `status` shows what
         the site shows.
         """
         return self._json_or_none(
-            f"/project/{urllib.parse.quote(pid)}/builds.json")
+            f"{variant_prefix(pid, variant)}builds.json")
 
-    def build_meta(self, pid: str, name: str):
-        """One build's `meta.json` — `dev`, `latest` or a revision, or None.
+    def variants(self, pid: str):
+        """`variants.json`, or None when the hub has none for this id."""
+        return self._json_or_none(
+            f"/project/{urllib.parse.quote(pid)}/variants.json")
+
+    def build_meta(self, pid: str, name: str, variant: str = DEFAULT_VARIANT):
+        """One build's `meta.json` — `dev` or `latest` of `variant`, or a
+        revision — or None.
 
         Needed for the local slot: `builds.json` says only whether it is
         occupied (`has_dev`), so its timestamp exists only in its own meta.
         """
         return self._json_or_none(
-            f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
-            f"/meta.json")
+            f"{build_path(pid, name, variant)}meta.json")
 
     def _json_or_none(self, path: str):
         status, raw = self._call(path)
@@ -583,7 +616,8 @@ class Hub:
                 f"{quoted(raw)}")
         return self._payload(status, raw)
 
-    def build_file(self, pid: str, name: str, filename: str):
+    def build_file(self, pid: str, name: str, filename: str,
+                   variant: str = DEFAULT_VARIANT):
         """One file out of a published build, or None when it is not there.
 
         The same URL the viewer fetches. The JSON and PNG files are public; the
@@ -592,8 +626,7 @@ class Hub:
         (e.g. an old build without metrics.json) is an answer callers act on.
         """
         code, raw = self._call(
-            f"/project/{urllib.parse.quote(pid)}/{urllib.parse.quote(name)}"
-            f"/{urllib.parse.quote(filename)}")
+            f"{build_path(pid, name, variant)}{urllib.parse.quote(filename)}")
         if code == 404:
             return None
         _refuse_unauthorized(code)

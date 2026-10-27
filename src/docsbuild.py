@@ -55,6 +55,10 @@ entry refuses the whole push with a 422 naming every offender; nothing is
 skipped in silence. `project.json` is the build half's to read as well
 (`cadbuild.project.load_project`), which takes the keys it knows and leaves
 this one alone.
+
+The same file's `"variant"` is the label of the branch's variant
+(`variant_label`), read here because this module is the hub's reader of
+project.json.
 """
 
 import dataclasses
@@ -74,10 +78,12 @@ from src.render import (BOARD_TYPE, DOCUMENTS_KIND, FILE_TYPE,
                         KICAD_SCHEMATIC, MAX_KICAD_SHEETS, SCHEMATIC_TYPE,
                         document_id, document_type, dxf_preview,
                         project_title, published_type)
+from src import render
 from src.store import BUILD_META_FILE
 
 PROJECT_FILE = "project.json"
 DOCUMENTS_FIELD = "documents"
+VARIANT_FIELD = "variant"
 
 # The keys an entry written as an object may hold.
 ENTRY_KEYS = ("file", "title", "hidden", "download")
@@ -139,6 +145,19 @@ def _project(sources: Path) -> dict:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def variant_label(sources) -> str | None:
+    """The tree's `"variant"`, checked by `render.variant_label`, or None
+    without one. Raises PublishError(422) for one that does not pass, which
+    fails the build and refuses the push."""
+    data = _project(Path(sources))
+    if VARIANT_FIELD not in data:
+        return None
+    try:
+        return render.variant_label(data[VARIANT_FIELD])
+    except ValueError as error:
+        raise PublishError(422, f"{PROJECT_FILE}: {error}") from error
 
 
 def has_model(sources) -> bool:

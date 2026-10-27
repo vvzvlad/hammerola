@@ -10,7 +10,7 @@ service with it. The copy is the price; this file is what makes the price
 bearable.
 """
 
-from src import store
+from src import prereceive, store
 from hammerola import limits
 
 
@@ -27,6 +27,9 @@ def test_the_tree_ceilings_are_the_hubs():
 def test_the_reserved_build_names_are_the_hubs():
     assert set(limits.RESERVED_BUILD_NAMES) == set(store.RESERVED_BUILD_NAMES)
     assert limits.DEV_SLOT == store.DEV_LINK
+    assert limits.VARIANT_SEGMENT == store.VARIANT_SEGMENT
+    assert limits.DEFAULT_VARIANT == store.MAIN_BRANCH
+    assert limits.VARIANT_NAME_REFUSAL == prereceive.VARIANT_NAME_REFUSAL
 
 
 def test_the_text_ceiling_is_the_hubs():

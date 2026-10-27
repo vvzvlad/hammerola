@@ -7,15 +7,17 @@ and nothing else: no test here hands git a header of its own. The build is
 BROKEN.
 """
 
+import json
 import os
 import subprocess
 
 import pytest
-from harness import BROKEN, TOKEN, picky_builder, view_bytes
+from harness import BROKEN, TOKEN, comment_payload, picky_builder, view_bytes
 from modeldir import make_model, model_archive
 
 from hammerola import config
 from hammerola.cli import main
+from src.prereceive import VARIANT_NAME_REFUSAL
 
 PID = "demo0001"
 IDENTITY = {"GIT_AUTHOR_NAME": "author", "GIT_AUTHOR_EMAIL": "a@example.invalid",
@@ -126,8 +128,9 @@ def test_build_publishes_the_working_copy_and_touches_nothing_of_the_author(
     assert served(hub, "dev") == view_bytes("staged")
 
 
-def test_build_from_a_worktree_on_another_branch_fills_the_one_slot(
+def test_build_on_a_branch_fills_its_variant_s_slot_and_not_main_s(
         hub, tmp_path, capfd, monkeypatch):
+    """Criterion 4: a worktree on its own branch has a draft of its own."""
     root = repository(tmp_path / "work")
     tree = tmp_path / "concrete-cabinet"
     git(root, "worktree", "add", "-q", "-b", "concrete-cabinet", tree)
@@ -135,7 +138,8 @@ def test_build_from_a_worktree_on_another_branch_fills_the_one_slot(
     assert main(["-C", str(tree), "connect"]) == 0
 
     assert main(["-C", str(tree), "build"]) == 0
-    assert served(hub, "dev") == view_bytes("cabinet")
+    assert served(hub, "v/concrete-cabinet/dev") == view_bytes("cabinet")
+    assert hub.get(f"/project/{PID}/dev/meta.json").status_code == 404
     made = jobs_made(hub)
     capfd.readouterr()
 
@@ -145,9 +149,100 @@ def test_build_from_a_worktree_on_another_branch_fills_the_one_slot(
         monkeypatch.setenv(name, "2030-01-01T00:00:00Z")
     assert main(["-C", str(tree), "build"]) == 0
     out, err = capfd.readouterr()
-    assert f"unchanged: /project/{PID}/dev/" in err
-    assert out.rstrip().endswith(f"{hub.url}/project/{PID}/dev/")
+    assert f"unchanged: /project/{PID}/v/concrete-cabinet/dev/" in err
+    assert out.rstrip().endswith(
+        f"{hub.url}/project/{PID}/v/concrete-cabinet/dev/")
     assert jobs_made(hub) == made
+
+
+def test_build_refuses_a_detached_head_and_a_branch_no_variant_is_named(
+        hub, tmp_path, capfd):
+    """Criterion 5, from the client: the hub's words for the name."""
+    root = repository(tmp_path / "work")
+    assert main(["-C", str(root), "connect"]) == 0
+    git(root, "switch", "-q", "--detach")
+    capfd.readouterr()
+
+    assert main(["-C", str(root), "build"]) == 1
+    assert "HEAD is detached" in capfd.readouterr().err
+
+    git(root, "switch", "-q", "-c", "feature/x")
+    assert main(["-C", str(root), "build"]) != 0
+    assert VARIANT_NAME_REFUSAL in capfd.readouterr().err
+
+
+def test_the_reading_verbs_read_the_variant_of_the_branch(
+        hub, tmp_path, capfd):
+    """`status`, `artifacts latest` and `log dev` of a branch are its
+    variant's, `status` lists the variants, and `comments` names the variant
+    of a comment on its draft (criterion 8)."""
+    root = repository(tmp_path / "work")
+    assert main(["-C", str(root), "connect"]) == 0
+    assert subprocess.run(["git", "-C", str(root), "push", f"hammerola-{PID}",
+                           "main"], capture_output=True).returncode == 0
+    git(root, "switch", "-q", "-c", "ceiling")
+    document = json.loads((root / "project.json").read_text())
+    (root / "project.json").write_text(json.dumps({**document,
+                                                   "variant": "Ceiling box"}))
+    (root / "lid.stl").write_bytes(b"solid ceiling\nendsolid ceiling\n")
+    git(root, "commit", "-qam", "ceiling")
+    ceiling = git(root, "rev-parse", "HEAD").strip()
+    pushed = subprocess.run(["git", "-C", str(root), "push",
+                             f"hammerola-{PID}", "ceiling"],
+                            capture_output=True, text=True)
+    assert pushed.returncode == 0, pushed.stderr
+    (root / "assembled.json").write_bytes(view_bytes("ceiling-draft"))
+    assert main(["-C", str(root), "build"]) == 0
+    capfd.readouterr()
+
+    assert main(["-C", str(root), "status"]) == 0
+    out = capfd.readouterr().out
+    assert f"{hub.url}/project/{PID}/v/ceiling/latest/" in out
+    assert "  variant ceiling" in out
+    assert f"  latest  {ceiling}" in out
+    assert "variants  2" in out
+    assert "* ceiling  Ceiling box" in out
+    assert "  main     main" in out
+
+    assert main(["-C", str(root), "artifacts", "latest",
+                 "-o", str(tmp_path / "got")]) == 0
+    assert (tmp_path / "got" / "lid.stl").read_bytes() == \
+        b"solid ceiling\nendsolid ceiling\n"
+
+    assert main(["-C", str(root), "log", "dev"]) == 0
+    assert "(build, state done)" in capfd.readouterr().out
+
+    posted = hub.post_comment(PID, "v/ceiling/dev", payload=comment_payload())
+    assert posted.status_code == 201, posted.text
+    assert main(["-C", str(root), "comments"]) == 0
+    assert "build dev  variant ceiling" in capfd.readouterr().out
+
+
+def test_status_on_a_branch_no_variant_is_named_reads_main(
+        hub, tmp_path, capfd):
+    """A branch the hub refuses as a variant: `connect` and `status` say so in
+    the hook's words, once, advise no push, and `status` reads `main`."""
+    root = repository(tmp_path / "work")
+    git(root, "switch", "-q", "-c", "feat/use-cad-publish")
+    capfd.readouterr()
+
+    assert main(["-C", str(root), "connect"]) == 0
+    out, err = capfd.readouterr()
+    assert (out + err).count(VARIANT_NAME_REFUSAL) == 1
+    assert "git push" not in out + err
+
+    assert main(["-C", str(root), "status"]) == 0
+    out, err = capfd.readouterr()
+    assert err.count(VARIANT_NAME_REFUSAL) == 1
+    assert "git push" not in out + err
+    assert f"  {hub.url}/project/{PID}/\n" in out
+    assert "  variant main" in out
+
+    assert subprocess.run(["git", "-C", str(root), "push", f"hammerola-{PID}",
+                           "main"], capture_output=True).returncode == 0
+    assert main(["-C", str(root), "status"]) == 0
+    assert f"  latest  {git(root, 'rev-parse', 'main').strip()}" in \
+        capfd.readouterr().out
 
 
 def test_build_without_connect_says_to_connect(tmp_path, capsys):
@@ -178,7 +273,8 @@ def test_connect_joins_the_published_history_into_main_from_a_worktree(
     branch_head = git(tree, "rev-parse", "HEAD")
 
     assert main(["-C", str(tree / "hub"), "connect"]) == 0
-    assert f"git push hammerola-{PID} main" in capsys.readouterr().out
+    assert f"git push hammerola-{PID} concrete-cabinet" in \
+        capsys.readouterr().out
 
     parents = git(work, "rev-list", "--parents", "-n1", "main").split()
     assert parents[1] == main_before and len(parents) == 3

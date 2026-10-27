@@ -32,6 +32,10 @@
 // (`pick`), and a mark on the drawing opens its row. The reader does not
 // change on this page: the token is read once, and nothing here sets it.
 //
+// THE VARIANTS of the project are switched beside the title, as on the model's
+// page and by the same code (variants.jsx), from `variants.json`, which needs
+// no token.
+//
 // `DocPage` is the drawing and takes everything as props, so a test reads the
 // tree it returns without mounting anything (ui/tests/docshell.test.js).
 
@@ -44,10 +48,11 @@ import {
 } from './comments.jsx';
 import DocumentView, { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
-import { buildKey, PAGE, shortId } from './hub.js';
+import { buildKey, loadVariants, PAGE, pageVariant, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
+import { VariantSwitch, variantChoices } from './variants.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, toolBar } from './viewlist.jsx';
 
 /** What a build with no model says it is, in meta.json's `kind`. The hub
@@ -122,11 +127,13 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
  * of the comments (`DocShell.comments`): what the open document is handed for
  * them (`docComment`), the composer's, the rail's and its button's, and the
  * ref the composer's textarea is focused through (`box`); with none the page
- * draws no comments. `toast` is what the toast says, or null.
+ * draws no comments. `toast` is what the toast says, or null. `variants` is
+ * the switcher's choices (`variantChoices` in variants.jsx), null for none;
+ * `variantsOpen` says its menu is open and `onVariants` opens or shuts it.
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
-  tool, onComment, comments, toast,
+  tool, onComment, comments, toast, variants = null, variantsOpen = false, onVariants,
 }) {
   const doc = pickDocument(meta.documents, active);
   return (
@@ -137,7 +144,9 @@ export function DocPage({
           <span style={css(WORDMARK)}>hammerola</span>
         </a>
         <div style={css(HEADER_RULE)} />
-        <div style={css(`${TITLE};flex:1;min-width:0`)}>{meta.title || meta.project}</div>
+        <div style={css(`${TITLE};flex:0 1 auto;min-width:0`)}>{meta.title || meta.project}</div>
+        <VariantSwitch choices={variants} open={variantsOpen} onToggle={onVariants} narrow={narrow} />
+        <div style={css('flex:1')} />
         <span title={meta.commit} style={css(`${HEAD_MONO};color:var(--text-soft)`)}>
           {meta.dev ? 'dev' : shortId(meta.commit)}
         </span>
@@ -186,6 +195,9 @@ export default class DocShell extends React.Component {
       // toast says.
       feed: [], activePin: null, composer: null, sending: false, rail: false, tool: null,
       docFocus: null, docLost: {}, toast: null,
+      // `variants.json` once it comes (`loadVariants` in hub.js), and the
+      // switcher's menu open.
+      variants: null, variantsOpen: false,
     };
     // Who the reader is does not change on this page, which has no token
     // control: the token is read once.
@@ -194,6 +206,8 @@ export default class DocShell extends React.Component {
     // The composer's textarea, focused when the composer opens.
     this.compBox = React.createRef();
     this.tt = undefined;
+    // True once the page has gone, for the list of variants landing after.
+    this.gone = false;
     this.onTools = (tools) => this.setState({ tools });
     this.mq = null;
     // Narrowing puts an armed tool down, as on the model's page: its button
@@ -217,6 +231,10 @@ export default class DocShell extends React.Component {
     window.addEventListener('keydown', this.onKey, true);
     // The queue takes the token, so a reader without one asks for nothing.
     if (this.token) this.loadFeed();
+    // The variants need none.
+    loadVariants(PAGE.pid).then((variants) => {
+      if (!this.gone) this.setState({ variants });
+    });
   }
 
   componentWillUnmount() {
@@ -224,6 +242,7 @@ export default class DocShell extends React.Component {
     unsubscribe(this.onPop);
     window.removeEventListener('keydown', this.onKey, true);
     clearTimeout(this.tt);
+    this.gone = true;
   }
 
   /** The document on screen. */
@@ -368,10 +387,21 @@ export default class DocShell extends React.Component {
                     onSheet={this.onSheet} viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();
-                      this.setState({ viewsOpen: !this.state.viewsOpen });
+                      this.setState({ viewsOpen: !this.state.viewsOpen, variantsOpen: false });
                     }}
-                    onClose={() => { if (this.state.viewsOpen) this.setState({ viewsOpen: false }); }}
+                    onClose={() => {
+                      if (this.state.viewsOpen || this.state.variantsOpen) {
+                        this.setState({ viewsOpen: false, variantsOpen: false });
+                      }
+                    }}
                     tool={this.state.tool} onComment={this.onComment}
-                    comments={this.comments()} toast={this.state.toast} />;
+                    comments={this.comments()} toast={this.state.toast}
+                    variants={variantChoices(this.state.variants, PAGE.pid,
+                                             pageVariant(PAGE, this.props.meta))}
+                    variantsOpen={this.state.variantsOpen}
+                    onVariants={(e) => {
+                      e.stopPropagation();
+                      this.setState({ variantsOpen: !this.state.variantsOpen, viewsOpen: false });
+                    }} />;
   }
 }

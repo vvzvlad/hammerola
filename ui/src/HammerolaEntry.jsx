@@ -11,6 +11,8 @@
  *                 stays invisible (see `projectCard` in hub.js).
  *   rev / hash -> one thing: a revision is named by the digest of its sources
  *                 (SPEC 7.7).
+ *   variants   -> the card is the default variant's; one of a project with
+ *                 more variants (branches) says `N variants` (`index_card`).
  *   createdAt  -> the OLDEST build the hub still holds, labelled "first built"
  *                 (render.index_card).
  *   login      -> the same `EDIT_TOKEN` and storage functions as the build page
@@ -651,6 +653,14 @@ export const RevLine = ({ p }) => {
           {p.status}
         </span>
       )}
+      {p.variants ? (
+        <span
+          title="this card shows the default variant; the project page switches between them"
+          style={css(`font:500 10px ${MONO};color:var(--text-soft);background:var(--chip-bg);padding:2px 6px;border-radius:4px;white-space:nowrap`)}
+        >
+          {p.variants}
+        </span>
+      ) : null}
     </React.Fragment>
   );
 };

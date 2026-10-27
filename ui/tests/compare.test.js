@@ -1965,7 +1965,7 @@ describe('a comparison entered in the page', () => {
     const c = comparing()
     // A swap to C on the wire is what makes this branch reachable at all:
     // `_want` is where the page is going, and the gesture asks to stay.
-    c._want = C
+    c._want = `/project/proj1/${C}/`
 
     c.switchBuild('proj1', A)
 
@@ -2138,7 +2138,7 @@ describe('back and forward through a comparison', () => {
     // Forward onto another build: the swap goes out and never lands, so the
     // comparison is still what is on the screen.
     await back(`/project/proj1/${C}/`)
-    expect(c._want).toBe(C)
+    expect(c._want).toBe(`/project/proj1/${C}/`)
     const push = vi.spyOn(history, 'pushState')
 
     // And Back again, onto an entry of the build that never left — on the other

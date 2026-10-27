@@ -336,8 +336,12 @@ class CommentStore:
 
     # -- writing ------------------------------------------------------------
     def add(self, pid: str, commit: str, payload: dict,
-            attachments: dict) -> dict:
+            attachments: dict, variant: str = None) -> dict:
         """Store one comment. `attachments` maps a kind to raw bytes.
+
+        `variant` is the variant whose draft the comment was left on, for a
+        variant other than the default; None for the default one and for a
+        revision, as on every comment written before variants.
 
         The photo is written BEFORE the record, on purpose. A photo with no record
         is invisible to every reader and gets cleaned up; a record naming a photo
@@ -353,6 +357,8 @@ class CommentStore:
             raise CommentError(422, "invalid project id")
         if not SAFE_ID.match(commit or ""):
             raise CommentError(422, "invalid commit id")
+        if variant is not None and not SAFE_ID.match(variant):
+            raise CommentError(422, "invalid variant")
 
         stored = {}
         for kind, data in attachments.items():
@@ -368,6 +374,7 @@ class CommentStore:
             "id": cid,
             "pid": pid,
             "commit": commit,
+            "variant": variant,
             "published": payload["published"],
             "view": payload["view"],
             "part": payload["part"],
@@ -418,8 +425,9 @@ class CommentStore:
                     except OSError:
                         pass
                 raise
+        where = commit if variant is None else f"v/{variant}/{commit}"
         logger.info(
-            f"comment {cid} on {pid}/{commit}: {len(payload['text'])} chars, "
+            f"comment {cid} on {pid}/{where}: {len(payload['text'])} chars, "
             f"attachments {sorted(stored) or 'none'}")
         return record
 

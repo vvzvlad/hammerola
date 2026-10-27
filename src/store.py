@@ -17,12 +17,19 @@ the docker volume; templates and viewer assets deliberately live outside it,
 because the volume would shadow them.
 
     <data>/index.json                      cards for the front page
-    <data>/project/<pid>/builds.json       build picker for one project
+    <data>/project/<pid>/builds.json       build picker of the default variant
     <data>/project/<pid>/latest            SYMLINK -> <commit>, the nearest built
                                            commit on the first-parent line of `main`
-    <data>/project/<pid>/dev/              THE local slot — one directory, rewritten
-                                           by every draft (SPEC 7.6)
-    <data>/project/<pid>/<commit>/         one immutable build
+    <data>/project/<pid>/dev/              the default variant's local slot — one
+                                           directory, rewritten by every draft
+                                           (SPEC 7.6)
+    <data>/project/<pid>/variants.json     the variants: every branch, with its label
+    <data>/project/<pid>/.variants/<b>/    any other variant `b` (a branch, or a
+                                           draft `refs/drafts/<b>`): its `latest`
+                                           (-> ../../<commit>), `dev/` and
+                                           `builds.json`
+    <data>/project/<pid>/<commit>/         one immutable build, whichever branch
+                                           it was published from
     <data>/project/<pid>/<commit>/.build.log   what that build printed
     <data>/project/<pid>/.tmp-<commit>-<uuid>/   staging, never served
     <data>/jobs/<id>/                      one build job (src/jobs.py)
@@ -38,9 +45,15 @@ because the volume would shadow them.
 A revision is published by `git push` (src/prereceive.py): the pre-receive hook
 hands the pushed commit to the hub, which builds it in the ordinary queue and
 publishes it under the commit's sha before git writes the ref. The repository
-is the canon of history; `latest`, `builds.json` and `index.json` are derived
-from it and from the build directories, at the end of every push and at start
-(`recompute`, `catch_up`).
+is the canon of history; `latest`, `builds.json`, `variants.json` and
+`index.json` are derived from it and from the build directories, at the end of
+every push and at start (`recompute`, `catch_up`).
+
+A variant is a branch, named as the author's local branch is (SPEC §4). The
+default one, `main`, keeps the old places; every other lives in
+`.variants/<b>/`. The dot keeps it out of every walk that takes a directory of
+the project for a build (`builds_of`, `_dedupe`, `_digests_of`); `_dedupe` and
+the sweep are told about it on purpose.
 
 Builds published before git are taken into the repository by the import
 (`ensure_repo`): one commit per build, oldest first, out of its archive in
@@ -60,9 +73,10 @@ as a build (~1.5 s a pair), and nothing prunes it.
 nothing serves it: the file server's `_safe_build_path` looks only inside a
 build directory.
 
-`latest` and `dev` are the two names a build directory may not claim, for
-different reasons: `latest` is a symlink the store moves, and `dev` is the local
-slot itself, a real directory the store rewrites.
+`latest`, `dev` and `v` are the names a build directory may not claim, for
+different reasons: `latest` is a symlink the store moves, `dev` is the local
+slot itself, a real directory the store rewrites, and `v` begins the address of
+a variant (`/project/<pid>/v/<b>/latest/`).
 
 The naming rule that carries security weight here is enforced by whitelist
 rather than by blacklist, because a whitelist cannot be walked around by an
@@ -147,13 +161,24 @@ LATEST_LINK = "latest"
 DEV_LINK = "dev"
 POINTER_NAMES = (LATEST_LINK, DEV_LINK)
 
+# The segment that begins a variant's address, `/project/<pid>/v/<b>/latest/`.
+VARIANT_SEGMENT = "v"
+
 # Names a build may not claim, because the hub already answers to them: `latest`
-# is a pointer symlink, `dev` is the local slot's directory, and both are the
-# last segment of a publish route.
+# is a pointer symlink, `dev` is the local slot's directory, and `v` begins a
+# variant's address. A revision is named by its commit, and the builds published
+# before git carry none of the three.
 # `resolve` is deliberately NOT here: it is reserved by the COMMENT api only
 # (SPEC 7A.2), where it costs a build the ability to be commented on and nothing
 # else, and app.py documents that trade.
-RESERVED_BUILD_NAMES = set(POINTER_NAMES)
+RESERVED_BUILD_NAMES = {*POINTER_NAMES, VARIANT_SEGMENT}
+
+# Where a variant other than the default keeps its `latest`, `dev/` and
+# `builds.json` (`variant_dir`). Dot-prefixed: see the module docstring.
+VARIANTS_DIR = ".variants"
+# The list of variants, `{"default", "variants": [{"name", "label"}, ...]}`,
+# beside the default variant's `builds.json`. Public (`app._serve_project`).
+VARIANTS_FILE = "variants.json"
 
 # The three documents this hub generates, one per level of the layout above: a
 # build's `meta.json`, a project's `builds.json` and the root `index.json`. Named
@@ -208,10 +233,11 @@ COMPARE_FILES = ("scene.json", "report.json")
 REPOS_DIR_NAME = "repos"
 REPO_SUFFIX = ".git"
 
-# The default branch, the only one the hub takes for now (src/prereceive.py).
-# `HEAD` of every repository is `git init --initial-branch=main` and never moves.
+# The default branch, the default variant. `HEAD` of every repository is
+# `git init --initial-branch=main` and never moves.
 MAIN_BRANCH = "main"
-MAIN_REF = f"refs/heads/{MAIN_BRANCH}"
+BRANCH_PREFIX = "refs/heads/"
+MAIN_REF = f"{BRANCH_PREFIX}{MAIN_BRANCH}"
 
 # The trailer of an imported commit: `Hammerola-Import: <pid>/<build>`. A key of
 # the hub's own, so a trailer an author writes means nothing here; the pid is in
@@ -428,15 +454,26 @@ def published_stamp() -> str:
     return f"{now:%Y-%m-%dT%H:%M:%S}.{now.microsecond // 1000:03d}Z"
 
 
-def _build_url(pid: str, name: str) -> dict:
+def build_path(pid: str, name: str, variant: str = MAIN_BRANCH) -> str:
+    """The address of a build: a revision, or a pointer of one variant.
+
+    `/project/<pid>/<name>/` for a revision and for the default variant's
+    pointers, `/project/<pid>/v/<variant>/<name>/` for another variant's.
+    """
+    if name in POINTER_NAMES and variant != MAIN_BRANCH:
+        return f"/project/{pid}/{VARIANT_SEGMENT}/{variant}/{name}/"
+    return f"/project/{pid}/{name}/"
+
+
+def _build_url(pid: str, name: str, variant: str = MAIN_BRANCH) -> dict:
     """The body of a successful publish: where the thing just published lives.
 
     One URL, for both routes. A commit push answers with its permanent
-    `/<commit>/`; a local push answers with `/dev/`, which is the only address a
-    local build has ever needed — it is the slot, and the author keeps it open in
-    a tab (SPEC 7.6).
+    `/<commit>/`; a local push answers with its variant's `dev/`, which is the
+    only address a local build has ever needed — it is the slot, and the author
+    keeps it open in a tab (SPEC 7.6).
     """
-    return {"url": f"/project/{pid}/{name}/"}
+    return {"url": build_path(pid, name, variant)}
 
 
 def _built_key(meta: dict) -> tuple:
@@ -522,6 +559,10 @@ class Store:
             directories += [p for p in self.projects_dir.iterdir() if p.is_dir()]
         except OSError:
             pass
+        # A variant's directory, where its slot is swapped and its `latest`
+        # moved (`variant_dir`).
+        directories += [p for p in self.projects_dir.glob(f"*/{VARIANTS_DIR}/*")
+                        if p.is_dir()]
         # AND WHERE A COMPARISON STAGES, which is `compare/<pid>/<a>/<b>/` —
         # THREE levels down, because the cache entry is the `<view>` inside it
         # and staging sits beside the entry (`compare_staging`). The depth is the
@@ -602,6 +643,12 @@ class Store:
         return bool(SAFE_ID.match(name)) and name not in RESERVED_BUILD_NAMES
 
     @staticmethod
+    def valid_variant(name) -> bool:
+        """Is this a name a variant may have? A branch whose name passes
+        `SAFE_ID`, the rule of every other id in an address."""
+        return isinstance(name, str) and bool(SAFE_ID.match(name))
+
+    @staticmethod
     def valid_view_id(name) -> bool:
         """Can a comparison of this view be filed in the cache at all?
 
@@ -648,9 +695,25 @@ class Store:
         """What the build of one revision printed."""
         return self.build_dir(pid, name) / BUILD_LOG_FILE
 
-    def builds_json_path(self, pid: str) -> Path:
-        """The project's build picker."""
-        return self.project_dir(pid) / PROJECT_BUILDS_FILE
+    def variant_dir(self, pid: str, variant: str = MAIN_BRANCH) -> Path:
+        """Where one variant's `latest`, `dev/` and `builds.json` are: the
+        project's own directory for the default variant, `.variants/<b>/`
+        for any other."""
+        if variant == MAIN_BRANCH:
+            return self.project_dir(pid)
+        return self.project_dir(pid) / VARIANTS_DIR / variant
+
+    def pointer_dir(self, pid: str, variant: str, name: str) -> Path:
+        """One variant's `latest` or `dev`."""
+        return self.variant_dir(pid, variant) / name
+
+    def builds_json_path(self, pid: str, variant: str = MAIN_BRANCH) -> Path:
+        """One variant's build picker."""
+        return self.variant_dir(pid, variant) / PROJECT_BUILDS_FILE
+
+    def variants_json_path(self, pid: str) -> Path:
+        """The project's list of variants."""
+        return self.project_dir(pid) / VARIANTS_FILE
 
     def site_index_path(self) -> Path:
         """The front page's cards. Absent until the first push."""
@@ -893,20 +956,54 @@ class Store:
         sha, values = commits[0]
         return self._built_name(pid, sha, values, names)
 
-    def _branch_latest(self, pid: str) -> str | None:
-        """The build of the nearest built commit on `main`'s first-parent line."""
+    def _branches(self, pid: str) -> list:
+        """The project's branches, the variants, by name. [] with no repository."""
         repo = self.repo_dir(pid)
         if not repo.is_dir():
-            return None
-        names = {meta["commit"] for meta in self.builds_of(pid)}
-        for sha, values in _trailed_log(repo, MAIN_REF, "--first-parent"):
+            return []
+        out = run_git(repo, "for-each-ref", "--format=%(refname)",
+                      BRANCH_PREFIX)
+        return sorted(name for line in out.splitlines()
+                      if self.valid_variant(name := line.removeprefix(
+                          BRANCH_PREFIX)))
+
+    def _branch_latest(self, pid: str, branch: str, names) -> str | None:
+        """The build of the nearest built commit on `branch`'s first-parent
+        line, among `names`."""
+        for sha, values in _trailed_log(self.repo_dir(pid),
+                                        f"{BRANCH_PREFIX}{branch}",
+                                        "--first-parent"):
             name = self._built_name(pid, sha, values, names)
             if name is not None:
                 return name
         return None
 
+    def _reached(self, pid: str, branch: str, names) -> set:
+        """The builds among `names` whose commits `branch` reaches, through
+        every parent: the imported versions stand behind `connect`'s merge as
+        its second parent."""
+        found = set()
+        for sha, values in _trailed_log(self.repo_dir(pid),
+                                        f"{BRANCH_PREFIX}{branch}"):
+            name = self._built_name(pid, sha, values, names)
+            if name is not None:
+                found.add(name)
+        return found
+
+    def _variants_on_disk(self, pid: str) -> set:
+        """The variants with a directory of their own: a branch's, or a draft's
+        whose branch the hub does not have."""
+        try:
+            entries = list((self.project_dir(pid) / VARIANTS_DIR).iterdir())
+        except OSError:
+            return set()
+        return {entry.name for entry in entries
+                if entry.is_dir() and self.valid_variant(entry.name)
+                and entry.name != MAIN_BRANCH}
+
     def recompute(self, pid: str, index: bool = True) -> None:
-        """`latest` and `builds.json` from `main` as it stands, then the index.
+        """Every variant's `latest` and `builds.json`, `variants.json`, then
+        the index.
 
         Run at the end of every push (`githttp.end_of_request`) and at start
         (`catch_up`). Under the project's lock, the index outside it: holding
@@ -917,10 +1014,74 @@ class Store:
         if pid in self._import_failures:
             return
         with self._lock_for(pid):
-            self._switch_latest(pid)
-            self._write_builds_json(pid)
+            self._derive(pid)
         if index:
             self._refresh_index()
+
+    def _derive(self, pid: str) -> None:
+        """What `recompute` writes, under the project lock its callers hold.
+
+        A variant's `latest` is the nearest built commit of its branch's
+        first-parent line; its `builds.json` lists the builds its branch
+        reaches. The default variant's lists besides every build no branch
+        reaches (the loser of a race), so no build drops out of every history.
+        A variant with only a draft gets a `builds.json` with its slot alone.
+        """
+        metas = self.builds_of(pid)
+        names = {meta["commit"] for meta in metas}
+        branches = self._branches(pid)
+        reached = {branch: self._reached(pid, branch, names)
+                   for branch in branches}
+        unreached = names.difference(*reached.values())
+        for variant in {MAIN_BRANCH, *branches, *self._variants_on_disk(pid)}:
+            if variant in reached:
+                self._switch_latest(pid, variant, names)
+            own = reached.get(variant, set())
+            if variant == MAIN_BRANCH:
+                own = own | unreached
+            self._write_builds_json(
+                pid, variant, [meta for meta in metas if meta["commit"] in own])
+        self._write_variants_json(pid, branches, metas)
+
+    def _write_variants_json(self, pid: str, branches: list,
+                             metas: list) -> None:
+        """`variants.json`: every branch, the default first, the rest by label.
+
+        A branch's label is the `variant_label` of the newest revision
+        published from it (`variant` in its meta.json, absent on a build older
+        than variants and meaning the default), else the branch's name: a
+        branch just cut from `main` is not labelled as `main` is.
+
+        No branch, no file: a refused first push leaves a repository and the
+        empty project directory `build_staging` made, and that is no project. A
+        `variants.json` in that directory would make `empty()` count it, and
+        the sign-in page would lose its first steps for good.
+        """
+        if not branches:
+            self.variants_json_path(pid).unlink(missing_ok=True)
+            return
+        variants = []
+        for branch in branches:
+            newest = next((meta for meta in metas
+                           if (meta.get("variant") or MAIN_BRANCH) == branch),
+                          {})
+            label = newest.get("variant_label")
+            variants.append({"name": branch,
+                             "label": label if isinstance(label, str) and label
+                             else branch})
+        variants.sort(key=lambda v: (v["name"] != MAIN_BRANCH,
+                                     v["label"].casefold(), v["name"]))
+        _atomic_write_json(self.variants_json_path(pid),
+                           {"default": MAIN_BRANCH, "variants": variants})
+
+    def variant_count(self, pid: str) -> int:
+        """How many variants `variants.json` lists; 1 when it cannot say."""
+        try:
+            listed = json.loads(self.variants_json_path(pid).read_text(
+                encoding="utf-8"))["variants"]
+        except (OSError, ValueError, TypeError, KeyError, RecursionError):
+            return 1
+        return max(1, len(listed)) if isinstance(listed, list) else 1
 
     def catch_up(self) -> None:
         """At start: import what needs it, then recompute every project.
@@ -988,7 +1149,9 @@ class Store:
 
     # -- publishing what a build produced (in a worker thread) --------------
     def publish_built(self, pid: str, commit: str, staging: Path, names,
-                      digest: str, job=None, message=None) -> tuple[int, dict]:
+                      digest: str, job=None, message=None,
+                      variant: str = MAIN_BRANCH,
+                      variant_label: str = None) -> tuple[int, dict]:
         """Put one built tree at `<pid>/<commit>`. Returns (status, response).
 
         201 published, 200 identical retry, 409 same commit / different content.
@@ -1003,7 +1166,9 @@ class Store:
         `job` reaches only the copy this makes into the slot; the revision's own
         document does not carry one (`render.build_meta`). `message` goes into
         the revision's document, and the mirror copies it into the slot with
-        the rest.
+        the rest. `variant` is the branch the revision is published from: it
+        goes into the document, and the revision fills that variant's slot.
+        `variant_label` is the checked `"variant"` of its project.json.
         """
         files = _hash_output(staging, names)
         pdir = self.projects_dir / pid
@@ -1023,7 +1188,8 @@ class Store:
                     409, f"build {commit} already exists with different content")
 
             meta = self._finish_staging(pid, commit, staging, files, digest,
-                                        message=message)
+                                        message=message, variant=variant,
+                                        variant_label=variant_label)
             try:
                 os.rename(staging, final)
             except OSError as error:
@@ -1049,24 +1215,30 @@ class Store:
             # live build's job `failed`).
             #
             # Order: fill the slot with this revision, then the picker from what
-            # is on disk. The mirror has to come before `_write_builds_json` and
+            # is on disk. The mirror has to come before `_derive` and
             # `_refresh_index`, which describe the slot (`has_dev`, the
-            # front-page card). `latest` follows `main`, which git has not moved
-            # yet: it stays where it was until the end of the push.
+            # front-page card). `latest` follows the branch, which git has not
+            # moved yet: it stays where it was until the end of the push.
             try:
-                self._mirror_into_dev_slot(pid, pdir, final, meta, digest, job)
-                # A rename is superseded by the push that follows it: the build
-                # carries the project's own title, and that is the newer
-                # statement of what the project is called. Before the picker is
-                # written, so the file is rebuilt from the state that survives.
-                self.clear_title(pid)
-                # The draft status goes too: the mirror has just put this
-                # revision into the slot, so a draft status left behind would
-                # outlive the draft it is about. A draft build in flight loses
-                # its `building` chip to this commit, which is the lesser error.
-                self.clear_draft_job(pid)
-                self._switch_latest(pid)
-                self._write_builds_json(pid)
+                self._mirror_into_dev_slot(
+                    pid, self.pointer_dir(pid, variant, DEV_LINK), final, meta,
+                    digest, job)
+                if variant == MAIN_BRANCH:
+                    # A rename is superseded by the push that follows it: the
+                    # build carries the project's own title, and that is the
+                    # newer statement of what the project is called. Before the
+                    # picker is written, so the file is rebuilt from the state
+                    # that survives.
+                    self.clear_title(pid)
+                    # The draft status goes too: the mirror has just put this
+                    # revision into the slot, so a draft status left behind
+                    # would outlive the draft it is about. A draft build in
+                    # flight loses its `building` chip to this commit, which is
+                    # the lesser error. Both belong to the front page's card,
+                    # which shows the default variant, so another variant's
+                    # revision touches neither.
+                    self.clear_draft_job(pid)
+                self._derive(pid)
                 # Last: after the mirror, so the slot's fresh copy is linked
                 # too, and inside this guard, because linking only saves space.
                 self._dedupe(pid)
@@ -1088,8 +1260,10 @@ class Store:
         return 201, _build_url(pid, commit)
 
     def publish_dev_built(self, pid: str, staging: Path, names,
-                          digest: str, job=None) -> tuple[int, dict]:
-        """Overwrite the project's ONE local slot, `<pid>/dev/` (SPEC 7.6).
+                          digest: str, job=None, variant: str = MAIN_BRANCH,
+                          variant_label: str = None) -> tuple[int, dict]:
+        """Overwrite a variant's ONE local slot, `<pid>/dev/` for the default
+        variant and `.variants/<b>/dev/` for another (SPEC 7.6).
 
         The author is editing model.py on a laptop and wants to see the result
         now, without committing. That work has no commit to be addressed by, and
@@ -1110,22 +1284,25 @@ class Store:
 
         `job` goes into the slot's meta.json: the slot is the one build no
         revision addresses, so the job that filled it is the only place its log
-        exists.
+        exists. `variant` and `variant_label` go there too, as on a revision.
         """
         files = _hash_output(staging, names)
-        pdir = self.projects_dir / pid
-        url = _build_url(pid, DEV_LINK)
+        slot = self.pointer_dir(pid, variant, DEV_LINK)
+        url = _build_url(pid, DEV_LINK, variant)
+        where = f"{pid}/{DEV_LINK}" if variant == MAIN_BRANCH \
+            else f"{pid}/{VARIANT_SEGMENT}/{variant}/{DEV_LINK}"
         with self._lock_for(pid):
-            pdir.mkdir(parents=True, exist_ok=True)
-            if _read_digest(pdir / DEV_LINK) == digest:
+            slot.parent.mkdir(parents=True, exist_ok=True)
+            if _read_digest(slot) == digest:
                 # Same sources as the slot already holds. Nothing to write, and
                 # nothing SHOULD be written: a swap here would take the page the
                 # author has open through a needless re-render.
-                logger.info(f"publish {pid}/{DEV_LINK}: identical, kept")
+                logger.info(f"publish {where}: identical, kept")
                 return 200, url
             meta = self._finish_staging(pid, DEV_LINK, staging, files, digest,
-                                        job=job)
-            self._swap_dev_slot(pdir, staging)
+                                        job=job, variant=variant,
+                                        variant_label=variant_label)
+            self._swap_dev_slot(slot, staging)
 
             # `latest` is not touched: a local build is not a commit, so it
             # cannot be the newest one. `builds.json` is rewritten because the picker shows
@@ -1135,13 +1312,15 @@ class Store:
             # rewrites the file from scratch.
             try:
                 # Same as the commit route: this push carries the project's own
-                # title, so an earlier rename has been answered.
-                self.clear_title(pid)
-                self._write_builds_json(pid)
+                # title, so an earlier rename has been answered — by the
+                # default variant, whose name the card shows.
+                if variant == MAIN_BRANCH:
+                    self.clear_title(pid)
+                self._derive(pid)
                 self._dedupe(pid)
             except Exception:
                 logger.exception(
-                    f"publish {pid}/{DEV_LINK}: the slot is published, but the "
+                    f"publish {where}: the slot is published, but the "
                     f"bookkeeping after it did not finish; the next push "
                     f"redoes it")
 
@@ -1165,17 +1344,15 @@ class Store:
             self._refresh_index()
         except Exception:
             logger.exception(
-                f"publish {pid}/{DEV_LINK}: the slot is published, but the site "
+                f"publish {where}: the slot is published, but the site "
                 f"index was not refreshed")
 
-        logger.info(
-            f"publish {pid}/{DEV_LINK}: {len(files)} files, "
-            f"{_contents(meta)}")
+        logger.info(f"publish {where}: {len(files)} files, {_contents(meta)}")
         return 201, url
 
     @staticmethod
-    def _swap_dev_slot(pdir: Path, source: Path) -> None:
-        """Put a prepared tree into `<pid>/dev/`, replacing what is there.
+    def _swap_dev_slot(slot: Path, source: Path) -> None:
+        """Put a prepared tree into a slot, `dev/`, replacing what is there.
 
         `source` is a directory beside the slot that is ready to BE the slot, and
         it comes from two places now: the tree a `build` push unpacked
@@ -1197,7 +1374,7 @@ class Store:
         If the second rename fails the old slot is put back, so a failed push
         leaves the author looking at what they had rather than at a 404.
         """
-        Store._replace_directory(pdir / DEV_LINK, source)
+        Store._replace_directory(slot, source)
 
     @staticmethod
     def _replace_directory(target: Path, source: Path) -> None:
@@ -1286,9 +1463,9 @@ class Store:
         logger.info(f"compare {pid} {old} -> {new} ({view}): cached")
         return final
 
-    def _mirror_into_dev_slot(self, pid: str, pdir: Path, final: Path,
+    def _mirror_into_dev_slot(self, pid: str, slot: Path, final: Path,
                               meta: dict, digest: str, job=None) -> None:
-        """Put a revision that has just been published into `<pid>/dev/` too.
+        """Put a revision that has just been published into its variant's slot.
 
         The slot is the freshest state the hub knows about the project, not the
         last call to `build`; without this a commit would leave the slot showing
@@ -1306,8 +1483,9 @@ class Store:
         Never raises: it runs past the point of no return, and the slot has no
         history to lose.
         """
-        tmp = pdir / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
+        tmp = self.project_dir(pid) / f"{STAGING_PREFIX}{DEV_LINK}-{uuid.uuid4().hex}"
         try:
+            slot.parent.mkdir(parents=True, exist_ok=True)
             # A copy and not hard links: the two writes below go into these
             # files in place, and through a link they would rewrite the
             # revision. `_dedupe` links the rest once the slot is in place.
@@ -1321,7 +1499,7 @@ class Store:
             # and tells the front page the slot holds nothing the commit does
             # not (`_uncommitted_in_slot`).
             (tmp / PAYLOAD_DIGEST_FILE).write_text(digest, encoding="utf-8")
-            self._swap_dev_slot(pdir, tmp)
+            self._swap_dev_slot(slot, tmp)
         except Exception:
             shutil.rmtree(tmp, ignore_errors=True)
             logger.exception(
@@ -1332,8 +1510,9 @@ class Store:
     def _dedupe(self, pid: str) -> int:
         """Hard-link identical files across one project's builds. -> files linked.
 
-        Every build directory of the project, the `dev` slot included, is
-        walked in name order with the sha256 of each file it ships
+        Every build directory of the project, the `dev` slot included, then
+        every other variant's slot, is walked in name order with the sha256 of
+        each file it ships
         (`_file_digests`), and a file whose content was already seen is
         replaced by a hard link to the first copy in that order — which may be
         the build just published, the others then relinked to it. Run after
@@ -1356,7 +1535,10 @@ class Store:
         pdir = self.projects_dir / pid
         first: dict[str, Path] = {}
         linked = 0
-        for build in sorted(pdir.iterdir()):
+        # A variant's slot is filled with a COPY of its revision
+        # (`_mirror_into_dev_slot`), and only this links the two.
+        slots = sorted(pdir.glob(f"{VARIANTS_DIR}/*/{DEV_LINK}"))
+        for build in [*sorted(pdir.iterdir()), *slots]:
             if (build.name.startswith(".") or build.is_symlink()
                     or not build.is_dir()):
                 continue
@@ -1414,7 +1596,8 @@ class Store:
 
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest,
-                        job=None, message=None) -> dict:
+                        job=None, message=None, variant=MAIN_BRANCH,
+                        variant_label=None) -> dict:
         """Validate meta.json and write everything the build page needs.
 
         `staging` is what the build wrote (SPEC 8A.2 step 5), so the meta.json
@@ -1423,13 +1606,14 @@ class Store:
         `job` is handed on to `build_meta`, which records it in the slot's
         document only. `message` is the subject of the pushed commit, already
         cleaned to what a message may be (`prereceive.revision_message`).
+        `variant` and `variant_label` go into the document as they are.
         """
         raw = self._read_meta(staging)
         try:
             meta = render.build_meta(
                 pid=pid, commit=commit, raw=raw, staging=staging, files=files,
                 published=published_stamp(), dev=(commit == DEV_LINK), job=job,
-                message=message)
+                message=message, variant=variant, variant_label=variant_label)
         except ValueError as error:
             # render.py validates without knowing about HTTP; every way it can
             # refuse is "the push described something that is not there", i.e. 422.
@@ -1548,26 +1732,34 @@ class Store:
         metas.sort(key=_built_key, reverse=True)
         return metas
 
-    def latest_commit(self, pid: str) -> str | None:
-        """What `latest` currently points at, or None if it is not set."""
+    def latest_commit(self, pid: str, variant: str = MAIN_BRANCH) -> str | None:
+        """The build a variant's `latest` currently points at, or None."""
         try:
-            return os.readlink(self.projects_dir / pid / LATEST_LINK)
+            return os.path.basename(os.readlink(
+                self.pointer_dir(pid, variant, LATEST_LINK)))
         except OSError:
             return None
 
-    def _switch_latest(self, pid: str) -> None:
-        """Point `latest` at the nearest built commit of `main`, as it stands.
+    def _switch_latest(self, pid: str, variant: str, names) -> None:
+        """Point a variant's `latest` at the nearest built commit of its
+        branch, as it stands.
 
         Only a commit build can be one — the local slot is not in `builds_of` —
         which is the rule `latest` exists to keep (SPEC 7.6): it is the link
         that gets pasted into chat, and it has to go on meaning "the project as
         of some commit". Nothing built on the branch leaves it where it is.
         """
-        name = self._branch_latest(pid)
-        if name is not None and name != self.latest_commit(pid):
-            self._point(pid, LATEST_LINK, name)
+        name = self._branch_latest(pid, variant, names)
+        if name is None or name == self.latest_commit(pid, variant):
+            return
+        directory = self.variant_dir(pid, variant)
+        directory.mkdir(parents=True, exist_ok=True)
+        # From `.variants/<b>/` the build is two levels up.
+        target = name if variant == MAIN_BRANCH else f"../../{name}"
+        self._point(directory, LATEST_LINK, target)
 
-    def _point(self, pid: str, name: str, target: str) -> None:
+    @staticmethod
+    def _point(directory: Path, name: str, target: str) -> None:
         """Move one pointer symlink, atomically.
 
         `os.symlink` to a temporary name followed by `os.rename` over the old link
@@ -1575,18 +1767,17 @@ class Store:
         then create the new one — leaves a window in which /project/<pid>/latest/
         is a 404, and that window is open on every single publish.
 
-        The link is RELATIVE (just the build name). An absolute one would bake in
-        the path the hub happened to have when it wrote it, and break the day the
-        same tree is mounted somewhere else — which is exactly what the container
-        does with /app/data.
+        The link is RELATIVE. An absolute one would bake in the path the hub
+        happened to have when it wrote it, and break the day the same tree is
+        mounted somewhere else — which is exactly what the container does with
+        /app/data.
         """
-        pdir = self.projects_dir / pid
-        tmp_link = pdir / f"{LATEST_LINK_PREFIX}{uuid.uuid4().hex}"
+        tmp_link = directory / f"{LATEST_LINK_PREFIX}{uuid.uuid4().hex}"
         os.symlink(target, tmp_link)
-        os.rename(tmp_link, pdir / name)
+        os.rename(tmp_link, directory / name)
 
-    def _write_builds_json(self, pid: str) -> None:
-        """Rewrite the build picker from what is actually on disk.
+    def _write_builds_json(self, pid: str, variant: str, metas: list) -> None:
+        """Rewrite one variant's build picker: `metas`, its builds, newest first.
 
         Called AFTER the pointer has moved, so `latest` in the file names the
         build a reader following that link will actually land on. Temp file plus
@@ -1596,46 +1787,48 @@ class Store:
         The local slot is not one of the entries and never will be — that is the
         point of it being a slot (SPEC 7.6) — but the picker still has to be able
         to OFFER it, so whether it is occupied is recorded alongside the list.
-        Which is also why this runs for a project that has no commit builds yet:
-        a local-only project has an empty history and a slot worth linking to.
+        Which is also why this runs for a variant that has no commit builds yet:
+        a draft-only one has an empty history and a slot worth linking to.
         """
-        metas = self.builds_of(pid)
-        dev_meta = self._dev_meta(pid)
+        dev_meta = self._dev_meta(pid, variant)
         if not metas and dev_meta is None:
             return
         picker = render.builds_json(pid, metas, dev=dev_meta is not None,
-                                    latest=self.latest_commit(pid),
+                                    latest=self.latest_commit(pid, variant),
                                     fallback=dev_meta)
         renamed = self.project_title(pid)
         if renamed is not None:
             picker["title"] = renamed
-        _atomic_write_json(self.builds_json_path(pid), picker)
+        self.variant_dir(pid, variant).mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(self.builds_json_path(pid, variant), picker)
 
-    def _dev_meta(self, pid: str) -> dict | None:
-        """The local slot's meta.json, or None if the slot is empty.
+    def _dev_meta(self, pid: str, variant: str = MAIN_BRANCH) -> dict | None:
+        """A variant's local slot's meta.json, or None if the slot is empty.
 
         Read rather than assumed: with no commit build in the project it is the
         only source of the project's name and title, and `builds.json` needs
         those to render a header.
         """
         try:
-            meta = json.loads(self.build_meta_path(pid, DEV_LINK).read_text(
-                encoding="utf-8"))
+            meta = json.loads((self.pointer_dir(pid, variant, DEV_LINK)
+                               / BUILD_META_FILE).read_text(encoding="utf-8"))
         except (ValueError, OSError, RecursionError):
             return None
         return meta if _usable_meta(meta, DEV_LINK) else None
 
-    def dev_metrics_path(self, pid: str) -> Path | None:
-        """The local slot's metrics.json, or None when there is nothing there.
+    def dev_metrics_path(self, pid: str,
+                         variant: str = MAIN_BRANCH) -> Path | None:
+        """A variant's slot's metrics.json, or None when there is nothing there.
 
         A path rather than the parsed file: the only caller hands it to a build
         process, and parsing it here would mean two readers of the same file
         disagreeing about what a broken one is. Tolerant like `_dev_meta` next
         to it — an unreadable slot is a missing baseline, never an exception on
         the publish path, and `is_file()` answers False for every way a path can
-        refuse to be looked at rather than raising.
+        refuse to be looked at rather than raising. Each variant's build
+        measures itself against its own slot, not the default variant's.
         """
-        path = self.projects_dir / pid / DEV_LINK / METRICS_NAME
+        path = self.pointer_dir(pid, variant, DEV_LINK) / METRICS_NAME
         return path if path.is_file() else None
 
     def _uncommitted_in_slot(self, pid: str) -> bool:
@@ -1666,18 +1859,21 @@ class Store:
     def _refresh_index(self) -> None:
         """Rebuild the root index.json from the build each project's `latest` is.
 
-        The local slot is left out for the same reason it does not move
-        `latest` (SPEC 7.6): the front page must not describe uncommitted work.
-        A project whose `latest` names no build — only a draft so far, or a
-        first push whose branch git has not written yet — has no card yet. The
-        build `latest` names and not the newest one: after two pushes raced,
-        the newest is the loser's, which is not on the branch.
+        The card shows the default variant: its `latest` and its slot. The
+        local slot is left out for the same reason it does not move `latest`
+        (SPEC 7.6): the front page must not describe uncommitted work. A
+        project whose `latest` names no build — only a draft so far, a first
+        push whose branch git has not written yet, or no `main` on the hub at
+        all — has no card yet. The build `latest` names and not the newest
+        one: after two pushes raced, the newest is the loser's, which is not
+        on the branch.
 
-        Two of the card's fields belong to the project rather than the build, so
-        they are read here and handed over: whether the slot holds sources no
-        commit has published (`_uncommitted_in_slot`, not the same question as
-        `has_dev` in `builds.json`), and the oldest build still on disk.
-        `render.index_card` says what each is for.
+        Three of the card's fields belong to the project rather than the build,
+        so they are read here and handed over: whether the slot holds sources
+        no commit has published (`_uncommitted_in_slot`, not the same question
+        as `has_dev` in `builds.json`), the oldest build still on disk, and how
+        many variants the project has (`variant_count`). `render.index_card`
+        says what each is for.
         """
         with self._index_lock:
             cards = []
@@ -1696,6 +1892,7 @@ class Store:
                         head,
                         dev=self._uncommitted_in_slot(pdir.name),
                         first_built=metas[-1]["built"],
+                        variants=self.variant_count(pdir.name),
                     )
                     renamed = self.project_title(pdir.name)
                     if renamed is not None:
@@ -1807,8 +2004,8 @@ class Store:
         project-level answer here uses (`_serve_pointer_page`, `builds_of`): a
         project whose builds somebody cleared out by hand is still a project.
 
-        The picker and the index are rewritten from what is on disk, in that
-        order and for the reason `publish_built` gives: the per-project file
+        The pickers and the index are rewritten from what is on disk, in that
+        order and for the reason `publish_built` gives: the per-project files
         first, the site-wide one after it.
         """
         pdir = self.projects_dir / pid
@@ -1817,7 +2014,7 @@ class Store:
                 return False
             _atomic_write_json(pdir / PROJECT_TITLE_FILE,
                                {"title": title, "renamed": utcnow_iso()})
-            self._write_builds_json(pid)
+            self._derive(pid)
         self._refresh_index()
         return True
 
@@ -2102,9 +2299,9 @@ def _read_digest(build_dir: Path) -> str | None:
 def _atomic_write_json(path: Path, payload) -> None:
     """Write JSON so a reader sees the old file or the new one, never a torn one.
 
-    Every write through this function lands in `self.root` or in `<pid>/`, the
-    two levels `_sweep_leftovers` walks, so the temporary beside the target is
-    collectable.
+    Every write through this function lands in `self.root`, in `<pid>/` or in
+    a variant's `<pid>/.variants/<b>/`, the three levels `_sweep_leftovers`
+    walks, so the temporary beside the target is collectable.
     """
     atomic_write_bytes(path, json.dumps(payload, indent=1).encode("utf-8"))
 

@@ -455,28 +455,36 @@ def test_stale_leftovers_are_swept_at_startup(tmp_path):
     store = Store(data_dir=data)
     pdir = store.projects_dir / "proj1"
     pdir.mkdir(parents=True, exist_ok=True)
+    # A variant's directory, where its slot is swapped and its `latest` moved.
+    vdir = pdir / ".variants" / "ceiling"
+    vdir.mkdir(parents=True)
 
     stale = [
         data / ".wip-index.json-deadbeef",
         pdir / ".wip-builds.json-deadbeef",
+        vdir / ".wip-builds.json-deadbeef",
         data / ".src-deadbeef",
         pdir / ".trash-deadbeef",
         pdir / ".tmp-abc123-deadbeef",
+        vdir / ".trash-deadbeef",
     ]
-    for path in stale[:2]:
+    for path in stale[:3]:
         path.write_bytes(b"x" * 16)
-    for path in stale[2:]:
+    for path in stale[3:]:
         path.mkdir()
         (path / "meta.json").write_text("{}")
-    link = pdir / ".latest-deadbeef"
-    os.symlink("nowhere", link)  # deliberately dangling, like a real leftover
+    links = [pdir / ".latest-deadbeef", vdir / ".latest-deadbeef"]
+    for link in links:
+        os.symlink("nowhere", link)  # deliberately dangling, like a real leftover
 
     # Age them past the ceiling: anything younger might belong to a live publish.
     # Read off the constant, which follows the queue wait and so `Limits.wall_seconds`.
+    # `.variants` and its entry too: they survive by name, not by age.
     old = time.time() - 2 * LEFTOVER_MAX_AGE_SECONDS
-    for path in stale:
+    for path in [*stale, vdir, vdir.parent]:
         os.utime(path, (old, old))
-    os.utime(link, (old, old), follow_symlinks=False)
+    for link in links:
+        os.utime(link, (old, old), follow_symlinks=False)
 
     # Two things that must SURVIVE: a real build, and fresh debris that could
     # belong to a publish running right now.
@@ -489,6 +497,8 @@ def test_stale_leftovers_are_swept_at_startup(tmp_path):
 
     for path in stale:
         assert not path.exists(), path
-    assert not link.is_symlink()
+    for link in links:
+        assert not link.is_symlink(), link
+    assert vdir.is_dir(), "a variant's directory is no leftover"
     assert (pdir / "c1" / "meta.json").is_file()
     assert fresh.is_dir(), "a leftover younger than an hour may still be in use"

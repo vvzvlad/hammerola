@@ -265,7 +265,7 @@ def test_a_model_that_lists_no_documents_publishes_what_it_always_did(
     build = hub.project_dir("proj1") / "abc123"
     meta = json.loads((build / "meta.json").read_text(encoding="utf-8"))
     assert set(meta) == {"pid", "project", "title", "commit", "dev", "built",
-                         "published", "views", "parts"}
+                         "published", "views", "parts", "variant"}
     assert sorted(path.name for path in build.iterdir()) == sorted(
         {*ARTEFACTS, PAYLOAD_DIGEST_FILE, FILE_DIGESTS_FILE, BUILD_LOG_FILE})
     assert hub.job_log(record["id"]).text == (

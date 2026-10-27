@@ -55,10 +55,18 @@ history as commits of their own, under their old names.
 **A published revision never changes and never expires.** Its URL is served as
 immutable, and there is no retention anywhere on the hub — nothing ages out and
 no build can be taken back on its own — so a link pasted into a chat shows the
-same geometry a year later. `dev` is the other kind of slot: one per project,
+same geometry a year later. `dev` is the other kind of slot: one per variant,
 rewritten by every `hammerola build`, no history, never listed, and it is where
 the working copy goes while a part is still moving — uncommitted, as a draft
 the client pushes beside the branch.
+
+**A variant of a project is a branch.** A ceiling and a wall version of one
+case are two branches of its repository, each with its own history, `latest`,
+draft and documents, and the page switches between them by the project's title,
+for a reader with a link as much as for the owner. `main` is the default
+variant and keeps the project's addresses; another branch `b` is under
+`/project/<pid>/v/<b>/`, labelled by the `"variant"` key of its own
+`project.json`, or by its name.
 
 **Geometry that fails the gate is not published.** Every printable has to be a
 valid solid with positive volume, export a watertight mesh and come out as one
@@ -205,7 +213,12 @@ itself would name the project after that.
 `connect` adds the remote `hammerola-<pid>`, includes from the repository's own
 config the file `login` wrote the hub's password into for git, and — for a
 project published before git — joins the hub's history into the local `main`
-with a merge that changes no file. Only `main` is published for now.
+with a merge that changes no file. It prints the push for the branch checked
+out: `git push hammerola-<pid> <branch>` publishes a revision of that branch's
+variant, and `hammerola build` writes the draft of that branch — of `main` into
+`/project/<pid>/dev/`, of any other into `/project/<pid>/v/<branch>/dev/`. A
+branch name is letters, digits, `-` and `_`; the hub refuses any other, and a
+pushed branch stays a variant for good.
 
 Both ways of publishing are a `git push` that waits for the build and prints
 what the build printed: `git push hammerola-<pid> main` publishes a revision,
@@ -219,7 +232,7 @@ each non-zero with the sentence that says which.
 The rest of the commands answer questions about a project that is already there:
 
 ```bash
-hammerola status                 # latest, dev, and the revisions that exist
+hammerola status                 # latest, dev and the revisions of this branch's variant, and the variants
 hammerola log <revision>         # read a build log again
 hammerola artifacts <revision>   # its STEP/STL/3MF and its documents
 hammerola diff <rev> <rev>       # what moved, in geometry and in source

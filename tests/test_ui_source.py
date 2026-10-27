@@ -526,6 +526,20 @@ def test_the_assembled_view_is_spelled_the_same_on_both_sides_of_the_wire():
         f"the current layout, on a page that is showing the assembly")
 
 
+@pytest.mark.parametrize("name, python", [("DEFAULT_VARIANT", "MAIN_BRANCH"),
+                                          ("VARIANT_SEGMENT", "VARIANT_SEGMENT")])
+def test_the_variant_addressing_is_the_store_s(name, python):
+    """Which variant keeps the project's own addresses, and the segment the
+    others' begin with: a page that disagreed would fetch every other
+    variant's builds.json from a 404 and link the switcher's rows to one."""
+    from src import store
+
+    declared = re.search(rf"export\s+const\s+{name}\s*=\s*'([^']+)'",
+                         strip_comments(read(UI / "hub.js")))
+    assert declared, f"ui/src/hub.js no longer declares {name} as a plain literal"
+    assert declared.group(1) == getattr(store, python)
+
+
 def test_the_compare_legend_says_what_the_hub_says_not_compared_means():
     """One explanation of one word, written on both sides of the wire.
 
