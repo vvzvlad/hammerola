@@ -1665,3 +1665,16 @@ def test_second_build_moves_latest_and_keeps_the_old_one(hub):
 
     builds = json.loads((hub.project_dir("proj1") / "builds.json").read_text())
     assert [b["commit"] for b in builds["builds"]] == ["bbb222", "aaa111"]
+
+
+def test_latest_follows_built_not_arrival_order(hub):
+    # The import takes the revisions an older hub published into `main` in the
+    # order of `built` (`Store._import`), and `latest` is the tip of `main`, so a
+    # build that arrived late but is OLDER must not steal `latest`.
+    hub.publish("proj1", "newer", tar_gz({
+        "meta.json": meta_bytes(built="2026-08-22T10:00:00Z"),
+        "assembled.json": view_bytes("newer"), **DEFAULT_EXPORTS}))
+    hub.publish("proj1", "older", tar_gz({
+        "meta.json": meta_bytes(built="2026-08-01T10:00:00Z"),
+        "assembled.json": view_bytes("older"), **DEFAULT_EXPORTS}))
+    assert os.readlink(hub.project_dir("proj1") / "latest") == "newer"

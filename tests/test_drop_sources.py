@@ -1,10 +1,11 @@
 """The pass at start over `data/sources/`, the archives of the builds published
 before git (`Store.drop_sources`).
 
-`Hub.publish` leaves a build as such a build stands on a hub now: built from
-the archive's tree, recorded by its `.payload.sha256`, with its import commit
-in `main` and its `.build.log`. `published` files the archive and its log in
-`sources/` as the older hub kept them.
+`Hub.publish` publishes as the older hub did, filing the archive in `sources/`,
+and the import takes it into `main`: the build stands as such a build stands on
+a hub now, built from the archive's tree, recorded by its `.payload.sha256`,
+with its import commit in `main` and its `.build.log`. `published` adds the log
+the older hub kept beside the archive.
 """
 
 import hashlib
@@ -24,15 +25,13 @@ from src.store import (MAIN_REF, PAYLOAD_DIGEST_FILE, SOURCE_LOG_NAME,
 
 
 def published(hub, pid, name, body, log=True):
-    """Publish `body` as `<pid>/<name>` and file its archive by its digest.
+    """Publish `body` as `<pid>/<name>`, with a log beside its archive.
 
     -> the archive's directory in `sources/`.
     """
     assert hub.publish(pid, name, body).status_code == 201
     directory = (hub.data / SOURCES_DIR_NAME
                  / _read_digest(hub.store.build_dir(pid, name)))
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / "source.tar.gz").write_bytes(body)
     if log:
         (directory / SOURCE_LOG_NAME).write_text("old log\n")
     return directory
@@ -118,13 +117,11 @@ def test_an_archive_is_kept_while_one_of_its_builds_has_no_import_commit(hub):
 
 def test_an_archive_whose_import_commit_gives_another_digest_is_kept(hub):
     """The build carries a digest its import commit does not give back."""
-    assert hub.publish("src2", "first", good_build("a")).status_code == 201
+    filed = published(hub, "src2", "first", good_build("a"), log=False)
     other = "f" * 64
     build = hub.store.build_dir("src2", "first")
     (build / PAYLOAD_DIGEST_FILE).write_text(other)
-    directory = hub.data / SOURCES_DIR_NAME / other
-    directory.mkdir(parents=True)
-    (directory / "source.tar.gz").write_bytes(good_build("a"))
+    directory = filed.rename(filed.parent / other)
 
     said = swept(hub)
 
@@ -179,7 +176,7 @@ def test_an_archive_of_a_build_of_an_older_format_is_checked_too(hub):
     (half / meta_path.name).write_text(json.dumps({**meta, "commit": "half"}))
     assert hub.store.builds_of("src5") == []
     assert [build["commit"] for build in
-            hub.store._imported_builds("src5")] == ["first"]
+            hub.store._import_builds("src5")] == ["first"]
 
     said = swept(hub)
 
