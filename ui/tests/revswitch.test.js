@@ -2660,6 +2660,63 @@ describe('a target that will not load', () => {
   })
 })
 
+describe('a variant other than the default', () => {
+  // A variant's pointers live under `/project/<pid>/v/<variant>/`, and a
+  // revision has one address whichever variant holds it. The page's variant
+  // is the one its address names on a pointer and its meta.json's `variant`
+  // on a revision (`pageVariant` in hub.js).
+  const CEILING_LATEST = '/project/proj1/v/ceiling/latest/'
+
+  it('picks `latest` of the variant a revision of it belongs to', async () => {
+    const c = component({ token: 'sekrit' })
+    c.state.meta = { ...c.state.meta, variant: 'ceiling' }
+    c.state.builds = { ...BUILDS(), latest: B }
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockResolvedValue({ ...build(), variant: 'ceiling' })
+
+    c.computed().revRows.find((r) => r.key === 'latest').onPick({ stopPropagation() {} })
+    await flush()
+
+    expect(loadMeta).toHaveBeenCalledWith(true, CEILING_LATEST)
+    expect(pushed(push)).toBe(CEILING_LATEST)
+    expect([PAGE.slot, PAGE.variant, PAGE.base]).toEqual(['latest', 'ceiling', CEILING_LATEST])
+    expect(loadBuilds).toHaveBeenLastCalledWith('sekrit', 'ceiling')
+  })
+
+  it('takes Back onto another variant\'s pointer to that address', async () => {
+    // From the default variant's revision: a slot name alone would read
+    // `latest` as this variant's and fetch the wrong build.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = component({ token: 'sekrit' })
+    c.load = vi.fn(async () => {})
+    c.componentDidMount()
+    onTestFinished(() => c.componentWillUnmount())
+    loadMeta.mockResolvedValue({ ...build(), variant: 'ceiling' })
+
+    window.history.replaceState(null, '', CEILING_LATEST)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flush()
+
+    expect(loadMeta).toHaveBeenCalledWith(true, CEILING_LATEST)
+    expect(PAGE.variant).toBe('ceiling')
+    expect(c.variant()).toBe('ceiling')
+    expect(loadBuilds).toHaveBeenLastCalledWith('sekrit', 'ceiling')
+  })
+
+  it('drops a list that lands for a variant the page has left', async () => {
+    const c = component({ token: 'sekrit' })
+    let answer
+    loadBuilds.mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+    c.refreshBuilds()
+    c.state.meta = { ...c.state.meta, variant: 'ceiling' }
+
+    answer({ ...BUILDS(), latest: 'stale' })
+    await flush()
+
+    expect(c.state.builds.latest).toBe(null)
+  })
+})
+
 describe('another project', () => {
   it('is still a real navigation', async () => {
     // Everything changes there at once — the title, the picker, the notes, the

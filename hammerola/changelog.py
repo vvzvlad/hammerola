@@ -76,6 +76,18 @@ ENTRIES = {
         "git. `hammerola diff` reads it from the local repository, after "
         "`git fetch hammerola-<pid>`.",
     ),
+    "0.6.0": (
+        "A branch is a variant of the project: `git push hammerola-<pid> "
+        "<branch>` publishes a version of it, and the hub's page switches "
+        "between variants by the project's title. `\"variant\"` in "
+        "project.json names one.",
+        "`hammerola build` pushes the draft of the branch checked out, into "
+        "`/project/<pid>/v/<branch>/dev/` for any branch but `main`, and "
+        "refuses a detached HEAD.",
+        "`hammerola status`, `log`, `artifacts latest|dev` and `latest` in "
+        "`diff` read the variant of the branch checked out; `status` lists "
+        "the variants.",
+    ),
 }
 
 

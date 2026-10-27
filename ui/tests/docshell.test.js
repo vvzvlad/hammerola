@@ -626,7 +626,8 @@ describe('the shell', () => {
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
-    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST })
+    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST,
+                                  variants: null, variantsOpen: false })
     // the door `Show in …` on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
@@ -909,9 +910,10 @@ describe('comments on the page of a build with no model', () => {
     expect(values(shell).threads.map((t) => t.says)).toEqual(['on amp of Схема — near C1',
       'left on the model, which this build does not have', 'on amp of Схема — near C1'])
     expect(texts(drawn(shell))).toEqual(expect.arrayContaining(['too hot', 'too thin', 'on amp of Схема — near C1']))
-    // a reader without the token asks for nothing
+    // a reader without the token asks for nothing but the project's
+    // variants, which are public
     opened({ token: null }).componentDidMount()
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/project/docs0001/variants.json'])
   })
 
   it('opens a row\'s document at its place as a step of history, the sheet the reader\'s step where it was on screen, and a row on a model nowhere', () => {

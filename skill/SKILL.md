@@ -142,9 +142,26 @@ hub's address — not once at the end, or the person waits or prints something
 superseded. The commit's subject is what a person picks a revision by.
 
 It pushes the local branch `main` from any worktree: there is no need to switch
-to it. Only `main` is published for now — a variant of a project is the name of
-a branch, and the hub refuses any other one. `build` writes the draft of `main`
-whatever branch it runs on.
+to it. `main` is the project's default variant, and its addresses are the
+project's own.
+
+**A variant of the project is a git branch** — a ceiling and a wall version of
+one case. Each has its own history, `latest`, draft and documents; the page
+switches between them by the project's title.
+
+* Make one with `git switch -c <name>`, label it with `"variant": "Ceiling
+  case"` in its `project.json` (without the key the switcher shows the branch
+  name), publish it with `git push hammerola-<pid> <name>`. Its `latest` is
+  `/project/<pid>/v/<name>/latest/`.
+* A pushed branch stays a variant for good and is visible to everyone with the
+  link: the hub never deletes a branch. **Never push a working branch that is
+  not a variant.**
+* `build` writes the draft of the branch checked out, from a worktree too:
+  `/project/<pid>/v/<branch>/dev/`, the address it prints, and `/dev/` is
+  `main`'s alone. A branch name is letters, digits, `-` and `_` — no `/`: the
+  hub refuses `feat/x`, its draft included, and `build` refuses a detached HEAD.
+* A change every variant needs (the board, a datasheet, the shared case code)
+  goes into each branch: `git merge` or `git cherry-pick`.
 
 **The push waits for the whole build** and exits non-zero unless the commit was
 published: the hook refusing it is the build failing, with its log in the

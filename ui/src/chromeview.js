@@ -22,7 +22,7 @@ import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
 import { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
 import {
-  PAGE, buildKey, isPointerPage, mb, projectUrl, shortId, stamp,
+  PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
 import {
   BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, btn, popover, tab,
@@ -31,11 +31,13 @@ import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, menuRow, quietBtn } from './viewlist.jsx';
+import { variantChoices } from './variants.jsx';
 
 export function chromeView(s, props, deps) {
   const {
-    // -- what `computed()` has already worked out
-    meta, viewer, narrow, stop,
+    // -- what `computed()` has already worked out; `variant` is the one this
+    // page is of (`pageVariant` in hub.js)
+    meta, viewer, narrow, stop, variant,
     // -- the other panels' answers, drawn by controls that live up here
     revRows, downloadGroups, dlShown, threads, openCount,
     // -- the lookups and constants that stay beside the component
@@ -113,8 +115,9 @@ export function chromeView(s, props, deps) {
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
-  // commit, never the shortened one a row shows. The key is the hub's own
-  // (`files_keys` on builds.json); without one the box cannot be ticked.
+  // commit, never the shortened one a row shows; `latest` is the one of the
+  // variant on screen. The key is the hub's own (`files_keys` on builds.json,
+  // the variant's); without one the box cannot be ticked.
   const share = s.share || null;
   const shareKeys = (s.builds && s.builds.files_keys) || null;
   const shareKey = share && shareKeys
@@ -135,7 +138,7 @@ export function chromeView(s, props, deps) {
     + `align-items:center;justify-content:center;font:600 10px ${MONO};`
     + (on ? ON_ACCENT : BLANK_BOX);
   const shareLink = !share ? ''
-    : `${location.origin}${format(fresh(`${projectUrl(PAGE.pid)}${encodeURIComponent(share.id)}/`, {
+    : `${location.origin}${format(fresh(buildPath(PAGE.pid, share.id, variant), {
       view: viewParam(s.view, views),
       doc: docOpen ? docOpen.id : null,
       sheet: docOpen ? parse().sheet : null,
@@ -172,6 +175,13 @@ export function chromeView(s, props, deps) {
     // past the window edge. `0 1 auto`: shrink allowed, grow refused, because a
     // title that claimed the leftover room would push the picker away from it.
     titleColStyle: 'display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0',
+    // The variants beside the title (variants.jsx), for every reader: the list
+    // needs no token. Null, and nothing drawn, on a project of one variant.
+    variantChoices: variantChoices(s.variants, PAGE.pid, variant),
+    variantsOpen: !!s.variantsOpen,
+    variantsToggle: stop(() => setState({
+      variantsOpen: !s.variantsOpen, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false })),
+    narrowMenus: narrow,
     subtitle: meta ? subtitle() : '',
     // Shortened: `PAGE.slot` comes straight from the URL, so on a pinned
     // revision it is the full 64-character source digest, too wide for the
@@ -191,7 +201,7 @@ export function chromeView(s, props, deps) {
     // so a reader holding a shared link has no list to open and no menu.
     revPicker: !viewer,
     revToggle: viewer ? undefined
-      : stop(() => setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false })),
+      : stop(() => setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false })),
     revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px'
       + (viewer ? '' : ';cursor:pointer'),
     revMenuStyle: popover({
@@ -250,7 +260,7 @@ export function chromeView(s, props, deps) {
     downloadGroups,
     // NO KEY, NO BUTTON: the hub would refuse every file in the menu.
     dlShown,
-    dlToggle: stop(() => setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false })),
+    dlToggle: stop(() => setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false })),
     dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
     // Clamped like the other two: this header button survives the narrow
     // branch, and once the row wraps `right:0` is no longer the window's right
@@ -263,7 +273,8 @@ export function chromeView(s, props, deps) {
     // -- the token: the whole customer/viewer split, in one control
     viewer,
     tokenToggle: stop(() => setState({
-      tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false })),
+      tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false,
+      variantsOpen: false })),
     tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
     tokenLabel: viewer ? 'View only' : 'Editing on',
     tokenPopStyle: popover({
@@ -506,6 +517,7 @@ export function chromeView(s, props, deps) {
     viewsOpen: !!s.viewsOpen,
     viewsToggle: stop(() => setState({
       viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
+      variantsOpen: false,
       // The other menus in this toolbar, which open upwards from buttons a few
       // pixels along: two of them at once would overlap.
       opsOpen: false, settingsOpen: false })),
@@ -580,7 +592,7 @@ export function chromeView(s, props, deps) {
     // refuses such a value by its shape.
     tProposal: stop(() => setState({
       opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
-      settingsOpen: false, tokenPop: false, menu: null })),
+      settingsOpen: false, tokenPop: false, menu: null, variantsOpen: false })),
     proposalBtnStyle: btn(s.opsOpen, viewer, !!docOpen),
     // The card, drawn like the view switcher's: upwards from the button, no
     // `z-index` (the toolbar is its own stacking context), and no sheet on a
@@ -604,7 +616,7 @@ export function chromeView(s, props, deps) {
     // service under a document: the resolution it sets is the model's canvas'.
     tSettings: stop(() => setState({
       settingsOpen: !s.settingsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
-      opsOpen: false, tokenPop: false, menu: null })),
+      opsOpen: false, tokenPop: false, menu: null, variantsOpen: false })),
     settingsBtnStyle: btn(s.settingsOpen, false, !!docOpen),
     // `right:0` AND NOT `left:0`: this is the last button in the bar, so a card
     // measured from its left edge would hang out past the toolbar's end rather

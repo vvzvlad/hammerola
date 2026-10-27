@@ -81,11 +81,11 @@ import {
 } from './address.js';
 import {
   PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, HUB_UNREACHABLE,
-  JOB_DONE, JOB_FAILED, anchorFor, askHub, compareBase, decodeCamera,
-  encodeCamera, isPointerPage, buildKey,
+  JOB_DONE, JOB_FAILED, anchorFor, askHub, buildPath, compareBase, decodeCamera,
+  encodeCamera, isDefaultPointerPage, isPointerPage, buildKey,
   countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
-  loadJob, loadMeta, loadBuilds, pageFrom, rereadPage, rowsByKey, shortId,
-  startCompare, mb,
+  loadJob, loadMeta, loadBuilds, loadVariants, pageFrom, pageVariant, rereadPage,
+  rowsByKey, shortId, startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` come from here, not the viewport: the theme is the
 // whole interface's palette, per-reader state like the token, the notes and the
@@ -129,6 +129,7 @@ import DocumentView, { COMMENTABLE, docExt, FILE_TYPE } from './DocumentView.jsx
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
+import { VariantSwitch } from './variants.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -950,12 +951,13 @@ export default class HammerolaViewer extends React.Component {
     // Not state, like `this.carry`: nothing is drawn from it (no undo button,
     // no count), so a write must not cost a render.
     this.history = [];
-    // Where the last accepted gesture is taking this page, which is NOT where
-    // the page has got to (`PAGE.slot`) while a swap is on the wire. `popstate`
-    // is compared against this one; see `switchBuild`.
+    // Where the last accepted gesture is taking this page — the address of a
+    // build, `buildPath` — which is NOT where the page has got to (`PAGE.base`)
+    // while a swap is on the wire. `popstate` is compared against this one;
+    // see `switchBuild`.
     this._want = null;
-    // The slot the comparison on screen was ENTERED from, where that was one of
-    // the two moving names, and null everywhere else — a comparison arrived at
+    // The address the comparison on screen was ENTERED from, where that was one
+    // of the two moving names, and null everywhere else — a comparison arrived at
     // by its own URL was never on a pointer. Written by `compareRevisions` on
     // the way in and spent by `leaveCompare` on the way out; see there for what
     // standing on a pointer is worth beyond the address. Not state, for the
@@ -1026,6 +1028,9 @@ export default class HammerolaViewer extends React.Component {
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
+      // `variants.json`, the switcher's list (variants.jsx), or null until it
+      // comes and when it does not.
+      variants: null,
       pending: null,          // a newer build, seen by the poll, not applied
       // A revision picked from the picker is on the wire. It exists to take the
       // banner's Switch out of service for exactly that window — see
@@ -1050,7 +1055,7 @@ export default class HammerolaViewer extends React.Component {
       // a sentence has been wrong twice already, because nothing fails when a
       // menu is added beside it.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
-      settingsOpen: false,
+      settingsOpen: false, variantsOpen: false,
       // The Share window: `{id, files}` while it is open, where `id` is
       // `latest` or the full commit of the row it was opened from and `files`
       // is its first checkbox; `camera`, the Current view box, is absent until
@@ -1276,10 +1281,12 @@ export default class HammerolaViewer extends React.Component {
     // the load: the URL opened is already known, and a build whose meta.json
     // never arrives was still the one asked for.
     //
-    // Only on a pointer page. On `/project/<pid>/<commit>/` there is no choice
-    // between the two moving names to record, and the URL that names a pointer
-    // has to keep winning over the remembered one.
-    if (isPointerPage()) rememberPointer(PAGE.pid, PAGE.slot);
+    // Only on a pointer page of the default variant. On
+    // `/project/<pid>/<commit>/` there is no choice between the two moving
+    // names to record, and the URL that names a pointer has to keep winning
+    // over the remembered one; the project's own address never opens a
+    // variant, so a variant's pointer is not recorded either.
+    if (isDefaultPointerPage()) rememberPointer(PAGE.pid, PAGE.slot);
     this.load().catch((error) => {
       console.error('hammerola', error);
       this.setState({ error: String(error && error.message ? error.message : error) });
@@ -1454,7 +1461,8 @@ export default class HammerolaViewer extends React.Component {
       if (e.key !== 'Escape') return;
       const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
                      viewsOpen: false, opsOpen: false, settingsOpen: false,
-                     notePop: null, tokenPop: false, tool: null, share: null };
+                     variantsOpen: false, notePop: null, tokenPop: false, tool: null,
+                     share: null };
       // An armed tool is not on screen under an open document — the document
       // covers the model and the tool's button is out of service — so it does
       // not count as something this Escape closed; the Comment tool over a
@@ -1472,9 +1480,11 @@ export default class HammerolaViewer extends React.Component {
     //
     // The entry is read off its address (`parse`), never its state: the entry
     // may be the server-rendered one, which carries no state of ours. The
-    // address can name a comparison pair as well as a slot.
+    // address can name a comparison pair as well as a slot, and a pointer of
+    // another variant than the page is on now, so the build is handed over as
+    // the address the entry names (`at.base`), not as a slot name.
     this._pop = (at) => {
-      // "Is this the build we are already on" is not asked here: `PAGE.slot`
+      // "Is this the build we are already on" is not asked here: `PAGE.base`
       // still names the build being left during a swap. `switchBuild` answers
       // it, against where the page is going.
       if (!at.slot) return;
@@ -1482,7 +1492,7 @@ export default class HammerolaViewer extends React.Component {
       // build is a fetch and the panel hangs off whichever one lands: a Back
       // that crosses both — from a comparison of `<a>` to another build — has
       // to leave the comparison of a build nobody is looking at any more.
-      this.switchBuild(PAGE.pid, at.slot, { push: false })
+      this.switchBuild(PAGE.pid, at.slot, { push: false, path: at.base })
         .then(() => this.syncCompare(at))
         .catch((error) => console.error('switch', error));
     };
@@ -1594,10 +1604,18 @@ export default class HammerolaViewer extends React.Component {
   }
 
   async load() {
+    // The switcher's list, with no token: every reader switches variants. Not
+    // waited for, as the page is whole without it.
+    loadVariants(PAGE.pid).then((variants) => {
+      if (!this._gone) this.setState({ variants });
+    });
     const meta = await loadMeta();
     // Asked for only with a token: the list is behind it, so a reader holding a
-    // shared link sees that build and no picker (`builds` stays null).
-    const builds = !this.state.token ? null : await loadBuilds(this.state.token).catch((error) => {
+    // shared link sees that build and no picker (`builds` stays null). The
+    // list of the variant this page is of, which on a revision its meta.json
+    // says (`pageVariant`).
+    const builds = !this.state.token ? null : await loadBuilds(
+      this.state.token, pageVariant(PAGE, meta)).catch((error) => {
       // A project with no builds.json is a project whose picker is empty, not a
       // page that failed: the model in front of the reader is unaffected.
       console.warn('builds', error);
@@ -1681,7 +1699,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * `push` is false for the one caller that must NOT push: `popstate`, where the
    * browser has already moved the address and pushing again would bury the entry
-   * the reader just came back to.
+   * the reader just came back to. That caller hands over the address too
+   * (`path`), which may be a pointer of another variant than this page is of.
    */
   async switchBuild(pid, slot, options) {
     const push = !options || options.push !== false;
@@ -1697,26 +1716,30 @@ export default class HammerolaViewer extends React.Component {
     // above the guards rather than beside the push because the cancelling branch
     // needs it to ANSWER a guard: whether the bar still names the build on
     // screen. One expression, so the two can never disagree about what the
-    // address of a slot is.
-    const path = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
+    // address of a slot is. A pointer is the one of the variant this page is of
+    // (`variant`); a revision has one address whichever variant holds it.
+    //
+    // The ADDRESS, not the slot, is what says which build: `latest` of one
+    // variant is not `latest` of another.
+    const path = (options && options.path) || buildPath(PAGE.pid, slot, this.variant());
     // "Already going there", which differs from "already here" and is what both
     // callers ask. `PAGE` moves only once a swap's fetch answers, so during one
-    // `PAGE.slot` still names the build being left. `_want` is the destination:
-    // the slot of the last accepted gesture, or `PAGE.slot` when nothing is in
-    // flight. Asking `PAGE.slot` would let a picker click on the target of an
+    // `PAGE.base` still names the build being left. `_want` is the destination:
+    // the address of the last accepted gesture, or `PAGE.base` when nothing is
+    // in flight. Asking `PAGE.base` would let a picker click on the target of an
     // in-flight Forward push a duplicate history entry and lose the forward
     // history.
     //
     // The generation below is taken after this line: the gesture asks for what
     // is already on its way, so a bump here would kill the swap fetching it.
-    const here = this._want || PAGE.slot;
-    if (slot === here) {
+    const here = this._want || PAGE.base;
+    if (path === here) {
       this.setState({ revOpen: false });
       // A `popstate` through the choices made in the menu of views, or between
       // the build on screen and a comparison of it, moves no build, so the view
       // and the document its entry names are put back here. With a swap still on
-      // its way to `slot`, that swap settles both when it lands.
-      if (!push && slot === PAGE.slot) this.followEntry();
+      // its way to `path`, that swap settles both when it lands.
+      if (!push && path === PAGE.base) this.followEntry();
       return;
     }
 
@@ -1731,9 +1754,9 @@ export default class HammerolaViewer extends React.Component {
     // back and `onModel` never spends `_refit` and `carry`. Those would then
     // fire on a later unrelated event: a live reload re-capturing the Fit frame,
     // and hidden parts rejoined by name onto the wrong tree.
-    if (slot === PAGE.slot) {
+    if (path === PAGE.base) {
       this._swapGen = (this._swapGen || 0) + 1;
-      this._want = slot;
+      this._want = path;
       // The swap that just died raised `swapping` on its way out and is not
       // coming back to put it down; nobody else would, and the banner's Switch
       // would sit spent for the rest of the page's life.
@@ -1807,7 +1830,7 @@ export default class HammerolaViewer extends React.Component {
     // AND WHERE THIS PAGE IS NOW HEADED, for the guard above. Written together
     // with the generation because they answer the same question from two sides:
     // the number says which swap is current, this says which BUILD it is for.
-    this._want = slot;
+    this._want = path;
 
     // The banner's Switch is disabled for this window: the banner is not in the
     // picker. A click during this await would run `takePending` fully (meta
@@ -1932,7 +1955,7 @@ export default class HammerolaViewer extends React.Component {
       // Recorded here for the same reason `componentDidMount` records it: this
       // is an arrival at a pointer URL, and SPEC 9 is about which of the two
       // moving names this reader was last on.
-      if (isPointerPage()) rememberPointer(PAGE.pid, PAGE.slot);
+      if (isDefaultPointerPage()) rememberPointer(PAGE.pid, PAGE.slot);
       // Cleared BEFORE the re-arm, because `schedulePoll` returns without
       // touching the timer when the new slot is a pinned revision — so a poll
       // armed while the page was on `latest` would otherwise still fire once
@@ -1941,7 +1964,8 @@ export default class HammerolaViewer extends React.Component {
       this.schedulePoll(POLL_MS);
       // The picker's list catches up: builds.json is read once on mount, so
       // without this a session of switching would show stale history and could
-      // not reach a newly published revision.
+      // not reach a newly published revision. And a revision of another
+      // variant is that variant's page, whose list is another file.
       //
       // After the swap, so the model does not wait on a list in a closed menu.
       // Best effort, as on first load: a missing builds.json is an empty picker,
@@ -1950,12 +1974,22 @@ export default class HammerolaViewer extends React.Component {
     });
   }
 
-  /** Re-read builds.json into the picker — only with a token, which it is behind. */
+  /** Re-read builds.json of the variant on screen into the picker — only with
+   *  a token, which it is behind. An answer for a variant the page has left
+   *  by the time it lands is dropped. */
   refreshBuilds() {
     if (!this.state.token) return;
-    loadBuilds(this.state.token)
-      .then((builds) => { if (!this._gone) this.setState({ builds }); })
+    const variant = this.variant();
+    loadBuilds(this.state.token, variant)
+      .then((builds) => {
+        if (!this._gone && variant === this.variant()) this.setState({ builds });
+      })
       .catch((error) => console.warn('builds', error));
+  }
+
+  /** The variant this page is of (`pageVariant` in hub.js). */
+  variant() {
+    return pageVariant(PAGE, this.state.meta);
   }
 
   /**
@@ -1978,7 +2012,7 @@ export default class HammerolaViewer extends React.Component {
     // pointless fetch of the revision already there. Only the current swap
     // reaches this method (the generation is checked before the call), so this
     // cannot put back a destination a newer gesture has since chosen.
-    this._want = PAGE.slot;
+    this._want = PAGE.base;
     this.setState({
       revOpen: false, swapping: false,
       viewError: `${shortId(slot)} did not load — still showing ${shortId(PAGE.slot)}`,
@@ -2860,7 +2894,7 @@ export default class HammerolaViewer extends React.Component {
     // Only on the way in: Try again, a view tab and a second pair all arrive
     // with the panel open, and re-reading `PAGE` then would remember the commit
     // the page was already moved onto.
-    if (!this.state.compare) this._cmpFrom = isPointerPage() ? PAGE.slot : null;
+    if (!this.state.compare) this._cmpFrom = isPointerPage() ? PAGE.base : null;
     // AND THE ADDRESS SAYS SO, which is the whole reason the route exists: a
     // comparison is a thing one person sends another, and until this the only
     // way to that URL was to type it. Measured rather than pushed blindly, so
@@ -2923,7 +2957,7 @@ export default class HammerolaViewer extends React.Component {
     // A link's frame still waiting for the comparison scene is the closed
     // panel's: the next view drawn afresh fits as usual.
     this._linkCamera = null;
-    if (back && back !== PAGE.slot) this.standOnPointer(back);
+    if (back && back !== PAGE.base) this.standOnPointer(back);
     else this.moveAddress(null);
     this.set({
       compare: false, cmpPair: null, cmpView: null, cmpStage: null,
@@ -2943,11 +2977,13 @@ export default class HammerolaViewer extends React.Component {
    * `schedulePoll` arms nothing on a pinned revision, so the timer in flight
    * when the comparison opened fired once and stopped. Cleared before re-arming
    * as in `switchBuild`, so a pending timer does not leave two.
+   *
+   * `to` is the pointer's address, its variant's (`buildPath`).
    */
-  standOnPointer(slot) {
-    const to = `/project/${PAGE.pid}/${encodeURIComponent(slot)}/`;
+  standOnPointer(to) {
     const views = (this.state.meta && this.state.meta.views) || [];
-    navigate(fresh(to, this.screenParams(this.state.view, views, this.shownDoc()), { hmr: slot }));
+    navigate(fresh(to, this.screenParams(this.state.view, views, this.shownDoc()),
+      { hmr: pageFrom(to).slot }));
     // IN PLACE, so `PAGE.slot` says what the bar says — which is what the watch
     // below, the chip and every relative fetch on this page are read off.
     rereadPage(to);
@@ -2982,7 +3018,7 @@ export default class HammerolaViewer extends React.Component {
     return here && Array.isArray(pair) && pair.length === 2 && pair[0] === here
       ? `/project/${PAGE.pid}/${encodeURIComponent(here)}`
         + `/compare/${encodeURIComponent(pair[1])}/`
-      : `/project/${PAGE.pid}/${encodeURIComponent(PAGE.slot)}/`;
+      : buildPath(PAGE.pid, PAGE.slot, PAGE.variant);
   }
 
   /**
@@ -3031,7 +3067,7 @@ export default class HammerolaViewer extends React.Component {
    * the bar before writing, so a Back that moved only the build asks nothing.
    */
   syncCompare(at) {
-    if (this._gone || at.slot !== PAGE.slot) return;
+    if (this._gone || at.base !== PAGE.base) return;
     // AND THE RECORD FOLLOWS THE BAR HERE, because on the shortest of these
     // trips nothing else does: Back between a build and a comparison OF THAT
     // BUILD moves neither the build nor the address, so `switchBuild` returns
@@ -5117,7 +5153,7 @@ export default class HammerolaViewer extends React.Component {
     // drawn on a header button, the picker's rows inside a header menu, and a
     // second count worked out up there could disagree with the rail it is about.
     const chrome = chromeView(s, this.props, {
-      meta, viewer, narrow, stop,
+      meta, viewer, narrow, stop, variant: this.variant(),
       revRows, downloadGroups, dlShown, threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
@@ -5157,7 +5193,7 @@ export default class HammerolaViewer extends React.Component {
     });
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, tokenPop: false }),
+      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, variantsOpen: false, tokenPop: false }),
 
       // -- the page's chrome ---------------------------------------------------
       //
@@ -5464,6 +5500,8 @@ export default class HammerolaViewer extends React.Component {
             <div style={css(TITLE)}>{v.title}</div>
             {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
+          <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
+                         onToggle={v.variantsToggle} narrow={v.narrowMenus} />
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>

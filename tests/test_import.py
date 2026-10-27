@@ -112,7 +112,7 @@ def test_a_missing_import_under_commits_of_the_author_is_an_error(
     published_by_the_old_image(hub, monkeypatch, "imp3", "c3",
                                good_build("c"))
     # That image moved `latest` to its newest build.
-    hub.store._point("imp3", LATEST_LINK, "c3")
+    hub.store._point(hub.store.project_dir("imp3"), LATEST_LINK, "c3")
     stop_hub(hub)
 
     said, handle = logged()

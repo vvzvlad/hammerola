@@ -142,21 +142,6 @@ def test_a_forced_push_is_refused_before_anything_is_built(
     assert jobs_made(picky_hub) == before
 
 
-def test_a_branch_other_than_main_is_refused_and_nothing_built(
-        picky_hub, tmp_path):
-    work = tmp_path / "work"
-    working_copy(work, "br1")
-    git("-C", work, "branch", "parts-catalogue")
-
-    alone = push(picky_hub, work, "br1", "parts-catalogue")
-    both = push(picky_hub, work, "br1", "main", "parts-catalogue")
-
-    for pushed in (alone, both):
-        assert pushed.returncode != 0
-        assert "remote: this hub takes only main for now" in pushed.stderr
-    assert jobs_made(picky_hub) == 0
-
-
 def test_a_symlink_is_refused_with_its_path_and_a_gitignore_is_not(
         picky_hub, tmp_path):
     work = tmp_path / "work"

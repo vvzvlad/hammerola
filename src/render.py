@@ -196,9 +196,21 @@ def project_title(value) -> str:
     printable title reading "None", and a caller that sent the wrong field has to
     hear about it instead of renaming a project to that.
     """
+    return _name_text(value, "title")
+
+
+def variant_label(value) -> str:
+    """A variant's label, `"variant"` in its branch's project.json, checked
+    by `project_title`'s rules: it is shown beside the title, in the header's
+    switch of variants."""
+    return _name_text(value, "variant")
+
+
+def _name_text(value, field: str) -> str:
+    """The rule of `project_title` and `variant_label`, naming `field`."""
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("`title` must be a non-empty string")
-    return _plain_text(value.strip(), "title")
+        raise ValueError(f"`{field}` must be a non-empty string")
+    return _plain_text(value.strip(), field)
 
 
 # -- the theme, which the server decides --------------------------------------
@@ -900,7 +912,8 @@ def _match_selection(declared: list, shown: set, view_id: str) -> None:
 
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                files: dict, published: str, dev: bool = False,
-               job: str = None, message: str = None) -> dict:
+               job: str = None, message: str = None, variant: str = None,
+               variant_label: str = None) -> dict:
     """Validate the uploaded meta.json and normalize it for the page.
 
     What the build is OF decides the body: a model's `views` and `parts`
@@ -966,6 +979,13 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     # (`prereceive.revision_message`).
     if message:
         meta["message"] = message
+    # From the push too: the branch it came from, and the label its
+    # project.json gave that branch (`docsbuild.variant_label`). A build older
+    # than variants carries neither, which means the default variant.
+    if variant:
+        meta["variant"] = variant
+    if variant_label:
+        meta["variant_label"] = variant_label
     return meta
 
 
@@ -1270,11 +1290,14 @@ def card_status(state: str | None) -> str:
     return CARD_IDLE
 
 
-def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
+def index_card(meta: dict, *, dev: bool, first_built: str,
+               variants: int = 1) -> dict:
     """One project's card in the index payload (`/index.json`, EDIT_TOKEN).
 
-    Built from its newest commit build, plus two project-level facts the caller
-    (`Store._refresh_index`) passes in.
+    Built from the build the default variant's `latest` is, plus three
+    project-level facts the caller (`Store._refresh_index`) passes in.
+    `variants` is how many variants the project has; the page marks a card
+    with more than one.
 
     `dev` is whether the local slot holds sources no commit has published
     (`Store._uncommitted_in_slot`, by digest), not whether the slot is occupied:
@@ -1319,6 +1342,7 @@ def index_card(meta: dict, *, dev: bool, first_built: str) -> dict:
         "commit": meta["commit"],
         "built": meta["built"],
         "first_built": first_built,
+        "variants": variants,
         "dev": bool(dev),
         # Answered by the route: `_serve_index_json` in src/app.py fills it per
         # request from the project's pointer and the job registry

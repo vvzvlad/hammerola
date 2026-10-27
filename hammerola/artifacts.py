@@ -33,7 +33,8 @@ for the front-page tile. `DECLARING_FIELDS` enforces both, and
 `tests/client/test_fetching.py` pins it.
 
 `dev` and `latest` are accepted here, unlike in `source`: the hub serves them like
-any other build directory.
+any other build directory. They are those of the variant of the branch checked
+out (`variant.current_variant`).
 """
 
 import reprlib
@@ -42,8 +43,9 @@ from pathlib import Path
 from hammerola.buildnames import unservable_path_reason, unservable_reason
 from hammerola import project
 from hammerola.errors import ClientError
-from hammerola.limits import DEV_SLOT, SAFE_ID
+from hammerola.limits import DEFAULT_VARIANT, DEV_SLOT, SAFE_ID
 from hammerola.sources import LATEST, SHORT_ID_CHARS, hub_for, scratch_dir
+from hammerola.variant import current_variant
 
 # The build names that are not revision ids and are still perfectly good targets:
 # the two pointers. `latest` is passed through to the hub rather than resolved
@@ -83,10 +85,15 @@ def run(args) -> int:
     hub = hub_for(root)
 
     name = _build_name(args.revision)
-    meta = hub.build_meta(pid, name)
+    # Only a pointer has a variant: a revision has one address.
+    variant = (current_variant(root) if name in POINTER_NAMES
+               else DEFAULT_VARIANT)
+    meta = hub.build_meta(pid, name, variant)
     if meta is None:
+        of = ("" if name not in POINTER_NAMES or variant == DEFAULT_VARIANT
+              else f" of variant {variant}")
         raise ClientError(
-            f"the hub has no build {name} for project {pid}.\n"
+            f"the hub has no build {name}{of} for project {pid}.\n"
             f"  `hammerola status` lists what it does have.")
 
     declared = _declared(meta)
@@ -132,7 +139,7 @@ def run(args) -> int:
                 f"{filename!r}, which {reason}.\n"
                 f"  That is not a name a build can serve, so this answer did "
                 f"not come from a build the hub published.")
-        body = hub.build_file(pid, name, filename)
+        body = hub.build_file(pid, name, filename, variant)
         if body is None:
             raise ClientError(
                 f"{name} declares the {field!r} of {where} -> {filename}, and "

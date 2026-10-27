@@ -71,7 +71,7 @@ from src.buildproc import (
     run_compare,
 )
 from src import docsbuild
-from src.store import (BUILD_LOG_FILE, DEV_LINK, PublishError,
+from src.store import (BUILD_LOG_FILE, DEV_LINK, MAIN_BRANCH, PublishError,
                        atomic_write_bytes, utcnow_iso)
 
 # -- what a job can be -------------------------------------------------------
@@ -229,6 +229,10 @@ class BuildTask:
 
     `message` is what the commit says it is. The build never reads it; it is
     written into the published document, and a draft has none.
+
+    `variant` is the branch the push was for, `refs/heads/<b>` or
+    `refs/drafts/<b>`: a draft fills that variant's slot, and a revision says
+    in its document which branch it was published from.
     """
 
     job_id: str
@@ -238,6 +242,7 @@ class BuildTask:
     digest: str
     force: bool = False
     message: str | None = None
+    variant: str = MAIN_BRANCH
 
 
 @dataclass(frozen=True)
@@ -818,11 +823,12 @@ class BuildQueue:
         verdict = None
         try:
             self._jobs.start(task.job_id)
-            if task.commit == DEV_LINK:
+            if task.commit == DEV_LINK and task.variant == MAIN_BRANCH:
                 # Set at the start, so the front page can show `building` or
                 # `failed`; the slot's meta.json records a job only on publish.
                 # Guarded: a failed write costs the front-page chip, not the
-                # build.
+                # build. The default variant's draft only: the card shows that
+                # variant, and another's would light its chip.
                 try:
                     self._store.set_draft_job(task.pid, task.job_id)
                 except Exception:
@@ -831,8 +837,10 @@ class BuildQueue:
                         f"not be written; the front page will not show this "
                         f"build until it finishes")
             staging = self._store.build_staging(task.pid, task.commit)
-            # The documents project.json lists, checked before anything runs:
-            # a wrong entry is a 422 now rather than after a model's build.
+            # The variant's label and the documents project.json lists,
+            # checked before anything runs: a wrong one is a 422 now rather
+            # than after a model's build.
+            label = docsbuild.variant_label(task.sources)
             documents = docsbuild.declared_documents(task.sources)
             if documents and not docsbuild.has_model(task.sources):
                 # Files to read, not a model to run: nothing from the tree is
@@ -842,9 +850,12 @@ class BuildQueue:
             else:
                 # The baseline is looked up here: the build process gets a copy
                 # of the file, not access to the store. None for a first build.
+                # The slot of the build's own variant, so a variant measures
+                # itself against itself and not against the default one.
                 args, keywords = build_arguments(
                     task.sources, staging, task.pid, force=task.force,
-                    baseline=self._store.dev_metrics_path(task.pid))
+                    baseline=self._store.dev_metrics_path(task.pid,
+                                                          task.variant))
                 outcome = self._run_build(*args, **keywords)
                 if outcome.ok and documents:
                     outcome = docsbuild.add_documents(
@@ -857,13 +868,15 @@ class BuildQueue:
                 if task.commit == DEV_LINK:
                     status, payload = self._store.publish_dev_built(
                         task.pid, staging, outcome.files, task.digest,
-                        job=task.job_id)
+                        job=task.job_id, variant=task.variant,
+                        variant_label=label)
                 else:
                     (staging / BUILD_LOG_FILE).write_bytes(
                         _capped_log(outcome.log))
                     status, payload = self._store.publish_built(
                         task.pid, task.commit, staging, outcome.files,
-                        task.digest, job=task.job_id, message=task.message)
+                        task.digest, job=task.job_id, message=task.message,
+                        variant=task.variant, variant_label=label)
                 logger.info(
                     f"job {task.job_id}: published {task.pid}/{task.commit} "
                     f"-> {payload['url']}")

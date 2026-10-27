@@ -13,9 +13,11 @@ and included from the repository's own `.git/config` by `connect`. It is never
 an argument or an environment variable of git, so it reaches neither `ps` nor
 a transcript. The global `~/.gitconfig` is not touched.
 
-Until the hub takes other branches, both the version and the draft are of the
-branch `main`: `git push hammerola-<pid> main` pushes the local `main` from any
-worktree, and `build` writes `refs/drafts/main` whichever branch it runs on.
+A variant of the project is a branch, and the variant a command works on is the
+branch checked out here (`variant.py`): `git push hammerola-<pid> <branch>`
+publishes a version of it, and `build` writes its draft, `refs/drafts/<branch>`.
+A detached HEAD is no variant, and `build` refuses it. The hub's `main` is the
+default variant; its history from before git is joined into the local `main`.
 """
 
 import json
@@ -28,12 +30,14 @@ from pathlib import Path
 
 from hammerola import config, project, update
 from hammerola.errors import ClientError
-from hammerola.hub import git_headers
+from hammerola.hub import build_path, git_headers
+from hammerola.limits import DEFAULT_VARIANT
+from hammerola.variant import current_branch, refusal, unfit
 
 REMOTE_PREFIX = "hammerola-"
-MAIN = "main"
-MAIN_REF = "refs/heads/main"
-DRAFT_REF = "refs/drafts/main"
+MAIN = DEFAULT_VARIANT
+MAIN_REF = f"refs/heads/{MAIN}"
+DRAFT_PREFIX = "refs/drafts/"
 DRAFT_MESSAGE = "hammerola draft"
 
 # How a build published before git is found in the history: the hub's import
@@ -121,10 +125,16 @@ def connect(args) -> int:
                           f"above.")
     _join(root, pid, remote)
 
+    branch = current_branch(root)
     print(f"connected {pid}: the remote {remote} is {url}")
-    print(f"  The hub publishes the branch {MAIN}. A version is a commit on "
-          f"it, published with")
-    print(f"  git push {remote} {MAIN}")
+    if unfit(branch):
+        # No push to advise: the hub refuses this branch's push and draft.
+        print(f"  {refusal(branch)}")
+        return 0
+    branch = branch or MAIN
+    print(f"  A variant of the project is a branch. A version of {branch} is "
+          f"a commit on it, published with")
+    print(f"  git push {remote} {branch}")
     return 0
 
 
@@ -162,12 +172,15 @@ def _join(root, pid: str, remote: str) -> None:
 
 # -- build -------------------------------------------------------------------
 def build(args) -> int:
-    """Push the working copy as the draft of `main`. -> git push's exit code.
+    """Push the working copy as the draft of the branch checked out.
+    -> git push's exit code.
 
     The draft is a commit made through a temporary index, so the author's
     index, HEAD and history are not touched; files git ignores are not in it,
-    as they are not in a version. The hook builds it into the dev slot, or
-    answers `unchanged` when the slot already holds this tree.
+    as they are not in a version. The hook builds it into the dev slot of the
+    branch's variant, or answers `unchanged` when the slot already holds this
+    tree. A branch name the hub cannot take as a variant is refused by the
+    hook, in the same words as a push of that branch.
     """
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
@@ -178,17 +191,23 @@ def build(args) -> int:
         raise ClientError(
             f"this repository has no remote {remote}: run `hammerola connect` "
             f"first.")
+    branch = current_branch(root)
+    if branch is None:
+        raise ClientError(
+            "HEAD is detached, and a draft is the draft of a branch: its "
+            "variant.\n"
+            "  `git switch <branch>` (or `git switch -c <name>`), then build.")
     update.refuse_if_behind(hub_url, root)
 
     commit = _draft_commit(root)
     command = ["git", "push", "--force"]
     if args.force:
         command += ["-o", "force"]
-    command += [remote, f"{commit}:{DRAFT_REF}"]
+    command += [remote, f"{commit}:{DRAFT_PREFIX}{branch}"]
     pushed = subprocess.run(command, cwd=root)
     if pushed.returncode == 0:
         # The last line of the run: a bare URL, so it pastes as a link.
-        print(f"{hub_url.rstrip('/')}/project/{pid}/dev/")
+        print(f"{hub_url.rstrip('/')}{build_path(pid, 'dev', branch)}")
     return pushed.returncode
 
 
