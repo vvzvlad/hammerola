@@ -115,7 +115,8 @@ def test_a_branch_publishes_its_own_latest_list_and_label(hub, tmp_path):
     assert key != hub.builds("var1").json()["files_keys"]["latest"]
 
 
-def test_a_branch_s_draft_fills_its_own_slot_and_main_s_stays(hub, tmp_path):
+def test_a_branch_s_draft_fills_its_own_slot_and_main_s_stays(
+        hub, tmp_path, monkeypatch):
     """Criterion 4: the draft and the revision of `ceiling` go to its slot,
     and an unchanged file there is a hard link to the revision's."""
     work = tmp_path / "work"
@@ -145,6 +146,10 @@ def test_a_branch_s_draft_fills_its_own_slot_and_main_s_stays(hub, tmp_path):
     assert os.path.samefile(slot / "lid.stl",
                             hub.store.build_dir("var2", ceiling) / "lid.stl")
 
+    # A later moment, so the same tree is a commit of its own: made within the
+    # second of `second` it is that commit, and git never reaches the hook.
+    for name in ("GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"):
+        monkeypatch.setenv(name, "2030-01-01T00:00:00Z")
     again = draft(work, "var2", "two", CEILING)
     unchanged = push(hub, work, "var2", f"{again}:refs/drafts/ceiling",
                      extra=("--force",))
