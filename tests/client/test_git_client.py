@@ -16,7 +16,7 @@ from harness import BROKEN, TOKEN, comment_payload, picky_builder, view_bytes
 from modeldir import make_model, model_archive
 
 from hammerola import config
-from hammerola.cli import main
+from hammerola.cli import build_parser, main
 from src.prereceive import VARIANT_NAME_REFUSAL
 
 PID = "demo0001"
@@ -354,9 +354,22 @@ def test_diff_names_the_fetch_for_a_revision_it_does_not_have(
     assert f"git fetch hammerola-{PID}" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("verb", ["commit", "source"])
-def test_the_archive_verbs_are_gone(verb, capsys):
-    with pytest.raises(SystemExit) as stopped:
-        main([verb])
-    assert stopped.value.code == 2
-    assert f"invalid choice: '{verb}'" in capsys.readouterr().err
+def test_the_archive_verbs_are_not_offered():
+    """Answered when typed, but not listed among the commands."""
+    usage = build_parser().format_usage()
+    assert "commit" not in usage and "source" not in usage
+    assert "connect" in usage
+
+
+@pytest.mark.parametrize("argv,instead", [
+    (["commit", "-m", "a wider box"], "`git push hammerola-<pid> main`"),
+    (["source", "latest", "-o", "old"], "`git fetch hammerola-<pid>`"),
+])
+def test_the_archive_verbs_are_gone(argv, instead, capsys):
+    """Typed as an old skill taught them, flags included, they name what
+    replaced them and the stale skill, not argparse's `invalid choice`."""
+    assert main(argv) == 1
+    error = capsys.readouterr().err
+    assert f"`hammerola {argv[0]}` was removed in version 0.5.0" in error
+    assert "`hammerola connect`" in error and instead in error
+    assert "run `hammerola skill update` and read it again" in error

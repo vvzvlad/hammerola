@@ -4,9 +4,12 @@ The client, the template and the model contract fail loudly when stale (a
 stale client refuses to publish, see `update.py`); a stale skill fails
 silently, teaching renamed commands and removed flags. This verb checks it.
 
-It never checks by itself: nothing else in the tool looks at the agent's skills
-directory, because the tool cannot know which copy of the skill an agent is
-reading (plugin, project copy, ...). Nothing blocks a push on a stale skill.
+Two other moments look too, at `DEFAULT_PATH` only and out of a manifest they
+fetched anyway (`stale_notice`): `update`, and the refusal of a client older
+than its hub — the client moved, so the commands the skill teaches may have.
+Nothing looks anywhere else, because the tool cannot know which copy of the
+skill an agent is reading (plugin, project copy, ...). Nothing blocks a push on
+a stale skill.
 
 No token: `/start` and the skill archive are public (`src/onboarding.py`).
 
@@ -109,6 +112,40 @@ def show(args) -> int:
     else:
         print(f"out of date. `{UPDATE_HINT}` writes the hub's copy over it")
     return 0
+
+
+def stale_notice(served):
+    """The line saying the installed skill is not the hub's, or None.
+
+    `served` is the `skill_digest` of a manifest the caller already holds, so
+    the question costs no round trip. Only an installation of THIS skill at
+    `DEFAULT_PATH` is compared. Nothing installed there, somebody else's
+    skill, an entry document `_read` refuses and a hub that states no digest
+    all give None: the caller's own answer goes on, and `hammerola skill` is
+    the verb that explains those states.
+    """
+    try:
+        # No HOME and no passwd entry is an ordinary state in a container
+        # started with `--user` (`config._home`).
+        path = Path(DEFAULT_PATH).expanduser()
+    except (RuntimeError, KeyError):
+        return None
+    try:
+        text = _read(path / ENTRY)
+    except ClientError:
+        return None
+    if not is_ours(text) or not isinstance(served, str):
+        return None
+    # The question is a side note: a file the walk cannot read must not take
+    # the caller's own answer, a written client or a refusal, down with it.
+    try:
+        installed = tree_digest(path)
+    except OSError:
+        return None
+    if installed == served:
+        return None
+    return (f"the skill at {config.display_path(path)} is out of date: run "
+            f"`{UPDATE_HINT}` and read it again")
 
 
 def update(args) -> int:

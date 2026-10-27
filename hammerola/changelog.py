@@ -88,6 +88,18 @@ ENTRIES = {
         "`diff` read the variant of the branch checked out; `status` lists "
         "the variants.",
     ),
+    # Printed by the client being REPLACED, which says nothing about the skill
+    # itself, so the first line carries the instruction.
+    "0.6.1": (
+        "Now run `hammerola skill update` and read the skill again: it is "
+        "where the commands are taught, and a copy older than this client "
+        "may teach some that are gone.",
+        "`hammerola update` says when the skill installed at "
+        "`~/.claude/skills/hammerola` is not the hub's copy, and so does "
+        "`build` when it refuses a client older than the hub.",
+        "`hammerola commit` and `hammerola source` say what replaced them "
+        "instead of argparse's `invalid choice`.",
+    ),
 }
 
 

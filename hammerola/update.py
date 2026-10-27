@@ -11,7 +11,8 @@ beside the target with the target's mode, and `os.replace` swaps it in one step.
 Before that, the download must be a zipapp (shebang plus zip,
 `onboarding.CLIENT_SHEBANG`) that states a version, so a proxy's login page
 never lands on PATH. The version printed comes from the archive. The manifest's
-`client_version` is used by `refuse_if_behind`.
+`client_version` is used by `refuse_if_behind`, and its `skill_digest` by
+`run` and `refuse_if_behind`, to say when the installed skill is stale.
 """
 
 import ast
@@ -22,7 +23,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from hammerola import VERSION, changelog, config
+from hammerola import VERSION, changelog, config, skill
 from hammerola.errors import ClientError
 from hammerola.hub import HubError
 from hammerola.sources import public_hub
@@ -68,9 +69,15 @@ def run(args) -> int:
     if served == VERSION:
         # Written anyway; the line says the version did not move.
         print(f"  version {VERSION}, unchanged")
-        return 0
-    print(f"  version {VERSION} -> version {served}")
-    _print_changes(entries, VERSION, served)
+    else:
+        print(f"  version {VERSION} -> version {served}")
+        _print_changes(entries, VERSION, served)
+    # Last, and either way: the skill is where the agent reads the commands
+    # this run may just have changed. `skill` was imported before the write, so
+    # nothing is read out of the archive that was replaced.
+    stale = skill.stale_notice(manifest.get(skill.DIGEST_KEY))
+    if stale is not None:
+        print(stale)
     return 0
 
 
@@ -87,6 +94,10 @@ def refuse_if_behind(hub_url: str, root=None) -> None:
     Takes an address and uses `sources.public_hub` (`QUERY_TIMEOUT`). `root`
     is the project being published, where `public_hub` also looks for
     `HUB_BASIC_AUTH`.
+
+    The refusal also names a stale skill (`skill.stale_notice`), out of the
+    same manifest: a client the hub has outgrown is the moment the commands
+    its skill teaches may be gone.
     """
     try:
         manifest = public_hub(hub_url, root).start()
@@ -96,11 +107,13 @@ def refuse_if_behind(hub_url: str, root=None) -> None:
     here, there = changelog.as_tuple(VERSION), changelog.as_tuple(served)
     if here is None or there is None or not here < there:
         return
+    stale = skill.stale_notice(manifest.get(skill.DIGEST_KEY))
     raise ClientError(
         f"this hammerola is version {VERSION} and {hub_url} serves version "
         f"{served}, so it is out of date. Nothing was published.\n"
         f"  `{UPDATE_HINT}` writes the hub's copy over this one and prints what "
-        f"changed between the two.")
+        f"changed between the two."
+        + ("" if stale is None else f"\n  {stale}"))
 
 
 def _target() -> Path:

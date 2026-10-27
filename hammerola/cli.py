@@ -57,6 +57,18 @@ EXIT_FAILED = 1
 # "the build failed" bucket that a caller may act on.
 EXIT_INTERRUPTED = 130
 
+# Verbs removed in 0.5.0, each with what replaced it. An agent following a
+# skill written for an older client still types them, and argparse's bare
+# `invalid choice` reads like a broken tool; `_gone` answers instead.
+GONE = {
+    "commit": "A version is a git commit: run `hammerola connect` once in the "
+              "project's git repository, then `git commit` and `git push "
+              "hammerola-<pid> main` for each version",
+    "source": "The code of a revision is its commit in git: run `hammerola "
+              "connect` once in the project's git repository, then `git fetch "
+              "hammerola-<pid>`",
+}
+
 
 def _fail(message: str) -> int:
     """Say why, on stderr, and hand back the failing exit code.
@@ -213,8 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="do not ask. Without it the project id has to be typed at the "
              "prompt — nothing can bring the proposal back")
 
-    # Nothing else in this tool looks at the agent's skills directory (see
-    # `skill.py` for why there is no automatic check).
+    # Besides this verb, only `update` and a client refused as older than its
+    # hub look at the agent's skills directory (see `skill.py`).
     instructions = commands.add_parser(
         "skill",
         help="the agent instructions: whether the copy installed here is the "
@@ -259,6 +271,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="do not ask. Without it the project id has to be typed at the "
              "prompt — this cannot be undone and the hub keeps no copy")
 
+    # The verbs in `GONE`, with no help line. Every word after one is taken as
+    # it comes, the old verb's flags included (`commit -m`, `source -o`): no
+    # argument can begin with a NUL, so with it as the only prefix character a
+    # `-m` is a word rather than an undeclared option, and the command an old
+    # skill taught reaches `_gone` instead of `unrecognized arguments`.
+    for verb in GONE:
+        gone = commands.add_parser(verb, add_help=False, prefix_chars="\0")
+        gone.add_argument("words", nargs="*")
+    # Left out of `-h` and the usage line. argparse's `invalid choice` still
+    # lists them under `choose from`; typed, they reach `_gone`.
+    commands.metavar = "{" + ",".join(
+        name for name in commands.choices if name not in GONE) + "}"
+
     return parser
 
 
@@ -277,6 +302,15 @@ def main(argv=None) -> int:
         return EXIT_INTERRUPTED
 
 
+def _gone(args) -> int:
+    """A verb in `GONE`: what replaced it, and that the skill naming it is stale."""
+    raise ClientError(
+        f"`hammerola {args.command}` was removed in version 0.5.0. "
+        f"{GONE[args.command]}.\n"
+        f"  A skill that names `hammerola {args.command}` is out of date: run "
+        f"`{skill.UPDATE_HINT}` and read it again.")
+
+
 # A verb the parser accepts but nothing implements is a KeyError.
 HANDLERS = {
     "login": setup.login,
@@ -293,4 +327,6 @@ HANDLERS = {
     "update": update.run,
     "rename": admin.rename,
     "rm": admin.remove,
+    "commit": _gone,
+    "source": _gone,
 }

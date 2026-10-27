@@ -41,7 +41,7 @@ from harness import TOKEN
 from modeldir import git, git_repo, make_model
 
 from src import onboarding
-from hammerola import VERSION, changelog, config, repo, update
+from hammerola import VERSION, changelog, config, repo, skill, update
 from hammerola import hub as hub_module
 from hammerola.cli import main
 from hammerola.errors import ClientError
@@ -342,6 +342,62 @@ def test_update_still_installs_a_client_whose_changelog_it_cannot_read(
     assert "what changed:" not in capsys.readouterr().out
 
 
+STALE = "is out of date: run `hammerola skill update` and read it again"
+
+
+def plant_old_skill() -> Path:
+    """An installation of this skill that is not the hub's, where agents read it.
+
+    Under the HOME this directory's conftest substitutes, never the real one.
+    """
+    path = Path(skill.DEFAULT_PATH).expanduser()
+    path.mkdir(parents=True)
+    (path / skill.ENTRY).write_text(
+        "---\nname: hammerola\ndescription: x\n---\n\n`hammerola commit`\n",
+        encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("version", [None, "9.9.9"])
+def test_update_says_when_the_installed_skill_is_not_the_hubs(
+        version, monkeypatch, target, capsys):
+    """The skill is where the agent reads the commands an update may just have
+    removed, and nothing else would tell it the copy is old: it would type a
+    verb that is gone and blame the hub. Said whether the version moved or
+    not; not said with nothing installed, nor over the hub's own copy."""
+    if version is not None:
+        doctored = rebuilt(version)
+        monkeypatch.setattr(onboarding, "client_bytes", lambda: doctored)
+
+    assert main(["update"]) == 0
+    assert STALE not in capsys.readouterr().out
+
+    installed = plant_old_skill()
+    assert main(["update"]) == 0
+    assert (f"the skill at {config.display_path(installed)} {STALE}"
+            in capsys.readouterr().out)
+
+    assert main(["skill", "update"]) == 0
+    capsys.readouterr()
+    assert main(["update"]) == 0
+    assert STALE not in capsys.readouterr().out
+
+
+def test_an_unreadable_skill_does_not_fail_the_update(monkeypatch, target,
+                                                    capsys):
+    """The skill is a side note: once the client is written, a skill file
+    the digest cannot read must not turn the update into a failure."""
+    plant_old_skill()
+
+    def unreadable(_path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(skill, "tree_digest", unreadable)
+
+    assert main(["update"]) == 0
+    assert STALE not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("served,why", [
     (b"<html>you are not signed in</html>\n", "no shebang at all"),
     (b"#!/usr/bin/env python3\nprint('hello')\n", "a script and not a zipapp"),
@@ -419,6 +475,25 @@ def test_a_client_older_than_the_hub_refuses_to_publish(hub, monkeypatch, model,
     assert "9.9.9" in error
     assert "hammerola update" in error
     assert not hub.project_dir("demo0001").exists(), "a stale client published"
+
+
+def test_the_refusal_of_an_old_client_also_names_a_stale_skill(
+        monkeypatch, model, capsys):
+    """A client the hub has outgrown is the moment the skill's commands may be
+    gone too, so the refusal names it — only when the copy differs."""
+    monkeypatch.setattr(onboarding, "CLIENT_VERSION", "9.9.9")
+
+    assert publish(model) == 1
+    assert STALE not in capsys.readouterr().err
+
+    plant_old_skill()
+    assert publish(model) == 1
+    assert STALE in capsys.readouterr().err
+
+    assert main(["skill", "update"]) == 0
+    capsys.readouterr()
+    assert publish(model) == 1
+    assert STALE not in capsys.readouterr().err
 
 
 def test_a_client_newer_than_the_hub_publishes(monkeypatch, model):

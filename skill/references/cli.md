@@ -95,12 +95,14 @@ password); `hammerola login` notices the proxy and asks its login and password.
 The client installs the skill and updates it: `hammerola skill` compares a
 digest of the installed files with the hub's, `hammerola skill update` writes
 the hub's copy over the whole directory — the file you are reading and every
-file beside it — and removes what the new version no longer ships. A stale skill fails
-silently, teaching commands that no longer exist, and nothing checks it for
-you: ask when you start on a project. Installed somewhere else? Pass
-`--path DIR`, or both verbs act on a directory nobody reads.
-`hammerola update` replaces the client, which `build` refuses when older than
-the hub.
+file beside it — and removes what the new version no longer ships. A stale
+skill teaches commands that no longer exist; the client says so only from
+`hammerola update`, from the refusal of a client older than the hub, and from
+a verb that is gone, so ask `hammerola skill` when you start on a project.
+Installed somewhere else? Pass `--path DIR`, or both verbs act on a directory
+nobody reads. `hammerola update` replaces the client, which `build` refuses
+when older than the hub, and says when the skill in
+`~/.claude/skills/hammerola/` is stale.
 
 `login` asks for the password at the terminal and stores it 0600 in
 `~/.config/hammerola/env`, and for git, as the header it sends to the hub, 0600
