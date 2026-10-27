@@ -5,6 +5,7 @@ on the same volume (`start_hub`) is a new process catching up
 (`Store.catch_up`).
 """
 
+import json
 import shutil
 
 from harness import (TOKEN, TOKEN_CONFIG, commit_all, git, good_build,
@@ -126,6 +127,34 @@ def test_a_missing_import_under_commits_of_the_author_is_an_error(
         assert refused.status_code == 503
         assert "c3" in refused.json()["error"]
         assert hub.store.latest_commit("imp3") == "c3"
+    finally:
+        stop_hub(hub)
+
+
+def test_a_build_of_an_older_meta_format_is_imported_and_latest_stays(
+        tmp_path, monkeypatch):
+    """A build whose meta.json `builds_of` no longer reads is still a version:
+    its code goes into `main`, and `latest` stays a build the site serves."""
+    data = tmp_path / "data"
+    hub = start_hub(data)
+    hub.publish("imp6", "c1", good_build("a"))
+    hub.publish("imp6", "c2", good_build("b"))
+    body = good_build("c")
+    digest = digest_of(body, tmp_path)
+    published_by_the_old_image(hub, monkeypatch, "imp6", digest, body)
+    meta_path = hub.store.build_dir("imp6", digest) / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["variants"] = meta.pop("views")
+    # Older than every build the site lists, as those builds are.
+    meta["built"] = "2026-08-20T00:00:00Z"
+    meta_path.write_text(json.dumps(meta))
+    stop_hub(hub)
+
+    hub = start_hub(data)
+    try:
+        assert [value for _sha, value in main_log(hub, "imp6")] == [
+            f"imp6/{digest}", "imp6/c1", "imp6/c2"]
+        assert hub.store.latest_commit("imp6") == "c2"
     finally:
         stop_hub(hub)
 

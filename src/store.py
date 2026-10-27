@@ -669,13 +669,13 @@ class Store:
         meets an import in progress waits for it.
 
         A project with builds named otherwise than by a commit — published
-        before git — is imported (`_needs_import` says when), and every other
-        one gets an empty repository. A build named by a commit was published by
-        a push and is never imported: its commit is in the repository, or went
-        with a push git did not finish. Either repository is written under a
-        staging name and renamed into place, so a repository is whole or
-        absent; a staging directory a crash leaves behind is swept at the next
-        start (`_sweep_repos`).
+        before git (`_import_builds`) — is imported (`_needs_import` says
+        when), and every other one gets an empty repository. A build named by
+        a commit was published by a push and is never imported: its commit is
+        in the repository, or went with a push git did not finish. Either
+        repository is written under a staging name and renamed into place, so
+        a repository is whole or absent; a staging directory a crash leaves
+        behind is swept at the next start (`_sweep_repos`).
 
         Raises ImportFailed when the import fails, now or earlier in this
         process: nothing is changed, the line `import <pid>: <build>: <why>` is
@@ -686,8 +686,7 @@ class Store:
             failure = self._import_failures.get(pid)
             if failure is not None:
                 raise ImportFailed(failure)
-            builds = [meta for meta in self.builds_of(pid)
-                      if not COMMIT_NAME.match(meta["commit"])]
+            builds = self._import_builds(pid)
             try:
                 if builds and self._needs_import(pid, repo, builds):
                     self._import(pid, repo, builds)
@@ -708,6 +707,35 @@ class Store:
         logger.info(f"created the git repository of {pid}")
         return repo
 
+    def _import_builds(self, pid: str) -> list[dict]:
+        """The builds the import takes, newest first (`_built_key`).
+
+        Every build named otherwise than by a commit: the ones `builds_of`
+        lists, and the ones whose meta.json is of an older format it skips.
+        No list of the hub shows those, but they are versions of the project
+        all the same, still served by their URL, and their code goes into git
+        like the rest. A missing digest or archive fails the import as it does
+        for any build (`_import`).
+        """
+        metas = {meta["commit"]: meta for meta in self.builds_of(pid)}
+        pdir = self.projects_dir / pid
+        for entry in (pdir.iterdir() if pdir.is_dir() else ()):
+            if (entry.name in metas or entry.name.startswith(".")
+                    or entry.name in RESERVED_BUILD_NAMES
+                    or entry.is_symlink() or not entry.is_dir()):
+                continue
+            try:
+                meta = json.loads(
+                    (entry / BUILD_META_FILE).read_text(encoding="utf-8"))
+            except (ValueError, OSError, RecursionError):
+                continue
+            if isinstance(meta, dict) and meta.get("commit") == entry.name:
+                metas[entry.name] = meta
+        builds = [meta for meta in metas.values()
+                  if not COMMIT_NAME.match(meta["commit"])]
+        builds.sort(key=_built_key, reverse=True)
+        return builds
+
     def _repo_staging(self, pid: str) -> Path:
         return self.repos_dir / (
             f"{STAGING_PREFIX}{pid}-{uuid.uuid4().hex}{REPO_SUFFIX}")
@@ -720,13 +748,15 @@ class Store:
         """Does a project with these builds have to be imported (again)?
 
         `builds` are the project's builds named otherwise than by a commit
-        (`ensure_repo`), at least one. Yes when there is no repository, when
+        (`_import_builds`), at least one. Yes when there is no repository, when
         `main` is empty (a git request created the repository, or a push
         published a build and git never wrote the branch), and when `main`
         holds nothing but imported commits while one of `builds` has no import
         commit: a hub of the previous image published it from an archive after
-        the import, and the import is redone whole. It is deterministic, so the
-        commits it made before get the same shas.
+        the import, or it is of the older format an earlier import skipped.
+        The import is redone whole. It is deterministic: the commits older
+        than the first build it adds get the same shas, every later one a new
+        sha.
 
         A missing import commit under commits of the author's own is an
         ImportFailed: redoing the import would drop them, and leaving it would
@@ -751,10 +781,10 @@ class Store:
     def _import(self, pid: str, repo: Path, builds: list) -> None:
         """Take a project's old builds into a new repository, oldest first.
 
-        `builds` are the builds published before git: `builds_of(pid)` without
-        the builds named by a commit (`ensure_repo`), taken in reverse. That is
-        the list and order `latest` was taken from before git, so the tip of
-        `main` is the build `latest` was. One commit per build out of its
+        `builds` are the builds published before git (`_import_builds`), taken
+        in reverse: oldest first. The tip of `main` is the newest of them, and
+        `latest` the nearest to it that `builds_of` serves (`_branch_latest`):
+        the build `latest` was before git. One commit per build out of its
         archive, checked against the build's `.payload.sha256`; then each
         build's old log is copied beside it, `main` is pointed at the last
         commit and the repository renamed into place, over an existing one.
