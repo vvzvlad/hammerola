@@ -14,14 +14,8 @@ from src import store
 from hammerola import limits
 
 
-def test_the_path_alphabets_are_the_hubs():
+def test_the_id_alphabet_is_the_hubs():
     assert limits.SAFE_ID.pattern == store.SAFE_ID.pattern
-    assert limits.SAFE_COMPONENT.pattern == store.SAFE_COMPONENT.pattern
-
-
-def test_the_tree_ceilings_are_the_hubs():
-    assert limits.MAX_PATH_DEPTH == store.MAX_PATH_DEPTH
-    assert limits.MAX_MEMBERS == store.MAX_MEMBERS
 
 
 def test_the_reserved_build_names_are_the_hubs():

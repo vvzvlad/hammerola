@@ -10,13 +10,6 @@ WHAT EACH IS ALLOWED TO TOUCH IS THE SUBJECT HERE, more than the mechanics.
   * `rm` removes the project WHOLE. There is no route that removes one build,
     for the same reason turned around: that would break a permanent URL while
     the project went on standing.
-
-AND THE PART THAT IS EASY TO GET WRONG: the archive a revision published before
-git was built from is kept in `sources/`, addressed by the digest of its source
-tree and not by project, so the same tree published in two projects is ONE
-directory serving both. Removing a project may not take an archive another
-project's revision still points at, and may not leave behind one nothing points
-at.
 """
 
 import json
@@ -24,14 +17,11 @@ import json
 import httpx
 from harness import TOKEN, comment_payload, good_build
 
-from src.store import SOURCE_ARCHIVE_NAME, SOURCES_DIR_NAME
-
 
 def _publish(hub, pid="proj1", body=None):
     """Publish under the name a hub before git minted. -> that name.
 
-    The name is the digest of the tree (`Hub.publish` with no commit), and the
-    archive is filed in `sources/` under it.
+    The name is the digest of the tree (`Hub.publish` with no commit).
     """
     reply = hub.publish(pid, None, good_build() if body is None else body)
     assert reply.status_code == 201, reply.text
@@ -52,11 +42,6 @@ def _remove(hub, pid, token=TOKEN):
     headers = {"X-Hammerola-Token": token} if token is not None else {}
     return httpx.request("DELETE", f"{hub.url}/api/v1/projects/{pid}",
                          headers=headers, timeout=10, trust_env=False)
-
-
-def _sources(hub, revision=None):
-    root = hub.data / SOURCES_DIR_NAME
-    return root if revision is None else root / revision
 
 
 # -- rename ------------------------------------------------------------------
@@ -151,33 +136,15 @@ def test_removing_a_project_takes_everything_it_had(hub):
     assert removed.status_code == 200
     assert removed.json()["builds"] == 1
     assert removed.json()["comments"] == 1
-    assert removed.json()["sources"] == 1
 
     assert not (hub.project_dir("proj1")).exists()
     assert not (hub.comment_dir("proj1")).exists()
-    assert not _sources(hub, revision).exists()
     # The public surfaces stop naming it in the same breath.
     assert hub.index().json() == []
     assert hub.get(f"/project/proj1/{revision}/meta.json").status_code == 404
     assert hub.get("/project/proj1/").status_code == 404
     # And the code is gone from behind the secret too, not merely unlisted.
     assert not hub.store.repo_dir("proj1").exists()
-
-
-def test_code_another_project_still_points_at_is_kept(hub):
-    """`sources/` is addressed by content, so one directory can serve two
-    projects. Removing one of them may not take the other's code with it."""
-    shared = good_build("shared source")
-    revision = _publish(hub, pid="proj1", body=shared)
-    assert _publish(hub, pid="proj2", body=shared) == revision
-
-    removed = _remove(hub, "proj1")
-    assert removed.status_code == 200
-    assert removed.json()["sources"] == 0
-
-    assert (_sources(hub, revision) / SOURCE_ARCHIVE_NAME).is_file()
-    # And proj2 is untouched in every other way.
-    assert hub.get(f"/project/proj2/{revision}/meta.json").status_code == 200
 
 
 def test_removing_one_project_leaves_the_others_alone(hub):
@@ -259,8 +226,8 @@ def test_a_project_with_no_builds_can_still_be_removed(hub):
 
     removed = _remove(hub, "empty1")
     assert removed.status_code == 200
-    assert removed.json() == {"pid": "empty1", "builds": 0, "sources": 0,
-                              "comments": 0, "proposal": False}
+    assert removed.json() == {"pid": "empty1", "builds": 0, "comments": 0,
+                              "proposal": False}
     assert hub.get("/project/empty1/").status_code == 404
 
 

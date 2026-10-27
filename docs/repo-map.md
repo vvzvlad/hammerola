@@ -4,22 +4,6 @@
 
 ## Project structure
 - `src/` — application code (`settings.py` is the single config entry point)
-- `src/archive.py` — reading a tarball of sources: the ceilings, the alphabet
-  each path COMPONENT is held to, and the unpack that refuses a member before it
-  becomes a file. Its one reader now is the import, which turns the archives of
-  builds published before git into commits (`Store._import_build`). It was a third of `src/store.py` and knows nothing about
-  projects, builds or pointers, which is why it could leave. The import edge
-  runs `store → archive` and only that way, so it raises `PublishError` from
-  `src/errors.py` rather than from `store`. **Every name here is re-exported by
-  `src/store.py`** — `store.SAFE_COMPONENT` is what `app.py`, `onboarding.py`
-  and `tests/client/test_limits.py` already quote, and the re-export is what
-  kept the move from touching any of them. A RE-EXPORT BINDS A NAME, IT DOES
-  NOT REDIRECT A LOOKUP: code in this module resolves `SAFE_COMPONENT` and
-  `gzip` in THIS module's globals, so a test that replaces
-  one of them has to patch `src.archive` — patching `src.store` sets an
-  attribute nothing reads, and the test then passes without exercising
-  anything. Three tests in `tests/test_archive_security.py` did exactly that
-  for one commit
 - `src/cadbuild/` — the build half, moved in from `cad_publish` (SPEC 8A.2 step
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
@@ -93,11 +77,10 @@
   (`hook_environment`). `end_of_request` runs after the backend exits and
   before the connection closes: after a push it moves `latest`, `builds.json`
   and the index after the branch git has just written (`Store.recompute`). The
-  repository itself is the store's: created by `ensure_repo` on the first git
-  request or by the start, under a lock of its own — for a project with builds
-  published before git, as the import of those builds (`Store._import`); swept
-  of ref locks, push quarantine and unrenamed staging at startup with no age
-  threshold (`_sweep_repos`); removed with the project
+  repository itself is the store's: created empty by `ensure_repo` on the
+  first git request, under a lock of its own; swept of ref locks, push
+  quarantine and unrenamed staging at startup with no age threshold
+  (`_sweep_repos`); removed with the project
 - `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
   #128): the ref updates of one push, checked in two passes. The first refuses
   without building — a deleted ref, a branch other than `main`, a forced push,
@@ -119,9 +102,9 @@
   the routes, the ceilings, the codes, the job states —
   and publication once broke precisely because the two halves lived in two
   repositories where no test could see both. `tests/client/` drives the real hub
-  over a real socket, and `tests/client/test_limits.py` compares the client's copy
-  of the ceilings (`hammerola/limits.py`) against `src/store.py` and
-  `src/settings.py`.
+  over a real socket, and `tests/client/test_limits.py` compares the client's
+  copies of the hub's rules (`hammerola/limits.py`) against `src/store.py`,
+  `src/render.py` and the other modules that enforce them.
   STDLIB ONLY, every module of it: the tool runs under whatever python3 a laptop
   has, so it imports nothing from `requirements.txt` and talks HTTP with
   `urllib.request`. `tests/client/test_stdlib_only.py` enforces it, since the test
@@ -148,9 +131,9 @@
   write doors. STDLIB ONLY, and it lives in the client package for that reason — see
   the module's own docstring for why it could live in none of the three callers,
   and `tests/test_buildnames.py` plus `tests/client/test_stdlib_only.py` for what
-  holds both rules. `store.SAFE_COMPONENT` is deliberately NOT here: that is the
-  alphabet of a path component on the way IN, this is the name of a file on the
-  way OUT
+  holds both rules. `limits.SAFE_COMPONENT` is deliberately NOT here: that is the
+  alphabet of a path component in an archive the client reads, this is the name
+  of a file the hub serves
 - `hammerola/metricsdiff.py` — reading `metrics.json`: what a build measured, and what
   moved between two of them. It is NOT a copy of anything and that is the point:
   the document has one writer (the build) and two readers — `cadbuild.metrics`,
@@ -283,7 +266,10 @@
   both ends of the pair are commits. The path is nested rather than one
   joined name because `SAFE_ID` allows `_`: `<a>__<b>` would let the pair
   `x` + `y__z` and the pair `x__y` + `z` collide, and a collision here serves
-  one comparison the other's geometry
+  one comparison the other's geometry.
+  `data/sources/<digest>/` holds the archive and the log of a revision published
+  before git, kept by the hub of that time; the pass at start
+  (`Store.drop_sources`) deletes each one its import commits give back
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):

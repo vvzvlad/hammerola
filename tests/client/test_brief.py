@@ -110,7 +110,7 @@ def test_a_reply_sized_value_is_never_materialized():
 
     `tracemalloc` is global state, so it is stopped in a `finally` — a test that
     left it running would meter every test after it — and the peak is reset
-    inside the `start()`, the way `tests/test_archive_security.py` does it.
+    inside the `start()`.
 
     WHAT THAT RESET BUYS IS NARROWER THAN IT LOOKS, and is written down because
     the generous reading is wrong: it drops a HISTORICAL peak left by earlier
@@ -119,8 +119,7 @@ def test_a_reply_sized_value_is_never_materialized():
     tracer that was already running — `PYTHONTRACEMALLOC=1` — it sets the peak
     to the LIVE heap rather than to zero, so an absolute threshold like the one
     below is read against the forty-odd megabytes pytest is holding and fails
-    anyway. `tests/test_archive_security.py` fails under that variable for the
-    same reason. The line is here to match the pattern, not to survive it.
+    anyway. The line is here to match the pattern, not to survive it.
     """
     huge = "y" * HUGE
 

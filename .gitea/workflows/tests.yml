@@ -87,10 +87,11 @@ jobs:
         # `--rm` never fires.
         # Memory ceiling, measured pass/fail at a limit and never by `memory.peak` (which
         # counts page cache and rises with the limit): the suite passes at 3g and 6g, and at
-        # 2g the kernel kills a worker and the run hangs until the step timeout. 6g is 2-3x
-        # the floor. The flags must stay equal, as above. Re-measure when the image contents
-        # or the worker count change; the peak is tests/test_archive_security.py holding
-        # 800 MB in one buffer while other workers hold ~222 MB of OCCT each.
+        # 2g the kernel kills a worker and the run hangs until the step timeout. These were
+        # measured with a test, since removed, that held 800 MB in one buffer while other
+        # workers held ~222 MB of OCCT each. 6g is 2-3x the floor. The flags must stay
+        # equal, as above. Re-measure when the image contents, the worker count or the
+        # heaviest test change.
         # What is in the image and why is documented in ci/Dockerfile.test.
         # `-n 4 --dist loadfile`: the suite mostly waits on sockets, subprocesses and builds,
         # so workers cut the wall clock (163 s against 293 s serial). Four, not `auto`, because

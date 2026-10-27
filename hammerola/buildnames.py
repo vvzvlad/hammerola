@@ -32,8 +32,8 @@ machine that is not a checkout.
 
 Deliberately not here:
 
-  * `store.SAFE_COMPONENT`, a different rule: the alphabet of archive member
-    path components on the way in, capped at 128 characters.
+  * `limits.SAFE_COMPONENT`, a different rule: the alphabet of the member
+    path components of an archive the client reads, capped at 128 characters.
   * a length ceiling. `MEMBER_RE`'s 128 characters do not apply to a build's
     output names, and the scan, the only costly part (~6 ms on a 64 KiB segment),
     runs last and stops at the first offender.
