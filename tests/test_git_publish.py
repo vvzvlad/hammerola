@@ -222,7 +222,7 @@ def test_a_failing_draft_refuses_the_push_but_main_is_published(
     assert latest_commit(picky_hub, "pair1") == main
 
 
-def test_a_build_of_a_push_git_never_finished_is_not_imported(
+def test_a_build_of_a_push_git_never_finished_becomes_latest_on_the_next_push(
         picky_hub, tmp_path):
     """The first push of a project publishes `main`'s commit, and a failing
     draft in the same push keeps git from ever writing the branch."""

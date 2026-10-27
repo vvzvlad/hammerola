@@ -491,7 +491,7 @@ class Store:
     def __init__(self, data_dir):
         self.root = Path(data_dir).resolve()
         self.projects_dir = self.root / "project"
-        # Emptied by `drop_sources`, written by nothing.
+        # Pruned by `drop_sources`, written by nothing.
         self.sources_dir = self.root / SOURCES_DIR_NAME
         # NOT created here, unlike `projects_dir`: a hub nobody has asked for a
         # comparison on has no `compare/` at all.
@@ -978,7 +978,7 @@ class Store:
                       and self.valid_pid(entry.name))
 
     def _imported_builds(self, pid: str) -> list[dict]:
-        """The builds of `pid` published before git, newest first.
+        """The builds of `pid` published before git.
 
         Every build named otherwise than by a commit, each of which has an
         import commit to answer for: the ones `builds_of` lists, and the ones
@@ -1003,10 +1003,8 @@ class Store:
             if (isinstance(meta, dict) and meta.get("commit") == entry.name
                     and _read_digest(entry)):
                 metas[entry.name] = meta
-        builds = [meta for meta in metas.values()
-                  if not COMMIT_NAME.match(meta["commit"])]
-        builds.sort(key=_built_key, reverse=True)
-        return builds
+        return [meta for meta in metas.values()
+                if not COMMIT_NAME.match(meta["commit"])]
 
     def _unverified(self, directory: Path, builds: list, commits: dict):
         """Why `directory` in `sources/` may not go yet, or None if it may.
