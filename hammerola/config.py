@@ -219,17 +219,7 @@ def write_settings(values: dict, path: Path = None) -> Path:
         if value is not None:
             check_storable(name, value)
 
-    parent = path.parent
-    # Only a directory this call creates is narrowed: `HAMMEROLA_ENV_FILE` can
-    # point into a directory holding somebody else's files.
-    fresh = not parent.exists()
-    try:
-        parent.mkdir(parents=True, exist_ok=True)
-        if fresh:
-            os.chmod(parent, DIRECTORY_MODE)
-    except OSError as error:
-        raise ConfigError(
-            f"cannot create {display_path(parent)}: {error}") from error
+    _make_parent(path)
 
     try:
         existing = path.read_text(encoding="utf-8")
@@ -270,8 +260,27 @@ def write_git_settings(url: str, headers) -> Path:
     lines = [f'[http "{_git_quoted(url)}"]']
     lines += [f'\textraHeader = "{_git_quoted(header)}"' for header in headers]
     path = git_settings_file()
+    _make_parent(path)
     _write_private(path, "\n".join(lines) + "\n")
     return path
+
+
+def _make_parent(path: Path) -> None:
+    """Create the directory `path` goes into, if it is missing.
+
+    Only a directory this call creates is narrowed to this account:
+    `HAMMEROLA_ENV_FILE` can point into a directory holding somebody else's
+    files.
+    """
+    parent = path.parent
+    fresh = not parent.exists()
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        if fresh:
+            os.chmod(parent, DIRECTORY_MODE)
+    except OSError as error:
+        raise ConfigError(
+            f"cannot create {display_path(parent)}: {error}") from error
 
 
 def _git_quoted(value: str) -> str:

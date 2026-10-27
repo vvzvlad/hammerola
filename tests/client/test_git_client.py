@@ -103,6 +103,22 @@ def test_connect_writes_git_s_headers_on_a_machine_logged_in_before_git(
     assert TOKEN not in out + err
 
 
+def test_connect_makes_the_directory_for_git_s_headers(
+        hub, tmp_path, monkeypatch):
+    """Settings in the environment only: the config directory never existed."""
+    monkeypatch.setenv("HAMMEROLA_ENV_FILE", str(tmp_path / "fresh" / "env"))
+    monkeypatch.setenv("HUB_URL", hub.url)
+    monkeypatch.setenv("EDIT_TOKEN", TOKEN)
+    root = repository(tmp_path / "work")
+
+    assert main(["-C", str(root), "connect"]) == 0
+
+    gitconfig = config.git_settings_file()
+    assert gitconfig.parent == tmp_path / "fresh"
+    assert os.stat(gitconfig.parent).st_mode & 0o777 == 0o700
+    assert f'"X-Hammerola-Token: {TOKEN}"' in gitconfig.read_text()
+
+
 def test_build_publishes_the_working_copy_and_touches_nothing_of_the_author(
         hub, tmp_path):
     root = repository(tmp_path / "work")
