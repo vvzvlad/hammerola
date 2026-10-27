@@ -418,6 +418,11 @@ def _commit_digest(repo: Path, commit: str) -> str:
                         break
                     digest.update(chunk)
                 files[member.name] = digest.hexdigest()
+        # `tarfile` stops at the end-of-archive blocks, and git may still be
+        # writing the padding of its last record: closing the pipe before it
+        # is done kills git with SIGPIPE.
+        while process.stdout.read(CHUNK):
+            pass
     finally:
         process.stdout.close()
         errors = process.stderr.read().decode("utf-8", "replace")
