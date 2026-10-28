@@ -177,8 +177,8 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
                       SUBMIT_QUEUE_FULL, BuildQueue, CompareTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
-from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, MAIN_BRANCH,
-                       POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
+from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, LATEST_LINK,
+                       MAIN_BRANCH, POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
                        VARIANT_SEGMENT, VARIANTS_FILE, ImportFailed, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
@@ -873,27 +873,33 @@ class HubHandler(BaseHTTPRequestHandler):
         from the template with no-cache rather than frozen into an immutable
         build directory. Everything build-specific comes from meta.json at
         runtime, except the link-preview tags a messenger reads, since it runs
-        no script (`render.link_preview`): those are read here, and a meta.json
-        that cannot be read leaves them out. Their picture is named against
-        `page`, the path of the build's directory, made absolute with the
-        request's `X-Forwarded-Proto` and `Host`.
+        no script (`_link_preview`).
 
         Existence is decided by meta.json, not the directory (a restore or a
         hand-copy can leave a directory without one).
         """
         try:
-            meta = self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
+            self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
         except (OSError, ValueError):
             return self._error(404, "not found", with_body=with_body)
+        preview = self._link_preview(build_dir, page)
+        return self._serve_page(
+            lambda theme: render.build_page_html(theme, preview), with_body)
+
+    def _link_preview(self, build_dir: Path, page: str) -> str:
+        """The link-preview tags of the build in `build_dir`
+        (`render.link_preview`), or "" when its meta.json cannot be read. Their
+        picture is named against `page`, the path of that build's directory,
+        made absolute with the request's `X-Forwarded-Proto` and `Host`.
+        """
         scheme = self.headers.get("X-Forwarded-Proto") or "http"
         try:
-            preview = render.link_preview(
+            meta = self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
+            return render.link_preview(
                 json.loads(meta.read_bytes()),
                 f"{scheme}://{self.headers.get('Host', '')}{page}")
         except (ValueError, OSError, TypeError, KeyError):
-            preview = ""
-        return self._serve_page(
-            lambda theme: render.build_page_html(theme, preview), with_body)
+            return ""
 
     def _serve_pointer_page(self, pid: str, with_body: bool):
         """`/project/<pid>/` — the tiny page that picks a pointer (SPEC 9).
@@ -901,10 +907,18 @@ class HubHandler(BaseHTTPRequestHandler):
         `no-cache`: a cached decision page would freeze the decision. 404 for
         a project never pushed; the project directory is the test, not a
         build inside it.
+
+        It is the link a reader most often copies, so it unfurls in a
+        messenger as the project's `latest` does (`_link_preview`); a project
+        with no `latest` gets no tags.
         """
         if not self.server.store.project_dir(pid).is_dir():
             return self._error(404, "not found", with_body=with_body)
-        return self._serve_page(render.pointer_page_html, with_body)
+        preview = self._link_preview(
+            self.server.store.build_dir(pid, LATEST_LINK),
+            f"/project/{pid}/{LATEST_LINK}/")
+        return self._serve_page(
+            lambda theme: render.pointer_page_html(theme, preview), with_body)
 
     def _serve_builds_json(self, pid: str, with_body: bool,
                            variant: str = MAIN_BRANCH):

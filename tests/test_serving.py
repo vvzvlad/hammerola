@@ -360,6 +360,31 @@ def test_a_draft_with_no_picture_unfurls_without_one(hub):
     assert "og:image" not in page
 
 
+def test_a_project_link_unfurls_as_its_latest(hub):
+    """`/project/<pid>/`, the link a reader most often copies, carries the
+    tags of the project's `latest`, its picture under `latest/`; a project with
+    only a draft carries none."""
+    hub.publish_dev("proj2", good_build())
+    drafted = hub.get("/project/proj2/")
+    assert drafted.status_code == 200
+    assert "og:" not in drafted.text
+    hub.publish("proj1", "rev12345678901234", good_build(
+        views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
+                "parts": ["lid", "pin"], "preview": "assembled_preview.png",
+                "card": "assembled_card.png"}],
+        extra_files={"assembled_preview.png": b"\x89PNG\r\n\x1a\n",
+                     "assembled_card.png": b"\x89PNG\r\n\x1a\n"}),
+        message="first cut")
+    page = hub.get("/project/proj1/", headers={
+        "Host": "hub.example", "X-Forwarded-Proto": "https"}).text
+    head = page[:page.index("</head>")]
+    assert '<meta property="og:title" content="Demo project">' in head
+    assert ('<meta property="og:description" content="first cut · revision '
+            'rev123456789">') in head
+    assert ('<meta property="og:image" content="https://hub.example/project/'
+            'proj1/latest/assembled_card.png">') in head
+
+
 def test_a_build_whose_meta_cannot_be_read_gets_the_plain_shell(hub):
     hub.publish("proj1", "abc123", good_build())
     (hub.project_dir("proj1") / "abc123" / "meta.json").write_bytes(b"{")

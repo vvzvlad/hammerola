@@ -342,19 +342,21 @@ def index_page_html(theme: str) -> str:
     return _page("index.html", theme)
 
 
-def pointer_page_html(theme: str) -> str:
+def pointer_page_html(theme: str, preview: str = "") -> str:
     """`/project/<pid>/` — the URL that names no pointer (SPEC 9).
 
     A page and not a 302, because what decides the destination is a localStorage
-    key and only the browser can read it. It carries no project-specific text at
-    all: the script reads the pid off its own URL, exactly as the build page
-    does, so this stays one template rather than a per-project render.
+    key and only the browser can read it. The template carries no
+    project-specific text at all: the script reads the pid off its own URL,
+    exactly as the build page does, so this stays one template rather than a
+    per-project render. `preview` is the link-preview tags of the project's
+    `latest` (`link_preview`), put in front of `</head>` as on a build page.
 
     The THEME is the one thing about this page the browser cannot work out for
     itself — it loads no bundle and reads no storage — so the stamp above is the
     only reason it can be dark at all.
     """
-    return _page("pointer.html", theme)
+    return _page("pointer.html", theme).replace("</head>", preview + "</head>", 1)
 
 
 def _view_fields(pairs):
