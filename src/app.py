@@ -646,7 +646,7 @@ class HubHandler(BaseHTTPRequestHandler):
         """One of the three HTML documents, in this reader's own theme.
 
         One place for all three: the theme comes from the cookie and the reply
-        carries `Vary: Cookie`. `page` names only the template.
+        carries `Vary: Cookie`. `page` makes the document for a theme.
         """
         theme = render.cookie_theme(self.headers.get("Cookie", ""))
         self._send(200, page(theme).encode("utf-8"), HTML_TYPE, CACHE_NONE,
@@ -855,22 +855,34 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
         return None
 
-    def _serve_build_page(self, build_dir: Path, with_body: bool):
+    def _serve_build_page(self, build_dir: Path, with_body: bool, page: str):
         """The shell of a build page — from the IMAGE, never from the build.
 
         The same for every build and changing with the image, so it is served
         from the template with no-cache rather than frozen into an immutable
         build directory. Everything build-specific comes from meta.json at
-        runtime.
+        runtime, except the link-preview tags a messenger reads, since it runs
+        no script (`render.link_preview`): those are read here, and a meta.json
+        that cannot be read leaves them out. Their picture is named against
+        `page`, the path of the build's directory, made absolute with the
+        request's `X-Forwarded-Proto` and `Host`.
 
         Existence is decided by meta.json, not the directory (a restore or a
         hand-copy can leave a directory without one).
         """
         try:
-            self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
+            meta = self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
         except (OSError, ValueError):
             return self._error(404, "not found", with_body=with_body)
-        return self._serve_page(render.build_page_html, with_body)
+        scheme = self.headers.get("X-Forwarded-Proto") or "http"
+        try:
+            preview = render.link_preview(
+                json.loads(meta.read_bytes()),
+                f"{scheme}://{self.headers.get('Host', '')}{page}")
+        except (ValueError, OSError, TypeError, KeyError):
+            preview = ""
+        return self._serve_page(
+            lambda theme: render.build_page_html(theme, preview), with_body)
 
     def _serve_pointer_page(self, pid: str, with_body: bool):
         """`/project/<pid>/` — the tiny page that picks a pointer (SPEC 9).
@@ -1080,7 +1092,8 @@ class HubHandler(BaseHTTPRequestHandler):
             # matters.
             if not trailing_slash:
                 return self._redirect(f"/project/{pid}/{address}/", with_body)
-            return self._serve_build_page(build_dir, with_body)
+            return self._serve_build_page(build_dir, with_body,
+                                          f"/project/{pid}/{address}/")
 
         # The rest of the address is one file of the build: a name at the top,
         # or a document's path in the tree.
@@ -1089,7 +1102,8 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
         # Generated, never read from the build directory.
         if name == "index.html":
-            return self._serve_build_page(build_dir, with_body)
+            return self._serve_build_page(build_dir, with_body,
+                                          f"/project/{pid}/{address}/")
         # A file whose extension does not open it leaves to the token, to the
         # key of THIS address, or because this build lists it as a document.
         # The first two are checked before the volume is touched, and their
