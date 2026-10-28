@@ -126,7 +126,13 @@ timeout raised past the hub's ceiling, or in the background.
 **When it is slow, mark `checks()` up with `checklib.section("...")`** and read
 the table the hub prints, on a failed build too. Measure before cutting: in one
 model 52% of a 495-second checks phase sat in ONE loop, while the check
-suspected beforehand took 8.9 s against a predicted ~150.
+suspected beforehand took 8.9 s against a predicted ~150. A row that dominates
+is split before its cost is put down to anything: wrap each step inside its
+loop in a section of its own. A label used again adds up over the iterations; a
+section inside another counts its own time, and the outer row includes it.
+(The time left in one wire clearance check was put down to building the wire
+tubes, by the names of the functions; split, more than half of it was boxes
+and faces rebuilt for every wire piece.)
 
 **A distance the hub has measured before costs nothing.** Every
 `shape.distance(other)` and `BRepExtrema_DistShapeShape` in a project's builds
@@ -213,6 +219,17 @@ def build_lid():
 
 It is safe because CadQuery returns new objects; never cache a builder whose
 result you mutate.
+
+**What a check derives from a body is derived once, not once per pair.** A loop
+of pieces against bodies recomputes whatever depends on one side only.
+`BoundingBox()` is not a stored field: it computes an optimal box on every
+call. Faces built from a mesh's triangles and numpy's min and max over a mesh
+are the same. Put each under `@cache` or above the loop. A shape is a valid
+`@cache` key while nothing moves it in place: its hash is its TShape and
+location, so `move()` or `locate()` changes it while it sits in the cache. (One
+wire clearance check rebuilt the boxes and the board faces for every wire
+piece; computed once, the checks phase went from 132 s to 80 s, every printed
+line unchanged.)
 
 **Triangulating a shape leaves the mesh on it, and `BoundingBox()` then
 measures the mesh**, which reads bigger: a cylinder r=5 h=10 read `zlen`
