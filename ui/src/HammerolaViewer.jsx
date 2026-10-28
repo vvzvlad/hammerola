@@ -139,7 +139,9 @@ import { Pencil, RenameWindow, saveRename } from './rename.jsx';
 // because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
-// The Copy link at the end of each file row of both menus.
+// The Copy link at the end of each file row of both menus, and Open in Bambu
+// Studio before it on a 3MF's row.
+import BambuLink from './bambu.jsx';
 import CopyLink from './copylink.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 // And the comments the page of a build with no model holds too: the queue
@@ -5588,6 +5590,7 @@ export default class HammerolaViewer extends React.Component {
                           <span style={css(FILL)}>{f.label}</span>
                           <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
                         </a>
+                        {f.bambu && <BambuLink href={f.href} style={f.bambuStyle} />}
                         <CopyLink href={f.href} style={f.copyStyle} />
                       </div>
                     ))}
@@ -6187,7 +6190,8 @@ export default class HammerolaViewer extends React.Component {
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
             {/* A row that carries a file holds a real ANCHOR, not a div with a
                 handler: the download is the browser's to do, exactly as in the
-                header's menu, so the link can be middle-clicked or saved as. Its
+                header's menu, so the link can be middle-clicked or saved as. Open
+                in Bambu Studio closes the menu as the link does. Its
                 file name shrinks to an ellipsis rather than run under Copy link,
                 and the row is keyed by its address, so a Copy link that says
                 "copied" never moves to the same format of another part. */}
@@ -6202,6 +6206,7 @@ export default class HammerolaViewer extends React.Component {
                 ? (
                   <div key={m.href} style={css(m.rowStyle)}>
                     <a href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                    {m.bambu && <BambuLink href={m.href} onClick={m.onClick} style={m.bambuStyle} />}
                     <CopyLink href={m.href} style={m.copyStyle} />
                   </div>
                 )

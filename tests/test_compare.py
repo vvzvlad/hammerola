@@ -36,6 +36,7 @@ from harness import (TOKEN, copying_builder, failing_comparer, good_build,
                      reading_comparer, view_bytes)
 
 from src import jobs as jobs_module
+from src import render
 from src.app import VIEW_NOT_IN_BOTH_ERROR, VIEW_NOT_NAMEABLE_ERROR
 from src.buildproc import STATUS_CRASHED, STATUS_OK, run_compare
 from src.buildproc import comparechild, runner as runner_module
@@ -747,7 +748,8 @@ def test_the_runner_refuses_half_of_the_artefact_pair(tmp_path, keywords):
 
 # -- reading it back ---------------------------------------------------------
 def test_the_comparison_page_is_the_build_page_s_shell(hub):
-    """The same generated HTML every build page gets, and always `no-cache`.
+    """The shell every build page is made of, without the link-preview tags a
+    build page adds of its own build, and always `no-cache`.
 
     SPEC 7.4: a generated page changes with the image, so a year on it would
     pin every reader to the markup of the day they first opened one. It is
@@ -761,7 +763,7 @@ def test_the_comparison_page_is_the_build_page_s_shell(hub):
     assert page.status_code == 200
     assert page.headers["Cache-Control"] == "no-cache"
     assert page.headers["Content-Type"].startswith("text/html")
-    assert page.text == hub.get(f"/project/{PID}/{NEW}/").text
+    assert page.text == render.build_page_html(render.DEFAULT_THEME)
 
 
 def test_the_comparison_page_redirects_onto_its_trailing_slash(hub):

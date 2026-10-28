@@ -19,6 +19,7 @@
  * (a document, `app.OPEN_SUFFIXES`), and a reader who has none downloads it,
  * as every open document, from the strip at the bottom (`DocFile`, viewlist.jsx).
  */
+import { BAMBU_FORMAT } from './bambu.jsx';
 import { PAGE } from './hub.js';
 import { MONO, SANS } from './style.jsx';
 
@@ -55,8 +56,9 @@ export function filesKeyFor(builds, slot, fromAddress) {
 export function downloadsView(catalogue, deps) {
   const { groupDownloads, downloadAll, key, documents } = deps;
 
-  // A row is two controls side by side: the link, filling it, and its Copy
-  // link at the end (copylink.jsx), which may not sit inside the `<a>`.
+  // A row is controls side by side: the link, filling it, then, for a 3MF,
+  // Open in Bambu Studio (bambu.jsx), and its Copy link at the end
+  // (copylink.jsx), neither of which may sit inside the `<a>`.
   const dlRowStyle = 'display:flex;align-items:center';
   const dlLinkStyle = `display:flex;flex:1;min-width:0;align-items:center;gap:10px;padding:6px 4px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
   const downloadGroups = groupDownloads(catalogue, documents).map((g) => ({
@@ -64,6 +66,7 @@ export function downloadsView(catalogue, deps) {
     ext: g.ext,
     files: g.files.map((f) => ({
       key: f.file, label: f.label, file: f.file, href: fileHref(f.file, key),
+      bambu: g.ext === BAMBU_FORMAT, bambuStyle: 'padding:6px 4px',
       rowStyle: dlRowStyle, style: dlLinkStyle, copyStyle: 'padding:6px 14px 6px 4px',
     })),
     headStyle: `display:flex;align-items:center;gap:8px;padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`,
