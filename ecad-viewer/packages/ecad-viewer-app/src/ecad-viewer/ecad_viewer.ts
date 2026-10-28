@@ -38,6 +38,7 @@ import { KicadPCB, KicadSch } from "../kicad";
 import { type SchematicInstanceContext } from "../kicad/schematic";
 
 import { area_items, type AreaDocument } from "./area-items";
+import { schematicPageStep } from "./page-keys";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
     BoardContentReady,
@@ -3252,12 +3253,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         )
             return;
 
-        const direction =
-            event.key === "[" || event.code === "BracketLeft"
-                ? -1
-                : event.key === "]" || event.code === "BracketRight"
-                  ? 1
-                  : null;
+        const direction = schematicPageStep(event);
         if (direction) {
             if (this.navigateSchematicPage(direction)) event.preventDefault();
             return;

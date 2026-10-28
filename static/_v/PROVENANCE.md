@@ -177,7 +177,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `4add8134c1af3f60d815de9065d3ae6b5a8e12d10d464b0bfc86b6eca2733ab6` |
+| `ecad-viewer.js` as committed | `cc573be2b10540e46462a6b5d18b754815db17dfdaf22722cfb5bdb3f46b294c` |
 | `parser.worker.js` (none of our edits reach it) | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -200,13 +200,15 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Six, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
+Nine, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
 in a comment at the spot. Edit 6 is checked by `ui/tests/schematicpins.test.js`,
 which reads sheets through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
-it). The others are the viewer's drawing and input code, checked in a browser;
-what keeps them is that they live in the source the files are built from. Built without minifying, the bundle of this tree and the
-fork's at `461a091` differ in these six places and the comments beside them.
+it), edit 7 by `ui/tests/areaitems.test.js` the same way, and edit 9 by
+`ui/tests/pagekeys.test.js`. The others are the viewer's drawing and input code,
+checked in a browser; what keeps them is that they live in the source the files
+are built from. Built without minifying, the bundle of this tree and the fork's
+at `461a091` differ in these nine places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -270,14 +272,42 @@ is drawn is decided per placement), in body style 0 or its own, which is where
 `LibSymbol.pin_by_number` looks them up; with no uuid, since the file has none,
 and none at all when the library symbol is missing.
 
+**7. The element says what an area holds.** `itemsInArea(context, bounds)` of
+`<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`) hands what each layer of the
+viewer has painted, with the box it painted it in, to `area_items`
+(`ecad-viewer/area-items.ts`), which names what meets `bounds` (`[x, y, w, h]`
+in the document's millimetres): the designators of symbols and footprints and
+the names of nets, without power symbols and flags and without the names KiCad
+makes up for an unnamed net. The page reads it for the area of a comment
+(`ui/src/KicadView.jsx`).
+
+**8. Overlays survive a load of the document.** `DocumentViewer`
+(`viewers/base/document-viewer.ts`) bound the overlay scenes — the comment
+markers among them — into a document's new layers before its painter ran; the
+painter paints every layer the set yields, the overlays' own among them, and
+left an overlay compiled before it with an empty layer that the same scene,
+handed again, never filled. They are bound after the painter now. And the
+viewer's draw (`viewers/base/viewer.ts`) refreshes its screen-sized overlays
+every time: a fit after a load moves the camera without a change of viewport,
+and left them sized for the zoom before.
+
+**9. Command or Control with a bracket is the browser's.** `#handle_host_keydown`
+of `<ecad-viewer>` steps through the schematic's pages on `[` and `]`, and took
+them with Command or Control held as well. Command with `[` and `]` is Back and
+Forward on a Mac, so on a schematic Back moved to the previous sheet — from the
+root, round to the last — and added an entry to the history instead of leaving
+the page. The step is decided by `schematicPageStep` (`ecad-viewer/page-keys.ts`),
+which leaves the key to the browser with Command or Control held.
+
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
 first with none of our edits and compare the two files with what Prism publishes
 from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `461a091` is them, at the fork's paths, with
-the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`
-fails if edit 6 was lost — update this section and the hashes, and commit the
+the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
+`areaitems.test.js` and `pagekeys.test.js` fail if edit 6, 7 or 9 was lost —
+update this section and the hashes, and commit the
 source and the built files together.
 
 ## The Gerber renderer: `wasm_gerber_processor.js` and `wasm_gerber_processor_bg.wasm`
