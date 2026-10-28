@@ -298,7 +298,21 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
                 this.sch_viewer.zoom_fit_item(idx.uuid);
             } else {
                 this.sch_viewer.focus_net_item = idx.uuid;
-                this.viewer.load(sch);
+                // Through the project, as a sheet symbol's double click goes:
+                // its change event is what tells the host the page moved (the
+                // address and the browser's history). A file used by several
+                // sheet symbols opens at its first page. The page's own load
+                // fits the whole sheet, so the item is framed after it, as
+                // the element's cross-probe does.
+                const page = this.project.pages.find(
+                    (candidate) => candidate.filename === sch.filename,
+                );
+                if (page) {
+                    this.project.activate_sch(page.project_path);
+                    void this.viewer
+                        .load(sch)
+                        .then(() => this.sch_viewer.zoom_fit_item(idx.uuid));
+                } else this.viewer.load(sch);
             }
         }
     }
