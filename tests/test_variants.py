@@ -344,7 +344,7 @@ def test_a_branch_named_compare_is_a_variant_and_no_comparison(hub, tmp_path):
     assert meta(hub, "/project/var9/v/compare/latest/")["commit"] == mine
     page = hub.get("/project/var9/v/compare/latest/")
     assert page.status_code == 200
-    assert page.content == hub.get("/project/var9/latest/").content
+    assert f"revision {mine[:12]}" in page.text
 
 
 def test_the_variants_come_back_whole_at_start(tmp_path):

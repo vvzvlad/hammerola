@@ -167,12 +167,17 @@ describe('a KiCad design', () => {
     const viewers = ofType(tree, 'ecad-viewer')
     expect(viewers.map((v) => [v.props['data-view'], v.props['source-mode'], v.props['show-header'], v.props['hide-chrome']]))
       .toEqual([[SCH, 'host', 'false', 'true'], [PCB, 'host', 'false', 'true']])
-    expect(viewers.map((v) => v.props.style.visibility)).toEqual(['hidden', 'visible'])
+    // the open member's viewer too, until its files are drawn: before that it
+    // shows only its own spinner, right under the load bar
+    expect(viewers.map((v) => v.props.style.visibility)).toEqual(['hidden', 'hidden'])
+    view.setState({ ready: true })
+    expect(ofType(view.render(), 'ecad-viewer').map((v) => v.props.style.visibility)).toEqual(['hidden', 'visible'])
     expect(viewers.map((v) => v.props.style.height)).toEqual(['100%', '100%'])
   })
 
   it('draws a member with no sibling alone', () => {
     const lone = new KicadView({ doc: DOCS[4], documents: DOCS, base: BASE })
+    Object.assign(lone.state, { ready: true })
     expect(ofType(lone.render(), 'ecad-viewer').map((v) => [v.props['data-view'], v.props.style.visibility]))
       .toEqual([[PCB, 'visible']])
   })
