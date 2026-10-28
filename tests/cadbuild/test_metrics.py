@@ -13,6 +13,7 @@ import json
 import pytest
 
 from fakes import Box
+from src.cadbuild import metrics
 from src.cadbuild.metrics import (
     METRICS_NAME,
     METRICS_VERSION,
@@ -354,6 +355,36 @@ def test_nothing_is_claimed_when_the_code_hash_is_empty():
     assert not unchanged_code_moved_geometry(old, new)
 
 
+@pytest.mark.parametrize("was, said", [
+    ({"cadquery-ocp": "7.9.3.1.1"},
+     "on another CAD stack: cadquery-ocp 7.9.3.1.1 -> 7.9.4"),
+    ({"cadquery-ocp": "7.9.4"},
+     "on the same CAD stack (cadquery-ocp 7.9.4): the model is not "
+     "deterministic"),
+    (None, "did not both record their CAD stack"),
+])
+def test_unchanged_code_says_what_the_cad_stack_did(out_dir, capsys, was, said):
+    """The versions that moved are named, and a stack that did not move is
+    not blamed. A baseline that recorded none compares no versions."""
+    source = {"files": "aa", "code": "same"}
+    old = build({"body": measured(volume=1000.0)}, source=source)
+    if was is not None:
+        old["toolchain"] = was
+    write_metrics(out_dir, dict(build({"body": measured(volume=900.0)},
+                                      source=source),
+                                toolchain={"cadquery-ocp": "7.9.4"}))
+
+    report_metrics(out_dir, old, None)
+
+    out = capsys.readouterr().out
+    assert "! the geometry moved while the model's code did not (body)" in out
+    assert said in out
+    moved = was == {"cadquery-ocp": "7.9.3.1.1"}
+    assert ("another CAD stack" in out) is moved
+    assert ("  toolchain: cadquery-ocp 7.9.3.1.1 -> 7.9.4\n" in out) is moved
+    assert ("toolchain:" in out) is moved
+
+
 # --------------------------------------------------------------------------
 # Source fingerprints
 # --------------------------------------------------------------------------
@@ -405,8 +436,24 @@ def test_metrics_json_is_written_with_readable_floats(out_dir):
     assert data["parts"]["body"]["watertight"] is True
 
 
+def test_the_cad_stack_s_versions_are_written_less_what_is_not_installed(
+        out_dir, monkeypatch):
+    def version(name):
+        if name == "ocp-tessellate":
+            raise metrics.metadata.PackageNotFoundError(name)
+        return {"cadquery": "2.8.0", "cadquery-ocp": "7.9.3.1.1"}[name]
+
+    monkeypatch.setattr(metrics.metadata, "version", version)
+    write_metrics(out_dir, collect_metrics("scratch-project", {"body": measured()},
+                                           3, 0, {}, PRODUCT, PLATE))
+
+    data = json.loads((out_dir / METRICS_NAME).read_text(encoding="utf-8"))
+    assert data["toolchain"] == {"cadquery": "2.8.0", "cadquery-ocp": "7.9.3.1.1"}
+
+
 def test_a_build_that_never_ran_the_checks_writes_no_key_of_its_own(out_dir):
-    """A forced build is NOT MARKED, and this is where a mark would appear.
+    """A forced build is NOT MARKED in metrics.json, and this is where a mark
+    would appear.
 
     `build(force=True)` skips the model's own checks() and hands both counts in
     as None -- "count unknown", which this file has always been able to say

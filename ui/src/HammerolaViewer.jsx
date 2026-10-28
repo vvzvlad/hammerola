@@ -125,7 +125,7 @@ import { chromeView } from './chromeview.js';
 // the view list; drawn as the documents page draws it.
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
-import DocumentView, { COMMENTABLE, docExt, FILE_TYPE } from './DocumentView.jsx';
+import { COMMENTABLE, docExt, DocumentLayers, FILE_TYPE } from './DocumentView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -134,6 +134,8 @@ import { VariantSwitch } from './variants.jsx';
 // is handed over under; the frame waited for before the file is made.
 import { AR_FRAGMENT, arSupported, openQuickLook, USDZ_TYPE } from './ar.js';
 import { painted } from './loadbar.jsx';
+// The pencils and the window that rename a name of the project.
+import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -141,7 +143,9 @@ import { painted } from './loadbar.jsx';
 // because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
-// The Copy link at the end of each file row of both menus.
+// The Copy link at the end of each file row of both menus, and Open in Bambu
+// Studio before it on a 3MF's row.
+import BambuLink from './bambu.jsx';
 import CopyLink from './copylink.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 // And the comments the page of a build with no model holds too: the queue
@@ -1071,6 +1075,9 @@ export default class HammerolaViewer extends React.Component {
       // is its first checkbox; `camera`, the Current view box, is absent until
       // ticked; null while it is closed.
       share: null,
+      // The rename window (rename.jsx): what it renames, `{kind, variant, id,
+      // name}`, while it is open; null while it is closed.
+      rename: null,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison: five fields answering five questions.
       //
@@ -5535,6 +5542,7 @@ export default class HammerolaViewer extends React.Component {
       // layout to fit into and nothing underneath to leave visible.
       <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
         <style>{VIEWPORT_CSS}</style>
+        <style>{RENAME_CSS}</style>
 
         {/* ── header: model, revision, status, downloads, access, comments ── */}
         <div style={css(v.headerStyle)}>
@@ -5550,11 +5558,15 @@ export default class HammerolaViewer extends React.Component {
           </a>
           <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>
-            <div style={css(TITLE)}>{v.title}</div>
+            <div className={v.renameTitle ? RENAME_HOST : undefined}
+                 style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
+              <div style={css(`${TITLE};min-width:0`)}>{v.title}</div>
+              {v.renameTitle && <Pencil title="Rename project" onClick={v.renameTitle} />}
+            </div>
             {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
           <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
-                         onToggle={v.variantsToggle} narrow={v.narrowMenus} />
+                         onToggle={v.variantsToggle} narrow={v.narrowMenus} onRename={v.variantRename} />
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
@@ -5625,6 +5637,7 @@ export default class HammerolaViewer extends React.Component {
                           <span style={css(FILL)}>{f.label}</span>
                           <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
                         </a>
+                        {f.bambu && <BambuLink href={f.href} style={f.bambuStyle} />}
                         <CopyLink href={f.href} style={f.copyStyle} />
                       </div>
                     ))}
@@ -6061,18 +6074,18 @@ export default class HammerolaViewer extends React.Component {
             {/* A document chosen in the view list, laid OVER the model rather
                 in place of it: the viewport stays mounted underneath, camera,
                 cut and hidden parts and all. Drawn by the component the
-                documents page uses (DocumentView.jsx), handed the views for a
-                markdown link that names one. */}
-            {v.docOpen && (
-              <div style={css(v.docLayerStyle)}>
-                <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
-                              views={this.state.meta.views}
-                              base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
-                              onSheet={(sheet, push) => this.writeSheet(sheet, push)}
-                              onTools={(tools) => this.setState({ docTools: tools })}
-                              onReady={() => this.docReady()} />
-              </div>
-            )}
+                documents page uses (`DocumentLayers` in DocumentView.jsx),
+                handed the views for a markdown link that names one. A KiCad
+                design opened over this revision stays there, hidden, while
+                the model or another document is on screen: a hidden layer is
+                neither drawn nor hit by the pointer, so the model under it
+                takes its clicks. */}
+            <DocumentLayers build={buildKey(this.state.meta)} doc={v.docOpen} layer={v.docLayerStyle}
+                            documents={this.state.meta.documents} views={this.state.meta.views}
+                            base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
+                            onSheet={(sheet, push) => this.writeSheet(sheet, push)}
+                            onTools={(tools) => this.setState({ docTools: tools })}
+                            onReady={() => this.docReady()} />
 
             {/* views and tools. THE LAYER IS A VALUE rather than a constant
                 here — see `toolbarStyle`: the view menu opens INSIDE this
@@ -6224,7 +6237,8 @@ export default class HammerolaViewer extends React.Component {
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
             {/* A row that carries a file holds a real ANCHOR, not a div with a
                 handler: the download is the browser's to do, exactly as in the
-                header's menu, so the link can be middle-clicked or saved as. Its
+                header's menu, so the link can be middle-clicked or saved as. Open
+                in Bambu Studio closes the menu as the link does. Its
                 file name shrinks to an ellipsis rather than run under Copy link,
                 and the row is keyed by its address, so a Copy link that says
                 "copied" never moves to the same format of another part. */}
@@ -6239,6 +6253,7 @@ export default class HammerolaViewer extends React.Component {
                 ? (
                   <div key={m.href} style={css(m.rowStyle)}>
                     <a href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                    {m.bambu && <BambuLink href={m.href} onClick={m.onClick} style={m.bambuStyle} />}
                     <CopyLink href={m.href} style={m.copyStyle} />
                   </div>
                 )
@@ -6317,6 +6332,14 @@ export default class HammerolaViewer extends React.Component {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── the rename window, over the whole page like the Share window ── */}
+        {this.state.rename && (
+          <RenameWindow subject={this.state.rename}
+                        onSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.state.token,
+                          (said) => this.toast(said))}
+                        onClose={() => this.setState({ rename: null })} />
         )}
       </div>
     );

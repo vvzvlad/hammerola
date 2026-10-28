@@ -20,7 +20,7 @@
  */
 import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
-import { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
+import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import {
   PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -111,8 +111,17 @@ export function chromeView(s, props, deps) {
     setState({ doc: id, viewsOpen: false });
     pushChoice(s.view, id, sheet);
   };
+  // The rename window over the page (rename.jsx), opened by a pencil beside
+  // the title, a variant's row and a row of the views menu: with the token
+  // only, since the hub takes a rename only with it. It starts at the name on
+  // screen, and the commit goes on the branch of `variant`, the page's own but
+  // for a variant's row. The menus shut under it.
+  const askRename = viewer ? null : (subject) => setState({
+    rename: subject, viewsOpen: false, variantsOpen: false, revOpen: false, dlOpen: false, tokenPop: false });
+  const title = (meta && (meta.title || meta.project)) || '';
   // A document listed `hidden` has no row (viewlist.jsx).
-  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta));
+  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta),
+    askRename && ((doc) => askRename({ kind: 'document', variant, id: doc.id, name: doc.name })));
   // `View in AR`, the last row of the menu of views (`viewList`), where the
   // browser has AR Quick Look and a model view is on screen: a document over
   // the model, a schematic or a board's 3D among them, has none.
@@ -174,7 +183,8 @@ export function chromeView(s, props, deps) {
     showSubtitle: !narrow,
     showStatus: !narrow,
 
-    title: (meta && (meta.title || meta.project)) || '',
+    title,
+    renameTitle: askRename && (() => askRename({ kind: 'project', variant, name: title })),
     // The title column must be able to shrink, or the title's
     // `text-overflow:ellipsis` never fires and a long model name pushes the row
     // past the window edge. `0 1 auto`: shrink allowed, grow refused, because a
@@ -183,6 +193,7 @@ export function chromeView(s, props, deps) {
     // The variants beside the title (variants.jsx), for every reader: the list
     // needs no token. Null, and nothing drawn, on a project of one variant.
     variantChoices: variantChoices(s.variants, PAGE.pid, variant),
+    variantRename: askRename && ((row) => askRename({ kind: 'variant', variant: row.key, name: row.label })),
     variantsOpen: !!s.variantsOpen,
     variantsToggle: stop(() => setState({
       variantsOpen: !s.variantsOpen, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false })),
@@ -458,6 +469,9 @@ export function chromeView(s, props, deps) {
       // is on, and a pill's raised card in a list reads as a stray button.
       // Not lit while a document covers the model.
       rowStyle: menuRow(!docOpen && s.view === v.id),
+      // Its pencil in the menu; the strip has one pencil of its own
+      // (`renameView` below).
+      onRename: askRename && (() => askRename({ kind: 'view', variant, id: v.id, name: v.name })),
       // CLOSES THE MENU WHATEVER `showView` DOES WITH THE CLICK — it returns
       // without touching a thing when the view asked for is the one already
       // on screen, and a menu left standing open on the row you just pressed
@@ -501,6 +515,11 @@ export function chromeView(s, props, deps) {
     arRow: !arShown ? null
       : s.ar && s.ar.busy ? { onClick: null, hint: 'preparing…' }
         : { onClick: () => openAr(), hint: s.ar && s.ar.failed ? 'failed' : '' },
+    // The strip's one pencil, at its end: it renames the view on screen. One
+    // for the whole strip rather than one per pill, so the strip keeps its
+    // width and its pills their places from view to view (AGENTS.md).
+    renameView: askRename && shownView
+      && (() => askRename({ kind: 'view', variant, id: shownView.id, name: shownView.name })),
     // What that button says: the document over the model, else the view on
     // screen. Empty where none matches — `s.view` is null until the first view
     // lands, and a switcher captioned `undefined` is worse than a bare one.
@@ -522,11 +541,6 @@ export function chromeView(s, props, deps) {
     // DocumentView draws it from; null over the model, which leaves the strip
     // without the two.
     docHref: docOpen ? docUrl(PAGE.base, docOpen) : null,
-    // A NEW ELEMENT FOR ANOTHER REVISION: a markdown document is fetched once,
-    // when its view mounts, so a revision switch with the same document open
-    // must mount a new one rather than keep the old revision's text. Within
-    // one revision the members of a KiCad design share one (`docViewKey`).
-    docKey: docOpen ? `${buildKey(meta)}:${docViewKey(docOpen)}` : '',
     bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (docOpen ? '17' : '13'),
     docLayerStyle: DOC_LAYER,

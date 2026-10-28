@@ -11,7 +11,7 @@ const field = (name, value) => `(property "${name}" "${value}" (at 0 0 0) (effec
 /** A placed symbol: a power symbol, a power flag or a part, by its `Reference`. */
 const placed = (reference, value, uuid) => `\t(symbol (lib_id "lib:${value}") (at 1 1 0) (unit 1)
 \t\t${field('Reference', reference)}\n\t\t${field('Value', value)}\n\t\t(uuid "${uuid}"))\n`
-const label = (kind, name, uuid) => `\t(${kind} "${name}"${kind === 'label' ? '' : ' (shape input)'} (at 0 0 0)`
+const label = (kind, name, uuid, at = '0 0 0') => `\t(${kind} "${name}"${kind === 'label' ? '' : ' (shape input)'} (at ${at})`
   + ` (effects (font (size 1.27 1.27))) (uuid "${uuid}"))\n`
 // The library's copy of a power symbol carries the `Reference` and the `Value`
 // of one, and is placed nowhere.
@@ -102,5 +102,52 @@ describe('the board\'s name of a net', () => {
     expect(boards({ ...TEXTS, 'kicad/top.kicad_pcb': pcb }))
       .toMatchObject({ 'fault-n-amp': '/amp/sub/FAULT_N', 'fault-n-sub': '/amp/sub/FAULT_N', 'pin-fault-n': '/amp/sub/FAULT_N',
         en: '/amp/EN', out: '/amp/OUT_C' })
+  })
+})
+
+describe('a wire', () => {
+  const wire = (uuid, [x1, y1], [x2, y2]) => `\t(wire (pts (xy ${x1} ${y1}) (xy ${x2} ${y2}))`
+    + ` (stroke (width 0) (type default)) (uuid "${uuid}"))\n`
+  // The global label `EN` at an end of `a`; `t` ending on the middle of `a`,
+  // `cross` and `dot` crossing it, a junction at the second crossing only;
+  // `p1` and `p2` a chain from the pin `SPARE` of a sheet symbol; `alone`
+  // touching nothing.
+  const nets = netIndex({ 'hw/top.kicad_sch': sheet(label('global_label', 'EN', 'en', '10.16 10.16 180'),
+    wire('a', [10.16, 10.16], [20.32, 10.16]), wire('t', [15.24, 20.32], [15.24, 10.16]),
+    wire('cross', [12.7, 5.08], [12.7, 15.24]), wire('dot', [17.78, 5.08], [17.78, 15.24]),
+    '\t(junction (at 17.78 10.16) (diameter 0) (color 0 0 0 0) (uuid "junction"))\n',
+    `\t(sheet (at 40 50) (size 10 10) (uuid "sheet-sub") ${field('Sheetname', 'sub')} ${field('Sheetfile', 'sub.kicad_sch')}`
+      + ' (pin "SPARE" input (at 50.8 50.8 0) (uuid "spare")))\n',
+    wire('p1', [50.8, 50.8], [60.96, 50.8]), wire('p2', [60.96, 63.5], [60.96, 50.8]),
+    wire('alone', [30.48, 30.48], [40.64, 30.48])) }, 'hw/top.kicad_sch')
+  const wired = (...uuids) => uuids.map((uuid) => nets.byUuid.get(uuid))
+  const entry = (uuid, name, board) => ({ sheet: 'hw/top.kicad_sch', name, uuid, kind: 'wire', board, boards: [board] })
+
+  it('is the net of the label on its run, through a T-joint too, and no occurrence', () => {
+    expect(wired('a', 't')).toEqual([entry('a', 'EN', 'EN'), entry('t', 'EN', 'EN')])
+    expect(nets.occurrences.map((one) => one.uuid)).toEqual(['en', 'spare'])
+  })
+
+  it('crossing a wire mid-span is joined to it only where a junction stands', () => {
+    expect(wired('cross', 'dot')).toEqual([undefined, entry('dot', 'EN', 'EN')])
+  })
+
+  it('of a chain ending on a sheet pin is the pin\'s net', () => {
+    expect(wired('p1', 'p2')).toEqual([entry('p1', 'SPARE', '/SPARE'), entry('p2', 'SPARE', '/SPARE')])
+  })
+
+  it('on a run nothing names has no entry', () => {
+    expect(wired('alone')).toEqual([undefined])
+  })
+
+  it('is named as KiCad names the net: the strongest kind on its run, then the first name', () => {
+    const named = (...items) => netIndex({ 'hw/top.kicad_sch': sheet(...items, wire('w', [1, 1], [10.16, 1])) },
+      'hw/top.kicad_sch').byUuid.get('w')
+    // The local label is first in the file; the power symbol names the net.
+    expect(named(label('label', 'VDD_IO', 'io', '5.08 1 0'), placed('#PWR0101', '+3V3', 'pwr')))
+      .toMatchObject({ name: '+3V3', board: '+3V3' })
+    // Two global labels: `VBUS` is first in the file, `+5V` first by name.
+    expect(named(label('global_label', 'VBUS', 'vbus', '2.54 1 0'), label('global_label', '+5V', 'p5', '7.62 1 0')))
+      .toMatchObject({ name: '+5V', board: '+5V' })
   })
 })

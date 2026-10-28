@@ -166,9 +166,10 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     # slow tessellation and before anything is packed.
     if force:
         # Both counts None, which means "unknown" (as `run_checks` answers for
-        # an uncountable checks()). Nothing about a forced build is recorded in
-        # metrics.json or on the pages; this one line, where the checks'
-        # verdict would be, tells the pusher.
+        # an uncountable checks()). Nothing else about a forced build is
+        # recorded in metrics.json or shown on the pages; the hub marks it in
+        # meta.json (`forced`), and this one line, where the checks' verdict
+        # would be, tells the pusher.
         checks_passed = checks_static = None
         print("checks: not run -- this push asked for the model's own checks "
               "to be skipped")

@@ -117,9 +117,17 @@
   symlink or a submodule; the second builds the newest commit of each branch
   that touched the project's directory, and each draft (`refs/drafts/<branch>`),
   in the ordinary queue, into that branch's variant (issue #129), and streams
-  the log back to the hook. The build publishes before git moves the ref, so a
+  the log back to the hook. A branch's commit whose tree its variant's draft
+  slot already holds is not built: the slot's build is published under its sha
+  (`Store.promote_dev`). The build publishes before git moves the ref, so a
   build that fails refuses the push and a push that loses a race leaves its
-  revision published, to join the branch by the next merge
+  revision published, to join the branch by the next merge. A name changed on
+  the page (`POST /api/v1/projects/<pid>/names`, ui/src/rename.jsx) goes the
+  same way (`commit_name`): a hub commit to project.json on the branch's tip,
+  published as a copy of a build of the tip's project with the name rewritten
+  (`Store.publish_copy`; built only when neither the tip's own build nor the
+  variant's `latest` holds that project tree),
+  then the branch moved onto it unless a push moved it first
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). A version is published by git itself
   (`git push hammerola-<pid> <branch>`, a branch being a variant); `connect`
@@ -499,8 +507,11 @@
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
   and size, under the picture of a DXF when the entry carries `preview`; every
-  document is downloaded from the strip at the bottom (`DocFile`). DocShell draws it
-  under its list; the model page draws it over the
+  document is downloaded from the strip at the bottom (`DocFile`). Both pages
+  draw their document layer through `DocumentLayers`, which keeps every KiCad
+  design opened on the page of this build mounted and hidden while another
+  document or the model is on screen. DocShell draws it under its list; the
+  model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
 - `ui/src/KicadView.jsx` — a KiCad DESIGN: the listed schematic, board and 3D

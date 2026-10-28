@@ -511,14 +511,14 @@ export default class GerberView extends React.Component {
   render() {
     const { bytes, comment } = this.props;
     const { layers, failed, shown, side, open, error, received, got, band } = this.state;
-    const note = error || (!layers && loadBar(received, bytes, got));
+    const note = error ? <div style={css(NOTE)}>{error}</div> : !layers && loadBar(received, bytes, got);
     const { stage } = this;
     // Where an area lands on the canvas as the stage's view stands.
     const at = (area) => canvasBox(stage.view, area, stage.width, stage.height, flipOf(stage.side));
     return (
       <div style={css(SHELL)}>
         <div ref={this.setHost} style={css(HOLDER)} />
-        {note && <div style={css(NOTE)}>{note}</div>}
+        {note}
         {Boolean(stage && stage.width) && (
           <div data-marks="gerbers" style={css(MARKS)}>
             {this.marks().map((mark) => (

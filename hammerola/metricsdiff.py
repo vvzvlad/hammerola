@@ -240,6 +240,55 @@ def metrics_diff(old, new):
     return lines
 
 
+def toolchain_diff(old, new):
+    """`toolchain: <package> <old> -> <new>` per version that moved.
+
+    Apart from `metrics_diff` and printed after its verdict: a version is not
+    a measurement, so a new CAD stack alone leaves "every measured number is
+    the same" standing.
+    """
+    return [f"toolchain: {change}"
+            for change in toolchain_changes(old, new) or []]
+
+
+def toolchain_changes(old, new):
+    """`cadquery-ocp 7.9.3.1.1 -> 7.9.4` for each package of the CAD stack
+    whose version differs between two builds; None when either recorded none.
+
+    A package one build did not have reads as `absent`.
+    """
+    if "toolchain" not in old or "toolchain" not in new:
+        return None
+    was, now = old["toolchain"], new["toolchain"]
+    return [f"{name} {was.get(name, 'absent')} -> {now.get(name, 'absent')}"
+            for name in sorted(set(was) | set(now))
+            if was.get(name) != now.get(name)]
+
+
+def unchanged_code_note(old, new, shifted):
+    """The line that says `unchanged_code_moved_geometry` named `shifted`.
+
+    One wording for both readers. It names the versions of the CAD stack that
+    changed, and when the two builds recorded the same ones it says so instead
+    of blaming the stack.
+    """
+    head = (f"! the geometry moved while the model's code did not "
+            f"({', '.join(shifted)}): the same source built into a different "
+            f"solid")
+    changes = toolchain_changes(old, new)
+    if changes is None:
+        return (f"{head}. The two builds did not both record their CAD stack: "
+                f"compare the one each ran on, or the model is not "
+                f"deterministic")
+    if changes:
+        return f"{head} on another CAD stack: {', '.join(changes)}"
+    same = ", ".join(f"{name} {version}"
+                     for name, version in sorted(new["toolchain"].items()))
+    return (f"{head} on the same CAD stack ({same}): the model is not "
+            f"deterministic, or it builds from files besides the *.py at its "
+            f"root")
+
+
 def unchanged_code_moved_geometry(old, new):
     """Parts whose measurements moved while the model's code did not.
 

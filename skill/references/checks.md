@@ -111,8 +111,9 @@ built in 4m12s (queued 8s)
 The first number is your build; the second, absent when there was no wait, is
 time queued for a worker. **Past three minutes a warning follows**, naming this
 section's fixes; it is not a refusal, and a slow build publishes. A push the hub
-answers with `unchanged` rebuilt nothing and prints no line. Judge a fix by this
-line against the build before it, not by guessing.
+answers with `unchanged` or `reused the draft build of this tree` rebuilt nothing
+and prints no line. Judge a fix by this line against the build before it, not by
+guessing.
 
 **Three clocks run over one push, and the one that stops you first is your
 own.** The hub kills a build at 300 seconds of wall clock and runs four builds

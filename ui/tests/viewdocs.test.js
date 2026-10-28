@@ -25,7 +25,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import CopyLink from '../src/copylink.jsx'
-import DocumentView from '../src/DocumentView.jsx'
+import DocumentView, { DocumentLayers } from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
 import { STATE, VIEWPORT_TAG } from '../src/events.js'
@@ -93,7 +93,11 @@ function component(state = {}) {
 }
 
 const drawn = (c) => texts(c.render())
-const shownDocs = (c) => collect(c.render(), (el) => (el.type === DocumentView ? el : undefined))
+/** The layers the page's `DocumentLayers` draws, as on its first render: a
+ *  wrapper each, keyed, its `DocumentView` inside; and those views. */
+const layersOf = (c) => collect(c.render(), (el) => (el.type === DocumentLayers ? el : undefined))
+  .flatMap((el) => new DocumentLayers(el.props).render())
+const shownDocs = (c) => layersOf(c).map((layer) => layer.props.children)
 const viewports = (c) => collect(c.render(), (el) => (el.type === VIEWPORT_TAG ? el : undefined))
 const LIT = 'var(--accent-bg)'
 // The elements of one render drawn with this style string: `css()` caches by
@@ -413,20 +417,20 @@ describe('the documents in the list of views', () => {
     const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
     const lit = () => c.computed().docRows.map((t) => t.rowStyle.includes(LIT))
     expect(lit()).toEqual([true, false, false, false])
-    const [before] = shownDocs(c)
-    expect(before.props.documents).toBe(KICAD)
+    const [before] = layersOf(c)
+    expect(before.props.children.props.documents).toBe(KICAD)
     // The page's door for opening a document, which the view calls with the
     // other member's id.
-    before.props.onOpen(KICAD[1].id)
+    before.props.children.props.onOpen(KICAD[1].id)
     expect(c.state.doc).toBe(KICAD[1].id)
     expect(lit()).toEqual([false, true, false, false])
     expect(c.computed().viewLabel).toBe('Главная · плата')
-    const [after] = shownDocs(c)
-    expect(after.props.doc.id).toBe(KICAD[1].id)
+    const [after] = layersOf(c)
+    expect(after.props.children.props.doc.id).toBe(KICAD[1].id)
     expect(after.key).toBe(before.key)
     // another design is another view
     c.computed().docRows[2].onClick()
-    expect(shownDocs(c)[0].key).not.toBe(before.key)
+    expect(layersOf(c)[0].key).not.toBe(before.key)
   })
 
   it('write the sheet the schematic reports as `s=`, a step of history for the reader\'s, in place otherwise', () => {
@@ -620,10 +624,10 @@ describe('a schematic\'s sheets in a submenu beside its row', () => {
 describe('another revision with a document open', () => {
   it('mounts a new view of it, which fetches that revision\'s text', () => {
     const c = component({ doc: 'docs__cut-list.md' })
-    const [before] = shownDocs(c)
+    const [before] = layersOf(c)
     c.state.meta = { ...meta(), commit: 'def5678' }
-    const [after] = shownDocs(c)
-    expect(after.props.doc.id).toBe(before.props.doc.id)
+    const [after] = layersOf(c)
+    expect(after.props.children.props.doc.id).toBe(before.props.children.props.doc.id)
     expect(after.key).not.toBe(before.key)
   })
 
@@ -631,10 +635,33 @@ describe('another revision with a document open', () => {
     // In the slot `commit` is `dev` for every build; only `published` moves.
     const c = component({ doc: 'docs__cut-list.md' })
     c.state.meta = { ...meta(), commit: 'dev', dev: true, published: '2026-10-23T10:00:00Z' }
-    const [before] = shownDocs(c)
+    const [before] = layersOf(c)
     c.state.meta = { ...c.state.meta, published: '2026-10-23T10:05:00Z' }
-    const [after] = shownDocs(c)
+    const [after] = layersOf(c)
     expect(after.key).not.toBe(before.key)
+  })
+
+  it('drops the KiCad designs the page kept hidden over the revision left', () => {
+    const c = component({ meta: meta([...DOCS, ...KICAD]), doc: KICAD[0].id })
+    // The page's `DocumentLayers` across its renders, its state kept as React keeps it.
+    let held = null
+    const layered = () => {
+      const [el] = collect(c.render(), (one) => (one.type === DocumentLayers ? one : undefined))
+      held = held || new DocumentLayers(el.props)
+      held.props = el.props
+      held.state = DocumentLayers.getDerivedStateFromProps(held.props, held.state)
+      return held.render().map((layer) => [layer.key, layer.props.style.visibility])
+    }
+    const design = 'abc1234:design/hw/main'
+    expect(layered()).toEqual([[design, undefined]])
+    c.state.doc = DOCS[0].id
+    expect(layered()).toEqual([[design, 'hidden'], ['abc1234:docs__cut-list.md', undefined]])
+    // over the model, hidden in the document's layer, where nothing is drawn and no click lands
+    c.state.doc = null
+    expect(layered()).toEqual([[design, 'hidden']])
+    expect(held.render()[0].props.style).toEqual({ ...css(c.computed().docLayerStyle), visibility: 'hidden' })
+    c.state.meta = { ...meta([...DOCS, ...KICAD]), commit: 'def5678' }
+    expect(layered()).toEqual([])
   })
 
   it('keeps it where that revision lists it, and forgets it where it does not', () => {
