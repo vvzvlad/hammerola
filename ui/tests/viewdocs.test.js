@@ -370,10 +370,10 @@ describe('the documents in the list of views', () => {
     expect(drawnAs(c.render(), c.computed().bannerLayerStyle)).toHaveLength(1)
   })
 
-  it('take the Parts button out of a narrow header, and a comment in the rail brings the model back', () => {
+  it('take the Parts row out of a narrow header\'s menu, and a comment in the rail brings the model back', () => {
     const narrow = component({ narrow: true, doc: 'docs__cut-list.md' }).computed()
-    expect(css(narrow.treeBtnStyle).display).toBe('none')
-    expect(css(component({ narrow: true }).computed().treeBtnStyle).display).toBe('flex')
+    expect(css(narrow.partsRowStyle).display).toBe('none')
+    expect(css(component({ narrow: true }).computed().partsRowStyle).display).toBe('flex')
 
     const comment = {
       id: 'c1', pid: 'proj1', commit: 'abc1234', view: 'closed', part: null, key: null,

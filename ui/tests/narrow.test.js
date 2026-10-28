@@ -130,6 +130,25 @@ const click = { stopPropagation() {}, preventDefault() {} }
 /** Every style object the page drew, at a given width. */
 const drawn = (over) => styles(component(over).render())
 
+/** The header row itself, found by the style `computed()` names for it. */
+function header(c) {
+  const wanted = css(c.computed().headerStyle)
+  const found = collect(c.render(), (el) => (el.props.style === wanted ? el : undefined))
+  expect(found, 'no element on the page carries the header row\'s own style').toHaveLength(1)
+  return found[0]
+}
+
+/** Every header menu on the page, as `[button, card]`: the children of the
+ *  element holding the button titled "Menu". */
+const menus = (c) => collect(c.render(), (el) => {
+  const kids = [].concat(el.props.children)
+  return kids.some((kid) => kid && kid.props && kid.props.title === 'Menu') ? kids : undefined
+})
+
+/** The row of the header's menu that says `said`. */
+const menuRow = (c, said) => collect(menus(c)[0][1],
+  (el) => (el.props.onClick && texts(el).includes(said) ? el : undefined))[0]
+
 // -- which layout the page comes up in ---------------------------------------
 
 describe('which layout the page comes up in', () => {
@@ -231,6 +250,27 @@ describe('which layout the page comes up in', () => {
     expect(c.state.tool).toBe('measure')
   })
 
+  it('puts the header\'s menu down on the way back out', () => {
+    // The wide header draws no menu, so a flag left up would bring the menu
+    // back open the next time the phone is turned upright.
+    const { change } = fakeMatchMedia(true)
+    const c = mounted({ narrow: true })
+
+    c.computed().headMenuToggle(click)
+    expect(c.state.headMenu).toBe(true)
+    change(false)
+    expect(c.state.headMenu).toBe(false)
+  })
+
+  it('puts the header\'s menu down on Escape', () => {
+    fakeMatchMedia(true)
+    const c = mounted({ narrow: true })
+
+    c.computed().headMenuToggle(click)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(c.state.headMenu).toBe(false)
+  })
+
   it('lets go of the query when the page goes', () => {
     // A live media query holding this component would call `setState` on one
     // that is gone — the same reason every other listener in
@@ -267,8 +307,8 @@ describe('which layout the page comes up in', () => {
 
 describe('the header row', () => {
   it('grows a second line rather than being cut off', () => {
-    // Nothing that could be dropped from this row makes it fit a phone, so it
-    // has to be able to break its line: the root it sits in is
+    // A long title makes the wide row wider than a window just past the
+    // breakpoint, so it has to be able to break its line: the root it sits in is
     // `overflow:hidden`, and a row that overflows there is silently CUT OFF
     // rather than scrolled — the comment button simply not on the screen. The
     // same fix static/_v/site.css already makes on the resolver's copy of it.
@@ -311,6 +351,52 @@ describe('the header row', () => {
     expect(collect(c.render(), (el) => (el.type === 'a' && el.props.href === '/' ? el : undefined)))
       .toHaveLength(1)
   })
+
+  it('folds its controls into one menu on a narrow window, and has none wide', () => {
+    // The owner, of the phone: the revision, Downloads, the token, Parts,
+    // Comments and the theme into one menu, the title beside the mark.
+    const wide = component()
+    expect(menus(wide)).toEqual([])
+    const buttons = collect(header(wide), (el) => (el.props.onClick ? texts(el).join(' ') : undefined))
+    expect(buttons).toEqual(expect.arrayContaining(['Editing on', 'Comments 0', 'Light']))
+
+    const c = component({ narrow: true })
+    expect(menus(c)).toHaveLength(1)
+    expect(menus(c)[0][1].props.style.display).toBe('none')
+    c.computed().headMenuToggle(click)
+    const [button, card] = menus(c)[0]
+    expect(button.props.title).toBe('Menu')
+    expect(card.props.style.display).toBe('block')
+    // The rows, in the owner's order, and each said once in the whole header:
+    // none of them is still a button beside the menu.
+    const ROWS = [REV.slice(0, 7), 'Downloads', 'Editing on', 'Parts', 'Comments', 'Light']
+    expect(texts(card).filter((said) => ROWS.includes(said))).toEqual(ROWS)
+    for (const said of ROWS) expect(texts(header(c)).filter((t) => t === said)).toHaveLength(1)
+  })
+
+  it('shuts its menu as a row opens what it stands for, and on a click anywhere else', () => {
+    // A row calls what its wide button calls; the sheet it opens lies along
+    // the bottom edge, and a menu left open over the model would hide it.
+    const c = component({ narrow: true })
+    const opens = [[REV.slice(0, 7), 'revOpen'], ['Downloads', 'dlOpen'], ['Editing on', 'tokenPop'],
+                   ['Parts', 'treeOpen'], ['Comments', 'rail']]
+    for (const [said, field] of opens) {
+      c.computed().headMenuToggle(click)
+      menuRow(c, said).props.onClick(click)
+      expect([said, c.state[field], c.state.headMenu]).toEqual([said, true, false])
+    }
+
+    // The title's pencil stops its click, so the rename window shuts the menu
+    // itself rather than leaving it to come back when the window closes.
+    c.computed().headMenuToggle(click)
+    c.computed().renameTitle()
+    expect([!!c.state.rename, c.state.headMenu]).toEqual([true, false])
+
+    c.computed().headMenuToggle(click)
+    expect(c.state.headMenu).toBe(true)
+    c.computed().rootClick()
+    expect(c.state.headMenu).toBe(false)
+  })
 })
 
 // -- the tree ----------------------------------------------------------------
@@ -326,21 +412,21 @@ describe('the tree on a narrow window', () => {
     expect(treeDrawn(component({ narrow: true }))).toBe(false)
   })
 
-  it('opens from a header button, and closes again', () => {
+  it('opens from the header\'s menu, and closes again', () => {
     const c = component({ narrow: true })
-    c.computed().treeToggle(click)
+    menuRow(c, 'Parts').props.onClick(click)
     expect(c.state.treeOpen).toBe(true)
     expect(treeDrawn(c)).toBe(true)
 
-    c.computed().treeToggle(click)
+    menuRow(c, 'Parts').props.onClick(click)
     expect(c.state.treeOpen).toBe(false)
     expect(treeDrawn(c)).toBe(false)
   })
 
-  it('offers no such button where the tree is simply there', () => {
+  it('offers no such row where the tree is simply there', () => {
     // A control saying "Parts" beside a visible list of them is noise.
-    expect(css(component().computed().treeBtnStyle).display).toBe('none')
-    expect(css(component({ narrow: true }).computed().treeBtnStyle).display).toBe('flex')
+    expect(css(component().computed().partsRowStyle).display).toBe('none')
+    expect(css(component({ narrow: true }).computed().partsRowStyle).display).toBe('flex')
   })
 
   it('is not remembered — a page opens with the tree closed however the last one was left', async () => {
@@ -359,12 +445,12 @@ describe('the tree on a narrow window', () => {
     expect(Object.keys(store).filter((name) => /tree|narrow/i.test(name))).toEqual([])
   })
 
-  it('offers no button while two revisions are being compared, either', () => {
+  it('offers no row while two revisions are being compared, either', () => {
     // The compare panel stands where the tree does, so there is nothing for the
-    // button to open — on either width.
-    expect(css(component({ narrow: true, compare: true }).computed().treeBtnStyle).display)
+    // row to open — on either width.
+    expect(css(component({ narrow: true, compare: true }).computed().partsRowStyle).display)
       .toBe('none')
-    expect(css(component({ compare: true }).computed().treeBtnStyle).display).toBe('none')
+    expect(css(component({ compare: true }).computed().partsRowStyle).display).toBe('none')
   })
 })
 
@@ -476,33 +562,34 @@ describe('the Move row of an object\'s menu on a narrow window', () => {
 // -- the one control that was moved OUT of that strip -------------------------
 
 describe('the theme button', () => {
-  /** The header row itself, found by the style `computed()` names for it. */
-  function header(c) {
-    const wanted = css(c.computed().headerStyle)
-    const found = collect(c.render(), (el) => (el.props.style === wanted ? el : undefined))
-    expect(found, 'no element on the page carries the header row\'s own style').toHaveLength(1)
-    return found[0]
-  }
-
-  it('stands in the header beside the comments, at both widths', () => {
+  it('stands in the header beside the comments: a button wide, the menu\'s row after Comments narrow', () => {
     // The theme button lives with the comments. What makes that a test rather
     // than a sentence is the PAIR of facts: the button is inside the header
     // row, which is the one part of this page drawn at every width, and it is
     // drawn after the comments control rather than somewhere else in the same
     // row. Either one alone is satisfiable by the wrong arrangement.
-    for (const over of [{}, { narrow: true }]) {
-      const c = component(over)
-      const said = texts(header(c))
-      expect(said).toContain('Comments')
-      expect(said).toContain('Light')
-      expect(said.indexOf('Light'), 'the theme button is in the header but not '
-        + 'beside the comments').toBeGreaterThan(said.indexOf('Comments'))
-      // IN THE MARKUP IS NOT ON THE SCREEN. Every other control in this row is
-      // taken away by `display:none` rather than by being left out, so a
-      // reading that only walks the tree would pass with the theme hidden at
-      // the narrow width.
-      expect(css(c.computed().themeBtnStyle).display).toBe('flex')
-    }
+    const wide = component()
+    const said = texts(header(wide))
+    expect(said).toContain('Comments')
+    expect(said).toContain('Light')
+    expect(said.indexOf('Light'), 'the theme button is in the header but not '
+      + 'beside the comments').toBeGreaterThan(said.indexOf('Comments'))
+    // IN THE MARKUP IS NOT ON THE SCREEN: a control can be taken away by
+    // `display:none` rather than by being left out, so a reading that only
+    // walks the tree would pass with the theme hidden.
+    expect(css(wide.computed().themeBtnStyle).display).toBe('flex')
+
+    // Narrow, the header's controls are rows of its menu, and the theme is the
+    // row after Comments, on screen once the menu is open.
+    const narrow = component({ narrow: true })
+    narrow.computed().headMenuToggle(click)
+    const [[, card]] = menus(narrow)
+    const rows = texts(card)
+    expect(rows).toContain('Comments')
+    expect(rows.indexOf('Light'), 'the theme row is in the menu but not after '
+      + 'the comments').toBeGreaterThan(rows.indexOf('Comments'))
+    expect(card.props.style.display).toBe('block')
+    expect(menuRow(narrow, 'Light').props.style.display).toBe('flex')
   })
 
   it('was MOVED and not copied', () => {
@@ -523,6 +610,10 @@ describe('the theme button', () => {
     expect(css(c.computed().railBtnStyle).display).toBe('none')
     expect(css(c.computed().themeBtnStyle).display).toBe('flex')
     expect(texts(header(c))).toContain('Light')
+    // Narrow, their menu has no Comments row and still the theme's.
+    const [[, card]] = menus(component({ token: null, narrow: true }))
+    expect(texts(card)).not.toContain('Comments')
+    expect(texts(card)).toContain('Light')
   })
 })
 
@@ -537,9 +628,9 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // Two different costs, and the second is the serious one.
   //
   // The revisions, the downloads and the token box hang off buttons in the
-  // HEADER, and that header wraps at phone width, so their anchor is no longer
-  // near the window's edge and the panel is cut off by the root's
-  // `overflow:hidden`. They stay dismissible — `rootClick` clears all three.
+  // HEADER, and at phone width those buttons are rows of the header's menu,
+  // which shuts as the panel opens, so no control is left on screen to hang
+  // the panel off. They stay dismissible — `rootClick` clears all three.
   //
   // The section panel and the note editor hang off rows in the TREE, at
   // `left:278px` and `left:310px`, so on a 390px screen their own close
@@ -585,11 +676,10 @@ describe('the popovers that become a sheet on a narrow page', () => {
   })
 
   it('are anchored to the bottom edge, the one thing the header cannot move', () => {
-    // The header above them wraps BY CONSTRUCTION, so its height is 50px or two
-    // rows or three, with a tab strip under it for more again. Any constant
-    // measured from the top of the window therefore has a header height at
-    // which the sheet opens on top of the button that opened it — and the token
-    // sheet stops clicks, so that covered button could not be pressed at all.
+    // The header above them wraps BY CONSTRUCTION (`headerStyle`), so any
+    // constant measured from the top of the window has a header height at
+    // which the sheet opens on top of the control that opened it — and the
+    // token sheet stops clicks, so that covered control could not be pressed.
     for (const narrow of sheets({ narrow: true })) {
       expect(narrow.bottom).toBe('8px')
       expect(narrow.top, 'a sheet measured from the top of the window is a '

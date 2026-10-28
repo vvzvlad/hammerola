@@ -24,8 +24,9 @@ import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import {
   PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
+import { headRow } from './headmenu.jsx';
 import {
-  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, btn, popover, tab,
+  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, RELATIVE, btn, popover, tab,
 } from './panelstyle.js';
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
@@ -115,9 +116,11 @@ export function chromeView(s, props, deps) {
   // the title, a variant's row and a row of the views menu: with the token
   // only, since the hub takes a rename only with it. It starts at the name on
   // screen, and the commit goes on the branch of `variant`, the page's own but
-  // for a variant's row. The menus shut under it.
+  // for a variant's row. The menus shut under it, the header's menu too: the
+  // title's pencil stops its click, so `rootClick` does not shut that one.
   const askRename = viewer ? null : (subject) => setState({
-    rename: subject, viewsOpen: false, variantsOpen: false, revOpen: false, dlOpen: false, tokenPop: false });
+    rename: subject, viewsOpen: false, variantsOpen: false, revOpen: false, dlOpen: false, tokenPop: false,
+    headMenu: false });
   const title = (meta && (meta.title || meta.project)) || '';
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta),
@@ -163,10 +166,12 @@ export function chromeView(s, props, deps) {
   return {
     // -- the header row ------------------------------------------------------
     //
-    // `min-height` rather than `height`, and it wraps: below the breakpoint the
-    // mark, title, revision picker and five controls are still wider than a
-    // phone, and the root is `overflow:hidden`, so a row that cannot wrap is
-    // silently cut off (the comments button would vanish). Same rule as
+    // `min-height` rather than `height`, and it wraps: with a long title the
+    // mark, title, revision picker and the controls are wider than a window
+    // just past the breakpoint, and the root is `overflow:hidden`, so a row
+    // that cannot wrap is silently cut off (the comments button would vanish).
+    // Below the breakpoint the controls are rows of the header's menu
+    // (`headFolded` below) and the row is one line. Same rule as
     // `static/_v/site.css` on the resolver's copy of this header.
     headerStyle: 'min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;'
       + 'gap:6px 12px;padding:0 16px;'
@@ -176,9 +181,10 @@ export function chromeView(s, props, deps) {
     // the page still says it somewhere else. The wordmark sits beside a mark
     // that stays and goes on linking home; the subtitle is a description of
     // the build (parts, views, size) and not a control, with the same counts
-    // on the view tabs; and the status chip's dot is already on the revision
-    // button next to it, while the one status worth interrupting somebody for
-    // — a newer build — announces itself with the banner over the model.
+    // on the view tabs; and the status chip's dot is already on the revision's
+    // row of the header's menu, while the one status worth interrupting
+    // somebody for — a newer build — announces itself with the banner over the
+    // model.
     showWordmark: !narrow,
     showSubtitle: !narrow,
     showStatus: !narrow,
@@ -187,17 +193,55 @@ export function chromeView(s, props, deps) {
     renameTitle: askRename && (() => askRename({ kind: 'project', variant, name: title })),
     // The title column must be able to shrink, or the title's
     // `text-overflow:ellipsis` never fires and a long model name pushes the row
-    // past the window edge. `0 1 auto`: shrink allowed, grow refused, because a
-    // title that claimed the leftover room would push the picker away from it.
-    titleColStyle: 'display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0',
+    // past the window edge. Wide, `0 1 auto`: shrink allowed, grow refused,
+    // because a title that claimed the leftover room would push the picker
+    // away from it. Narrow, `1 1 0`: a wrapping row is filled by max-content
+    // sizes, so a long title at its own width goes to a line of its own; from
+    // a basis of 0 it never breaks the line and takes the room the mark, the
+    // variants and the menu's button leave — which is why the spacer before
+    // the controls is not drawn there, as it would split that room.
+    titleColStyle: 'display:flex;flex-direction:column;gap:1px;min-width:0;flex:'
+      + (narrow ? '1 1 0' : '0 1 auto'),
     // The variants beside the title (variants.jsx), for every reader: the list
     // needs no token. Null, and nothing drawn, on a project of one variant.
     variantChoices: variantChoices(s.variants, PAGE.pid, variant),
     variantRename: askRename && ((row) => askRename({ kind: 'variant', variant: row.key, name: row.label })),
     variantsOpen: !!s.variantsOpen,
     variantsToggle: stop(() => setState({
-      variantsOpen: !s.variantsOpen, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false })),
+      variantsOpen: !s.variantsOpen, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false,
+      headMenu: false })),
     narrowMenus: narrow,
+
+    // -- the header's menu, on a narrow window (headmenu.jsx) -----------------
+    //
+    // On a phone the header is one row: the mark, the title, the variants and
+    // this menu's button. The revision, Downloads, the token, Parts, Comments
+    // and the theme are rows of the menu, in that order. A row that opens
+    // something calls the toggle the wide header calls for it (Parts has no
+    // wide button: the tree is on screen there), and those toggles put the
+    // menu down (`headMenu: false`), so one press opens its sheet and shuts the
+    // menu. The theme's row opens nothing and does not stop its click, which
+    // reaches `rootClick` and shuts the menu. `headFolded` says the header is
+    // drawn this way;
+    // `headMenuOpen` (state `headMenu`) says the card is open.
+    headFolded: narrow,
+    headMenuOpen: !!s.headMenu,
+    headMenuToggle: stop(() => setState({
+      headMenu: !s.headMenu, revOpen: false, dlOpen: false, tokenPop: false, variantsOpen: false,
+      viewsOpen: false })),
+    // The wrappers the revision picker, the downloads and the token hang their
+    // cards off. Wide, each holds its button and its card, measured from the
+    // button. Narrow, the buttons are rows of the menu and the cards are
+    // sheets along the bottom edge (`popover`), which need no button to hang
+    // off; `display:contents` keeps a wrapper left with only its card from
+    // taking a gap in the row.
+    revWrapStyle: narrow ? 'display:contents' : 'position:relative;margin-left:8px;flex:none',
+    headWrapStyle: narrow ? 'display:contents' : RELATIVE,
+    // The rows: the revision a label without a token, as its button is; the
+    // token lit while editing, as its button is.
+    revRowStyle: headRow(false) + (viewer ? ';cursor:default' : ''),
+    tokenRowStyle: headRow(!viewer),
+    headRowStyle: headRow(false),
     subtitle: meta ? subtitle() : '',
     // Shortened: `PAGE.slot` comes straight from the URL, so on a pinned
     // revision it is the full 64-character source digest, too wide for the
@@ -217,7 +261,9 @@ export function chromeView(s, props, deps) {
     // so a reader holding a shared link has no list to open and no menu.
     revPicker: !viewer,
     revToggle: viewer ? undefined
-      : stop(() => setState({ revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false })),
+      : stop(() => setState({
+        revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false,
+        headMenu: false })),
     revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px'
       + (viewer ? '' : ';cursor:pointer'),
     revMenuStyle: popover({
@@ -276,12 +322,13 @@ export function chromeView(s, props, deps) {
     downloadGroups,
     // NO KEY, NO BUTTON: the hub would refuse every file in the menu.
     dlShown,
-    dlToggle: stop(() => setState({ dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false })),
+    dlToggle: stop(() => setState({
+      dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false,
+      headMenu: false })),
     dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
-    // Clamped like the other two: this header button survives the narrow
-    // branch, and once the row wraps `right:0` is no longer the window's right
-    // edge, so a 250px menu would start off the left of a 390px screen and be
-    // cut off by the root's `overflow:hidden`.
+    // A sheet on a narrow window like the other two: there its button is a row
+    // of the header's menu, and the menu shuts as the sheet opens, so the card
+    // has no button left to hang off.
     dlMenuStyle: popover({
       narrow, anchor: 'right:0;top:40px', width: '250px', radius: '9px',
       tail: 'padding:6px 0;', z: 40, open: s.dlOpen }),
@@ -290,7 +337,7 @@ export function chromeView(s, props, deps) {
     viewer,
     tokenToggle: stop(() => setState({
       tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false,
-      variantsOpen: false })),
+      variantsOpen: false, headMenu: false })),
     tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
     tokenLabel: viewer ? 'View only' : 'Editing on',
     tokenPopStyle: popover({
@@ -368,16 +415,16 @@ export function chromeView(s, props, deps) {
     // -- the tree, which on narrow is something you open ---------------------
     //
     // Wide, it floats over a corner of the model and there is room for both.
-    // Narrow, it covers the thing it describes — so it starts closed and this
-    // button in the header is what opens it. Its openness is state and only
-    // state; the constructor says why it is not remembered.
+    // Narrow, it covers the thing it describes — so it starts closed and the
+    // Parts row of the header's menu is what opens it; wide, there is no such
+    // row. Its openness is state and only state; the constructor says why it
+    // is not remembered.
     // Not while two revisions are compared either: the compare panel stands in
-    // the tree's place, so the button would open nothing. Nor under a document,
+    // the tree's place, so the row would open nothing. Nor under a document,
     // which hides the tree with the rest of the model.
     treeShown: !narrow || s.treeOpen,
-    treeToggle: stop(() => setState({ treeOpen: !s.treeOpen })),
-    treeBtnStyle: btn(false, !narrow || s.compare || !!docOpen) + ';border:1px solid '
-      + (s.treeOpen ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);background:var(--card-bg)'),
+    treeToggle: stop(() => setState({ treeOpen: !s.treeOpen, headMenu: false })),
+    partsRowStyle: headRow(s.treeOpen) + (!narrow || s.compare || docOpen ? ';display:none' : ''),
 
     // -- the comment rail and the header's button that opens it (comments.jsx)
     ...railView({ open: railOpen, viewer, narrow, threads, openCount, stop, setState }),
@@ -386,16 +433,18 @@ export function chromeView(s, props, deps) {
     //
     // In the header, not the floating strip: it changes the whole page, and the
     // strip is not drawn on a phone (`showTools`), where a reader most likely
-    // wants the dark theme.
+    // wants the dark theme. There it is the row of the header's menu after
+    // Comments.
     //
     // Beside the comments button, not inside the rail: the rail is
     // `display:none` while closed and for a reader with no token, while the
-    // header row is drawn at every width for every reader and wraps instead of
-    // clipping.
+    // header row — and on a narrow window its menu — is drawn for every
+    // reader.
     //
-    // No `stop()`, unlike the two buttons before it: Parts and Comments open
+    // No `stop()`, unlike Comments and the menu's Parts row: those open
     // something the same click must not close, this one opens nothing, so the
-    // click reaching `rootClick` dismisses a menu left open elsewhere.
+    // click reaching `rootClick` dismisses a menu left open elsewhere — the
+    // header's menu, when the click is on its row.
     //
     // The label names the current mode, like the access button beside the
     // token; the tooltip names the mode it switches to.
@@ -413,14 +462,16 @@ export function chromeView(s, props, deps) {
     // title, a picker, a status chip and four controls.
     //
     // Below two tabs it is not rendered at all: a strip whose only link is the
-    // project on screen is noise, and it costs 30px of model.
+    // project on screen is noise, and it costs 30px of model. Nor on a narrow
+    // window, at the owner's word: no tabs on a phone, where the pills stack
+    // into a column that takes the model's height.
     //
     // The active tab is derived from the address (`PAGE.pid`) and nothing else,
     // so the highlight cannot disagree with the page (store.js says why).
     // It wraps: ten pills at the 190px cap are close to 2000px and the root is
     // `overflow:hidden`, so a non-wrapping strip would silently lose its tail.
     // Same rule as `static/_v/site.css` on the resolver's header.
-    tabsShown: openTabs.length > 1,
+    tabsShown: openTabs.length > 1 && !narrow,
     tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
       + HEADER_BAR,
     tabs: openTabs.map((t) => ({
@@ -545,7 +596,7 @@ export function chromeView(s, props, deps) {
     viewsOpen: !!s.viewsOpen,
     viewsToggle: stop(() => setState({
       viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
-      variantsOpen: false,
+      variantsOpen: false, headMenu: false,
       // The other menus in this toolbar, which open upwards from buttons a few
       // pixels along: two of them at once would overlap.
       opsOpen: false, settingsOpen: false })),

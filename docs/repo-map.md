@@ -478,6 +478,10 @@
   (`/project/<pid>/v/<branch>/…`, `pageFrom`), the revision's `variant` in
   meta.json elsewhere; the picker, Share's `latest` and a comment on a
   variant's draft (`commentTarget` in `comments.jsx`) follow it
+- `ui/src/headmenu.jsx` — the header's menu on a narrow window, on both pages:
+  a button at the right end of the row and a card under it whose rows are the
+  header's controls (`headMenu`, `headRow`); `chromeview.js` and `DocShell.jsx`
+  say which rows. The tab strip is not drawn on a narrow window
 - `ui/src/DocShell.jsx` — the page of a build with no model
   (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
   `HammerolaViewer.jsx`. A header, the document, and the model page's bar

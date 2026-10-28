@@ -633,7 +633,7 @@ describe('the shell', () => {
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST,
-                                  variants: null, variantsOpen: false, rename: null })
+                                  variants: null, variantsOpen: false, rename: null, headMenu: false })
     // the door `Show in …` on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
@@ -962,6 +962,53 @@ describe('comments on the page of a build with no model', () => {
     await vi.waitFor(() => expect(shell.state.feed[0].status).toBe('resolved'))
     expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v1/comments/c1/resolve',
       '/api/v1/comments?project=docs0001'])
+  })
+
+  it('folds the revision and Comments into the header\'s menu on a narrow window, as the model\'s page does', () => {
+    /** The header row: the element holding the link home. */
+    const header = (tree) => collect(tree, (el) => ([].concat(el.props.children)
+      .some((kid) => kid && kid.type === 'a' && kid.props.href === '/') ? el : undefined))[0]
+    /** The header's menus, as `[button, card]`. */
+    const menus = (tree) => collect(tree, (el) => {
+      const kids = [].concat(el.props.children)
+      return kids.some((kid) => kid && kid.props && kid.props.title === 'Menu') ? kids : undefined
+    })
+    const shell = opened()
+    // wide: the wordmark, the revision and the button, and no menu
+    const wide = drawn(shell)
+    expect(texts(header(wide))).toEqual(['hammerola', BUILD.title, 'abc1234', 'Comments', '0'])
+    expect(menus(wide)).toEqual([])
+
+    shell.state.narrow = true
+    const narrow = drawn(shell)
+    expect(texts(narrow)).not.toContain('hammerola')
+    const [[button, card]] = menus(narrow)
+    // everything the header says beside the title is said inside the card
+    expect(texts(card)).toEqual(['abc1234', 'Comments', '0'])
+    expect(texts(header(narrow))).toEqual([BUILD.title, ...texts(card)])
+    expect(card.props.style.display).toBe('none')
+    button.props.onClick(CLICK)
+    expect(shell.state.headMenu).toBe(true)
+    expect(menus(drawn(shell))[0][1].props.style.display).toBe('block')
+    // the Comments row opens the rail and shuts the menu
+    const [comments] = collect(menus(drawn(shell))[0][1],
+      (el) => (el.props.onClick && texts(el)[0] === 'Comments' ? el : undefined))
+    comments.props.onClick(CLICK)
+    expect([shell.state.rail, shell.state.headMenu]).toEqual([true, false])
+    // and a click anywhere else shuts it too
+    button.props.onClick(CLICK)
+    drawn(shell).props.onClick()
+    expect(shell.state.headMenu).toBe(false)
+    // the title's pencil stops its click, so the rename window shuts it itself
+    button.props.onClick(CLICK)
+    shell.render().props.onRename({ kind: 'project', name: BUILD.title })
+    expect([!!shell.state.rename, shell.state.headMenu]).toEqual([true, false])
+    shell.setState({ rename: null })
+    // and so does the window growing wide, where no menu is drawn: a flag
+    // left up would bring it back open on the way back to narrow
+    button.props.onClick(CLICK)
+    shell.onNarrow({ matches: false })
+    expect([shell.state.narrow, shell.state.headMenu]).toEqual([false, false])
   })
 
   it('puts the armed tool down on Escape, taking it before a design under it hears it', () => {

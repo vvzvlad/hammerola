@@ -153,11 +153,9 @@ const CARD_LOOK = 'background:var(--card-bg);border:1px solid var(--line);border
  * strip of tabs ends at 85px (98px at 721px, where the header wraps; measured),
  * which leaves room for two more rows of tabs. `dvh`, not `vh`: on a tablet
  * `vh` counts the browser's toolbar as hidden, and this page never scrolls it
- * away. On a narrow window the header wraps again and every open project can
- * add a row of tabs, so no length off the window holds; the card keeps
- * 308px there. The card itself scrolls, views and documents together: it is
- * one list with one scroll, not a list of views and a list of documents
- * scrolling apart.
+ * away. On a narrow window the card keeps 308px. The card itself scrolls,
+ * views and documents together: it is one list with one scroll, not a list of
+ * views and a list of documents scrolling apart.
  */
 export const viewMenuStyle = (open, wide = true) => 'position:absolute;left:0;bottom:38px;'
   + (wide ? 'width:360px;max-height:calc(100dvh - 240px);' : 'width:260px;max-height:308px;') + 'overflow:auto;'
