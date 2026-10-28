@@ -475,9 +475,12 @@ design. The schematic is listed by its root sheet and brings every sheet it
 names, either of the two brings the `.kicad_pro` beside it, and the `.glb` is
 made on the laptop with
 `kicad-cli pcb export glb`, not on the hub. The views are linked: a part clicked
-in one is selected in the others, and a right click on a part or a net opens a
-menu that shows it in the other views — `Show C507 in Main board`, `Show net +12V
-in Main schematic`, an item per sheet for a net that spans several. The board
+in one is selected in the others, and a right click on a part opens a menu that
+shows it in the other views — `Show C507 in Main board`. On the schematic a
+click on a net, left or right — a label, a power symbol, a sheet pin, a wire —
+lists every place of it on every sheet, with arrows to step through them and
+`Show net +12V in Main board` as the last row; on the board a right click on a
+net offers an item per sheet it is on. The board
 view has its own panel of layers and lights the whole net of a clicked track or
 pad; the 3D view turns like the model does. A part whose `Datasheet` field names
 a PDF the project lists (`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above) gets

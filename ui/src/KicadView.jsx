@@ -48,14 +48,14 @@
 // keeps hidden.
 //
 // A CHANGE OF THE SCHEMATIC'S PAGE IS A STEP OF THE BROWSER'S HISTORY, whatever
-// makes it: a double click on a sheet symbol, an item `… · <sheet>`, the
-// viewer's own `[`, `]` and Alt+Backspace. The element reports each one
-// (`PAGE_EVENT`), and this component reports the sheet to the page as `s=`
-// says it (`onSheet`, `sheetQueryValue`), which writes it into the address
-// beside the `d=` of the schematic, as a view is `v=`, and nothing here
-// writes the address itself. Back and Forward (`subscribe` in address.js), a
-// reload, a link and a sheet chosen in the list of views (`SheetRows` in
-// viewlist.jsx) put the sheet the address names on screen
+// makes it: a double click on a sheet symbol, a place chosen in the viewer's
+// list of a net, the viewer's own `[`, `]` and Alt+Backspace. The element
+// reports each one (`PAGE_EVENT`), and this component reports the sheet to
+// the page as `s=` says it (`onSheet`, `sheetQueryValue`), which writes it
+// into the address beside the `d=` of the schematic, as a view is `v=`, and
+// nothing here writes the address itself. Back and Forward (`subscribe` in
+// address.js), a reload, a link and a sheet chosen in the list of views
+// (`SheetRows` in viewlist.jsx) put the sheet the address names on screen
 // (`followPage`), opened whole as the viewer opens a sheet itself, not at the
 // camera it was left at. The root sheet has no `s=`, so a design opened from
 // the list of views after another document starts on it (`pushChoice`, and
@@ -76,7 +76,7 @@
 // and the other an empty circle. The board gets a panel of ours instead
 // (PcbPanel.jsx), drawn over it once its files are loaded.
 //
-// THE VIEWS ARE LINKED HERE, not in the viewer, two ways:
+// THE VIEWS ARE LINKED HERE, not in the viewer, three ways:
 //   * a click that selects a part in one view selects it in the others too,
 //     hidden as they are, and changes nothing on screen: an element reports it
 //     as `ecad-viewer:selection`, the 3D view through `onSelect`; a click on
@@ -84,49 +84,59 @@
 //     others. A click on nothing at all, and Escape, put out what is lit in
 //     EVERY view, the clicked one included: the viewer itself leaves a part lit
 //     through a click on the bare board. Nets are not carried across this way;
-//   * the RIGHT BUTTON on a part, or in the schematic and the board on what has
-//     a net (a track, a via, a zone, a label, a power symbol, a sheet pin, a
-//     wire joined to one of the last three),
-//     opens a menu at the pointer (`menuFor`), headed with the part, the net,
-//     or both: a pad of the board is both, a pin of the schematic its part
-//     alone. The part has
-//     an item `Show <ref> in <name>` for every other listed member, the net
-//     `Show net <name> in <name>` for every other drawn one, never the 3D
-//     model. A power symbol (`#PWR`) is no part, being on the schematic only,
-//     but the net its `Value` names; a power flag (`#FLG`) is neither. A net
-//     the sheets name has in place of the schematic's item one per sheet it is
-//     on, `… · <sheet>`, aimed at its first occurrence there: every sheet from
-//     the board, the other sheets from the schematic. What is one net is read
-//     from the sheets' texts and the board's (kicadnets.js): the occurrences of
-//     one name on the board, `board` — global labels and power symbols of one
-//     name, which KiCad joins across the whole design, and hierarchical labels
-//     of one name with the sheet pins of that name, through which the sheet
-//     that draws a sheet symbol wires them together, so that net's items
-//     include that sheet. A wire run joins the nets of what stands on it, so
-//     a wire's menu, and that of each thing on the run, has the sheets of all
-//     of them (`boards`). A local label's net is on its own sheet alone, so
-//     from the schematic it has no sheet item of its own; a net no sheet names
-//     keeps the one item, and the viewer looks it up.
-//     An item of another member asks the page to open it (`onOpen` with its
-//     id, which moves the lit row of its list too) and, once the page has
-//     handed it down, asks its element to select the same thing — a part by
-//     its designator, a net by its name, and for a sheet's item on that sheet
-//     at that occurrence (`requestCrossProbe`); the 3D view is handed the part
-//     as `selected`. The board is asked for a net a sheet names by the board's
-//     name of it (`/amp/OUT_C` for a local label `OUT_C` on the sheet `amp`);
-//     the lines show the name clicked, a label's own or the one the board
-//     reported. An item of another sheet of the schematic on screen asks its
-//     element straight away: the page shows what it showed.
+//   * a click of EITHER BUTTON on what has a net in the schematic (a label, a
+//     power symbol, a sheet pin, a wire joined to one of them) opens the
+//     viewer's own list of the net's places, a row `<sheet>:<name>` each and
+//     ‹ › to step through them, at the pointer, on the place clicked where it
+//     is one (`openList`, and the element's `showNetList`, an edit of ours:
+//     static/_v/PROVENANCE.md, "Our edits"). A place chosen there the viewer
+//     frames itself, on its sheet. The places are this component's (`netList`):
+//     every occurrence of the net on every sheet. Its last row, `Show net
+//     <name> in <name>`, shows the net on the board where the design lists
+//     one. It opens only where it has somewhere to go: two places, or the
+//     board row. A power symbol (`#PWR`) is no part, being on the schematic
+//     only, but the net its `Value` names; a power flag (`#FLG`) is neither.
+//     The element's own list on a click on a label or a sheet pin, which goes
+//     by the label's name alone, is off (`show-selection-panel="false"`);
+//   * the RIGHT BUTTON on a part, or on the board on what has a net (a track,
+//     a via, a zone), opens a menu at the pointer (`menuFor`), headed with the
+//     part, the net, or both: a pad of the board is both. The part has an item
+//     `Show <ref> in <name>` for every other listed member; the net `Show net
+//     <name> in <name>` for the schematic — the 3D model has no nets — or,
+//     where the sheets name it, one item per sheet it is on, `… · <sheet>`,
+//     aimed at its first occurrence there; a net no sheet names keeps the one
+//     item, and the viewer looks it up.
+//
+// WHAT IS ONE NET is read from the sheets' texts and the board's (kicadnets.js):
+// the occurrences of one name on the board, `board` — global labels and power
+// symbols of one name, which KiCad joins across the whole design, and
+// hierarchical labels of one name with the sheet pins of that name, through
+// which the sheet that draws a sheet symbol wires them together, so that net's
+// places include that sheet. A local label's net is on its own sheet alone. A
+// wire run joins the nets of what stands on it, so the list for a wire, and for
+// each thing on the run, has the places of all of them (`boards`).
+//
+// AN ITEM OF ANOTHER MEMBER, the menu's and the list's board row, asks the page
+// to open it (`onOpen` with its id, which moves the lit row of its list too)
+// and, once the page has handed it down, asks its element to select the same
+// thing — a part by its designator, a net by its name, and for a sheet's item
+// on that sheet at that occurrence (`requestCrossProbe`); the 3D view is handed
+// the part as `selected`. The board is asked for a net a sheet names by the
+// board's name of it (`/amp/OUT_C` for a local label `OUT_C` on the sheet
+// `amp`); the lines show the name clicked, a label's own or the one the board
+// reported.
 //
 // WHAT IS UNDER THE POINTER at a right click is the element's own hit test,
 // `selectAt`: it selects there what a left click there selects, and the
-// selection it reports is what the menu is for. The thing is selected too, as
-// a right click in KiCad selects it. A right press the viewer panned with (it
-// pans from `PAN_SLOP` on) is no click. The 3D view picks with its own raycast.
+// selection it reports is what the menu or the list is for. The thing is
+// selected too, as a right click in KiCad selects it. A right press the viewer
+// panned with (it pans from `PAN_SLOP` on) is no click. The 3D view picks with
+// its own raycast.
 //
 // THE MENU is one at a time, inside the view area, in the page's colours; it
 // goes on Escape, a press anywhere else, the wheel, a resize, and when its view
-// leaves the screen.
+// leaves the screen. The viewer's list goes on a press anywhere but on it, so
+// the two are never open together.
 //
 // THE WHEEL ON THE SCHEMATIC AND THE BOARD, and HOW A SELECTION LOOKS there,
 // are the viewer's own doing: both are edits of ours to its source in
@@ -385,16 +395,38 @@ export function crossProbeRequest(detail, targetContext, nets = NO_NETS) {
 const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
 
 /**
- * The first occurrence on each sheet of any of the nets the board names
- * `boards` (kicadnets.js), in the order of `nets`: the sheet of `own`, the
- * occurrence the menu is for, if any, left out.
+ * The first occurrence on each sheet of the net the board names `board`
+ * (kicadnets.js), in the order of `nets`.
  */
-function netSheets(nets, boards, own) {
+function netSheets(nets, board) {
   const first = new Map();
   for (const one of nets.occurrences) {
-    if (boards.includes(one.board) && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) first.set(one.sheet, one);
+    if (one.board === board && !first.has(one.sheet)) first.set(one.sheet, one);
   }
   return [...first.values()];
+}
+
+/**
+ * The viewer's own list for a net the schematic reported selected (`detail`),
+ * with the sheets' nets `nets`: `items`, every occurrence of the net on every
+ * sheet, in the order of `nets`, as `{ sheet, name, uuid }` — for what stands
+ * on a wire run, of every net of the run (`boards`) — and `board`, the row that
+ * shows the net on the board where the design lists one (an item as a menu's
+ * is, `show`), or null. The board is asked for the net by the board's name of
+ * it, the occurrence's `board` where the index holds one; the line shows the
+ * name reported (`crossProbeRequest`). Null for what is no net, and where
+ * there is nowhere to go: fewer than two places and no board.
+ */
+export function netList(detail, members, nets = NO_NETS) {
+  const { net } = crossProbeRequest(detail, null, nets);
+  if (!net) return null;
+  const own = nets.byUuid.get(detail.uuid);
+  const boards = (own && own.boards) || [own ? own.board : net.value];
+  const items = nets.occurrences.filter((one) => boards.includes(one.board))
+    .map(({ sheet, name, uuid }) => ({ sheet, name, uuid }));
+  const board = members[PCB] ? { view: PCB, id: members[PCB].id, label: `Show net ${net.value} in ${members[PCB].name}`,
+    request: { targetContext: PCB, kind: 'net', value: own ? own.board : net.value } } : null;
+  return items.length >= 2 || board ? { items, board } : null;
 }
 
 /**
@@ -404,14 +436,12 @@ function netSheets(nets, boards, own) {
  * carrying the request its view is asked (`request`). The part's first, an
  * item for every other listed member that can show it; then the net's, the
  * same but for the schematic where the sheets name the net (`netSheets`),
- * which has an item per sheet it is on instead — for what stands on a wire
- * run, per sheet any net of the run is on (`boards`) — the request carrying the
- * sheet's path and the occurrence's uuid, and for the board, which is asked for
- * the net by the board's name of it: the occurrence's `board` when the menu is
- * for one, else the name reported, which a click on the board reports as the
- * board names it. Every line shows the name reported. Last, for a part, the
- * document its datasheet names (`sheet`, or null), which its item carries as
- * `doc`. Null when there is no item.
+ * which has an item per sheet it is on instead, the request carrying the
+ * sheet's path and the occurrence's uuid. A net the schematic reports has the
+ * viewer's own list instead (`netList`), so a net here is the board's, by the
+ * board's name of it. Last, for a part, the document its datasheet names
+ * (`sheet`, or null), which its item carries as `doc`. Null when there is no
+ * item.
  */
 export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
   const { part, net } = crossProbeRequest(detail, null, nets);
@@ -424,9 +454,7 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
     }
   }
   if (net) {
-    const own = nets.byUuid.get(detail.uuid);
-    const board = own ? own.board : net.value;
-    const sheets = netSheets(nets, (own && own.boards) || [board], own);
+    const sheets = netSheets(nets, net.value);
     for (const view of SHOWS.net.filter((one) => members[one])) {
       const label = `Show net ${net.value} in ${members[view].name}`;
       if (view === SCH && sheets.length) {
@@ -434,7 +462,7 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
           offer(view, `${label} · ${sheetName(one.sheet)}`, { ...net, net: net.value, sheet: one.sheet, uuid: one.uuid });
         }
       } else if (view !== from) {
-        offer(view, label, view === PCB ? { ...net, value: board } : net);
+        offer(view, label, net);
       }
     }
   }
@@ -446,16 +474,6 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
 
 /** The head line of `menu`: its part, its net, or both. */
 const menuHead = (menu) => [menu.part, menu.net && `net ${menu.net}`].filter(Boolean).join(' · ');
-
-/** The viewer's own list of a label's namesakes (`kc-sch-selection-menu`),
- *  beside `canvas` in the shadow tree of its schematic app, or null. */
-function labelList(canvas) {
-  for (let root = canvas.getRootNode(); root && root.querySelector; root = root.host ? root.host.getRootNode() : null) {
-    const list = root.querySelector('kc-sch-selection-menu');
-    if (list) return list;
-  }
-  return null;
-}
 
 /** The menu's box, known before it is drawn, so that where it fits is too: a
  *  head line, a row per item, 2px and 6px of padding and a 1px border; at
@@ -594,10 +612,12 @@ export default class KicadView extends React.Component {
     // `{ to, request }`, or null.
     this.probe = null;
     // A right press on a drawn view until it is released, `{ context, x, y }`;
-    // and while the viewer is asked what is under it, the point its menu opens
-    // at, `{ from, x, y }`.
+    // while the viewer is asked what is under it, the point its menu opens
+    // at, `{ from, x, y }`; and the last press of any button on a drawn view,
+    // `{ x, y }`, where the viewer's list of a net opens (`openList`).
     this.pressed = null;
     this.pointing = null;
+    this.down = null;
     // The schematic's page on screen (its `projectPath`), and the one the
     // address asked for while the element switches to it (`followPage`).
     this.page = null;
@@ -610,10 +630,8 @@ export default class KicadView extends React.Component {
       this.seen = addressNow();
       this.followPage();
     };
-    // Set while the page itself probes an element (`pageProbe`), and while
-    // the reader's own item of the menu moves the schematic on screen (`choose`).
+    // Set while the page itself probes an element (`pageProbe`).
     this.probing = false;
-    this.choosing = false;
     // Comments: what each element was last told — its comment mode and its
     // markers, by view — the page's `focus` last put on screen, and the
     // centre to move to once the sheet a focus switched to has loaded.
@@ -672,6 +690,7 @@ export default class KicadView extends React.Component {
       [SELECTION_EVENT]: (event) => this.picked(context, event.detail),
       pointerdown: (event) => {
         this.pressed = event.button === 2 ? { context, x: event.clientX, y: event.clientY } : null;
+        this.down = { x: event.clientX, y: event.clientY };
       },
       pointerup: (event) => this.release(context, event),
       [AREA_EVENT]: (event) => this.area(context, event.detail),
@@ -805,10 +824,9 @@ export default class KicadView extends React.Component {
    *  across a change of page and paints it again whenever the element is
    *  made active (`activate`), so the sheet symbol whose double click enters
    *  a sheet would stand selected over the sheet it opens. A probe keeps the
-   *  selection it made, and so does the reader's `… · <sheet>` item over the
-   *  schematic on screen (`choose`): the viewer focuses its target once the
-   *  sheet is open, and a selection put out meanwhile cancels that. The
-   *  highlighted nets stay.
+   *  selection it made: the viewer focuses its target once the sheet is
+   *  open, and a selection put out meanwhile cancels that. The highlighted
+   *  nets stay.
    *
    *  Every change of page hands the element the new sheet's comment markers
    *  at once (`overlay`): the element may still be loading that sheet, and
@@ -819,7 +837,7 @@ export default class KicadView extends React.Component {
     const before = this.page;
     this.page = now;
     const element = this.elements[SCH];
-    if (!this.probing && !this.choosing && typeof element.clearSelection === 'function') {
+    if (!this.probing && typeof element.clearSelection === 'function') {
       element.clearSelection({ keepHighlights: true });
     }
     this.overlay();
@@ -888,16 +906,32 @@ export default class KicadView extends React.Component {
 
   /** What a click in the drawn view `from` selected, as its element reports
    *  it. A click on nothing at all (an empty `itemType`) puts out what is lit
-   *  in every view (`clear`), else the other views follow (`select`). A right
-   *  click being answered (`release`) opens its menu on it. */
+   *  in every view (`clear`), else the other views follow (`select`). A net
+   *  of the schematic, by either button, opens the viewer's own list of its
+   *  places (`openList`), and our menu is shut; anything else a right click
+   *  being answered (`release`) is on opens our menu on it. */
   picked(from, detail) {
     if (detail && detail.itemType === '') this.clear();
     else this.select(from, (detail && detail.reference) || null);
     const at = this.pointing;
-    if (at && at.from === from) {
-      this.pointing = null;
+    if (at && at.from === from) this.pointing = null;
+    if (from === SCH && crossProbeRequest(detail, SCH, this.state.nets).net) {
+      this.closeMenu();
+      this.openList(detail);
+    } else if (at && at.from === from) {
       this.openMenu(from, detail, at.x, at.y);
     }
+  }
+
+  /** The schematic's own list of the places of the net `detail` is on, at
+   *  the last press on a drawn view, its board row last (`netList`): a place
+   *  chosen in it the viewer frames itself, the board row is an item as a
+   *  menu's is (`show`). Nothing where there is nowhere to go. */
+  openList(detail) {
+    const list = netList(detail, this.members(), this.state.nets);
+    if (!list) return;
+    const actions = list.board ? [{ label: list.board.label, run: () => this.show(list.board) }] : [];
+    this.elements[SCH].showNetList({ items: list.items, activeUuid: detail.uuid, actions, at: this.down });
   }
 
   /** A click in `from` selected the part `designator`, or something that is
@@ -948,14 +982,9 @@ export default class KicadView extends React.Component {
 
   /** A right press released on a drawn view's canvas. Released where it was
    *  pressed it is a click on what is under the pointer, which the element is
-   *  asked for (`selectAt`), and the selection it reports opens the menu
-   *  (`picked`). Released anywhere else, the viewer panned with it.
-   *
-   *  Selecting a label or a sheet pin there opens the schematic's own list
-   *  of the label's namesakes (`kc-sch-selection-menu`), which would stand
-   *  under our menu; it is closed again, as the viewer itself closes it
-   *  (`hidden`). One the reader had open closed on the press: the list
-   *  closes on any press outside it. */
+   *  asked for (`selectAt`), and the selection it reports opens the menu or
+   *  the viewer's list (`picked`). Released anywhere else, the viewer panned
+   *  with it. */
   release(context, event) {
     const { pressed } = this;
     this.pressed = null;
@@ -963,14 +992,12 @@ export default class KicadView extends React.Component {
       || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) >= PAN_SLOP) return;
     const [canvas] = event.composedPath();
     if (!canvas || canvas.localName !== 'canvas') return;
-    const list = labelList(canvas);
     this.pointing = { from: context, x: event.clientX, y: event.clientY };
     try {
       this.elements[context].selectAt(event.clientX, event.clientY);
     } finally {
       this.pointing = null;
     }
-    if (list) list.hidden = true;
   }
 
   /** The menu for what `from` selected, at the page point `x`,`y`, in place of
@@ -1000,30 +1027,19 @@ export default class KicadView extends React.Component {
       this.setState({ sheet: { doc: item.doc, from: menu.from } });
       return;
     }
-    this.show(item, menu.from);
+    this.show(item);
   }
 
-  /** An item `{ view, id, request }` chosen over the view `from`: a menu's, or
-   *  a designator of the BOM (`showPart`). Another sheet of the schematic on
-   *  screen: its element is asked now, the page asked for nothing, as it
-   *  shows what it showed. Another member of the design: the page is asked to
-   *  open it, and it selects the same thing once the page has handed it down
+  /** An item `{ view, id, request }` of another member chosen: a menu's, a
+   *  designator of the BOM (`showPart`), or the board row of the viewer's
+   *  list of a net (`openList`). The page is asked to open the member, and it
+   *  selects the same thing once the page has handed it down
    *  (`componentDidUpdate`); the 3D view is handed the part. */
-  show(item, from) {
+  show(item) {
     if (item.view === BOARD3D) {
       if (item.request.value !== this.state.selected) this.setState({ selected: item.request.value });
     } else {
-      const element = this.elements[item.view];
-      if (!element) return;
-      if (item.view === from) {
-        this.choosing = true;
-        try {
-          element.requestCrossProbe(item.request);
-        } finally {
-          this.choosing = false;
-        }
-        return;
-      }
+      if (!this.elements[item.view]) return;
       this.probe = { to: item.view, request: item.request };
     }
     if (this.props.onOpen) this.props.onOpen(item.id);
@@ -1035,7 +1051,7 @@ export default class KicadView extends React.Component {
   showPart(designator) {
     const board = this.members()[PCB];
     this.select(BOM, designator);
-    this.show({ view: PCB, id: board.id, request: { targetContext: PCB, kind: 'designator', value: designator } }, BOM);
+    this.show({ view: PCB, id: board.id, request: { targetContext: PCB, kind: 'designator', value: designator } });
   }
 
   /** The viewer's comment mode on the drawn view on screen while the page's
@@ -1320,7 +1336,7 @@ export default class KicadView extends React.Component {
       <div ref={this.setShell} style={css(SHELL)} onWheelCapture={this.closeMenu}>
         {drawnViews(members).map((context) => (
           <ecad-viewer key={context} ref={this.refCallbacks[context]} source-mode="host"
-                       show-header="false" hide-chrome="true" data-view={context}
+                       show-header="false" hide-chrome="true" show-selection-panel="false" data-view={context}
                        style={css(shown(context))} />
         ))}
         {ready && !error && members[PCB] && <PcbPanel element={this.elements[PCB]} active={showing === PCB} />}

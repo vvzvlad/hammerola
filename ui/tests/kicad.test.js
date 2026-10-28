@@ -8,8 +8,9 @@
 // nothing puts out everything. `Show in …` of the right-click menu asks the
 // page to open another member (`onOpen`, with its id) and selects there once
 // the page has answered; a part's datasheet opens in a window over the design
-// and asks the page for nothing, and so does an item of another sheet of the
-// schematic on screen, which its element is asked for straight away.
+// and asks the page for nothing. A net on the schematic, by either button,
+// opens the viewer's own list of its places (`showNetList`), whose board row
+// does what the menu's `Show in …` does.
 //
 // The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
 // and are checked in a browser; here the two elements are plain DOM elements
@@ -32,7 +33,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK,
-  drawingOf, drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
+  drawingOf, drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, netList, PAGE_EVENT, PAN_SLOP, PCB, SCH,
   SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
 import { loadMeta } from '../src/hub.js'
@@ -89,6 +90,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.setActive = vi.fn()
       element.clearSelection = vi.fn()
       element.replaceSources = vi.fn(async () => {})
+      element.showNetList = vi.fn(() => true)
     }
     // The canvas the viewer draws on, and the element's hit test: `selectAt`
     // reports what is under the point, as the viewer's own click does.
@@ -167,8 +169,9 @@ describe('a KiCad design', () => {
     const tree = view.render()
     expect(ofType(tree, 'button')).toEqual([])
     const viewers = ofType(tree, 'ecad-viewer')
-    expect(viewers.map((v) => [v.props['data-view'], v.props['source-mode'], v.props['show-header'], v.props['hide-chrome']]))
-      .toEqual([[SCH, 'host', 'false', 'true'], [PCB, 'host', 'false', 'true']])
+    // the viewer's own list of a label's places opens only when the page asks
+    expect(viewers.map((v) => [v.props['data-view'], v.props['source-mode'], v.props['show-header'], v.props['hide-chrome'],
+      v.props['show-selection-panel']])).toEqual([[SCH, 'host', 'false', 'true', 'false'], [PCB, 'host', 'false', 'true', 'false']])
     // the open member's viewer too, until its files are drawn: before that it
     // shows only its own spinner, right under the load bar
     expect(viewers.map((v) => v.props.style.visibility)).toEqual(['hidden', 'hidden'])
@@ -722,17 +725,6 @@ describe('the schematic\'s page', () => {
     expect(window.location.search).toBe(`?d=${BOARD}`)
   })
 
-  it('is the reader\'s step on a `… · <sheet>` item of the schematic on screen, which keeps the selection it makes', async () => {
-    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
-    const { view, sch } = await opened()
-    const push = vi.spyOn(window.history, 'pushState')
-    sch.clearSelection.mockClear()
-    view.setState({ menu: { from: SCH } })
-    view.choose(SHOW_FAULT)
-    expect([sch.page, push.mock.calls, sch.clearSelection.mock.calls])
-      .toEqual([AMP, [[null, '', `${BASE}?d=${SHEET}&s=amp`]], []])
-  })
-
   it('is the address\'s when the page shows again the design it kept hidden, which nothing writes meanwhile', async () => {
     window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=amp`)
     const { view, sch } = await opened()
@@ -881,13 +873,12 @@ describe('the right-click menu', () => {
     const all = [SCH, PCB, BOARD3D]
     const pad = { itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' }
     const track = { itemType: 'track', net: '+5V', netCode: 14 }
-    const label = { itemType: 'global-label', net: 'EFUSE_PGOOD' }
     expect([
       offered(SCH, C523, all), offered(PCB, pad, all), offered(BOARD3D, { reference: 'L101' }, all),
       // a net: the drawings only, never the 3D model
-      offered(PCB, track, all), offered(SCH, label, all),
+      offered(PCB, track, all),
       // no board, no 3D model
-      offered(SCH, C523, [SCH, BOARD3D]), offered(SCH, label, [SCH, BOARD3D]), offered(BOARD3D, { reference: 'L101' }, [SCH, BOARD3D]),
+      offered(SCH, C523, [SCH, BOARD3D]), offered(BOARD3D, { reference: 'L101' }, [SCH, BOARD3D]),
       offered(PCB, pad, [SCH, PCB]), offered(PCB, track, [PCB, BOARD3D]),
       // neither a part nor a net, a design of one, a power symbol (never on the board)
       offered(SCH, { itemType: 'wire' }, all), offered(SCH, { itemType: '' }, all), offered(PCB, pad, [PCB]),
@@ -897,8 +888,7 @@ describe('the right-click menu', () => {
       'U501 · net GND: Show U501 in SCH (id-SCH), Show U501 in 3D (id-3D), Show net GND in SCH (id-SCH)',
       'L101: Show L101 in SCH (id-SCH), Show L101 in PCB (id-PCB)',
       'net +5V: Show net +5V in SCH (id-SCH)',
-      'net EFUSE_PGOOD: Show net EFUSE_PGOOD in PCB (id-PCB)',
-      'C523: Show C523 in 3D (id-3D)', null, 'L101: Show L101 in SCH (id-SCH)',
+      'C523: Show C523 in 3D (id-3D)', 'L101: Show L101 in SCH (id-SCH)',
       'U501 · net GND: Show U501 in SCH (id-SCH), Show net GND in SCH (id-SCH)', null,
       null, null, null, null, null,
     ])
@@ -928,29 +918,6 @@ describe('the right-click menu', () => {
     expect([elements[SCH].picks, menuOf(view)]).toEqual([[], undefined])
     rightClick(elements[SCH], 300, 250, PAN_SLOP - 1)
     expect(menuOf(view)).toBeDefined()
-  })
-
-  it('closes the list of a label\'s namesakes its click opens in the schematic, the reader\'s own too', () => {
-    const { view, elements } = mounted()
-    const element = elements[SCH]
-    // the viewer's trees: the canvas and the list beside it in the schematic app's
-    const app = element.attachShadow({ mode: 'open' }).appendChild(document.createElement('kc-schematic-app'))
-    const list = document.createElement('kc-sch-selection-menu')
-    list.hidden = true
-    app.attachShadow({ mode: 'open' }).append(element.canvas, list)
-    // selecting a label with namesakes on other sheets opens it
-    const select = element.selectAt
-    element.selectAt = (x, y) => {
-      select(x, y)
-      list.hidden = false
-    }
-    element.under = { sourceContext: SCH, itemType: 'global-label', net: 'AMP_FAULT' }
-    rightClick(element, 300, 250)
-    expect([texts(menuOf(view)), list.hidden]).toEqual([['net AMP_FAULT', 'Show net AMP_FAULT in hw/board.kicad_pcb'], true])
-    // the reader's own left click opened it: one menu at a time
-    list.hidden = false
-    rightClick(element, 300, 250)
-    expect(list.hidden).toBe(true)
   })
 
   it('an item opens its member and selects the same part or net there, once the page hands it down', () => {
@@ -1117,14 +1084,22 @@ describe('a net across the schematic\'s sheets', () => {
     return menuOf(view) ? texts(menuOf(view)) : null
   }
   const net = (value, sheet, uuid) => ({ targetContext: SCH, kind: 'net', value, net: value, sheet, uuid })
+  /** The viewer's list for `detail` clicked on the schematic (`netList`), of the
+   *  design's members `members`: the uuids of its places, then its board row's
+   *  line and the board's name of the net it asks for. */
+  const listed = (detail, members = designMembers(DOCS, DOCS[0])) => {
+    const list = netList({ sourceContext: SCH, ...detail }, members, NETS)
+    return list && [...list.items.map((one) => one.uuid),
+      ...(list.board ? [`${list.board.label} → ${list.board.request.value}`] : [])]
+  }
+  /** The design without its board. */
+  const NO_BOARD = designMembers([DOCS[0], DOCS[2]], DOCS[0])
 
-  it('a power symbol is its net: the board and the schematic\'s other sheets, its own left out; a power flag none', () => {
-    const one = withNets()
-    expect(offered(one, { itemType: 'symbol', reference: '#PWR0101', uuid: 'pwr-board', sheet: 'hw/board.kicad_sch' }))
-      .toEqual(['net +12V', 'Show net +12V in hw/board.kicad_sch · power', 'Show net +12V in hw/board.kicad_pcb'])
-    expect(offered(one, { itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power', sheet: 'hw/sub/power.kicad_sch' }))
-      .toEqual(['net +12V', 'Show net +12V in hw/board.kicad_sch · board', 'Show net +12V in hw/board.kicad_pcb'])
-    expect(offered(one, { itemType: 'symbol', reference: '#FLG0201', uuid: 'flg-power' })).toBeNull()
+  it('a power symbol is its net: every place of it on every sheet, and the board; a power flag none', () => {
+    const places = ['pwr-board', 'pwr-power', 'pwr-power-2', 'Show net +12V in hw/board.kicad_pcb → +12V']
+    expect(listed({ itemType: 'symbol', reference: '#PWR0101', uuid: 'pwr-board' })).toEqual(places)
+    expect(listed({ itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' })).toEqual(places)
+    expect(listed({ itemType: 'symbol', reference: '#FLG0201', uuid: 'flg-power' })).toBeNull()
   })
 
   it('a pad of the board is its part and its net, the net on every sheet it is on', () => {
@@ -1133,14 +1108,11 @@ describe('a net across the schematic\'s sheets', () => {
         'Show net +12V in hw/board.kicad_sch · board', 'Show net +12V in hw/board.kicad_sch · power'])
   })
 
-  it('a global label, and the wire it is on, is shown on its namesake\'s sheet and on that of the sheet pin wired to it', () => {
-    const one = withNets()
+  it('a global label, and the wire it is on, lists its namesakes and every place of the net of the sheet pin wired to it', () => {
     for (const detail of [{ itemType: 'global-label', net: 'AMP_CLIP_OTW', uuid: 'clip-board' }, { itemType: 'wire', uuid: 'wire-clip' }]) {
-      expect(offered(one, detail)).toEqual(['net AMP_CLIP_OTW', 'Show net AMP_CLIP_OTW in hw/board.kicad_sch · power',
-        'Show net AMP_CLIP_OTW in hw/board.kicad_sch · dsp', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb'])
+      expect(listed(detail)).toEqual(['clip-board', 'pin-fault-power', 'pin-fault-dsp', 'clip-power', 'fault-power',
+        'fault-dsp', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb → AMP_CLIP_OTW'])
     }
-    itemsOf(one.view)[1].props.onClick()
-    expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('AMP_CLIP_OTW', 'hw/sub/dsp.kicad_sch', 'fault-dsp'))
   })
 
   it('is as wide as its longest line needs, so the sheet a line ends with is not cut', () => {
@@ -1155,30 +1127,20 @@ describe('a net across the schematic\'s sheets', () => {
     expect([longest > lines[1].length, menuOf(one.view).props.style.width]).toEqual([true, `${longest * 7 + 30}px`])
   })
 
-  it('a local label is a net of its own sheet: no other sheet is offered', () => {
-    expect(offered(withNets(), { itemType: 'label', net: 'AMP_CLIP_OTW', uuid: 'clip-local' }))
-      .toEqual(['net AMP_CLIP_OTW', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb'])
+  it('a local label is a net of its own sheet, a net no sheet names none: no list without the board', () => {
+    const local = { itemType: 'label', net: 'AMP_CLIP_OTW', uuid: 'clip-local' }
+    const unnamed = { itemType: 'global-label', net: 'EFUSE_PGOOD' }
+    expect([listed(local), listed(unnamed), listed(local, NO_BOARD), listed(unnamed, NO_BOARD)]).toEqual([
+      ['clip-local', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb → /dsp/AMP_CLIP_OTW'],
+      ['Show net EFUSE_PGOOD in hw/board.kicad_pcb → EFUSE_PGOOD'], null, null])
   })
 
-  it('a hierarchical label is one net with its namesakes and the root\'s pins: their sheets offered, the board asked by its name', () => {
-    const one = withNets()
-    expect(offered(one, { itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' })).toEqual(['net AMP_FAULT',
-      'Show net AMP_FAULT in hw/board.kicad_sch · board', 'Show net AMP_FAULT in hw/board.kicad_sch · dsp',
-      'Show net AMP_FAULT in hw/board.kicad_pcb'])
-    itemsOf(one.view)[1].props.onClick()
-    expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('AMP_FAULT', 'hw/sub/dsp.kicad_sch', 'fault-dsp'))
-    offered(one, { itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' })
-    itemsOf(one.view)[2].props.onClick()
-    expect(one.elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: '/dsp/AMP_FAULT' })
-  })
-
-  it('a sheet pin is the net of the hierarchical labels of its name: their sheets offered, the board asked by its name', () => {
-    const one = withNets()
-    expect(offered(one, { itemType: 'sheet-pin', net: 'AMP_FAULT', uuid: 'pin-fault-power' })).toEqual(['net AMP_FAULT',
-      'Show net AMP_FAULT in hw/board.kicad_sch · power', 'Show net AMP_FAULT in hw/board.kicad_sch · dsp',
-      'Show net AMP_FAULT in hw/board.kicad_pcb'])
-    itemsOf(one.view)[2].props.onClick()
-    expect(one.elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: '/dsp/AMP_FAULT' })
+  it('a hierarchical label, and a sheet pin of its name, are one net with its namesakes and the root\'s pins, the board asked by its name', () => {
+    for (const detail of [{ itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' },
+      { itemType: 'sheet-pin', net: 'AMP_FAULT', uuid: 'pin-fault-power' }]) {
+      expect(listed(detail)).toEqual(['pin-fault-power', 'pin-fault-dsp', 'fault-power', 'fault-dsp',
+        'Show net AMP_FAULT in hw/board.kicad_pcb → /dsp/AMP_FAULT'])
+    }
   })
 
   it('a track of a hierarchical net is shown on every sheet that carries it, the root through its pin', () => {
@@ -1191,15 +1153,6 @@ describe('a net across the schematic\'s sheets', () => {
       .toHaveBeenLastCalledWith(net('/dsp/AMP_FAULT', 'hw/board.kicad_sch', 'pin-fault-power'))
   })
 
-  it('an item of another sheet asks the schematic on screen for it straight away, the page asked for nothing', () => {
-    const one = withNets()
-    offered(one, { itemType: 'global-label', net: 'AMP_CLIP_OTW', uuid: 'clip-board' })
-    itemsOf(one.view)[0].props.onClick()
-    expect(one.elements[SCH].requestCrossProbe.mock.calls)
-      .toEqual([[net('AMP_CLIP_OTW', 'hw/sub/power.kicad_sch', 'clip-power')]])
-    expect([one.view.props.onOpen.mock.calls, one.view.probe, menuOf(one.view)]).toEqual([[], null, undefined])
-  })
-
   it('an item of a sheet from the board opens the schematic and asks it for the first occurrence there', () => {
     const one = withNets(DOCS[1])
     offered(one, { itemType: 'track', net: '+12V', netCode: 4 })
@@ -1208,10 +1161,41 @@ describe('a net across the schematic\'s sheets', () => {
     expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('+12V', 'hw/sub/power.kicad_sch', 'pwr-power'))
   })
 
+  it('opens the viewer\'s own list for a net of the schematic, by either button, and our menu for a part', () => {
+    const { view, elements } = withNets()
+    const sch = elements[SCH]
+    // a left click on a power symbol: the press, then the viewer's own click
+    sch.under = { sourceContext: SCH, itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' }
+    rightClick(sch, 120, 80, 0, 0)
+    click(sch, sch.under)
+    const [left] = sch.showNetList.mock.lastCall
+    expect({ ...left, actions: left.actions.map((action) => action.label) }).toEqual({
+      items: [{ sheet: 'hw/board.kicad_sch', name: '+12V', uuid: 'pwr-board' },
+        { sheet: 'hw/sub/power.kicad_sch', name: '+12V', uuid: 'pwr-power' },
+        { sheet: 'hw/sub/power.kicad_sch', name: '+12V', uuid: 'pwr-power-2' }],
+      activeUuid: 'pwr-power', actions: ['Show net +12V in hw/board.kicad_pcb'], at: { x: 120, y: 80 },
+    })
+    // a right click on a part opens our menu, and no list
+    sch.under = { sourceContext: SCH, itemType: 'symbol', reference: 'C523', uuid: 'c523' }
+    rightClick(sch, 300, 250)
+    expect([texts(menuOf(view)), sch.showNetList.mock.calls.length])
+      .toEqual([['C523', 'Show C523 in hw/board.kicad_pcb', 'Show C523 in hw/board.glb'], 1])
+    // a right click on a label: the list at the pointer, our menu shut
+    sch.under = { sourceContext: SCH, itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-dsp' }
+    rightClick(sch, 300, 250)
+    const [right] = sch.showNetList.mock.lastCall
+    expect([right.items.map((item) => item.uuid), right.activeUuid, right.at, menuOf(view)])
+      .toEqual([['pin-fault-power', 'pin-fault-dsp', 'fault-power', 'fault-dsp'], 'fault-dsp', { x: 300, y: 250 }, undefined])
+    // its board row opens the board, which is asked for the net by the board's name of it
+    right.actions[0].run()
+    expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
+    expect(elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: '/dsp/AMP_FAULT' })
+  })
+
   describe('asks the board for a label\'s net by the board\'s name of it', () => {
     afterEach(() => vi.unstubAllGlobals())
 
-    it('a local label\'s with its sheet\'s path in front, a global label\'s bare; the line shows the label\'s own', async () => {
+    it('a local label\'s with its sheet\'s path in front, a global label\'s bare; the row shows the label\'s own', async () => {
       // The root's sheet symbol `amp` points at the design's other file: the
       // path is the sheet's name, not its file's.
       const files = {
@@ -1227,9 +1211,12 @@ describe('a net across the schematic\'s sheets', () => {
       for (const [detail, board] of [[{ itemType: 'label', net: 'OUT_C', uuid: 'out-c' }, '/amp/OUT_C'],
         [{ itemType: 'global-label', net: 'AMP_FAULT', uuid: 'fault' }, 'AMP_FAULT']]) {
         one.view.props.onOpen(DOCS[0].id)
-        expect(offered(one, detail)).toEqual([`net ${detail.net}`, `Show net ${detail.net} in hw/board.kicad_pcb`])
-        itemsOf(one.view)[0].props.onClick()
-        expect(one.elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: board })
+        one.elements[SCH].under = { sourceContext: SCH, ...detail }
+        rightClick(one.elements[SCH], 300, 250)
+        const [{ actions: [row] }] = one.elements[SCH].showNetList.mock.lastCall
+        row.run()
+        expect([row.label, one.elements[PCB].requestCrossProbe.mock.lastCall])
+          .toEqual([`Show net ${detail.net} in hw/board.kicad_pcb`, [{ targetContext: PCB, kind: 'net', value: board }]])
       }
       one.view.componentWillUnmount()
     })
