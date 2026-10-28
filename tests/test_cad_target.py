@@ -1,10 +1,10 @@
-"""`make cad-test` names six tests by node id, and node ids rot.
+"""`make cad-test` names nine tests by node id, and node ids rot.
 
-The target runs those six without the rest of the suite, for the edit-run-edit loop
+The target runs those nine without the rest of the suite, for the edit-run-edit loop
 on the export half; CI runs them too, since its test image (`ci/Dockerfile.test`)
 carries the kernel's libraries. The target fails on a missing name only for
 somebody who runs it, so the list is checked here on every run of the ordinary
-suite. This does NOT run the six (that needs the kernel); it checks that each name
+suite. This does NOT run the nine (that needs the kernel); it checks that each name
 still points at a function.
 """
 
@@ -24,21 +24,23 @@ def _declared_node_ids() -> list[str]:
     text = (ROOT / "Makefile").read_text(encoding="utf-8")
     match = CAD_TESTS_RE.search(text)
     assert match, "the Makefile no longer declares CAD_TESTS; `make cad-test` " \
-                  "is what runs the six kernel tests on their own (issue #27)"
+                  "is what runs the nine kernel tests on their own (issue #27)"
     body = match.group(1).replace("\\\n", " ")
     return body.split()
 
 
-def test_the_target_still_names_six_tests():
-    """Six, and the number is deliberate.
+def test_the_target_still_names_nine_tests():
+    """Nine, and the number is deliberate.
 
-    A seventh added or a sixth removed changes what the kernel-backed loop covers,
-    and neither should happen without somebody reading this line. One of the six
-    checks that the pieces the revision diff is drawn from stand, in world
+    A tenth added or a ninth removed changes what the kernel-backed loop
+    covers, and neither should happen without somebody reading this line. One of
+    them checks that the pieces the revision diff is drawn from stand, in world
     coordinates, on the part they were cut from -- placed with the view leaf's
-    `at`, not its `loc` -- which nothing else in the suite would notice drifting.
+    `at`, not its `loc` -- which nothing else in the suite would notice drifting;
+    three measure STEP solids placed by the same `at` and tell a body the view
+    draws as a shape of its own (`cadbuild.measure`).
     """
-    assert len(_declared_node_ids()) == 6
+    assert len(_declared_node_ids()) == 9
 
 
 def test_every_name_the_target_runs_still_exists():

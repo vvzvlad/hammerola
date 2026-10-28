@@ -132,6 +132,11 @@ keeps no history, and a `dev`-only project is not on the front page.
 with no kernel here an unpushed model is one nobody has looked at. A brief that
 forbids pushing blinds you.
 
+**Looking again costs no build.** `hammerola snapshot <revision>` draws a view
+of a published build from any angle with parts hidden, `hammerola measure
+<revision> <a> <b>` gives the smallest gap between two of its parts; both take
+`dev` and `latest` (`references/model-py.md`).
+
 `git push hammerola-<pid> main` makes a version exist: the hub builds the newest
 pushed commit that touched the project's directory, names the revision by that
 commit, keeps its log, moves `latest`, and the project gets its card. A commit

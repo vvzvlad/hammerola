@@ -127,26 +127,29 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	$(PYTEST)
 	@$(RUN_JS_TESTS)
 
-# --- The six tests that need the CAD kernel -----------------------------------
+# --- The nine tests that need the CAD kernel ----------------------------------
 # CI runs them too (ci/Dockerfile.test carries the kernel's libraries); this target is
 # for the edit-run loop on the export half. It fails when a test skips, because on a
-# machine without the kernel all six would skip and pytest would exit 0.
+# machine without the kernel all nine would skip and pytest would exit 0.
 CAD_TESTS := \
 	tests/cadbuild/test_views.py::test_a_real_export_is_a_document_the_hub_would_accept \
 	tests/test_view_fixture.py::test_the_exporter_still_produces_the_committed_structure \
 	tests/buildproc/test_build_child.py::test_a_simple_model_builds_and_reports_what_it_wrote \
 	tests/buildproc/test_build_child.py::test_the_occt_pool_is_capped_before_the_model_runs \
 	tests/cadbuild/test_shapediff.py::test_two_real_step_files_measure_the_change_between_them \
-	tests/cadbuild/test_comparescene.py::test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed
+	tests/cadbuild/test_comparescene.py::test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed \
+	tests/cadbuild/test_measure.py::test_two_printable_boxes_a_known_distance_apart_measure_exactly_that \
+	tests/cadbuild/test_measure.py::test_a_deformed_reference_is_measured_on_what_the_view_draws \
+	tests/cadbuild/test_measure.py::test_a_shape_its_step_does_not_match_goes_to_the_mesh_unmarked_too
 
 .PHONY: cad-test
-cad-test: install ## Run just the six tests that need the CAD kernel (CI runs them too)
+cad-test: install ## Run just the nine tests that need the CAD kernel (CI runs them too)
 	@out=$$($(PYTEST) -q -rs $(CAD_TESTS) 2>&1); status=$$?; \
 	printf '%s\n' "$$out"; \
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \
 		echo ""; \
 		echo "make cad-test: FAILED — a test skipped, so nothing was checked."; \
-		echo "               These six need the CAD kernel, and it does not import"; \
+		echo "               These nine need the CAD kernel, and it does not import"; \
 		echo "               on this machine. Install it here, or run this where it"; \
 		echo "               does — CI's test container has it (issue #27)."; \
 		exit 1; \

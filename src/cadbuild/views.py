@@ -766,7 +766,7 @@ def export_views(prepared, out_dir):
     So the grouping is applied afterwards, on the document, where all three
     survive.
 
-    Three things are written into the document that the tessellator does not
+    Four things are written into the document that the tessellator does not
     put there:
 
       * `key` on every leaf, the catalogue key the part came from, so identity
@@ -778,6 +778,9 @@ def export_views(prepared, out_dir):
         `<key>.step` has the solid's own location baked into its geometry
         (`printables.export_printables`) -- so geometry measured from the STEP
         is placed by `at` alone (`comparescene`);
+      * `deformed: true` on a leaf of a reference that brought a shape of its
+        own, so a measurement does not place the catalogue's `<key>.step`
+        there (`cadbuild.measure`);
       * the groups, as `{"name", "id", "loc", "parts"}` nodes, which the viewer
         (`isShapeTree`) and the hub (`render.check_view_file`) both accept.
 
@@ -842,6 +845,9 @@ def export_views(prepared, out_dir):
 def shaped_document(doc, view):
     """The tessellated document with `key` and `at` stamped on, groups put back.
 
+    A leaf of a reference that brought a shape of its own also gets
+    `"deformed": true`.
+
     Separated from the export so the whole rewrite can be tested without a CAD
     kernel: what goes in is a JSON document and what comes out is one.
 
@@ -876,6 +882,11 @@ def shaped_document(doc, view):
             repeats[node["key"]] = repeats.get(node["key"], 0) + 1
             leaf = _mesh_leaf(node, repeats[node["key"]])
         leaf["at"] = _motion_loc(node["at"])
+        # A reference that brought a shape of its own: what stands here is
+        # not the catalogue's body, so its STEP is not either, and
+        # `cadbuild.measure` measures it on this leaf's mesh.
+        if node["deformed"] is not None:
+            leaf["deformed"] = True
         leaves.append(leaf)
 
     def rebuild(entries, parent_id):

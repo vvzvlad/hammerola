@@ -11,6 +11,7 @@ group, and with its output captured and capped.
     wrapper.py    `python -m` entry that applies them to itself and execs the child
     child.py      `python -m` entry that arms faulthandler, caps OCCT, and builds
     comparechild.py  `python -m` entry that compares two revisions and prints it
+    inspectchild.py  `python -m` entry that pictures or measures one revision
     runner.py     the parent: spawn, deadline, kill, capture, CHECK the result
     hardening.py  the one call that runs in the HUB: hide its /proc entry
 
@@ -57,6 +58,9 @@ from src.buildproc.hardening import HardeningFailed, hide_process_from_same_uid
 from src.buildproc.limits import DEFAULT_LIMITS, Limits, LimitsUnavailable
 from src.buildproc.runner import (
     BuildOutcome,
+    INSPECT_KINDS,
+    INSPECT_MEASURE,
+    INSPECT_SNAPSHOT,
     ProcessResult,
     STATUS_BAD_RESULT,
     STATUS_CPU_EXHAUSTED,
@@ -71,6 +75,7 @@ from src.buildproc.runner import (
     child_environment,
     run_build,
     run_compare,
+    run_inspect,
     run_isolated,
 )
 
@@ -78,6 +83,9 @@ __all__ = [
     "BuildOutcome",
     "DEFAULT_LIMITS",
     "HardeningFailed",
+    "INSPECT_KINDS",
+    "INSPECT_MEASURE",
+    "INSPECT_SNAPSHOT",
     "Limits",
     "LimitsUnavailable",
     "ProcessResult",
@@ -95,5 +103,6 @@ __all__ = [
     "hide_process_from_same_uid",
     "run_build",
     "run_compare",
+    "run_inspect",
     "run_isolated",
 ]

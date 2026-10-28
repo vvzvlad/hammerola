@@ -518,14 +518,43 @@ def failing_comparer(status=STATUS_CRASHED, log="compareproc: the kernel died\n"
     return run
 
 
+# The bytes `naming_inspector` writes for a snapshot: a PNG signature, then what
+# it was asked, so a test can read the request back off the picture.
+FAKE_PNG = b"\x89PNG\r\n\x1a\n"
+
+
+def naming_inspector(build_dir, *, pid, kind, view, angle=None, hide=(),
+                     parts=(), out=None, **_kw):
+    """Stand in for `src.buildproc.run_inspect`: say what it was asked.
+
+    The real one starts a child with the rasteriser or the kernel in it; what
+    the hub owns of an inspection -- the door, the queue, the job, the log, the
+    picture in the job's directory -- is the same whoever draws. So the log
+    names the build, the view and the request, and a snapshot's picture is a
+    PNG signature followed by the same words.
+    """
+    asked = (f"{Path(build_dir).name} view {view} angle {angle} "
+             f"hide {','.join(hide)} parts {','.join(parts)}")
+    files = ()
+    if out is not None:
+        Path(out).write_bytes(FAKE_PNG + asked.encode("utf-8"))
+        files = (Path(out).name,)
+    return BuildOutcome(
+        status=STATUS_OK, pid=pid, files=files, log=f"{kind}: {asked}\n",
+        log_truncated=False, exit_code=0, signal=None, duration_seconds=0.01)
+
+
 def start_hub(data_dir, build_runner=None, compare_runner=None,
-              build_workers=None, build_queue_size=None, **kw):
+              inspect_runner=None, build_workers=None, build_queue_size=None,
+              **kw):
     """Bind, serve on a daemon thread, and hand back a Hub. Caller stops it."""
     server = create_server(
         settings_for(data_dir, **kw),
         build_runner=copying_builder if build_runner is None else build_runner,
         compare_runner=(reading_comparer if compare_runner is None
                         else compare_runner),
+        inspect_runner=(naming_inspector if inspect_runner is None
+                        else inspect_runner),
         build_workers=build_workers, build_queue_size=build_queue_size)
     # `shutdown()` blocks until serve_forever notices, which it only does once per
     # poll interval — the 0.5 s default would add half a second to every test that

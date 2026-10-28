@@ -13,6 +13,9 @@ reads its verdict.
     CompareTask the other kind of work on the same pool: two PUBLISHED revisions
                 to measure against each other, owning nothing and publishing
                 nothing — its product is the log
+    InspectTask a third: one published build pictured from an angle or two of
+                its parts measured against each other; its product is the log,
+                and a snapshot's picture in the job's own directory
     BuildQueue  the pool: a bounded queue and N worker threads that run the
                 build and then publish its output
 
@@ -66,9 +69,11 @@ from src.buildproc import (
     STATUS_LIMITS_ERROR,
     STATUS_OUTPUT_LIMIT,
     STATUS_TIMEOUT,
+    INSPECT_SNAPSHOT,
     Limits,
     run_build,
     run_compare,
+    run_inspect,
 )
 from src import docsbuild
 from src.store import (BUILD_LOG_FILE, DEV_LINK, MAIN_BRANCH, PublishError,
@@ -100,9 +105,11 @@ KNOWN_STATES = frozenset((STATE_QUEUED, STATE_BUILDING, STATE_DONE, STATE_FAILED
 JOB_ID_BYTES = 16
 SAFE_JOB_ID = re.compile(r"\A[A-Za-z0-9_-]{22}\Z")
 
-# The two files one job owns on the volume.
+# The files one job owns on the volume: every job has the first two, a
+# snapshot the third, served at `/api/v1/jobs/<id>/snapshot.png`.
 RECORD_NAME = "job.json"
 LOG_NAME = "log.txt"
+SNAPSHOT_NAME = "snapshot.png"
 
 # The registry owns no file of its own: jobs are looked up by id only. Anything
 # that is a property of the set of records must not be stored per record; it
@@ -274,6 +281,30 @@ class CompareTask:
     view: str | None = None
 
 
+@dataclass(frozen=True)
+class InspectTask:
+    """One published build pictured or measured, handed to a worker.
+
+    Owns nothing, like a `CompareTask`: `build_dir` is the build in the store,
+    a revision's directory (what `latest` pointed at when the request came) or
+    a variant's `dev` slot. `revision` is what the log's first line calls it.
+
+    `kind` is `INSPECT_SNAPSHOT`, with `angle` and `hide`, or
+    `INSPECT_MEASURE`, with `parts`; the request checked `view`, `hide` and
+    `parts` against the build's meta.json (`app.inspection`).
+    """
+
+    job_id: str
+    pid: str
+    revision: str
+    build_dir: Path
+    kind: str
+    view: str
+    angle: str | None = None
+    hide: tuple = ()
+    parts: tuple = ()
+
+
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
                     baseline: Path | None, distance_cache: Path):
     """The call the worker makes into `run_build`, written down ONCE.
@@ -313,6 +344,20 @@ def compare_arguments(old_dir: Path, new_dir: Path, pid: str, *,
     Both are None for the measurement-only comparison, which writes nothing.
     """
     return (old_dir, new_dir), {"pid": pid, "out_dir": out_dir, "view": view}
+
+
+def inspect_arguments(task: InspectTask, out: Path | None):
+    """The call the worker makes into `run_inspect`, written down ONCE.
+
+    The same seam as `compare_arguments`, bound by a test against
+    `src.buildproc.run_inspect`'s signature. `out` is where a snapshot's PNG
+    goes, the job's own directory (`JobStore.snapshot_path`), and None for a
+    measurement, which writes nothing.
+    """
+    return (task.build_dir,), {"pid": task.pid, "kind": task.kind,
+                               "view": task.view, "angle": task.angle,
+                               "hide": task.hide, "parts": task.parts,
+                               "out": out}
 
 
 class JobStore:
@@ -465,6 +510,16 @@ class JobStore:
             return ""
         return raw.decode("utf-8", errors="replace")
 
+    def snapshot_path(self, job_id) -> Path | None:
+        """Where a snapshot job's PNG is, or None for an id this hub never
+        issued. The file is there only once such a job has written it."""
+        if not isinstance(job_id, str) or not SAFE_JOB_ID.match(job_id):
+            return None
+        with self._lock:
+            if job_id not in self._records:
+                return None
+        return self.root / job_id / SNAPSHOT_NAME
+
     # -- writing -----------------------------------------------------------
     def create(self, pid: str, commit: str) -> dict:
         """Register a queued job and return its record."""
@@ -608,7 +663,7 @@ class BuildQueue:
     # queue of one makes a full queue observable). Made configurable, they
     # belong in `Settings`.
     def __init__(self, store, jobs: JobStore, *, build_runner=None,
-                 compare_runner=None,
+                 compare_runner=None, inspect_runner=None,
                  workers=MAX_CONCURRENT_BUILDS, queue_size=MAX_QUEUED_JOBS):
         self._store = store
         self._jobs = jobs
@@ -621,6 +676,8 @@ class BuildQueue:
         # substitutes both is what shows a comparison did not go to the builder.
         self._run_compare = (run_compare if compare_runner is None
                              else compare_runner)
+        self._run_inspect = (run_inspect if inspect_runner is None
+                             else inspect_runner)
         self._queue: queue.Queue = queue.Queue(maxsize=queue_size)
         self._worker_count = max(1, int(workers))
         self._workers: list[threading.Thread] = []
@@ -640,7 +697,7 @@ class BuildQueue:
             thread.start()
             self._workers.append(thread)
 
-    def submit(self, task: BuildTask | CompareTask) -> str:
+    def submit(self, task: BuildTask | CompareTask | InspectTask) -> str:
         """Hand a push to the pool. One of the three SUBMIT_ constants.
 
         Checked on both sides of the insertion: a request thread can run through
@@ -772,9 +829,10 @@ class BuildQueue:
             with self._dropped_lock:
                 self._dropped.add(task.job_id)
             try:
-                # A comparison owns no tree and no body: both revisions are in
-                # the store and stay there. Only the job has to be answered.
-                if not isinstance(task, CompareTask):
+                # A comparison or an inspection owns no tree and no body: what
+                # it reads is in the store and stays there. Only the job has
+                # to be answered.
+                if isinstance(task, BuildTask):
                     shutil.rmtree(task.sources, ignore_errors=True)
                 self._jobs.finish(task.job_id, state=STATE_FAILED,
                                   code=RESTART_CODE, error=STOPPED_ERROR)
@@ -796,6 +854,8 @@ class BuildQueue:
                 # other reads two published ones and owns nothing.
                 if isinstance(task, CompareTask):
                     self._compare_and_record(task)
+                elif isinstance(task, InspectTask):
+                    self._inspect_and_record(task)
                 else:
                     self._build_and_publish(task)
             except Exception:
@@ -1035,6 +1095,59 @@ class BuildQueue:
             # somebody polls for ever.
             logger.exception(
                 f"job {task.job_id}: could not record how the comparison ended")
+
+    def _inspect_and_record(self, task: InspectTask) -> None:
+        """Picture or measure one published build and record what came back.
+
+        `_compare_and_record` with one artefact and no cache: a snapshot's
+        child writes its PNG straight into the job's own directory, where
+        `/api/v1/jobs/<id>/snapshot.png` serves it and nothing else reads it.
+        The log is the answer either way, and its first line is written here,
+        so it names the build even when the child said nothing.
+
+        422 for the child's refusal (a question this build cannot answer, said
+        in the log), 500 for every other bad ending, as a comparison's.
+        """
+        outcome = None
+        verdict = None
+        try:
+            self._jobs.start(task.job_id)
+            out = (self._jobs.snapshot_path(task.job_id)
+                   if task.kind == INSPECT_SNAPSHOT else None)
+            args, keywords = inspect_arguments(task, out)
+            outcome = self._run_inspect(*args, **keywords)
+            if outcome.ok:
+                verdict = {"state": STATE_DONE, "code": 200}
+            else:
+                logger.warning(
+                    f"{task.kind} {task.pid} {task.revision} ({task.job_id}) "
+                    f"{outcome.status}")
+                verdict = {
+                    "state": STATE_FAILED,
+                    "code": 422 if outcome.status == STATUS_FAILED else 500,
+                    "error": f"the {task.kind} did not finish "
+                             f"({outcome.status})"}
+        except Exception:
+            logger.exception(f"{task.kind} {task.pid} {task.revision} failed")
+            verdict = {"state": STATE_FAILED, "code": 500,
+                       "error": "internal error"}
+
+        log = f"{task.kind} of {task.pid} {task.revision}\n"
+        if outcome is not None:
+            log += outcome.log
+        try:
+            self._jobs.finish(
+                task.job_id,
+                status=None if outcome is None else outcome.status,
+                log=log,
+                log_truncated=False if outcome is None else outcome.log_truncated,
+                duration_seconds=(None if outcome is None
+                                  else outcome.duration_seconds),
+                **verdict)
+        except Exception:
+            logger.exception(
+                f"job {task.job_id}: could not record how the {task.kind} "
+                f"ended")
 
 
 def _capped_log(log: str) -> bytes:

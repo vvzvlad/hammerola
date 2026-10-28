@@ -509,3 +509,53 @@ def test_where_a_chunk_boundary_falls_cannot_move_a_pixel(monkeypatch):
     band = np.array([[[0.0, y, 1.0], [40.0, y, 1.0], [20.0, y + 10.0, 1.0]]
                      for y in range(0, 100, 10)])
     assert len(list(preview_png._fragments(band, width, height))) > 1
+
+
+# -- `hammerola snapshot` ------------------------------------------------------
+def test_a_snapshot_with_a_part_hidden_is_not_the_snapshot_without_it(tmp_path):
+    """`hide` takes the part out of the picture, and only that part.
+
+    Asked of the fixture's post: drawn in the whole view, gone from the one
+    that hides it, and the plate and the cap still there, so what vanished is
+    the part and not the picture. Hiding every part is a refusal in words.
+    """
+    whole, hidden = tmp_path / "whole.png", tmp_path / "hidden.png"
+    preview_png.render_scene(FIXTURE, whole, angle="iso", resolution=120)
+    preview_png.render_scene(FIXTURE, hidden, angle="iso", hide=["post"],
+                             resolution=120)
+
+    with Image.open(whole) as one, Image.open(hidden) as other:
+        whole_rgb, hidden_rgb = one.convert("RGB"), other.convert("RGB")
+    assert whole_rgb.tobytes() != hidden_rgb.tobytes()
+    # The title's black lettering is near enough to every hue for `_shows`,
+    # so it is painted over first; the darkest lit post pixel is brighter.
+    whole_rgb, hidden_rgb = (_without_lettering(image)
+                             for image in (whole_rgb, hidden_rgb))
+    assert _shows(whole_rgb, POST) and not _shows(hidden_rgb, POST)
+    assert _shows(hidden_rgb, PLATE) and _shows(hidden_rgb, CAP)
+
+    keys = ["plate", "post", "cap", "reference_spacer"]
+    with pytest.raises(ValueError, match="nothing to draw"):
+        preview_png.render_scene(FIXTURE, tmp_path / "none.png", hide=keys)
+
+
+def _without_lettering(image):
+    pixels = np.asarray(image).copy()
+    pixels[pixels.max(axis=2) < 40] = 255
+    return Image.fromarray(pixels)
+
+
+def test_every_angle_the_client_offers_is_one_tile_and_multi_is_the_sheet():
+    """The client checks `--angle` against a copy of these names before it
+    sends anything (`hammerola/revinspect.py`); the two lists are one."""
+    from hammerola import revinspect
+
+    assert revinspect.ANGLE_NAMES == preview_png.ANGLE_NAMES
+    assert revinspect.SHEET_ANGLE == preview_png.SHEET_ANGLE
+    assert [preview_png.camera_angles(name)[0]
+            for name in preview_png.ANGLE_NAMES] == preview_png.MULTI_VIEWS
+    assert preview_png.camera_angles("multi") == preview_png.MULTI_VIEWS
+    assert preview_png.camera_angles("-30,45")[0][:2] == (-30.0, 45.0)
+    for wrong in ("sideways", "30", "nan,0"):
+        with pytest.raises(ValueError, match="ELEV,AZIM"):
+            preview_png.camera_angles(wrong)

@@ -7,6 +7,8 @@
     status                    latest, dev, the revisions, and the variants
     artifacts <revision>      fetch the STL/STEP/3MF, which a link can open
     diff <rev> <rev>          what moved: the geometry, and the source
+    snapshot <revision>       a PNG of one view, from any angle, parts hidden
+    measure <rev> <a> <b>     how near two parts of one view come, in mm
     log [dev|<revision>]      read a build log again
     comments                  the project's comment queue
     comments resolve <id>     close one, with an optional note
@@ -22,7 +24,8 @@
 This module parses and dispatches; every verb lives in its own module:
 `setup.py` (login, create), `repo.py` (connect, build), `status.py`, `queue.py`
 (comments), `proposal.py`, `sources.py` (log), `artifacts.py`, `revdiff.py`
-(diff), `admin.py` (rename, rm), `skill.py`, `update.py`. They all RAISE on
+(diff), `revinspect.py` (snapshot, measure), `admin.py` (rename, rm),
+`skill.py`, `update.py`. They all RAISE on
 refusal, so `main` below is the one place that decides what a failure looks
 like.
 
@@ -43,15 +46,16 @@ into the dev slot of the branch checked out the same way, and its exit code is
 the draft it fast-forwards that branch to the hub's, which moves when a name
 is changed on the page (the hub commits it into project.json), and stops,
 naming the `git pull`, when the two have diverged.
-`status`, `log`, `artifacts` and `diff` read `latest` and `dev` of that
-branch's variant too.
+`status`, `log`, `artifacts`, `diff`, `snapshot` and `measure` read `latest`
+and `dev` of that branch's variant too.
 """
 
 import argparse
 import sys
 
 from hammerola import (admin, artifacts, config, project, proposal, queue,
-                       repo, revdiff, setup, skill, sources, status, update)
+                       repo, revdiff, revinspect, setup, skill, sources,
+                       status, update)
 from hammerola.errors import ClientError
 from hammerola.hub import HubError
 
@@ -174,6 +178,46 @@ def build_parser() -> argparse.ArgumentParser:
         "--material", action="store_true",
         help="also ask the hub to measure how much material each part gained "
              "and lost, which runs the CAD kernel and takes as long as a build")
+
+    picture = commands.add_parser(
+        "snapshot",
+        help="a PNG of one view of a published build, drawn by the hub from "
+             "what the build stores, without building it again")
+    picture.add_argument(
+        "revision", help="a revision id, `latest`, or `dev` for the local slot")
+    picture.add_argument(
+        "--view", default=None, metavar="VIEW",
+        help="the view to draw (default: `assembled`, else the build's first)")
+    picture.add_argument(
+        "--angle", type=revinspect.camera, default=revinspect.ANGLE_NAMES[0],
+        metavar="ANGLE",
+        help=f"one of {', '.join(revinspect.ANGLE_NAMES)}; "
+             f"`{revinspect.SHEET_ANGLE}` for all six on one sheet; or "
+             f"ELEV,AZIM in degrees, a negative ELEV written --angle=-30,45 "
+             f"(default: {revinspect.ANGLE_NAMES[0]})")
+    picture.add_argument(
+        "--hide", action="append", default=None, metavar="NAME",
+        help="leave this part out of the picture; repeat for more. The name "
+             "is the part's, as the view lists it")
+    picture.add_argument(
+        "-o", "--output", metavar="FILE", default=None,
+        help=f"write the PNG here instead of into "
+             f"`.hammerola/{revinspect.SNAPSHOT_DIR}`")
+
+    gap = commands.add_parser(
+        "measure",
+        help="the smallest distance between two parts of one view of a "
+             "published build, in mm, with the two closest points")
+    gap.add_argument(
+        "revision", help="a revision id, `latest`, or `dev` for the local slot")
+    gap.add_argument("part_a", metavar="PART_A",
+                     help="a part's name, as the view lists it")
+    gap.add_argument("part_b", metavar="PART_B",
+                     help="the other part's name")
+    gap.add_argument(
+        "--view", default=None, metavar="VIEW",
+        help="the view the two parts are placed in (default: `assembled`, "
+             "else the build's first)")
 
     logs = commands.add_parser(
         "log", help="print a build log again")
@@ -323,6 +367,8 @@ HANDLERS = {
     "status": status.run,
     "artifacts": artifacts.run,
     "diff": revdiff.run,
+    "snapshot": revinspect.run_snapshot,
+    "measure": revinspect.run_measure,
     "log": sources.run_log,
     "comments": queue.run,
     "proposal": proposal.run,

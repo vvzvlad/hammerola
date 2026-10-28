@@ -96,6 +96,12 @@ STATUS_BAD_RESULT = "bad_result"        # it claimed something that is not true
 # to `comparechild.ARTEFACTS` and `store.COMPARE_FILES`.
 _COMPARE_ARTEFACTS = ("scene.json", "report.json")
 
+# The two kinds of work `run_inspect` does, as `inspectchild` spells them; the
+# same reason keeps them a copy, which `tests/test_inspect.py` holds equal.
+INSPECT_SNAPSHOT = "snapshot"
+INSPECT_MEASURE = "measure"
+INSPECT_KINDS = (INSPECT_SNAPSHOT, INSPECT_MEASURE)
+
 # Appended to the log of a build that left a straggler behind, so the leaked
 # thread and descriptor are visible.
 STRAGGLER_NOTE = (
@@ -281,6 +287,55 @@ def run_compare(old_dir, new_dir, *, pid, limits=DEFAULT_LIMITS, out_dir=None,
                                   threads=limits.occt_threads),
             guard=None)
         return _compare_outcome(process, pid=pid, out_dir=out_dir)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def run_inspect(build_dir, *, pid, kind, view, angle=None, hide=(),
+                parts=(), out=None, limits=DEFAULT_LIMITS):
+    """Picture or measure one published build in a process of its own.
+
+    `kind` is INSPECT_SNAPSHOT, with `angle`, `hide` (catalogue keys) and `out`,
+    the PNG to write; or INSPECT_MEASURE, with `parts`, the two keys. The child
+    is `inspectchild`, this repository's own module reading a directory this
+    hub's build wrote, so, as for `run_compare`, there is no output guard and no
+    claim to check beyond the picture having arrived. The log is the answer.
+    """
+    if kind not in INSPECT_KINDS:
+        # The caller is `jobs.inspect_arguments`: a programming error.
+        raise ValueError(f"run_inspect does {', '.join(INSPECT_KINDS)}, "
+                         f"not {kind!r}")
+    build_dir = Path(build_dir).resolve()
+    out = None if out is None else Path(out).resolve()
+
+    # HOME and TMPDIR point here, as on the build path: matplotlib writes a
+    # font cache. 0700, removed afterwards.
+    scratch = Path(tempfile.mkdtemp(prefix="hammerola-inspect-"))
+    try:
+        home = scratch / "home"
+        tmp = scratch / "tmp"
+        for directory in (home, tmp):
+            directory.mkdir(mode=0o700)
+
+        target = [
+            sys.executable, "-s", "-m", "src.buildproc.inspectchild",
+            "--build-dir", str(build_dir),
+            "--view", str(view),
+            "--kind", kind,
+            "--occt-threads", str(limits.occt_threads),
+        ]
+        if kind == INSPECT_SNAPSHOT:
+            target += ["--angle", str(angle), "--hide", json.dumps(list(hide)),
+                       "--out", str(out)]
+        else:
+            part_a, part_b = parts
+            target += ["--part-a", str(part_a), "--part-b", str(part_b)]
+        process = run_isolated(
+            target, limits=limits,
+            env=child_environment(home=home, tmp=tmp,
+                                  threads=limits.occt_threads),
+            guard=None)
+        return _inspect_outcome(process, pid=pid, out=out)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -530,6 +585,51 @@ def _compare_outcome(process, *, pid, out_dir=None):
                     f"{', '.join(missing)}, so there is nothing to publish\n")
         else:
             files = _COMPARE_ARTEFACTS
+
+    return BuildOutcome(
+        status=status,
+        pid=pid,
+        files=files,
+        log=log,
+        log_truncated=process.log_truncated,
+        exit_code=process.exit_code,
+        signal=process.signal,
+        duration_seconds=process.duration_seconds,
+    )
+
+
+def _inspect_outcome(process, *, pid, out=None):
+    """Read a `ProcessResult` as a snapshot or a measurement.
+
+    `_compare_outcome`'s reading, plus EXIT_BUILD_FAILED: the child's refusal
+    of a question this revision cannot answer, said in its log. A snapshot
+    that exits 0 without its PNG is a crash, as a comparison without its
+    artefact is.
+    """
+    log = process.log
+    files = ()
+    status = STATUS_CRASHED
+    if process.timed_out:
+        status = STATUS_TIMEOUT
+    elif process.signal is not None:
+        xcpu = getattr(signal, "SIGXCPU", None)
+        status = (STATUS_CPU_EXHAUSTED
+                  if xcpu is not None and process.signal == int(xcpu)
+                  else STATUS_KILLED)
+    elif process.exit_code == EXIT_OK:
+        status = STATUS_OK
+    elif process.exit_code == EXIT_BUILD_FAILED:
+        status = STATUS_FAILED
+    elif process.exit_code in WRAPPER_EXIT_CODES or process.exit_code == EXIT_UNCAPPED:
+        status = STATUS_LIMITS_ERROR
+
+    if status == STATUS_OK and out is not None:
+        if out.is_file():
+            files = (out.name,)
+        else:
+            status = STATUS_CRASHED
+            log += (f"\nbuildproc: the snapshot exited 0 without writing "
+                    f"{out.name}\n")
 
     return BuildOutcome(
         status=status,

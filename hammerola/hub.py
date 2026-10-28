@@ -20,10 +20,20 @@ token (`UNAUTHORIZED`).
 
     POST /api/v1/compare/<pid>/<a>/<b>    Token -> 202 {"job", ...}: the hub
                                           measures two revisions in a job
+    POST /api/v1/snapshot/<pid>/<build>   Token, `{"view", "angle", "hide"}`
+                                          -> 202 {"job", "view", ...}: a
+                                          picture of one build, in a job
+    POST /api/v1/measure/<pid>/<build>    Token, `{"view", "parts"}` -> 202
+                                          {"job", "view", ...}: how near two
+                                          of its parts come, the job's log.
+                                          Both take `<pid>/v/<variant>/<pointer>`
+                                          for another variant's pointer
     GET  /api/v1/jobs/<id>                Token -> the record, `state` in
                                           queued|building|done|failed
     GET  /api/v1/jobs/<id>/log            Token -> text/plain, what the job
                                           printed
+    GET  /api/v1/jobs/<id>/snapshot.png   Token -> the picture a snapshot
+                                          job drew
 
 The routes the read-only commands use (`status` and `comments` read what the
 browser fetches):
@@ -197,6 +207,10 @@ IMPOSSIBLE_JOB_ID = "0" * 22
 # `Authorization`, which a password proxy in front of the hub wants for itself.
 TOKEN_HEADER = "X-Hammerola-Token"
 
+# The file a snapshot job leaves under `/api/v1/jobs/<id>/`
+# (`src.jobs.SNAPSHOT_NAME`); `tests/client/test_revinspect.py` fetches one.
+SNAPSHOT_FILE = "snapshot.png"
+
 
 class HubError(Exception):
     """The hub could not be reached, or answered something unusable.
@@ -368,6 +382,40 @@ class Hub:
                 f"the hub answered HTTP {status} when asked to compare {old} "
                 f"with {new}: {quoted(raw)}", status)
         return self._payload(status, raw)
+
+    def inspect(self, kind: str, pid: str, name: str, variant: str,
+                request: dict) -> dict:
+        """Ask the hub to picture (`snapshot`) or measure (`measure`) one
+        build. -> payload, `{"job", "view", ...}`.
+
+        `name` is a revision or a pointer of `variant`, addressed as the build
+        is (`build_path`). A refusal carries the hub's own sentence, which
+        names what this build does have.
+        """
+        address = build_path(pid, name, variant)[len("/project"):]
+        status, raw = self._call(
+            f"/api/v1/{urllib.parse.quote(kind)}{address.rstrip('/')}",
+            method="POST", body=json.dumps(request).encode("utf-8"),
+            content_type="application/json")
+        _refuse_unauthorized(status)
+        if status != 202:
+            try:
+                reason = json.loads(raw.decode("utf-8"))["error"]
+            except (ValueError, UnicodeDecodeError, TypeError, KeyError):
+                reason = raw
+            raise HubError(f"the hub refused the {kind} of {name} (HTTP "
+                           f"{status}): {quoted(reason)}", status)
+        return self._payload(status, raw)
+
+    def job_snapshot(self, job_id: str) -> bytes:
+        """The picture a finished snapshot job drew."""
+        status, raw = self._call(f"/api/v1/jobs/{urllib.parse.quote(job_id)}"
+                                 f"/{SNAPSHOT_FILE}")
+        _refuse_unauthorized(status)
+        if status != 200:
+            raise HubError(f"the hub answered HTTP {status} for the picture "
+                           f"of job {job_id}", status)
+        return raw
 
     # Both name a refusal explicitly: `hammerola log dev` calls them after a
     # public read, so a stale token first shows up here. Both set `status` on every
