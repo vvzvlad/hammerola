@@ -39,6 +39,7 @@ import { applyGhost, applyHidden, applySelected, partTop, reconcileMoves,
   restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
+import { usdzOf } from "../ar.js";
 
 /** The state the viewport starts in — the mock-up's shape, plus the fields a
  *  real build needs (where the geometry comes from). */
@@ -1021,6 +1022,14 @@ export class HmrViewport extends HTMLElement {
   /** This frame as a PNG blob, for the snapshot a comment carries. */
   snapshot(label) {
     return snapshot(this, label);
+  }
+
+  /** The parts on screen as the bytes of a USDZ file for AR Quick Look
+   * (`arScene` in ui/src/ar.js), or null before a model is drawn. */
+  usdz() {
+    const g = internals(this.viewer);
+    if (!g || !g.nestedGroup || !this.three) return Promise.resolve(null);
+    return usdzOf(this.three, g.nestedGroup.groups);
   }
 
   /** True while a gesture is in progress and a build swap would yank the model. */

@@ -21,17 +21,26 @@ the library's own `CADTrackballControls`, out of the bundle above, so three's
 `OrbitControls.js` is not here. Unlike the two above they are NOT
 byte-for-byte: a bare `from 'three'` needs an import map, which the hub's CSP
 drops, so each file's `from 'three'` is `from './three.module.js'`, and the
-loader's two `../utils/…` imports are `./…`. Nothing else is changed. sha256 of
-npm's file, then of ours:
+loader's two `../utils/…` imports are `./…`. Nothing else is changed.
+
+`USDZExporter.js` and `fflate.module.js` are two more of the same package's
+add-ons (`examples/jsm/exporters/` and `libs/`), for View in AR on the model's
+page (`ui/src/ar.js`): the exporter writes the view on screen as a USDZ file
+and zips it with fflate. The exporter's `from 'three'` is rewritten the same
+way and its `../libs/fflate.module.js` import is `./fflate.module.js`; fflate
+(0.8.2, MIT, its licence in its own header) imports nothing and is npm's file
+byte for byte. sha256 of npm's file, then of ours:
 
 | File | npm | here |
 | --- | --- | --- |
 | `GLTFLoader.js` | `97642d720f16cc9a0c9844934198e4d0c023bea8e89576d0f7545d03b2d103d2` | `d7f4b3a86e622f5ae040ab32349a96714e8d6b360bc706c697f17e5a6d9464d7` |
 | `BufferGeometryUtils.js` | `d700b4c4584b9ff53a04692624d2363019f6d1df2978a207389168c6ae647a65` | `b3f9636affbbd893311f20c8d0d03c7bf3b345eff7fb723180d333a625e85a01` |
 | `SkeletonUtils.js` | `b1632a703206c3d830de9fcbe515696770d04b71a15ee6b50afa6d2c3298c86f` | `eedd768765d6553f8082953ab3882e2c86dacc2eb7d180a312d1d52e86bb35c5` |
+| `USDZExporter.js` | `ba4b5cdd504c9f299181203fc135db5fc95639a1bd92e687186db50cd37cf180` | `c4a740cbfeb3d03f98eeb77977a0834425616bc7092751d1181d764cb1ffdfaa` |
+| `fflate.module.js` | `209a4412eb48ce609edb4391992a792ffcc3983d30ee7e2b0b89a8c470f3cd8a` | `209a4412eb48ce609edb4391992a792ffcc3983d30ee7e2b0b89a8c470f3cd8a` |
 
-To move them: copy the three from the same three version as the two above and
-repeat the two rewrites.
+To move them: copy them from the same three version as the two above and
+repeat the rewrites.
 
 ## Where the source came from
 

@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from ci.smoke import REQUIRED_PATHS
+
 ROOT = Path(__file__).resolve().parent.parent
 ADAPTER = ROOT / "ui" / "src" / "viewport"
 
@@ -175,6 +177,21 @@ def test_the_url_names_a_file_the_hub_really_serves(library_url):
         "exist. Nothing else in the bundle references the library, so this "
         "string IS the dependency."
     )
+
+
+def test_view_in_ar_loads_the_exporter_from_files_the_image_ships():
+    """ui/src/ar.js imports three's USDZ exporter by URL, and the exporter
+    imports its neighbours from beside itself, so a missing or renamed file is
+    a 404 on the reader's tap that no build notices."""
+    source = (ROOT / "ui" / "src" / "ar.js").read_text(encoding="utf-8")
+    url = re.search(r"export const USDZ_EXPORTER_URL = '/_v/([^'/]+)';", source)
+    assert url, "ar.js no longer declares USDZ_EXPORTER_URL"
+    exporter = (ASSETS / url.group(1)).read_text(encoding="utf-8")
+    beside = re.findall(r"from '\./([^'/]+)';", exporter)
+    assert sorted(beside) == ["fflate.module.js", "three.module.js"], beside
+    for name in (url.group(1), *beside):
+        assert (ASSETS / name).is_file(), name
+        assert f"/app/static/_v/{name}" in REQUIRED_PATHS, name
 
 
 # -- the names on the wire ---------------------------------------------------
