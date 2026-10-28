@@ -248,6 +248,7 @@ inside `checks()`.**
 skips pairs whose bounding boxes cannot touch; your filter can only remove pairs
 it was meant to see.
 
-**Profile with section marks or a sampling profiler, not `cProfile`**: the
-kernel spends ~89% of its time in a thread pool a main-thread profiler cannot
-see, so it reports a slow build as fast.
+**`cProfile` names functions, not lines.** It does count the kernel's time:
+while OCC's thread pool computes, the main thread waits inside the OCC call and
+the wait lands on that call. Which line of `model.py` made the call, only
+section marks say.
