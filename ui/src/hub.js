@@ -36,8 +36,12 @@
 //                                       is what `pageFrom` below reads off it
 //     /api/v1/projects/<pid>            DELETE: the project and everything under
 //                                       it -- EDIT_TOKEN. The one address here
-//                                       that UNMAKES something, and the only
-//                                       write either page makes to a project
+//                                       that UNMAKES something
+//     /api/v1/projects/<pid>/names      POST: a new name for the project, a
+//                                       variant, a view or a document,
+//                                       committed to project.json on the
+//                                       variant's branch and published before
+//                                       the answer -- EDIT_TOKEN
 //
 // A comparison's SCENE is not fetched here: the viewport fetches it to render
 // it and hands the tree back on `hmr:model`.
@@ -699,6 +703,28 @@ export async function deleteProject(pid, token) {
   const url = `/api/v1/projects/${encodeURIComponent(pid)}`;
   const response = await guarded(url, { method: 'DELETE', headers: tokenHeader(token) });
   if (!response.ok) throw new Error(await refusal(url, response));
+}
+
+// -- renaming ----------------------------------------------------------------
+//
+// A new name is a commit of the hub's to project.json, never a new id: every
+// address stays (rename.jsx).
+
+/**
+ * `POST /api/v1/projects/<pid>/names`: `change` is `{variant, kind, id,
+ * name}`, `id` a view's or a document's. Resolves with the hub's answer,
+ * `{commit, build_url}`, once the revision is published; rejects with the
+ * hub's own sentence for any refusal (`refusal`), the 403 among them, or
+ * `HUB_UNREACHABLE`.
+ */
+export async function renameItem(pid, change, token) {
+  const url = `/api/v1/projects/${encodeURIComponent(pid)}/names`;
+  const { response, error } = await askHub(url, token, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change),
+  });
+  if (error) throw new Error(HUB_UNREACHABLE);
+  if (!response.ok) throw new Error(await refusal(url, response));
+  return response.json();
 }
 
 /**

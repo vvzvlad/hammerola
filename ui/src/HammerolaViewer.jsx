@@ -130,6 +130,8 @@ import DocumentView, { COMMENTABLE, docExt, FILE_TYPE } from './DocumentView.jsx
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
 import { VariantSwitch } from './variants.jsx';
+// The pencils and the window that rename a name of the project.
+import { Pencil, RenameWindow, saveRename } from './rename.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -1061,6 +1063,9 @@ export default class HammerolaViewer extends React.Component {
       // is its first checkbox; `camera`, the Current view box, is absent until
       // ticked; null while it is closed.
       share: null,
+      // The rename window (rename.jsx): what it renames, `{kind, variant, id,
+      // name}`, while it is open; null while it is closed.
+      rename: null,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison: five fields answering five questions.
       //
@@ -5497,11 +5502,14 @@ export default class HammerolaViewer extends React.Component {
           </a>
           <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>
-            <div style={css(TITLE)}>{v.title}</div>
+            <div style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
+              <div style={css(`${TITLE};min-width:0`)}>{v.title}</div>
+              {v.renameTitle && <Pencil title="Rename project" onClick={v.renameTitle} />}
+            </div>
             {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
           <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
-                         onToggle={v.variantsToggle} narrow={v.narrowMenus} />
+                         onToggle={v.variantsToggle} narrow={v.narrowMenus} onRename={v.variantRename} />
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
@@ -6264,6 +6272,14 @@ export default class HammerolaViewer extends React.Component {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── the rename window, over the whole page like the Share window ── */}
+        {this.state.rename && (
+          <RenameWindow subject={this.state.rename}
+                        onSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.state.token,
+                          (said) => this.toast(said))}
+                        onClose={() => this.setState({ rename: null })} />
         )}
       </div>
     );
