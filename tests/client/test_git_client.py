@@ -171,6 +171,43 @@ def test_build_on_a_branch_fills_its_variant_s_slot_and_not_main_s(
     assert jobs_made(hub) == made
 
 
+def test_build_fast_forwards_to_a_name_changed_on_the_page_and_stops_on_a_fork(
+        hub, tmp_path, capfd):
+    root = repository(tmp_path / "work")
+    assert main(["-C", str(root), "connect"]) == 0
+    assert subprocess.run(["git", "-C", str(root), "push", f"hammerola-{PID}",
+                           "main"], capture_output=True).returncode == 0
+
+    def rename(name):
+        reply = hub.request("POST", f"/api/v1/projects/{PID}/names",
+                            headers={"X-Hammerola-Token": TOKEN}, timeout=30,
+                            json={"variant": "main", "kind": "project",
+                                  "name": name})
+        assert reply.status_code == 200, reply.text
+        return reply.json()["commit"]
+    renamed = rename("Bracket mk2")
+    capfd.readouterr()
+
+    assert main(["-C", str(root), "build"]) == 0
+    assert git(root, "rev-parse", "HEAD").strip() == renamed
+    assert json.loads((root / "project.json").read_text())["title"] == \
+        "Bracket mk2"
+    assert f"fast-forwarded main to the hub's: {renamed[:12]}" in \
+        capfd.readouterr().out
+
+    rename("Bracket mk3")
+    (root / "notes.md").write_text("mine\n")
+    git(root, "add", "notes.md")
+    git(root, "commit", "-q", "-m", "mine")
+    mine = git(root, "rev-parse", "HEAD").strip()
+
+    assert main(["-C", str(root), "build"]) == 1
+    err = capfd.readouterr().err
+    assert "the two have diverged" in err
+    assert f"git pull --no-rebase hammerola-{PID} main" in err
+    assert git(root, "rev-parse", "HEAD").strip() == mine
+
+
 def test_build_refuses_a_detached_head_and_a_branch_no_variant_is_named(
         hub, tmp_path, capfd):
     """Criterion 5, from the client: the hub's words for the name."""

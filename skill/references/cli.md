@@ -27,7 +27,8 @@ the title's slug; with neither, the project publishes under its bare id.
 **Commit `project.json`, and never edit its `id`**: every permanent URL is
 built from it, so a new id is a new project orphaning the old.
 `hammerola rename "..."` changes the title only. `project` has no command —
-edit the line, and only later builds carry it.
+edit the line, and only later builds carry it. A name changed on the hub's
+page arrives as the hub's commit to `project.json` (`SKILL.md`, variants).
 
 Then, once per project, in its git repository:
 
