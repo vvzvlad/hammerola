@@ -1311,9 +1311,10 @@ def index_card(meta: dict, *, dev: bool, first_built: str,
     project was created (`hammerola create` runs locally), and with no retention
     (SPEC 5.3) the oldest build stays the oldest. The page labels it as that.
 
-    A build with no model has no views and no catalogue: its card counts the
-    documents and their bytes. A model's card is the model's whether or not
-    it lists documents, and its `documents` is None.
+    A build with no model has no views and no catalogue: its card counts as
+    views the documents its page lists, and the bytes of every document,
+    hidden ones included; its `printables` is None. A model's card is the
+    model's whether or not it lists documents.
     """
     documents = (meta["documents"] if meta.get("kind") == DOCUMENTS_KIND
                  else None)
@@ -1350,11 +1351,16 @@ def index_card(meta: dict, *, dev: bool, first_built: str,
         # this function writes (tests/test_ui_source.py).
         "status": None,
         # How many parts get printed: catalogue records of kind printable, so
-        # bought screws and scenery are not counted.
-        "printables": sum(1 for record in records.values()
-                          if record["kind"] == KIND_PRINTABLE),
-        "views": len(views),
-        "documents": None if documents is None else len(documents),
+        # bought screws and scenery are not counted. None with no model: there
+        # is no catalogue, and the front page leaves the count out.
+        "printables": (None if documents is not None else
+                       sum(1 for record in records.values()
+                           if record["kind"] == KIND_PRINTABLE)),
+        # The model's views (a model's card is the model's: its documents are
+        # not counted), or with no model the documents that have a row in the
+        # page's menu (one listed `hidden` has none, ui/src/viewlist.jsx).
+        "views": (len(views) if documents is None
+                  else sum(1 for doc in documents if not doc.get("hidden"))),
         "mb": f"{size / 1e6:.1f}",
         "preview": preview,
         "card": card,

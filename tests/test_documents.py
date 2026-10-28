@@ -198,7 +198,7 @@ def test_publication_moves_latest_the_picker_and_the_card(hub):
 
     card, = hub.index().json()
     total = sum(len(data) for data in DOCUMENTS.values())
-    assert (card["documents"], card["views"], card["printables"]) == (len(LISTED), 0, 0)
+    assert (card["views"], card["printables"]) == (len(LISTED), None)
     assert card["mb"] == f"{total / 1e6:.1f}"
     assert card["preview"] is None
 
@@ -235,7 +235,7 @@ def test_a_model_carries_its_documents_beside_its_views(model_hub):
         assert reply.content == DOCUMENTS[name], name
     # The card is the model's: documents do not turn it into a list of them.
     card, = model_hub.index().json()
-    assert card["documents"] is None and card["views"] == 1
+    assert card["printables"] is not None and card["views"] == 1
     # The job's log ends with what the hub added.
     record = model_hub.await_job(
         model_hub.publish_async("docs0001", None, model_tree(LISTED[:1]))
@@ -495,6 +495,9 @@ def test_a_hidden_document_is_published_and_served_and_says_it_is_hidden(
         ("list.md", None), ("docs/report.pdf", True), ("drawing.svg", None)]
     served = model_hub.get(f"/project/docs0001/{revision}/docs/report.pdf")
     assert (served.status_code, served.content) == (200, DOCUMENTS["docs/report.pdf"])
+    # The card counts what the page offers: a hidden document has no row.
+    card, = model_hub.index().json()
+    assert card["views"] == (2 if tree is documents_tree else 1)
 
 
 @pytest.mark.parametrize("entry, named", [
