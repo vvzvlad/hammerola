@@ -1042,16 +1042,26 @@ def _widen_bb(doc, nodes):
     doc["bb"] = widened
 
 
+# Decimals every mesh number is rounded to: 0.1 um on a coordinate in
+# millimetres, 1e-4 on a normal component.
+MESH_DECIMALS = 4
+
+
 def at_viewer_precision(doc):
-    """The same document with every coordinate cut down to what float32 keeps.
+    """The same document with every mesh number rounded to MESH_DECIMALS.
 
     The viewer loads each mesh buffer into a `Float32Array`
-    (`viewer/src/scene/nestedgroup.ts`), so every digit a coordinate carries
-    beyond float32 is thrown away the moment it arrives -- shipped over the
-    wire and then dropped on the floor. Writing the shortest decimal that reads
-    back as the same float32 takes a third off the document (6.65 MB -> 4.27 MB
-    on an 82k-triangle mesh, 2.60 -> 1.49 gzipped) and moves nothing that is
-    drawn.
+    (`viewer/src/scene/nestedgroup.ts`), so the ten-odd digits a float64
+    spelling carries are shipped over the wire and then dropped on the floor.
+    Rounded to four decimals of a millimetre, a coordinate moves by at most
+    0.05 um -- nothing that is drawn -- and is written short: on 1.45 million
+    coordinates within +-200 mm the JSON is 14.27 MB, against 16.24 MB for the
+    shortest decimal that reads back as the same float32. Normals get the same
+    four decimals, an error of at most 5e-5 per component.
+
+    One numpy rounding per buffer, because a build rounds every view and a
+    large model's views hold millions of numbers: 0.14 s for those 1.45
+    million, where spelling each as its shortest float32 took 2.7 s.
 
     Only the float buffers: the integers beside them (`triangles`,
     `face_types`, `edge_types`, `triangles_per_face`, `segments_per_edge`) are
@@ -1063,28 +1073,27 @@ def at_viewer_precision(doc):
     """
     import numpy as np
 
-    def shortest(values):
-        # numpy prints a float32 as the shortest decimal that reads back as
-        # that same float32, which is what makes this lossless against the
-        # buffer the browser ends up with. Whole-array rather than a loop: the
-        # numbers in one view are counted in the hundreds of thousands.
-        return (np.asarray(values, dtype=np.float64).astype(np.float32)
-                .astype(str).astype(np.float64).tolist())
+    def rounded(values):
+        # `round` of a double by a power of ten divides two exact integers, so
+        # the result is the double nearest the 4-decimal value and `json`
+        # writes it with those four decimals at most.
+        return np.round(np.asarray(values, dtype=np.float64),
+                        MESH_DECIMALS).tolist()
 
-    def shorten(node):
+    def round_buffers(node):
         for child in node.get("parts", ()):
-            shorten(child)
+            round_buffers(child)
         # A group carries no `shape`; every leaf does.
         shape = node.get("shape")
         if not shape:
             return
         for name in ("vertices", "normals", "obj_vertices"):
             if shape.get(name):
-                shape[name] = shortest(shape[name])
+                shape[name] = rounded(shape[name])
         # A segment at a time: `edges` is a list of them and the viewer
         # flattens it itself, so the nesting has to come out as it went in.
         if shape.get("edges"):
-            shape["edges"] = [shortest(edge) for edge in shape["edges"]]
+            shape["edges"] = [rounded(edge) for edge in shape["edges"]]
 
-    shorten(doc)
+    round_buffers(doc)
     return doc
