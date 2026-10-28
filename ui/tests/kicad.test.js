@@ -27,7 +27,7 @@ vi.mock('/_v/ecad-viewer.js', () => ({}))
 
 import { navigate, parse, respell } from '../src/address.js'
 import BoardView3D from '../src/BoardView3D.jsx'
-import DocumentView, { docHint, documentBody, docViewKey } from '../src/DocumentView.jsx'
+import DocumentView, { docHint, DocumentLayers, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
@@ -316,6 +316,117 @@ describe('what is on screen downloads first', () => {
     view.componentDidUpdate(view.props)
     expect(elements[SCH].requestCrossProbe.mock.calls).toEqual([[designator(SCH, 'C1')], [designator(SCH, 'C1')]])
     view.componentWillUnmount()
+  })
+})
+
+describe('a design the page keeps while another document is on screen', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const NOTES = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+  const FILES = designFiles(designMembers(DOCS, DOCS[0])).map((file) => `${BASE}${file}`)
+  /** The page handing the view `shown`, as `DocumentLayers` does. */
+  const keep = (view, shown) => {
+    const before = view.props
+    view.props = { ...before, shown }
+    view.componentDidUpdate(before)
+  }
+
+  it('is one view of it under a markdown document and back, its files fetched once, kept in the order opened', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const page = new DocumentLayers({ build: 'abc', layer: 'position:absolute;inset:0', doc: DOCS[0],
+      documents: [...DOCS, NOTES], base: BASE, onTools: vi.fn(), onReady: vi.fn() })
+    /** The page drawn with `doc` on screen, its layers' state kept as React keeps it. */
+    const draw = (doc) => {
+      page.props = { ...page.props, doc }
+      page.state = DocumentLayers.getDerivedStateFromProps(page.props, page.state)
+      return page.render()
+    }
+    /** What a layer hands its design's view, through the DocumentView in it. */
+    const handed = (layer) => new DocumentView(layer.props.children.props).render().props
+    const [design] = draw(DOCS[0])
+    const { view } = mounted(DOCS[0])
+    view.props = handed(design)
+    view.componentDidMount()
+    onTestFinished(() => view.componentWillUnmount())
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    const over = draw(NOTES)
+    expect(over.map((layer) => [layer.key, layer.props.children.props.shown])).toEqual([[design.key, false],
+      ['abc:notes.md', true]])
+    // hidden in a layer of the same size, so its canvases keep theirs
+    expect(over[0].props.style).toEqual({ ...design.props.style, visibility: 'hidden' })
+    for (const layers of [over, draw(DOCS[0])]) {
+      const before = view.props
+      view.props = handed(layers[0])
+      view.componentDidUpdate(before)
+    }
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(FILES)
+    // another design after it, and its board: none moved
+    expect(draw(DOCS[4]).map((layer) => [layer.key, layer.props.children.props.shown]))
+      .toEqual([[design.key, false], ['abc:design/psu/psu', true]])
+    expect(draw(DOCS[1]).map((layer) => [layer.key, layer.props.children.props.doc]))
+      .toEqual([[design.key, DOCS[1]], ['abc:design/psu/psu', DOCS[4]]])
+  })
+
+  it('hidden, draws no view, puts its elements and comment mode out, shuts its menu and calls none of the page\'s doors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const comment = { on: true, marks: [], focus: null, onArea: vi.fn(), onMarker: vi.fn(), onFocused: vi.fn(),
+      onLost: vi.fn() }
+    const { view, elements } = mounted(DOCS[1])
+    for (const element of Object.values(elements)) element.setCommentMode = vi.fn()
+    view.props = { ...view.props, comment }
+    view.componentDidMount()
+    onTestFinished(() => view.componentWillUnmount())
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    view.componentDidUpdate(view.props)
+    view.setState({ menu: { from: PCB }, sheet: { doc: pdf, from: PCB } })
+    const told = view.props.onTools.mock.calls.length
+    keep(view, false)
+    // what would call the page: a place asked for on the board, Escape, an area
+    // drawn and a marker clicked there
+    view.props = { ...view.props, comment: { ...comment, focus: { doc: DOCS[1].file, area: [0, 0, 2, 2] } } }
+    view.componentDidUpdate(view.props)
+    for (const element of Object.values(elements)) element.clearSelection.mockClear()
+    window.dispatchEvent(ESCAPE())
+    elements[PCB].dispatchEvent(new CustomEvent(AREA_EVENT, { detail: { context: PCB, bounds: [1, 2, 3, 4] } }))
+    elements[PCB].dispatchEvent(new CustomEvent(MARKER_EVENT, { detail: { commentId: 'c1' } }))
+    expect(view.props.onTools).toHaveBeenCalledTimes(told)
+    expect([comment.onArea, comment.onMarker, comment.onFocused, comment.onLost].map((fn) => fn.mock.calls.length))
+      .toEqual([0, 0, 0, 0])
+    expect([view.state.menu, view.state.sheet]).toEqual([null, null])
+    for (const element of Object.values(elements)) {
+      expect([element.setActive.mock.lastCall, element.setCommentMode.mock.lastCall, element.clearSelection.mock.calls])
+        .toEqual([[false], [false], []])
+    }
+    const tree = view.render()
+    expect(collect(tree, (el) => (el.props.style && el.props.style.visibility === 'visible' ? el : undefined)))
+      .toEqual([])
+    expect([ofType(tree, PcbPanel)[0].props.active, view3d(view).three.props.active, view3d(view).three.props.comment])
+      .toEqual([false, false, null])
+    // shown again: the bar told afresh what the board can do
+    keep(view, true)
+    expect(view.props.onTools).toHaveBeenCalledTimes(told + 1)
+    expect(Object.keys(view.props.onTools.mock.lastCall[0])).toEqual(['fit', 'frame'])
+  })
+
+  it('owes the page the files that came in while it was hidden, and tells it when shown', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    // opened on the schematic, and on the 3D model, whose `.glb` lands hidden
+    for (const doc of [DOCS[0], DOCS[2]]) {
+      const { view } = mounted(doc)
+      view.componentDidMount()
+      onTestFinished(() => view.componentWillUnmount())
+      keep(view, false)
+      if (doc === DOCS[2]) view3d(view).three.props.onFetched()
+      await vi.waitFor(() => expect(view.state.ready).toBe(true))
+      expect(view.props.onReady).not.toHaveBeenCalled()
+      // React's update after the files, and the 3D model's tools: the bar hears
+      // of neither while the design is hidden
+      const told = view.props.onTools.mock.calls.length
+      if (doc === DOCS[2]) view3d(view).three.props.onTools({ fit() {}, frame() {} })
+      view.componentDidUpdate(view.props)
+      expect(view.props.onTools).toHaveBeenCalledTimes(told)
+      keep(view, true)
+      expect(view.props.onReady).toHaveBeenCalledTimes(1)
+    }
   })
 })
 
@@ -618,6 +729,39 @@ describe('the schematic\'s page', () => {
     view.choose(SHOW_FAULT)
     expect([sch.page, push.mock.calls, sch.clearSelection.mock.calls])
       .toEqual([AMP, [[null, '', `${BASE}?d=${SHEET}&s=amp`]], []])
+  })
+
+  it('is the address\'s when the page shows again the design it kept hidden, which nothing writes meanwhile', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=amp`)
+    const { view, sch } = await opened()
+    /** The page handing the view `shown`, and the member on screen. */
+    const keep = (shown, doc = view.props.doc) => {
+      const before = view.props
+      view.props = { ...before, shown, doc }
+      view.componentDidUpdate(before)
+    }
+    // a markdown document on screen over the schematic, a step of the page's
+    window.history.pushState(null, '', `${BASE}?d=notes.md`)
+    keep(false)
+    sch.switchPage.mockClear()
+    // moved meanwhile, Back onto the schematic's entry heard before the page
+    // shows it, and an update of the page's while it is still hidden
+    sch.show(PSU_B)
+    const left = window.location.search
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}&s=amp`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    view.componentDidUpdate(view.props)
+    expect([left, window.location.search, sch.switchPage.mock.calls]).toEqual(['?d=notes.md', `?d=${SHEET}&s=amp`, []])
+    keep(true)
+    expect([sch.page, window.location.search]).toEqual([AMP, `?d=${SHEET}&s=amp`])
+    // hidden over its board, and shown on the schematic's row, which names no
+    // sheet: on the root, as a fresh mount opens
+    keep(true, DOCS[1])
+    window.history.pushState(null, '', `${BASE}?d=notes.md`)
+    keep(false)
+    window.history.pushState(null, '', `${BASE}?d=${SHEET}`)
+    keep(true, DOCS[0])
+    expect([sch.page, window.location.search]).toEqual([ROOT, `?d=${SHEET}`])
   })
 })
 

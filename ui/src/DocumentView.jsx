@@ -38,10 +38,11 @@
 // `frame()` answers a promise of a PNG blob — and the page greys both while it
 // holds none. The Gerbers, the board and the schematic, and the board's 3D
 // model can; a markdown page, an image and a file in a frame cannot. The view
-// on screen of a KiCad design says it again for each member (KicadView.jsx);
-// this component says null as it goes, so the next document starts grey. A
-// document drawn where no bar is — the datasheet's window in KicadView.jsx —
-// tells nobody.
+// on screen of a KiCad design says it again for each member, and again when it
+// is shown after being kept hidden (KicadView.jsx); this component says null as
+// it comes and as it goes, so a document starts grey whatever was on screen
+// before it — a design kept hidden says nothing. A document drawn where no bar
+// is — the datasheet's window in KicadView.jsx — tells nobody.
 //
 // WHEN IT HAS ITS FILE (`onReady`), the page is told: a markdown text in,
 // a picture or a frame loaded, a KiCad design's files for the view on screen
@@ -51,11 +52,14 @@
 // the line (HammerolaViewer.jsx, `sync`). While a file comes in, its view
 // draws the bar of loadbar.jsx.
 //
-// The parent keys this by `docViewKey`, so another document is another
-// instance and a fetch still running for the last one lands nowhere — except
-// another member of the same KiCad design, which keeps the instance and its
-// viewers. `documentBody` is the drawing and takes everything as arguments, so
-// a test reads the tree it returns without mounting anything
+// Both pages draw it through `DocumentLayers`, a layer per instance keyed by
+// the build and `docViewKey`, so another document is another instance and a
+// fetch still running for the last one lands nowhere — except another member
+// of the same KiCad design, which keeps the instance and its viewers. A KiCad
+// design, once opened, stays mounted for the build, hidden while another
+// document or the model is on screen (`shown`), so coming back to it fetches
+// and parses nothing again. `documentBody` is the drawing and takes everything
+// as arguments, so a test reads the tree it returns without mounting anything
 // (ui/tests/docshell.test.js).
 
 import React from 'react';
@@ -151,6 +155,27 @@ export function docHint(doc) {
 export function docViewKey(doc) {
   const design = designKey(doc);
   return design === null ? doc.id : `design/${design}`;
+}
+
+/** The KiCad designs a page keeps drawn once `doc` is on screen: `kept`, a
+ *  design `doc` is a member of added at the end the first time, and standing
+ *  as `doc` from then on, the member last on screen. Any other document, or
+ *  none, keeps `kept` as it is. */
+export function keptDesigns(kept, doc) {
+  if (!doc || designKey(doc) === null) return kept;
+  const at = kept.findIndex((one) => docViewKey(one) === docViewKey(doc));
+  if (at < 0) return [...kept, doc];
+  return kept[at] === doc ? kept : kept.map((one, i) => (i === at ? doc : one));
+}
+
+/** What a page's document layer draws, `{ doc, shown }` each: every kept
+ *  design in the order it was first opened, shown where `doc` is its member,
+ *  then `doc` where it is no design. Never reordered: a node moved in the page
+ *  disconnects the `<ecad-viewer>` in it, and its WebGL with it. */
+export function docLayers(kept, doc) {
+  const open = doc ? docViewKey(doc) : null;
+  const layers = kept.map((one) => ({ doc: one, shown: docViewKey(one) === open }));
+  return doc && designKey(doc) === null ? [...layers, { doc, shown: true }] : layers;
 }
 
 const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--paper-bg)';
@@ -277,11 +302,12 @@ export function docLinks(base, documents, onOpen, views) {
  *  page's comments (KicadView.jsx, GerberView.jsx), and `quoting` what a
  *  markdown article does for them (`DocumentView`): its ref, its pointer's
  *  handlers, and whether the pointer is over a quote; `views` the build's,
- *  none on the page of a build with no model, for a markdown link naming one.
+ *  none on the page of a build with no model, for a markdown link naming one;
+ *  `shown` false for a KiCad design kept hidden (KicadView.jsx).
  *  Pure but for a link's address, which is the page's current one
  *  (`docLinks`). */
 export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc,
-  onSheet, comment, quoting, views) {
+  onSheet, comment, quoting, views, shown) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(LOADING)}>{loadBar(received, doc.bytes, false)}</div>;
@@ -298,7 +324,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   }
   if (viewOf(doc)) {
     return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady}
-                      addressDoc={addressDoc} onSheet={onSheet} comment={comment} />;
+                      addressDoc={addressDoc} onSheet={onSheet} comment={comment} shown={shown} />;
   }
   if (doc.type === GERBERS_TYPE) {
     return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady}
@@ -447,6 +473,7 @@ export default class DocumentView extends React.Component {
 
   componentDidMount() {
     const { doc, base } = this.props;
+    this.props.onTools(null);
     if (doc.type === FILE_TYPE) this.props.onReady();
     if (doc.type !== 'markdown') return;
     const count = meter((received) => {
@@ -466,7 +493,7 @@ export default class DocumentView extends React.Component {
 
   componentWillUnmount() {
     this._gone = true;
-    this.props.onTools(null);
+    if (this.props.shown !== false) this.props.onTools(null);
     const registry = this.quoted && highlights();
     if (registry) {
       registry.delete(QUOTE_HIGHLIGHT);
@@ -475,9 +502,38 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment, views } = this.props;
+    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment, views, shown } = this.props;
     const { text, error, received, pointing } = this.state;
     return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet,
-      comment, comment ? { ...this.quoting, pointing } : null, views);
+      comment, comment ? { ...this.quoting, pointing } : null, views, shown);
+  }
+}
+
+/**
+ * A page's document layer: the document on screen (`doc`, or none over the
+ * model) and every KiCad design opened before it in this build (`build`), each
+ * a `DocumentView` in a layer of its own drawn in the style `layer`, the rest
+ * of the props handed to every one. A design not on screen is hidden with
+ * `visibility`, in a layer of the same size, so its canvases keep theirs.
+ * Another build drops what was kept: a markdown text is fetched once, when its
+ * view mounts, so the same document of another revision is another instance.
+ */
+export class DocumentLayers extends React.Component {
+  static getDerivedStateFromProps({ build, doc }, state) {
+    return { build, kept: keptDesigns(state.build === build ? state.kept : [], doc) };
+  }
+
+  constructor(props) {
+    super(props);
+    this.state = DocumentLayers.getDerivedStateFromProps(props, { build: props.build, kept: [] });
+  }
+
+  render() {
+    const { build, doc, layer, ...view } = this.props;
+    return docLayers(this.state.kept, doc).map((one) => (
+      <div key={`${build}:${docViewKey(one.doc)}`} style={css(one.shown ? layer : `${layer};visibility:hidden`)}>
+        <DocumentView {...view} doc={one.doc} shown={one.shown} />
+      </div>
+    ));
   }
 }

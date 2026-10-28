@@ -4,12 +4,14 @@
 // documents only. `ui/src/main.jsx` mounts it instead of HammerolaViewer when
 // the build's meta.json says `"kind": "documents"` (src/render.py).
 //
-// The document is drawn by DocumentView.jsx, which the model's page uses too.
-// The page holds which document is open — `Show in …` of a KiCad design's
-// right-click menu opens the other member through the same door a row does
-// (`onPick`) — what the bar's Fit and Frame can do with it (`tools`), and
-// whether the window is narrow, which takes the bar down to the list and Fit
-// as on the model's page.
+// The document is drawn by DocumentView.jsx, which the model's page uses too,
+// through its `DocumentLayers`: a KiCad design opened on the page stays
+// mounted, hidden, while another document is on screen, and comes back without
+// fetching its files again. The page holds which document is open — `Show in
+// …` of a KiCad design's right-click menu opens the other member through the
+// same door a row does (`onPick`) — what the bar's Fit and Frame can do with it
+// (`tools`), and whether the window is narrow, which takes the bar down to the
+// list and Fit as on the model's page.
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
 // `?v=<id>`; the default document — the first one not listed `hidden` — needs
@@ -47,7 +49,7 @@ import {
   closeComment, commentRail, commentsButton, composerCard, composerView, docComment, docDraft, docFrame,
   railView, readFeed, sendDraft,
 } from './comments.jsx';
-import DocumentView, { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
+import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, loadVariants, PAGE, pageVariant, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
@@ -169,11 +171,9 @@ export function DocPage({
       </div>
       <div style={css(BODY)}>
         <div style={css(STAGE)}>
-          <div style={css(DOC_LAYER)}>
-            <DocumentView key={docViewKey(doc)} doc={doc} documents={meta.documents} base={base} onOpen={onPick}
-                          onTools={onTools} addressDoc={addressDoc} onSheet={onSheet}
+          <DocumentLayers build={buildKey(meta)} doc={doc} layer={DOC_LAYER} documents={meta.documents} base={base}
+                          onOpen={onPick} onTools={onTools} addressDoc={addressDoc} onSheet={onSheet}
                           comment={comments ? comments.docComment : undefined} />
-          </div>
           {/* Over the document, under the bar, as on the model's page. */}
           {comments && composerCard(comments, comments.box)}
           <div style={css(BAR)}>

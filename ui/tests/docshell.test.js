@@ -14,7 +14,7 @@ vi.mock('/_v/ecad-viewer.js', () => ({}))
 
 import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
-import DocumentView, { docBase, docHint, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
+import DocumentView, { docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
 import KicadView, { DRAFT_MARK, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
@@ -63,6 +63,10 @@ const CUT_LIST = [
 
 const ofType = (tree, type) => collect(tree, (el) => (el.type === type ? el : undefined))
 const text = (el) => texts(el).join('')
+/** The layers a page's `DocumentLayers` draws, as on its first render: a
+ *  wrapper each, keyed, its `DocumentView` inside; and those views. */
+const layers = (tree) => ofType(tree, DocumentLayers).flatMap((el) => new DocumentLayers(el.props).render())
+const views = (tree) => layers(tree).map((layer) => layer.props.children)
 
 describe('markdown', () => {
   it('draws the document as elements, with no markup from a string', () => {
@@ -361,11 +365,12 @@ describe('one document, as both pages draw it', () => {
       expect(view.state.text).toBeNull()
     })
 
-    it('tells the page\'s bar, as it goes, that it can do nothing more', () => {
+    it('tells the page\'s bar, as it comes and as it goes, that it can do nothing', () => {
+      // as it comes: a design kept hidden before it said nothing as it went
       const view = mounted(META.documents[2])
-      expect(view.props.onTools).not.toHaveBeenCalled()
-      view.componentWillUnmount()
       expect(view.props.onTools.mock.calls).toEqual([[null]])
+      view.componentWillUnmount()
+      expect(view.props.onTools.mock.calls).toEqual([[null], [null]])
       // and hands the door to the views that can drive the bar
       const zip = doc('fab/board.zip', 'gerbers')
       const onTools = () => {}
@@ -468,7 +473,7 @@ const WITH_KICAD = { ...META, documents: [DATASHEET, SCHEMATIC, BOARD, ...META.d
 
 describe('the page of a build with no model', () => {
   const page = (active, extra = {}) => DocPage({ meta: META, active, base: BASE, onPick: () => {}, ...extra })
-  const shown = (tree) => collect(tree, (el) => (el.type === DocumentView ? el : undefined))
+  const shown = views
   /** The rows of the list, by what they say, and the click each one makes. */
   const rows = (tree) => collect(tree, (el) => (el.props.onClick && el.type === 'div'
     && texts(el).length === 2 ? texts(el) : undefined))
@@ -553,8 +558,8 @@ describe('the page of a build with no model', () => {
     view.props.onOpen(SCHEMATIC.id)
     expect(picked.at(-1)).toBe(SCHEMATIC.id)
     // One instance for the design, whichever member is open.
-    const schematicView = shown(DocPage({ meta: WITH_KICAD, active: SCHEMATIC.id, base: BASE, onPick: () => {} }))[0]
-    expect(schematicView.key).toBe(view.key)
+    const schematicView = layers(DocPage({ meta: WITH_KICAD, active: SCHEMATIC.id, base: BASE, onPick: () => {} }))[0]
+    expect(schematicView.key).toBe(layers(tree)[0].key)
   })
 
   it('names the project and the revision in the header', () => {
@@ -567,9 +572,10 @@ describe('the page of a build with no model', () => {
   })
 
   it('puts the open document on the page, one instance per document', () => {
-    const [view] = shown(page('report.pdf'))
+    const [layer] = layers(page('report.pdf'))
+    const view = layer.props.children
     expect(view.props.doc.id).toBe('report.pdf')
-    expect(view.key).toBe('report.pdf')
+    expect(layer.key).toBe(`${META.commit}:report.pdf`)
     expect(view.props.base).toBe(BASE)
   })
 
@@ -717,7 +723,7 @@ describe('the shell', () => {
     shell.setState = (patch) => Object.assign(shell.state, patch)
     shell.componentDidMount()
     onTestFinished(() => shell.componentWillUnmount())
-    const [shown] = collect(DocPage(shell.render().props), (el) => (el.type === DocumentView ? el : undefined))
+    const [shown] = views(DocPage(shell.render().props))
     const note = new DocumentView(shown.props)
     note.state.text = `[open](?v=open) [amp](?d=${SCHEMATIC.id}&s=amp)`
     const [view, sheet] = ofType(note.render(), 'a')
@@ -770,7 +776,7 @@ describe('the shell', () => {
     shell.setState = (patch) => Object.assign(shell.state, patch)
     // The design as the page draws it, its schematic's element switching sheets
     // as the viewer does, reporting the change inside `switchPage`.
-    const [shown] = collect(DocPage(shell.render().props), (el) => (el.type === DocumentView ? el : undefined))
+    const [shown] = views(DocPage(shell.render().props))
     const view = new KicadView(new DocumentView(shown.props).render().props)
     view.setState = (patch, done) => {
       Object.assign(view.state, patch)
@@ -879,7 +885,7 @@ describe('comments on the page of a build with no model', () => {
     shell.state.tool = 'comment'
     const shot = new Blob(['png'], { type: 'image/png' })
     shell.onTools({ fit() {}, frame: async () => shot })
-    const [view] = collect(drawn(shell), (el) => (el.type === DocumentView ? el : undefined))
+    const [view] = views(drawn(shell))
     view.props.comment.onArea(SCHEMATIC, { frame: 'sheet', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], items: ['C1'] })
     expect(shell.state.tool).toBeNull()
     expect([css(values(shell).composerStyle).display, values(shell).composerPart]).toEqual(['block', 'amp of Схема'])
