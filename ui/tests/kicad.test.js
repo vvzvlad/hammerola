@@ -779,7 +779,7 @@ describe('the right-click menu', () => {
     expect(menuOf(view)).toBeDefined()
   })
 
-  it('closes the list of a label\'s namesakes its click opens in the schematic, and leaves the reader\'s own', () => {
+  it('closes the list of a label\'s namesakes its click opens in the schematic, the reader\'s own too', () => {
     const { view, elements } = mounted()
     const element = elements[SCH]
     // the viewer's trees: the canvas and the list beside it in the schematic app's
@@ -796,10 +796,10 @@ describe('the right-click menu', () => {
     element.under = { sourceContext: SCH, itemType: 'global-label', net: 'AMP_FAULT' }
     rightClick(element, 300, 250)
     expect([texts(menuOf(view)), list.hidden]).toEqual([['net AMP_FAULT', 'Show net AMP_FAULT in hw/board.kicad_pcb'], true])
-    // the reader's own left click opened it
+    // the reader's own left click opened it: one menu at a time
     list.hidden = false
     rightClick(element, 300, 250)
-    expect(list.hidden).toBe(false)
+    expect(list.hidden).toBe(true)
   })
 
   it('an item opens its member and selects the same part or net there, once the page hands it down', () => {
@@ -932,16 +932,18 @@ describe('the right-click menu', () => {
 describe('a net across the schematic\'s sheets', () => {
   // What names a net on the design's sheets, the root's two sheet symbols
   // pointing at the other two with a pin each for their hierarchical label,
-  // and the board's nets, as KiCad writes them.
+  // the root's global label wired to the pin of `dsp`, and the board's nets, as
+  // KiCad writes them.
   const power = (reference, value, uuid) => `(symbol (lib_id "power:${value}") (at 0 0 0)`
     + ` (property "Reference" "${reference}" (at 0 0 0)) (property "Value" "${value}" (at 0 0 0)) (uuid "${uuid}"))`
-  const global = (name, uuid) => `(global_label "${name}" (shape input) (at 0 0 0) (uuid "${uuid}"))`
+  const global = (name, uuid, at = '0 0 0') => `(global_label "${name}" (shape input) (at ${at}) (uuid "${uuid}"))`
   const hierarchical = (name, uuid) => `(hierarchical_label "${name}" (shape input) (at 0 0 0) (uuid "${uuid}"))`
-  const sheetSymbol = (name) => `(sheet (at 0 0) (uuid "sheet-${name}") (property "Sheetname" "${name}")`
-    + ` (property "Sheetfile" "sub/${name}.kicad_sch") (pin "AMP_FAULT" input (at 0 0 0) (uuid "pin-fault-${name}")))`
+  const sheetSymbol = (name, at = '0 0 0') => `(sheet (at 0 0) (uuid "sheet-${name}") (property "Sheetname" "${name}")`
+    + ` (property "Sheetfile" "sub/${name}.kicad_sch") (pin "AMP_FAULT" input (at ${at}) (uuid "pin-fault-${name}")))`
   const NETS = netIndex({
-    'hw/board.kicad_sch': `(kicad_sch ${sheetSymbol('power')} ${sheetSymbol('dsp')}`
-      + ` ${power('#PWR0101', '+12V', 'pwr-board')} ${global('AMP_CLIP_OTW', 'clip-board')})`,
+    'hw/board.kicad_sch': `(kicad_sch ${global('AMP_CLIP_OTW', 'clip-board', '50.8 25.4 0')}`
+      + ' (wire (pts (xy 50.8 25.4) (xy 63.5 25.4)) (uuid "wire-clip"))'
+      + ` ${sheetSymbol('power')} ${sheetSymbol('dsp', '63.5 25.4 0')} ${power('#PWR0101', '+12V', 'pwr-board')})`,
     'hw/sub/power.kicad_sch': `(kicad_sch ${global('AMP_CLIP_OTW', 'clip-power')} ${power('#PWR0201', '+12V', 'pwr-power')}`
       + ` ${power('#PWR0202', '+12V', 'pwr-power-2')} ${power('#FLG0201', 'PWR_FLAG', 'flg-power')}`
       + ` ${hierarchical('AMP_FAULT', 'fault-power')})`,
@@ -980,9 +982,14 @@ describe('a net across the schematic\'s sheets', () => {
         'Show net +12V in hw/board.kicad_sch · board', 'Show net +12V in hw/board.kicad_sch · power'])
   })
 
-  it('a global label is shown on the other sheet its namesake is on', () => {
-    expect(offered(withNets(), { itemType: 'global-label', net: 'AMP_CLIP_OTW', uuid: 'clip-board' })).toEqual(['net AMP_CLIP_OTW',
-      'Show net AMP_CLIP_OTW in hw/board.kicad_sch · power', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb'])
+  it('a global label, and the wire it is on, is shown on its namesake\'s sheet and on that of the sheet pin wired to it', () => {
+    const one = withNets()
+    for (const detail of [{ itemType: 'global-label', net: 'AMP_CLIP_OTW', uuid: 'clip-board' }, { itemType: 'wire', uuid: 'wire-clip' }]) {
+      expect(offered(one, detail)).toEqual(['net AMP_CLIP_OTW', 'Show net AMP_CLIP_OTW in hw/board.kicad_sch · power',
+        'Show net AMP_CLIP_OTW in hw/board.kicad_sch · dsp', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb'])
+    }
+    itemsOf(one.view)[1].props.onClick()
+    expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('AMP_CLIP_OTW', 'hw/sub/dsp.kicad_sch', 'fault-dsp'))
   })
 
   it('is as wide as its longest line needs, so the sheet a line ends with is not cut', () => {
