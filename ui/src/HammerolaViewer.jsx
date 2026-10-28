@@ -133,6 +133,10 @@ import { loadBar } from './loadbar.jsx';
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
 import { VariantSwitch } from './variants.jsx';
+// `View in AR`: whether the browser has AR Quick Look, and the type its file
+// is handed over under; the frame waited for before the file is made.
+import { AR_FRAGMENT, arSupported, openQuickLook, USDZ_TYPE } from './ar.js';
+import { painted } from './loadbar.jsx';
 // The pencils and the window that rename a name of the project.
 import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
 // And the four panels that answer to little more than the state: the revision
@@ -1032,6 +1036,9 @@ export default class HammerolaViewer extends React.Component {
     // whether the last `sync` did
     this._modelFree = undefined;
     this._heldBack = undefined;
+    // Whether this browser has AR Quick Look (`arSupported` in ar.js): asked
+    // once, as nothing changes the answer while the page is open.
+    this.arCapable = arSupported();
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
@@ -1066,6 +1073,9 @@ export default class HammerolaViewer extends React.Component {
       // menu is added beside it.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
       settingsOpen: false, variantsOpen: false,
+      // `View in AR` (`openAr`): `{ busy }` while the file is made, `{ failed }`
+      // where it could not be, else null.
+      ar: null,
       // The Share window: `{id, files}` while it is open, where `id` is
       // `latest` or the full commit of the row it was opened from and `files`
       // is its first checkbox; `camera`, the Current view box, is absent until
@@ -3943,6 +3953,40 @@ export default class HammerolaViewer extends React.Component {
     });
   }
 
+  /**
+   * `View in AR` tapped (`arRow` in chromeview.js): the file of the view as it
+   * stands (`usdz()` of the viewport), handed to AR Quick Look at 1:1
+   * (`openQuickLook`, `AR_FRAGMENT`). Made only once the row saying
+   * `preparing…` has been painted: the export holds the main thread. While
+   * it is made the row has no handler, so no second file is asked for. The
+   * address goes as soon as Quick Look has it — Safari holds the blob of the
+   * preview it started (`openQuickLook`).
+   */
+  openAr() {
+    this.setState({ ar: { busy: true } });
+    const live = () => !this._gone;
+    painted()
+      .then(() => {
+        const el = live() && this.el();
+        return el && typeof el.usdz === 'function' ? el.usdz() : null;
+      })
+      .then((bytes) => {
+        if (!live()) return;
+        if (!bytes) throw new Error('no model is drawn');
+        const url = URL.createObjectURL(new Blob([bytes], { type: USDZ_TYPE }));
+        try {
+          openQuickLook(`${url}${AR_FRAGMENT}`);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        this.setState({ ar: null });
+      })
+      .catch((error) => {
+        console.warn('ar', error);
+        if (live()) this.setState({ ar: { failed: true } });
+      });
+  }
+
   /** The open document's frame, as `frameBlob` gives the model's: what its
    *  view told the page it can do (`docTools`), else null. */
   docFrameBlob() {
@@ -5181,7 +5225,7 @@ export default class HammerolaViewer extends React.Component {
     // drawn on a header button, the picker's rows inside a header menu, and a
     // second count worked out up there could disagree with the rail it is about.
     const chrome = chromeView(s, this.props, {
-      meta, viewer, narrow, stop, variant: this.variant(),
+      meta, viewer, narrow, stop, variant: this.variant(), arCapable: this.arCapable,
       revRows, downloadGroups, dlShown, threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
@@ -5209,6 +5253,7 @@ export default class HammerolaViewer extends React.Component {
       proposalMoves: this.proposalMoves.bind(this),
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
+      openAr: this.openAr.bind(this),
     });
 
     // The composer, over the model or the document its draft is on.

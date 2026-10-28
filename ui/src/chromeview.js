@@ -36,8 +36,9 @@ import { variantChoices } from './variants.jsx';
 export function chromeView(s, props, deps) {
   const {
     // -- what `computed()` has already worked out; `variant` is the one this
-    // page is of (`pageVariant` in hub.js)
-    meta, viewer, narrow, stop, variant,
+    // page is of (`pageVariant` in hub.js), `arCapable` whether the browser has
+    // AR Quick Look (`arSupported` in ar.js)
+    meta, viewer, narrow, stop, variant, arCapable,
     // -- the other panels' answers, drawn by controls that live up here
     revRows, downloadGroups, dlShown, threads, openCount,
     // -- the lookups and constants that stay beside the component
@@ -46,7 +47,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, cameraParam, pushChoice,
+    refreshBuilds, cameraParam, pushChoice, openAr,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -121,6 +122,10 @@ export function chromeView(s, props, deps) {
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta),
     askRename && ((doc) => askRename({ kind: 'document', variant, id: doc.id, name: doc.name })));
+  // `View in AR`, the last row of the menu of views (`viewList`), where the
+  // browser has AR Quick Look and a model view is on screen: a document over
+  // the model, a schematic or a board's 3D among them, has none.
+  const arShown = !!arCapable && views.length > 0 && !docOpen;
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -498,8 +503,19 @@ export function chromeView(s, props, deps) {
     // for what the strip does to the toolbar when it is too long for it. A
     // build with rows of documents always gets the menu: they are rows of it.
     // So does a page with a hidden document open, which has no row: the strip
-    // would light the model's view over a document and name neither.
-    viewMenu: views.length > VIEW_TABS_MAX || docRows.length > 0 || !!docOpen,
+    // would light the model's view over a document and name neither. And so
+    // does every view in a browser with AR Quick Look, whose `View in AR` is a
+    // row of the menu: a strip has nowhere to put it, and the bar keeps one
+    // shape from view to view (AGENTS.md).
+    viewMenu: views.length > VIEW_TABS_MAX || docRows.length > 0 || !!docOpen
+      || (!!arCapable && views.length > 0),
+    // The menu's `View in AR` (`arGroup` in viewlist.jsx), or null where it
+    // has none. A tap makes the file of the view as it stands and hands it to
+    // Quick Look (`openAr`); while the file is made the row is out of service
+    // and says so, and where it could not be made it says that (`s.ar`).
+    arRow: !arShown ? null
+      : s.ar && s.ar.busy ? { onClick: null, hint: 'preparing…' }
+        : { onClick: () => openAr(), hint: s.ar && s.ar.failed ? 'failed' : '' },
     // The strip's one pencil, at its end: it renames the view on screen. One
     // for the whole strip rather than one per pill, so the strip keeps its
     // width and its pills their places from view to view (AGENTS.md).

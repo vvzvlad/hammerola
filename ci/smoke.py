@@ -159,6 +159,10 @@ REQUIRED_PATHS = [
     "/app/static/_v/GLTFLoader.js",
     "/app/static/_v/BufferGeometryUtils.js",
     "/app/static/_v/SkeletonUtils.js",
+    # View in AR (`ui/src/ar.js`) imports three's USDZ exporter by URL when the reader taps
+    # it; the exporter imports fflate and three from beside itself.
+    "/app/static/_v/USDZExporter.js",
+    "/app/static/_v/fflate.module.js",
     # The palette, linked by every page. Missing, every page still answers 200 but every
     # `var(--…)` resolves to nothing.
     "/app/static/_v/tokens.css",
