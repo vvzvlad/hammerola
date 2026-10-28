@@ -42,6 +42,18 @@ function renameWindow(onSave, onClose = () => {}) {
 
 const field = (w) => collect(w.render(), (el) => (el.type === 'input' ? el : undefined))[0]
 
+/** A press on `pressedOn` and a release on `releasedOn` — 'overlay', 'card'
+ *  or 'field' — ending, as in the browser, in a click on the overlay: a click
+ *  goes to the nearest element holding both, so a drag between the card and
+ *  the overlay ends in a click on the overlay as well. */
+function clickOverlay(w, pressedOn, releasedOn = 'overlay') {
+  const overlay = w.render()
+  const at = { overlay, card: overlay.props.children, field: field(w) }
+  overlay.props.onPointerDown({ target: at[pressedOn], currentTarget: overlay })
+  overlay.props.onPointerUp({ target: at[releasedOn], currentTarget: overlay })
+  overlay.props.onClick({ target: overlay, currentTarget: overlay })
+}
+
 /** Writes to `location.href`, which jsdom neither performs nor reports; the
  *  rest of the address read through to the real one. */
 function watchNavigation() {
@@ -87,6 +99,29 @@ describe('the rename window', () => {
     onTestFinished(() => w.componentWillUnmount())
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves a changed name on a click outside the card, and closes an unchanged one', () => {
+    const onSave = vi.fn(async () => false)
+    const onClose = vi.fn()
+    const w = renameWindow(onSave, onClose)
+    clickOverlay(w, 'overlay')
+    expect([onSave.mock.calls.length, onClose.mock.calls.length]).toEqual([0, 1])
+
+    field(w).props.onChange({ target: { value: 'Front' } })
+    clickOverlay(w, 'overlay')
+    expect(onSave.mock.calls).toEqual([['Front']])
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('neither saves nor closes on a drag between the card and the outside', () => {
+    const onSave = vi.fn(async () => false)
+    const onClose = vi.fn()
+    const w = renameWindow(onSave, onClose)
+    field(w).props.onChange({ target: { value: 'Front' } })
+    clickOverlay(w, 'field', 'overlay')
+    clickOverlay(w, 'overlay', 'card')
+    expect([onSave.mock.calls.length, onClose.mock.calls.length]).toEqual([0, 0])
   })
 
   it('takes one Save at a time, and takes one again only after a refusal', async () => {
