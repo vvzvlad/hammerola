@@ -961,7 +961,7 @@ describe('the right-click menu', () => {
     view3d(view).three.props.onSelect('L101')
     view3d(view).three.props.onMenu('L101', 700, 640)
     // no room right of or below the pointer: left of and above it
-    expect(menuOf(view).props.style).toMatchObject({ left: '480px', top: `${590 - menuHeight(2)}px` })
+    expect(menuOf(view).props.style).toMatchObject({ left: '540px', top: `${590 - menuHeight(2)}px` })
     itemsOf(view)[0].props.onClick()
     expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
     expect(elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(designator(SCH, 'L101'))
@@ -1016,8 +1016,8 @@ describe('the right-click menu', () => {
   })
 
   it('stays inside the view area wherever it opens, a phone\'s too', () => {
-    expect(menuPlace(100, 100, 2, { width: 800, height: 600 })).toEqual({ left: 100, top: 100, width: 220 })
-    expect(menuPlace(700, 580, 2, { width: 800, height: 600 })).toEqual({ left: 480, top: 580 - menuHeight(2), width: 220 })
+    expect(menuPlace(100, 100, 2, { width: 800, height: 600 })).toEqual({ left: 100, top: 100, width: 160 })
+    expect(menuPlace(700, 580, 2, { width: 800, height: 600 })).toEqual({ left: 540, top: 580 - menuHeight(2), width: 160 })
     for (const rows of [1, 2, 3]) {
       for (const x of [0, 120, 195, 300, 389]) {
         for (const y of [0, 350, 699]) {
@@ -1027,9 +1027,9 @@ describe('the right-click menu', () => {
       }
     }
     // an area narrower than the menu narrows it
-    expect(menuPlace(10, 10, 1, { width: 200, height: 300 }).width).toBe(184)
+    expect(menuPlace(10, 10, 1, { width: 150, height: 300 }).width).toBe(134)
     // a line wider than the menu widens it, as far as the area lets it
-    expect(menuPlace(100, 100, 2, { width: 800, height: 600 }, 287.2).width).toBe(318)
+    expect(menuPlace(100, 100, 2, { width: 800, height: 600 }, 287.2).width).toBe(316)
     expect(menuPlace(10, 10, 1, { width: 300, height: 300 }, 400).width).toBe(284)
   })
 
@@ -1124,7 +1124,7 @@ describe('a net across the schematic\'s sheets', () => {
     rect.mockRestore()
     // the longest line is not the first item's
     const longest = Math.max(...lines.slice(1).map((line) => line.length))
-    expect([longest > lines[1].length, menuOf(one.view).props.style.width]).toEqual([true, `${longest * 7 + 30}px`])
+    expect([longest > lines[1].length, menuOf(one.view).props.style.width]).toEqual([true, `${longest * 7 + 28}px`])
   })
 
   it('a local label is a net of its own sheet, a net no sheet names none: no list without the board', () => {
@@ -1250,7 +1250,7 @@ describe('a part\'s datasheet', () => {
       'Show U501 in hw/board.kicad_sch', 'Show U501 in hw/board.glb', 'Show net GND in hw/board.kicad_sch', sheet])
     // in the menu's own rows, and nothing drawn for it anywhere else
     expect(itemsOf(one.view).map((item) => item.props['data-show'])).toEqual([SCH, BOARD3D, SCH, 'datasheet'])
-    expect(itemsOf(one.view).at(-1).props.style).toEqual(itemsOf(one.view)[0].props.style)
+    expect(itemsOf(one.view).at(-1).props.style).toEqual(itemsOf(one.view)[1].props.style)
     expect(collect(one.view.render(), (el) => el.props['data-datasheet'])).toEqual([])
     one.view.props = { ...one.view.props, doc: docs[2] }
     view3d(one.view).three.props.onMenu('U501', 300, 250)

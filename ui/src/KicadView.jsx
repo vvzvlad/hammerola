@@ -133,7 +133,8 @@
 // panned with (it pans from `PAN_SLOP` on) is no click. The 3D view picks with
 // its own raycast.
 //
-// THE MENU is one at a time, inside the view area, in the page's colours; it
+// THE MENU is one at a time, inside the view area, drawn as the viewer's own
+// list is, in its colours (`--menu-*` in static/_v/tokens.css) and its font; it
 // goes on Escape, a press anywhere else, the wheel, a resize, and when its view
 // leaves the screen. The viewer's list goes on a press anywhere but on it, so
 // the two are never open together.
@@ -212,7 +213,7 @@ import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
-import { css, FONTS, MONO, SANS } from './style.jsx';
+import { css, MONO, SANS } from './style.jsx';
 import { typingTarget } from './viewport/holdkey.js';
 
 /** Where the hub serves the viewer; `parser.worker.js` is fetched beside it. */
@@ -475,20 +476,29 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
 /** The head line of `menu`: its part, its net, or both. */
 const menuHead = (menu) => [menu.part, menu.net && `net ${menu.net}`].filter(Boolean).join(' · ');
 
-/** The menu's box, known before it is drawn, so that where it fits is too: a
- *  head line, a row per item, 2px and 6px of padding and a 1px border; at
- *  least `MENU_WIDTH` wide, wider where a line needs it, and `MENU_PAD` of it
- *  the items' padding on either side and the border. An item's font is what
- *  `labelsWidth` measures its line in; its side padding is in `MENU_PAD`. */
+/** The menu's box, known before it is drawn, so that where it fits is too. It
+ *  is drawn as the viewer's own list of a net's places is
+ *  (`kc-schematic/selection-pop-menu.ts` in ecad-viewer/), in its font and
+ *  its spacing: `BOX_PAD` around everything, the head line parted from the
+ *  items by a rule with `GAP` on either side, each item `ITEM_PAD` inside and
+ *  `GAP` from the next. Every line is `LINE` high where the viewer's are of
+ *  the font's `normal` height, so that the height is known before the menu is
+ *  drawn. At least `MENU_WIDTH` wide, wider where a line needs it, and
+ *  `MENU_PAD` of it the box's and the items' padding on either side. An
+ *  item's font is what `labelsWidth` measures its line in. */
+const LIST_FONT = '"Segoe UI",Helvetica,Arial,sans-serif';
 const ITEM_FONT = '400 12px';
-const ITEM_PAD = 14;
-const MENU_WIDTH = 220;
-const MENU_PAD = 2 * ITEM_PAD + 2;
-const MENU_HEAD = 27;
-const MENU_ROW = 30;
+const LINE = 15;
+const BOX_PAD = [8, 10];
+const ITEM_PAD = [2, 4];
+const GAP = 6;
+const MENU_WIDTH = 160;
+const MENU_PAD = 2 * BOX_PAD[1] + 2 * ITEM_PAD[1];
+const MENU_HEAD = LINE + GAP + 1 + GAP;
+const MENU_ROW = LINE + 2 * ITEM_PAD[0];
 /** How far the menu keeps from the view area's edges. */
 const MENU_MARGIN = 8;
-export const menuHeight = (rows) => MENU_HEAD + rows * MENU_ROW + 10;
+export const menuHeight = (rows) => 2 * BOX_PAD[0] + MENU_HEAD + rows * MENU_ROW + (rows - 1) * GAP;
 
 /** How wide the widest of `labels` is drawn in the font of the menu's items:
  *  measured in a hidden line laid out in the page, so 0 where nothing is laid
@@ -497,7 +507,7 @@ export const menuHeight = (rows) => MENU_HEAD + rows * MENU_ROW + 10;
  *  name, which a cut would hide. */
 function labelsWidth(labels) {
   const line = document.createElement('span');
-  line.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${ITEM_FONT} ${FONTS['--hmr-sans']}`;
+  line.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${ITEM_FONT} ${LIST_FONT}`;
   document.body.appendChild(line);
   let widest = 0;
   for (const label of labels) {
@@ -548,17 +558,20 @@ export function selectedDatasheet(designator, datasheets, members, documents) {
 const SHELL = 'position:relative;height:100%;min-height:320px';
 const VIEWER = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
-// The menu as the build page's right-click menu is drawn (rowmenu.js), in a box
-// of a known size (`menuPlace`).
+// The menu as the viewer's own list of a net's places is drawn (`menuHeight`),
+// in a box of a known size (`menuPlace`): an item under the pointer takes the
+// list's hover ink.
+const RULE = 'color-mix(in srgb, var(--menu-fg) 20%, transparent)';
 const menuBox = ({ left, top, width }) => `position:absolute;left:${left}px;top:${top}px;width:${width}px;`
-  + 'z-index:1;box-sizing:border-box;padding:2px 0 6px;background:var(--card-bg);border:1px solid var(--line);'
-  + `border-radius:9px;box-shadow:${POP_SHADOW_HIGH}`;
-const MENU_NAME = `height:${MENU_HEAD}px;box-sizing:border-box;padding:7px 14px 0;${ELLIPSIS};`
-  + `font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`;
-const menuItem = (hover) => `height:${MENU_ROW}px;box-sizing:border-box;padding:8px ${ITEM_PAD}px 0;${ELLIPSIS};`
-  + `font:${ITEM_FONT} ${SANS};color:var(--text);cursor:pointer;user-select:none`
-  + (hover ? ';background:var(--hover-bg)' : '');
-// The datasheet's window, in the menu's colours: a veil over the whole view
+  + `z-index:1;box-sizing:border-box;padding:${BOX_PAD[0]}px ${BOX_PAD[1]}px;`
+  + 'background:var(--menu-bg);color:var(--menu-fg);border-radius:5px;box-shadow:0 0 10px var(--menu-shadow)';
+const MENU_NAME = `font:600 12px/${LINE}px ${LIST_FONT};padding-bottom:${GAP}px;margin-bottom:${GAP}px;`
+  + `border-bottom:1px solid ${RULE};${ELLIPSIS}`;
+const menuItem = (hover, first) => `font:${ITEM_FONT}/${LINE}px ${LIST_FONT};`
+  + `padding:${ITEM_PAD[0]}px ${ITEM_PAD[1]}px;border-radius:3px;`
+  + (first ? '' : `margin-top:${GAP}px;`) + `${ELLIPSIS};cursor:pointer;user-select:none;transition:color .3s;`
+  + `color:${hover ? 'var(--menu-fg-hover)' : 'var(--menu-fg)'}`;
+// The datasheet's window, in the page's colours: a veil over the whole view
 // area, which a click on closes, and the window 12px in from its edges, no
 // wider than a page of a datasheet needs.
 const SHEET_VEIL = 'position:absolute;inset:0;z-index:2;display:flex;justify-content:center;'
@@ -1386,7 +1399,7 @@ export default class KicadView extends React.Component {
             <div style={css(MENU_NAME)}>{menuHead(menu)}</div>
             {menu.items.map((item, index) => (
               <div key={index} data-show={item.view || 'datasheet'} title={item.label}
-                   style={css(menuItem(index === hover))}
+                   style={css(menuItem(index === hover, index === 0))}
                    onMouseEnter={() => this.setState({ hover: index })}
                    onMouseLeave={() => this.setState({ hover: -1 })}
                    onClick={() => this.choose(item)}>{item.label}</div>
