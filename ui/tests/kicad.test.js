@@ -382,7 +382,7 @@ describe('a design the page keeps while another document is on screen', () => {
     keep(view, false)
     // what would call the page: a place asked for on the board, Escape, an area
     // drawn and a marker clicked there
-    view.props ={ ...view.props, comment: { ...comment, focus: { doc: DOCS[1].file, area: [0, 0, 2, 2] } } }
+    view.props = { ...view.props, comment: { ...comment, focus: { doc: DOCS[1].file, area: [0, 0, 2, 2] } } }
     view.componentDidUpdate(view.props)
     for (const element of Object.values(elements)) element.clearSelection.mockClear()
     window.dispatchEvent(ESCAPE())
