@@ -495,8 +495,11 @@
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
   and size, under the picture of a DXF when the entry carries `preview`; every
-  document is downloaded from the strip at the bottom (`DocFile`). DocShell draws it
-  under its list; the model page draws it over the
+  document is downloaded from the strip at the bottom (`DocFile`). Both pages
+  draw their document layer through `DocumentLayers`, which keeps every KiCad
+  design opened on the page of this build mounted and hidden while another
+  document or the model is on screen. DocShell draws it under its list; the
+  model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
 - `ui/src/KicadView.jsx` — a KiCad DESIGN: the listed schematic, board and 3D

@@ -125,7 +125,7 @@ import { chromeView } from './chromeview.js';
 // the view list; drawn as the documents page draws it.
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
-import DocumentView, { COMMENTABLE, docExt, FILE_TYPE } from './DocumentView.jsx';
+import { COMMENTABLE, docExt, DocumentLayers, FILE_TYPE } from './DocumentView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -6016,18 +6016,18 @@ export default class HammerolaViewer extends React.Component {
             {/* A document chosen in the view list, laid OVER the model rather
                 in place of it: the viewport stays mounted underneath, camera,
                 cut and hidden parts and all. Drawn by the component the
-                documents page uses (DocumentView.jsx), handed the views for a
-                markdown link that names one. */}
-            {v.docOpen && (
-              <div style={css(v.docLayerStyle)}>
-                <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
-                              views={this.state.meta.views}
-                              base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
-                              onSheet={(sheet, push) => this.writeSheet(sheet, push)}
-                              onTools={(tools) => this.setState({ docTools: tools })}
-                              onReady={() => this.docReady()} />
-              </div>
-            )}
+                documents page uses (`DocumentLayers` in DocumentView.jsx),
+                handed the views for a markdown link that names one. A KiCad
+                design opened over this revision stays there, hidden, while
+                the model or another document is on screen: a hidden layer is
+                neither drawn nor hit by the pointer, so the model under it
+                takes its clicks. */}
+            <DocumentLayers build={buildKey(this.state.meta)} doc={v.docOpen} layer={v.docLayerStyle}
+                            documents={this.state.meta.documents} views={this.state.meta.views}
+                            base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
+                            onSheet={(sheet, push) => this.writeSheet(sheet, push)}
+                            onTools={(tools) => this.setState({ docTools: tools })}
+                            onReady={() => this.docReady()} />
 
             {/* views and tools. THE LAYER IS A VALUE rather than a constant
                 here — see `toolbarStyle`: the view menu opens INSIDE this
