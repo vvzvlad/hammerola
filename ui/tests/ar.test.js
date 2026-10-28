@@ -3,7 +3,8 @@
 // View in AR (ui/src/ar.js): the scene handed to three's USDZ exporter, built
 // out of groups shaped as the viewer's (`nestedGroup.groups`: a path to a group
 // whose `front` is the mesh of its faces), on three's own objects with no GPU;
-// then the exporter itself over that scene, as the browser runs it.
+// then the exporter itself over that scene, as the browser runs it; and where
+// a WebXR session stands that scene (`arPlacement`).
 //
 // Node and not jsdom, the directory's default, which this file needs nothing
 // of: under jsdom `TextEncoder` hands fflate a Uint8Array of another realm,
@@ -15,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import * as THREE from '../../static/_v/three.module.js'
 import { strFromU8, unzipSync } from '../../static/_v/fflate.module.js'
 import { USDZExporter } from '../../static/_v/USDZExporter.js'
-import { arScene, MM } from '../src/ar.js'
+import { arPlacement, arScene, MM, XR_NEAREST } from '../src/ar.js'
 
 /** A part as the library draws it: a group placed at `at` holding its front
  *  (the faces, one triangle with a corner at the origin and one at x = 1) and
@@ -118,5 +119,55 @@ describe('the scene View in AR exports', () => {
     const { r, g, b } = groups['/m/lid'].front.material.color
     expect(usda).toContain(`color3f inputs:diffuseColor = (${r}, ${g}, ${b})`)
     expect(usda).toContain('float inputs:opacity = 0.25')
+  })
+})
+
+describe('where WebXR stands the model', () => {
+  // In the session's `local` space the phone is at the origin looking down −Z,
+  // Y up. Read off the scene as the session draws it: `arScene`'s root moved
+  // to `arPlacement`.
+  const placed = (groups) => {
+    const root = arScene(THREE, groups)
+    const size = new THREE.Box3().setFromObject(root, true).getSize(new THREE.Vector3())
+    const at = arPlacement(size)
+    root.position.set(at.x, at.y, at.z)
+    root.updateMatrixWorld(true)
+    return new THREE.Box3().setFromObject(root, true)
+  }
+  /** A model of one part, its triangle `mm` millimetres on a side. */
+  const sized = (mm) => {
+    const root = new THREE.Group()
+    const one = part(root, [0, 0, 0], new THREE.MeshStandardMaterial())
+    one.scale.setScalar(mm)
+    return { '/m': root, '/m/p': one }
+  }
+
+  it('keeps it at 1:1', () => {
+    // The shown parts of `model()` span 11 × 21 × 30 mm (x, y, z); in the
+    // session's metres with Y up that is 11 mm across, 30 up and 21 deep.
+    const size = placed(model()).getSize(new THREE.Vector3())
+    const want = [11 * MM, 30 * MM, 21 * MM]
+    size.toArray().forEach((value, axis) => expect(value).toBeCloseTo(want[axis], 9))
+  })
+
+  it('stands its middle straight ahead, a little below eye level', () => {
+    const middle = placed(model()).getCenter(new THREE.Vector3())
+    expect(middle.x).toBeCloseTo(0, 9)
+    // a small part no nearer than the nearest the reader holds a thing
+    expect(middle.z).toBeCloseTo(-XR_NEAREST, 9)
+    // below the phone, and by less than it is ahead: in front, not underfoot
+    expect(middle.y).toBeLessThan(0)
+    expect(-middle.y).toBeLessThan(-middle.z)
+  })
+
+  it('puts the whole of it ahead of the phone, a large one farther off', () => {
+    // Two metres on a side: the nearest face of the model must still be in
+    // front of the phone, and it is not drawn smaller to get there.
+    const small = placed(sized(10))
+    const large = placed(sized(2000))
+    expect(small.max.z).toBeLessThan(0)
+    expect(large.max.z).toBeLessThan(0)
+    expect(large.getCenter(new THREE.Vector3()).z).toBeLessThan(small.getCenter(new THREE.Vector3()).z)
+    expect(large.getSize(new THREE.Vector3()).x).toBeCloseTo(2, 9)
   })
 })

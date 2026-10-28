@@ -498,9 +498,9 @@
   and opens is `ui/src/feedview.js`
 - `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
   views in it: `toolBar` (the views, then Measure, Comment, Add primitive, Fit,
-  on the model's page in a browser with AR Quick Look `AR` (`arBtn`, see
-  `ui/src/ar.js`), Frame, Settings, a tool that does not apply drawn out of
-  service; with a
+  on the model's page in a browser with AR Quick Look or WebXR AR (Chrome on
+  Android) `AR` (`arBtn`, see `ui/src/ar.js`), Frame, Settings, a tool that
+  does not apply drawn out of service; with a
   document open, `DocFile` on the strip to the bar's left: Download and Copy
   link of its file, in words where they fit beside the centred bar and as icons
   where not), the button
@@ -572,8 +572,16 @@
   hidden `<a rel="ar">` with an `<img>` inside. The file is made on the reader's
   tap on the bar's `AR` beside Fit, not before (`openAr` in
   `HammerolaViewer.jsx`, `usdz()` of the viewport), and the address carries
-  `AR_FRAGMENT`, which turns off the pinch that rescales. Over a document the
-  button stays, out of service (`arBtn` in `chromeview.js`)
+  `AR_FRAGMENT`, which turns off the pinch that rescales. A browser with no
+  Quick Look whose WebXR answers `xrSupported` (Chrome on an ARCore Android
+  phone, asked once at mount) gets the same button for the same scene on the
+  page itself: the tap asks for an `immersive-ar` session at once
+  (`requestXr`, its DOM overlay one × that ends it), and `showXr` draws the
+  scene on a renderer of its own, at 1:1, in the `local` space ahead of where
+  the phone was at the start (`arPlacement`), with no floor looked for
+  (`openXr` in `HammerolaViewer.jsx`, `webxr()` of the viewport). Over a
+  document the button stays, out of service, and so it is while the file is
+  made or the session runs (`arBtn` in `chromeview.js`)
 - `ui/src/GerberView.jsx`, `ui/src/gerber.js` — a zip of Gerbers (document type
   `gerbers`): `gerber.js` reads the zip in the browser (central directory,
   `DecompressionStream('deflate-raw')`), tells each file's layer by its

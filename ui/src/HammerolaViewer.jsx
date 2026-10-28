@@ -134,8 +134,10 @@ import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
 import { VariantSwitch } from './variants.jsx';
 // `View in AR`: whether the browser has AR Quick Look, and the type its file
-// is handed over under; the frame waited for before the file is made.
-import { AR_FRAGMENT, arSupported, openQuickLook, USDZ_TYPE } from './ar.js';
+// is handed over under; the frame waited for before the file is made. Where
+// there is no Quick Look, whether WebXR has AR (`xrSupported`) and the
+// session the tap asks it for (`requestXr`).
+import { AR_FRAGMENT, arSupported, openQuickLook, requestXr, USDZ_TYPE, xrSupported } from './ar.js';
 import { painted } from './loadbar.jsx';
 // The pencils and the window that rename a name of the project.
 import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
@@ -1092,8 +1094,12 @@ export default class HammerolaViewer extends React.Component {
       // window (headmenu.jsx), which holds the header's controls as rows.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
       settingsOpen: false, variantsOpen: false, headMenu: false,
-      // `View in AR` (`openAr`): `{ busy }` while the file is made, else null.
+      // `View in AR` (`openAr`, `openXr`): `{ busy }` while the file is made
+      // or while the WebXR session starts and runs, else null.
       ar: null,
+      // Whether this browser opens a WebXR AR session (`xrSupported` in ar.js),
+      // asked at mount where there is no AR Quick Look: true once it says yes.
+      xrCapable: false,
       // The Share window: `{id, files}` while it is open, where `id` is
       // `latest` or the full commit of the row it was opened from and `files`
       // is its first checkbox; `camera`, the Current view box, is absent until
@@ -1339,6 +1345,15 @@ export default class HammerolaViewer extends React.Component {
     // AND THE STORED PROPOSAL WITH IT, behind the same token and through the
     // same two doors: `loadProposal` says why those two and no others.
     if (this.state.token) { this.loadFeed(); this.loadProposal(); }
+
+    // A browser with no AR Quick Look may have AR in WebXR (Chrome on an ARCore
+    // phone), which answers only asynchronously: asked once, and `View in AR`
+    // comes onto the bar when the answer is yes. Quick Look comes first.
+    if (!this.arCapable) {
+      xrSupported().then((yes) => {
+        if (yes && !this._gone) this.setState({ xrCapable: true });
+      });
+    }
 
     this._h = {
       [PICK]: (e) => this.onPick(e.detail),
@@ -4010,6 +4025,44 @@ export default class HammerolaViewer extends React.Component {
       });
   }
 
+  /**
+   * `View in AR` tapped in a browser with WebXR AR and no Quick Look
+   * (`xrCapable`): the view as it stands shown on the page itself, in an
+   * `immersive-ar` session (`requestXr`, then `webxr()` of the viewport). The
+   * session is asked for first, in the tap itself: the request needs the tap's
+   * user activation, which anything awaited before it would spend. From the tap
+   * until the session ends the button has no handler, so no second session is
+   * asked for. A session that is refused, or whose scene could not be built, is
+   * said in a toast, as `openAr` says a file it could not make; one granted is
+   * ended rather than left running empty. The overlay's × comes once the scene
+   * is set in the session (`shown`).
+   */
+  openXr() {
+    const asked = requestXr();
+    this.setState({ ar: { busy: true } });
+    const live = () => !this._gone;
+    asked
+      .then(({ session, shown }) => {
+        session.addEventListener('end', () => {
+          if (live()) this.setState({ ar: null });
+        });
+        const el = live() && this.el();
+        const set = el && typeof el.webxr === 'function' ? el.webxr(session) : null;
+        return (set || Promise.reject(new Error('no model is drawn'))).then(shown, (error) => {
+          // Rejected where the session has already ended, which is the end
+          // this asks for.
+          session.end().catch(() => {});
+          throw error;
+        });
+      })
+      .catch((error) => {
+        console.warn('ar', error);
+        if (!live()) return;
+        this.setState({ ar: null });
+        this.toast('Could not start AR');
+      });
+  }
+
   /** The open document's frame, as `frameBlob` gives the model's: what its
    *  view told the page it can do (`docTools`), else null. */
   docFrameBlob() {
@@ -5277,6 +5330,7 @@ export default class HammerolaViewer extends React.Component {
       proposalOverlay: this.proposalOverlay.bind(this),
       stageProposal: this.stageProposal.bind(this),
       openAr: this.openAr.bind(this),
+      openXr: this.openXr.bind(this),
     });
 
     // The composer, over the model or the document its draft is on.

@@ -39,7 +39,7 @@ import { applyGhost, applyHidden, applySelected, partTop, reconcileMoves,
   restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
-import { usdzOf } from "../ar.js";
+import { showXr, usdzOf } from "../ar.js";
 
 /** The state the viewport starts in — the mock-up's shape, plus the fields a
  *  real build needs (where the geometry comes from). */
@@ -1096,6 +1096,15 @@ export class HmrViewport extends HTMLElement {
     const g = internals(this.viewer);
     if (!g || !g.nestedGroup || !this.three) return Promise.resolve(null);
     return usdzOf(this.three, g.nestedGroup.groups);
+  }
+
+  /** The parts on screen shown in WebXR AR `session` (`showXr` in
+   * ui/src/ar.js): a promise settled once the session shows them, or null
+   * before a model is drawn. */
+  webxr(session) {
+    const g = internals(this.viewer);
+    if (!g || !g.nestedGroup || !this.three) return null;
+    return showXr(this.three, g.nestedGroup.groups, session);
   }
 
   /** True while a gesture is in progress and a build swap would yank the model. */
