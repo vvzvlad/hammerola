@@ -51,27 +51,33 @@ export function renamedAddress(pid, variant, at = parse()) {
   return format(fresh(buildPath(pid, 'latest', variant), { view: at.view, doc: at.doc }));
 }
 
-const PENCIL = 'flex:none;display:inline-block;margin-left:5px;font-size:11px;line-height:1;'
-  + 'color:var(--text-faint);cursor:pointer;user-select:none';
+const PENCIL_LOOK = 'font-size:11px;line-height:1;color:var(--text-faint);cursor:pointer;user-select:none';
+const PENCIL = `flex:none;display:inline-block;margin-left:5px;${PENCIL_LOOK}`;
+// In a menu row the pencil stands in the row's left padding, before the name,
+// where a click meant for the row does not land; the row (`menuRow` in
+// viewlist.jsx) is positioned.
+const PENCIL_LEAD = `position:absolute;left:8px;top:50%;transform:translateY(-50%);${PENCIL_LOOK}`;
 
 // The pencil shows only while the pointer is over the element that carries
 // `RENAME_HOST` — the name itself, its row, or the whole strip of views — and
-// the page draws `RENAME_CSS` once. Hidden rather than absent, so the line
-// keeps its width when the pencil comes and goes; a hidden pencil takes no
-// clicks. A screen with no hover (a phone) shows it always: there it could
-// never appear, and the name could not be renamed.
+// only after the pointer has rested there for half a second, so a pointer
+// passing over a row does not flash it; it hides at once. The page draws
+// `RENAME_CSS` once. Hidden rather than absent, so the line keeps its width
+// when the pencil comes and goes; a hidden pencil takes no clicks. A screen
+// with no hover (a phone) shows it always: there it could never appear, and
+// the name could not be renamed.
 export const RENAME_HOST = 'hmr-rename-host';
 const PENCIL_CLASS = 'hmr-pencil';
 export const RENAME_CSS = `@media (hover:hover){.${RENAME_HOST} .${PENCIL_CLASS}{visibility:hidden}`
-  + `.${RENAME_HOST}:hover .${PENCIL_CLASS}{visibility:visible}}`;
+  + `.${RENAME_HOST}:hover .${PENCIL_CLASS}{visibility:visible;transition:visibility 0s .5s}}`;
 
-/** The faint control that opens the window for one name, right after the
- *  name or at the end of the strip of views, inside an element carrying
- *  `RENAME_HOST`. It stops its click, which would otherwise reach the row it
- *  stands in, a link among them. */
-export function Pencil({ title, onClick }) {
+/** The faint control that opens the window for one name, inside an element
+ *  carrying `RENAME_HOST`: right after the name, at the end of the strip of
+ *  views, or with `lead`, in the left padding of a menu row. It stops its
+ *  click, which would otherwise reach the row it stands in, a link among them. */
+export function Pencil({ title, onClick, lead = false }) {
   return (
-    <span title={title} className={PENCIL_CLASS} style={css(PENCIL)}
+    <span title={title} className={PENCIL_CLASS} style={css(lead ? PENCIL_LEAD : PENCIL)}
           onClick={(event) => { event.preventDefault(); event.stopPropagation(); onClick(); }}>
       ✎
     </span>
