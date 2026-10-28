@@ -25,7 +25,7 @@ export function rowMenu(s, deps) {
     // -- the lookups that stay beside the component
     noteFor, partRecord, fileList,
     // -- the page's own doors
-    node: nodeAt, proposalBody, set, setState,
+    node: nodeAt, expandedTo, proposalBody, set, setState,
     setVisibility, toast, toggle,
   } = deps;
 
@@ -174,7 +174,8 @@ export function rowMenu(s, deps) {
       // - a comparison: the enclosing `compared` block (`toolsOff`).
       ...(viewer || narrow || mNode.isNode ? [] : [
         mi('Move', '', () => {
-          set({ sel: mNode.id, selName: mNode.name, tool: 'move' });
+          set({ sel: mNode.id, selName: mNode.name, tool: 'move',
+                expanded: expandedTo(mNode.id) });
           toast(armedSaid(mNode.id));
         }),
       ]),

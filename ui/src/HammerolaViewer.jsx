@@ -2655,9 +2655,10 @@ export default class HammerolaViewer extends React.Component {
         snapSteps: snapsKept(s.snapSteps,
                              dropMoves(s.proposal || emptyProposal())),
       }),
-      // The reader's own collapses survive: part paths are the same across a
-      // rebuild, and this is the tree they were reading a moment ago.
-      expanded: { ...this.defaultExpanded(tree), ...s.expanded },
+      // The tree opens folded, and what the reader opened stays open: part
+      // paths are the same across a rebuild, and this is the tree they were
+      // reading a moment ago.
+      expanded: s.expanded,
       ...(rejoined || null),
     }), () => {
       // Not on a live one: `home` is the frame the library fitted, and a live
@@ -2753,22 +2754,6 @@ export default class HammerolaViewer extends React.Component {
       viewError: (detail && detail.message) || 'the viewport could not render this view',
       ...(this._refit ? { tree: null } : null),
     });
-  }
-
-  /**
-   * Which nodes start open.
-   *
-   * Everything, on the assemblies people actually look at. The ceiling is there
-   * because the brief asks for the hundred-part case too, and a hundred rows
-   * opened over the model is the tree covering the thing it describes.
-   */
-  defaultExpanded(tree) {
-    const open = {};
-    const all = tree.nodes.size <= 200;
-    tree.nodes.forEach((node) => {
-      if (node.isNode && (all || node.depth === 0)) open[node.id] = true;
-    });
-    return open;
   }
 
   /** The ROW a path belongs to — its own, or the one that collapsed it. */
@@ -4587,7 +4572,29 @@ export default class HammerolaViewer extends React.Component {
       return;
     }
     this.set({ sel: node ? node.id : id,
-               selName: (node && node.name) || picked, menu: null });
+               selName: (node && node.name) || picked, menu: null,
+               ...(node ? { expanded: this.expandedTo(node.id) } : null) });
+  }
+
+  /**
+   * The `expanded` map with every group above row `id` opened.
+   *
+   * The tree opens folded, so a part selected from the scene would otherwise
+   * light up a row nobody can see, and the brief asks the other way round: a
+   * click on the model says which row it was. Written by the two scene-side
+   * selectors, `onPick` and the row menu's `Move`.
+   *
+   * A proposal body is left alone: it hangs under the model's root in the
+   * scene, but its row is in the proposal's own branch, so opening its scene
+   * ancestors would only unfold the parts tree.
+   */
+  expandedTo(id) {
+    const expanded = { ...this.state.expanded };
+    if (this.proposalBody(id)) return expanded;
+    for (let n = this.node(id); n && n.parent; n = this.node(n.parent)) {
+      expanded[n.parent] = true;
+    }
+    return expanded;
   }
 
   /**
@@ -5085,6 +5092,7 @@ export default class HammerolaViewer extends React.Component {
       clearSection, stop, SECTION_ROW,
       noteFor, partRecord, fileList,
       node: this.node.bind(this),
+      expandedTo: this.expandedTo.bind(this),
       proposalBody: this.proposalBody.bind(this),
       set: this.set.bind(this),
       setState: this.setState.bind(this),
