@@ -42,7 +42,7 @@ import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.js
 import {
   DIALOG_BTN, ELLIPSIS, FAINT_MONO, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
-import { Pencil } from './rename.jsx';
+import { Pencil, RENAME_HOST } from './rename.jsx';
 import { css, MONO, SANS } from './style.jsx';
 
 /** One row of the list, a view's or a document's: the same shape for both, so
@@ -339,10 +339,12 @@ export class SheetRows extends React.Component {
     return (
       <>
         <div ref={this.rowBox} onClick={row.onClick} onPointerEnter={this.enter} onPointerLeave={this.leave}
-             style={css(row.rowStyle)}>
-          <span style={css(DOC_LABEL)}>{row.label}</span>
+             className={row.onRename ? RENAME_HOST : undefined} style={css(row.rowStyle)}>
+          <span style={css(DOC_LABEL)}>
+            {row.label}
+            {row.onRename && <Pencil title="Rename document" onClick={row.onRename} />}
+          </span>
           <span style={css(DOC_HINT)}>{row.hint}</span>
-          {row.onRename && <Pencil title="Rename document" onClick={row.onRename} />}
           <span onPointerDown={this.pressed} onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
         </div>
         {open && shown && !(pages && !pages.length) && (
@@ -366,7 +368,7 @@ export class SheetRows extends React.Component {
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
  * a schematic's of several files with what its sheets need, any of them with
- * `onRename`, which ends the row in a pencil), drawn in their
+ * `onRename`, which puts a pencil right after its name), drawn in their
  * groups (`menuGroups`), the documents under the views; `wide` is whether the
  * bar holds the tools (`viewMenuStyle`). `onToggle` must stop the click: the
  * pages shut their menus on a click that reaches the root. Pure, but for the
@@ -393,12 +395,15 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
         {menuGroups(views, documents).map(([head, rows]) => [
           <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
           ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
-            <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-              <span style={css(DOC_LABEL)}>{t.label}</span>
+            <div key={t.key} onClick={t.onClick} className={t.onRename ? RENAME_HOST : undefined}
+                 style={css(t.rowStyle)}>
+              <span style={css(DOC_LABEL)}>
+                {t.label}
+                {t.onRename && (
+                  <Pencil title={head === VIEWS_GROUP ? 'Rename view' : 'Rename document'} onClick={t.onRename} />
+                )}
+              </span>
               <span style={css(DOC_HINT)}>{t.hint}</span>
-              {t.onRename && (
-                <Pencil title={head === VIEWS_GROUP ? 'Rename view' : 'Rename document'} onClick={t.onRename} />
-              )}
             </div>
           ))),
         ])}
@@ -538,7 +543,7 @@ function floatBar(b, menus) {
         viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
           views: b.viewTabs, documents: b.docRows, wide: b.showTools })
       ) : (
-        <div style={css(TAB_STRIP)}>
+        <div className={b.renameView ? RENAME_HOST : undefined} style={css(TAB_STRIP)}>
           {b.viewTabs.map((t) => (
             <div key={t.key} onClick={t.onClick} title={`${t.label} · ${t.hint}`} style={css(t.style)}>{t.label}</div>
           ))}

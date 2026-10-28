@@ -13,7 +13,7 @@ import React from 'react';
 
 import { buildPath } from './hub.js';
 import { FAINT_MONO, popover } from './panelstyle.js';
-import { Pencil } from './rename.jsx';
+import { Pencil, RENAME_HOST } from './rename.jsx';
 import { css, SANS } from './style.jsx';
 import { GROUP_HEAD, menuRow } from './viewlist.jsx';
 
@@ -50,8 +50,8 @@ const LABEL = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:no
  * so a reader sees it is a choice of variants and not a label of the build,
  * and its menu while `open`. `onToggle(event)` opens and shuts it; a click
  * anywhere else is the page's to shut it with. With `onRename(row)`, a row
- * ends in the pencil that renames its variant (rename.jsx). Nothing at all
- * for `choices` null.
+ * carries right after its name the pencil that renames its variant
+ * (rename.jsx). Nothing at all for `choices` null.
  */
 export function VariantSwitch({ choices, open, onToggle, narrow, onRename }) {
   if (!choices) return null;
@@ -67,11 +67,16 @@ export function VariantSwitch({ choices, open, onToggle, narrow, onRename }) {
         tail: 'padding:6px 0;', z: 40, open: !!open }))}>
         <div style={css(GROUP_HEAD)}>VARIANTS</div>
         {choices.rows.map((row) => (
-          <a key={row.key} href={row.href}
+          <a key={row.key} href={row.href} className={onRename ? RENAME_HOST : undefined}
              style={css(`${menuRow(row.current)};text-decoration:none;color:var(--text)`)}>
-            <span style={css(`${LABEL};flex:1`)}>{row.label}</span>
-            {row.label !== row.key && <span style={css(FAINT_MONO)}>{row.key}</span>}
-            {onRename && <Pencil title="Rename variant" onClick={() => onRename(row)} />}
+            {/* The label shrinks with its ellipsis, far ahead of the branch, and
+                the pencil stays right after it, outside the row's gap; the
+                branch keeps the right end. */}
+            <span style={css('display:flex;align-items:center;flex:0 100 auto;min-width:0')}>
+              <span style={css(LABEL)}>{row.label}</span>
+              {onRename && <Pencil title="Rename variant" onClick={() => onRename(row)} />}
+            </span>
+            {row.label !== row.key && <span style={css(`${FAINT_MONO};margin-left:auto`)}>{row.key}</span>}
           </a>
         ))}
       </div>

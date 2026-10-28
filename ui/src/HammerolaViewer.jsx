@@ -131,7 +131,7 @@ import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
 import { VariantSwitch } from './variants.jsx';
 // The pencils and the window that rename a name of the project.
-import { Pencil, RenameWindow, saveRename } from './rename.jsx';
+import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -5495,6 +5495,7 @@ export default class HammerolaViewer extends React.Component {
       // layout to fit into and nothing underneath to leave visible.
       <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
         <style>{VIEWPORT_CSS}</style>
+        <style>{RENAME_CSS}</style>
 
         {/* ── header: model, revision, status, downloads, access, comments ── */}
         <div style={css(v.headerStyle)}>
@@ -5510,7 +5511,8 @@ export default class HammerolaViewer extends React.Component {
           </a>
           <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>
-            <div style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
+            <div className={v.renameTitle ? RENAME_HOST : undefined}
+                 style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
               <div style={css(`${TITLE};min-width:0`)}>{v.title}</div>
               {v.renameTitle && <Pencil title="Rename project" onClick={v.renameTitle} />}
             </div>
