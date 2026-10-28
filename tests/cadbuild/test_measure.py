@@ -4,10 +4,11 @@ Two boxes of 10 mm, 2.5 mm apart along their group's X, inside a group that is
 turned a quarter about Z and moved -- so the gap runs along the view's Y, and a
 placement composed the wrong way round moves the closest points off it.
 
-The first three run without the CAD kernel: with a part that has no STEP the
-measurement is on the view's own triangles, and flat faces make the mesh answer
-exact. The last three read real STEP files, so they skip where the kernel is
-missing and `make cad-test` runs them.
+The first four run without the CAD kernel: with a part that has no STEP, or a
+view that does not say where a STEP stands, the measurement is on the view's
+own triangles, and flat faces make the mesh answer exact. The last three read
+real STEP files, so they skip where the kernel is missing and `make cad-test`
+runs them.
 """
 
 import json
@@ -104,6 +105,28 @@ def test_parts_that_cross_measure_zero_and_the_nearest_of_several_is_named(
     itself = measure.measure(tmp_path, leaves, "b", "b")
     assert itself["pairs"] == 1
     assert itself["distance"] == pytest.approx(SIDE + 1.0)
+
+
+def test_a_view_built_before_it_recorded_at_is_measured_on_the_mesh(tmp_path):
+    """Both parts printable, but the view records no `at`: nothing says where
+    their STEP stands, so the pair goes to the mesh -- without reading the
+    STEP -- and the answer says why, instead of refusing."""
+    for key in ("a", "b"):
+        (tmp_path / f"{key}.step").write_bytes(b"never read on this path")
+    a, b = _box("a", "a", 0.0), _box("b", "b", SIDE + GAP)
+    for leaf in (a, b):
+        del leaf["at"]
+    leaves = _scene(tmp_path, a, b)
+
+    found = measure.measure(tmp_path, leaves, "a", "b")
+
+    assert (found["method"], found["unplaced"], found["reshaped"]) == (
+        measure.MESH, ["a", "b"], [])
+    assert found["distance"] == pytest.approx(GAP, abs=1e-9)
+    assert measure.describe(found)[0] == (
+        "method: the view's mesh -- the view was built before views recorded "
+        "where each part stands, so the STEP of a and b cannot be placed in it "
+        "(publish the model again to measure exactly)")
 
 
 def test_a_part_the_view_does_not_show_or_shows_once_is_refused(tmp_path):
