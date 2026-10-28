@@ -1073,8 +1073,7 @@ export default class HammerolaViewer extends React.Component {
       // menu is added beside it.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
       settingsOpen: false, variantsOpen: false,
-      // `View in AR` (`openAr`): `{ busy }` while the file is made, `{ failed }`
-      // where it could not be, else null.
+      // `View in AR` (`openAr`): `{ busy }` while the file is made, else null.
       ar: null,
       // The Share window: `{id, files}` while it is open, where `id` is
       // `latest` or the full commit of the row it was opened from and `files`
@@ -3958,9 +3957,10 @@ export default class HammerolaViewer extends React.Component {
    * stands (`usdz()` of the viewport), handed to AR Quick Look at 1:1
    * (`openQuickLook`, `AR_FRAGMENT`). Made only once the button dimmed out
    * of service has been painted: the export holds the main thread. While
-   * it is made the row has no handler, so no second file is asked for. The
+   * it is made the button has no handler, so no second file is asked for. The
    * address goes as soon as Quick Look has it — Safari holds the blob of the
-   * preview it started (`openQuickLook`).
+   * preview it started (`openQuickLook`). A file that could not be made is
+   * said in a toast, as Frame's is: on a phone a title is never seen.
    */
   openAr() {
     this.setState({ ar: { busy: true } });
@@ -3983,7 +3983,9 @@ export default class HammerolaViewer extends React.Component {
       })
       .catch((error) => {
         console.warn('ar', error);
-        if (live()) this.setState({ ar: { failed: true } });
+        if (!live()) return;
+        this.setState({ ar: null });
+        this.toast('Could not make the AR file');
       });
   }
 

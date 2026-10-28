@@ -331,6 +331,8 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     const [button] = arButtons(c)
     expect(texts(button)).toContain('AR')
     expect(typeof button.props.onClick).toBe('function')
+    // A phone's window is narrow, where the bar keeps only the views and Fit.
+    expect(arButtons(arPage({ narrow: true }))).toHaveLength(1)
   })
 
   it('makes the file on a tap and hands it to Quick Look at 1:1 through a link Safari takes for one', async () => {
@@ -338,8 +340,8 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     const file = deferred()
     const { c, usdz } = exporting(file)
     arButtons(c)[0].props.onClick(click)
-    // out of service, and saying so, while the file is made
-    expect(c.computed().arBtn).toEqual({ onClick: null, title: 'preparing the AR file…' })
+    // out of service while the file is made
+    expect(c.computed().arBtn).toEqual({ onClick: null })
     expect(arButtons(c)[0].props.onClick).toBeUndefined()
     await vi.waitFor(() => expect(usdz).toHaveBeenCalledTimes(1))
     file.resolve(new Uint8Array(3))
@@ -353,17 +355,17 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     expect(URL.revokeObjectURL.mock.calls).toEqual([['blob:https://hub/1']])
   })
 
-  it('says it failed where no file could be made, opens nothing and can be tapped again', async () => {
+  it('says in a toast it failed where no file could be made, opens nothing and can be tapped again', async () => {
     const { blobs, clicked } = quickLook()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const file = deferred()
     const { c } = exporting(file)
+    c.toast = vi.fn()
     c.computed().arBtn.onClick()
     file.resolve(null)
-    await vi.waitFor(() => expect(c.state.ar).toEqual({ failed: true }))
-    expect([blobs, clicked]).toEqual([[], []])
+    await vi.waitFor(() => expect(c.toast).toHaveBeenCalledWith('Could not make the AR file'))
+    expect([blobs, clicked, c.state.ar]).toEqual([[], [], null])
     const [button] = arButtons(c)
-    expect(button.props.title).toContain('could not be made')
     expect(typeof button.props.onClick).toBe('function')
   })
 

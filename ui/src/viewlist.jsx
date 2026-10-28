@@ -512,9 +512,9 @@ export function DocFile({ href }) {
  *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
  *                and `tSettings`. A tool out of service is drawn `OFF` and
  *                takes no click, so its handler may be absent. And `arBtn`,
- *                `View in AR` beside Fit (`{ onClick, title }`, `onClick` null
- *                out of service), or null: only the model's page has it, and
- *                only in a browser with AR Quick Look.
+ *                `View in AR` beside Fit (`{ onClick }`, `onClick` null out of
+ *                service), or null: only the model's page has it, and only in
+ *                a browser with AR Quick Look.
  * `menus` are the cards `Add primitive` and Settings open (`proposal`,
  * `settings`), which only the model's page has. Pure. What it returns goes
  * straight into the layer (`BAR_LAYER`): the bar alone, or with a document
@@ -597,7 +597,7 @@ function floatBar(b, menus) {
           on every view, out of service where it cannot be, so the bar keeps
           its shape from view to view (AGENTS.md). */}
       {b.arBtn && (
-        <div key="ar" onClick={b.arBtn.onClick || undefined} title={b.arBtn.title} style={css(quietBtn(!b.arBtn.onClick))}>
+        <div key="ar" onClick={b.arBtn.onClick || undefined} title="view the model in AR at 1:1" style={css(quietBtn(!b.arBtn.onClick))}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" /><path d="M2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" /></svg>
           AR
         </div>

@@ -125,7 +125,7 @@ export function chromeView(s, props, deps) {
   // Whether `View in AR` (`arBtn`) can make a file: where a model view is on
   // screen. A document over the model, a schematic or a board's 3D among them,
   // has none.
-  const arShown = !!arCapable && views.length > 0 && !docOpen;
+  const arReady = !!arCapable && views.length > 0 && !docOpen;
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -508,14 +508,10 @@ export function chromeView(s, props, deps) {
     // `View in AR` beside Fit (`floatBar` in viewlist.jsx) in a browser with
     // AR Quick Look, null elsewhere. On every view, so the bar keeps its shape
     // (AGENTS.md): out of service where no model view is on screen
-    // (`arShown`) and while its file is made. A tap makes the file of the view
-    // as it stands and hands it to Quick Look (`openAr`); the title says when
-    // the last try failed (`s.ar`).
+    // (`arReady`) and while its file is made (`s.ar`). A tap makes the file of
+    // the view as it stands and hands it to Quick Look (`openAr`).
     arBtn: !arCapable ? null : {
-      onClick: arShown && !(s.ar && s.ar.busy) ? () => openAr() : null,
-      title: s.ar && s.ar.busy ? 'preparing the AR file…'
-        : s.ar && s.ar.failed ? 'the AR file could not be made; tap to try again'
-          : 'view the model in AR at 1:1',
+      onClick: arReady && !(s.ar && s.ar.busy) ? () => openAr() : null,
     },
     // The strip's one pencil, at its end: it renames the view on screen. One
     // for the whole strip rather than one per pill, so the strip keeps its
