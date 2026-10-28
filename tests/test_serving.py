@@ -365,7 +365,9 @@ def test_a_project_link_unfurls_as_its_latest(hub):
     tags of the project's `latest`, its picture under `latest/`; a project with
     only a draft carries none."""
     hub.publish_dev("proj2", good_build())
-    assert "og:" not in hub.get("/project/proj2/").text
+    drafted = hub.get("/project/proj2/")
+    assert drafted.status_code == 200
+    assert "og:" not in drafted.text
     hub.publish("proj1", "rev12345678901234", good_build(
         views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
                 "parts": ["lid", "pin"], "preview": "assembled_preview.png",

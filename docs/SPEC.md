@@ -1294,8 +1294,9 @@ meta.json при каждом запросе (`render.link_preview`, §4): ме�
 Плюс `GET /health` для healthcheck из compose и `GET /project/<pid>/` — страничка,
 которая выбирает указатель по тому, что читатель смотрел в прошлый раз (§9);
 302 на неё отдаётся с URL без завершающего слеша. В её `<head>` — те же теги превью,
-что у `latest` проекта (`render.pointer_page_html`, §4); у проекта без `latest` их нет. Живой список маршрутов — шапка
-`src/app.py`, и её держит `tests/test_route_inventory.py`.
+что у `latest` проекта (`render.pointer_page_html`, §4); у проекта без `latest`
+их нет. Живой список маршрутов — шапка `src/app.py`, и её держит
+`tests/test_route_inventory.py`.
 
 **Статус и лог сборки** (§8A.2, шаг 5) — единственная часть раздачи, которая не
 публичная:
