@@ -320,8 +320,10 @@ def end_of_request(store: Store, request: GitRequest) -> None:
     The git client returns when the connection closes, so whatever is done here
     is done by the time `git push` returns: after a push, the project's `latest`
     and `builds.json` follow the branch git has just written, and the index
-    follows them (`Store.recompute`). A push is the one request that can move a
-    ref.
+    follows them (`Store.recompute`). A push is one of the two requests that
+    can move a ref; the other is a name changed on the page (`POST
+    /api/v1/projects/<pid>/names`, `prereceive.commit_name`), which
+    recomputes the same way.
     """
     if request.path_info.endswith(f"/{RECEIVE_PACK}"):
         try:

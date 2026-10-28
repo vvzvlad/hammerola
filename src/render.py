@@ -19,10 +19,12 @@ avoids an import cycle with the thing that calls it.
 """
 
 import gzip
+import html
 import json
 import re
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 # The file-name rule lives in hammerola/buildnames.py, so this module, the file
 # server (`app._safe_build_path`) and hammerola/artifacts.py share one object
@@ -196,18 +198,27 @@ def project_title(value) -> str:
     printable title reading "None", and a caller that sent the wrong field has to
     hear about it instead of renaming a project to that.
     """
-    return _name_text(value, "title")
+    return name_text(value, "title")
 
 
 def variant_label(value) -> str:
     """A variant's label, `"variant"` in its branch's project.json, checked
     by `project_title`'s rules: it is shown beside the title, in the header's
     switch of variants."""
-    return _name_text(value, "variant")
+    return name_text(value, "variant")
 
 
-def _name_text(value, field: str) -> str:
-    """The rule of `project_title` and `variant_label`, naming `field`."""
+def view_name(value) -> str:
+    """A view's name from project.json's `views` (`docsbuild.view_names`),
+    checked by the rule its name from the model is (`_model_body`), and refused
+    blank: it is the caption of the view's row in the menu of views."""
+    return name_text(value, "view name")
+
+
+def name_text(value, field: str) -> str:
+    """The rule of `project_title`, `variant_label` and `view_name`, naming
+    `field`: public for the rename route (`app._handle_names`), whose body
+    carries every one of the four as its `name`."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"`{field}` must be a non-empty string")
     return _plain_text(value.strip(), field)
@@ -289,15 +300,41 @@ def _page(name: str, theme: str) -> str:
     return _template(name, theme if theme in THEMES else DEFAULT_THEME)
 
 
-def build_page_html(theme: str) -> str:
+def build_page_html(theme: str, preview: str = "") -> str:
     """The shell of one build's page, served from the image on every request.
 
     Not written into the build directory (`app._serve_build_page`): the shell is
     identical for every build and changes with the image, so a copy served under
     a commit URL's year of `immutable` would freeze each build on the markup of
     the day it was pushed.
+
+    `preview` is the build's own link-preview tags (`link_preview`), put in
+    front of `</head>` of the cached shell rather than into the cache.
     """
-    return _page("build.html", theme)
+    return _page("build.html", theme).replace("</head>", preview + "</head>", 1)
+
+
+def link_preview(meta: dict, page: str) -> str:
+    """The `<meta>` tags a messenger unfurls a link to this build from.
+
+    Telegram reads the Open Graph tags off the page: the title, the commit's
+    message and which revision it is, and the picture the front page's card
+    shows (`card_picture`), named against `page`, the absolute address of the
+    build's directory. A build with no picture gets no `og:image`. Every value
+    is escaped: the title and the message come from a push.
+    """
+    revision = ("draft build" if meta.get("dev")
+                else f"revision {meta['commit'][:12]}")
+    message = meta.get("message")
+    tags = [("property", "og:title", meta["title"]),
+            ("property", "og:description",
+             f"{message} · {revision}" if message else revision)]
+    picture = card_picture(meta)
+    if picture is not None:
+        tags.append(("property", "og:image", page + quote(picture)))
+    tags.append(("name", "twitter:card", "summary_large_image"))
+    return "".join(f'<meta {attribute}="{name}" content="{html.escape(value)}">'
+                   for attribute, name, value in tags)
 
 
 def index_page_html(theme: str) -> str:
@@ -1322,20 +1359,7 @@ def index_card(meta: dict, *, dev: bool, first_built: str,
     records = meta["parts"] if documents is None else {}
     size = (sum(v["gzip"] for v in views) if documents is None
             else sum(d["bytes"] for d in documents))
-    # The picture is the first one any view of this build declares. It is not a
-    # promise about what the card's link opens: pictures hang only on the view
-    # ids the build knows while view order is the model's, and the link opens
-    # whichever of `latest` and `dev` the reader was last on (SPEC 9). Not looked
-    # up by view id, because the serving side does not import the build half
-    # (`cadbuild.artifacts.ASSEMBLED_VIEW_ID`; see docs/repo-map.md). `None` is a
-    # normal answer: an image with no rendering stack ships no PNGs.
-    preview = next((view["preview"] for view in views
-                    if view.get("preview") is not None), None)
-    # The same pick for the card picture (the sheet without its title band and
-    # footer). `None` also means a build made before the build side wrote it; the
-    # front page falls back to `preview` (`ui/src/HammerolaEntry.jsx`).
-    card = next((view["card"] for view in views
-                 if view.get("card") is not None), None)
+    preview, card = _card_pictures(views)
     return {
         "pid": meta["pid"],
         "project": meta["project"],
@@ -1365,3 +1389,34 @@ def index_card(meta: dict, *, dev: bool, first_built: str,
         "preview": preview,
         "card": card,
     }
+
+
+def _card_pictures(views: list) -> tuple[str | None, str | None]:
+    """A build's two card pictures, `preview` and `card`, out of its views.
+
+    The picture is the first one any view of this build declares. It is not a
+    promise about what the card's link opens: pictures hang only on the view
+    ids the build knows while view order is the model's, and the link opens
+    whichever of `latest` and `dev` the reader was last on (SPEC 9). Not looked
+    up by view id, because the serving side does not import the build half
+    (`cadbuild.artifacts.ASSEMBLED_VIEW_ID`; see docs/repo-map.md). `None` is a
+    normal answer: an image with no rendering stack ships no PNGs.
+
+    `card` is the same pick for the card picture (the sheet without its title
+    band and footer). `None` also means a build made before the build side
+    wrote it; the front page falls back to `preview` (`ui/src/HammerolaEntry.jsx`).
+    """
+    preview = next((view["preview"] for view in views
+                    if view.get("preview") is not None), None)
+    card = next((view["card"] for view in views
+                 if view.get("card") is not None), None)
+    return preview, card
+
+
+def card_picture(meta: dict) -> str | None:
+    """The one picture the front page draws on this build's card: `card`, and
+    `preview` for a build that has none (`Preview` in ui/src/HammerolaEntry.jsx).
+    None for a build with no model, which has no views, or with no picture."""
+    preview, card = _card_pictures(
+        [] if meta.get("kind") == DOCUMENTS_KIND else meta["views"])
+    return card or preview

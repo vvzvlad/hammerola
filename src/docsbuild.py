@@ -57,8 +57,11 @@ skipped in silence. `project.json` is the build half's to read as well
 this one alone.
 
 The same file's `"variant"` is the label of the branch's variant
-(`variant_label`), read here because this module is the hub's reader of
-project.json.
+(`variant_label`), and its `"views"`, `{"<view id>": "<name>"}`, names a
+model's views in place of the names model.py gave them (`view_names`,
+`name_views`), both read here because this module is the hub's reader of
+project.json. A build of documents alone has no views and leaves `views`
+unread.
 """
 
 import dataclasses
@@ -84,6 +87,7 @@ from src.store import BUILD_META_FILE
 PROJECT_FILE = "project.json"
 DOCUMENTS_FIELD = "documents"
 VARIANT_FIELD = "variant"
+VIEWS_FIELD = "views"
 
 # The keys an entry written as an object may hold.
 ENTRY_KEYS = ("file", "title", "hidden", "download")
@@ -158,6 +162,51 @@ def variant_label(sources) -> str | None:
         return render.variant_label(data[VARIANT_FIELD])
     except ValueError as error:
         raise PublishError(422, f"{PROJECT_FILE}: {error}") from error
+
+
+def view_names(sources) -> dict:
+    """The tree's `"views"`: view id -> the name the page shows in place of
+    the model's, each checked by `render.view_name`; {} without one. Raises
+    PublishError(422) naming every name that does not pass, which fails the
+    build and refuses the push."""
+    data = _project(Path(sources))
+    listed = data.get(VIEWS_FIELD, {})
+    if not isinstance(listed, dict):
+        raise PublishError(
+            422, f"`{VIEWS_FIELD}` in {PROJECT_FILE} has to be an object of "
+                 f"view id to name, such as {{\"assembled\": \"Assembled\"}}")
+    names, problems = {}, []
+    for view_id, name in listed.items():
+        try:
+            names[view_id] = render.view_name(name)
+        except ValueError as error:
+            problems.append(f"  {view_id!r}: {error}")
+    if problems:
+        raise PublishError(
+            422, f"{PROJECT_FILE} names views the page cannot show:\n"
+                 + "\n".join(problems))
+    return names
+
+
+def name_views(staging, names: dict) -> None:
+    """Lay `names` (`view_names`) over the names the model gave its views in
+    the build's meta.json; an id no view has is left alone. A broken meta.json
+    is left for publication to refuse in its own words (`Store._read_meta`)."""
+    if not names:
+        return
+    meta_path = Path(staging) / BUILD_META_FILE
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    views = meta.get("views") if isinstance(meta, dict) else None
+    if not isinstance(views, list):
+        return
+    for view in views:
+        view_id = view.get("id") if isinstance(view, dict) else None
+        if isinstance(view_id, str) and view_id in names:
+            view["name"] = names[view_id]
+    meta_path.write_text(json.dumps(meta, indent=1), encoding="utf-8")
 
 
 def has_model(sources) -> bool:
@@ -404,12 +453,15 @@ def _draw_dxf(target: Path) -> tuple:
     return text, None
 
 
-def _names(data: dict, pid: str) -> tuple:
+def project_names(data: dict, pid: str) -> tuple:
     """(project, title), resolved the way a model's build resolves them.
 
     The same chain as `cadbuild.project.load_project`: the `project` key, else
-    the slug in the title's brackets, else the id. Both are checked as text by
-    `render.build_meta` on the way in.
+    the slug in the title's brackets, else the id. On a build both are checked
+    as text by `render.build_meta`. Public for a rename of the project, which
+    writes them into a copy of a build (`prereceive.commit_name`) without that
+    check: the title was checked by `render.name_text` in the route, and
+    `project` is the key a build already carried or a slug (`SLUG_RE`).
     """
     raw_title = str(data.get("title") or "").strip()
     project = (str(data.get("project") or "").strip()
@@ -476,7 +528,7 @@ def run_documents_build(sources, out_dir, documents, *, pid) -> BuildOutcome:
     """
     started = time.monotonic()
     sources, out_dir = Path(sources), Path(out_dir)
-    project, title = _names(_project(sources), pid)
+    project, title = project_names(_project(sources), pid)
     out_dir.mkdir()
     entries, lines = _copy(sources, out_dir, documents)
     meta = {"project": project, "title": title, "kind": DOCUMENTS_KIND,

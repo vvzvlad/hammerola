@@ -42,6 +42,7 @@ import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.js
 import {
   DIALOG_BTN, ELLIPSIS, FAINT_MONO, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
+import { Pencil } from './rename.jsx';
 import { css, MONO, SANS } from './style.jsx';
 
 /** One row of the list, a view's or a document's: the same shape for both, so
@@ -80,12 +81,14 @@ const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
  * itself as `doc`, `base`, the address the build's files are served under,
  * `build`, the build's key (`buildKey` in hub.js), whether it is `on` screen,
  * and `chooseSheet(value)`, which is `choose(id, value)` with a sheet's `s=`
- * value.
+ * value. With `rename(doc)`, a row carries `onRename`, its pencil's
+ * (rename.jsx).
  */
-export function documentRows(documents, open, choose, base, build) {
+export function documentRows(documents, open, choose, base, build, rename) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
     key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
+    onRename: rename ? () => rename(doc) : undefined,
     ...(doc.type === 'schematic' && doc.kicad.schematics.length > 1
       ? { doc, base, build, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
   }));
@@ -339,6 +342,7 @@ export class SheetRows extends React.Component {
              style={css(row.rowStyle)}>
           <span style={css(DOC_LABEL)}>{row.label}</span>
           <span style={css(DOC_HINT)}>{row.hint}</span>
+          {row.onRename && <Pencil title="Rename document" onClick={row.onRename} />}
           <span onPointerDown={this.pressed} onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
         </div>
         {open && shown && !(pages && !pages.length) && (
@@ -361,7 +365,8 @@ export class SheetRows extends React.Component {
 /**
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
- * a schematic's of several files with what its sheets need), drawn in their
+ * a schematic's of several files with what its sheets need, any of them with
+ * `onRename`, which ends the row in a pencil), drawn in their
  * groups (`menuGroups`), the documents under the views; `wide` is whether the
  * bar holds the tools (`viewMenuStyle`). `onToggle` must stop the click: the
  * pages shut their menus on a click that reaches the root. Pure, but for the
@@ -391,6 +396,9 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
             <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
               <span style={css(DOC_LABEL)}>{t.label}</span>
               <span style={css(DOC_HINT)}>{t.hint}</span>
+              {t.onRename && (
+                <Pencil title={head === VIEWS_GROUP ? 'Rename view' : 'Rename document'} onClick={t.onRename} />
+              )}
             </div>
           ))),
         ])}
@@ -534,6 +542,11 @@ function floatBar(b, menus) {
           {b.viewTabs.map((t) => (
             <div key={t.key} onClick={t.onClick} title={`${t.label} · ${t.hint}`} style={css(t.style)}>{t.label}</div>
           ))}
+          {b.renameView && (
+            <div style={css('display:flex;align-items:center')}>
+              <Pencil title="Rename view" onClick={b.renameView} />
+            </div>
+          )}
         </div>
       )}
       {/* Everything between the views and Fit belongs to a pointer and a

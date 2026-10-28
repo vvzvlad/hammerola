@@ -93,6 +93,10 @@ export class SchematicDrawingSettings {
     default_line_thickness: number = 6;
     default_text_size: number = 50;
     field_names: unknown[];
+    // KiCad 9/10 fills an absent intersheets_ref_* key from eeschema's app
+    // settings, whose intersheet fields are never loaded and stay false and
+    // empty (schematic_settings.cpp, eeschema_settings.cpp), not from
+    // SCHEMATIC_SETTINGS' own initial values (own page on, "[" and "]").
     intersheets_ref_own_page: boolean = false;
     intersheets_ref_prefix: string = "";
     intersheets_ref_short: boolean = false;

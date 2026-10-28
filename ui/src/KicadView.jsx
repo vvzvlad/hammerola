@@ -33,14 +33,17 @@
 // in or failed to (`onFetched3D`), or the reader has moved to one of them, so
 // the two do not share the line; the page is told the view on screen has its
 // file(s) through `onReady` (DocumentView.jsx). While those files come in, the
-// 2D views' note is the bar of loadbar.jsx, filled to the schematic's and the
+// 2D views show the bar of loadbar.jsx, filled to the schematic's and the
 // board's `bytes`, and a part selected in the 3D view, or asked for by `Show
 // in …`, is selected in them once they are drawn.
 //
 // EVERY MEMBER'S VIEW STAYS MOUNTED. The ones not on screen — all of them
 // while the design is hidden — are hidden with `visibility`, not `display`, so
 // each keeps its size, its camera and its selection, and is told it is inactive
-// (`setActive`, `active`), which stops its drawing until it is back.
+// (`setActive`, `active`), which stops its drawing until it is back. So is a 2D
+// view on screen until its files are drawn: before that the viewer shows only
+// its own spinner, where the load bar stands, and it is fitted to the size it
+// keeps hidden.
 //
 // A CHANGE OF THE SCHEMATIC'S PAGE IS A STEP OF THE BROWSER'S HISTORY, whatever
 // makes it: a double click on a sheet symbol, an item `… · <sheet>`, the
@@ -80,7 +83,8 @@
 //     EVERY view, the clicked one included: the viewer itself leaves a part lit
 //     through a click on the bare board. Nets are not carried across this way;
 //   * the RIGHT BUTTON on a part, or in the schematic and the board on what has
-//     a net (a track, a via, a zone, a label, a power symbol, a sheet pin),
+//     a net (a track, a via, a zone, a label, a power symbol, a sheet pin, a
+//     wire joined to one of the last three),
 //     opens a menu at the pointer (`menuFor`), headed with the part, the net,
 //     or both: a pad of the board is both, a pin of the schematic its part
 //     alone. The part has
@@ -96,9 +100,11 @@
 //     name, which KiCad joins across the whole design, and hierarchical labels
 //     of one name with the sheet pins of that name, through which the sheet
 //     that draws a sheet symbol wires them together, so that net's items
-//     include that sheet. A local label's net is on its own sheet alone, so
-//     from the schematic it has no sheet item; a net no sheet names keeps the
-//     one item, and the viewer looks it up.
+//     include that sheet. A wire run joins the nets of what stands on it, so
+//     a wire's menu, and that of each thing on the run, has the sheets of all
+//     of them (`boards`). A local label's net is on its own sheet alone, so
+//     from the schematic it has no sheet item of its own; a net no sheet names
+//     keeps the one item, and the viewer looks it up.
 //     An item of another member asks the page to open it (`onOpen` with its
 //     id, which moves the lit row of its list too) and, once the page has
 //     handed it down, asks its element to select the same thing — a part by
@@ -342,12 +348,12 @@ const NO_NETS = netIndex({});
  * zone, and a pad, which has both). A designator KiCad starts with `#` is no
  * part: a power symbol or a power flag is drawn on the schematic only, never
  * placed on the board. A power symbol is a net instead, the one `nets`
- * (kicadnets.js) holds for its uuid; a power flag names none.
+ * (kicadnets.js) holds for its uuid, and so is a wire; a power flag names none.
  */
 export function crossProbeRequest(detail, targetContext, nets = NO_NETS) {
   const { reference, net, uuid } = detail || {};
   const own = nets.byUuid.get(uuid);
-  const name = net || (own && own.kind === 'power' ? own.name : '');
+  const name = net || (own && (own.kind === 'power' || own.kind === 'wire') ? own.name : '');
   return {
     part: reference && !reference.startsWith('#') ? { targetContext, kind: 'designator', value: reference } : null,
     net: name ? { targetContext, kind: 'net', value: name } : null,
@@ -359,14 +365,14 @@ export function crossProbeRequest(detail, targetContext, nets = NO_NETS) {
 const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
 
 /**
- * The first occurrence on each sheet of the net the board names `board`
- * (kicadnets.js), in the order of `nets`: the sheet of `own`, the occurrence
- * the menu is for, if any, left out.
+ * The first occurrence on each sheet of any of the nets the board names
+ * `boards` (kicadnets.js), in the order of `nets`: the sheet of `own`, the
+ * occurrence the menu is for, if any, left out.
  */
-function netSheets(nets, board, own) {
+function netSheets(nets, boards, own) {
   const first = new Map();
   for (const one of nets.occurrences) {
-    if (one.board === board && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) first.set(one.sheet, one);
+    if (boards.includes(one.board) && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) first.set(one.sheet, one);
   }
   return [...first.values()];
 }
@@ -378,7 +384,8 @@ function netSheets(nets, board, own) {
  * carrying the request its view is asked (`request`). The part's first, an
  * item for every other listed member that can show it; then the net's, the
  * same but for the schematic where the sheets name the net (`netSheets`),
- * which has an item per sheet it is on instead, the request carrying the
+ * which has an item per sheet it is on instead — for what stands on a wire
+ * run, per sheet any net of the run is on (`boards`) — the request carrying the
  * sheet's path and the occurrence's uuid, and for the board, which is asked for
  * the net by the board's name of it: the occurrence's `board` when the menu is
  * for one, else the name reported, which a click on the board reports as the
@@ -399,7 +406,7 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
   if (net) {
     const own = nets.byUuid.get(detail.uuid);
     const board = own ? own.board : net.value;
-    const sheets = netSheets(nets, board, own);
+    const sheets = netSheets(nets, (own && own.boards) || [board], own);
     for (const view of SHOWS.net.filter((one) => members[one])) {
       const label = `Show net ${net.value} in ${members[view].name}`;
       if (view === SCH && sheets.length) {
@@ -906,10 +913,10 @@ export default class KicadView extends React.Component {
    *  (`picked`). Released anywhere else, the viewer panned with it.
    *
    *  Selecting a label or a sheet pin there opens the schematic's own list
-   *  of the label's namesakes (`kc-sch-selection-menu`), which stays open
-   *  after our menu; a list that opened so is closed again, as the viewer
-   *  itself closes it (`hidden`). One the reader opened with the left button
-   *  is left as it is. */
+   *  of the label's namesakes (`kc-sch-selection-menu`), which would stand
+   *  under our menu; it is closed again, as the viewer itself closes it
+   *  (`hidden`). One the reader had open closed on the press: the list
+   *  closes on any press outside it. */
   release(context, event) {
     const { pressed } = this;
     this.pressed = null;
@@ -918,14 +925,13 @@ export default class KicadView extends React.Component {
     const [canvas] = event.composedPath();
     if (!canvas || canvas.localName !== 'canvas') return;
     const list = labelList(canvas);
-    const listShut = Boolean(list && list.hidden);
     this.pointing = { from: context, x: event.clientX, y: event.clientY };
     try {
       this.elements[context].selectAt(event.clientX, event.clientY);
     } finally {
       this.pointing = null;
     }
-    if (listShut && !list.hidden) list.hidden = true;
+    if (list) list.hidden = true;
   }
 
   /** The menu for what `from` selected, at the page point `x`,`y`, in place of
@@ -1243,11 +1249,15 @@ export default class KicadView extends React.Component {
     const { ready, error, selected, menu, hover, sheet, received, got } = this.state;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
-    const note = side !== BOARD3D && (error || (!ready && loadBar(received, total, got)));
+    const note = side !== BOARD3D
+      && (error ? <div style={css(NOTE)}>{error}</div> : !ready && loadBar(received, total, got));
     // The view drawn: none while the design is hidden, whose layer is hidden
-    // too, which a child marked `visible` would show through.
+    // too, which a child marked `visible` would show through. A 2D viewer is
+    // shown only once its files are drawn: before that it draws nothing but its
+    // own spinner, in the middle, where the load bar stands.
     const showing = this.onScreen() ? side : null;
-    const shown = (context) => `${VIEWER};visibility:${context === showing ? 'visible' : 'hidden'}`;
+    const visible = (context) => context === showing && (ready || context === BOARD3D);
+    const shown = (context) => `${VIEWER};visibility:${visible(context) ? 'visible' : 'hidden'}`;
     const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
     return (
       <div ref={this.setShell} style={css(SHELL)} onWheelCapture={this.closeMenu}>
@@ -1264,7 +1274,7 @@ export default class KicadView extends React.Component {
                          onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
           </div>
         )}
-        {note && <div style={css(NOTE)}>{note}</div>}
+        {note}
         {menu && menu.from === side && (
           <div data-menu={menu.from} ref={this.setMenu} style={css(menuBox(menu))}
                onContextMenu={(event) => event.preventDefault()}>

@@ -14,6 +14,7 @@
  * `narrow`, the catalogue, the shared `clearSection`) and lookups the component
  * also needs (`partRecord`, `fileList`, `noteFor`).
  */
+import { BAMBU_FORMAT } from './bambu.jsx';
 import { countedName } from './hub.js';
 import { SANS } from './style.jsx';
 
@@ -61,10 +62,11 @@ export function rowMenu(s, deps) {
   // below — and `tone` is 'top' for a rule above the row, 'said' for a row that
   // states something rather than doing it.
   //
-  // A row with `href` is two controls side by side, the link and its Copy link
+  // A row with `href` is controls side by side, the link and its Copy link
   // at the end (copylink.jsx), which may not sit inside the `<a>`: `rowStyle`
-  // holds both and the rule above them, `style` is the link's, filling the
-  // row, and `copyStyle` pads the Copy link.
+  // holds them and the rule above them, `style` is the link's, filling the
+  // row, and `copyStyle` pads the Copy link. A 3MF's row also has Open in
+  // Bambu Studio before the Copy link (`fileRows`, bambu.jsx).
   //
   // A 'said' row gets no handler at all, so it is inert as it looks: the click
   // stops at the menu's wrapper (which stops propagation so a press on the
@@ -121,8 +123,10 @@ export function rowMenu(s, deps) {
     if (!anyDownloads) return [mi('No files in this build', '', () => {}, 'said')];
     const files = fileList(partRecord(catalogue, key));
     if (!files.length) return [mi('No files for this part', 'not a printable', () => {}, 'said')];
-    return files.map((f, at) => mi(f.ext.toUpperCase(), f.file, () => {},
-                                   at === 0 ? 'top' : '', fileHref(f.file, filesKey)));
+    return files.map((f, at) => ({
+      ...mi(f.ext.toUpperCase(), f.file, () => {}, at === 0 ? 'top' : '', fileHref(f.file, filesKey)),
+      bambu: f.ext.toUpperCase() === BAMBU_FORMAT, bambuStyle: 'padding:7px 4px',
+    }));
   };
 
   // WHILE A COMPARISON IS UP, VISIBILITY IS THE THREE TABS AND NOTHING ELSE.

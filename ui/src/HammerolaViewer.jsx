@@ -130,6 +130,8 @@ import { COMMENTABLE, docExt, DocumentLayers, FILE_TYPE } from './DocumentView.j
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
 import { VariantSwitch } from './variants.jsx';
+// The pencils and the window that rename a name of the project.
+import { Pencil, RenameWindow, saveRename } from './rename.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -137,7 +139,9 @@ import { VariantSwitch } from './variants.jsx';
 // because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
-// The Copy link at the end of each file row of both menus.
+// The Copy link at the end of each file row of both menus, and Open in Bambu
+// Studio before it on a 3MF's row.
+import BambuLink from './bambu.jsx';
 import CopyLink from './copylink.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 // And the comments the page of a build with no model holds too: the queue
@@ -1061,6 +1065,9 @@ export default class HammerolaViewer extends React.Component {
       // is its first checkbox; `camera`, the Current view box, is absent until
       // ticked; null while it is closed.
       share: null,
+      // The rename window (rename.jsx): what it renames, `{kind, variant, id,
+      // name}`, while it is open; null while it is closed.
+      rename: null,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison: five fields answering five questions.
       //
@@ -5505,11 +5512,14 @@ export default class HammerolaViewer extends React.Component {
           </a>
           <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>
-            <div style={css(TITLE)}>{v.title}</div>
+            <div style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
+              <div style={css(`${TITLE};min-width:0`)}>{v.title}</div>
+              {v.renameTitle && <Pencil title="Rename project" onClick={v.renameTitle} />}
+            </div>
             {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
           </div>
           <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
-                         onToggle={v.variantsToggle} narrow={v.narrowMenus} />
+                         onToggle={v.variantsToggle} narrow={v.narrowMenus} onRename={v.variantRename} />
 
           <div style={css('position:relative;margin-left:8px;flex:none')}>
             <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
@@ -5580,6 +5590,7 @@ export default class HammerolaViewer extends React.Component {
                           <span style={css(FILL)}>{f.label}</span>
                           <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
                         </a>
+                        {f.bambu && <BambuLink href={f.href} style={f.bambuStyle} />}
                         <CopyLink href={f.href} style={f.copyStyle} />
                       </div>
                     ))}
@@ -6179,7 +6190,8 @@ export default class HammerolaViewer extends React.Component {
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
             {/* A row that carries a file holds a real ANCHOR, not a div with a
                 handler: the download is the browser's to do, exactly as in the
-                header's menu, so the link can be middle-clicked or saved as. Its
+                header's menu, so the link can be middle-clicked or saved as. Open
+                in Bambu Studio closes the menu as the link does. Its
                 file name shrinks to an ellipsis rather than run under Copy link,
                 and the row is keyed by its address, so a Copy link that says
                 "copied" never moves to the same format of another part. */}
@@ -6194,6 +6206,7 @@ export default class HammerolaViewer extends React.Component {
                 ? (
                   <div key={m.href} style={css(m.rowStyle)}>
                     <a href={m.href} download onClick={m.onClick} style={css(m.style)}>{inner}</a>
+                    {m.bambu && <BambuLink href={m.href} onClick={m.onClick} style={m.bambuStyle} />}
                     <CopyLink href={m.href} style={m.copyStyle} />
                   </div>
                 )
@@ -6272,6 +6285,14 @@ export default class HammerolaViewer extends React.Component {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── the rename window, over the whole page like the Share window ── */}
+        {this.state.rename && (
+          <RenameWindow subject={this.state.rename}
+                        onSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.state.token,
+                          (said) => this.toast(said))}
+                        onClose={() => this.setState({ rename: null })} />
         )}
       </div>
     );

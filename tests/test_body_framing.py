@@ -1,8 +1,8 @@
 """One request, two ways of saying how long its body is. Every route says 411.
 
-`_body_length` in `src/app.py` opens the preamble the five routes that read their
+`_body_length` in `src/app.py` opens the preamble the six routes that read their
 body by its length share, and refuses a chunked body like a missing length on all
-five. This file holds that rule. The git route is not one of them: it takes a
+six. This file holds that rule. The git route is not one of them: it takes a
 chunked push and decodes it itself (`githttp.copy_chunked`).
 
 It differs from `test_a_body_of_unknown_length_is_411`, which sends chunked and no
@@ -28,12 +28,12 @@ from src.app import HOOK_SECRET_HEADER
 PID = "proj1"
 COMMIT = "abc123"
 
-# The five routes of the preamble, by the name their handler goes by. `resolve`
+# The six routes of the preamble, by the name their handler goes by. `resolve`
 # is the one that enters the preamble conditionally -- its body is optional, so
 # a request with no framing at all is a resolve with no note -- and it is here
 # because the framing it does carry is still framing this service cannot read.
 # `pre-receive` is the git hook's, behind the secret of this process.
-ROUTES = ("comment", "pre-receive", "proposal", "resolve", "title")
+ROUTES = ("comment", "names", "pre-receive", "proposal", "resolve", "title")
 
 
 def _setup(hub):
@@ -48,6 +48,7 @@ def _setup(hub):
     return {
         "pre-receive": githttp.HOOK_PATH,
         "title": f"/api/v1/projects/{PID}/title",
+        "names": f"/api/v1/projects/{PID}/names",
         "comment": f"/api/v1/comments/{PID}/{COMMIT}",
         "resolve": f"/api/v1/comments/{cid}/resolve",
         "proposal": f"/api/v1/proposals/{PID}",

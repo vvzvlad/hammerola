@@ -13,6 +13,7 @@ import React from 'react';
 
 import { buildPath } from './hub.js';
 import { FAINT_MONO, popover } from './panelstyle.js';
+import { Pencil } from './rename.jsx';
 import { css, SANS } from './style.jsx';
 import { GROUP_HEAD, menuRow } from './viewlist.jsx';
 
@@ -48,10 +49,11 @@ const LABEL = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:no
  * The switcher: a button naming the variant on screen, captioned `variant`
  * so a reader sees it is a choice of variants and not a label of the build,
  * and its menu while `open`. `onToggle(event)` opens and shuts it; a click
- * anywhere else is the page's to shut it with. Nothing at all for `choices`
- * null.
+ * anywhere else is the page's to shut it with. With `onRename(row)`, a row
+ * ends in the pencil that renames its variant (rename.jsx). Nothing at all
+ * for `choices` null.
  */
-export function VariantSwitch({ choices, open, onToggle, narrow }) {
+export function VariantSwitch({ choices, open, onToggle, narrow, onRename }) {
   if (!choices) return null;
   return (
     <div style={css('position:relative;flex:none;min-width:0')}>
@@ -69,6 +71,7 @@ export function VariantSwitch({ choices, open, onToggle, narrow }) {
              style={css(`${menuRow(row.current)};text-decoration:none;color:var(--text)`)}>
             <span style={css(`${LABEL};flex:1`)}>{row.label}</span>
             {row.label !== row.key && <span style={css(FAINT_MONO)}>{row.key}</span>}
+            {onRename && <Pencil title="Rename variant" onClick={() => onRename(row)} />}
           </a>
         ))}
       </div>

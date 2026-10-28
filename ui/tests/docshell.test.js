@@ -633,7 +633,7 @@ describe('the shell', () => {
     shell = new DocShell({ meta: WITH_KICAD })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST,
-                                  variants: null, variantsOpen: false })
+                                  variants: null, variantsOpen: false, rename: null })
     // the door `Show in …` on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)

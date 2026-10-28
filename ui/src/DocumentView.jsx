@@ -185,6 +185,8 @@ const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--pa
 const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55;user-select:text';
 const PICTURE = 'display:block;max-width:100%;margin:24px auto;background:var(--paper-bg)';
 const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
+// The box the load bar centres itself in: the whole area the document is drawn in.
+const LOADING = 'position:relative;height:100%';
 
 // A file the page does not draw, in the middle of the sheet the drawn ones use:
 // its name and what it is. It may be the only document of a build and so the
@@ -308,7 +310,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   onSheet, comment, quoting, views, shown) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
-    if (text === null) return <div style={css(NOTE)}>{loadBar(received, doc.bytes, false)}</div>;
+    if (text === null) return <div style={css(LOADING)}>{loadBar(received, doc.bytes, false)}</div>;
     const { pointing, ...hooks } = quoting || {};
     return (
       <article style={css(ARTICLE + (pointing ? ';cursor:pointer' : ''))} {...hooks}>
