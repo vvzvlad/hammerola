@@ -52,8 +52,8 @@
 import React from 'react';
 
 import {
-  disposeModel, exportRoot, frameBox, fromPart, light, loadThree, mergeByMaterial, partPlace, partsOf, pickedPart,
-  plainColours, sharedGeometries,
+  disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, mergeByMaterial, partPlace, partsOf,
+  pickedPart, plainColours, sharedGeometries,
 } from './board3d.js';
 import { wheelMove } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
@@ -107,6 +107,7 @@ class Stage {
     this.root = exportRoot(this.model);
     const shared = sharedGeometries(this.root);
     for (const node of [...this.root.children]) mergeByMaterial(THREE, mergeGeometries, node, shared);
+    layersWriteDepth(this.root);
     this.parts = partsOf(this.model);
     this.box = new THREE.Box3().setFromObject(this.model);
     this.radius = this.box.getBoundingSphere(new THREE.Sphere()).radius || 1;
@@ -218,9 +219,10 @@ class Stage {
 
   draw() {
     // The depth range follows the camera, so a close look at a 0402 keeps its
-    // precision. Silkscreen lies 40 µm over the copper: with near at a hundredth
-    // of the distance to what is looked at, a whole board seen from 30 cm lost
-    // its far half's silkscreen under the copper; a twentieth keeps it.
+    // precision: with near at a twentieth of the distance, a 24-bit depth
+    // buffer tells apart 0.4 µm at 30 cm, and the silkscreen lies 25 µm over the
+    // mask. Which of the two shows is the layers' depth writing
+    // (`layersWriteDepth` in board3d.js), not this range.
     const distance = this.camera.position.distanceTo(this.controls.target);
     this.camera.near = distance / 20;
     this.camera.far = distance + this.radius * 4;
