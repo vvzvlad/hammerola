@@ -519,11 +519,11 @@ export default class BoardView3D extends React.Component {
 
   render() {
     const { loading, error, received, got } = this.state;
-    const note = error || (loading && loadBar(received, this.props.bytes, got));
+    const note = error ? <div style={css(NOTE)}>{error}</div> : loading && loadBar(received, this.props.bytes, got);
     return (
       <div style={css(SHELL)}>
         <div ref={this.setHost} style={css(HOLDER)} />
-        {note && <div style={css(NOTE)}>{note}</div>}
+        {note}
       </div>
     );
   }

@@ -24,14 +24,16 @@
 // in or failed to (`onFetched3D`), or the reader has moved to one of them, so
 // the two do not share the line; the page is told the view on screen has its
 // file(s) through `onReady` (DocumentView.jsx). While those files come in, the
-// 2D views' note is the bar of loadbar.jsx, filled to the schematic's and the
+// 2D views show the bar of loadbar.jsx, filled to the schematic's and the
 // board's `bytes`, and a part selected in the 3D view, or asked for by `Show
 // in …`, is selected in them once they are drawn.
 //
 // EVERY MEMBER'S VIEW STAYS MOUNTED. The ones not on screen are hidden with
 // `visibility`, not `display`, so each keeps its size, its camera and its
 // selection, and is told it is inactive (`setActive`, `active`), which stops its
-// drawing until it is back.
+// drawing until it is back. So is a 2D view on screen until its files are
+// drawn: before that the viewer shows only its own spinner, where the load bar
+// stands, and it is fitted to the size it keeps hidden.
 //
 // A CHANGE OF THE SCHEMATIC'S PAGE IS A STEP OF THE BROWSER'S HISTORY, whatever
 // makes it: a double click on a sheet symbol, an item `… · <sheet>`, the
@@ -1195,8 +1197,12 @@ export default class KicadView extends React.Component {
     const { ready, error, selected, menu, hover, sheet, received, got } = this.state;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
-    const note = side !== BOARD3D && (error || (!ready && loadBar(received, total, got)));
-    const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
+    const note = side !== BOARD3D
+      && (error ? <div style={css(NOTE)}>{error}</div> : !ready && loadBar(received, total, got));
+    // A 2D viewer is shown only once its files are drawn: before that it draws
+    // nothing but its own spinner, in the middle, where the load bar stands.
+    const visible = (context) => context === side && (ready || context === BOARD3D);
+    const shown = (context) => `${VIEWER};visibility:${visible(context) ? 'visible' : 'hidden'}`;
     const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
     return (
       <div ref={this.setShell} style={css(SHELL)} onWheelCapture={this.closeMenu}>
@@ -1213,7 +1219,7 @@ export default class KicadView extends React.Component {
                          onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
           </div>
         )}
-        {note && <div style={css(NOTE)}>{note}</div>}
+        {note}
         {menu && menu.from === side && (
           <div data-menu={menu.from} ref={this.setMenu} style={css(menuBox(menu))}
                onContextMenu={(event) => event.preventDefault()}>
