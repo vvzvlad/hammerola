@@ -559,7 +559,9 @@
   `fetchBody` reads the answer chunk by chunk and counts each one on a `meter`,
   which reaches the screen at most once per frame, and `loadBar` is the label
   (`Loading… 2.1 / 40.7 MB`, then `Preparing…`) and the bar, filled against the
-  document's `bytes` in meta.json
+  document's `bytes` in meta.json. The model page draws the same bar over the
+  model while the viewport reads a view file, from the viewport's
+  `hmr:progress` counted against the view's `bytes`
 - `ui/src/PcbPanel.jsx` — the board view's own panel over the top left of its
   canvas, where the model's parts tree stands (the viewer's panels are hidden by
   `hide-chrome`): layer presets, a row per layer with an eye and an

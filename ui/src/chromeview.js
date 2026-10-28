@@ -475,7 +475,8 @@ export function chromeView(s, props, deps) {
       // already on screen, through `set`: `showView` sends nothing then, and
       // the model the document held back (`sync`) is let go here. On another,
       // `showView` sends it, and a second `hmr:state` before the model is
-      // drawn would start its load again.
+      // drawn is one the viewport has to ignore (`fetching` in
+      // viewport/element.js).
       onClick: () => {
         (s.view === v.id ? set : setState)({ doc: null });
         // A step of history whose address names the view and no document

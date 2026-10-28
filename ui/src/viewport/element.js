@@ -14,7 +14,7 @@
 // ordinary document; a shadow root would leave the widget unstyled.
 
 import {
-  EVENT_ERROR, EVENT_MODEL, EVENT_STATE, EVENT_TOOL, emit,
+  EVENT_ERROR, EVENT_MODEL, EVENT_PROGRESS, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
 import { settleCoplanar } from "./coplanar.js";
 import { safeHatch, setCutHatch } from "./hatch.js";
@@ -211,6 +211,26 @@ function throughPart(vp, path, point, normal, inverse) {
   const n = normal ? new three.Vector3(...normal).transformDirection(m) : null;
   return { p: [p.x, p.y, p.z], n: n ? [n.x, n.y, n.z] : null };
 }
+
+/** Resolves once a frame has been painted. Awaited between the last byte of a
+ *  view file and its parse: started in the task the last chunk lands in, the
+ *  parse would hold the frame that paints the interface's full bar and
+ *  `Preparing…` until it is over.
+ *
+ *  TWO frames, not one: the `Preparing…` the interface asks React for on the
+ *  `done` report is put on the page by a task of React's own, which the browser
+ *  may run after the next frame rather than before it; that frame then still
+ *  shows the bar part-way, and the parse after it holds the page there. React's
+ *  task runs before the frame after, which is the one waited for; the timeout
+ *  starts the parse once that frame is out.
+ *
+ *  A hidden page paints no frames and calls no animation frame, so there it
+ *  resolves at once: the parse goes on in the background and the model is on
+ *  screen when the reader comes back. */
+const painted = () => new Promise((resolve) => {
+  if (document.visibilityState === "hidden") resolve();
+  else requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)));
+});
 
 export class HmrViewport extends HTMLElement {
   connectedCallback() {
@@ -478,10 +498,14 @@ export class HmrViewport extends HTMLElement {
     // `__retry` is the error panel's Retry button: `showView(id)` returns
     // immediately for the id already on screen, so a single-view build would
     // otherwise have no way back short of a page reload.
+    //
+    // Nor while the first load is still on its way (`fetching`): every `set()`
+    // during it would start the same file again from its first byte, beside
+    // the one already coming in.
     const retry = !!patch.__retry;
     if (reload || swap || retry) this.loadFailed = null;
     if (reload || swap || retry
-        || (this.state.view && !this.viewer && !this.loadFailed)) {
+        || (this.state.view && !this.viewer && !this.loadFailed && !this.fetching)) {
       // A build changed under the same view is a LIVE RELOAD and keeps the
       // frame; a different view is re-fitted (ui-brief block 2).
       //
@@ -534,6 +558,10 @@ export class HmrViewport extends HTMLElement {
     }
     const base = this.state.base
       || location.pathname.replace(/[^/]*$/, "");
+    // The load in flight, until it has drawn or failed: `setState` starts no
+    // first load while one is on its way. Only the load that set it last
+    // clears it.
+    this.fetching = token;
     try {
       // `fetch`, not a `<script type="module">`: data loaded as a module stays
       // in module scope and the scene renders empty with nothing in the console.
@@ -550,7 +578,43 @@ export class HmrViewport extends HTMLElement {
                                      ? { headers: { "X-Hammerola-Token": secret } }
                                      : undefined);
       if (!response.ok) throw new Error(`${chosen.file} -> HTTP ${response.status}`);
-      const shapes = await response.json();
+      // Read chunk by chunk so the interface can draw how much is in. The count
+      // is of decoded chunks against the view's `bytes` in meta.json: the proxy
+      // compresses the answer, so its `Content-Length` is the wrong size. Told
+      // at most once per animation frame, and only while this load is the
+      // newest: one overtaken by another says nothing.
+      const report = (received, done) => {
+        if (token !== this.loadToken) return;
+        emit(this, EVENT_PROGRESS, { view: chosen.id, received, total: chosen.bytes, done });
+      };
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      let received = 0;
+      let frame = 0;
+      // The frame asked for last is called off however the reading ends: one
+      // left standing after a dropped connection would draw the bar again
+      // after the failure has been reported.
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.length;
+          text += decoder.decode(value, { stream: true });
+          if (!frame) {
+            frame = requestAnimationFrame(() => {
+              frame = 0;
+              report(received, false);
+            });
+          }
+        }
+      } finally {
+        cancelAnimationFrame(frame);
+      }
+      text += decoder.decode();
+      report(received, true);
+      await painted();
+      const shapes = JSON.parse(text);
       await this.show(shapes, { live, view: chosen.id, token });
     } catch (error) {
       if (token !== this.loadToken) return;
@@ -562,6 +626,8 @@ export class HmrViewport extends HTMLElement {
         stage: "load", view: chosen.id,
         message: String((error && error.message) || error),
       });
+    } finally {
+      if (this.fetching === token) this.fetching = 0;
     }
   }
 

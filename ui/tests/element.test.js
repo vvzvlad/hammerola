@@ -98,7 +98,7 @@ vi.mock('../src/viewport/library.js', () => ({
 // build an HmrViewport rather than an unknown inline box.
 import '../src/viewport/index.js'
 import { HmrViewport } from '../src/viewport/element.js'
-import { EVENT_ERROR, EVENT_MODEL, TAG } from '../src/viewport/events.js'
+import { EVENT_ERROR, EVENT_MODEL, EVENT_PROGRESS, TAG } from '../src/viewport/events.js'
 import { settleCoplanar } from '../src/viewport/coplanar.js'
 import { safeHatch, setCutHatch } from '../src/viewport/hatch.js'
 import { loadViewerLibrary } from '../src/viewport/library.js'
@@ -108,6 +108,7 @@ import {
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
 import * as THREE from '../../static/_v/three.module.js'
 import { fakeViewer } from './fakes.js'
+import { drained, runFrames, stubFrames } from './component.js'
 
 /**
  * The element as `reconcile` and `setState` see it: the real prototype, and the
@@ -781,6 +782,117 @@ describe('load', () => {
       expect(vp.load).toHaveBeenCalledWith({ live: false })
     })
   })
+
+  describe('the count the interface draws its bar from', () => {
+    // The view file comes in as a body the test feeds chunk by chunk, and
+    // animation frames run only when the test runs them.
+    let feed
+    beforeEach(() => {
+      stubFrames()
+      const body = new ReadableStream({ start(controller) { feed = controller } })
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+    })
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    const send = (text) => feed.enqueue(new TextEncoder().encode(text))
+    const said = (vp) => vp.dispatchEvent.mock.calls.map(([event]) => [event.type, event.detail])
+    const loading = () => {
+      const vp = element({ views: [{ id: 'a', file: 'a.json', bytes: 9 }], view: 'a', base: '/p/' }, null)
+      vp.show = vi.fn(async () => {})
+      return vp
+    }
+
+    it('tells the running total once a frame, and that every byte is in two painted frames before the parse', async () => {
+      const parse = vi.spyOn(JSON, 'parse')
+      const vp = loading()
+      const loaded = vp.load()
+      send('{"a":')
+      send('[1]')
+      await drained()
+      expect(said(vp)).toEqual([])
+      runFrames()
+      // The last chunk asks for a frame of its own, which the end of the body
+      // takes back: `done` is told at once.
+      send('}')
+      feed.close()
+      await drained()
+      expect(said(vp)).toEqual([
+        [EVENT_PROGRESS, { view: 'a', received: 8, total: 9, done: false }],
+        [EVENT_PROGRESS, { view: 'a', received: 9, total: 9, done: true }],
+      ])
+      runFrames()
+      await drained()
+      expect(parse).not.toHaveBeenCalledWith('{"a":[1]}')
+      runFrames()
+      await loaded
+      expect(parse).toHaveBeenCalledWith('{"a":[1]}')
+      expect(vp.show.mock.calls[0][0]).toEqual({ a: [1] })
+      expect(said(vp)).toHaveLength(2)
+    })
+
+    it('is not started again by an ordinary patch while it comes in', async () => {
+      // Every `set()` of the interface sends `hmr:state`, and with no scene yet
+      // the first-load branch would fetch the same file again from its first
+      // byte, the bar going back to nothing.
+      const vp = loading()
+      const loaded = vp.load()
+      send('{"a":')
+      await drained()
+      vp.setState({ hidden: ['/Group/a'] })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      send('[1]}')
+      feed.close()
+      await drained()
+      runFrames()
+      await drained()
+      runFrames()
+      await loaded
+      expect(vp.fetching).toBe(0)
+    })
+
+    it('is held by the load started last, which an overtaken one does not let go', async () => {
+      // A view chosen while the first one comes in: when the first ends, the
+      // second is still on its way and a patch must not start it again.
+      const feeds = []
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({ start(c) { feeds.push(c) } }))))
+      const vp = element({ views: [{ id: 'a', file: 'a.json', bytes: 2 }, { id: 'b', file: 'b.json', bytes: 2 }],
+                           view: 'a', base: '/p/' }, null)
+      vp.show = vi.fn(async () => {})
+      const first = vp.load()
+      await drained()
+      vp.setState({ view: 'b' })
+      await drained()
+      feeds[0].enqueue(new TextEncoder().encode('{}'))
+      feeds[0].close()
+      await drained()
+      runFrames()
+      await drained()
+      runFrames()
+      await first
+      vp.setState({ hidden: ['/Group/a'] })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('says nothing for a load a newer one has overtaken', async () => {
+      const vp = loading()
+      const loaded = vp.load()
+      send('{"a":[1]}')
+      await drained()
+      // A newer load took the token while this one's frame was pending.
+      vp.loadToken += 1
+      runFrames()
+      feed.close()
+      await drained()
+      runFrames()
+      await drained()
+      runFrames()
+      await loaded
+      expect(vp.dispatchEvent).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('show', () => {
@@ -1308,7 +1420,7 @@ describe('the overlay laid over the model', () => {
     expect(rendered(viewer).bodies).toEqual(['result'])
 
     const next = model('post')
-    const fetching = vi.fn(async () => ({ ok: true, json: async () => next }))
+    const fetching = vi.fn(async () => new Response(JSON.stringify(next)))
     vi.stubGlobal('fetch', fetching)
     onTestFinished(() => vi.unstubAllGlobals())
 
