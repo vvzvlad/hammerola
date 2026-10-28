@@ -71,6 +71,13 @@ MULTI_VIEWS = [
 ]
 ISO_VIEW = (25.0, -60.0)
 
+# The words `hammerola snapshot --angle` takes for the six views of the sheet,
+# in MULTI_VIEWS' order; `multi` asks for the whole sheet. The client checks a
+# copy of them before sending (`hammerola/revinspect.py`), and
+# `tests/cadbuild/test_preview_png.py` holds the two equal.
+ANGLE_NAMES = ("iso", "front", "right", "back", "top", "bottom")
+SHEET_ANGLE = "multi"
+
 BACKGROUND = "#ececef"
 
 # What one part is painted when nobody says: the picture of a single STL, and
@@ -168,6 +175,13 @@ def _collect(node, placement, into):
     A node with a `parts` list is a group and carries nothing of its own; a node
     with a `shape` is a leaf. The recursion is the document's own nesting, and
     the placement composes down through it.
+
+    Each leaf also carries who it is -- `key`, the catalogue's name for the part,
+    and `name`, the leaf's own (`pin(2)` for a repeat) -- and, for measuring
+    (`cadbuild.measure`), its `at`, the `parent` placement it was composed
+    onto, whether it is `deformed` (a shape the view brought, not the
+    catalogue's body), and its `extent`: x + y + z of its own vertices' box,
+    in its own frame, which is what the tessellator sized its mesh by.
     """
     here = _placed(placement, node.get("loc") or IDENTITY_LOC)
     children = node.get("parts")
@@ -184,7 +198,14 @@ def _collect(node, placement, into):
     into.append({"vertices": vertices @ rotation.T + offset,
                  "faces": faces,
                  "color": node["color"],
-                 "alpha": float(node["alpha"])})
+                 "alpha": float(node["alpha"]),
+                 "key": node.get("key"),
+                 "name": node.get("name"),
+                 "at": node.get("at"),
+                 "deformed": bool(node.get("deformed")),
+                 "parent": placement,
+                 "extent": (float(np.ptp(vertices, axis=0).sum())
+                            if len(vertices) else 0.0)})
 
 
 def load_scene(path):
@@ -197,7 +218,8 @@ def load_scene(path):
     three.
 
     Every leaf comes back as `{"vertices", "faces", "color", "alpha"}` with its
-    `loc` already applied, composed from the root down. The vertices in the
+    `loc` already applied, composed from the root down, and with who it is and
+    where it was placed besides (`_collect` lists those fields). The vertices in the
     document are the part's OWN coordinates and the `loc` is where the view puts
     it, so a picture drawn without this step is every part piled on the origin.
     """
@@ -682,6 +704,69 @@ def render(stl_path, output_path, views="iso", title=None, subtitle=None,
     if card_path is not None:
         tiles[0][0].save(card_path)
     _compose(tiles, mesh, title, subtitle, columns, parts).save(output_path)
+    return output_path
+
+
+def camera_angles(angle):
+    """The `(elev, azim, label)` of every tile one `--angle` asks for.
+
+    A word of ANGLE_NAMES is that view of the sheet, SHEET_ANGLE is the whole
+    sheet, and `ELEV,AZIM` is any other camera, in degrees. Anything else is a
+    ValueError carrying the sentence the refusal prints.
+    """
+    if angle == SHEET_ANGLE:
+        return list(MULTI_VIEWS)
+    if angle in ANGLE_NAMES:
+        return [MULTI_VIEWS[ANGLE_NAMES.index(angle)]]
+    try:
+        elev, azim = (float(number) for number in angle.split(","))
+    except (AttributeError, ValueError):
+        elev = azim = math.nan
+    if not (math.isfinite(elev) and math.isfinite(azim)):
+        raise ValueError(
+            f"the angle {angle!r} is none of {', '.join(ANGLE_NAMES)}, "
+            f"{SHEET_ANGLE} or ELEV,AZIM in degrees")
+    return [(elev, azim, f"elev {elev:g}, azim {azim:g}")]
+
+
+def render_scene(scene, output_path, angle="iso", hide=(), title=None,
+                 subtitle=None, resolution=DEFAULT_VIEW_SIZE):
+    """Draw a view document from `angle`, with the parts `hide` names left out.
+
+    What `hammerola snapshot` asks for (`buildproc.inspectchild`): the view a
+    published revision already stores, from any camera, nothing rebuilt.
+    `hide` holds catalogue keys and takes every leaf of each, out of the
+    picture and out of its framing, so the parts that remain fill the frame.
+
+    The footer describes what is drawn, measured on the drawn leaves' own
+    triangles: a scene with parts taken out of it has no STL of its own.
+
+    ValueError when `camera_angles` refuses the angle, or nothing is left to
+    draw.
+    """
+    tiles = camera_angles(angle)
+    hidden = set(hide)
+    drawn = [part for part in load_scene(scene) if part["key"] not in hidden]
+    visible = [part for part in drawn if part["alpha"] > 0.0]
+    if not visible:
+        raise ValueError("every part of this view is hidden, so there is "
+                         "nothing to draw")
+    sheet = len(tiles) > 1
+    width = resolution if sheet else int(resolution * ISO_SCALE)
+    height = round(width / VIEW_ASPECT)
+    frame_at = framing(visible, [(elev, azim) for elev, azim, _ in tiles])
+    rendered = [(render_view(drawn, elev, azim, width, height, frame_at),
+                 label if sheet else "") for elev, azim, label in tiles]
+
+    starts = np.cumsum([0] + [len(part["vertices"]) for part in visible])
+    footer = trimesh.Trimesh(
+        vertices=np.vstack([part["vertices"] for part in visible]),
+        faces=np.vstack([part["faces"] + start
+                         for part, start in zip(visible, starts)]))
+    if title is None:
+        title = os.path.splitext(os.path.basename(scene))[0]
+    _compose(rendered, footer, title, subtitle, 3 if sheet else 1,
+             parts=len(visible)).save(output_path)
     return output_path
 
 

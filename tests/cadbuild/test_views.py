@@ -717,6 +717,18 @@ def test_every_leaf_is_stamped_with_the_motion_the_view_applied_to_it():
     assert placed[1] == pytest.approx([0.0, 0.0, 0.5 ** 0.5, 0.5 ** 0.5])
 
 
+def test_a_leaf_of_a_shape_the_view_brought_is_stamped_deformed():
+    """What `cadbuild.measure` sends to the mesh: that leaf's STEP is the
+    catalogue's body, not the one standing there. Only that leaf."""
+    prepared = prepare([one_view(parts=[
+        {"part": "body", "shape": part(), "deformed": "clamped round the pipe"},
+        "lid"])], catalogue(body="printable", lid="printable"))
+
+    doc = shaped_document(flat_document("body", "lid"), prepared[0])
+
+    assert [leaf.get("deformed") for leaf in doc["parts"]] == [True, None]
+
+
 def test_a_vector_given_as_at_is_stamped_as_the_shift_it_is():
     """`Shape.moved` takes a cq.Vector as a pure shift, so a view that places a
     part with one builds; its `at` is that shift, with no turn."""

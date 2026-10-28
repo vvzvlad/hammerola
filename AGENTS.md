@@ -57,7 +57,7 @@ KiCad-вьювера, `skill/` — инструкции агенту, котор
 make install           # create .venv and install dev/test deps
 make env               # create .env from .env.example, then fill in the values
 make test              # pytest, plus the JS suite when npm is present
-make cad-test          # the six tests that need the CAD kernel
+make cad-test          # the nine tests that need the CAD kernel
 make run               # runs .venv/bin/python main.py
 make ui                # build the browser bundle into static/_v/ (needs npm)
 make lock              # regenerate requirements.lock (slow, deliberate)

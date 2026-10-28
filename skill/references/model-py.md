@@ -182,6 +182,25 @@ a plate or an assembly, `N parts`.
 after a `build`. Never assemble a picture's URL by hand: the command asks the
 build what it published.
 
+**`hammerola snapshot <build>`** draws one view of a build that exists, on the
+hub, without building it again: `--view VIEW` (default `assembled`), `--angle`
+one of `iso`, `front`, `right`, `back`, `top`, `bottom`, `multi` for all six on
+one sheet, or `ELEV,AZIM` in degrees (a negative one as `--angle=-30,45`),
+`--hide NAME` for each part in the way, `--output FILE` (default
+`.hammerola/snapshots/`). It prints where the PNG landed. A part's name is its
+key in the catalogue, as the view lists it; a wrong one is refused with the
+list.
+
+**`hammerola measure <build> <a> <b>`** prints the smallest distance between two
+parts of one view (`--view`, default `assembled`), the two closest points and
+how it was measured: two printables exactly, on their STEP; a pair with
+anything else, or with a `deformed` reference, on the view's mesh, which can
+differ from the true gap by up to the tolerance it names either way — larger on
+convex faces, smaller on concave ones such as a hole — and reads a part wholly
+inside the other as the gap between their surfaces. `0 mm` is touching or
+overlapping, and on the mesh also within that tolerance; a part placed several
+times gives its nearest pair, named.
+
 **A size comes back three ways**: the footer, `metrics.json` and the log.
 `curl <hub>/project/<pid>/dev/metrics.json` gives `bbox_mm` for every PRINTABLE
 right after a `build`; hardware and mocks are measured nowhere. A hub behind a

@@ -17,13 +17,17 @@
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
   through `src/` because it is a different job from serving: nothing in it
-  touches HTTP, the data volume or a credential. Three things import it, and
-  all three are deliberate: `src/buildproc/child.py` does it INSIDE the build
+  touches HTTP, the data volume or a credential. Four things import it, and
+  all four are deliberate: `src/buildproc/child.py` does it INSIDE the build
   process (step 4), `src/buildproc/comparechild.py` does it inside the
   COMPARISON process for the same reason (step 8, issue #10 — the OCCT boolean
   that measures a revision diff costs ~270 MB resident, measured, so it goes
   where the build already goes; that is OCP alone, less than the build's ~450 MB
-  because nothing on the comparison path imports cadquery itself), and the root
+  because nothing on the comparison path imports cadquery itself),
+  `src/buildproc/inspectchild.py` does it inside the process that draws a
+  published view or measures between two of its parts (`hammerola snapshot`,
+  `hammerola measure`; `preview_png.render_scene`, `cadbuild/measure.py`), and
+  the root
   `checklib.py` shim re-exports one module of
   it under the name every model.py imports (see the next entry). Nothing on the
   serving side imports it, and step 6 did not change that: the gate now runs on the
@@ -48,8 +52,9 @@
   cache (SPEC §4, the row on distances measured in a build)
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
-  `log.txt` beside it), `BuildTask` is what the pre-receive hook hands over
-  (`src/prereceive.py`), `BuildQueue`
+  `log.txt` beside it, and `snapshot.png` for a snapshot), `BuildTask` is what
+  the pre-receive hook hands over (`src/prereceive.py`), `InspectTask` what a
+  snapshot and a measurement ask, `BuildQueue`
   is the bounded queue and the worker threads that build and then publish. At
   start a record that does not parse, names another directory or carries an
   unknown state is logged and skipped, its directory left where it is; jobs a
@@ -125,9 +130,11 @@
   (`git push hammerola-<pid> <branch>`, a branch being a variant); `connect`
   sets a repository up for it and `build` pushes the working copy as the draft
   of the branch checked out (`hammerola/repo.py`; the branch is read by
-  `hammerola/variant.py`, which `status`, `log` and `artifacts` read too); around
-  them sit `login`, `create`, `status`, `artifacts`, `diff`, `log`, `comments`,
-  `proposal`, `rename`, `rm`, `skill` and `update`. The verb table with what each one may and may not do is the
+  `hammerola/variant.py`, which `status`, `log`, `artifacts`, `snapshot` and
+  `measure` read too); around
+  them sit `login`, `create`, `status`, `artifacts`, `diff`, `snapshot`,
+  `measure`, `log`, `comments`, `proposal`, `rename`, `rm`, `skill` and
+  `update`. The verb table with what each one may and may not do is the
   docstring of `hammerola/cli.py`, next to the parser that defines them — read it
   there rather than here.
   IT IS IN THIS REPOSITORY ON PURPOSE: the client and the hub share one contract —

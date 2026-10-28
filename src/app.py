@@ -62,8 +62,23 @@ Routing (SPEC 3, 7.4):
                                               the same, and the job also
                                               builds the scene of that view
                                               for the page above       EDIT_TOKEN
+    POST /api/v1/snapshot/<pid>/<build>       picture one build from an
+                                              angle, `<build>` a revision,
+                                              `latest` or `dev`; 202 + a
+                                              job, its picture below   EDIT_TOKEN
+    POST /api/v1/snapshot/<pid>/v/<variant>/<pointer>
+                                              the same, of another
+                                              variant's `latest` or `dev`
+                                                                       EDIT_TOKEN
+    POST /api/v1/measure/<pid>/<build>        how near two of its parts
+                                              come, 202 + a job whose LOG
+                                              is the answer            EDIT_TOKEN
+    POST /api/v1/measure/<pid>/v/<variant>/<pointer>
+                                              the same, of another
+                                              variant's pointer        EDIT_TOKEN
     GET  /api/v1/jobs/<id>                    how that build is going  EDIT_TOKEN
     GET  /api/v1/jobs/<id>/log                what the build printed   EDIT_TOKEN
+    GET  /api/v1/jobs/<id>/snapshot.png       what a snapshot job drew EDIT_TOKEN
     GET  /api/v1/logs/<pid>/<revision>        what the build of that
                                               revision printed         EDIT_TOKEN
 
@@ -168,9 +183,11 @@ from hammerola import buildnames
 from src import githttp, onboarding, prereceive, proposals, render
 from src.comments import (PHOTO_KIND, SHOT_KIND, CommentError, CommentStore,
                           normalize_since, validate_payload)
+from src.buildproc import INSPECT_MEASURE, INSPECT_SNAPSHOT
 from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
-                      STATE_FAILED, STOPPED_ERROR, SUBMIT_ACCEPTED,
-                      SUBMIT_QUEUE_FULL, BuildQueue, CompareTask, JobStore)
+                      SNAPSHOT_NAME, STATE_FAILED, STOPPED_ERROR,
+                      SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL, BuildQueue,
+                      CompareTask, InspectTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
 from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, MAIN_BRANCH,
                        POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
@@ -287,6 +304,19 @@ VIEW_NOT_IN_BOTH_ERROR = (
     "this view is not published in both revisions, so there is no pair of "
     "documents to build a comparison from. Compare a view both of them declare."
 )
+
+# The body of a snapshot or a measurement: a view, an angle and a few part
+# names, as JSON.
+MAX_INSPECT_BODY_BYTES = 8 * 1024
+
+# The view a snapshot or a measurement is of when the request names none, if
+# the build has it; otherwise its first. A copy of
+# `cadbuild.artifacts.ASSEMBLED_VIEW_ID`, which the serving side may not
+# import; `tests/test_inspect.py` holds the two equal.
+DEFAULT_INSPECT_VIEW = "assembled"
+
+# What a snapshot or a measurement of a build this hub does not hold is told.
+NO_SUCH_BUILD_ERROR = "this project has no such build"
 
 # Types our OWN files are served as — templates and generated JSON only.
 CONTENT_TYPES = {
@@ -471,6 +501,59 @@ def _route_proposal(handler, rest, query, trailing_slash, with_body):
             else handler._error(404, "not found", {"Connection": "close"}))
 
 
+class InspectRefused(ValueError):
+    """A snapshot or a measurement that cannot be taken: the status it is
+    answered with, and the sentence."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def inspection(kind: str, payload, meta: dict) -> dict:
+    """What a snapshot or a measurement asks of one build, checked against that
+    build's meta.json. -> `{"view", "angle", "hide", "parts"}`.
+
+    The view and every part name are held to what meta.json declares (a view's
+    `parts` are exactly the keys its file shows, `render._match_selection`),
+    so a name that is not there is refused before anything is queued, with a
+    sentence listing what is; the caller's own words are not echoed. The angle
+    goes on as it came: `preview_png.camera_angles` reads it, in the child.
+    """
+    if not isinstance(payload, dict):
+        raise InspectRefused(422, "the body must be a JSON object")
+    views = [view for view in meta.get("views") or []
+             if isinstance(view, dict)]
+    ids = [view.get("id") for view in views]
+    if not ids:
+        raise InspectRefused(404, "this build holds documents only, so there "
+                                  "is no view to picture or measure")
+    view = payload.get("view")
+    if view is None:
+        view = DEFAULT_INSPECT_VIEW if DEFAULT_INSPECT_VIEW in ids else ids[0]
+    if view not in ids or not Store.valid_view_id(view):
+        raise InspectRefused(404, f"this build has no such view; its views "
+                                  f"are {', '.join(map(str, ids))}")
+    shown = views[ids.index(view)].get("parts") or []
+    asked = {"view": view, "angle": None, "hide": (), "parts": ()}
+    if kind == INSPECT_SNAPSHOT:
+        angle, named = payload.get("angle"), payload.get("hide", [])
+        if not isinstance(angle, str) or not isinstance(named, list):
+            raise InspectRefused(422, "a snapshot takes `angle`, a string, "
+                                      "and `hide`, a list of part names")
+        asked.update(angle=angle, hide=tuple(named))
+    else:
+        named = payload.get("parts")
+        if not isinstance(named, list) or len(named) != 2:
+            raise InspectRefused(422, "a measurement takes `parts`, a list "
+                                      "of two part names")
+        asked["parts"] = tuple(named)
+    if any(name not in shown for name in named):
+        raise InspectRefused(404, f"view {view} shows no such part; its parts "
+                                  f"are {', '.join(map(str, shown))}")
+    return asked
+
+
 def _route_project(handler, rest, query, trailing_slash, with_body):
     return (handler._handle_rename(rest[0])
             if len(rest) == 2 and rest[1] == "title"
@@ -536,6 +619,12 @@ POST_ROUTES = (
     ((("api", "v1", "compare"), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._handle_compare(rest)),
+    ((("api", "v1", INSPECT_SNAPSHOT), None),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._handle_inspect(INSPECT_SNAPSHOT, rest)),
+    ((("api", "v1", INSPECT_MEASURE), None),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._handle_inspect(INSPECT_MEASURE, rest)),
     (((githttp.ROUTE,), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_git("POST", rest, query, with_body)),
@@ -1474,6 +1563,104 @@ class HubHandler(BaseHTTPRequestHandler):
              "log_url": f"{status_url}/log"},
             CACHE_NONE, {"Location": status_url, "Connection": "close"})
 
+    def _handle_inspect(self, kind: str, rest: list[str]):
+        """POST /api/v1/snapshot|measure/<pid>/<build> — 202 and a job.
+
+        `<build>` is a revision, or `latest` or `dev` of the default variant;
+        `<pid>/v/<variant>/<pointer>` is another variant's pointer. A pointer is
+        taken, unlike in a comparison, because nothing is cached under its
+        name; `latest` is followed here, so the job reads the revision it
+        pointed at when asked, while `dev` is read where it stands.
+
+        The token first, then the body, then the build and what the body asks
+        of it (`inspection`). The work runs in a child, as a comparison's does
+        (`jobs.InspectTask`). Every reply closes the connection, as
+        `_handle_compare`'s.
+        """
+        close = {"Connection": "close"}
+        if not self._require_token(close=True):
+            return None
+        body = self._take_body(MAX_INSPECT_BODY_BYTES,
+                               too_large="the request is too large")
+        if body is None:
+            return None
+        located = self._inspected_build(rest)
+        if located is None:
+            return self._error(404, NO_SUCH_BUILD_ERROR, close)
+        pid, revision, directory = located
+        try:
+            meta = json.loads((directory / BUILD_META_FILE).read_bytes())
+        except (OSError, ValueError):
+            return self._error(404, NO_SUCH_BUILD_ERROR, close)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return self._error(422, "the body is not valid JSON", close)
+        try:
+            asked = inspection(kind, payload, meta if isinstance(meta, dict)
+                               else {})
+        except InspectRefused as refusal:
+            return self._error(refusal.status, str(refusal), close)
+
+        record = self.server.jobs.create(pid, revision)
+        job_id = record["id"]
+        outcome = self.server.builds.submit(InspectTask(
+            job_id=job_id, pid=pid, revision=revision, build_dir=directory,
+            kind=kind, **asked))
+        if outcome == SUBMIT_QUEUE_FULL:
+            self.server.jobs.finish(job_id, state=STATE_FAILED, code=503,
+                                    error=QUEUE_FULL_ERROR)
+            logger.warning(f"{kind} {pid} {revision} refused: the build queue "
+                           f"is full")
+            return self._json(
+                503, {"error": QUEUE_FULL_ERROR}, CACHE_NONE,
+                {"Retry-After": str(QUEUE_FULL_RETRY_AFTER_SECONDS),
+                 "Connection": "close"})
+        if outcome != SUBMIT_ACCEPTED:
+            logger.warning(f"{kind} {pid} {revision} refused: the hub is "
+                           f"stopping")
+            return self._json(503, {"error": STOPPED_ERROR}, CACHE_NONE, close)
+
+        status_url = f"/api/v1/jobs/{job_id}"
+        logger.info(f"{kind} {pid} {revision}: queued as job {job_id}")
+        return self._json(
+            202,
+            {"job": job_id, "status_url": status_url,
+             "log_url": f"{status_url}/log", "view": asked["view"]},
+            CACHE_NONE, {"Location": status_url, "Connection": "close"})
+
+    def _inspected_build(self, rest: list[str]):
+        """`(pid, revision, directory)` of the build a snapshot or a
+        measurement names, or None when this hub holds no such build.
+
+        `revision` is what the job is filed under: the commit `latest` points
+        at, a revision's own name, or `dev`.
+        """
+        store = self.server.store
+        if len(rest) == 2:
+            pid, variant, name = rest[0], MAIN_BRANCH, rest[1]
+        elif (len(rest) == 4 and rest[1] == VARIANT_SEGMENT
+              and rest[3] in POINTER_NAMES):
+            pid, variant, name = rest[0], rest[2], rest[3]
+        else:
+            return None
+        if not (store.valid_pid(pid) and store.valid_variant(variant)):
+            return None
+        if name in POINTER_NAMES:
+            directory = store.pointer_dir(pid, variant, name)
+        elif store.valid_build_id(name):
+            directory = store.build_dir(pid, name)
+        else:
+            return None
+        try:
+            directory = store.resolve_inside(directory)
+        except (OSError, ValueError):
+            return None
+        if not directory.is_dir():
+            return None
+        return pid, (DEV_LINK if name == DEV_LINK else directory.name), \
+            directory
+
     # -- build jobs ------------------------------------------------
     def _serve_jobs(self, rest: list[str], with_body: bool):
         """GET /api/v1/jobs/<id>[/log] — for whoever pushed (SPEC 8A.2).
@@ -1484,13 +1671,23 @@ class HubHandler(BaseHTTPRequestHandler):
             return None
         if not rest or len(rest) > 2:
             return self._error(404, "not found", with_body=with_body)
-        if len(rest) == 2 and rest[1] != "log":
+        if len(rest) == 2 and rest[1] not in ("log", SNAPSHOT_NAME):
             return self._error(404, "not found", with_body=with_body)
 
         job_id = rest[0]
         record = self.server.jobs.get(job_id)
         if record is None:
             return self._error(404, "not found", with_body=with_body)
+
+        if len(rest) == 2 and rest[1] == SNAPSHOT_NAME:
+            # What a snapshot job drew, in its own directory; 404 until the
+            # job has written it, and for a job of any other kind.
+            try:
+                picture = self.server.jobs.snapshot_path(job_id).read_bytes()
+            except OSError:
+                return self._error(404, "not found", with_body=with_body)
+            return self._send(200, picture, "image/png", CACHE_NONE,
+                              with_body=with_body)
 
         if len(rest) == 2:
             # text/plain, never HTML: output the model produced, on an origin
@@ -1897,16 +2094,17 @@ class HubHandler(BaseHTTPRequestHandler):
         return bytes(chunks), None
 
 def create_server(settings, *, build_runner=None, compare_runner=None,
-                  build_workers=None,
+                  inspect_runner=None, build_workers=None,
                   build_queue_size=None) -> ThreadingHTTPServer:
     """Bind the listening socket and return the server, not yet serving.
 
     Binding here lets a test ask for port 0 and read back the real port.
 
-    `build_runner`, `compare_runner`, `build_workers` and `build_queue_size` are
-    test seams, not configuration: they replace `src.buildproc.run_build` /
-    `run_compare` and the `src.jobs` defaults so a test can drive the pipeline
-    without CadQuery or observe a full queue.
+    `build_runner`, `compare_runner`, `inspect_runner`, `build_workers` and
+    `build_queue_size` are test seams, not configuration: they replace
+    `src.buildproc.run_build` / `run_compare` / `run_inspect` and the
+    `src.jobs` defaults so a test can drive the pipeline without CadQuery or
+    observe a full queue.
     """
     store = Store(data_dir=settings.data_dir)
     # A separate tree: a comment must not inherit a build directory's
@@ -1927,7 +2125,8 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     if build_queue_size is not None:
         extra["queue_size"] = build_queue_size
     builds = BuildQueue(store, job_store, build_runner=build_runner,
-                        compare_runner=compare_runner, **extra)
+                        compare_runner=compare_runner,
+                        inspect_runner=inspect_runner, **extra)
 
     class Server(ThreadingHTTPServer):
         # Threads die with the process: a hung 2 MB download must never keep the

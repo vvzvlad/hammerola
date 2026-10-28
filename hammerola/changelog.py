@@ -100,6 +100,16 @@ ENTRIES = {
         "`hammerola commit` and `hammerola source` say what replaced them "
         "instead of argparse's `invalid choice`.",
     ),
+    "0.7.0": (
+        "`hammerola snapshot REVISION` saves a PNG of one view of a published "
+        "build, drawn by the hub without building it again: `--view`, "
+        "`--angle` (iso, front, right, back, top, bottom, multi, or "
+        "ELEV,AZIM), `--hide NAME`, `-o FILE`.",
+        "`hammerola measure REVISION PART_A PART_B [--view VIEW]` prints the "
+        "smallest distance between two parts of a published build, the two "
+        "closest points, and whether it was measured exactly on STEP or on "
+        "the view's mesh.",
+    ),
 }
 
 
