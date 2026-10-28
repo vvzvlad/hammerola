@@ -22,6 +22,7 @@ imported when `src.cadbuild.build` is, before the child reaches any model.
 """
 
 from datetime import datetime, timezone
+from importlib import metadata
 from pathlib import Path
 import hashlib
 import io
@@ -36,7 +37,9 @@ from hammerola.metricsdiff import (
     metrics_diff,
     metrics_summary,
     moved_fields,
+    toolchain_diff,
     unchanged_code_moved_geometry,
+    unchanged_code_note,
 )
 
 from . import checklib
@@ -67,6 +70,11 @@ __all__ = [
 # Adding fields does not need a bump: the comparison walks fields present in
 # both documents. A bump would make every published revision incomparable.
 METRICS_VERSION = 1
+
+# The CAD stack the geometry comes out of, recorded by version in every build
+# (`toolchain`): what tells "the same code, other bytes" apart from a model
+# that is not deterministic (`metricsdiff.unchanged_code_note`).
+TOOLCHAIN_PACKAGES = ("cadquery", "cadquery-ocp", "ocp-tessellate")
 
 
 # --------------------------------------------------------------------------
@@ -158,8 +166,8 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance,
 
     Either may be None, meaning "count unknown", not zero: `checks_passed` for
     an uncountable body (`modelchecks.run_checks`), and both on a build that
-    skipped the model's checks at the push's request. A forced build is not
-    otherwise marked.
+    skipped the model's checks at the push's request. That is all a forced
+    build leaves here; the hub marks it in meta.json (`forced`).
 
     `provenance` is what `cadbuild.provenance.report` returned: how many of
     the model's numbers were measured, derived or chosen, which nobody
@@ -174,6 +182,9 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance,
     Either may be None, and its key is then absent: no `print` view, or a view
     holding only mocks. An empty box would claim no bed or a product of no
     size.
+
+    `toolchain` is the installed version of each of TOOLCHAIN_PACKAGES; a
+    package that is not installed is left out.
     """
     # One assembly: how big the product is (its own envelope; mocks overlap it
     # by construction), how much bed it takes, how much material, and the two
@@ -206,11 +217,23 @@ def collect_metrics(project, parts, checks_passed, checks_static, provenance,
         "source": source_fingerprints(),
         # Beside `source`: both describe the model as written, not the solid.
         "provenance": provenance,
+        "toolchain": _toolchain(),
         "parts": parts,
         "assembly": assembly,
         "checks_passed": checks_passed,
         "checks_static": checks_static,
     }
+
+
+def _toolchain():
+    """`{package: version}` of TOOLCHAIN_PACKAGES, less what is not installed."""
+    versions = {}
+    for name in TOOLCHAIN_PACKAGES:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            pass
+    return versions
 
 
 def write_metrics(out_dir, metrics):
@@ -345,12 +368,7 @@ def report_metrics(out_dir, baseline, why):
         # WHAT moved, this says the source cannot be why.
         shifted = unchanged_code_moved_geometry(baseline, current)
         if shifted:
-            moved.append(
-                f"! the geometry changed but the code did not ({', '.join(shifted)}) "
-                f"-- the same model source built into a different solid than the "
-                f"one published as {DEV_LABEL}. Both builds ran here, so what "
-                "moved between them is the CAD stack this image resolves"
-            )
+            moved.append(unchanged_code_note(baseline, current, shifted))
         lines = ["", f"metrics vs {DEV_LABEL}:"]
         if moved:
             lines += [f"  {line}" for line in moved]
@@ -363,6 +381,7 @@ def report_metrics(out_dir, baseline, why):
             compared = moved_fields(baseline, current)["compared"]
             lines.append(f"  every measured number is the same "
                          f"({compared} part numbers compared)")
+        lines += [f"  {line}" for line in toolchain_diff(baseline, current)]
         for line in lines:
             print(line)
     except Exception:

@@ -880,14 +880,15 @@ class BuildQueue:
                     status, payload = self._store.publish_dev_built(
                         task.pid, staging, outcome.files, task.digest,
                         job=task.job_id, variant=task.variant,
-                        variant_label=label)
+                        variant_label=label, forced=task.force)
                 else:
                     (staging / BUILD_LOG_FILE).write_bytes(
                         _capped_log(outcome.log))
                     status, payload = self._store.publish_built(
                         task.pid, task.commit, staging, outcome.files,
                         task.digest, job=task.job_id, message=task.message,
-                        variant=task.variant, variant_label=label)
+                        variant=task.variant, variant_label=label,
+                        forced=task.force)
                 logger.info(
                     f"job {task.job_id}: published {task.pid}/{task.commit} "
                     f"-> {payload['url']}")

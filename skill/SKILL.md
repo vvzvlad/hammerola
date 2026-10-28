@@ -135,9 +135,12 @@ forbids pushing blinds you.
 `git push hammerola-<pid> main` makes a version exist: the hub builds the newest
 pushed commit that touched the project's directory, names the revision by that
 commit, keeps its log, moves `latest`, and the project gets its card. A commit
-that touched only another directory of the repository builds nothing. A
-session ending on a `build` published nothing. **Everything a person is shown
-is a pushed commit**, the block preview included. **Hand over its URL every
+of exactly the tree your last `build` of that branch published is not built
+again: that build becomes the revision, its log included (not when the `build`
+was `--force` and the push is not). A commit that touched only another
+directory of the repository builds nothing. A session ending on a `build`
+published nothing. **Everything a person is shown is a pushed commit**, the
+block preview included. **Hand over its URL every
 time** — `published: /project/<pid>/<sha>/` in the push's output, under the
 hub's address — not once at the end, or the person waits or prints something
 superseded. The commit's subject is what a person picks a revision by.
