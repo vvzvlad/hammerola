@@ -177,7 +177,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `cc573be2b10540e46462a6b5d18b754815db17dfdaf22722cfb5bdb3f46b294c` |
+| `ecad-viewer.js` as committed | `c3d0631d797573804a2882937ea6aca0bb537bbd52090ae101adb3e704afb7bb` |
 | `parser.worker.js` (none of our edits reach it) | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -200,15 +200,16 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Nine, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
+Eleven, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
 in a comment at the spot. Edit 6 is checked by `ui/tests/schematicpins.test.js`,
 which reads sheets through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
-it), edit 7 by `ui/tests/areaitems.test.js` the same way, and edit 9 by
-`ui/tests/pagekeys.test.js`. The others are the viewer's drawing and input code,
-checked in a browser; what keeps them is that they live in the source the files
-are built from. Built without minifying, the bundle of this tree and the fork's
-at `461a091` differ in these nine places and the comments beside them.
+it), edit 7 by `ui/tests/areaitems.test.js` the same way, edit 9 by
+`ui/tests/pagekeys.test.js` and the text of edit 10 by
+`ui/tests/intersheetrefs.test.js`. The others are the viewer's drawing and input
+code, checked in a browser; what keeps them is that they live in the source the
+files are built from. Built without minifying, the bundle of this tree and the
+fork's at `461a091` differ in these eleven places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -299,6 +300,35 @@ root, round to the last — and added an entry to the history instead of leaving
 the page. The step is decided by `schematicPageStep` (`ecad-viewer/page-keys.ts`),
 which leaves the key to the browser with Command or Control held.
 
+**10. A global label shows its inter-sheet references.** The viewer parsed a
+global label's `Intersheetrefs` field (`Intersheet References` in KiCad 6) and
+the `.kicad_pro`'s `intersheets_ref_*` settings, and drew neither.
+`GlobalLabelPainter.paint_fields` (`viewers/schematic/painters/label.ts`) now
+draws, while `intersheets_ref_show` is on, the text `intersheet_refs`
+(`kicad/intersheet-refs.ts`) builds as KiCad 10's
+`SCH_GLOBALLABEL::ResolveTextVar` does: the page numbers of the sheets that carry
+a global label of the name, sorted, the own page per `intersheets_ref_own_page`,
+the short form, the prefix and the suffix. It stands beside the label's body
+when the field still sits at the label's point, where KiCad places it itself,
+else at the field's saved place. The settings' defaults are left as they were,
+which is what KiCad's application settings load: no brackets, no own page.
+
+**11. The list of a label's namesakes is on screen, and a jump from it is a
+page change.** `SchSelectionPopMenu`
+(`kicanvas/elements/kc-schematic/selection-pop-menu.ts`), which a left click on a
+global or local label opens, is a fixed host the size of the view with no `top`
+or `left`; under `hide-chrome` it sat at its static place below the canvas, and
+the panel placed at the pointer inside it was drawn off the window. The host is
+pinned to the top left and lets the pointer through (`pointer-events: none`, the
+panel `auto`), so the wheel over the drawing still pans and zooms while the list
+is open; the panel is placed by the pointer's offset from the host's box once it
+is attached, and kept inside the window; a press of any button anywhere else
+closes it, so the page's right-click menu never stands on it. A jump from the list to another sheet
+(`#select_item` in `kc-schematic/app.ts`) loaded the file straight into the
+viewer; it now activates the sheet's page through the project, as a sheet
+symbol's double click does, so the page hears of the change, and frames the item
+after that load.
+
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
@@ -306,7 +336,8 @@ first with none of our edits and compare the two files with what Prism publishes
 from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `461a091` is them, at the fork's paths, with
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
-`areaitems.test.js` and `pagekeys.test.js` fail if edit 6, 7 or 9 was lost —
+`areaitems.test.js`, `pagekeys.test.js` and `intersheetrefs.test.js` fail if
+edit 6, 7, 9 or 10 was lost —
 update this section and the hashes, and commit the
 source and the built files together.
 
