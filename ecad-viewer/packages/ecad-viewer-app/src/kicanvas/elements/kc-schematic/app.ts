@@ -79,6 +79,8 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
         this.viewer.addEventListener(
             HierarchicalSheetPinClickEvent.type,
             (e) => {
+                if (this.#host_opens_lists()) return;
+
                 const it = this.project.find_net_item(e.detail.uuid);
                 if (!it) return;
                 this.pop_up_label_ref_menu([it], e.detail.uuid);
@@ -174,12 +176,7 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
         });
 
         this.viewer.addEventListener(LabelClickEvent.type, (e) => {
-            // Prism hosts its own Selection inspector; skip the canvas popover
-            // when the embedded selection panel is disabled.
-            const host = this.closest("ecad-viewer");
-            if (host?.getAttribute("show-selection-panel") === "false") {
-                return;
-            }
+            if (this.#host_opens_lists()) return;
 
             const its = this.project.find_labels_by_name(e.detail.name);
             if (!its?.length) return;
@@ -317,9 +314,28 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
         }
     }
 
-    pop_up_label_ref_menu(refs: NetRef[], activeUuid?: string) {
+    /** Whether the `<ecad-viewer>` this app is drawn in turned its embedded
+     *  selection panel off: such a host opens the list of a label's or a sheet
+     *  pin's places itself (the element's `showNetList`), so a click opens
+     *  none here. The app lives in the element's shadow tree, which
+     *  `closest` does not leave, so the host is that tree's. */
+    #host_opens_lists(): boolean {
+        const root = this.getRootNode();
+        const host = root instanceof ShadowRoot ? root.host : null;
+        return host?.getAttribute("show-selection-panel") === "false";
+    }
+
+    /** The list of a label's places, `refs`, at `activeUuid`; a host's rows
+     *  `actions` under it, and the client point `at` it opens at, else where
+     *  the pointer last moved. */
+    pop_up_label_ref_menu(
+        refs: NetRef[],
+        activeUuid?: string,
+        actions?: { label: string; run: () => void }[],
+        at?: { x: number; y: number },
+    ) {
         this.#selection_pop_menu.dispatchEvent(
-            new KiCanvasFitterMenuEvent({ items: refs, activeUuid }),
+            new KiCanvasFitterMenuEvent({ items: refs, activeUuid, actions, at }),
         );
     }
 

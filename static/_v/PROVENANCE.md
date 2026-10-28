@@ -186,7 +186,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `84df4d4c469187fb97be62d2d85df62de40235c00637407ac6756aa812d32ea0` |
+| `ecad-viewer.js` as committed | `5690589892482ca9af10819f59f972436ac6e9bf093a80ae2c152d611f59b426` |
 | `parser.worker.js` (none of our edits reach it) | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -209,7 +209,7 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Twelve, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
+Thirteen, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
 in a comment at the spot. Edit 6 is checked by `ui/tests/schematicpins.test.js`,
 which reads sheets through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
@@ -219,7 +219,7 @@ it), edit 7 by `ui/tests/areaitems.test.js` the same way, edit 9 by
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
 minifying, the bundle of this tree and the fork's at `461a091` differ in these
-twelve places and the comments beside them.
+thirteen places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -350,6 +350,24 @@ the group's designators one by one, which `ItemsGroupedByFpValueDNP`
 joined `Reference`. The page draws the BOM view of a design from it as a table
 of its own (`ui/src/KicadView.jsx`), each designator a link to the part on the
 board.
+
+**13. The host opens the schematic's list of a net.** `showNetList({ items,
+activeUuid, actions, at })` of `<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`)
+opens the list a click on a label opens (`kc-sch-selection-menu`) with places the
+host names, each `{ sheet, name, uuid }` turned into a `NetRef`, so a power
+symbol, a sheet pin or a wire gets the list too: the viewer's own builds it from
+a label's namesakes only. The list takes two more fields
+(`FitterSelections` in `viewers/base/events.ts`, `pop_up_label_ref_menu` in
+`kc-schematic/app.ts`): `actions`, the host's rows under the places, each a line
+and what a click on it runs, drawn as the places are under the header's rule
+(`kc-schematic/selection-pop-menu.ts`); and `at`, the client point it opens at in
+place of the pointer's last move. The list opens scrolled to its active place,
+which a net of dozens of places needs. A click on a sheet pin, like one on a
+label, opens no list of the viewer's own where the host sets
+`show-selection-panel="false"`; the page sets it and opens the list itself
+(`ui/src/KicadView.jsx`). The app finds that host as the root of the shadow
+tree it is drawn in: `closest` does not leave a shadow tree, so the check the
+fork had on a label never found it.
 
 ### Upgrading it
 
