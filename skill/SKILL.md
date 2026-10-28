@@ -164,6 +164,14 @@ switches between them by the project's title.
 * A change every variant needs (the board, a datasheet, the shared case code)
   goes into each branch: `git merge` or `git cherry-pick`.
 
+**A name changed on the hub's page comes back as a commit.** Renaming the
+project, a variant, a view or a document there makes the hub commit the new
+name into `project.json` on that branch: `title`, `variant`, a document's
+`title`, or `"views": {"<view id>": "<name>"}`, which names a view in place of
+the name `model.py` gives it. The hub's branch is then ahead of yours:
+`build` fast-forwards it first and stops when the two have diverged, and
+before `git push` run `git pull --no-rebase hammerola-<pid> <branch>`.
+
 **The push waits for the whole build** and exits non-zero unless the commit was
 published: the hook refusing it is the build failing, with its log in the
 output — "did not ship", not a warning. `build` likewise prints the log and

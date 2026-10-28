@@ -175,12 +175,14 @@ def build(args) -> int:
     """Push the working copy as the draft of the branch checked out.
     -> git push's exit code.
 
-    The draft is a commit made through a temporary index, so the author's
-    index, HEAD and history are not touched; files git ignores are not in it,
-    as they are not in a version. The hook builds it into the dev slot of the
-    branch's variant, or answers `unchanged` when the slot already holds this
-    tree. A branch name the hub cannot take as a variant is refused by the
-    hook, in the same words as a push of that branch.
+    First the branch is fast-forwarded to the hub's (`_follow_hub`), which
+    has commits of its own when a name was changed on the page. The draft is
+    then a commit made through a temporary index, so the author's index and
+    HEAD are not touched by it; files git ignores are not in it, as they are
+    not in a version. The hook builds it into the dev slot of the branch's
+    variant, or answers `unchanged` when the slot already holds this tree. A
+    branch name the hub cannot take as a variant is refused by the hook, in
+    the same words as a push of that branch.
     """
     root = project.find_project_root(args.directory)
     pid = project.read_project_id(root)
@@ -198,6 +200,7 @@ def build(args) -> int:
             "variant.\n"
             "  `git switch <branch>` (or `git switch -c <name>`), then build.")
     update.refuse_if_behind(hub_url, root)
+    _follow_hub(root, remote, branch)
 
     commit = _draft_commit(root)
     command = ["git", "push", "--force"]
@@ -209,6 +212,45 @@ def build(args) -> int:
         # The last line of the run: a bare URL, so it pastes as a link.
         print(f"{hub_url.rstrip('/')}{build_path(pid, 'dev', branch)}")
     return pushed.returncode
+
+
+def _follow_hub(root, remote: str, branch: str) -> None:
+    """Fast-forward the branch checked out to the hub's, saying so in a line.
+
+    The hub's branch moves on its own when a name is changed on the page: the
+    hub commits it into project.json (src/prereceive.py `commit_name`).
+    Nothing happens when the hub has no such branch or this one has its tip
+    already. A branch with commits of its own, or edits the fast-forward would
+    overwrite, is left alone and the build stops: its draft would carry a
+    project.json the hub has moved past, and the next push would be refused.
+    """
+    git(root, "fetch", "--quiet", remote)
+    published = f"refs/remotes/{remote}/{branch}"
+    if not _exists(root, published) or git(
+            root, "merge-base", "--is-ancestor", published, "HEAD",
+            check=False).returncode == 0:
+        return
+    behind = (f"the hub's {branch} has commits this branch lacks (names "
+              f"changed on the page)")
+    if git(root, "merge-base", "--is-ancestor", "HEAD", published,
+           check=False).returncode != 0:
+        # `--no-rebase`: a bare `git pull` refuses diverged branches.
+        raise ClientError(
+            f"{behind}, and the two have diverged.\n"
+            f"  Pull them, then build again: "
+            f"git pull --no-rebase {remote} {branch}")
+    merged = git(root, "merge", "--ff-only", "--quiet", published, check=False)
+    if merged.returncode != 0:
+        lines = merged.stderr.strip().splitlines()
+        why = (re.sub(r"^error:\s*|:$", "", lines[0]) if lines
+               else f"git merge exit {merged.returncode}")
+        raise ClientError(
+            f"{behind}, and fast-forwarding to them would overwrite the "
+            f"changes here: {why}.\n"
+            f"  Commit or stash them, then build again.")
+    print(f"fast-forwarded {branch} to the hub's: "
+          f"{git(root, 'rev-parse', 'HEAD').stdout.strip()[:12]}, "
+          f"names changed on the page")
 
 
 def _draft_commit(root) -> str:

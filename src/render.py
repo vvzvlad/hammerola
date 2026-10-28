@@ -196,18 +196,27 @@ def project_title(value) -> str:
     printable title reading "None", and a caller that sent the wrong field has to
     hear about it instead of renaming a project to that.
     """
-    return _name_text(value, "title")
+    return name_text(value, "title")
 
 
 def variant_label(value) -> str:
     """A variant's label, `"variant"` in its branch's project.json, checked
     by `project_title`'s rules: it is shown beside the title, in the header's
     switch of variants."""
-    return _name_text(value, "variant")
+    return name_text(value, "variant")
 
 
-def _name_text(value, field: str) -> str:
-    """The rule of `project_title` and `variant_label`, naming `field`."""
+def view_name(value) -> str:
+    """A view's name from project.json's `views` (`docsbuild.view_names`),
+    checked by the rule its name from the model is (`_model_body`), and refused
+    blank: it is the caption of the view's row in the menu of views."""
+    return name_text(value, "view name")
+
+
+def name_text(value, field: str) -> str:
+    """The rule of `project_title`, `variant_label` and `view_name`, naming
+    `field`: public for the rename route (`app._handle_names`), whose body
+    carries every one of the four as its `name`."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"`{field}` must be a non-empty string")
     return _plain_text(value.strip(), field)

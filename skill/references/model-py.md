@@ -85,7 +85,9 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
   grey for hardware, light grey for a mock.
 * **`views()` — tabs of REFERENCES into the catalogue.** A list of
   `{"id", "name", "parts": [...]}`; `name` captions the picker and falls back to
-  the id. **A view carries no geometry of its own.** Each entry of `parts` is:
+  the id, and `"views": {"<id>": "<name>"}` in `project.json` overrides it
+  (where a rename on the hub's page writes it). **A view carries no geometry of
+  its own.** Each entry of `parts` is:
   * `"lid"` — the catalogue part as it is;
   * `{"part": "pin", "at": cq.Location(...), "alpha": 0.6}` — placed by a rigid
     motion; `alpha` runs 0..1 and defaults to 1.0;

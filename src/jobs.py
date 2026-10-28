@@ -853,6 +853,9 @@ class BuildQueue:
                 outcome = docsbuild.run_documents_build(
                     task.sources, staging, documents, pid=task.pid)
             else:
+                # The names project.json gives the model's views, checked
+                # before the build like the label and the documents.
+                view_names = docsbuild.view_names(task.sources)
                 # The baseline is looked up here: the build process gets a copy
                 # of the file, not access to the store. None for a first build.
                 # The slot of the build's own variant, so a variant measures
@@ -863,6 +866,8 @@ class BuildQueue:
                                                           task.variant),
                     distance_cache=self._store.distance_cache_path(task.pid))
                 outcome = self._run_build(*args, **keywords)
+                if outcome.ok:
+                    docsbuild.name_views(staging, view_names)
                 if outcome.ok and documents:
                     outcome = docsbuild.add_documents(
                         task.sources, staging, documents, outcome)

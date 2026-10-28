@@ -34,7 +34,8 @@
 //
 // THE VARIANTS of the project are switched beside the title, as on the model's
 // page and by the same code (variants.jsx), from `variants.json`, which needs
-// no token.
+// no token. With the token, a pencil by the title, a variant's row and a
+// document's row renames it, in the model page's window (rename.jsx).
 //
 // `DocPage` is the drawing and takes everything as props, so a test reads the
 // tree it returns without mounting anything (ui/tests/docshell.test.js).
@@ -50,6 +51,7 @@ import DocumentView, { COMMENTABLE, docUrl, docViewKey } from './DocumentView.js
 import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, loadVariants, PAGE, pageVariant, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
+import { Pencil, RenameWindow, saveRename } from './rename.jsx';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 import { VariantSwitch, variantChoices } from './variants.jsx';
@@ -91,12 +93,13 @@ const BAR = `${BAR_LAYER}18`;
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
  * the document when its view can do them (`tools`, `onTools` in
  * DocumentView.jsx) and are out of service when it cannot. A narrow window
- * keeps the list and Fit. Pure.
+ * keeps the list and Fit. `onRename(doc)`, with the token, ends each row in
+ * a pencil (`documentRows`). Pure.
  */
-export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment }) {
+export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename }) {
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
-    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta)),
+    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta), onRename),
     docHref: docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),
@@ -130,12 +133,20 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
  * draws no comments. `toast` is what the toast says, or null. `variants` is
  * the switcher's choices (`variantChoices` in variants.jsx), null for none;
  * `variantsOpen` says its menu is open and `onVariants` opens or shuts it.
+ * `onRename(subject)`, with the token, is what a pencil by the title, a
+ * variant's row and a document's row asks to rename (`{kind, variant, id,
+ * name}`); `renaming` is the subject of the rename window while it is open,
+ * whose Save is `onRenameSave(name)` and whose Cancel is `onRenameClose`
+ * (rename.jsx).
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
   tool, onComment, comments, toast, variants = null, variantsOpen = false, onVariants,
+  onRename, renaming = null, onRenameSave, onRenameClose,
 }) {
   const doc = pickDocument(meta.documents, active);
+  const title = meta.title || meta.project;
+  const renameDoc = onRename && ((one) => onRename({ kind: 'document', id: one.id, name: one.name }));
   return (
     <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
       <div style={css(HEADER)}>
@@ -144,8 +155,12 @@ export function DocPage({
           <span style={css(WORDMARK)}>hammerola</span>
         </a>
         <div style={css(HEADER_RULE)} />
-        <div style={css(`${TITLE};flex:0 1 auto;min-width:0`)}>{meta.title || meta.project}</div>
-        <VariantSwitch choices={variants} open={variantsOpen} onToggle={onVariants} narrow={narrow} />
+        <div style={css('display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0')}>
+          <div style={css(`${TITLE};min-width:0`)}>{title}</div>
+          {onRename && <Pencil title="Rename project" onClick={() => onRename({ kind: 'project', name: title })} />}
+        </div>
+        <VariantSwitch choices={variants} open={variantsOpen} onToggle={onVariants} narrow={narrow}
+                       onRename={onRename && ((row) => onRename({ kind: 'variant', variant: row.key, name: row.label }))} />
         <div style={css('flex:1')} />
         <span title={meta.commit} style={css(`${HEAD_MONO};color:var(--text-soft)`)}>
           {meta.dev ? 'dev' : shortId(meta.commit)}
@@ -162,12 +177,14 @@ export function DocPage({
           {/* Over the document, under the bar, as on the model's page. */}
           {comments && composerCard(comments, comments.box)}
           <div style={css(BAR)}>
-            {toolBar(docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment }))}
+            {toolBar(docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment,
+              onRename: renameDoc }))}
           </div>
           <div style={css(toastStyle(!!toast))}>{toast}</div>
         </div>
         {comments && commentRail(comments)}
       </div>
+      {renaming && <RenameWindow subject={renaming} onSave={onRenameSave} onClose={onRenameClose} />}
     </div>
   );
 }
@@ -196,8 +213,8 @@ export default class DocShell extends React.Component {
       feed: [], activePin: null, composer: null, sending: false, rail: false, tool: null,
       docFocus: null, docLost: {}, toast: null,
       // `variants.json` once it comes (`loadVariants` in hub.js), and the
-      // switcher's menu open.
-      variants: null, variantsOpen: false,
+      // switcher's menu open; what the rename window renames while it is open.
+      variants: null, variantsOpen: false, rename: null,
     };
     // Who the reader is does not change on this page, which has no token
     // control: the token is read once.
@@ -402,6 +419,13 @@ export default class DocShell extends React.Component {
                     onVariants={(e) => {
                       e.stopPropagation();
                       this.setState({ variantsOpen: !this.state.variantsOpen, viewsOpen: false });
-                    }} />;
+                    }}
+                    onRename={this.viewer ? undefined : (subject) => this.setState({
+                      rename: { variant: pageVariant(PAGE, this.props.meta), ...subject },
+                      viewsOpen: false, variantsOpen: false })}
+                    renaming={this.state.rename}
+                    onRenameSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.token,
+                      (said) => this.toast(said))}
+                    onRenameClose={() => this.setState({ rename: null })} />;
   }
 }

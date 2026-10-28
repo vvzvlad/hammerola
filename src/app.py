@@ -68,6 +68,11 @@ Routing (SPEC 3, 7.4):
                                               revision printed         EDIT_TOKEN
 
     POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
+    POST   /api/v1/projects/<pid>/names       rename the project, a
+                                              variant, a view or a
+                                              document by a commit to
+                                              project.json, published
+                                              as a revision            EDIT_TOKEN
     DELETE /api/v1/projects/<pid>             remove it entirely       EDIT_TOKEN
 
     GET  /git/<pid>.git/info/refs?service=<service>
@@ -248,6 +253,10 @@ MAX_RESOLVE_BODY_BYTES = 8 * 1024
 # The rename body: one JSON object with one short string (`render` refuses a
 # title past MAX_TEXT).
 MAX_TITLE_BODY_BYTES = 2 * 1024
+
+# What `POST /api/v1/projects/<pid>/names` renames, each a key of project.json
+# (`prereceive._rename`).
+RENAMED_KINDS = ("project", "variant", "view", "document")
 
 # The pre-receive hook's call: the ref lines of one push, a few quarantine
 # paths and the push options, as JSON.
@@ -472,9 +481,11 @@ def _route_proposal(handler, rest, query, trailing_slash, with_body):
 
 
 def _route_project(handler, rest, query, trailing_slash, with_body):
-    return (handler._handle_rename(rest[0])
-            if len(rest) == 2 and rest[1] == "title"
-            else handler._error(404, "not found", {"Connection": "close"}))
+    if len(rest) == 2 and rest[1] == "title":
+        return handler._handle_rename(rest[0])
+    if len(rest) == 2 and rest[1] == "names":
+        return handler._handle_names(rest[0])
+    return handler._error(404, "not found", {"Connection": "close"})
 
 
 # One entry per route, tried in order: a narrow route must stay above a wider
@@ -1605,6 +1616,59 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found")
         logger.info(f"project {pid} renamed")
         return self._json(200, {"pid": pid, "title": title})
+
+    def _handle_names(self, pid: str):
+        """POST /api/v1/projects/<pid>/names — a name changed on the page:
+        `{"variant": <branch>, "kind": "project" | "variant" | "view" |
+        "document", "id": <the view's or the document's id>, "name": ...}`;
+        the project's name goes on `main` whatever `variant` says.
+
+        Committed into project.json on the variant's branch and published
+        before the answer, as a copy of a build of the tip's project with the
+        name rewritten, or built where neither the tip's own build nor the
+        variant's `latest` holds that tree (`prereceive.commit_name`): 200 with the commit and the revision's
+        address, 422 with the build's error. No id changes, as on `/title`.
+        The token is checked first, then the body, then whether the project
+        and the variant exist.
+        """
+        if not self._require_token(close=True):
+            return None
+        body = self._take_body(MAX_TITLE_BODY_BYTES,
+                               too_large="names body is too large")
+        if body is None:
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return self._error(422, "body is not valid JSON")
+        if not isinstance(payload, dict):
+            return self._error(422, "body must be a JSON object")
+        kind, item = payload.get("kind"), payload.get("id")
+        if kind not in RENAMED_KINDS:
+            return self._error(
+                422, f"`kind` must be one of {', '.join(RENAMED_KINDS)}")
+        if kind in ("view", "document") and not isinstance(item, str):
+            return self._error(422, f"`id` must name the {kind}")
+        try:
+            # Every kind's own rule (`render.project_title`, `variant_label`,
+            # `view_name`) is this one, worded for the body's field.
+            name = render.name_text(payload.get("name"), "name")
+        except ValueError as error:
+            return self._error(422, str(error))
+        store = self.server.store
+        # The project's name goes on the default variant whichever the page
+        # shows: the front page's card and the title a rename of `/title`
+        # left (`Store.clear_title`) follow that one.
+        variant = MAIN_BRANCH if kind == "project" else payload.get("variant")
+        if not (store.valid_pid(pid) and store.valid_variant(variant)
+                and store.repo_dir(pid).is_dir()):
+            return self._error(404, "not found")
+        status, answer = prereceive.commit_name(
+            store, self.server.jobs, self.server.builds, pid, variant, kind,
+            item, name)
+        if status != 200:
+            return self._error(status, answer)
+        return self._json(200, answer)
 
     def do_DELETE(self):
         try:
