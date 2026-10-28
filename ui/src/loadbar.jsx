@@ -78,9 +78,14 @@ export const painted = () => new Promise((resolve) => {
 
 // No width transition on the fill: width animates on the main thread, so the
 // reading after `painted` would freeze the bar short of full.
-const CENTER = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
-  + 'justify-content:center;gap:12px;padding:24px 28px;box-sizing:border-box;pointer-events:none;'
+const CENTER = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;'
+  + 'padding:24px 28px;box-sizing:border-box;pointer-events:none;'
   + `font:400 12.5px ${MONO};color:var(--text-muted)`;
+// On a card of its own: the model page draws the bar over the model already on
+// screen while another view comes in, where bare text would not read.
+const CARD = 'display:flex;flex-direction:column;align-items:center;gap:12px;max-width:100%;'
+  + 'box-sizing:border-box;padding:16px 20px;background:var(--card-bg);border:1px solid var(--line);'
+  + 'border-radius:9px;box-shadow:0 8px 28px var(--shadow)';
 const TRACK = 'width:260px;max-width:100%;height:4px;border-radius:2px;overflow:hidden;background:var(--line)';
 const FILL = 'height:100%;border-radius:2px;background:var(--accent)';
 
@@ -98,9 +103,11 @@ export function loadBar(received, total, done) {
   const share = done ? 1 : Math.min(1, received / total) || 0;
   return (
     <div data-loading="" style={css(CENTER)}>
-      <div>{done ? 'Preparing…' : `Loading… ${amount(received, total)}`}</div>
-      <div data-loadbar="" style={css(TRACK)}>
-        <div style={{ ...css(FILL), width: `${share * 100}%` }} />
+      <div style={css(CARD)}>
+        <div>{done ? 'Preparing…' : `Loading… ${amount(received, total)}`}</div>
+        <div data-loadbar="" style={css(TRACK)}>
+          <div style={{ ...css(FILL), width: `${share * 100}%` }} />
+        </div>
       </div>
     </div>
   );
