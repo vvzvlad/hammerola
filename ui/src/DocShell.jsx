@@ -53,6 +53,7 @@ import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 import { headMenu, headRow } from './headmenu.jsx';
 import { buildKey, loadVariants, PAGE, pageVariant, shortId } from './hub.js';
+import { BOM_TYPE } from './kicadbom.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
 import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
 import { readToken } from './store.js';
@@ -90,8 +91,9 @@ const BAR = `${BAR_LAYER}18`;
  * bar, the same controls in the same places. Download and Copy link for the
  * open document's file (`docHref`, served under `base`) stand outside the bar
  * at the left of the strip (`DocFile` in viewlist.jsx), as they do over a
- * document there. Measure, Add primitive and Settings, about a model, are out
- * of service, as they are over a document there; Comment is in service over a
+ * document there; a BOM, which has no file of its own (kicadbom.js), has
+ * neither. Measure, Add primitive and Settings, about a model, are out of
+ * service, as they are over a document there; Comment is in service over a
  * document that takes a comment (`COMMENTABLE`), lit while armed (`tool`) and
  * armed or put down by `onComment`; Comment and Add primitive are hidden from
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
@@ -105,7 +107,7 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
     viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta), onRename),
-    docHref: docUrl(base, doc),
+    docHref: doc.type === BOM_TYPE ? null : docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),
     tComment: onComment,

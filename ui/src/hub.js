@@ -49,6 +49,8 @@
 // Nothing here invents an endpoint: where a block of the brief has no source on
 // the server, the component says so on screen.
 
+import { withBoms } from './kicadbom.js';
+
 /** The two moving names. Same list as static/_v/pointer_pref.js. */
 export const POINTER_NAMES = ['latest', 'dev'];
 
@@ -215,7 +217,10 @@ async function getJson(url, init) {
   return response.json();
 }
 
-/** This build, as the hub normalised it at publish time (src/render.py).
+/** This build, as the hub normalised it at publish time (src/render.py), each
+ * schematic among its `documents` followed by the BOM the page adds for it
+ * (`withBoms`, kicadbom.js): this is the one fetch of meta.json, so every reader
+ * of the build's documents sees the BOM listed.
  *
  * `base` names a build OTHER than the one on screen, and it is what lets a
  * revision switch ask before it commits to anything: the swap has to know the
@@ -224,7 +229,9 @@ async function getJson(url, init) {
  */
 export const loadMeta = (fresh, base) =>
   getJson(`${base === undefined ? PAGE.base : base}meta.json`,
-          fresh ? { cache: 'no-store' } : undefined);
+          fresh ? { cache: 'no-store' } : undefined)
+    .then((meta) => (meta && Array.isArray(meta.documents)
+      ? { ...meta, documents: withBoms(meta.documents) } : meta));
 
 /** The build picker: `{pid, project, title, has_dev, latest, builds[],
  * files_keys}`.

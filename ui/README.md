@@ -151,6 +151,9 @@ document its page hands down; a single click selects the same part in the other
 views, a right click opens a menu that opens another view of the design, or
 another sheet of its schematic, with the same part or net selected, the part's
 items apart from the net's;
+the schematic's BOM, which `src/kicadbom.js` lists after it, is a member of the
+design too: a table of the parts the viewer counts in the schematic, each
+designator opening the board with that part selected;
 the board has a panel of its own over the top left of its canvas,
 `src/PcbPanel.jsx`: layers, presets, the opacity of the zone fills and the net
 of the last click;

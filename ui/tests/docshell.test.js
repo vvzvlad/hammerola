@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 // nothing here, the schematic's element below carrying what it would define.
 vi.mock('/_v/ecad-viewer.js', () => ({}))
 
+import { composerView } from '../src/comments.jsx'
 import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, { docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
@@ -499,6 +500,10 @@ describe('the page of a build with no model', () => {
     expect(drawn({})).toEqual(TOOLS)
     // a narrow window keeps the list and Fit, as the model's page does
     expect(drawn({ narrow: true })).toEqual(['Fit'])
+    // over a schematic's BOM, which has no file of its own: no Download, no Copy link
+    const bom = { id: 'b.kicad_sch~bom', type: 'bom', name: 'b · BOM', file: 'b.kicad_sch', bytes: 1 }
+    expect(docBar({ meta: META, doc: bom, base: '/b/', onPick: () => {} }).docHref).toBeNull()
+    expect(docBar({ meta: META, doc: META.documents[2], base: '/b/', onPick: () => {} }).docHref).toBe('/b/report.pdf')
     // over a PDF, which takes no comment
     const bar = (extra) => docBar({ meta: META, doc: META.documents[2], onPick: () => {}, ...extra })
     const off = (values, key) => css(values[key]).pointerEvents === 'none'
@@ -877,6 +882,13 @@ describe('comments on the page of a build with no model', () => {
     const reader = opened({ token: null })
     expect(commentTool(reader).props.style.display).toBe('none')
     expect(css(values(reader).railBtnStyle).display).toBe('none')
+  })
+
+  it('keeps a draft on a schematic off the schematic\'s BOM, which is under the same file', () => {
+    const shown = (docOpen) => css(composerView({ composer: { doc: SCHEMATIC.file, text: '' }, feed: [] },
+      { viewer: false, docOpen, tools: null, stop: (f) => f, set() {}, setState() {} }).composerStyle).display
+    expect(shown(SCHEMATIC)).toBe('block')
+    expect(shown({ ...SCHEMATIC, id: `${SCHEMATIC.id}~bom`, type: 'bom' })).toBe('none')
   })
 
   it('takes a place on the document into the composer, puts the tool down, and posts it with the document\'s frame', async () => {

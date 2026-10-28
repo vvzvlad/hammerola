@@ -17,7 +17,8 @@
  * the build on screen; without one the hub refuses every part's file, so the
  * menu is not drawn at all (`dlShown`). The Gerbers' zip opens without a key
  * (a document, `app.OPEN_SUFFIXES`), and a reader who has none downloads it,
- * as every open document, from the strip at the bottom (`DocFile`, viewlist.jsx).
+ * as every open document with a file of its own, from the strip at the bottom
+ * (`DocFile`, viewlist.jsx).
  */
 import { BAMBU_FORMAT } from './bambu.jsx';
 import { PAGE } from './hub.js';

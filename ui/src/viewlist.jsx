@@ -10,13 +10,15 @@
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
 // While a document is on screen, of whatever type, Download and Copy link for
-// its file stand at the left end of the bottom strip, outside the bar (`DocFile`):
+// its file stand at the left end of the bottom strip, outside the bar (`DocFile`),
+// but over a schematic's BOM, which has no file of its own (kicadbom.js):
 // the one place either page offers them, since most documents are drawn by a
 // view that has no such control of ours (a PDF's frame, a picture, a page of
 // text).
 //
 // Every listed document is one row, a KiCad schematic, board and 3D model as
-// much as a PDF, except one listed `hidden`: it has no row and is still opened
+// much as a PDF, and the BOM the page lists after each schematic
+// (kicadbom.js), except one listed `hidden`: it has no row and is still opened
 // by its address (`?d=`) or by a link from another document. A schematic of
 // more than one file has its sheets in a submenu beside its row (`SheetRows`).
 //
@@ -37,6 +39,7 @@ import { parse } from './address.js';
 import CopyLink, { WORDS_CLASS } from './copylink.jsx';
 import { docExt, docHint, docSize, FILE_TYPE } from './DocumentView.jsx';
 import { shortId } from './hub.js';
+import { BOM_TYPE } from './kicadbom.js';
 import { schematicSheets } from './kicadpages.js';
 import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.jsx';
 import {
@@ -60,10 +63,10 @@ export const GROUP_HEAD = `padding:8px 14px 3px;font:600 10px ${MONO};color:var(
 export const VIEWS_GROUP = '3D VIEWS';
 
 /** The heading a document's row stands under: a member of a KiCad design under
- *  KICAD — its schematic, board and the board's 3D model are one design the
- *  page moves between (`Show in …`), not three kinds of file — a file the page
- *  does not draw under its extension, as the Downloads menu groups it, any
- *  other document under its type. */
+ *  KICAD — its schematic, the schematic's BOM, board and the board's 3D model
+ *  are one design the page moves between (`Show in …`), not four kinds of
+ *  file — a file the page does not draw under its extension, as the Downloads
+ *  menu groups it, any other document under its type. */
 export function docGroup(doc) {
   if (viewOf(doc)) return 'KICAD';
   return (doc.type === FILE_TYPE ? docExt(doc) : doc.type).toUpperCase();
@@ -83,13 +86,14 @@ const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
  * `build`, the build's key (`buildKey` in hub.js), whether it is `on` screen,
  * and `chooseSheet(value)`, which is `choose(id, value)` with a sheet's `s=`
  * value. With `rename(doc)`, a row carries `onRename`, its pencil's
- * (rename.jsx).
+ * (rename.jsx), but a BOM's: the hub renames what it publishes, by the
+ * document's id, and the BOM's name follows its schematic's.
  */
 export function documentRows(documents, open, choose, base, build, rename) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
     key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
-    onRename: rename ? () => rename(doc) : undefined,
+    onRename: rename && doc.type !== BOM_TYPE ? () => rename(doc) : undefined,
     ...(doc.type === 'schematic' && doc.kicad.schematics.length > 1
       ? { doc, base, build, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
   }));
@@ -499,10 +503,11 @@ export function DocFile({ href }) {
  *   the views    `viewMenu` (a menu rather than a strip), `viewLabel`,
  *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`;
  *   the document `docHref`, the address the open document's file downloads
- *                from (`docUrl` in DocumentView.jsx), or null with none open:
- *                Download (a link that takes the file) and Copy link for it,
- *                drawn outside the bar at the left end of the strip
- *                (`DocFile`), and with none open not at all;
+ *                from (`docUrl` in DocumentView.jsx), or null with none open
+ *                and over a BOM, which has no file of its own: Download (a
+ *                link that takes the file) and Copy link for it, drawn outside
+ *                the bar at the left end of the strip (`DocFile`), and with
+ *                null not at all;
  *   the tools    `showTools` (false on a narrow window, which keeps the views
  *                and Fit), and each tool's style and handler: `measureBtnStyle`
  *                and `tMeasure`, `commentBtnStyle` and `tComment`,

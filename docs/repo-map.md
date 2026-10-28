@@ -606,6 +606,12 @@
   active-layer click, the zone fill opacity (dimmed to
   `ZONE_OPACITY` on open), and the net of the last click, lit whole through the
   viewer's own highlight. The viewer owns the state; the panel re-reads it
+- `ui/src/kicadbom.js` — a KiCad design's BOM, a document the hub does not
+  publish: `withBoms` lists one after every schematic as meta.json comes in
+  (`loadMeta` in `hub.js`), under the schematic's file, so `KicadView` draws it
+  as a member of that design; the rows are what the viewer computes from the
+  schematic it has loaded (`getBomItems`, `static/_v/PROVENANCE.md`, "Our
+  edits"), put in KiCad's order of designators by `bomRows`
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and

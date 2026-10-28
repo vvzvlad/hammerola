@@ -1,15 +1,17 @@
 // One KiCad design, as the documents of a build it is made of: its schematic
-// and its board, each in an `<ecad-viewer>` of its own, and the board's 3D
-// model in BoardView3D.jsx. DocumentView.jsx draws a document of type
-// `schematic`, `board` or `board3d` with this.
+// and its board, each in an `<ecad-viewer>` of its own, the board's 3D model
+// in BoardView3D.jsx, and the schematic's BOM, a table of ours. DocumentView.jsx
+// draws a document of type `schematic`, `bom`, `board` or `board3d` with this.
 //
 // A DESIGN is the listed schematic, board and 3D model with one path minus the
 // extension (`designKey`): `hw/board.kicad_sch`, `hw/board.kicad_pcb` and
-// `hw/board.glb` are one. Each is its own document and its own row of the
-// page's list of views (viewlist.jsx); WHICH ONE IS ON SCREEN IS THE PAGE'S,
-// the document it hands down as `doc`. The page keys this component by the
-// design (`docViewKey` in DocumentView.jsx), so moving between two members of
-// one design keeps this instance and all its views. A member with no listed
+// `hw/board.glb` are one, and so is the BOM the page lists after the
+// schematic, under the schematic's file (kicadbom.js). Each is its own
+// document and its own row of the page's list of views (viewlist.jsx); WHICH
+// ONE IS ON SCREEN IS THE PAGE'S, the document it hands down as `doc`. The
+// page keys this component by the design (`docViewKey` in DocumentView.jsx),
+// so moving between two members of one design keeps this instance and all its
+// views. A member with no listed
 // sibling is a design of one.
 //
 // THE PAGE KEEPS THE DESIGN while another document or the model is on screen
@@ -145,6 +147,20 @@
 // frame and reads the canvas in the same task. The 3D view says its own
 // (BoardView3D.jsx).
 //
+// THE BOM is the schematic's bill of materials as the viewer computes it from
+// the files the schematic's element is handed (`getBomItems`, an edit of ours:
+// static/_v/PROVENANCE.md, "Our edits"), read once the viewers have them and
+// drawn as a table in the page's colours: kicad-cli's default columns, a row
+// per footprint, value and DNP, the designators in KiCad's order (`bomRows` in
+// kicadbom.js). Until then it shows the load bar, as the 2D views do. Once
+// read it stays mounted, hidden off screen as every member's view is, so Back
+// from the board finds the table where it was scrolled to; it has nothing for
+// Fit and Frame, nor takes a comment (`COMMENTABLE` in DocumentView.jsx). A
+// designator selects its part in every view, as a click on the part in one
+// does, and then does what the part's `Show <ref> in <board>` item does
+// (`showPart`): the page opens the board with the part selected there. A
+// design that lists no board has its designators as plain text.
+//
 // A PART'S DATASHEET is the last item of its menu, `Open datasheet · <name>`,
 // when the part's KiCad `Datasheet` field names a document of the build, listed
 // or hidden (kicadsheets.js); a part with a datasheet and no other member to be
@@ -179,6 +195,7 @@ import React from 'react';
 import { parse, subscribe, unsubscribe } from './address.js';
 import BoardView3D from './BoardView3D.jsx';
 import DocumentView from './DocumentView.jsx';
+import { BOM_TYPE, bomRows } from './kicadbom.js';
 import { netIndex } from './kicadnets.js';
 import { sheetName } from './kicadpages.js';
 import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
@@ -261,14 +278,16 @@ function addressNow() {
 }
 
 /** The views of a design: the two by the names the viewer gives them
- *  (`targetContext`), and the 3D model of the board. */
+ *  (`targetContext`), the 3D model of the board, and the schematic's BOM. */
 export const SCH = 'SCH';
 export const PCB = 'PCB';
 export const BOARD3D = '3D';
+export const BOM = 'BOM';
 
 /** The view each document type of a design is, by meta.json's `type`
- *  (`render.DOCUMENT_TYPES` on the hub). */
-export const DESIGN_VIEWS = { schematic: SCH, board: PCB, board3d: BOARD3D };
+ *  (`render.DOCUMENT_TYPES` on the hub), and the BOM's, which the page adds
+ *  itself (kicadbom.js). */
+export const DESIGN_VIEWS = { schematic: SCH, board: PCB, board3d: BOARD3D, [BOM_TYPE]: BOM };
 
 /** The views the viewer draws, each in an element of its own. */
 const DRAWN = [SCH, PCB];
@@ -278,7 +297,8 @@ export const viewOf = (doc) => (Object.prototype.hasOwnProperty.call(DESIGN_VIEW
   ? DESIGN_VIEWS[doc.type] : undefined);
 
 /** The design `doc` is a member of: its path without the extension, or null
- *  for a document that is not a schematic, a board or a board's 3D model. */
+ *  for a document that is not a schematic, its BOM, a board or a board's 3D
+ *  model. */
 export function designKey(doc) {
   if (!viewOf(doc)) return null;
   const cut = doc.file.lastIndexOf('.');
@@ -534,6 +554,17 @@ const SHEET_NAME = `flex:1;min-width:0;${ELLIPSIS};font:600 12px ${SANS};color:v
 const SHEET_CLOSE = 'width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;'
   + `border-radius:6px;font:400 19px/1 ${SANS};color:var(--text-muted);cursor:pointer;user-select:none`;
 const SHEET_BODY = 'position:relative;flex:1;min-height:0;overflow:auto';
+// The BOM: a table as a markdown document's is drawn (docmd.js), over the whole
+// view area and scrolling inside it. The view area already stops above the
+// page's bar (`DOC_LAYER` in viewlist.jsx), so the bar covers no row of it.
+const BOM_PAGE = 'position:absolute;inset:0;overflow:auto;padding:24px 28px;box-sizing:border-box';
+const BOM_TABLE = `border-collapse:collapse;font:400 12.5px ${SANS};color:var(--text)`;
+const BOM_HEAD = `border:1px solid var(--line);padding:4px 10px;text-align:left;font:600 12px ${SANS};`
+  + 'background:var(--sunken-bg)';
+const BOM_CELL = 'border:1px solid var(--line);padding:4px 10px;vertical-align:top';
+const BOM_REF = 'color:var(--accent-text);cursor:pointer';
+/** The BOM's columns: kicad-cli's default (`sch export bom`). */
+const BOM_COLUMNS = ['Refs', 'Value', 'Footprint', 'Qty', 'DNP'];
 
 /** One design: a view per member, the one on screen, and the links between
  *  them. */
@@ -549,9 +580,10 @@ export default class KicadView extends React.Component {
     // `{ doc, from }` with the view it was opened over. `tools3d`: what the 3D
     // view told the bar it can do, or null. `received`: the bytes of the 2D
     // views' files in so far; `got`: all of them, the viewers being handed them.
+    // `bom`: the schematic's BOM in its order (`bomRows`), once it has its files.
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
-      tools3d: null, received: 0, got: false,
+      tools3d: null, received: 0, got: false, bom: [],
     };
     // What the bar can do with a drawn view on screen, one object for both, and
     // the last thing the page was told (`report`).
@@ -671,10 +703,11 @@ export default class KicadView extends React.Component {
   }
 
   /** What the bar can do with the view on screen: a drawn one once its files
-   *  are in, the 3D model once it is loaded. */
+   *  are in, the 3D model once it is loaded, the BOM nothing. */
   toolsOnScreen() {
-    if (this.side() === BOARD3D) return this.state.tools3d;
-    return this.state.ready && !this.state.error ? this.drawnTools : null;
+    const side = this.side();
+    if (side === BOARD3D) return this.state.tools3d;
+    return DRAWN.includes(side) && this.state.ready && !this.state.error ? this.drawnTools : null;
   }
 
   /** The page told what the bar can do (`onTools`), when that has changed;
@@ -722,6 +755,12 @@ export default class KicadView extends React.Component {
   pages() {
     const element = this.elements[SCH];
     return (element && typeof element.getSchematicPages === 'function' && element.getSchematicPages()) || [];
+  }
+
+  /** The schematic's BOM, as its element computes it, or none. */
+  bomItems() {
+    const element = this.elements[SCH];
+    return (element && typeof element.getBomItems === 'function' && element.getBomItems()) || [];
   }
 
   /** Does the address name this design's schematic as its document? Which
@@ -951,11 +990,8 @@ export default class KicadView extends React.Component {
   }
 
   /** An item of the menu. A datasheet opens in the window over the view
-   *  area, the page asked for nothing. Another sheet of the schematic on
-   *  screen: its element is asked now, the page asked for nothing, as it
-   *  shows what it showed. Another member of the design: the page is asked to
-   *  open it, and it selects the same thing once the page has handed it down
-   *  (`componentDidUpdate`); the 3D view is handed the part. */
+   *  area, the page asked for nothing; any other item shows its member
+   *  (`show`). */
   choose(item) {
     const { menu } = this.state;
     this.closeMenu();
@@ -964,12 +1000,22 @@ export default class KicadView extends React.Component {
       this.setState({ sheet: { doc: item.doc, from: menu.from } });
       return;
     }
+    this.show(item, menu.from);
+  }
+
+  /** An item `{ view, id, request }` chosen over the view `from`: a menu's, or
+   *  a designator of the BOM (`showPart`). Another sheet of the schematic on
+   *  screen: its element is asked now, the page asked for nothing, as it
+   *  shows what it showed. Another member of the design: the page is asked to
+   *  open it, and it selects the same thing once the page has handed it down
+   *  (`componentDidUpdate`); the 3D view is handed the part. */
+  show(item, from) {
     if (item.view === BOARD3D) {
       if (item.request.value !== this.state.selected) this.setState({ selected: item.request.value });
     } else {
       const element = this.elements[item.view];
       if (!element) return;
-      if (item.view === menu.from) {
+      if (item.view === from) {
         this.choosing = true;
         try {
           element.requestCrossProbe(item.request);
@@ -981,6 +1027,15 @@ export default class KicadView extends React.Component {
       this.probe = { to: item.view, request: item.request };
     }
     if (this.props.onOpen) this.props.onOpen(item.id);
+  }
+
+  /** A designator of the BOM clicked: the part selected in every view, as a
+   *  click on it in one is (`select`), and then what its `Show <ref> in
+   *  <board>` item does (`menuFor`), the board opened with the part selected. */
+  showPart(designator) {
+    const board = this.members()[PCB];
+    this.select(BOM, designator);
+    this.show({ view: PCB, id: board.id, request: { targetContext: PCB, kind: 'designator', value: designator } }, BOM);
   }
 
   /** The viewer's comment mode on the drawn view on screen while the page's
@@ -1147,9 +1202,10 @@ export default class KicadView extends React.Component {
         // The schematic goes to the sheet the address names, from the page it
         // opened on. A part selected in the 3D view while the files
         // came in is selected in the viewers now: they had nothing to select
-        // it in then. A place the page asked to show comes after both.
+        // it in then. A place the page asked to show comes after both. The
+        // BOM is the schematic's element's, computed as it loaded its files.
         if (!this._gone) {
-          this.setState({ ready: true }, () => {
+          this.setState({ ready: true, bom: bomRows(this.bomItems()) }, () => {
             this.page = this.activePage();
             this.followPage(true);
             this.select(BOARD3D, this.state.selected);
@@ -1246,8 +1302,9 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, menu, hover, sheet, received, got } = this.state;
-    // The 2D views' loading and failure, over them only: the 3D view says its own.
+    const { ready, error, selected, menu, hover, sheet, received, got, bom } = this.state;
+    // The 2D views' loading and failure, over them and over the BOM, which is
+    // read out of the schematic's: the 3D view says its own.
     const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
     const note = side !== BOARD3D
       && (error ? <div style={css(NOTE)}>{error}</div> : !ready && loadBar(received, total, got));
@@ -1272,6 +1329,38 @@ export default class KicadView extends React.Component {
             <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={showing === BOARD3D}
                          selected={selected} onSelect={this.onSelect3D} onMenu={this.onMenu3D}
                          onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
+          </div>
+        )}
+        {/* The BOM, once the schematic's element has its files. A designator is
+            a link to the part on the board where the design lists one. Kept
+            mounted off screen, as every member's view is, so that Back from the
+            board finds the table where it was scrolled to. */}
+        {members[BOM] && ready && !error && (
+          <div data-view={BOM} style={css(`${BOM_PAGE};visibility:${showing === BOM ? 'visible' : 'hidden'}`)}>
+            <table style={css(BOM_TABLE)}>
+              <thead>
+                <tr>{BOM_COLUMNS.map((name) => <th key={name} style={css(BOM_HEAD)}>{name}</th>)}</tr>
+              </thead>
+              <tbody>
+                {bom.map((row) => (
+                  <tr key={row.references[0]}>
+                    <td style={css(BOM_CELL)}>
+                      {row.references.map((ref, i) => (
+                        <React.Fragment key={ref}>
+                          {i > 0 && ', '}
+                          {members[PCB] ? (
+                            <span data-ref={ref} style={css(BOM_REF)} onClick={() => this.showPart(ref)}>{ref}</span>
+                          ) : ref}
+                        </React.Fragment>
+                      ))}
+                    </td>
+                    {[row.value, row.footprint, row.qty, row.dnp ? 'DNP' : ''].map((cell, i) => (
+                      <td key={i} style={css(BOM_CELL)}>{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
         {note}

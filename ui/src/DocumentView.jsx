@@ -14,11 +14,14 @@
 //              type, and an HTML page runs as its author wrote it
 //   image      an <img>
 //   schematic,
+//   bom,
 //   board,
 //   board3d    a member of a KiCad design, drawn with the design's other
 //              listed members linked to it (KicadView.jsx); the build's
 //              `documents` say which those are, and its right-click menu
-//              asks the page to open one (`onOpen`, with its id)
+//              and the BOM's designators ask the page to open one (`onOpen`,
+//              with its id). A `bom` is a schematic's parts list, which the
+//              page lists after it (kicadbom.js), not a document of the hub's
 //   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
 //              layer by layer (GerberView.jsx)
 //   file       anything else a build lists — a DXF for the glass shop, a CSV
@@ -29,7 +32,8 @@
 // A document keeps its path in the tree (`docs/cut-list.md`), and the hub
 // serves it under the same path below the build's directory. None of these
 // draws a link that downloads its file: the strip at the bottom of the page
-// does, for whichever is open (`DocFile`, viewlist.jsx).
+// does, for whichever is open (`DocFile`, viewlist.jsx), but a BOM, which has
+// no file of its own (kicadbom.js).
 //
 // WHAT THE PAGE'S BAR CAN DO WITH IT (`onTools`). The bar at the bottom of both
 // pages (`toolBar` in viewlist.jsx) has Fit and Frame; a view that can bring
@@ -71,6 +75,7 @@ import {
 import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
 import { mb } from './hub.js';
+import { BOM_TYPE } from './kicadbom.js';
 import KicadView, { designKey, DRAFT_MARK, viewOf } from './KicadView.jsx';
 import { fetchBody, loadBar, meter } from './loadbar.jsx';
 import { css, MONO, SANS } from './style.jsx';
@@ -131,17 +136,18 @@ export function docExt(doc) {
 }
 
 /** What a document is labelled with beside its name: a KiCad schematic its
- *  sheet count, a board and its 3D model what they are, any other its type and
- *  size. A plain file says its extension in place of the word `file`, which
- *  would be the same word on every such file. The caption on the card of a
- *  file the page does not draw; in the list of views only a KiCad member's row
- *  carries it, the others standing under their type (`docGroup` in
+ *  sheet count, its BOM, a board and its 3D model what they are, any other its
+ *  type and size. A plain file says its extension in place of the word `file`,
+ *  which would be the same word on every such file. The caption on the card of
+ *  a file the page does not draw; in the list of views only a KiCad member's
+ *  row carries it, the others standing under their type (`docGroup` in
  *  viewlist.jsx). */
 export function docHint(doc) {
   if (doc.type === 'schematic') {
     const sheets = doc.kicad.schematics.length;
     return `${sheets} sheet${sheets === 1 ? '' : 's'}`;
   }
+  if (doc.type === BOM_TYPE) return 'BOM';
   if (doc.type === 'board') return 'board';
   if (doc.type === 'board3d') return '3D';
   return [doc.type === FILE_TYPE ? docExt(doc) : doc.type, docSize(doc.bytes)].join(' · ');

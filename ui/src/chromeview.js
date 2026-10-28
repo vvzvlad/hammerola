@@ -25,6 +25,7 @@ import {
   PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
 import { headRow } from './headmenu.jsx';
+import { BOM_TYPE } from './kicadbom.js';
 import {
   BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, RELATIVE, btn, popover, tab,
 } from './panelstyle.js';
@@ -591,9 +592,10 @@ export function chromeView(s, props, deps) {
     docOpen,
     // Its file, which Download takes and Copy link copies (`DocFile` in
     // viewlist.jsx, on the strip left of the bar), from the address
-    // DocumentView draws it from; null over the model, which leaves the strip
-    // without the two.
-    docHref: docOpen ? docUrl(PAGE.base, docOpen) : null,
+    // DocumentView draws it from; null over the model and over a BOM, which
+    // has no file of its own (kicadbom.js), which leaves the strip without the
+    // two.
+    docHref: docOpen && docOpen.type !== BOM_TYPE ? docUrl(PAGE.base, docOpen) : null,
     bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (docOpen ? '17' : '13'),
     docLayerStyle: DOC_LAYER,

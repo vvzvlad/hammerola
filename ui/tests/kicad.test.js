@@ -31,10 +31,12 @@ import DocumentView, { docHint, DocumentLayers, documentBody, docViewKey } from 
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  AREA_EVENT, BOARD3D, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK, drawingOf,
-  drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH, SELECTION_EVENT,
-  SHEET_LOADED_EVENT,
+  AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK,
+  drawingOf, drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
+  SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
+import { loadMeta } from '../src/hub.js'
+import { bomRows, withBoms } from '../src/kicadbom.js'
 import { netIndex } from '../src/kicadnets.js'
 import { collect, texts } from './eltree.js'
 import { guardSubscribers } from './addressguard.js'
@@ -1562,5 +1564,96 @@ describe('a comment on the design\'s 3D model', () => {
   it('arms the model only while it is on screen', () => {
     const view = new KicadView({ doc: DOCS[1], documents: DOCS, base: BASE, comment: page() })
     expect(view.comment3D().on).toBe(false)
+  })
+})
+
+describe('the BOM of a design', () => {
+  const sch = schematic()
+  const listed = withBoms(DOCS)
+  const bom = listed[1]
+
+  it('follows each schematic among the build\'s documents, under its file, so it is a member of its design', () => {
+    expect(listed.map((doc) => doc.id)).toEqual(['hw__board.kicad_sch', 'hw__board.kicad_sch~bom',
+      'hw__board.kicad_pcb', 'hw__board.glb', 'ds__ne555.pdf', 'psu__psu.kicad_pcb'])
+    expect(bom).toEqual({ id: 'hw__board.kicad_sch~bom', type: 'bom', name: 'hw/board.kicad_sch · BOM',
+      file: sch.file, bytes: sch.bytes, kicad: sch.kicad })
+    // the documents the hub listed are the very ones it listed
+    expect(listed.filter((doc) => doc !== bom).every((doc, i) => doc === DOCS[i])).toBe(true)
+    expect([designKey(bom), docViewKey(bom)]).toEqual([designKey(sch), docViewKey(sch)])
+    expect(withBoms([{ ...sch, hidden: true }])[1].hidden).toBe(true)
+  })
+
+  it('lists each row\'s designators, and the rows by their first, in KiCad\'s order: the prefix, then the number', () => {
+    const rows = bomRows([{ references: ['R10', 'R2', 'R1'] }, { references: ['U10A', 'U2', 'U10'] },
+      { references: ['C12'] }, { references: ['TP'] }, { references: ['C3'] }])
+    // a designator with no number is all prefix
+    expect(rows.map((row) => row.references)).toEqual([['C3'], ['C12'], ['R1', 'R2', 'R10'], ['TP'],
+      ['U2', 'U10', 'U10A']])
+  })
+
+  it('is listed by the one fetch of meta.json', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ documents: DOCS }))))
+    onTestFinished(() => vi.unstubAllGlobals())
+    expect((await loadMeta(false, '/b/')).documents.map((doc) => doc.id)).toEqual(listed.map((doc) => doc.id))
+  })
+
+  it('has no rename pencil in the list of views: the hub renames what it publishes', () => {
+    expect(documentRows(listed, null, () => {}, BASE, 'b', () => {}).map((row) => typeof row.onRename))
+      .toEqual(['function', 'undefined', 'function', 'function', 'function', 'function'])
+  })
+
+  describe('on screen', () => {
+    afterEach(() => vi.unstubAllGlobals())
+    const ITEMS = [
+      { references: ['R10', 'R2'], value: '10k', footprint: 'R_0603', qty: 2, dnp: false },
+      { references: ['C3'], value: '100n', footprint: 'C_0603', qty: 1, dnp: true },
+    ]
+    /** The view on the BOM of `documents` once the files are in, its
+     *  schematic's element computing `ITEMS`. */
+    async function opened(documents) {
+      vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+      const { view, elements } = mounted(documents.find((one) => one.type === 'bom'), documents)
+      elements[SCH].getBomItems = () => ITEMS
+      view.componentDidMount()
+      await vi.waitFor(() => expect(view.state.ready).toBe(true))
+      onTestFinished(() => view.componentWillUnmount())
+      return { view, elements }
+    }
+    const links = (view) => collect(view.render(), (el) => (el.props['data-ref'] ? el : undefined))
+    const table = (view) => collect(view.render(), (el) => (el.props['data-view'] === BOM ? el : undefined))[0]
+
+    it('lists the schematic\'s parts, a designator opening the board with its part selected once the page hands it down', async () => {
+      const { view, elements } = await opened(listed)
+      expect(texts(table(view))).toEqual(['Refs', 'Value', 'Footprint', 'Qty', 'DNP',
+        'C3', '100n', 'C_0603', '1', 'DNP', 'R2', ', ', 'R10', '10k', 'R_0603', '2', ''])
+      expect(links(view).map((el) => el.props['data-ref'])).toEqual(['C3', 'R2', 'R10'])
+      // the part is selected in every view at once, hidden as they are, and the
+      // board asked again once the page, answering later, has it on screen
+      const answer = view.props.onOpen
+      view.props.onOpen = vi.fn()
+      links(view)[2].props.onClick()
+      expect(view.props.onOpen.mock.calls).toEqual([['hw__board.kicad_pcb']])
+      expect(elements[SCH].requestCrossProbe.mock.calls).toEqual([[designator(SCH, 'R10')]])
+      expect(elements[PCB].requestCrossProbe.mock.calls).toEqual([[designator(PCB, 'R10')]])
+      expect(view.state.selected).toBe('R10')
+      expect(table(view).props.style.visibility).toBe('visible')
+      view.props.onOpen = answer
+      answer('hw__board.kicad_pcb')
+      expect(elements[PCB].requestCrossProbe.mock.calls).toEqual([[designator(PCB, 'R10')], [designator(PCB, 'R10')]])
+      // the table stays, off screen, for Back to find it as it was scrolled
+      expect(table(view).props.style.visibility).toBe('hidden')
+    })
+
+    it('gives the bar nothing to fit or frame', async () => {
+      const { view } = await opened(listed)
+      view.componentDidUpdate(view.props)
+      expect(view.props.onTools.mock.lastCall).toEqual([null])
+    })
+
+    it('lists the designators of a design with no board as plain text', async () => {
+      const { view } = await opened(withBoms([schematic(), pdf]))
+      expect(links(view)).toEqual([])
+      expect(texts(table(view))).toContain('R10')
+    })
   })
 })

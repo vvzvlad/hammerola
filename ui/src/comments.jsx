@@ -21,6 +21,7 @@
  */
 import React from 'react';
 
+import { COMMENTABLE } from './DocumentView.jsx';
 import { docPlace } from './feedview.js';
 import { askHub, HUB_UNREACHABLE, hubBody, hubTrouble, PAGE, VARIANT_SEGMENT } from './hub.js';
 import { DRAFT_MARK } from './KicadView.jsx';
@@ -347,11 +348,14 @@ export function composerView(s, { viewer, docOpen, tools, stop, set, setState, t
   });
   return {
     // Shown over what the draft is about — the model, or the document it was
-    // drawn on (`docDraft`) — and hidden, not unmounted, over anything else:
+    // drawn on (`docDraft`), known by its file among the documents that take a
+    // comment, since a schematic's BOM is under the schematic's file
+    // (kicadbom.js) — and hidden, not unmounted, over anything else:
     // the draft comes back with it, sentence and all. Over a document it
     // stands above the bar's strip, which the bar's layer (18) keeps over it.
     composerStyle: `position:absolute;right:16px;bottom:${docOpen ? 72 : 16}px;width:400px;background:var(--card-bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 40px var(--shadow);z-index:16;display:`
-      + (s.composer && !viewer && (s.composer.doc ? !!docOpen && docOpen.file === s.composer.doc : !docOpen)
+      + (s.composer && !viewer && (s.composer.doc
+        ? !!docOpen && COMMENTABLE.has(docOpen.type) && docOpen.file === s.composer.doc : !docOpen)
         ? 'block' : 'none'),
     nextLabel: String(s.feed.length + 1),
     composerPart: s.composer ? s.composer.part : '',
