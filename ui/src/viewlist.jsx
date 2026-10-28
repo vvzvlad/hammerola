@@ -48,8 +48,9 @@ import { css, MONO, SANS } from './style.jsx';
 /** One row of the list, a view's or a document's: the same shape for both, so
  *  the two halves read as one list. Set in from its group's heading
  *  (`GROUP_HEAD`), as a file row of the Downloads menu is; a schematic's
- *  sheet has the same row (`SheetRows`). */
-export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px 7px 22px;font:400 12px ${SANS};cursor:pointer;`
+ *  sheet has the same row (`SheetRows`). Positioned, for the rename pencil
+ *  that stands in its left padding (`Pencil` with `lead`, rename.jsx). */
+export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px 7px 22px;position:relative;font:400 12px ${SANS};cursor:pointer;`
   + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
 
 /** A group's heading: the Downloads menu's (`headStyle` in downloadsview.js). */
@@ -343,10 +344,8 @@ export class SheetRows extends React.Component {
       <>
         <div ref={this.rowBox} onClick={row.onClick} onPointerEnter={this.enter} onPointerLeave={this.leave}
              className={row.onRename ? RENAME_HOST : undefined} style={css(row.rowStyle)}>
-          <span style={css(DOC_LABEL)}>
-            {row.label}
-            {row.onRename && <Pencil title="Rename document" onClick={row.onRename} />}
-          </span>
+          {row.onRename && <Pencil lead title="Rename document" onClick={row.onRename} />}
+          <span style={css(DOC_LABEL)}>{row.label}</span>
           <span style={css(DOC_HINT)}>{row.hint}</span>
           <span onPointerDown={this.pressed} onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
         </div>
@@ -389,7 +388,7 @@ const arGroup = (ar) => [
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
  * a schematic's of several files with what its sheets need, any of them with
- * `onRename`, which puts a pencil right after its name), drawn in their
+ * `onRename`, which puts a pencil before its name), drawn in their
  * groups (`menuGroups`), the documents under the views; `wide` is whether the
  * bar holds the tools (`viewMenuStyle`). `onToggle` must stop the click: the
  * pages shut their menus on a click that reaches the root. Pure, but for the
@@ -420,12 +419,10 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
           ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
             <div key={t.key} onClick={t.onClick} className={t.onRename ? RENAME_HOST : undefined}
                  style={css(t.rowStyle)}>
-              <span style={css(DOC_LABEL)}>
-                {t.label}
-                {t.onRename && (
-                  <Pencil title={head === VIEWS_GROUP ? 'Rename view' : 'Rename document'} onClick={t.onRename} />
-                )}
-              </span>
+              {t.onRename && (
+                <Pencil lead title={head === VIEWS_GROUP ? 'Rename view' : 'Rename document'} onClick={t.onRename} />
+              )}
+              <span style={css(DOC_LABEL)}>{t.label}</span>
               <span style={css(DOC_HINT)}>{t.hint}</span>
             </div>
           ))),

@@ -96,7 +96,7 @@ const BAR = `${BAR_LAYER}18`;
  * the document when its view can do them (`tools`, `onTools` in
  * DocumentView.jsx) and are out of service when it cannot. A narrow window
  * keeps the list and Fit. `onRename(doc)`, with the token, puts a pencil
- * right after each row's name (`documentRows`). Pure.
+ * before each row's name (`documentRows`). Pure.
  */
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename }) {
   return {
