@@ -537,9 +537,11 @@ def test_log_dev_says_when_a_commit_is_what_filled_the_slot(hub, model,
 
 
 def test_log_dev_of_a_slot_that_does_not_name_a_job(hub, model, capsys):
-    """A slot filled before the hub recorded the field. It is not an error on
-    the hub's side — the slot is published and serves its geometry — so the
-    refusal says what to run rather than sounding like a broken build."""
+    """A slot that names no job: one filled before the hub recorded the field,
+    or a revision published without a build (a name changed on the page). It
+    is not an error on the hub's side — the slot is published and serves its
+    geometry — so the refusal says what to run rather than sounding like a
+    broken build."""
     publish_model(hub, model, "dev")
     meta = slot_meta(hub)
     del meta["job"]
@@ -548,7 +550,7 @@ def test_log_dev_of_a_slot_that_does_not_name_a_job(hub, model, capsys):
     assert run(model, "log", "dev") == 1
     err = capsys.readouterr().err
     assert "does not say which job filled it" in err
-    assert "hammerola build" in err
+    assert "`hammerola log`" in err
 
 
 def test_log_dev_when_the_hub_does_not_have_that_job(hub, model, capsys):

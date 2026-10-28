@@ -121,7 +121,13 @@
   slot already holds is not built: the slot's build is published under its sha
   (`Store.promote_dev`). The build publishes before git moves the ref, so a
   build that fails refuses the push and a push that loses a race leaves its
-  revision published, to join the branch by the next merge
+  revision published, to join the branch by the next merge. A name changed on
+  the page (`POST /api/v1/projects/<pid>/names`, ui/src/rename.jsx) goes the
+  same way (`commit_name`): a hub commit to project.json on the branch's tip,
+  published as a copy of a build of the tip's project with the name rewritten
+  (`Store.publish_copy`; built only when neither the tip's own build nor the
+  variant's `latest` holds that project tree),
+  then the branch moved onto it unless a push moved it first
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). A version is published by git itself
   (`git push hammerola-<pid> <branch>`, a branch being a variant); `connect`

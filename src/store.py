@@ -50,10 +50,14 @@ because the volume would shadow them.
 
 A revision is published by `git push` (src/prereceive.py): the pre-receive hook
 hands the pushed commit to the hub, which builds it in the ordinary queue and
-publishes it under the commit's sha before git writes the ref. The repository
-is the canon of history; `latest`, `builds.json`, `variants.json` and
-`index.json` are derived from it and from the build directories, at the end of
-every push and at start (`recompute`, `catch_up`).
+publishes it under the commit's sha before git writes the ref. The other way
+is a name changed on the page (`POST /api/v1/projects/<pid>/names`,
+`prereceive.commit_name`): the hub's own commit, published as a copy of a
+build of the tip's project tree — the tip's own, or the variant's `latest` —
+(`publish_copy`) before it moves the branch. The repository is the
+canon of history; `latest`, `builds.json`, `variants.json` and `index.json`
+are derived from it and from the build directories, at the end of every push
+and of every rename, and at start (`recompute`, `catch_up`).
 
 A variant is a branch, named as the author's local branch is (SPEC §4). The
 default one, `main`, keeps the old places; every other lives in
@@ -1392,6 +1396,39 @@ class Store:
             # published; a copy cut short is what this removes.
             shutil.rmtree(staging, ignore_errors=True)
 
+    def publish_copy(self, pid: str, source: str, commit: str, meta: dict,
+                     digest: str, variant: str) -> tuple[int, dict]:
+        """Publish `commit` as a copy of the published build `source`, under
+        the document `meta`, written as it is. Returns (status, response), as
+        `publish_built` does.
+
+        For a name changed on the page (`prereceive.commit_name`): the commit
+        differs from `source`'s sources in a name the build only carries, so
+        nothing is built, and `meta` is `source`'s own with that name and the
+        commit's fields rewritten. The files are hard links to `source`'s, as
+        `_dedupe` would leave them; meta.json, the two digest records and the
+        log are this revision's own. Then the checks, the rename and the
+        bookkeeping of every revision (`_publish_revision`).
+        """
+        built = self.build_dir(pid, source)
+        files = self._file_digests(pid, built)
+        staging = self.build_staging(pid, commit)
+        try:
+            staging.mkdir()
+            for name in files:
+                (staging / name).parent.mkdir(parents=True, exist_ok=True)
+                os.link(built / name, staging / name)
+            (staging / BUILD_LOG_FILE).write_text(
+                f"not built: the build of {source}, renamed\n", encoding="utf-8")
+            return self._publish_revision(
+                pid, commit, staging, digest, variant,
+                lambda: (self._write_document(staging, meta, files, digest),
+                         None),
+                f"{len(files)} files")
+        finally:
+            # Gone on success: the publishing rename took it.
+            shutil.rmtree(staging, ignore_errors=True)
+
     def _publish_revision(self, pid: str, commit: str, staging: Path,
                           digest: str, variant: str, prepare,
                           note: str) -> tuple[int, dict] | None:
@@ -1399,11 +1436,12 @@ class Store:
         bookkeeping after it. -> (status, response), or None when `prepare`
         declines.
 
-        What `publish_built` and `promote_dev` share. `prepare()` runs under
-        the project lock once `<pid>/<commit>` is known to be free: it fills
-        `staging` and returns the meta.json it wrote with the job whose log the
-        revision carries, which the slot's copy names; or None, and nothing is
-        published. `note` says in the log line what the tree is.
+        What `publish_built`, `promote_dev` and `publish_copy` share.
+        `prepare()` runs under the project lock once `<pid>/<commit>` is known
+        to be free: it fills `staging` and returns the meta.json it wrote with
+        the job whose log the revision carries, which the slot's copy names; or
+        None, and nothing is published. `note` says in the log line what the
+        tree is.
         """
         pdir = self.projects_dir / pid
         with self._lock_for(pid):
@@ -1857,6 +1895,13 @@ class Store:
             # refuse is "the push described something that is not there", i.e. 422.
             raise PublishError(422, str(error)) from error
 
+        return self._write_document(staging, meta, files, digest)
+
+    @staticmethod
+    def _write_document(staging: Path, meta: dict, files: dict,
+                        digest: str) -> dict:
+        """Write a revision's meta.json and its two digest records into
+        `staging`. -> `meta`."""
         # meta.json only. The page shell is NOT written here: it is identical for
         # every build and it changes with the image, so a per-build copy served
         # under a commit URL's year of `immutable` would pin every published build
