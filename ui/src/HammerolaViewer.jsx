@@ -3954,10 +3954,10 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * `View in AR` tapped (`arRow` in chromeview.js): the file of the view as it
+   * `View in AR` tapped (`arBtn` in chromeview.js): the file of the view as it
    * stands (`usdz()` of the viewport), handed to AR Quick Look at 1:1
-   * (`openQuickLook`, `AR_FRAGMENT`). Made only once the row saying
-   * `preparing…` has been painted: the export holds the main thread. While
+   * (`openQuickLook`, `AR_FRAGMENT`). Made only once the button dimmed out
+   * of service has been painted: the export holds the main thread. While
    * it is made the row has no handler, so no second file is asked for. The
    * address goes as soon as Quick Look has it — Safari holds the blob of the
    * preview it started (`openQuickLook`).

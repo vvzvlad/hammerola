@@ -493,17 +493,17 @@
   and opens is `ui/src/feedview.js`
 - `ui/src/viewlist.jsx` — the bar at the bottom of both pages and the list of
   views in it: `toolBar` (the views, then Measure, Comment, Add primitive, Fit,
-  Frame, Settings, a tool that does not apply drawn out of service; with a
+  on the model's page in a browser with AR Quick Look `AR` (`arBtn`, see
+  `ui/src/ar.js`), Frame, Settings, a tool that does not apply drawn out of
+  service; with a
   document open, `DocFile` on the strip to the bar's left: Download and Copy
   link of its file, in words where they fit beside the centred bar and as icons
   where not), the button
   and the card it opens upwards with the views and then the documents
-  (`documentRows`: a row each but for a hidden one), and last, on the model's
-  page in a browser with AR Quick Look, `View in AR` (`arGroup`, see
-  `ui/src/ar.js`), the styles of the bar, the card and the document's layer,
-  and `savePng` (Frame's file). The views are a strip of pills while they fit
-  (`VIEW_TABS_MAX`) and nothing else needs a row; with documents or `View in
-  AR` they are the card.
+  (`documentRows`: a row each but for a hidden one), the styles of the bar,
+  the card and the document's layer, and `savePng` (Frame's file). The views
+  are a strip of pills while they fit (`VIEW_TABS_MAX`) and nothing else needs
+  a row; with documents they are the card.
   `chromeview.js` builds the model page's values and `DocShell.docBar` its own
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
@@ -565,10 +565,10 @@
   imported by URL from `static/_v/` (`USDZ_EXPORTER_URL`, with `fflate.module.js`
   beside it, `static/_v/PROVENANCE.md`) on first use; `openQuickLook` clicks a
   hidden `<a rel="ar">` with an `<img>` inside. The file is made on the reader's
-  tap on the row, not before (`openAr` in `HammerolaViewer.jsx`, `usdz()` of
-  the viewport), and the address carries `AR_FRAGMENT`, which turns off the
-  pinch that rescales. In such a browser the views are always the card
-  (`viewMenu` in `chromeview.js`); over a document there is no row
+  tap on the bar's `AR` beside Fit, not before (`openAr` in
+  `HammerolaViewer.jsx`, `usdz()` of the viewport), and the address carries
+  `AR_FRAGMENT`, which turns off the pinch that rescales. Over a document the
+  button stays, out of service (`arBtn` in `chromeview.js`)
 - `ui/src/GerberView.jsx`, `ui/src/gerber.js` — a zip of Gerbers (document type
   `gerbers`): `gerber.js` reads the zip in the browser (central directory,
   `DecompressionStream('deflate-raw')`), tells each file's layer by its
