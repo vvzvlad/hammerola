@@ -126,11 +126,11 @@ describe('a card of /index.json', () => {
     })
   })
 
-  it('counts documents, and only documents, for a build with no model', () => {
-    // `documents` is a number on such a card and null on a model's
-    // (`render.index_card`), and the model's line is the one a null keeps.
-    expect(projectCard({ ...CARD, documents: 3, mb: '0.1' }).meta).toBe('3 documents · 0.1 MB')
-    expect(projectCard({ ...CARD, documents: null }).meta).toBe('14 printables · 3 views · 1.2 MB')
+  it('leaves the printables out for a build with no model', () => {
+    // `printables` is null on such a card and a number on a model's
+    // (`render.index_card`); `views` there counts the documents the page lists.
+    expect(projectCard({ ...CARD, printables: null, views: 3, mb: '0.1' }).meta).toBe('3 views · 0.1 MB')
+    expect(projectCard(CARD).meta).toBe('14 printables · 3 views · 1.2 MB')
   })
 
   it('falls back through the names a project can be known by', () => {

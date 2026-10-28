@@ -320,20 +320,18 @@ export const buildFileUrl = (pid, commit, file) => (
  * `render.index_card`.
  *
  * `printables` counts only printable records (the catalogue's `parts` includes
- * bought screws and scenery), and the card says "printables" to match.
- *
- * `documents` is a count on the card of a build with no model and null on a
- * model's card, documents or not (absent on a card written before documents
- * existed), so `== null` is the model's line.
+ * bought screws and scenery), and the card says "printables" to match. It is
+ * null on the card of a build with no model, which has no catalogue, so the
+ * line leaves it out; `views` there counts the documents the page lists.
  */
 export function projectCard(card) {
   return {
     pid: card.pid,
     title: card.title || card.project || card.pid,
     slug: card.project,
-    meta: card.documents == null
-      ? `${card.printables} printables · ${card.views} views · ${card.mb} MB`
-      : `${card.documents} documents · ${card.mb} MB`,
+    meta: card.printables == null
+      ? `${card.views} views · ${card.mb} MB`
+      : `${card.printables} printables · ${card.views} views · ${card.mb} MB`,
     // The card is the default variant's; a project with others says how many
     // it has, and one with none says nothing.
     variants: card.variants > 1 ? `${card.variants} variants` : '',
