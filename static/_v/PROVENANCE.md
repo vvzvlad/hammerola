@@ -186,7 +186,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `c3d0631d797573804a2882937ea6aca0bb537bbd52090ae101adb3e704afb7bb` |
+| `ecad-viewer.js` as committed | `84df4d4c469187fb97be62d2d85df62de40235c00637407ac6756aa812d32ea0` |
 | `parser.worker.js` (none of our edits reach it) | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -209,16 +209,17 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Eleven, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
+Twelve, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
 in a comment at the spot. Edit 6 is checked by `ui/tests/schematicpins.test.js`,
 which reads sheets through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
 it), edit 7 by `ui/tests/areaitems.test.js` the same way, edit 9 by
 `ui/tests/pagekeys.test.js` and the text of edit 10 by
 `ui/tests/intersheetrefs.test.js`. The others are the viewer's drawing and input
-code, checked in a browser; what keeps them is that they live in the source the
-files are built from. Built without minifying, the bundle of this tree and the
-fork's at `461a091` differ in these eleven places and the comments beside them.
+code and what its element hands the page, checked in a browser; what keeps them
+is that they live in the source the files are built from. Built without
+minifying, the bundle of this tree and the fork's at `461a091` differ in these
+twelve places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -337,6 +338,18 @@ closes it, so the page's right-click menu never stands on it. A jump from the li
 viewer; it now activates the sheet's page through the project, as a sheet
 symbol's double click does, so the page hears of the change, and frames the item
 after that load.
+
+**12. The element hands out its BOM.** `getBomItems()` of `<ecad-viewer>`
+(`ecad-viewer/ecad_viewer.ts`) returns the project's BOM, `bom_items`, as plain
+objects `{ references, value, footprint, qty, dnp }`: a row per footprint, value
+and DNP, as `_sort_bom` of `kicanvas/project.ts` groups the parts the schematic
+visitor collects (every hierarchical instance; a part excluded from the BOM,
+one with no footprint and one not annotated, `R?`, left out). `references` is
+the group's designators one by one, which `ItemsGroupedByFpValueDNP`
+(`kicad/ItemsGroupedByFpValueDNP.ts`) now hands out through a getter beside its
+joined `Reference`. The page draws the BOM view of a design from it as a table
+of its own (`ui/src/KicadView.jsx`), each designator a link to the part on the
+board.
 
 ### Upgrading it
 

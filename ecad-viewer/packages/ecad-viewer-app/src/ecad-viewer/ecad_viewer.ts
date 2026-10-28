@@ -36,6 +36,7 @@ import { KCSchematicAppElement } from "../kicanvas/elements/kc-schematic/app";
 import { BomApp } from "../kicanvas/elements/bom/app";
 import { KicadPCB, KicadSch } from "../kicad";
 import { type SchematicInstanceContext } from "../kicad/schematic";
+import type { ItemsGroupedByFpValueDNP } from "../kicad/ItemsGroupedByFpValueDNP";
 
 import { area_items, type AreaDocument } from "./area-items";
 import { schematicPageStep } from "./page-keys";
@@ -3295,6 +3296,29 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             ...page,
             active: page.projectPath === active,
         }));
+    }
+
+    // The project's BOM as plain data, for the hub's BOM view
+    // (ui/src/KicadView.jsx), which draws it as a table of its own: a row per
+    // footprint, value and DNP, as `_sort_bom` of the project groups the parts,
+    // with each designator apart. Every row the project holds was made by
+    // `_sort_bom`, so each is a group.
+    public getBomItems(): {
+        references: string[];
+        value: string;
+        footprint: string;
+        qty: number;
+        dnp: boolean;
+    }[] {
+        return (this.#project.bom_items as ItemsGroupedByFpValueDNP[]).map(
+            (item) => ({
+                references: [...item.references],
+                value: item.Name,
+                footprint: item.Footprint,
+                qty: item.Qty,
+                dnp: item.DNP,
+            }),
+        );
     }
 
     public getPcbViewState(): EcadPcbViewState | null {

@@ -15,6 +15,13 @@ export class ItemsGroupedByFpValueDNP implements BomItem {
         return this.#references.filter((i) => i.length).join(",\n");
     }
 
+    // The designators one by one, for `getBomItems` of `<ecad-viewer>`: the
+    // hub's BOM makes each its own link to the part on the board, which the
+    // joined `Reference` above cannot be split back into without guessing.
+    public get references(): readonly string[] {
+        return this.#references;
+    }
+
     public addReference(ref: string) {
         this.#references.push(ref);
     }
