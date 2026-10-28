@@ -46,11 +46,12 @@ import React from 'react';
 
 import { navigate, parse, respell, subscribe, unsubscribe } from './address.js';
 import {
-  closeComment, commentRail, commentsButton, composerCard, composerView, docComment, docDraft, docFrame,
-  railView, readFeed, sendDraft,
+  closeComment, COMMENT_ICON, commentRail, commentsButton, composerCard, composerView, docComment, docDraft,
+  docFrame, railView, readFeed, sendDraft,
 } from './comments.jsx';
 import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
+import { headMenu, headRow } from './headmenu.jsx';
 import { buildKey, loadVariants, PAGE, pageVariant, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
 import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
@@ -73,8 +74,9 @@ export function pickDocument(documents, wanted) {
 }
 
 const SHELL = `position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px`;
-// Wraps, as the model page's header does: a row that cannot wrap cuts the
-// comments button off a phone's width.
+// Wraps, as the model page's header does: with a long title a row that cannot
+// wrap cuts the comments button off a window just past the breakpoint. Below
+// it the revision and Comments are rows of the header's menu (`DocPage`).
 const HEADER = `min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:0 16px;${HEADER_BAR}`;
 // Under the header the document's stage and the comment rail beside it, which
 // covers the stage on a narrow window (`railView` in comments.jsx).
@@ -140,12 +142,15 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
  * variant's row and a document's row asks to rename (`{kind, variant, id,
  * name}`); `renaming` is the subject of the rename window while it is open,
  * whose Save is `onRenameSave(name)` and whose Cancel is `onRenameClose`
- * (rename.jsx).
+ * (rename.jsx). On a narrow window the header is one row, as on the model's
+ * page: the mark without the wordmark, the title, the variants and the
+ * header's menu (headmenu.jsx), whose rows are the revision and Comments;
+ * `headMenuOpen` says the menu is open and `onHeadMenu` opens or shuts it.
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
   tool, onComment, comments, toast, variants = null, variantsOpen = false, onVariants,
-  onRename, renaming = null, onRenameSave, onRenameClose,
+  onRename, renaming = null, onRenameSave, onRenameClose, headMenuOpen = false, onHeadMenu,
 }) {
   const doc = pickDocument(meta.documents, active);
   const title = meta.title || meta.project;
@@ -156,21 +161,39 @@ export function DocPage({
       <div style={css(HEADER)}>
         <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
           <Mark />
-          <span style={css(WORDMARK)}>hammerola</span>
+          {!narrow && <span style={css(WORDMARK)}>hammerola</span>}
         </a>
         <div style={css(HEADER_RULE)} />
+        {/* Narrow, from a basis of 0 and with no spacer after it, as the model
+            page's title (`titleColStyle` in chromeview.js says why). */}
         <div className={onRename ? RENAME_HOST : undefined}
-             style={css('display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0')}>
+             style={css(`display:flex;align-items:center;gap:2px;flex:${narrow ? '1 1 0' : '0 1 auto'};min-width:0`)}>
           <div style={css(`${TITLE};min-width:0`)}>{title}</div>
           {onRename && <Pencil title="Rename project" onClick={() => onRename({ kind: 'project', name: title })} />}
         </div>
         <VariantSwitch choices={variants} open={variantsOpen} onToggle={onVariants} narrow={narrow}
                        onRename={onRename && ((row) => onRename({ kind: 'variant', variant: row.key, name: row.label }))} />
-        <div style={css('flex:1')} />
-        <span title={meta.commit} style={css(`${HEAD_MONO};color:var(--text-soft)`)}>
-          {meta.dev ? 'dev' : shortId(meta.commit)}
-        </span>
-        {comments && commentsButton(comments)}
+        {!narrow && <div style={css('flex:1')} />}
+        {!narrow && (
+          <span title={meta.commit} style={css(`${HEAD_MONO};color:var(--text-soft)`)}>
+            {meta.dev ? 'dev' : shortId(meta.commit)}
+          </span>
+        )}
+        {!narrow && comments && commentsButton(comments)}
+        {narrow && headMenu(headMenuOpen, onHeadMenu, (
+          <>
+            <div title={meta.commit} style={css(`${headRow(false)};cursor:default`)}>
+              <span style={css(HEAD_MONO)}>{meta.dev ? 'dev' : shortId(meta.commit)}</span>
+            </div>
+            {comments && !viewer && (
+              <div onClick={comments.railToggle} style={css(headRow(false))}>
+                {COMMENT_ICON}
+                Comments
+                <span style={css(comments.railCountStyle)}>{comments.openCount}</span>
+              </div>
+            )}
+          </>
+        ))}
       </div>
       <div style={css(BODY)}>
         <div style={css(STAGE)}>
@@ -218,6 +241,8 @@ export default class DocShell extends React.Component {
       // `variants.json` once it comes (`loadVariants` in hub.js), and the
       // switcher's menu open; what the rename window renames while it is open.
       variants: null, variantsOpen: false, rename: null,
+      // The header's menu open, on a narrow window (`DocPage`).
+      headMenu: false,
     };
     // Who the reader is does not change on this page, which has no token
     // control: the token is read once.
@@ -231,8 +256,10 @@ export default class DocShell extends React.Component {
     this.onTools = (tools) => this.setState({ tools });
     this.mq = null;
     // Narrowing puts an armed tool down, as on the model's page: its button
-    // leaves the bar, and a phone has no Escape to put it down with.
-    this.onNarrow = (event) => this.setState(event.matches ? { narrow: true, tool: null } : { narrow: false });
+    // leaves the bar, and a phone has no Escape to put it down with. Widening
+    // puts the header's menu down, which the wide header does not draw.
+    this.onNarrow = (event) => this.setState(event.matches ? { narrow: true, tool: null }
+      : { narrow: false, headMenu: false });
     // Back and Forward through the documents picked (`pick`): the entry's
     // document, read as the constructor reads it.
     this.onPop = (at) => this.set({ active: this.addressDoc(at) });
@@ -407,11 +434,11 @@ export default class DocShell extends React.Component {
                     onSheet={this.onSheet} viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();
-                      this.setState({ viewsOpen: !this.state.viewsOpen, variantsOpen: false });
+                      this.setState({ viewsOpen: !this.state.viewsOpen, variantsOpen: false, headMenu: false });
                     }}
                     onClose={() => {
-                      if (this.state.viewsOpen || this.state.variantsOpen) {
-                        this.setState({ viewsOpen: false, variantsOpen: false });
+                      if (this.state.viewsOpen || this.state.variantsOpen || this.state.headMenu) {
+                        this.setState({ viewsOpen: false, variantsOpen: false, headMenu: false });
                       }
                     }}
                     tool={this.state.tool} onComment={this.onComment}
@@ -421,11 +448,16 @@ export default class DocShell extends React.Component {
                     variantsOpen={this.state.variantsOpen}
                     onVariants={(e) => {
                       e.stopPropagation();
-                      this.setState({ variantsOpen: !this.state.variantsOpen, viewsOpen: false });
+                      this.setState({ variantsOpen: !this.state.variantsOpen, viewsOpen: false, headMenu: false });
+                    }}
+                    headMenuOpen={this.state.headMenu}
+                    onHeadMenu={(e) => {
+                      e.stopPropagation();
+                      this.setState({ headMenu: !this.state.headMenu, viewsOpen: false, variantsOpen: false });
                     }}
                     onRename={this.viewer ? undefined : (subject) => this.setState({
                       rename: { variant: pageVariant(PAGE, this.props.meta), ...subject },
-                      viewsOpen: false, variantsOpen: false })}
+                      viewsOpen: false, variantsOpen: false, headMenu: false })}
                     renaming={this.state.rename}
                     onRenameSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.token,
                       (said) => this.toast(said))}

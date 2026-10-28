@@ -81,7 +81,7 @@ afterEach(() => {
  * and those are `<a>` elements too. What is left under `/project/` is the strip
  * and nothing else, which is what makes the readings below exact.
  */
-function component({ tabs = [] } = {}) {
+function component({ tabs = [], narrow = false } = {}) {
   return makeComponent(HammerolaViewer, {
     state: {
       meta: {
@@ -91,7 +91,7 @@ function component({ tabs = [] } = {}) {
                   parts: [], gzip: 1000 }],
       },
       rail: null, menu: { id: null, x: 0, y: 0 },
-      tabs,
+      tabs, narrow,
     },
   })
 }
@@ -187,6 +187,16 @@ describe('a strip with fewer than two tabs', () => {
     })
     expect(c.computed().tabsShown).toBe(true)
     expect(tabHrefs(c)).toHaveLength(2)
+  })
+
+  it('is not drawn on a narrow window, however many there are', () => {
+    // The owner: no tabs on a phone, where the pills stack into a column that
+    // takes the model's height.
+    const two = [entry('proj1', 'Fixture bracket', 1000), entry('alpha', 'Alpha', 900)]
+    const c = component({ tabs: two, narrow: true })
+    expect(c.computed().tabsShown).toBe(false)
+    expect(tabHrefs(c)).toEqual([])
+    expect(tabHrefs(component({ tabs: two }))).toHaveLength(2)
   })
 })
 

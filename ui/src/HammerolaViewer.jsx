@@ -157,17 +157,20 @@ import { dropStaleFocus, feedView } from './feedview.js';
 // fetched and written, a draft on a document, what a document is handed for
 // them, and the composer, the comments button and the rail.
 import {
-  closeComment, commentRail, commentsButton, composerCard, composerView, docComment, docDraft, docFrame,
-  readFeed, sendDraft,
+  closeComment, COMMENT_ICON, commentRail, commentsButton, composerCard, composerView, docComment, docDraft,
+  docFrame, readFeed, sendDraft,
 } from './comments.jsx';
 import { comparePanel } from './compareview.js';
+// The header's menu a narrow window folds the header's controls into, which
+// the page of a build with no model draws too.
+import { headMenu } from './headmenu.jsx';
 // The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
 // were spelled out once per call site.
 import {
   ACCENT_BTN, BLANK_BOX, CARD, DIALOG_BTN, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN,
   HEADER_RULE, HEAD_MONO, HEAD_SANS, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK,
-  META_MONO, ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, RELATIVE, ROW,
+  META_MONO, ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, ROW,
   ROW_LABELLED, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TITLE, TOOL_SQUARE,
   WARN_BODY, WARN_CAPS, WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover, TOAST_MS, toastStyle,
 } from './panelstyle.js';
@@ -227,6 +230,21 @@ const VIEWPORT_CSS = `
   font: 600 11px ${FONTS['--hmr-mono']};
 }
 `;
+
+// The header's icons drawn twice: on its buttons on a wide window and on the
+// rows of the header's menu on a narrow one (headmenu.jsx).
+const DOWNLOAD_ICON = (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
+);
+const LOCK_ICON = (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2.5" y="7" width="11" height="7" rx="1.5" /><path d="M5 7V4.8a3 3 0 0 1 6 0V7" /></svg>
+);
+const MOON_ICON = (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
+);
+const SUN_ICON = (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
+);
 
 // How often a pointer page asks whether a newer build has landed. Below a
 // second the poll costs more than what it watches for; above five the "did that
@@ -1072,9 +1090,10 @@ export default class HammerolaViewer extends React.Component {
       // dismissed by `rootClick` and by Escape like the other menus of the
       // chrome. NO COUNT OF THEM HERE — `chromeview.js` says why: a number in
       // a sentence has been wrong twice already, because nothing fails when a
-      // menu is added beside it.
+      // menu is added beside it. `headMenu` is the header's menu on a narrow
+      // window (headmenu.jsx), which holds the header's controls as rows.
       revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
-      settingsOpen: false, variantsOpen: false,
+      settingsOpen: false, variantsOpen: false, headMenu: false,
       // `View in AR` (`openAr`, `openXr`): `{ busy }` while the file is made
       // or while the WebXR session starts and runs, else null.
       ar: null,
@@ -1502,7 +1521,7 @@ export default class HammerolaViewer extends React.Component {
       const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
                      viewsOpen: false, opsOpen: false, settingsOpen: false,
                      variantsOpen: false, notePop: null, tokenPop: false, tool: null,
-                     share: null };
+                     share: null, headMenu: false };
       // An armed tool is not on screen under an open document — the document
       // covers the model and the tool's button is out of service — so it does
       // not count as something this Escape closed; the Comment tool over a
@@ -1552,7 +1571,9 @@ export default class HammerolaViewer extends React.Component {
     // Escape key, so Measure would turn every touch into a measurement point
     // and Move would drag where an orbit was meant. Through `this.set`, since
     // the viewport holds the tool too and must be told; the wide direction is a
-    // plain `setState`, since nothing is taken away.
+    // plain `setState`, since nothing is taken away. It puts the header's menu
+    // down: the wide header draws no menu, and a flag left up would bring it
+    // back open on the next crossing into narrow.
     this._mq = window.matchMedia ? window.matchMedia(NARROW) : null;
     if (this._mq) {
       this._narrow = (e) => (e.matches
@@ -1563,7 +1584,7 @@ export default class HammerolaViewer extends React.Component {
         // for a menu that is not on screen, and the first click anywhere is
         // spent putting it down again.
         ? this.set({ narrow: true, tool: null, opsOpen: false, settingsOpen: false })
-        : this.setState({ narrow: false }));
+        : this.setState({ narrow: false, headMenu: false }));
       this._mq.addEventListener('change', this._narrow);
     }
 
@@ -5322,7 +5343,7 @@ export default class HammerolaViewer extends React.Component {
     });
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, variantsOpen: false, tokenPop: false }),
+      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, variantsOpen: false, tokenPop: false, headMenu: false }),
 
       // -- the page's chrome ---------------------------------------------------
       //
@@ -5387,7 +5408,8 @@ export default class HammerolaViewer extends React.Component {
       // sits past 540px, off a phone screen. `rootClick` does not clear this
       // popover, the panel stops the click anyway, and a phone has no Escape
       // key, so unclamped it could only be closed by reloading. On narrow it is
-      // reached through the tree, opened by the "Parts" button.
+      // reached through the tree, opened by the "Parts" row of the header's
+      // menu.
       secPopStyle: popover({
         narrow, anchor: 'left:278px;top:52px', width: '270px', radius: '10px',
         pad: '13px 14px', z: 15, open: s.secPop }),
@@ -5640,13 +5662,18 @@ export default class HammerolaViewer extends React.Component {
           <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
                          onToggle={v.variantsToggle} narrow={v.narrowMenus} onRename={v.variantRename} />
 
-          <div style={css('position:relative;margin-left:8px;flex:none')}>
-            <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
-              <span style={css(v.statusDotStyle)} />
-              <span style={css(HEAD_MONO)}>{v.slot}</span>
-              <span style={css(META_MONO)}>{v.slotDate}</span>
-              {v.revPicker && <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>}
-            </div>
+          {/* The revision, the downloads and the token: each a button with its
+              card on a wide window; on a narrow one the button is a row of the
+              header's menu below and the card a sheet (`revWrapStyle`). */}
+          <div style={css(v.revWrapStyle)}>
+            {!v.headFolded && (
+              <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
+                <span style={css(v.statusDotStyle)} />
+                <span style={css(HEAD_MONO)}>{v.slot}</span>
+                <span style={css(META_MONO)}>{v.slotDate}</span>
+                {v.revPicker && <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>}
+              </div>
+            )}
 
             {/* pointers on top, the history below; the ticks pick two to compare */}
             {v.revPicker && (
@@ -5683,16 +5710,18 @@ export default class HammerolaViewer extends React.Component {
           </div>
 
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
-          <div style={css(FILL)} />
+          {!v.headFolded && <div style={css(FILL)} />}
 
           {/* downloads: whole-build files, exactly the ones meta.json names,
               for a reader holding the key that opens them */}
           {v.dlShown && (
-            <div style={css(RELATIVE)}>
-              <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
-                Downloads
-              </div>
+            <div style={css(v.headWrapStyle)}>
+              {!v.headFolded && (
+                <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
+                  {DOWNLOAD_ICON}
+                  Downloads
+                </div>
+              )}
               {/* One block per FORMAT, each with a link that takes the whole
                   group: on a ten-part build the flat list was thirty rows in no
                   useful order, and "every STL" meant aiming at every third one. */}
@@ -5725,11 +5754,13 @@ export default class HammerolaViewer extends React.Component {
           )}
 
           {/* access: the token is what turns a viewer into the customer */}
-          <div style={css(RELATIVE)}>
-            <div onClick={v.tokenToggle} style={css(v.tokenBtnStyle)}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2.5" y="7" width="11" height="7" rx="1.5" /><path d="M5 7V4.8a3 3 0 0 1 6 0V7" /></svg>
-              {v.tokenLabel}
-            </div>
+          <div style={css(v.headWrapStyle)}>
+            {!v.headFolded && (
+              <div onClick={v.tokenToggle} style={css(v.tokenBtnStyle)}>
+                {LOCK_ICON}
+                {v.tokenLabel}
+              </div>
+            )}
             <div onClick={(e) => e.stopPropagation()} style={css(v.tokenPopStyle)}>
               <div style={css(`font:600 12.5px ${SANS};margin-bottom:4px`)}>
                 {v.viewer ? 'Enter your token' : 'Editing is on'}
@@ -5756,32 +5787,62 @@ export default class HammerolaViewer extends React.Component {
             </div>
           </div>
 
-          {/* The tree's own switch, drawn only where the tree is not simply
-              there: narrow, it lies over the model rather than beside it, so it
-              starts closed and something has to open it. Wide, this button is
-              `display:none` — the tree is on screen already and a control that
-              says "Parts" beside a visible list of them is noise. */}
-          <div onClick={v.treeToggle} style={css(v.treeBtnStyle)}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h12M4.5 8H14M4.5 13H14" /></svg>
-            Parts
-          </div>
-
-          {commentsButton(v)}
+          {!v.headFolded && commentsButton(v)}
 
           {/* Light or dark for the whole page — here because #35 says here, and
               drawn immediately after the comments so it stands against them.
-              Unconditional, deliberately: the two buttons above it are taken
-              away by a wide window and by a missing token, and this is the one
-              control in the row that belongs to the person rather than to what
-              they are allowed to do. `computed()` has the whole argument. */}
-          <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
-            {v.themeDark ? (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
-            )}
-            {v.themeLabel}
-          </div>
+              For every reader, deliberately: the comments button is taken away
+              by a missing token, and this is the one control in the row that
+              belongs to the person rather than to what they are allowed to do.
+              On a narrow window it is the menu's row after Comments. `computed()`
+              has the whole argument. */}
+          {!v.headFolded && (
+            <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
+              {v.themeDark ? MOON_ICON : SUN_ICON}
+              {v.themeLabel}
+            </div>
+          )}
+
+          {/* The header's menu on a narrow window (`headFolded` in chromeview.js):
+              the controls above as rows, in the owner's order. Parts is here
+              only: wide, the tree is on screen already, and a control that says
+              "Parts" beside a visible list of them is noise; narrow, the tree
+              lies over the model, so it starts closed and this row opens it. */}
+          {v.headFolded && headMenu(v.headMenuOpen, v.headMenuToggle, (
+            <>
+              <div onClick={v.revToggle} style={css(v.revRowStyle)}>
+                <span style={css(v.statusDotStyle)} />
+                <span style={css(HEAD_MONO)}>{v.slot}</span>
+                <span style={css(META_MONO)}>{v.slotDate}</span>
+                {v.revPicker && <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>}
+              </div>
+              {v.dlShown && (
+                <div onClick={v.dlToggle} style={css(v.headRowStyle)}>
+                  {DOWNLOAD_ICON}
+                  Downloads
+                </div>
+              )}
+              <div onClick={v.tokenToggle} style={css(v.tokenRowStyle)}>
+                {LOCK_ICON}
+                {v.tokenLabel}
+              </div>
+              <div onClick={v.treeToggle} style={css(v.partsRowStyle)}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h12M4.5 8H14M4.5 13H14" /></svg>
+                Parts
+              </div>
+              {!v.viewer && (
+                <div onClick={v.railToggle} style={css(v.headRowStyle)}>
+                  {COMMENT_ICON}
+                  Comments
+                  <span style={css(v.railCountStyle)}>{v.openCount}</span>
+                </div>
+              )}
+              <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.headRowStyle)}>
+                {v.themeDark ? MOON_ICON : SUN_ICON}
+                {v.themeLabel}
+              </div>
+            </>
+          ))}
         </div>
 
         {/* ── the tab strip: the projects this browser has been in lately ──

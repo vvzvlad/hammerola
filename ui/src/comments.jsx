@@ -397,7 +397,9 @@ export function composerView(s, { viewer, docOpen, tools, stop, set, setState, t
  */
 export function railView({ open, viewer, narrow, threads, openCount, stop, setState }) {
   return {
-    railToggle: stop(() => setState({ rail: !open })),
+    // The header's menu shuts with it: on a narrow window this is a row of it
+    // (headmenu.jsx).
+    railToggle: stop(() => setState({ rail: !open, headMenu: false })),
     railBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)' + (viewer ? ';display:none' : ''),
     // The two states differ by tone, not ink contrast. White on `--accent` is
     // 4.27:1 in both themes and cannot rise without moving the accent, and a
@@ -426,11 +428,17 @@ export function railView({ open, viewer, narrow, threads, openCount, stop, setSt
   };
 }
 
+/** The comments' icon: on the header's button, and on the row of the header's
+ *  menu that stands for it on a narrow window (headmenu.jsx). */
+export const COMMENT_ICON = (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /></svg>
+);
+
 /** The header's button that opens the rail, wearing the count of open comments. */
 export function commentsButton(v) {
   return (
     <div onClick={v.railToggle} style={css(v.railBtnStyle)}>
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /></svg>
+      {COMMENT_ICON}
       Comments
       <span style={css(v.railCountStyle)}>{v.openCount}</span>
     </div>
