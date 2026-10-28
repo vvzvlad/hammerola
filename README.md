@@ -111,8 +111,8 @@ by definition:
 ```bash
 mkdir -p ~/.local/bin
 curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
-hammerola login <hub>   # once per machine; the password is prompted for
-hammerola skill update  # the agent instructions, into ~/.claude/skills/hammerola/
+hammerola login <hub>   # once per machine; the password is prompted for, then the
+                        # agent instructions go into ~/.claude/skills/hammerola/
 ```
 
 The instructions are a directory — a short `SKILL.md` an agent keeps in front of
@@ -170,11 +170,11 @@ deliberately never a count, a name or a date, and it fails closed: a project
 directory the hub cannot read answers "not empty", rather than telling somebody
 their hub is empty on the strength of an error. It is what the SIGN-IN PAGE of a
 hub nobody has pushed to reads: instead of a login form and nothing else, it
-draws seven lines to hand an agent — where the client is, what this hub's
-address is, the command that installs the client, the command that installs the
-skill, the one that logs in, read the skill and follow it, ask the owner for
-the token. The addresses in it are built from the browser's own origin and the
-manifest's paths, so nothing here names a deployment; the request is made only
+draws five lines to hand an agent — what this hub's address is, the command
+that installs the client, the one that logs in and installs the skill, read the
+skill and follow it, ask the owner for the token. The addresses in it are built
+from the browser's own origin and the manifest's paths, so nothing here names a
+deployment; the request is made only
 when the form is what is on the screen, and every failure of it is silence.
 `hammerola create` is the other reader, and it follows `template`. The manifest
 also states the DIGEST of the skill this image ships, a sha256 over its files

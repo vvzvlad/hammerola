@@ -149,7 +149,16 @@ def stale_notice(served):
 
 
 def update(args) -> int:
-    """Fetch the hub's copy and write it where a skill is read from. -> exit code.
+    """`skill update`: `install` into `--path`, or the usual place."""
+    return install(_path(args))
+
+
+def install(path: Path, hub=None) -> int:
+    """Fetch the hub's copy and write it into `path`. -> exit code.
+
+    `hub` is passed by `login`, which installs the skill at `DEFAULT_PATH`
+    through the address and proxy login it has just checked; `skill update`
+    builds it from the settings.
 
     Overwrites the whole directory; the destination is printed and can be moved
     with `--path`. What comes back must be an archive carrying an `ENTRY`
@@ -162,13 +171,12 @@ def update(args) -> int:
     sweep their files — which is the same accident whether their directory held
     a skill of their own or no skill at all.
     """
-    path = _path(args)
     before_text = _read(path / ENTRY)
     _refuse_a_place_of_somebody_elses(path, before_text)
     before = None if before_text is None else tree_digest(path)
 
-    hub_url = config.hub_url(None)
-    hub = public_hub(hub_url)
+    hub = hub or public_hub(config.hub_url(None))
+    hub_url = hub.url
     manifest = hub.start()
     where = manifest.get(SKILL_KEY)
     if not isinstance(where, str) or not where:

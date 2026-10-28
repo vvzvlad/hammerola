@@ -15,13 +15,15 @@ in real use: the prompt is driven by replacing `getpass`.
 
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from harness import TOKEN
 from modeldir import make_model, push_version
 
-from hammerola import config, limits, project, setup
+from src import onboarding
+from hammerola import config, limits, project, setup, skill
 from hammerola import hub as hub_module
 from hammerola.cli import main
 
@@ -69,6 +71,18 @@ def test_login_stores_both_settings_in_a_file_only_this_account_can_read(
     out = capsys.readouterr().out
     assert TOKEN not in out
     assert str(len(TOKEN)) in out
+
+
+def test_login_installs_the_skill_the_hub_serves(hub, env_file, answers,
+                                                 capsys):
+    """The setup block on the hub's page ends at `login`: no separate
+    `skill update` follows it, so this is where the agent's instructions land."""
+    assert main(["login", hub.url]) == 0
+
+    installed = Path(skill.DEFAULT_PATH).expanduser()
+    assert installed.is_relative_to(Path(os.environ["HOME"]))
+    assert skill.tree_digest(installed) == onboarding.skill_digest()
+    assert config.display_path(installed) in capsys.readouterr().out
 
 
 def test_login_creates_its_directory_narrowly(tmp_path, hub, monkeypatch,
@@ -173,6 +187,9 @@ def test_login_says_when_the_environment_will_shadow_what_it_wrote(
     monkeypatch.setenv("HUB_URL", "https://somewhere-else.example")
     assert main(["login", hub.url]) == 0
     assert "wins over the file" in capsys.readouterr().out
+    # The skill still comes from the hub this login checked, not from that one.
+    assert (skill.tree_digest(Path(skill.DEFAULT_PATH).expanduser())
+            == onboarding.skill_digest())
 
 
 def test_a_password_the_file_format_cannot_carry_is_refused_without_echoing_it(
@@ -233,6 +250,31 @@ def test_login_notices_a_password_proxy_and_stores_its_login_beside_the_rest(
     assert prompts.asked == [setup.TOKEN_PROMPT]
     assert config.parse_env_file(env_file) == {"HUB_URL": hub.url,
                                                "EDIT_TOKEN": TOKEN}
+
+
+def test_login_installs_the_skill_through_the_proxy_login_it_checked(
+        password_proxy, env_file, prompts, monkeypatch):
+    """Not through a `HUB_BASIC_AUTH` the environment still holds, which
+    outranks the file login has just written."""
+    monkeypatch.setenv("HUB_BASIC_AUTH", "zlo:not-the-password")
+    assert main(["login", password_proxy.url]) == 0
+    assert (skill.tree_digest(Path(skill.DEFAULT_PATH).expanduser())
+            == onboarding.skill_digest())
+
+
+def test_a_skill_login_cannot_install_leaves_the_login_saved_and_says_so(
+        hub, env_file, answers, capsys):
+    """The refusal comes after the settings are written: the reader is told
+    to run `skill update`, not to log in and type the password again."""
+    installed = Path(skill.DEFAULT_PATH).expanduser()
+    installed.mkdir(parents=True)
+    (installed / "notes.txt").write_text("mine\n", encoding="utf-8")
+
+    assert main(["login", hub.url]) == 1
+
+    assert config.parse_env_file(env_file)["EDIT_TOKEN"] == TOKEN
+    assert setup.SKILL_NOT_INSTALLED in capsys.readouterr().err
+    assert (installed / "notes.txt").read_text(encoding="utf-8") == "mine\n"
 
 
 def test_a_proxy_that_refuses_its_password_is_named_and_nothing_is_stored(

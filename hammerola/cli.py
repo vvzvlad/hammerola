@@ -1,6 +1,6 @@
 """The `hammerola` command: its verbs, its dispatch, and its exit code.
 
-    login                     store the hub's address and the one password
+    login                     store the hub's address and password, install the skill
     create                    start a project: a fresh id, and the template
     connect                   make this git repository publish to the hub
     build                     push the working copy as the draft of this branch
@@ -100,7 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     enter = commands.add_parser(
         "login", help="store the hub's address and password on this machine, "
-                      "and a password proxy's login if one stands in front")
+                      "and a password proxy's login if one stands in front; "
+                      f"then install the skill into {skill.DEFAULT_PATH}")
     enter.add_argument(
         "url", nargs="?", default=None,
         help="the hub's address; asked for if it is not given. THE PASSWORD IS "

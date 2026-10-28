@@ -241,7 +241,7 @@
   IMAGE and not a second statement about this deployment — `empty` is still the
   only one of those; and the SIGN-IN PAGE reads `empty` — the gate on everything
   below — and then follows `client` when it says this hub has nothing on it
-  (issue #48). That block — seven lines a person copies and hands to their
+  (issue #48). That block — five lines a person copies and hands to their
   agent — is what the route was built for and what collects on the argument for
   answering a question about the deployment anonymously. It is on the DOOR and
   not on the list, because the list is behind the very token somebody opening an
@@ -418,7 +418,8 @@
   this one: a short `SKILL.md` and the `references/*.md` it sends its reader to.
   THE DIRECTORY is what is served, as one deterministic archive at
   `/start/skill.tar.gz` (`onboarding.skill_bytes`, built like the template's),
-  and `hammerola skill update` unpacks it into `~/.claude/skills/hammerola/` and
+  and `hammerola skill update` — and `hammerola login`, once the password is
+  accepted — unpacks it into `~/.claude/skills/hammerola/` and
   REMOVES from the directories the archive writes into (the root and
   `references/`) whatever the archive does not have — a reference withdrawn in
   a later version would otherwise be found by `ls` and read as a rule that

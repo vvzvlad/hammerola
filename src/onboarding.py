@@ -22,7 +22,7 @@ and it is a boolean on purpose: not a count (fleet size and growth), not a name
 (the prefix of a permanent URL, which `/index.json` withholds).
 
 What reads `empty` is the sign-in screen of a hub nobody has pushed to
-(`ui/src/HammerolaEntry.jsx`): seven lines to hand to an agent, with the client's
+(`ui/src/HammerolaEntry.jsx`): five lines to hand to an agent, with the client's
 path from the manifest and the address from the browser. The page asks lazily,
 only when showing the form.
 

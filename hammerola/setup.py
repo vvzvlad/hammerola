@@ -1,7 +1,8 @@
 """`hammerola login` and `hammerola create` — the two things done once.
 
-`login` answers WHERE and AS WHOM for every model directory on the machine;
-`create` answers WHICH PROJECT for one directory.
+`login` answers WHERE and AS WHOM for every model directory on the machine,
+and installs the skill from that hub; `create` answers WHICH PROJECT for one
+directory.
 
 Neither publishes. The id is minted locally (SPEC §3.1). `create` reaches the
 hub only for the public starter template and never reads the token;
@@ -16,7 +17,7 @@ import getpass
 import os
 from pathlib import Path
 
-from hammerola import config, project, unpack
+from hammerola import config, project, skill, unpack
 from hammerola.errors import ClientError
 from hammerola.hub import QUERY_TIMEOUT, Hub, HubError, git_headers
 from hammerola.projectslug import slug_from_title
@@ -54,7 +55,7 @@ SLUG_DISAGREEMENT = (
 
 
 def login(args) -> int:
-    """Ask where and as whom, check it, store it. -> exit code.
+    """Ask where and as whom, check it, store it, install the skill. -> exit code.
 
     A password proxy in front of the hub (Traefik basicAuth and the like) is
     noticed, not configured: `/start` asked with no credentials answers 401,
@@ -104,7 +105,13 @@ def login(args) -> int:
     for name in values:
         if os.environ.get(name, "").strip():
             print(SHADOWED.format(name=name))
-    return 0
+    # Through the address and proxy login just checked, not the settings: the
+    # environment outranks the file and could name another hub or proxy login.
+    public = Hub(url, "", timeout=QUERY_TIMEOUT, basic_auth=basic_auth)
+    try:
+        return skill.install(Path(skill.DEFAULT_PATH).expanduser(), public)
+    except (ClientError, HubError) as error:
+        raise ClientError(f"{error}\n{SKILL_NOT_INSTALLED}") from error
 
 
 def _proxy_credentials():
@@ -149,6 +156,13 @@ def _password() -> str:
     config.check_storable(config.EDIT_TOKEN_VAR, token)
     config.check_sendable_as_header(config.EDIT_TOKEN_VAR, token)
     return token
+
+
+# Said under a refusal of the skill's install that follows a stored login, so
+# the reader does not run `login` and type the password again.
+SKILL_NOT_INSTALLED = (
+    "  The login above is saved; only the skill is not installed. Once that is "
+    "fixed,\n  `hammerola skill update` installs it.")
 
 
 _NOTHING_TO_READ = (

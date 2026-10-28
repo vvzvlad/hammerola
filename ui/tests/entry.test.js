@@ -685,8 +685,8 @@ describe('the block for an agent', () => {
     // THE POINT OF THE WHOLE FILE-FULL: nothing in the bundle names a host, and
     // nothing names the path either — the origin is the browser's and the path
     // is the hub's own answer. Fed an address and a path no deployment uses,
-    // the block has to print exactly those, in the command as well as in the
-    // line above it: a `curl` against a hardcoded path is the same bug moved
+    // the block has to print exactly those, in the `curl` command and in the
+    // `login` line: a `curl` against a hardcoded path is the same bug moved
     // somewhere nobody reads.
     const odd = {
       origin: 'https://elsewhere.example:8443',
@@ -695,44 +695,22 @@ describe('the block for an agent', () => {
       empty: true,
     }
     const drawn = texts(drawnDoor({ start: odd }))
-    expect(drawn).toContain('Client: https://elsewhere.example:8443/get/tool')
     expect(drawn).toContain('Hub: https://elsewhere.example:8443')
     expect(drawn.join('\n')).toContain('curl -fsSL https://elsewhere.example:8443/get/tool')
     expect(drawn.join('\n')).toContain('hammerola login https://elsewhere.example:8443')
   })
 
-  it('installs the skill with a command rather than asking for it to be installed', () => {
+  it('installs the skill through `login` rather than asking for it to be installed', () => {
     // The client never looks at the agent's skills directory by itself
     // (`hammerola/skill.py`), so "install the skill" is work the reader has to
-    // work out. These commands are the whole of it.
+    // work out. These two commands are the whole of it: `login` writes the
+    // skill once the password is accepted (`hammerola/setup.py`).
     const copied = agentBrief(AT).join('\n')
     expect(copied).toContain(`curl -fsSL ${AT.origin}${AT.client} -o ~/.local/bin/hammerola`)
-    expect(copied).toContain('hammerola skill update')
-    // No address of the skill itself: it arrives through the client now, and a
+    expect(copied).toContain(`hammerola login ${AT.origin}`)
+    // No address of the skill itself: it arrives through the client, and a
     // second way of getting it is a second way of getting a stale one.
     expect(copied).not.toContain(HINT.skill)
-
-    // INSTALLING THE SKILL DOES NOT WAIT ON `login`, which asks for a password
-    // at the terminal an agent does not have: chained behind it, the skill
-    // would be installed only when a human happened to be watching. The skill
-    // is public, so the address travels with the command instead.
-    const lines = agentBrief(AT)
-    const skillLine = lines.find((line) => line.includes('skill update'))
-    expect(skillLine).toContain(`HUB_URL=${AT.origin}`)
-    expect(skillLine).not.toContain('login')
-    // And it comes FIRST: the two lines swapped would leave an agent at the
-    // password prompt with no skill installed, which is the whole of the bug.
-    expect(lines.findIndex((line) => line.includes('skill update')))
-      .toBeLessThan(lines.findIndex((line) => line.includes('hammerola login')))
-  })
-
-  it('calls the client what the rest of this repository calls it', () => {
-    // `hammerola/`, "the client" in AGENTS.md and the SPEC, `hammerola` on a
-    // PATH. A third name for it here — `Helper:`, which is what this said first
-    // — leaves whoever reads the block and then the skill working out that the
-    // two are one file.
-    expect(agentBrief(AT)).toContain(`Client: ${AT.origin}${AT.client}`)
-    expect(agentBrief(AT).join('\n')).not.toMatch(/helper/i)
   })
 
   it('joins the browser\'s own origin to what the hub answered', async () => {
@@ -756,11 +734,11 @@ describe('the block for an agent', () => {
   })
 
   it('says nothing this page cannot say', () => {
-    // Seven lines, no explanation of what any of it is: two of them install the
-    // client and the skill, and everything about hammerola is written there. A
-    // block that grew a second account of it would be a copy going stale on a
-    // page whose reader has not read the first one yet.
-    expect(agentBrief(AT)).toHaveLength(7)
+    // Five lines, no explanation of what any of it is: two of them install the
+    // client and, through `login`, the skill, and everything about hammerola is
+    // written there. A block that grew a second account of it would be a copy
+    // going stale on a page whose reader has not read the first one yet.
+    expect(agentBrief(AT)).toHaveLength(5)
   })
 
   it('is handed no token to print, whatever the page is holding', () => {
@@ -788,10 +766,10 @@ describe('the block for an agent', () => {
 
 describe('the last line of the brief', () => {
   it('is the token, where a token was passed', () => {
-    // The six above it are the same six either way: what the list's copy is
+    // The four above it are the same four either way: what the list's copy is
     // is the door's copy with the last line answered instead of deferred.
     expect(agentBrief({ ...AT, token: 'sekrit' }))
-      .toEqual([...agentBrief(AT).slice(0, 6), 'Token: sekrit'])
+      .toEqual([...agentBrief(AT).slice(0, 4), 'Token: sekrit'])
   })
 
   it('is the sentence, where none was', () => {

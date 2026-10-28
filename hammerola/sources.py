@@ -55,7 +55,8 @@ def hub_for(root) -> Hub:
 def public_hub(hub_url: str, root=None) -> Hub:
     """The hub handle for the routes that present no secret. -> Hub.
 
-    Used by `create`'s template download, `skill`, `skill update`, `update` and
+    Used by `create`'s template download, `skill`, `skill update` (`login`
+    builds its own, from the proxy login it has just checked), `update` and
     the version check before a draft is pushed. The empty token is deliberate: `/start`
     and the files it names are public (`src/onboarding.py`). Takes an address:
     none of these verbs addresses a project. `root` is only where to look for

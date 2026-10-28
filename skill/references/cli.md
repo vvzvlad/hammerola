@@ -86,17 +86,17 @@ write one into a repository.
 ```sh
 mkdir -p ~/.local/bin
 curl -fsSL <hub>/start/hammerola -o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola
-hammerola login <hub>
-hammerola skill update        # writes this skill into ~/.claude/skills/hammerola/
+hammerola login <hub>         # also writes this skill into ~/.claude/skills/hammerola/
 ```
 
 Behind a password proxy, add `-u <login>` to the `curl` line (curl asks the
 password); `hammerola login` notices the proxy and asks its login and password.
 
-The client installs the skill and updates it: `hammerola skill` compares a
-digest of the installed files with the hub's, `hammerola skill update` writes
-the hub's copy over the whole directory — the file you are reading and every
-file beside it — and removes what the new version no longer ships. A stale
+The client installs the skill — `login` does, once the password is accepted —
+and updates it: `hammerola skill` compares a digest of the installed files with
+the hub's, `hammerola skill update` writes the hub's copy over the whole
+directory — the file you are reading and every file beside it — and removes
+what the new version no longer ships. A stale
 skill teaches commands that no longer exist; the client says so only from
 `hammerola update`, from the refusal of a client older than the hub, and from
 a verb that is gone, so ask `hammerola skill` when you start on a project.

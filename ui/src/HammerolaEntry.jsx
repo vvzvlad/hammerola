@@ -305,19 +305,12 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
  * The block both screens offer, as the lines it is made of.
  *
  * Addressed to an agent: imperative and short, because everything about
- * hammerola is in the skill — which this block does not link to but INSTALLS,
- * because the client never looks at the agent's skills directory by itself
- * (`hammerola/skill.py`) and a line asking for the skill to be installed is a
- * line somebody has to work out how to carry out. The commands do it: the
- * client is one file off this hub, and `skill update` writes the whole skill
- * from it.
- *
- * `skill update` carries the address itself rather than waiting for `login` to
- * store it: the skill is public (`/start` needs no token) and `login` asks for
- * the password at the terminal, which an agent's shell does not have. Chained
- * behind it, the skill would be installed only when a human happened to be
- * watching. So `login` comes last and stands alone: it is the one step that
- * needs a person.
+ * hammerola is in the skill — which this block does not link to but has
+ * INSTALLED, because the client never looks at the agent's skills directory by
+ * itself (`hammerola/skill.py`) and a line asking for the skill to be installed
+ * is a line somebody has to work out how to carry out. The commands do it: the
+ * client is one file off this hub, and `hammerola login` writes the whole skill
+ * from the hub once the password is accepted.
  *
  * The `Hub:` line is the one only this page can write — the skill names no
  * deployment (`test_the_skill_names_no_deployment`) — and it stands alone
@@ -326,19 +319,16 @@ const DESCRIPTION = '3D models built from code. Every link is pinned to a revisi
  * The last line is the token when `token` is passed (the list, which holds an
  * accepted token; the block is then a credential, which the list says beside its
  * button) and otherwise says where the token comes from (the door) — which is
- * what `login` asks for. One function keeps the six shared lines in one place.
+ * what `login` asks for. One function keeps the four shared lines in one place.
  *
  * Everything addressable is built from the caller's `origin` (`hubOrigin`) and
- * the manifest's path for the client; nothing here names a host. "Client" is the
- * repository's one word for `hammerola/`.
+ * the manifest's path for the client; nothing here names a host.
  */
 export function agentBrief({ origin, client, token }) {
   return [
-    `Client: ${origin}${client}`,
     `Hub: ${origin}`,
     `Install: mkdir -p ~/.local/bin && curl -fsSL ${origin}${client} `
       + '-o ~/.local/bin/hammerola && chmod +x ~/.local/bin/hammerola',
-    `Skill: HUB_URL=${origin} hammerola skill update`,
     `Then: hammerola login ${origin}`,
     'Read the skill, and follow it.',
     // `Token:` with nothing after it would read as a hub without a secret.
