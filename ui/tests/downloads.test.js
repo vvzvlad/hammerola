@@ -26,6 +26,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer, {
   DOWNLOAD_GAP_MS, groupDownloads, menuAt, partRecord, sequentialDownload,
 } from '../src/HammerolaViewer.jsx'
+import BambuLink from '../src/bambu.jsx'
 import CopyLink from '../src/copylink.jsx'
 import { filesKeyFor } from '../src/downloadsview.js'
 import { PAGE, indexTree, rereadPage } from '../src/hub.js'
@@ -761,6 +762,20 @@ describe('the row menu', () => {
     })
     expect(rows).toHaveLength(9)
     rows.forEach(([link, copy]) => expect(copy).toBe(link))
+  })
+
+  it('puts Open in Bambu Studio on the 3MF rows of both menus alone, each with its own row\'s address', () => {
+    // Bambu Studio refuses any other format, so on a STEP or STL row the
+    // control would open an error in it.
+    const c = component({ node: '/model/plate' })
+    const v = c.computed()
+    const want = [
+      ...v.downloadGroups.flatMap((g) => g.files).filter((f) => f.file.endsWith('.3mf')),
+      ...fileRows(v.menuItems).filter((m) => m.hint.endsWith('.3mf')),
+    ].map((f) => f.href)
+    const got = collect(c.render(), (el) => (el.type === BambuLink ? el.props.href : undefined))
+    expect(want.length).toBeGreaterThanOrEqual(2)
+    expect([...got].sort()).toEqual([...want].sort())
   })
 
   it('points those rows at the same URLs the header\'s menu does', () => {

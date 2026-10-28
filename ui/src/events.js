@@ -28,6 +28,7 @@ import {
   EVENT_MODEL as MODEL,
   EVENT_ERROR as ERROR,
   EVENT_TOOL as TOOL,
+  EVENT_PROGRESS as PROGRESS,
 } from './viewport/events.js';
 
 /*
@@ -60,6 +61,9 @@ import {
  *   MODEL    {view, buildKey, tree, live}   -- a view finished rendering
  *   ERROR    {stage, message}  -- something asked for did not happen
  *   TOOL     {tool, held, escape}
+ *   PROGRESS {view, received, total, done}  -- the view file coming in: decoded
+ *            bytes so far, the view's `bytes` from meta.json (absent for a
+ *            comparison's scene), and `done` once the last byte is in
  *
  * MODEL is where the part tree comes from: the viewport already fetches the
  * view file (about two megabytes) to render it, and the tree is inside it, so
@@ -71,12 +75,13 @@ import {
  */
 export {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
-  PLACE, PIN, MODEL, ERROR, TOOL,
+  PLACE, PIN, MODEL, ERROR, TOOL, PROGRESS,
 };
 
 /** Every event the viewport sends us, in one list — see componentDidMount. */
 export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE,
-                          TURNED, PROPOSALTURN, PLACE, PIN, MODEL, ERROR, TOOL];
+                          TURNED, PROPOSALTURN, PLACE, PIN, MODEL, ERROR, TOOL,
+                          PROGRESS];
 
 /** The custom element the adapter registers.
  *

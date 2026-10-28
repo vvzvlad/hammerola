@@ -16,6 +16,7 @@ from harness import (DEFAULT_EXPORTS, TOKEN, good_build, meta_bytes, tar_gz,
                      view_bytes)
 from loguru import logger
 
+from src import render
 from src.app import STATIC_DIR, files_key
 
 IMMUTABLE = "public, max-age=31536000, immutable"
@@ -322,6 +323,74 @@ def test_build_page_is_the_viewer(hub):
     assert r.status_code == 200
     assert r.headers["Content-Type"].startswith("text/html")
     assert "/_v/hammerola.js" in r.text
+
+
+def test_a_build_link_unfurls_with_its_title_message_and_card(hub):
+    """A link pasted into Telegram unfurls from the page's Open Graph tags
+    (SPEC §4): the title, the commit's message and revision, and the front
+    page's card picture at an absolute address. The title and the message come
+    from a push, so they are escaped."""
+    hub.publish("proj1", "rev12345678901234", good_build(
+        title='Bracket <v2> & "lid"',
+        views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
+                "parts": ["lid", "pin"], "preview": "assembled_preview.png",
+                "card": "assembled_card.png"}],
+        extra_files={"assembled_preview.png": b"\x89PNG\r\n\x1a\n",
+                     "assembled_card.png": b"\x89PNG\r\n\x1a\n"}),
+        message='fix the "lid" & <clip>')
+    page = hub.get("/project/proj1/rev12345678901234/", headers={
+        "Host": "hub.example", "X-Forwarded-Proto": "https"}).text
+    head = page[:page.index("</head>")]
+    assert ('<meta property="og:title" content="Bracket &lt;v2&gt; &amp; '
+            '&quot;lid&quot;">') in head
+    assert ('<meta property="og:description" content="fix the &quot;lid&quot; '
+            '&amp; &lt;clip&gt; · revision rev123456789">') in head
+    assert ('<meta property="og:image" content="https://hub.example/project/'
+            'proj1/rev12345678901234/assembled_card.png">') in head
+    assert '<meta name="twitter:card" content="summary_large_image">' in head
+
+
+def test_a_draft_with_no_picture_unfurls_without_one(hub):
+    """No `og:image` for a build that has no picture, and a draft says it is
+    one where a revision is named."""
+    hub.publish_dev("proj1", good_build())
+    page = hub.get("/project/proj1/dev/").text
+    assert '<meta property="og:title" content="Demo project">' in page
+    assert '<meta property="og:description" content="draft build">' in page
+    assert "og:image" not in page
+
+
+def test_a_project_link_unfurls_as_its_latest(hub):
+    """`/project/<pid>/`, the link a reader most often copies, carries the
+    tags of the project's `latest`, its picture under `latest/`; a project with
+    only a draft carries none."""
+    hub.publish_dev("proj2", good_build())
+    drafted = hub.get("/project/proj2/")
+    assert drafted.status_code == 200
+    assert "og:" not in drafted.text
+    hub.publish("proj1", "rev12345678901234", good_build(
+        views=[{"id": "assembled", "name": "assembled", "file": "assembled.json",
+                "parts": ["lid", "pin"], "preview": "assembled_preview.png",
+                "card": "assembled_card.png"}],
+        extra_files={"assembled_preview.png": b"\x89PNG\r\n\x1a\n",
+                     "assembled_card.png": b"\x89PNG\r\n\x1a\n"}),
+        message="first cut")
+    page = hub.get("/project/proj1/", headers={
+        "Host": "hub.example", "X-Forwarded-Proto": "https"}).text
+    head = page[:page.index("</head>")]
+    assert '<meta property="og:title" content="Demo project">' in head
+    assert ('<meta property="og:description" content="first cut · revision '
+            'rev123456789">') in head
+    assert ('<meta property="og:image" content="https://hub.example/project/'
+            'proj1/latest/assembled_card.png">') in head
+
+
+def test_a_build_whose_meta_cannot_be_read_gets_the_plain_shell(hub):
+    hub.publish("proj1", "abc123", good_build())
+    (hub.project_dir("proj1") / "abc123" / "meta.json").write_bytes(b"{")
+    r = hub.get("/project/proj1/abc123/")
+    assert r.status_code == 200
+    assert r.text == render.build_page_html(render.DEFAULT_THEME)
 
 
 def test_latest_serves_the_newest_build(hub):

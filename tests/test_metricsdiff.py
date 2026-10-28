@@ -114,6 +114,25 @@ def test_two_documents_with_no_field_in_common_compare_nothing():
     assert answer == {"moved": [], "compared": 0}
 
 
+def test_a_new_cad_stack_alone_leaves_the_part_the_same(tmp_path, capsys):
+    """Both readers keep "every measured number is the same" when only the
+    versions moved: that line is the one the skill stops on, and a version is
+    not a measurement. The versions follow it on lines of their own."""
+    from hammerola import revdiff
+
+    before = {"parts": {"body": _part()},
+              "toolchain": {"cadquery-ocp": "7.9.3.1.1"}}
+    after = dict(before, toolchain={"cadquery-ocp": "7.9.4"})
+
+    revdiff._print_geometry(before, after)
+    metrics.write_metrics(tmp_path, after)
+    metrics.report_metrics(tmp_path, before, None)
+
+    out = capsys.readouterr().out
+    assert out.count("every measured number is the same") == 2, out
+    assert out.count("  toolchain: cadquery-ocp 7.9.3.1.1 -> 7.9.4\n") == 2, out
+
+
 def test_the_shared_module_imports_nothing_but_the_standard_library():
     """What makes it importable by the client at all.
 

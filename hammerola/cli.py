@@ -42,7 +42,10 @@ A VERSION IS A GIT COMMIT. It is published by `git push hammerola-<pid>
 build fails; `connect` sets that remote up. A branch is a variant of the
 project, `main` the default one. `build` pushes a draft of the uncommitted tree
 into the dev slot of the branch checked out the same way, and its exit code is
-`git push`'s: zero means the draft was published or was already there.
+`git push`'s: zero means the draft was published or was already there. Before
+the draft it fast-forwards that branch to the hub's, which moves when a name
+is changed on the page (the hub commits it into project.json), and stops,
+naming the `git pull`, when the two have diverged.
 `status`, `log`, `artifacts`, `diff`, `snapshot` and `measure` read `latest`
 and `dev` of that branch's variant too.
 """

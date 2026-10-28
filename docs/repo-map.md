@@ -122,9 +122,17 @@
   symlink or a submodule; the second builds the newest commit of each branch
   that touched the project's directory, and each draft (`refs/drafts/<branch>`),
   in the ordinary queue, into that branch's variant (issue #129), and streams
-  the log back to the hook. The build publishes before git moves the ref, so a
+  the log back to the hook. A branch's commit whose tree its variant's draft
+  slot already holds is not built: the slot's build is published under its sha
+  (`Store.promote_dev`). The build publishes before git moves the ref, so a
   build that fails refuses the push and a push that loses a race leaves its
-  revision published, to join the branch by the next merge
+  revision published, to join the branch by the next merge. A name changed on
+  the page (`POST /api/v1/projects/<pid>/names`, ui/src/rename.jsx) goes the
+  same way (`commit_name`): a hub commit to project.json on the branch's tip,
+  published as a copy of a build of the tip's project with the name rewritten
+  (`Store.publish_copy`; built only when neither the tip's own build nor the
+  variant's `latest` holds that project tree),
+  then the branch moved onto it unless a push moved it first
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). A version is published by git itself
   (`git push hammerola-<pid> <branch>`, a branch being a variant); `connect`
@@ -490,8 +498,12 @@
   link of its file, in words where they fit beside the centred bar and as icons
   where not), the button
   and the card it opens upwards with the views and then the documents
-  (`documentRows`: a row each but for a hidden one), the styles of the bar, the
-  card and the document's layer, and `savePng` (Frame's file).
+  (`documentRows`: a row each but for a hidden one), and last, on the model's
+  page in a browser with AR Quick Look, `View in AR` (`arGroup`, see
+  `ui/src/ar.js`), the styles of the bar, the card and the document's layer,
+  and `savePng` (Frame's file). The views are a strip of pills while they fit
+  (`VIEW_TABS_MAX`) and nothing else needs a row; with documents or `View in
+  AR` they are the card.
   `chromeview.js` builds the model page's values and `DocShell.docBar` its own
 - `ui/src/DocumentView.jsx` — one document, as both pages draw it: markdown
   drawn by `ui/src/docmd.js` (markdown-it with HTML off, its tokens turned into
@@ -502,8 +514,11 @@
   as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
   and size, under the picture of a DXF when the entry carries `preview`; every
-  document is downloaded from the strip at the bottom (`DocFile`). DocShell draws it
-  under its list; the model page draws it over the
+  document is downloaded from the strip at the bottom (`DocFile`). Both pages
+  draw their document layer through `DocumentLayers`, which keeps every KiCad
+  design opened on the page of this build mounted and hidden while another
+  document or the model is on screen. DocShell draws it under its list; the
+  model page draws it over the
   3D area when a document is chosen in the view list (the rows are built in
   `chromeview.js`, `?d=` is read on arrival in `HammerolaViewer.load`)
 - `ui/src/KicadView.jsx` — a KiCad DESIGN: the listed schematic, board and 3D
@@ -542,6 +557,18 @@
   is the part that needs no WebGL: which nodes are parts (a child of the scene
   root named by its designator), merging a part's meshes, lighting one part on
   copies of its materials, framing it
+- `ui/src/ar.js` — View in AR: the model view on screen as a USDZ file that
+  iOS opens in AR Quick Look at 1:1. `arSupported` asks the browser
+  (`relList.supports('ar')`); `arScene` copies the faces the viewer draws of
+  each shown part, scaled from millimetres to USDZ's metres and turned to its
+  Y up, the model standing on y = 0; `usdzOf` hands that to three's `USDZExporter.js`,
+  imported by URL from `static/_v/` (`USDZ_EXPORTER_URL`, with `fflate.module.js`
+  beside it, `static/_v/PROVENANCE.md`) on first use; `openQuickLook` clicks a
+  hidden `<a rel="ar">` with an `<img>` inside. The file is made on the reader's
+  tap on the row, not before (`openAr` in `HammerolaViewer.jsx`, `usdz()` of
+  the viewport), and the address carries `AR_FRAGMENT`, which turns off the
+  pinch that rescales. In such a browser the views are always the card
+  (`viewMenu` in `chromeview.js`); over a document there is no row
 - `ui/src/GerberView.jsx`, `ui/src/gerber.js` — a zip of Gerbers (document type
   `gerbers`): `gerber.js` reads the zip in the browser (central directory,
   `DecompressionStream('deflate-raw')`), tells each file's layer by its
@@ -557,7 +584,9 @@
   `fetchBody` reads the answer chunk by chunk and counts each one on a `meter`,
   which reaches the screen at most once per frame, and `loadBar` is the label
   (`Loading… 2.1 / 40.7 MB`, then `Preparing…`) and the bar, filled against the
-  document's `bytes` in meta.json
+  document's `bytes` in meta.json. The model page draws the same bar over the
+  model while the viewport reads a view file, from the viewport's
+  `hmr:progress` counted against the view's `bytes`
 - `ui/src/PcbPanel.jsx` — the board view's own panel over the top left of its
   canvas, where the model's parts tree stands (the viewer's panels are hidden by
   `hide-chrome`): layer presets, a row per layer with an eye and an

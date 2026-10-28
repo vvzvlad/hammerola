@@ -135,7 +135,9 @@ jobs:
         # section hatch splices at); three.module.js and three.core.js are three's own source,
         # which the viewer bundle keeps external, read by the hatch, picking and outline tests.
         # BufferGeometryUtils.js, GLTFLoader.js and SkeletonUtils.js (which GLTFLoader imports)
-        # are three's addons, read by ui/tests/board3d.test.js and ui/tests/board3dview.test.js.
+        # are three's addons, read by ui/tests/board3d.test.js and ui/tests/board3dview.test.js;
+        # USDZExporter.js and fflate.module.js (which the exporter imports) are two more, read by
+        # ui/tests/ar.test.js.
         # Not all of static/_v: it also holds this project's own built bundle.
         # ecad-viewer/packages is the KiCad viewer's source, which ui/tests/schematicpins.test.js
         # reads through the viewer's own parser (aliased in ui/vitest.config.mjs); its build
@@ -160,6 +162,7 @@ jobs:
           ./static/_v/pointer.js ./static/_v/pointer_pref.js ./static/_v/three-cad-viewer.esm.js \
           ./static/_v/three.module.js ./static/_v/three.core.js \
           ./static/_v/BufferGeometryUtils.js ./static/_v/GLTFLoader.js ./static/_v/SkeletonUtils.js \
+          ./static/_v/USDZExporter.js ./static/_v/fflate.module.js \
           | docker run --rm -i --pull always --name "$JS_NAME" \
           --memory=3g --memory-swap=3g \
           -e CI=true \

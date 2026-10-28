@@ -83,6 +83,11 @@ Routing (SPEC 3, 7.4):
                                               revision printed         EDIT_TOKEN
 
     POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
+    POST   /api/v1/projects/<pid>/names       rename the project, a
+                                              variant, a view or a
+                                              document by a commit to
+                                              project.json, published
+                                              as a revision            EDIT_TOKEN
     DELETE /api/v1/projects/<pid>             remove it entirely       EDIT_TOKEN
 
     GET  /git/<pid>.git/info/refs?service=<service>
@@ -189,8 +194,8 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL, BuildQueue,
                       CompareTask, InspectTask, JobStore)
 from src.multipart import MultipartError, parse_multipart
-from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, MAIN_BRANCH,
-                       POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
+from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, LATEST_LINK,
+                       MAIN_BRANCH, POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
                        VARIANT_SEGMENT, VARIANTS_FILE, ImportFailed, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
@@ -265,6 +270,10 @@ MAX_RESOLVE_BODY_BYTES = 8 * 1024
 # The rename body: one JSON object with one short string (`render` refuses a
 # title past MAX_TEXT).
 MAX_TITLE_BODY_BYTES = 2 * 1024
+
+# What `POST /api/v1/projects/<pid>/names` renames, each a key of project.json
+# (`prereceive._rename`).
+RENAMED_KINDS = ("project", "variant", "view", "document")
 
 # The pre-receive hook's call: the ref lines of one push, a few quarantine
 # paths and the push options, as JSON.
@@ -555,9 +564,11 @@ def inspection(kind: str, payload, meta: dict) -> dict:
 
 
 def _route_project(handler, rest, query, trailing_slash, with_body):
-    return (handler._handle_rename(rest[0])
-            if len(rest) == 2 and rest[1] == "title"
-            else handler._error(404, "not found", {"Connection": "close"}))
+    if len(rest) == 2 and rest[1] == "title":
+        return handler._handle_rename(rest[0])
+    if len(rest) == 2 and rest[1] == "names":
+        return handler._handle_names(rest[0])
+    return handler._error(404, "not found", {"Connection": "close"})
 
 
 # One entry per route, tried in order: a narrow route must stay above a wider
@@ -735,7 +746,7 @@ class HubHandler(BaseHTTPRequestHandler):
         """One of the three HTML documents, in this reader's own theme.
 
         One place for all three: the theme comes from the cookie and the reply
-        carries `Vary: Cookie`. `page` names only the template.
+        carries `Vary: Cookie`. `page` makes the document for a theme.
         """
         theme = render.cookie_theme(self.headers.get("Cookie", ""))
         self._send(200, page(theme).encode("utf-8"), HTML_TYPE, CACHE_NONE,
@@ -944,13 +955,14 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
         return None
 
-    def _serve_build_page(self, build_dir: Path, with_body: bool):
+    def _serve_build_page(self, build_dir: Path, with_body: bool, page: str):
         """The shell of a build page — from the IMAGE, never from the build.
 
         The same for every build and changing with the image, so it is served
         from the template with no-cache rather than frozen into an immutable
         build directory. Everything build-specific comes from meta.json at
-        runtime.
+        runtime, except the link-preview tags a messenger reads, since it runs
+        no script (`_link_preview`).
 
         Existence is decided by meta.json, not the directory (a restore or a
         hand-copy can leave a directory without one).
@@ -959,7 +971,24 @@ class HubHandler(BaseHTTPRequestHandler):
             self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
         except (OSError, ValueError):
             return self._error(404, "not found", with_body=with_body)
-        return self._serve_page(render.build_page_html, with_body)
+        preview = self._link_preview(build_dir, page)
+        return self._serve_page(
+            lambda theme: render.build_page_html(theme, preview), with_body)
+
+    def _link_preview(self, build_dir: Path, page: str) -> str:
+        """The link-preview tags of the build in `build_dir`
+        (`render.link_preview`), or "" when its meta.json cannot be read. Their
+        picture is named against `page`, the path of that build's directory,
+        made absolute with the request's `X-Forwarded-Proto` and `Host`.
+        """
+        scheme = self.headers.get("X-Forwarded-Proto") or "http"
+        try:
+            meta = self.server.store.resolve_inside(build_dir / BUILD_META_FILE)
+            return render.link_preview(
+                json.loads(meta.read_bytes()),
+                f"{scheme}://{self.headers.get('Host', '')}{page}")
+        except (ValueError, OSError, TypeError, KeyError):
+            return ""
 
     def _serve_pointer_page(self, pid: str, with_body: bool):
         """`/project/<pid>/` — the tiny page that picks a pointer (SPEC 9).
@@ -967,10 +996,18 @@ class HubHandler(BaseHTTPRequestHandler):
         `no-cache`: a cached decision page would freeze the decision. 404 for
         a project never pushed; the project directory is the test, not a
         build inside it.
+
+        It is the link a reader most often copies, so it unfurls in a
+        messenger as the project's `latest` does (`_link_preview`); a project
+        with no `latest` gets no tags.
         """
         if not self.server.store.project_dir(pid).is_dir():
             return self._error(404, "not found", with_body=with_body)
-        return self._serve_page(render.pointer_page_html, with_body)
+        preview = self._link_preview(
+            self.server.store.build_dir(pid, LATEST_LINK),
+            f"/project/{pid}/{LATEST_LINK}/")
+        return self._serve_page(
+            lambda theme: render.pointer_page_html(theme, preview), with_body)
 
     def _serve_builds_json(self, pid: str, with_body: bool,
                            variant: str = MAIN_BRANCH):
@@ -1169,7 +1206,8 @@ class HubHandler(BaseHTTPRequestHandler):
             # matters.
             if not trailing_slash:
                 return self._redirect(f"/project/{pid}/{address}/", with_body)
-            return self._serve_build_page(build_dir, with_body)
+            return self._serve_build_page(build_dir, with_body,
+                                          f"/project/{pid}/{address}/")
 
         # The rest of the address is one file of the build: a name at the top,
         # or a document's path in the tree.
@@ -1178,7 +1216,8 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found", with_body=with_body)
         # Generated, never read from the build directory.
         if name == "index.html":
-            return self._serve_build_page(build_dir, with_body)
+            return self._serve_build_page(build_dir, with_body,
+                                          f"/project/{pid}/{address}/")
         # A file whose extension does not open it leaves to the token, to the
         # key of THIS address, or because this build lists it as a document.
         # The first two are checked before the volume is touched, and their
@@ -1802,6 +1841,59 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(404, "not found")
         logger.info(f"project {pid} renamed")
         return self._json(200, {"pid": pid, "title": title})
+
+    def _handle_names(self, pid: str):
+        """POST /api/v1/projects/<pid>/names — a name changed on the page:
+        `{"variant": <branch>, "kind": "project" | "variant" | "view" |
+        "document", "id": <the view's or the document's id>, "name": ...}`;
+        the project's name goes on `main` whatever `variant` says.
+
+        Committed into project.json on the variant's branch and published
+        before the answer, as a copy of a build of the tip's project with the
+        name rewritten, or built where neither the tip's own build nor the
+        variant's `latest` holds that tree (`prereceive.commit_name`): 200 with the commit and the revision's
+        address, 422 with the build's error. No id changes, as on `/title`.
+        The token is checked first, then the body, then whether the project
+        and the variant exist.
+        """
+        if not self._require_token(close=True):
+            return None
+        body = self._take_body(MAX_TITLE_BODY_BYTES,
+                               too_large="names body is too large")
+        if body is None:
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return self._error(422, "body is not valid JSON")
+        if not isinstance(payload, dict):
+            return self._error(422, "body must be a JSON object")
+        kind, item = payload.get("kind"), payload.get("id")
+        if kind not in RENAMED_KINDS:
+            return self._error(
+                422, f"`kind` must be one of {', '.join(RENAMED_KINDS)}")
+        if kind in ("view", "document") and not isinstance(item, str):
+            return self._error(422, f"`id` must name the {kind}")
+        try:
+            # Every kind's own rule (`render.project_title`, `variant_label`,
+            # `view_name`) is this one, worded for the body's field.
+            name = render.name_text(payload.get("name"), "name")
+        except ValueError as error:
+            return self._error(422, str(error))
+        store = self.server.store
+        # The project's name goes on the default variant whichever the page
+        # shows: the front page's card and the title a rename of `/title`
+        # left (`Store.clear_title`) follow that one.
+        variant = MAIN_BRANCH if kind == "project" else payload.get("variant")
+        if not (store.valid_pid(pid) and store.valid_variant(variant)
+                and store.repo_dir(pid).is_dir()):
+            return self._error(404, "not found")
+        status, answer = prereceive.commit_name(
+            store, self.server.jobs, self.server.builds, pid, variant, kind,
+            item, name)
+        if status != 200:
+            return self._error(status, answer)
+        return self._json(200, answer)
 
     def do_DELETE(self):
         try:

@@ -42,6 +42,7 @@ import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.js
 import {
   DIALOG_BTN, ELLIPSIS, FAINT_MONO, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
+import { Pencil, RENAME_HOST } from './rename.jsx';
 import { css, MONO, SANS } from './style.jsx';
 
 /** One row of the list, a view's or a document's: the same shape for both, so
@@ -56,6 +57,9 @@ export const GROUP_HEAD = `padding:8px 14px 3px;font:600 10px ${MONO};color:var(
 
 /** The heading the model's views stand under. */
 export const VIEWS_GROUP = '3D VIEWS';
+
+/** The heading `View in AR` stands under, the last of the card (`arGroup`). */
+export const AR_GROUP = 'AR';
 
 /** The heading a document's row stands under: a member of a KiCad design under
  *  KICAD — its schematic, board and the board's 3D model are one design the
@@ -80,12 +84,14 @@ const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
  * itself as `doc`, `base`, the address the build's files are served under,
  * `build`, the build's key (`buildKey` in hub.js), whether it is `on` screen,
  * and `chooseSheet(value)`, which is `choose(id, value)` with a sheet's `s=`
- * value.
+ * value. With `rename(doc)`, a row carries `onRename`, its pencil's
+ * (rename.jsx).
  */
-export function documentRows(documents, open, choose, base, build) {
+export function documentRows(documents, open, choose, base, build, rename) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
     key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
+    onRename: rename ? () => rename(doc) : undefined,
     ...(doc.type === 'schematic' && doc.kicad.schematics.length > 1
       ? { doc, base, build, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
   }));
@@ -336,8 +342,11 @@ export class SheetRows extends React.Component {
     return (
       <>
         <div ref={this.rowBox} onClick={row.onClick} onPointerEnter={this.enter} onPointerLeave={this.leave}
-             style={css(row.rowStyle)}>
-          <span style={css(DOC_LABEL)}>{row.label}</span>
+             className={row.onRename ? RENAME_HOST : undefined} style={css(row.rowStyle)}>
+          <span style={css(DOC_LABEL)}>
+            {row.label}
+            {row.onRename && <Pencil title="Rename document" onClick={row.onRename} />}
+          </span>
           <span style={css(DOC_HINT)}>{row.hint}</span>
           <span onPointerDown={this.pressed} onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
         </div>
@@ -358,10 +367,29 @@ export class SheetRows extends React.Component {
   }
 }
 
+// The row `View in AR` (`viewList`) out of service while its file is made.
+const AR_OFF = `${menuRow(false)};${OFF}`;
+
+/**
+ * The heading and the row of `View in AR` (`arRow` in chromeview.js), where
+ * the browser has AR Quick Look and a model view is on screen: a row like the
+ * card's others, whose `onClick` makes the file and opens Quick Look
+ * (`openAr` in HammerolaViewer.jsx). Without `onClick` it is out of service;
+ * `hint` says why, or that the last try failed.
+ */
+const arGroup = (ar) => [
+  <div key="group:ar" style={css(GROUP_HEAD)}>{AR_GROUP}</div>,
+  <div key="ar" onClick={ar.onClick || undefined} style={css(ar.onClick ? menuRow(false) : AR_OFF)}>
+    <span style={css(DOC_LABEL)}>View in AR</span>
+    <span style={css(DOC_HINT)}>{ar.hint}</span>
+  </div>,
+];
+
 /**
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
- * a schematic's of several files with what its sheets need), drawn in their
+ * a schematic's of several files with what its sheets need, any of them with
+ * `onRename`, which puts a pencil right after its name), drawn in their
  * groups (`menuGroups`), the documents under the views; `wide` is whether the
  * bar holds the tools (`viewMenuStyle`). `onToggle` must stop the click: the
  * pages shut their menus on a click that reaches the root. Pure, but for the
@@ -374,8 +402,10 @@ export class SheetRows extends React.Component {
  * It is also what shrinks when the bar is short of room (`FLOAT_BAR`): a shrink
  * far above the other controls' and no minimum width, so the name is cut before
  * any other label wraps.
+ *
+ * `ar` is the card's last group, `View in AR` (`arGroup`), or null.
  */
-export function viewList({ label, open, onToggle, views = [], documents = [], wide = true }) {
+export function viewList({ label, open, onToggle, views = [], documents = [], wide = true, ar = null }) {
   return (
     <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
@@ -385,15 +415,21 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
       <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, wide))}>
         {/* One array per group, so that a view and a document sharing a key
             are siblings of different arrays rather than of one. */}
-        {menuGroups(views, documents).map(([head, rows]) => [
+        {[...menuGroups(views, documents).map(([head, rows]) => [
           <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
           ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
-            <div key={t.key} onClick={t.onClick} style={css(t.rowStyle)}>
-              <span style={css(DOC_LABEL)}>{t.label}</span>
+            <div key={t.key} onClick={t.onClick} className={t.onRename ? RENAME_HOST : undefined}
+                 style={css(t.rowStyle)}>
+              <span style={css(DOC_LABEL)}>
+                {t.label}
+                {t.onRename && (
+                  <Pencil title={head === VIEWS_GROUP ? 'Rename view' : 'Rename document'} onClick={t.onRename} />
+                )}
+              </span>
               <span style={css(DOC_HINT)}>{t.hint}</span>
             </div>
           ))),
-        ])}
+        ]), ...(ar ? [arGroup(ar)] : [])]}
       </div>
     </div>
   );
@@ -489,7 +525,9 @@ export function DocFile({ href }) {
  * (chromeview.js), the page of documents builds them (`docBar` in
  * DocShell.jsx):
  *   the views    `viewMenu` (a menu rather than a strip), `viewLabel`,
- *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`;
+ *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`, and
+ *                `arRow`, the menu's `View in AR` (`viewList`), which only
+ *                the model's page has;
  *   the document `docHref`, the address the open document's file downloads
  *                from (`docUrl` in DocumentView.jsx), or null with none open:
  *                Download (a link that takes the file) and Copy link for it,
@@ -522,18 +560,24 @@ export function toolBar(b, menus = {}) {
 function floatBar(b, menus) {
   return (
     <div style={css(FLOAT_BAR)}>
-      {/* A STRIP WHILE THE VIEWS FIT, A MENU WHEN THEY DO NOT — see
-          `VIEW_TABS_MAX`. The menu holds the build's documents under the
-          views. A pill's tooltip starts with the view's whole name: a short
-          bar cuts its caption, and the strip has no menu to read it in. */}
+      {/* A STRIP WHILE THE VIEWS FIT AND NOTHING ELSE NEEDS A ROW, ELSE A
+          MENU (`viewMenu` in chromeview.js): the views past `VIEW_TABS_MAX`,
+          the build's documents under them, `View in AR` last. A pill's
+          tooltip starts with the view's whole name: a short bar cuts its
+          caption, and the strip has no menu to read it in. */}
       {b.viewMenu ? (
         viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
-          views: b.viewTabs, documents: b.docRows, wide: b.showTools })
+          views: b.viewTabs, documents: b.docRows, wide: b.showTools, ar: b.arRow })
       ) : (
-        <div style={css(TAB_STRIP)}>
+        <div className={b.renameView ? RENAME_HOST : undefined} style={css(TAB_STRIP)}>
           {b.viewTabs.map((t) => (
             <div key={t.key} onClick={t.onClick} title={`${t.label} · ${t.hint}`} style={css(t.style)}>{t.label}</div>
           ))}
+          {b.renameView && (
+            <div style={css('display:flex;align-items:center')}>
+              <Pencil title="Rename view" onClick={b.renameView} />
+            </div>
+          )}
         </div>
       )}
       {/* Everything between the views and Fit belongs to a pointer and a

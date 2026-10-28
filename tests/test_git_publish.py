@@ -6,6 +6,7 @@ The build is `copying_builder`'s, or a stand-in that fails on demand.
 """
 
 import dataclasses
+import json
 import os
 import signal
 import subprocess
@@ -20,6 +21,8 @@ from harness import (BROKEN, TOKEN, TOKEN_CONFIG, commit_all, copying_builder,
 
 from src import githttp, prereceive
 from src.buildproc import STATUS_CPU_EXHAUSTED, STATUS_TIMEOUT
+from src.jobs import LOG_NAME
+from src.store import BUILD_META_FILE, DEV_LINK
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -195,6 +198,123 @@ def test_a_draft_goes_to_the_slot_and_an_unchanged_one_builds_nothing(
                  extra=("--force",))
     assert "remote: unchanged: /project/draft1/dev/" in again.stderr
     assert jobs_made(picky_hub) == before
+
+
+def committed_after_its_draft(hub, work, pid, options=()):
+    """`hammerola build` of a changed tree, then `git commit` of the index.
+
+    -> the slot's meta.json, as the draft left it.
+    """
+    working_copy(work, pid)
+    assert push(hub, work, pid).returncode == 0
+    write_files(work, project_files(pid, marker="b"))
+    draft = commit_all(work, "hammerola draft")
+    git("-C", work, "reset", "--quiet", "--soft", "HEAD~1")
+    assert push(hub, work, pid, f"{draft}:refs/drafts/main",
+                extra=("--force", *options)).returncode == 0
+    return hub.get(f"/project/{pid}/dev/meta.json").json()
+
+
+REUSED = ("remote: reused the draft build of this tree for refs/heads/main: "
+          "not built again")
+
+
+@pytest.mark.parametrize("draft_options, push_options, same_tree, reused", [
+    ((), (), True, True),
+    ((), (), False, False),
+    (("-o", "force"), (), True, False),
+    (("-o", "force"), ("-o", "force"), True, True),
+])
+def test_a_commit_of_the_tree_its_draft_built_is_published_from_the_slot(
+        picky_hub, tmp_path, draft_options, push_options, same_tree, reused):
+    """Not from a slot holding another tree, nor from a draft built with
+    `-o force` for a push that is not forced."""
+    work = tmp_path / "work"
+    slot = committed_after_its_draft(picky_hub, work, "reuse1", draft_options)
+    assert slot.get("forced", False) == bool(draft_options)
+    if not same_tree:
+        write_files(work, {"notes.md": b"after the draft"})
+    sha = commit_all(work, "a thicker lid")
+    before = jobs_made(picky_hub)
+
+    pushed = push(picky_hub, work, "reuse1", extra=push_options)
+
+    assert pushed.returncode == 0, pushed.stderr
+    assert f"remote: published: /project/reuse1/{sha}/" in pushed.stderr
+    assert latest_commit(picky_hub, "reuse1") == sha
+    if not reused:
+        assert REUSED not in pushed.stderr
+        assert f"remote: building {sha[:12]}" in pushed.stderr
+        assert jobs_made(picky_hub) == before + 1
+        return
+    assert REUSED in pushed.stderr
+    assert "remote: building" not in pushed.stderr
+    assert "remote: built in" not in pushed.stderr
+    assert jobs_made(picky_hub) == before
+    assert picky_hub.store.built_build("reuse1", sha) == sha
+    revision = picky_hub.get(f"/project/reuse1/{sha}/meta.json").json()
+    assert {key: value for key, value in revision.items()
+            if key != "published"} == dict(
+        {key: value for key, value in slot.items()
+         if key not in ("job", "published")},
+        commit=sha, dev=False, message="a thicker lid")
+    log = picky_hub.get(f"/api/v1/logs/reuse1/{sha}",
+                        headers={"X-Hammerola-Token": TOKEN})
+    assert log.text == picky_hub.job_log(slot["job"]).text != ""
+    mirrored = picky_hub.get("/project/reuse1/dev/meta.json").json()
+    assert (mirrored["job"], mirrored["message"], mirrored["published"]) == (
+        slot["job"], "a thicker lid", revision["published"])
+
+
+def test_a_commit_back_to_a_revision_s_tree_reuses_its_copy_in_the_slot(
+        picky_hub, tmp_path):
+    """The slot a revision mirrored itself into carries that revision's
+    `.build.log`, and the copy keeps it: the job's own log is gone here."""
+    work = tmp_path / "work"
+    first = working_copy(work, "back1")
+    assert push(picky_hub, work, "back1").returncode == 0
+    job = picky_hub.get("/project/back1/dev/meta.json").json()["job"]
+    (picky_hub.data / "jobs" / job / LOG_NAME).unlink()
+    write_files(work, {"notes.md": b"tried"})
+    commit_all(work, "try something")
+    (work / "notes.md").unlink()
+    sha = commit_all(work, "and take it back")
+    before = jobs_made(picky_hub)
+
+    pushed = push(picky_hub, work, "back1")
+
+    assert pushed.returncode == 0, pushed.stderr
+    assert REUSED in pushed.stderr
+    assert f"remote: published: /project/back1/{sha}/" in pushed.stderr
+    assert jobs_made(picky_hub) == before
+    first_log, log = (picky_hub.get(f"/api/v1/logs/back1/{name}",
+                                    headers={"X-Hammerola-Token": TOKEN}).text
+                      for name in (first, sha))
+    assert log == first_log != ""
+
+
+@pytest.mark.parametrize("spoil", ["no job", "unknown job", "empty log"])
+def test_a_draft_whose_log_cannot_be_had_is_built_over(
+        picky_hub, tmp_path, spoil):
+    """A revision carries its build's log, so a slot naming no job, a job the
+    hub does not know or a job with no log gives none: the commit is built."""
+    work = tmp_path / "work"
+    slot = committed_after_its_draft(picky_hub, work, "nolog1")
+    if spoil == "empty log":
+        (picky_hub.data / "jobs" / slot["job"] / LOG_NAME).unlink()
+    else:
+        named = {key: value for key, value in slot.items() if key != "job"}
+        if spoil == "unknown job":
+            named["job"] = "A" * 22
+        (picky_hub.store.pointer_dir("nolog1", "main", DEV_LINK)
+         / BUILD_META_FILE).write_text(json.dumps(named), encoding="utf-8")
+    sha = commit_all(work, "a thicker lid")
+
+    pushed = push(picky_hub, work, "nolog1")
+
+    assert pushed.returncode == 0, pushed.stderr
+    assert REUSED not in pushed.stderr
+    assert f"remote: building {sha[:12]}" in pushed.stderr
 
 
 def test_a_failing_draft_refuses_the_push_but_main_is_published(

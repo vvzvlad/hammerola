@@ -140,9 +140,12 @@ of a published build from any angle with parts hidden, `hammerola measure
 `git push hammerola-<pid> main` makes a version exist: the hub builds the newest
 pushed commit that touched the project's directory, names the revision by that
 commit, keeps its log, moves `latest`, and the project gets its card. A commit
-that touched only another directory of the repository builds nothing. A
-session ending on a `build` published nothing. **Everything a person is shown
-is a pushed commit**, the block preview included. **Hand over its URL every
+of exactly the tree your last `build` of that branch published is not built
+again: that build becomes the revision, its log included (not when the `build`
+was `--force` and the push is not). A commit that touched only another
+directory of the repository builds nothing. A session ending on a `build`
+published nothing. **Everything a person is shown is a pushed commit**, the
+block preview included. **Hand over its URL every
 time** — `published: /project/<pid>/<sha>/` in the push's output, under the
 hub's address — not once at the end, or the person waits or prints something
 superseded. The commit's subject is what a person picks a revision by.
@@ -168,6 +171,14 @@ switches between them by the project's title.
   hub refuses `feat/x`, its draft included, and `build` refuses a detached HEAD.
 * A change every variant needs (the board, a datasheet, the shared case code)
   goes into each branch: `git merge` or `git cherry-pick`.
+
+**A name changed on the hub's page comes back as a commit.** Renaming the
+project, a variant, a view or a document there makes the hub commit the new
+name into `project.json` on that branch: `title`, `variant`, a document's
+`title`, or `"views": {"<view id>": "<name>"}`, which names a view in place of
+the name `model.py` gives it. The hub's branch is then ahead of yours:
+`build` fast-forwards it first and stops when the two have diverged, and
+before `git push` run `git pull --no-rebase hammerola-<pid> <branch>`.
 
 **The push waits for the whole build** and exits non-zero unless the commit was
 published: the hook refusing it is the build failing, with its log in the

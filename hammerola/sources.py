@@ -174,9 +174,11 @@ def _dev_log(hub: Hub, root) -> int:
         raise ClientError(
             f"the `{DEV_SLOT}` slot of project {pid} does not say which job "
             f"filled it, so there is\n"
-            f"  nothing to read the log of: it was written before the hub "
-            f"recorded that. `hammerola build`\n"
-            f"  fills the slot again and records the job with it.")
+            f"  no job log to read: it holds a revision the hub published "
+            f"without a build (a name\n"
+            f"  changed on the page), or one written before the hub recorded "
+            f"jobs. `hammerola log`\n"
+            f"  prints the log of the newest revision.")
 
     # The record only decorates the header; failing to get it is not fatal.
     record = None

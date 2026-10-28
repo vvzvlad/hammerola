@@ -17,7 +17,7 @@ const chunked = (...parts) => new Response(new ReadableStream({
 }))
 
 /** How full the bar is drawn. */
-const fill = (bar) => bar[1].props.children.props.style.width
+const fill = (bar) => bar.props.children.props.children[1].props.children.props.style.width
 
 beforeEach(() => stubFrames())
 afterEach(() => vi.unstubAllGlobals())

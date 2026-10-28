@@ -21,17 +21,26 @@ the library's own `CADTrackballControls`, out of the bundle above, so three's
 `OrbitControls.js` is not here. Unlike the two above they are NOT
 byte-for-byte: a bare `from 'three'` needs an import map, which the hub's CSP
 drops, so each file's `from 'three'` is `from './three.module.js'`, and the
-loader's two `../utils/…` imports are `./…`. Nothing else is changed. sha256 of
-npm's file, then of ours:
+loader's two `../utils/…` imports are `./…`. Nothing else is changed.
+
+`USDZExporter.js` and `fflate.module.js` are two more of the same package's
+add-ons (`examples/jsm/exporters/` and `libs/`), for View in AR on the model's
+page (`ui/src/ar.js`): the exporter writes the view on screen as a USDZ file
+and zips it with fflate. The exporter's `from 'three'` is rewritten the same
+way and its `../libs/fflate.module.js` import is `./fflate.module.js`; fflate
+(0.8.2, MIT, its licence in its own header) imports nothing and is npm's file
+byte for byte. sha256 of npm's file, then of ours:
 
 | File | npm | here |
 | --- | --- | --- |
 | `GLTFLoader.js` | `97642d720f16cc9a0c9844934198e4d0c023bea8e89576d0f7545d03b2d103d2` | `d7f4b3a86e622f5ae040ab32349a96714e8d6b360bc706c697f17e5a6d9464d7` |
 | `BufferGeometryUtils.js` | `d700b4c4584b9ff53a04692624d2363019f6d1df2978a207389168c6ae647a65` | `b3f9636affbbd893311f20c8d0d03c7bf3b345eff7fb723180d333a625e85a01` |
 | `SkeletonUtils.js` | `b1632a703206c3d830de9fcbe515696770d04b71a15ee6b50afa6d2c3298c86f` | `eedd768765d6553f8082953ab3882e2c86dacc2eb7d180a312d1d52e86bb35c5` |
+| `USDZExporter.js` | `ba4b5cdd504c9f299181203fc135db5fc95639a1bd92e687186db50cd37cf180` | `c4a740cbfeb3d03f98eeb77977a0834425616bc7092751d1181d764cb1ffdfaa` |
+| `fflate.module.js` | `209a4412eb48ce609edb4391992a792ffcc3983d30ee7e2b0b89a8c470f3cd8a` | `209a4412eb48ce609edb4391992a792ffcc3983d30ee7e2b0b89a8c470f3cd8a` |
 
-To move them: copy the three from the same three version as the two above and
-repeat the two rewrites.
+To move them: copy them from the same three version as the two above and
+repeat the rewrites.
 
 ## Where the source came from
 
@@ -177,7 +186,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `4add8134c1af3f60d815de9065d3ae6b5a8e12d10d464b0bfc86b6eca2733ab6` |
+| `ecad-viewer.js` as committed | `c3d0631d797573804a2882937ea6aca0bb537bbd52090ae101adb3e704afb7bb` |
 | `parser.worker.js` (none of our edits reach it) | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
@@ -200,13 +209,16 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Six, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
+Eleven, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
 in a comment at the spot. Edit 6 is checked by `ui/tests/schematicpins.test.js`,
 which reads sheets through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
-it). The others are the viewer's drawing and input code, checked in a browser;
-what keeps them is that they live in the source the files are built from. Built without minifying, the bundle of this tree and the
-fork's at `461a091` differ in these six places and the comments beside them.
+it), edit 7 by `ui/tests/areaitems.test.js` the same way, edit 9 by
+`ui/tests/pagekeys.test.js` and the text of edit 10 by
+`ui/tests/intersheetrefs.test.js`. The others are the viewer's drawing and input
+code, checked in a browser; what keeps them is that they live in the source the
+files are built from. Built without minifying, the bundle of this tree and the
+fork's at `461a091` differ in these eleven places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -270,14 +282,72 @@ is drawn is decided per placement), in body style 0 or its own, which is where
 `LibSymbol.pin_by_number` looks them up; with no uuid, since the file has none,
 and none at all when the library symbol is missing.
 
+**7. The element says what an area holds.** `itemsInArea(context, bounds)` of
+`<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`) hands what each layer of the
+viewer has painted, with the box it painted it in, to `area_items`
+(`ecad-viewer/area-items.ts`), which names what meets `bounds` (`[x, y, w, h]`
+in the document's millimetres): the designators of symbols and footprints and
+the names of nets, without power symbols and flags and without the names KiCad
+makes up for an unnamed net. The page reads it for the area of a comment
+(`ui/src/KicadView.jsx`).
+
+**8. Overlays survive a load of the document.** `DocumentViewer`
+(`viewers/base/document-viewer.ts`) bound the overlay scenes — the comment
+markers among them — into a document's new layers before its painter ran; the
+painter paints every layer the set yields, the overlays' own among them, and
+left an overlay compiled before it with an empty layer that the same scene,
+handed again, never filled. They are bound after the painter now. And the
+viewer's draw (`viewers/base/viewer.ts`) refreshes its screen-sized overlays
+every time: a fit after a load moves the camera without a change of viewport,
+and left them sized for the zoom before.
+
+**9. Command or Control with a bracket is the browser's.** `#handle_host_keydown`
+of `<ecad-viewer>` steps through the schematic's pages on `[` and `]`, and took
+them with Command or Control held as well. Command with `[` and `]` is Back and
+Forward on a Mac, so on a schematic Back moved to the previous sheet — from the
+root, round to the last — and added an entry to the history instead of leaving
+the page. The step is decided by `schematicPageStep` (`ecad-viewer/page-keys.ts`),
+which leaves the key to the browser with Command or Control held.
+
+**10. A global label shows its inter-sheet references.** The viewer parsed a
+global label's `Intersheetrefs` field (`Intersheet References` in KiCad 6) and
+the `.kicad_pro`'s `intersheets_ref_*` settings, and drew neither.
+`GlobalLabelPainter.paint_fields` (`viewers/schematic/painters/label.ts`) now
+draws, while `intersheets_ref_show` is on, the text `intersheet_refs`
+(`kicad/intersheet-refs.ts`) builds as KiCad 10's
+`SCH_GLOBALLABEL::ResolveTextVar` does: the page numbers of the sheets that carry
+a global label of the name, sorted, the own page per `intersheets_ref_own_page`,
+the short form, the prefix and the suffix. It stands beside the label's body
+when the field still sits at the label's point, where KiCad places it itself,
+else at the field's saved place. The settings' defaults are left as they were,
+which is what KiCad's application settings load: no brackets, no own page.
+
+**11. The list of a label's namesakes is on screen, and a jump from it is a
+page change.** `SchSelectionPopMenu`
+(`kicanvas/elements/kc-schematic/selection-pop-menu.ts`), which a left click on a
+global or local label opens, is a fixed host the size of the view with no `top`
+or `left`; under `hide-chrome` it sat at its static place below the canvas, and
+the panel placed at the pointer inside it was drawn off the window. The host is
+pinned to the top left and lets the pointer through (`pointer-events: none`, the
+panel `auto`), so the wheel over the drawing still pans and zooms while the list
+is open; the panel is placed by the pointer's offset from the host's box once it
+is attached, and kept inside the window; a press of any button anywhere else
+closes it, so the page's right-click menu never stands on it. A jump from the list to another sheet
+(`#select_item` in `kc-schematic/app.ts`) loaded the file straight into the
+viewer; it now activates the sheet's page through the project, as a sheet
+symbol's double click does, so the page hears of the change, and frames the item
+after that load.
+
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
 first with none of our edits and compare the two files with what Prism publishes
 from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `461a091` is them, at the fork's paths, with
-the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`
-fails if edit 6 was lost — update this section and the hashes, and commit the
+the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
+`areaitems.test.js`, `pagekeys.test.js` and `intersheetrefs.test.js` fail if
+edit 6, 7, 9 or 10 was lost —
+update this section and the hashes, and commit the
 source and the built files together.
 
 ## The Gerber renderer: `wasm_gerber_processor.js` and `wasm_gerber_processor_bg.wasm`

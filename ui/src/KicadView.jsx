@@ -12,6 +12,15 @@
 // one design keeps this instance and all its views. A member with no listed
 // sibling is a design of one.
 //
+// THE PAGE KEEPS THE DESIGN while another document or the model is on screen
+// (`DocumentLayers` in DocumentView.jsx), handing it `shown` false. Hidden, it
+// draws nothing, its elements inactive, its menu and datasheet's window shut,
+// its page-wide listeners deaf, and it calls none of the page's doors —
+// `onTools`, `onReady`, `onSheet`, `onOpen`, the comments' — a fetch landing
+// meanwhile included. Shown again, it tells the bar what it can do, tells
+// `onReady` where that is owed, and puts the schematic on
+// the sheet the address names, as a fresh mount does (`followPage`).
+//
 // The viewer is the vendored `ecad-viewer.js` (static/_v/PROVENANCE.md),
 // fetched by URL only when a design is opened: nothing of it is in this bundle.
 // In `source-mode="host"` it reads nothing by itself; this component fetches the
@@ -24,14 +33,17 @@
 // in or failed to (`onFetched3D`), or the reader has moved to one of them, so
 // the two do not share the line; the page is told the view on screen has its
 // file(s) through `onReady` (DocumentView.jsx). While those files come in, the
-// 2D views' note is the bar of loadbar.jsx, filled to the schematic's and the
+// 2D views show the bar of loadbar.jsx, filled to the schematic's and the
 // board's `bytes`, and a part selected in the 3D view, or asked for by `Show
 // in …`, is selected in them once they are drawn.
 //
-// EVERY MEMBER'S VIEW STAYS MOUNTED. The ones not on screen are hidden with
-// `visibility`, not `display`, so each keeps its size, its camera and its
-// selection, and is told it is inactive (`setActive`, `active`), which stops its
-// drawing until it is back.
+// EVERY MEMBER'S VIEW STAYS MOUNTED. The ones not on screen — all of them
+// while the design is hidden — are hidden with `visibility`, not `display`, so
+// each keeps its size, its camera and its selection, and is told it is inactive
+// (`setActive`, `active`), which stops its drawing until it is back. So is a 2D
+// view on screen until its files are drawn: before that the viewer shows only
+// its own spinner, where the load bar stands, and it is fitted to the size it
+// keeps hidden.
 //
 // A CHANGE OF THE SCHEMATIC'S PAGE IS A STEP OF THE BROWSER'S HISTORY, whatever
 // makes it: a double click on a sheet symbol, an item `… · <sheet>`, the
@@ -71,7 +83,8 @@
 //     EVERY view, the clicked one included: the viewer itself leaves a part lit
 //     through a click on the bare board. Nets are not carried across this way;
 //   * the RIGHT BUTTON on a part, or in the schematic and the board on what has
-//     a net (a track, a via, a zone, a label, a power symbol, a sheet pin),
+//     a net (a track, a via, a zone, a label, a power symbol, a sheet pin, a
+//     wire joined to one of the last three),
 //     opens a menu at the pointer (`menuFor`), headed with the part, the net,
 //     or both: a pad of the board is both, a pin of the schematic its part
 //     alone. The part has
@@ -87,9 +100,11 @@
 //     name, which KiCad joins across the whole design, and hierarchical labels
 //     of one name with the sheet pins of that name, through which the sheet
 //     that draws a sheet symbol wires them together, so that net's items
-//     include that sheet. A local label's net is on its own sheet alone, so
-//     from the schematic it has no sheet item; a net no sheet names keeps the
-//     one item, and the viewer looks it up.
+//     include that sheet. A wire run joins the nets of what stands on it, so
+//     a wire's menu, and that of each thing on the run, has the sheets of all
+//     of them (`boards`). A local label's net is on its own sheet alone, so
+//     from the schematic it has no sheet item of its own; a net no sheet names
+//     keeps the one item, and the viewer looks it up.
 //     An item of another member asks the page to open it (`onOpen` with its
 //     id, which moves the lit row of its list too) and, once the page has
 //     handed it down, asks its element to select the same thing — a part by
@@ -333,12 +348,12 @@ const NO_NETS = netIndex({});
  * zone, and a pad, which has both). A designator KiCad starts with `#` is no
  * part: a power symbol or a power flag is drawn on the schematic only, never
  * placed on the board. A power symbol is a net instead, the one `nets`
- * (kicadnets.js) holds for its uuid; a power flag names none.
+ * (kicadnets.js) holds for its uuid, and so is a wire; a power flag names none.
  */
 export function crossProbeRequest(detail, targetContext, nets = NO_NETS) {
   const { reference, net, uuid } = detail || {};
   const own = nets.byUuid.get(uuid);
-  const name = net || (own && own.kind === 'power' ? own.name : '');
+  const name = net || (own && (own.kind === 'power' || own.kind === 'wire') ? own.name : '');
   return {
     part: reference && !reference.startsWith('#') ? { targetContext, kind: 'designator', value: reference } : null,
     net: name ? { targetContext, kind: 'net', value: name } : null,
@@ -350,14 +365,14 @@ export function crossProbeRequest(detail, targetContext, nets = NO_NETS) {
 const SHOWS = { designator: [SCH, PCB, BOARD3D], net: [SCH, PCB] };
 
 /**
- * The first occurrence on each sheet of the net the board names `board`
- * (kicadnets.js), in the order of `nets`: the sheet of `own`, the occurrence
- * the menu is for, if any, left out.
+ * The first occurrence on each sheet of any of the nets the board names
+ * `boards` (kicadnets.js), in the order of `nets`: the sheet of `own`, the
+ * occurrence the menu is for, if any, left out.
  */
-function netSheets(nets, board, own) {
+function netSheets(nets, boards, own) {
   const first = new Map();
   for (const one of nets.occurrences) {
-    if (one.board === board && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) first.set(one.sheet, one);
+    if (boards.includes(one.board) && !(own && one.sheet === own.sheet) && !first.has(one.sheet)) first.set(one.sheet, one);
   }
   return [...first.values()];
 }
@@ -369,7 +384,8 @@ function netSheets(nets, board, own) {
  * carrying the request its view is asked (`request`). The part's first, an
  * item for every other listed member that can show it; then the net's, the
  * same but for the schematic where the sheets name the net (`netSheets`),
- * which has an item per sheet it is on instead, the request carrying the
+ * which has an item per sheet it is on instead — for what stands on a wire
+ * run, per sheet any net of the run is on (`boards`) — the request carrying the
  * sheet's path and the occurrence's uuid, and for the board, which is asked for
  * the net by the board's name of it: the occurrence's `board` when the menu is
  * for one, else the name reported, which a click on the board reports as the
@@ -390,7 +406,7 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
   if (net) {
     const own = nets.byUuid.get(detail.uuid);
     const board = own ? own.board : net.value;
-    const sheets = netSheets(nets, board, own);
+    const sheets = netSheets(nets, (own && own.boards) || [board], own);
     for (const view of SHOWS.net.filter((one) => members[one])) {
       const label = `Show net ${net.value} in ${members[view].name}`;
       if (view === SCH && sheets.length) {
@@ -558,6 +574,7 @@ export default class KicadView extends React.Component {
     // (`tellSheet`), Back's and Forward's (`componentDidUpdate`).
     this.seen = addressNow();
     this.onPop = () => {
+      if (!this.onScreen()) return;
       this.seen = addressNow();
       this.followPage();
     };
@@ -588,10 +605,12 @@ export default class KicadView extends React.Component {
     // 3D view, the `.glb` in or failed tells the page and lets them go, unless
     // the reader moved to the schematic or the board first (`componentDidUpdate`).
     this.after3D = false;
+    // Set where the page was not told `onReady` because the design was hidden.
+    this.owed = false;
     this.onFetched3D = () => {
       if (!this.after3D) return;
       this.after3D = false;
-      this.props.onReady();
+      this.tellReady();
       this.fetchDesign(false);
     };
     this.onSelect3D = (designator) => this.select(BOARD3D, designator);
@@ -658,12 +677,26 @@ export default class KicadView extends React.Component {
     return this.state.ready && !this.state.error ? this.drawnTools : null;
   }
 
-  /** The page told what the bar can do (`onTools`), when that has changed. */
+  /** The page told what the bar can do (`onTools`), when that has changed;
+   *  nothing while the design is hidden. */
   report() {
+    if (!this.onScreen()) return;
     const tools = this.toolsOnScreen();
     if (tools === this.reported) return;
     this.reported = tools;
     this.props.onTools(tools);
+  }
+
+  /** Is the design on screen? Unless the page says it keeps it hidden. */
+  onScreen() {
+    return this.props.shown !== false;
+  }
+
+  /** The page told the view on screen has its file(s) (`onReady`), or, while
+   *  the design is hidden, owed that until it is shown. */
+  tellReady() {
+    if (this.onScreen()) this.props.onReady();
+    else this.owed = true;
   }
 
   /** The page-wide listeners, on or off: Escape, what closes the menu from
@@ -860,9 +893,10 @@ export default class KicadView extends React.Component {
   /** Escape closes the datasheet's window, or the menu, or else puts out what
    *  is lit everywhere: one thing per Escape, and one that closed the window is
    *  taken, as the page takes one that closed something of its own. Not while
-   *  typing: the page may have a field open over the design. */
+   *  typing: the page may have a field open over the design, nor while the
+   *  design is hidden. */
   key(event) {
-    if (event.key !== 'Escape' || event.defaultPrevented || typingTarget()) return;
+    if (!this.onScreen() || event.key !== 'Escape' || event.defaultPrevented || typingTarget()) return;
     if (this.state.sheet) {
       event.preventDefault();
       this.closeSheet();
@@ -879,10 +913,10 @@ export default class KicadView extends React.Component {
    *  (`picked`). Released anywhere else, the viewer panned with it.
    *
    *  Selecting a label or a sheet pin there opens the schematic's own list
-   *  of the label's namesakes (`kc-sch-selection-menu`), which stays open
-   *  after our menu; a list that opened so is closed again, as the viewer
-   *  itself closes it (`hidden`). One the reader opened with the left button
-   *  is left as it is. */
+   *  of the label's namesakes (`kc-sch-selection-menu`), which would stand
+   *  under our menu; it is closed again, as the viewer itself closes it
+   *  (`hidden`). One the reader had open closed on the press: the list
+   *  closes on any press outside it. */
   release(context, event) {
     const { pressed } = this;
     this.pressed = null;
@@ -891,14 +925,13 @@ export default class KicadView extends React.Component {
     const [canvas] = event.composedPath();
     if (!canvas || canvas.localName !== 'canvas') return;
     const list = labelList(canvas);
-    const listShut = Boolean(list && list.hidden);
     this.pointing = { from: context, x: event.clientX, y: event.clientY };
     try {
       this.elements[context].selectAt(event.clientX, event.clientY);
     } finally {
       this.pointing = null;
     }
-    if (listShut && !list.hidden) list.hidden = true;
+    if (list) list.hidden = true;
   }
 
   /** The menu for what `from` selected, at the page point `x`,`y`, in place of
@@ -951,9 +984,11 @@ export default class KicadView extends React.Component {
   }
 
   /** The viewer's comment mode on the drawn view on screen while the page's
-   *  tool is armed, off on the others, each told only of a change. */
+   *  tool is armed, off on the others and on all of a hidden design, each told
+   *  only of a change. */
   armComment() {
-    const on = Boolean(this.props.comment && this.props.comment.on) && this.state.ready && !this.state.error;
+    const on = this.onScreen() && Boolean(this.props.comment && this.props.comment.on) && this.state.ready
+      && !this.state.error;
     for (const context of drawnViews(this.members())) {
       const element = this.elements[context];
       const want = on && context === this.side();
@@ -989,7 +1024,7 @@ export default class KicadView extends React.Component {
   area(context, detail) {
     const { comment } = this.props;
     const doc = this.members()[context];
-    if (!comment || !doc || !detail || !Array.isArray(detail.bounds)) return;
+    if (!comment || !this.onScreen() || !doc || !detail || !Array.isArray(detail.bounds)) return;
     const element = this.elements[context];
     comment.onArea(doc, {
       frame: context === SCH ? 'sheet' : 'board',
@@ -1003,16 +1038,19 @@ export default class KicadView extends React.Component {
    *  comment yet. */
   marker(detail) {
     const { comment } = this.props;
-    if (comment && detail && detail.commentId && detail.commentId !== DRAFT_MARK) comment.onMarker(detail.commentId);
+    if (comment && this.onScreen() && detail && detail.commentId && detail.commentId !== DRAFT_MARK) {
+      comment.onMarker(detail.commentId);
+    }
   }
 
   /** What the 3D model needs for comments (BoardView3D.jsx): the tool armed
    *  while it is on screen, the marks and the focus on its file, and the
-   *  doors back, the draft's arrow naming nothing (`marker`) and never lost. */
+   *  doors back, the draft's arrow naming nothing (`marker`) and never lost.
+   *  None while the design is hidden. */
   comment3D() {
     const { comment } = this.props;
     const model = this.members()[BOARD3D];
-    if (!comment || !model) return null;
+    if (!comment || !model || !this.onScreen()) return null;
     return {
       on: Boolean(comment.on) && this.side() === BOARD3D,
       marks: (comment.marks || []).filter((one) => one.doc === model.file && one.part),
@@ -1031,8 +1069,8 @@ export default class KicadView extends React.Component {
     const focus = comment && comment.focus;
     const side = this.side();
     const member = this.members()[side];
-    if (!focus || focus === this.focused || !this.state.ready || !member || member.file !== focus.doc
-      || !Array.isArray(focus.area) || (side === SCH && !this.page)) return;
+    if (!focus || focus === this.focused || !this.onScreen() || !this.state.ready || !member
+      || member.file !== focus.doc || !Array.isArray(focus.area) || (side === SCH && !this.page)) return;
     this.focused = focus;
     const [x, y, w, h] = focus.area;
     this.zoomTo = { x: x + w / 2, y: y + h / 2 };
@@ -1067,7 +1105,7 @@ export default class KicadView extends React.Component {
 
   /** The 2D views' files fetched and handed to their elements; the page told
    *  once they are in or one failed when `tell` is set — when they are what
-   *  is on screen. */
+   *  is on screen — or owed that while the design is hidden (`tellReady`). */
   fetchDesign(tell) {
     const { base } = this.props;
     const members = this.members();
@@ -1084,9 +1122,9 @@ export default class KicadView extends React.Component {
     arrived.then(() => {
       if (this._gone) return;
       this.setState({ got: true });
-      if (tell) this.props.onReady();
+      if (tell) this.tellReady();
     }, () => {
-      if (!this._gone && tell) this.props.onReady();
+      if (!this._gone && tell) this.tellReady();
     });
     // The full bar is painted before the files are read and handed over.
     Promise.all([loadEcadViewer(), arrived])
@@ -1124,11 +1162,22 @@ export default class KicadView extends React.Component {
   }
 
   componentDidUpdate(before) {
+    const visible = this.onScreen();
+    // Shown again after the page kept it hidden: the bar told afresh, and the
+    // page `onReady` where that is owed.
+    const back = visible && Boolean(before) && before.shown === false;
+    if (back) this.reported = undefined;
     this.activate();
     this.report();
     this.armComment();
     this.overlay();
-    // The schematic on screen under an address naming it, the address changed
+    if (back && this.owed) {
+      this.owed = false;
+      this.props.onReady();
+    }
+    // Shown again, the schematic goes to the sheet the address names, as on a
+    // fresh mount (`followPage`); hidden, it follows nothing. Otherwise: the
+    // schematic on screen under an address naming it, the address changed
     // since the one this component last saw: its last update's, its own
     // (`tellSheet`), and Back's and Forward's, which `onPop` follows —
     // address.js hands it the entry before React runs the page's update for
@@ -1148,13 +1197,16 @@ export default class KicadView extends React.Component {
     const address = addressNow();
     const moved = address !== this.seen;
     this.seen = address;
-    if (moved && this.page && this.side() === SCH && this.addressed()) {
+    if (back) {
+      this.followPage(true);
+    } else if (visible && moved && this.page && this.side() === SCH && this.addressed()) {
       if (viewOf(before.doc) !== SCH && !parse().sheet) this.tellSheet(false);
       else this.followPage(true);
     }
-    // The menu and the datasheet's window go with their view off the screen.
-    if (this.state.menu && this.state.menu.from !== this.side()) this.closeMenu();
-    if (this.state.sheet && this.state.sheet.from !== this.side()) this.closeSheet();
+    // The menu and the datasheet's window go with their view off the screen,
+    // and with the design.
+    if (this.state.menu && (!visible || this.state.menu.from !== this.side())) this.closeMenu();
+    if (this.state.sheet && (!visible || this.state.sheet.from !== this.side())) this.closeSheet();
     // Opened on the 3D view and moved off it before the `.glb` came in: the
     // files of the view now on screen wait for nothing.
     if (this.after3D && this.side() !== BOARD3D) {
@@ -1181,11 +1233,13 @@ export default class KicadView extends React.Component {
     this.listen(false);
   }
 
-  /** Tell each element whether it is the one on screen. */
+  /** Tell each element whether it is the one on screen: none of a hidden
+   *  design is. */
   activate() {
+    const visible = this.onScreen();
     for (const context of drawnViews(this.members())) {
       const element = this.elements[context];
-      if (element && typeof element.setActive === 'function') element.setActive(context === this.side());
+      if (element && typeof element.setActive === 'function') element.setActive(visible && context === this.side());
     }
   }
 
@@ -1195,8 +1249,15 @@ export default class KicadView extends React.Component {
     const { ready, error, selected, menu, hover, sheet, received, got } = this.state;
     // The 2D views' loading and failure, over them only: the 3D view says its own.
     const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
-    const note = side !== BOARD3D && (error || (!ready && loadBar(received, total, got)));
-    const shown = (context) => `${VIEWER};visibility:${context === side ? 'visible' : 'hidden'}`;
+    const note = side !== BOARD3D
+      && (error ? <div style={css(NOTE)}>{error}</div> : !ready && loadBar(received, total, got));
+    // The view drawn: none while the design is hidden, whose layer is hidden
+    // too, which a child marked `visible` would show through. A 2D viewer is
+    // shown only once its files are drawn: before that it draws nothing but its
+    // own spinner, in the middle, where the load bar stands.
+    const showing = this.onScreen() ? side : null;
+    const visible = (context) => context === showing && (ready || context === BOARD3D);
+    const shown = (context) => `${VIEWER};visibility:${visible(context) ? 'visible' : 'hidden'}`;
     const model = members[BOARD3D] && fileUrl(this.props.base, members[BOARD3D].file);
     return (
       <div ref={this.setShell} style={css(SHELL)} onWheelCapture={this.closeMenu}>
@@ -1205,15 +1266,15 @@ export default class KicadView extends React.Component {
                        show-header="false" hide-chrome="true" data-view={context}
                        style={css(shown(context))} />
         ))}
-        {ready && !error && members[PCB] && <PcbPanel element={this.elements[PCB]} active={side === PCB} />}
+        {ready && !error && members[PCB] && <PcbPanel element={this.elements[PCB]} active={showing === PCB} />}
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
-            <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={side === BOARD3D}
+            <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={showing === BOARD3D}
                          selected={selected} onSelect={this.onSelect3D} onMenu={this.onMenu3D}
                          onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
           </div>
         )}
-        {note && <div style={css(NOTE)}>{note}</div>}
+        {note}
         {menu && menu.from === side && (
           <div data-menu={menu.from} ref={this.setMenu} style={css(menuBox(menu))}
                onContextMenu={(event) => event.preventDefault()}>
