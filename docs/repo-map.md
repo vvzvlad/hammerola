@@ -117,7 +117,9 @@
   symlink or a submodule; the second builds the newest commit of each branch
   that touched the project's directory, and each draft (`refs/drafts/<branch>`),
   in the ordinary queue, into that branch's variant (issue #129), and streams
-  the log back to the hook. The build publishes before git moves the ref, so a
+  the log back to the hook. A branch's commit whose tree its variant's draft
+  slot already holds is not built: the slot's build is published under its sha
+  (`Store.promote_dev`). The build publishes before git moves the ref, so a
   build that fails refuses the push and a push that loses a race leaves its
   revision published, to join the branch by the next merge
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs

@@ -20,7 +20,10 @@ Two passes over the refs:
 A branch is a variant of the project. It publishes the newest commit of its
 first-parent line after the old tip that touched the project's directory,
 under its sha, unless that commit is built already; its `latest` follows the
-branch once git has written it (`githttp.end_of_request`). A draft,
+branch once git has written it (`githttp.end_of_request`). When the variant's
+draft slot holds that commit's tree, the slot's build is published under the
+sha and nothing is built, unless the draft was built with `-o force` and the
+push is not (`Store.promote_dev`). A draft,
 `refs/drafts/<variant>`, publishes its commit into that variant's `dev` slot,
 whether or not the hub has the branch yet. A variant's name is the branch's,
 held to `SAFE_ID`: it is a segment of the variant's address.
@@ -46,8 +49,8 @@ from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR, STATE_DONE,
                       STATE_FAILED, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
                       BuildTask)
 from src.store import (BRANCH_PREFIX, DEV_LINK, JSON_TMP_PREFIX,
-                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, Store, build_path,
-                       git_failure, run_git)
+                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, PublishError, Store,
+                       build_path, git_failure, run_git)
 
 # What git writes for a ref that does not exist on one side of an update.
 ZERO = "0" * 40
@@ -189,6 +192,10 @@ def run(store: Store, jobs, builds, request: HookRequest, say) -> bool:
                     or store.built_build(request.pid, plan.target, env) is None):
                 # Asked again for a branch: an earlier ref of this push, a
                 # second branch at the same commit, may have built it.
+                if not plan.draft and _reuse_draft(store, jobs, repo,
+                                                   request.pid, env, plan,
+                                                   force, say):
+                    continue
                 _build(store, jobs, builds, repo, request.pid, env, plan, force,
                        say)
     except Refused as refusal:
@@ -302,6 +309,41 @@ def revision_message(subject: str) -> str | None:
     kept = "".join(char for char in subject
                    if first_nonprintable(char) is None and char not in "<>")
     return kept.strip()[:render.MAX_TEXT].strip() or None
+
+
+def _reuse_draft(store: Store, jobs, repo, pid: str, env: dict, plan: Plan,
+                 force: bool, say) -> bool:
+    """Publish a branch's target from its variant's draft slot. -> whether it did.
+
+    When the slot holds the target's tree, the draft has built and checked it
+    already: the revision is the slot's build with the draft's log, and
+    nothing is built (`Store.promote_dev`, which also says when it declines).
+    Raises Refused.
+    """
+    try:
+        digest = run_git(repo, "rev-parse", f"{plan.target}:{plan.directory}",
+                         env=env).strip()
+        message = revision_message(run_git(
+            repo, "log", "-1", "--format=%s", plan.target, env=env))
+    except subprocess.CalledProcessError as error:
+        raise Refused(plan.ref, git_failure(error)) from error
+
+    def draft_log(job_id):
+        # "" is a job with no log yet. What is there was capped when the job
+        # wrote it (`JobStore._write_log`), so it is copied as it is.
+        log = jobs.log(job_id)
+        return log.encode("utf-8") if log else None
+
+    try:
+        answer = store.promote_dev(pid, plan.variant, plan.target, digest,
+                                   message, force, draft_log)
+    except PublishError as error:
+        raise Refused(plan.ref, error.message) from error
+    if answer is None:
+        return False
+    say(f"reused the draft build of this tree for {plan.ref}: not built again")
+    say(f"published: {answer[1]['url']}")
+    return True
 
 
 def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,

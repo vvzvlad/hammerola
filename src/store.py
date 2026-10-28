@@ -1293,11 +1293,12 @@ class Store:
         pdir.mkdir(parents=True, exist_ok=True)
         return pdir / f"{STAGING_PREFIX}{commit}-{uuid.uuid4().hex}"
 
-    # -- publishing what a build produced (in a worker thread) --------------
+    # -- publishing what a build produced (in a worker thread, or the hook's) -
     def publish_built(self, pid: str, commit: str, staging: Path, names,
                       digest: str, job=None, message=None,
                       variant: str = MAIN_BRANCH,
-                      variant_label: str = None) -> tuple[int, dict]:
+                      variant_label: str = None,
+                      forced: bool = False) -> tuple[int, dict]:
         """Put one built tree at `<pid>/<commit>`. Returns (status, response).
 
         201 published, 200 identical retry, 409 same commit / different content.
@@ -1314,9 +1315,96 @@ class Store:
         the revision's document, and the mirror copies it into the slot with
         the rest. `variant` is the branch the revision is published from: it
         goes into the document, and the revision fills that variant's slot.
-        `variant_label` is the checked `"variant"` of its project.json.
+        `variant_label` is the checked `"variant"` of its project.json, and
+        `forced` says the push skipped the model's checks().
         """
         files = _hash_output(staging, names)
+
+        def prepare():
+            meta = self._finish_staging(pid, commit, staging, files, digest,
+                                        message=message, variant=variant,
+                                        variant_label=variant_label,
+                                        forced=forced)
+            return meta, job
+
+        return self._publish_revision(pid, commit, staging, digest, variant,
+                                      prepare, f"{len(files)} files")
+
+    def promote_dev(self, pid: str, variant: str, commit: str, digest: str,
+                    message: str | None, force: bool,
+                    draft_log) -> tuple[int, dict] | None:
+        """Publish `commit` from its variant's slot, not built again. -> as
+        `publish_built`, or None when the slot cannot give it.
+
+        `hammerola build`, `git commit`, `git push` is how a revision ordinarily
+        arrives, and the draft has then built and checked the commit's tree
+        already: a copy of the slot becomes `<pid>/<commit>`. The pre-receive
+        hook asks in its own thread, with no job, and builds on None.
+
+        The slot is read once, under the project's publication lock, so no
+        draft can replace it between the check and the copy. None when the
+        slot's `.payload.sha256` is not `digest`, when its build skipped the
+        model's checks() (`forced`) and this push did not ask to (`force`), and
+        when the draft's log cannot be had. That log is the slot's `.build.log`
+        when it has one (a slot mirrored from a revision), otherwise
+        `draft_log(<the slot's job>)`, bytes or None.
+
+        The revision's meta.json is the slot's with a revision's `commit`,
+        `dev`, `published` and `message` and no `job`; `built`, `variant`,
+        `variant_label` and `forced` stay the draft's.
+        """
+        slot = self.pointer_dir(pid, variant, DEV_LINK)
+        staging = self.build_staging(pid, commit)
+
+        def prepare():
+            meta = self._dev_meta(pid, variant)
+            if (meta is None or _read_digest(slot) != digest
+                    or (meta.get("forced") and not force)):
+                return None
+            job = meta.get("job")
+            log = None
+            if not (slot / BUILD_LOG_FILE).is_file():
+                log = draft_log(job)
+                if log is None:
+                    return None
+            # A copy and not hard links: meta.json is rewritten below, and
+            # through a link it would rewrite the slot. `_dedupe` links the
+            # rest once the revision is in place.
+            shutil.copytree(slot, staging)
+            if log is not None:
+                (staging / BUILD_LOG_FILE).write_bytes(log)
+            revision = {key: value for key, value in meta.items()
+                        if key not in ("job", "message")}
+            revision.update(commit=commit, dev=False,
+                            published=published_stamp())
+            if message:
+                revision["message"] = message
+            (staging / BUILD_META_FILE).write_text(
+                json.dumps(revision, indent=1), encoding="utf-8")
+            return revision, job
+
+        try:
+            return self._publish_revision(pid, commit, staging, digest,
+                                          variant, prepare,
+                                          f"the {DEV_LINK} slot's build")
+        finally:
+            # Never created when `prepare` declined, renamed away when it
+            # published; a copy cut short is what this removes.
+            shutil.rmtree(staging, ignore_errors=True)
+
+    def _publish_revision(self, pid: str, commit: str, staging: Path,
+                          digest: str, variant: str, prepare,
+                          note: str) -> tuple[int, dict] | None:
+        """Rename the tree `prepare` fills onto `<pid>/<commit>`, and the
+        bookkeeping after it. -> (status, response), or None when `prepare`
+        declines.
+
+        What `publish_built` and `promote_dev` share. `prepare()` runs under
+        the project lock once `<pid>/<commit>` is known to be free: it fills
+        `staging` and returns the meta.json it wrote with the job whose log the
+        revision carries, which the slot's copy names; or None, and nothing is
+        published. `note` says in the log line what the tree is.
+        """
         pdir = self.projects_dir / pid
         with self._lock_for(pid):
             pdir.mkdir(parents=True, exist_ok=True)
@@ -1333,9 +1421,10 @@ class Store:
                 raise PublishError(
                     409, f"build {commit} already exists with different content")
 
-            meta = self._finish_staging(pid, commit, staging, files, digest,
-                                        message=message, variant=variant,
-                                        variant_label=variant_label)
+            prepared = prepare()
+            if prepared is None:
+                return None
+            meta, job = prepared
             try:
                 os.rename(staging, final)
             except OSError as error:
@@ -1400,14 +1489,13 @@ class Store:
             logger.exception(
                 f"publish {pid}/{commit}: the build is published, but the site "
                 f"index was not refreshed")
-        logger.info(
-            f"publish {pid}/{commit}: {len(files)} files, "
-            f"{_contents(meta)}")
+        logger.info(f"publish {pid}/{commit}: {note}, {_contents(meta)}")
         return 201, _build_url(pid, commit)
 
     def publish_dev_built(self, pid: str, staging: Path, names,
                           digest: str, job=None, variant: str = MAIN_BRANCH,
-                          variant_label: str = None) -> tuple[int, dict]:
+                          variant_label: str = None,
+                          forced: bool = False) -> tuple[int, dict]:
         """Overwrite a variant's ONE local slot, `<pid>/dev/` for the default
         variant and `.variants/<b>/dev/` for another (SPEC 7.6).
 
@@ -1430,7 +1518,8 @@ class Store:
 
         `job` goes into the slot's meta.json: the slot is the one build no
         revision addresses, so the job that filled it is the only place its log
-        exists. `variant` and `variant_label` go there too, as on a revision.
+        exists. `variant`, `variant_label` and `forced` go there too, as on a
+        revision.
         """
         files = _hash_output(staging, names)
         slot = self.pointer_dir(pid, variant, DEV_LINK)
@@ -1447,7 +1536,8 @@ class Store:
                 return 200, url
             meta = self._finish_staging(pid, DEV_LINK, staging, files, digest,
                                         job=job, variant=variant,
-                                        variant_label=variant_label)
+                                        variant_label=variant_label,
+                                        forced=forced)
             self._swap_dev_slot(slot, staging)
 
             # `latest` is not touched: a local build is not a commit, so it
@@ -1743,7 +1833,7 @@ class Store:
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest,
                         job=None, message=None, variant=MAIN_BRANCH,
-                        variant_label=None) -> dict:
+                        variant_label=None, forced=False) -> dict:
         """Validate meta.json and write everything the build page needs.
 
         `staging` is what the build wrote (SPEC 8A.2 step 5), so the meta.json
@@ -1752,14 +1842,16 @@ class Store:
         `job` is handed on to `build_meta`, which records it in the slot's
         document only. `message` is the subject of the pushed commit, already
         cleaned to what a message may be (`prereceive.revision_message`).
-        `variant` and `variant_label` go into the document as they are.
+        `variant`, `variant_label` and `forced` go into the document as they
+        are.
         """
         raw = self._read_meta(staging)
         try:
             meta = render.build_meta(
                 pid=pid, commit=commit, raw=raw, staging=staging, files=files,
                 published=published_stamp(), dev=(commit == DEV_LINK), job=job,
-                message=message, variant=variant, variant_label=variant_label)
+                message=message, variant=variant, variant_label=variant_label,
+                forced=forced)
         except ValueError as error:
             # render.py validates without knowing about HTTP; every way it can
             # refuse is "the push described something that is not there", i.e. 422.
@@ -2106,8 +2198,8 @@ class Store:
         Same shape as `clear_title`: a commit mirrors itself into the slot, so
         afterwards there is no draft to have a state, and a pointer left behind
         would keep reporting the last draft build's ending on a card whose local
-        work is gone. `publish_built` is the only caller, one line after
-        `clear_title`.
+        work is gone. `_publish_revision` (for `publish_built` and
+        `promote_dev`) is the only caller, one line after `clear_title`.
 
         Best effort, and called from inside the publish path: a volume that will
         not take the unlink must not turn a published build into a failed one.

@@ -913,7 +913,7 @@ def _match_selection(declared: list, shown: set, view_id: str) -> None:
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                files: dict, published: str, dev: bool = False,
                job: str = None, message: str = None, variant: str = None,
-               variant_label: str = None) -> dict:
+               variant_label: str = None, forced: bool = False) -> dict:
     """Validate the uploaded meta.json and normalize it for the page.
 
     What the build is OF decides the body: a model's `views` and `parts`
@@ -986,6 +986,11 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
         meta["variant"] = variant
     if variant_label:
         meta["variant_label"] = variant_label
+    # A build whose push skipped the model's own checks() (`-o force`). Written
+    # only when true, like `message`: a draft slot carrying it gives a revision
+    # only to a push that is forced too (`Store.promote_dev`).
+    if forced:
+        meta["forced"] = True
     return meta
 
 
