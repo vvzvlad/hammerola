@@ -19,7 +19,8 @@ where it can be" (SPEC §4):
     triangles by bounding box (`_stands_there`); a leaf it does not match is
     measured on the mesh too. A view published before leaves carried the mark
     has only that barrier: publish it again to have a reshaped part measured
-    on the mesh.
+    on the mesh. One published before leaves carried `at` cannot place a STEP
+    at all, and its pairs are measured on the mesh.
   * ANY OTHER PAIR is measured on the view's own triangles, the only geometry a
     bought part is stored as. A tessellated face is a set of chords of the
     curved surface, up to the tessellation tolerance off it (`tolerance`) on
@@ -75,11 +76,12 @@ def measure(build_dir, leaves, key_a, key_b):
     """The nearest approach of part `key_a` to part `key_b` in one view. -> dict
 
     `{"method", "distance", "a", "b", "point_a", "point_b", "pairs",
-    "stepless", "reshaped", "tolerance"}`: the method and leaf names of the
-    nearest pair, their two closest points in the view's coordinates, how many
-    pairs were measured, which of the two keys has no STEP, which leaves of the
-    nearest pair the view draws as a shape of their own, and for the mesh
-    method each of the two leaves' tessellation tolerance.
+    "stepless", "reshaped", "unplaced", "tolerance"}`: the method and leaf
+    names of the nearest pair, their two closest points in the view's
+    coordinates, how many pairs were measured, which of the two keys has no
+    STEP, which leaves of the nearest pair the view draws as a shape of their
+    own, which of them the view records no `at` for, and for the mesh method
+    each of the two leaves' tessellation tolerance.
 
     ValueError, carrying the sentence the refusal prints, for a key the view
     does not show and for a part named twice that stands in the view once.
@@ -106,11 +108,15 @@ def measure(build_dir, leaves, key_a, key_b):
     # draws as that body.
     placed = {}
     if not stepless:
-        solids = {key: _step_solid(path) for key, path in steps.items()}
         involved = {id(leaf): leaf for pair in pairs for leaf in pair}
-        for leaf in involved.values():
-            if leaf["deformed"]:
-                continue
+        # Neither a leaf the view draws as a shape of its own (its STEP is not
+        # what stands there) nor one of a view built before views recorded
+        # `at` (nothing says where its STEP stands).
+        placeable = [leaf for leaf in involved.values()
+                     if not leaf["deformed"] and leaf["at"]]
+        solids = {key: _step_solid(steps[key])
+                  for key in {leaf["key"] for leaf in placeable}}
+        for leaf in placeable:
             body = _moved(solids[leaf["key"]], leaf)
             if _stands_there(body, leaf):
                 placed[id(leaf)] = body
@@ -134,7 +140,10 @@ def measure(build_dir, leaves, key_a, key_b):
         "stepless": stepless,
         "reshaped": ([] if stepless else
                      [_leaf_name(leaf) for leaf in (leaf_a, leaf_b)
-                      if id(leaf) not in placed]),
+                      if id(leaf) not in placed and leaf["at"]]),
+        "unplaced": ([] if stepless else
+                     [_leaf_name(leaf) for leaf in (leaf_a, leaf_b)
+                      if not leaf["at"]]),
         "tolerance": (None if method == STEP else
                       {_leaf_name(leaf_a): tolerance(leaf_a),
                        _leaf_name(leaf_b): tolerance(leaf_b)}),
@@ -150,6 +159,7 @@ def describe(found):
                  "view places them"]
     else:
         missing, reshaped = found["stepless"], found["reshaped"]
+        unplaced = found["unplaced"]
         why = []
         if missing:
             why.append(f"{' and '.join(missing)} "
@@ -161,6 +171,11 @@ def describe(found):
                        f"of {'its' if len(reshaped) == 1 else 'their'} own, so "
                        f"{'its' if len(reshaped) == 1 else 'their'} STEP is "
                        f"not what stands there")
+        if unplaced:
+            why.append(f"the view was built before views recorded where each "
+                       f"part stands, so the STEP of {' and '.join(unplaced)} "
+                       f"cannot be placed in it (publish the model again to "
+                       f"measure exactly)")
         lines = [f"method: the view's mesh -- {'; '.join(why)}"]
         each = found["tolerance"]
         allowance = f"{sum(each.values()):.3g} mm"
@@ -260,14 +275,7 @@ def _moved(solid, leaf):
     from OCP.TopLoc import TopLoc_Location
     from OCP.gp import gp_Trsf
 
-    at = leaf["at"]
-    if not at:
-        raise ValueError(
-            f"the view records no `at` for {_leaf_name(leaf)}: it was built "
-            f"before views recorded where each part is placed, so the part's "
-            f"STEP cannot be placed in it. Publish the model again to measure "
-            f"it")
-    rotation, offset = _placed(leaf["parent"], at)
+    rotation, offset = _placed(leaf["parent"], leaf["at"])
     trsf = gp_Trsf()
     trsf.SetValues(*rotation[0], offset[0], *rotation[1], offset[1],
                    *rotation[2], offset[2])
