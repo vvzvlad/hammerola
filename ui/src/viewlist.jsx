@@ -514,7 +514,7 @@ export function DocFile({ href }) {
  *                takes no click, so its handler may be absent. And `arBtn`,
  *                `View in AR` beside Fit (`{ onClick }`, `onClick` null out of
  *                service), or null: only the model's page has it, and only in
- *                a browser with AR Quick Look.
+ *                a browser with AR Quick Look or WebXR AR.
  * `menus` are the cards `Add primitive` and Settings open (`proposal`,
  * `settings`), which only the model's page has. Pure. What it returns goes
  * straight into the layer (`BAR_LAYER`): the bar alone, or with a document

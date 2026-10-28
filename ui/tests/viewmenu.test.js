@@ -391,3 +391,115 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     expect(button.props.onClick).toBeUndefined()
   })
 })
+
+describe('View in AR, in a browser with WebXR AR and no Quick Look', () => {
+  const arButtons = (c) => collect(c.render(), (el) => (el.key === 'ar' ? el : undefined))
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  /**
+   * WebXR as Chrome on an ARCore phone has it, doubled: `isSessionSupported`
+   * answers `supported`, and `requestSession` refuses or grants a session, an
+   * EventTarget whose `end()` fires `end` as the browser's does.
+   */
+  const webxr = ({ supported = true, refuse = false } = {}) => {
+    const sessions = []
+    const xr = {
+      isSessionSupported: vi.fn(async () => supported),
+      requestSession: vi.fn(async () => {
+        if (refuse) throw new DOMException('refused', 'NotAllowedError')
+        const session = new EventTarget()
+        session.end = vi.fn(async () => { session.dispatchEvent(new Event('end')) })
+        sessions.push(session)
+        return session
+      }),
+    }
+    Object.defineProperty(navigator, 'xr', { value: xr, configurable: true })
+    onTestFinished(() => { delete navigator.xr })
+    return { xr, sessions }
+  }
+  /** The page as mounted, its hub stubbed out. */
+  const mounted = () => {
+    const c = component({ views: someViews(2) })
+    Object.assign(c, { load: vi.fn(async () => {}), loadFeed: vi.fn(), loadProposal: vi.fn() })
+    c.componentDidMount()
+    onTestFinished(() => c.componentWillUnmount())
+    return c
+  }
+  /** The page once WebXR has said yes, over a viewport whose `webxr()` is
+   *  `set`: by default it sets the view in the session at once. */
+  const xrPage = (set = async () => {}) => {
+    const c = component({ views: someViews(2) })
+    c.state = { ...c.state, ar: null, xrCapable: true }
+    c.host = { current: { webxr: vi.fn(set) } }
+    c.toast = vi.fn()
+    return c
+  }
+
+  it('comes onto the bar once WebXR says it has AR', async () => {
+    const { xr } = webxr()
+    const c = mounted()
+    expect(c.computed().arBtn).toBe(null)
+    await vi.waitFor(() => expect(arButtons(c)).toHaveLength(1))
+    expect(xr.isSessionSupported.mock.calls).toEqual([['immersive-ar']])
+    expect(typeof arButtons(c)[0].props.onClick).toBe('function')
+  })
+
+  it('stays off the bar where WebXR says it has none', async () => {
+    webxr({ supported: false })
+    const c = mounted()
+    await settle()
+    expect(c.computed().arBtn).toBe(null)
+  })
+
+  it('asks for the session in the tap itself, shows the view and is out of service until it ends', async () => {
+    const { xr, sessions } = webxr()
+    let setDone
+    const c = xrPage(() => new Promise((resolve) => { setDone = resolve }))
+    arButtons(c)[0].props.onClick(click)
+    // Before anything is awaited: the request needs the tap's user activation.
+    expect(xr.requestSession).toHaveBeenCalledTimes(1)
+    const [mode, init] = xr.requestSession.mock.calls[0]
+    expect([mode, init.optionalFeatures]).toEqual(['immersive-ar', ['dom-overlay']])
+    const overlay = init.domOverlay.root
+    expect(overlay.isConnected).toBe(true)
+    expect(c.computed().arBtn).toEqual({ onClick: null })
+    await vi.waitFor(() => expect(c.el().webxr.mock.calls).toEqual([[sessions[0]]]))
+    // The × only once the view is set in the session.
+    await settle()
+    expect(overlay.style.display).toBe('none')
+    setDone()
+    await vi.waitFor(() => expect(overlay.style.display).toBe(''))
+    // running
+    expect(arButtons(c)[0].props.onClick).toBeUndefined()
+    // The overlay's one button ends the session, and the bar has AR back.
+    overlay.querySelector('button').click()
+    expect(sessions[0].end).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(c.state.ar).toBe(null))
+    expect(overlay.isConnected).toBe(false)
+    expect(typeof arButtons(c)[0].props.onClick).toBe('function')
+    expect(c.toast).not.toHaveBeenCalled()
+  })
+
+  it('says in a toast it could not start where the session is refused, and can be tapped again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    onTestFinished(() => vi.restoreAllMocks())
+    const { xr } = webxr({ refuse: true })
+    const c = xrPage()
+    c.computed().arBtn.onClick()
+    await vi.waitFor(() => expect(c.toast).toHaveBeenCalledWith('Could not start AR'))
+    expect(c.state.ar).toBe(null)
+    expect(xr.requestSession.mock.calls[0][1].domOverlay.root.isConnected).toBe(false)
+    expect(typeof arButtons(c)[0].props.onClick).toBe('function')
+  })
+
+  it('ends a session whose scene could not be built, and says so in a toast', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    onTestFinished(() => vi.restoreAllMocks())
+    const { sessions } = webxr()
+    const c = xrPage(async () => { throw new Error('no WebGL') })
+    c.computed().arBtn.onClick()
+    await vi.waitFor(() => expect(c.toast).toHaveBeenCalledWith('Could not start AR'))
+    expect(sessions[0].end).toHaveBeenCalledTimes(1)
+    expect(c.state.ar).toBe(null)
+    expect(typeof arButtons(c)[0].props.onClick).toBe('function')
+  })
+})

@@ -37,7 +37,7 @@ export function chromeView(s, props, deps) {
   const {
     // -- what `computed()` has already worked out; `variant` is the one this
     // page is of (`pageVariant` in hub.js), `arCapable` whether the browser has
-    // AR Quick Look (`arSupported` in ar.js)
+    // AR Quick Look (`arSupported` in ar.js; WebXR's answer is `s.xrCapable`)
     meta, viewer, narrow, stop, variant, arCapable,
     // -- the other panels' answers, drawn by controls that live up here
     revRows, downloadGroups, dlShown, threads, openCount,
@@ -47,7 +47,7 @@ export function chromeView(s, props, deps) {
     set, setState, stateNow, toast, toolsOff, subtitle,
     applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
     loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, cameraParam, pushChoice, openAr,
+    refreshBuilds, cameraParam, pushChoice, openAr, openXr,
   } = deps;
 
   const cmpReady = s.cmp.length === 2;
@@ -122,10 +122,12 @@ export function chromeView(s, props, deps) {
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta),
     askRename && ((doc) => askRename({ kind: 'document', variant, id: doc.id, name: doc.name })));
-  // Whether `View in AR` (`arBtn`) can make a file: where a model view is on
-  // screen. A document over the model, a schematic or a board's 3D among them,
-  // has none.
-  const arReady = !!arCapable && views.length > 0 && !docOpen;
+  // `View in AR` (`arBtn`) is on the bar in a browser with AR Quick Look, and
+  // in one without it whose WebXR said it has AR (`s.xrCapable`). It can show
+  // the model where a model view is on screen. A document over the model, a
+  // schematic or a board's 3D among them, has none.
+  const arShown = !!arCapable || !!s.xrCapable;
+  const arReady = arShown && views.length > 0 && !docOpen;
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -506,12 +508,14 @@ export function chromeView(s, props, deps) {
     // would light the model's view over a document and name neither.
     viewMenu: views.length > VIEW_TABS_MAX || docRows.length > 0 || !!docOpen,
     // `View in AR` beside Fit (`floatBar` in viewlist.jsx) in a browser with
-    // AR Quick Look, null elsewhere. On every view, so the bar keeps its shape
-    // (AGENTS.md): out of service where no model view is on screen
-    // (`arReady`) and while its file is made (`s.ar`). A tap makes the file of
-    // the view as it stands and hands it to Quick Look (`openAr`).
-    arBtn: !arCapable ? null : {
-      onClick: arReady && !(s.ar && s.ar.busy) ? () => openAr() : null,
+    // AR Quick Look or WebXR AR (`arShown`), null elsewhere. On every view, so
+    // the bar keeps its shape (AGENTS.md): out of service where no model view
+    // is on screen (`arReady`), while its file is made and while a WebXR
+    // session starts and runs (`s.ar`). A tap makes the file of the view as it
+    // stands and hands it to Quick Look (`openAr`), or, with no Quick Look,
+    // shows the view in a WebXR session on the page (`openXr`).
+    arBtn: !arShown ? null : {
+      onClick: arReady && !(s.ar && s.ar.busy) ? () => (arCapable ? openAr() : openXr()) : null,
     },
     // The strip's one pencil, at its end: it renames the view on screen. One
     // for the whole strip rather than one per pill, so the strip keeps its
