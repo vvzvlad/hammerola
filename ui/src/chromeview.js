@@ -20,7 +20,7 @@
  */
 import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
-import { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
+import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import {
   PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId, stamp,
 } from './hub.js';
@@ -525,11 +525,6 @@ export function chromeView(s, props, deps) {
     // DocumentView draws it from; null over the model, which leaves the strip
     // without the two.
     docHref: docOpen ? docUrl(PAGE.base, docOpen) : null,
-    // A NEW ELEMENT FOR ANOTHER REVISION: a markdown document is fetched once,
-    // when its view mounts, so a revision switch with the same document open
-    // must mount a new one rather than keep the old revision's text. Within
-    // one revision the members of a KiCad design share one (`docViewKey`).
-    docKey: docOpen ? `${buildKey(meta)}:${docViewKey(docOpen)}` : '',
     bannerLayerStyle: 'position:absolute;left:0;right:0;top:14px;display:flex;justify-content:center;pointer-events:none;z-index:'
       + (docOpen ? '17' : '13'),
     docLayerStyle: DOC_LAYER,

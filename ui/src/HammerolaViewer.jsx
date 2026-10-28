@@ -125,13 +125,13 @@ import { chromeView } from './chromeview.js';
 // the view list; drawn as the documents page draws it.
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
-import DocumentView, { COMMENTABLE, docExt, FILE_TYPE } from './DocumentView.jsx';
+import { COMMENTABLE, docExt, DocumentLayers, FILE_TYPE } from './DocumentView.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
 import { VariantSwitch } from './variants.jsx';
 // The pencils and the window that rename a name of the project.
-import { Pencil, RenameWindow, saveRename } from './rename.jsx';
+import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
 // And the four panels that answer to little more than the state: the revision
 // picker, the downloads menu, the comment rail and the comparison. `fileHref`
 // comes with the downloads because the row menu builds the same link for one
@@ -5497,6 +5497,7 @@ export default class HammerolaViewer extends React.Component {
       // layout to fit into and nothing underneath to leave visible.
       <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
         <style>{VIEWPORT_CSS}</style>
+        <style>{RENAME_CSS}</style>
 
         {/* ── header: model, revision, status, downloads, access, comments ── */}
         <div style={css(v.headerStyle)}>
@@ -5512,7 +5513,8 @@ export default class HammerolaViewer extends React.Component {
           </a>
           <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>
-            <div style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
+            <div className={v.renameTitle ? RENAME_HOST : undefined}
+                 style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
               <div style={css(`${TITLE};min-width:0`)}>{v.title}</div>
               {v.renameTitle && <Pencil title="Rename project" onClick={v.renameTitle} />}
             </div>
@@ -6027,18 +6029,18 @@ export default class HammerolaViewer extends React.Component {
             {/* A document chosen in the view list, laid OVER the model rather
                 in place of it: the viewport stays mounted underneath, camera,
                 cut and hidden parts and all. Drawn by the component the
-                documents page uses (DocumentView.jsx), handed the views for a
-                markdown link that names one. */}
-            {v.docOpen && (
-              <div style={css(v.docLayerStyle)}>
-                <DocumentView key={v.docKey} doc={v.docOpen} documents={this.state.meta.documents}
-                              views={this.state.meta.views}
-                              base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
-                              onSheet={(sheet, push) => this.writeSheet(sheet, push)}
-                              onTools={(tools) => this.setState({ docTools: tools })}
-                              onReady={() => this.docReady()} />
-              </div>
-            )}
+                documents page uses (`DocumentLayers` in DocumentView.jsx),
+                handed the views for a markdown link that names one. A KiCad
+                design opened over this revision stays there, hidden, while
+                the model or another document is on screen: a hidden layer is
+                neither drawn nor hit by the pointer, so the model under it
+                takes its clicks. */}
+            <DocumentLayers build={buildKey(this.state.meta)} doc={v.docOpen} layer={v.docLayerStyle}
+                            documents={this.state.meta.documents} views={this.state.meta.views}
+                            base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
+                            onSheet={(sheet, push) => this.writeSheet(sheet, push)}
+                            onTools={(tools) => this.setState({ docTools: tools })}
+                            onReady={() => this.docReady()} />
 
             {/* views and tools. THE LAYER IS A VALUE rather than a constant
                 here — see `toolbarStyle`: the view menu opens INSIDE this

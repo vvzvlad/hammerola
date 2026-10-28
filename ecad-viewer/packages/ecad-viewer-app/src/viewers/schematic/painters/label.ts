@@ -5,9 +5,11 @@
 */
 
 import { Color } from "../../../base/color";
-import { Angle, Vec2 } from "../../../base/math";
+import { Angle, BBox, Vec2 } from "../../../base/math";
+import { intersheet_refs } from "../../../kicad/intersheet-refs";
 import * as schematic_items from "../../../kicad/schematic";
-import { SchText, StrokeFont } from "../../../kicad/text";
+import { EDAText, SchText, StrokeFont } from "../../../kicad/text";
+import type { Project } from "../../../kicanvas/project";
 import { LayerNames, ViewLayer } from "../layers";
 import { SchematicItemPainter } from "./base";
 
@@ -69,12 +71,17 @@ export abstract class LabelPainter extends SchematicItemPainter {
             this.gfx.line(shape_pts, schtext.attributes.stroke_width / 10000);
         }
 
+        this.paint_fields(l, schtext, shape_pts);
+
         this.gfx.state.pop();
     }
 
     create_shape(l: schematic_items.Label, schtext: SchText): Vec2[] {
         return [];
     }
+
+    /** Draws the label's fields, in the label's colour; `shape` is its body. */
+    paint_fields(l: schematic_items.Label, schtext: SchText, shape: Vec2[]) {}
 
     get color() {
         return new Color(1, 0, 1, 1);
@@ -274,6 +281,81 @@ export class GlobalLabelPainter extends LabelPainter {
         });
 
         return pts;
+    }
+
+    /**
+     * Draws the inter-sheet references when the project shows them: KiCad
+     * sets the field's visibility from `intersheets_ref_show`, whatever the
+     * file's `hide` says (SCH_SHEET_PATH::UpdateAllScreenReferences). Placed
+     * as SCH_FIELD::Plot places it: the field's position moved by the label's
+     * text offset, in the field's justification and angle.
+     */
+    override paint_fields(
+        l: schematic_items.Label,
+        schtext: SchText,
+        shape: Vec2[],
+    ) {
+        const label = l as schematic_items.GlobalLabel;
+        const context = this.view_painter.active_instance_context;
+        const project = context?.document.project as Project | undefined;
+        // KiCad 6 names the field "Intersheet References", 7 on "Intersheetrefs".
+        const field = label.properties.find(
+            (property) =>
+                property.name == "Intersheetrefs" ||
+                property.name == "Intersheet References",
+        );
+        if (
+            !context ||
+            !field ||
+            !project?.settings.schematic.drawing.intersheets_ref_show
+        ) {
+            return;
+        }
+
+        const text = intersheet_refs(project, label.text, context.project_path);
+        if (!text) {
+            return;
+        }
+
+        const refs = new EDAText(text);
+        refs.apply_effects(field.effects);
+        refs.apply_at(field.at);
+
+        // SCHEMATIC::RecomputeIntersheetRefs autoplaces a lone field still on
+        // the label's own position, whether or not `fields_autoplaced` is set;
+        // any other field stays where the file put it.
+        if (
+            label.properties.length == 1 &&
+            field.at.position.equals(label.at.position)
+        ) {
+            // SCH_LABEL_BASE::AutoplaceFields: beyond the body, along the
+            // label, by the body's longer side (inflated by the pen) plus twice
+            // the text offset.
+            const body = BBox.from_points(shape);
+            const distance =
+                Math.max(body.w, body.h) * 10000 +
+                schtext.attributes.stroke_width +
+                2 * this.get_text_offset(schtext);
+            const along: Record<number, Vec2> = {
+                0: new Vec2(distance, 0),
+                90: new Vec2(0, -distance),
+                180: new Vec2(-distance, 0),
+                270: new Vec2(0, distance),
+            };
+            refs.text_pos = schtext.text_pos.add(along[l.at.rotation]!);
+            refs.text_angle = Angle.from_degrees(
+                l.at.rotation == 90 || l.at.rotation == 270 ? 90 : 0,
+            );
+            refs.h_align =
+                l.at.rotation == 0 || l.at.rotation == 90 ? "left" : "right";
+        }
+
+        StrokeFont.default().draw(
+            this.gfx,
+            text,
+            refs.text_pos.add(this.get_schematic_text_offset(l, schtext)),
+            refs.attributes,
+        );
     }
 }
 

@@ -4,12 +4,14 @@
 // documents only. `ui/src/main.jsx` mounts it instead of HammerolaViewer when
 // the build's meta.json says `"kind": "documents"` (src/render.py).
 //
-// The document is drawn by DocumentView.jsx, which the model's page uses too.
-// The page holds which document is open — `Show in …` of a KiCad design's
-// right-click menu opens the other member through the same door a row does
-// (`onPick`) — what the bar's Fit and Frame can do with it (`tools`), and
-// whether the window is narrow, which takes the bar down to the list and Fit
-// as on the model's page.
+// The document is drawn by DocumentView.jsx, which the model's page uses too,
+// through its `DocumentLayers`: a KiCad design opened on the page stays
+// mounted, hidden, while another document is on screen, and comes back without
+// fetching its files again. The page holds which document is open — `Show in
+// …` of a KiCad design's right-click menu opens the other member through the
+// same door a row does (`onPick`) — what the bar's Fit and Frame can do with it
+// (`tools`), and whether the window is narrow, which takes the bar down to the
+// list and Fit as on the model's page.
 //
 // The document on screen is `?d=<id>` in the address, as a model's view is
 // `?v=<id>`; the default document — the first one not listed `hidden` — needs
@@ -47,11 +49,11 @@ import {
   closeComment, commentRail, commentsButton, composerCard, composerView, docComment, docDraft, docFrame,
   railView, readFeed, sendDraft,
 } from './comments.jsx';
-import DocumentView, { COMMENTABLE, docUrl, docViewKey } from './DocumentView.jsx';
+import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, loadVariants, PAGE, pageVariant, shortId } from './hub.js';
 import { btn, HEADER_BAR, HEADER_RULE, HEAD_MONO, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
-import { Pencil, RenameWindow, saveRename } from './rename.jsx';
+import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
 import { readToken } from './store.js';
 import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 import { VariantSwitch, variantChoices } from './variants.jsx';
@@ -93,8 +95,8 @@ const BAR = `${BAR_LAYER}18`;
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
  * the document when its view can do them (`tools`, `onTools` in
  * DocumentView.jsx) and are out of service when it cannot. A narrow window
- * keeps the list and Fit. `onRename(doc)`, with the token, ends each row in
- * a pencil (`documentRows`). Pure.
+ * keeps the list and Fit. `onRename(doc)`, with the token, puts a pencil
+ * right after each row's name (`documentRows`). Pure.
  */
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename }) {
   return {
@@ -149,13 +151,15 @@ export function DocPage({
   const renameDoc = onRename && ((one) => onRename({ kind: 'document', id: one.id, name: one.name }));
   return (
     <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
+      <style>{RENAME_CSS}</style>
       <div style={css(HEADER)}>
         <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
           <Mark />
           <span style={css(WORDMARK)}>hammerola</span>
         </a>
         <div style={css(HEADER_RULE)} />
-        <div style={css('display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0')}>
+        <div className={onRename ? RENAME_HOST : undefined}
+             style={css('display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0')}>
           <div style={css(`${TITLE};min-width:0`)}>{title}</div>
           {onRename && <Pencil title="Rename project" onClick={() => onRename({ kind: 'project', name: title })} />}
         </div>
@@ -169,11 +173,9 @@ export function DocPage({
       </div>
       <div style={css(BODY)}>
         <div style={css(STAGE)}>
-          <div style={css(DOC_LAYER)}>
-            <DocumentView key={docViewKey(doc)} doc={doc} documents={meta.documents} base={base} onOpen={onPick}
-                          onTools={onTools} addressDoc={addressDoc} onSheet={onSheet}
+          <DocumentLayers build={buildKey(meta)} doc={doc} layer={DOC_LAYER} documents={meta.documents} base={base}
+                          onOpen={onPick} onTools={onTools} addressDoc={addressDoc} onSheet={onSheet}
                           comment={comments ? comments.docComment : undefined} />
-          </div>
           {/* Over the document, under the bar, as on the model's page. */}
           {comments && composerCard(comments, comments.box)}
           <div style={css(BAR)}>

@@ -51,13 +51,27 @@ export function renamedAddress(pid, variant, at = parse()) {
   return format(fresh(buildPath(pid, 'latest', variant), { view: at.view, doc: at.doc }));
 }
 
-const PENCIL = 'flex:none;padding:0 3px;font-size:12px;line-height:1;color:var(--text-faint);cursor:pointer;user-select:none';
+const PENCIL = 'flex:none;display:inline-block;margin-left:5px;font-size:11px;line-height:1;'
+  + 'color:var(--text-faint);cursor:pointer;user-select:none';
 
-/** The faint control that opens the window for one name. It stops its click,
- *  which would otherwise reach the row it stands in, a link among them. */
+// The pencil shows only while the pointer is over the element that carries
+// `RENAME_HOST` — the name itself, its row, or the whole strip of views — and
+// the page draws `RENAME_CSS` once. Hidden rather than absent, so the line
+// keeps its width when the pencil comes and goes; a hidden pencil takes no
+// clicks. A screen with no hover (a phone) shows it always: there it could
+// never appear, and the name could not be renamed.
+export const RENAME_HOST = 'hmr-rename-host';
+const PENCIL_CLASS = 'hmr-pencil';
+export const RENAME_CSS = `@media (hover:hover){.${RENAME_HOST} .${PENCIL_CLASS}{visibility:hidden}`
+  + `.${RENAME_HOST}:hover .${PENCIL_CLASS}{visibility:visible}}`;
+
+/** The faint control that opens the window for one name, right after the
+ *  name or at the end of the strip of views, inside an element carrying
+ *  `RENAME_HOST`. It stops its click, which would otherwise reach the row it
+ *  stands in, a link among them. */
 export function Pencil({ title, onClick }) {
   return (
-    <span title={title} style={css(PENCIL)}
+    <span title={title} className={PENCIL_CLASS} style={css(PENCIL)}
           onClick={(event) => { event.preventDefault(); event.stopPropagation(); onClick(); }}>
       ✎
     </span>
@@ -74,12 +88,14 @@ const BUTTON = `${DIALOG_BTN}user-select:none;font:600 12px ${SANS};`;
 
 /**
  * The window: `subject` is what it renames, its field starts at the current
- * name. Over the whole page, like the Share window: the overlay, Cancel and
- * Escape close it (`onClose`), a click on the card stops there, and Save or
- * Enter hands the field to `onSave`, which answers a promise: true when the
- * hub took the name and the page is leaving for the new revision, so the
- * window goes on saying it is saving until the page is gone. One Save at a
- * time.
+ * name. Over the whole page, like the Share window: Cancel and Escape close it
+ * (`onClose`), a click on the card stops there, and Save or Enter hands the
+ * field to `onSave`. A click outside the card — pressed and released outside
+ * it — saves a changed name too, so a typed name is not lost to a stray
+ * click, and closes an unchanged one.
+ * `onSave` answers a promise: true when the hub took the name and the page
+ * is leaving for the new revision, so the window goes on saying it is saving
+ * until the page is gone. One Save at a time.
  */
 export class RenameWindow extends React.Component {
   constructor(props) {
@@ -97,6 +113,19 @@ export class RenameWindow extends React.Component {
         if (!leaving && !this.gone) this.setState({ saving: false });
       });
     };
+    // The browser sends a click to the nearest element holding both the press
+    // and the release, so a selection dragged out of the field, or a press on
+    // the overlay released on the card, ends in a click on the overlay too.
+    // Neither closes the window nor saves: both ends must be on the overlay.
+    this.pressed = (event) => { this.pressedOutside = event.target === event.currentTarget; };
+    this.released = (event) => { this.releasedOutside = event.target === event.currentTarget; };
+    this.outside = (event) => {
+      const outside = this.pressedOutside && this.releasedOutside && event.target === event.currentTarget;
+      this.pressedOutside = false;
+      this.releasedOutside = false;
+      if (!outside) return undefined;
+      return this.state.typed === (this.props.subject.name || '') ? this.props.onClose() : this.save();
+    };
   }
 
   componentDidMount() {
@@ -112,7 +141,7 @@ export class RenameWindow extends React.Component {
     const { subject, onClose } = this.props;
     const { saving } = this.state;
     return (
-      <div onClick={onClose} style={css(OVERLAY)}>
+      <div onPointerDown={this.pressed} onPointerUp={this.released} onClick={this.outside} style={css(OVERLAY)}>
         <div onClick={(event) => event.stopPropagation()} style={css(BOX)}>
           <div style={css(`font:700 15px ${SANS}`)}>{RENAME_HEADS[subject.kind]}</div>
           <input type="text" autoFocus value={this.state.typed} autoComplete="off" spellCheck="false"

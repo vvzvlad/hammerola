@@ -11,17 +11,27 @@ import type { SchematicViewer } from "../../../viewers/schematic/viewer";
 export class SchSelectionPopMenu extends KCUIElement {
     static override styles = [
         css`
+            /* Pinned to the top left: without it a fixed host sits at its
+               static place, which under hide-chrome is below the canvas, and
+               the panel placed at the pointer lands off the window. The host
+               lets the pointer through, so the wheel over the drawing still
+               pans and zooms while the list is open; only the panel takes
+               the pointer. */
             :host {
                 position: fixed;
+                top: 0;
+                left: 0;
                 display: block;
                 height: 100%;
                 width: 100%;
                 background: transparent;
                 color: var(--pop-menu-fg);
                 z-index: 10;
+                pointer-events: none;
             }
 
             .modal-panel {
+                pointer-events: auto;
                 background-color: var(--pop-menu-bg);
                 position: absolute;
                 display: flex;
@@ -148,14 +158,14 @@ export class SchSelectionPopMenu extends KCUIElement {
             this.#pos = new Vec2(e.clientX, e.clientY);
         });
 
-        this.addEventListener("click", (event: MouseEvent) => {
-            if (this.#content?.contains(event.target as any)) {
+        // The host lets the pointer through, so a press of any button
+        // anywhere but on the panel closes the list here: one menu is open at
+        // a time, the page's right-click menu included.
+        window.addEventListener("pointerdown", (event: PointerEvent) => {
+            if (this.hidden) return;
+            if (this.#content && event.composedPath().includes(this.#content))
                 return;
-            }
-
-            if (event.button === 0 && this.hidden === false) {
-                this.hidden = true;
-            }
+            this.hidden = true;
         });
 
         this.addEventListener(KiCanvasFitterMenuEvent.type, (e) => {
@@ -173,17 +183,44 @@ export class SchSelectionPopMenu extends KCUIElement {
 
             if (!this.#pos) return;
             this.#anchor = this.#pos.copy();
-            this.#apply_positioned_update();
+            // Shown first: the panel is placed by its own size and the
+            // host's box, and a hidden element has neither.
             this.hidden = false;
+            this.#apply_positioned_update();
         });
     }
 
     #apply_positioned_update() {
-        this.update();
+        const rendered = this.update();
         const anchor = this.#anchor ?? this.#pos;
-        if (!anchor || !this.#content) return;
-        this.#content.style.top = `${anchor.y - 10}px`;
-        this.#content.style.left = `${anchor.x}px`;
+        if (!anchor) return;
+        // `update` attaches the new panel a microtask after it returns and
+        // settles on the next animation frame, before that frame is painted:
+        // only then has the panel a size to keep it inside the window by.
+        void rendered.then(() => {
+            const content = this.#content;
+            if (!content) return;
+            // The anchor is a client point; the panel is placed inside the
+            // host, whose box an ancestor's transform or containment may move
+            // off the window's origin. Kept inside the window by its own
+            // size, so a label clicked near an edge shows its whole list.
+            const host = this.getBoundingClientRect();
+            const panel = content.getBoundingClientRect();
+            const margin = 8;
+            const x = Math.max(
+                margin,
+                Math.min(anchor.x, window.innerWidth - panel.width - margin),
+            );
+            const y = Math.max(
+                margin,
+                Math.min(
+                    anchor.y - 10,
+                    window.innerHeight - panel.height - margin,
+                ),
+            );
+            content.style.top = `${y - host.top}px`;
+            content.style.left = `${x - host.left}px`;
+        });
     }
 
     build_item_desc(itm: NetRef) {

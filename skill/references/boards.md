@@ -33,7 +33,11 @@ other, one entry and one row each, with any caption, as many as the project has:
 A schematic is listed by its root sheet; the hub publishes with it every sheet
 the schematics name, wherever in the project they sit, and the `.kicad_pro` with
 the same path minus the extension if it is there (a `.kicad_pro` listed as a
-document refuses the push). The `.glb` is made on your machine, not on the hub:
+document refuses the push). Sheet numbers beside global labels (KiCad's
+inter-sheet references, `[2,5]`) are drawn, in KiCad and on the hub page, only when
+that `.kicad_pro` turns them on: `"schematic": {"drawing": {"intersheets_ref_show":
+true}}`. KiCad leaves them off, so a `.kicad_pro` written by a script has them off
+unless it writes that key. The `.glb` is made on your machine, not on the hub:
 `kicad-cli pcb export glb --subst-models --include-tracks --include-pads --include-zones
 --include-silkscreen --include-soldermask -o hw/main.glb hw/main.kicad_pcb` (about 41 MB
 for a 235-part board; without the tracks, pads and zones it is 10 MB, and the 3D view has
