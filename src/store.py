@@ -41,6 +41,10 @@ because the volume would shadow them.
                                            start deletes it
     <data>/sources/<digest>/log.txt        what the build of that revision printed
     <data>/compare/<pid>/<a>/<b>/<view>/   one computed comparison
+    <data>/cache/<pid>/                    the project's caches, written by its
+                                           builds; `distance.sqlite` holds the
+                                           distances they measured
+                                           (src/cadbuild/distcache.py)
     <data>/repos/<pid>.git/                the project's bare git repository,
                                            served by src/githttp.py
 
@@ -225,6 +229,12 @@ COMPARE_DIR_NAME = "compare"
 # checks they arrived; the hub half may not import the build half, so the tuple
 # is spelled three times and `tests/test_compare.py` holds the three equal.
 COMPARE_FILES = ("scene.json", "report.json")
+
+# A project's caches: `cache/<pid>/`, one directory for all of them, opened and
+# written by the project's build processes and never served. The distance
+# cache is `distance.sqlite` in it (`src/cadbuild/distcache.py`).
+CACHE_DIR_NAME = "cache"
+DISTANCE_CACHE_FILE = "distance.sqlite"
 
 # Each project's git repository: `repos/<pid>.git`, bare, created by `ensure_repo`
 # for the first git request to the project, or by the import.
@@ -515,6 +525,8 @@ class Store:
         # NOT created here, unlike `projects_dir`: a hub nobody has asked for a
         # comparison on has no `compare/` at all.
         self.compare_root = self.root / COMPARE_DIR_NAME
+        # Created by the first build that opens a cache in it, likewise.
+        self.cache_root = self.root / CACHE_DIR_NAME
         # Created by the first `ensure_repo`, for the same reason.
         self.repos_dir = self.root / REPOS_DIR_NAME
         # Publication is serialized per project: builds.json and the `latest`
@@ -1965,6 +1977,14 @@ class Store:
         path = self.pointer_dir(pid, variant, DEV_LINK) / METRICS_NAME
         return path if path.is_file() else None
 
+    def distance_cache_path(self, pid: str) -> Path:
+        """The project's distance cache, which its build process opens itself.
+
+        One file for every variant of the project: the key is the geometry, so
+        a body two variants share is measured once.
+        """
+        return self.cache_root / pid / DISTANCE_CACHE_FILE
+
     def _uncommitted_in_slot(self, pid: str) -> bool:
         """Whether the local slot holds sources that no commit has published.
 
@@ -2188,7 +2208,9 @@ class Store:
         a project that no longer exists — under a URL a re-pushed project of the
         same id would inherit. It is a cache, so losing it costs a recomputation
         and nothing else; `ignore_errors` because a project with no comparisons
-        has no such directory at all.
+        has no such directory at all. The project's caches under `cache/<pid>/`
+        go the same way, the directory whole: sqlite keeps its `-wal` and `-shm`
+        beside the distance cache.
 
         THE GIT REPOSITORY GOES TOO, and a project EXISTS when it has either its
         directory under `project/` or its repository: a repository a git request
@@ -2210,6 +2232,7 @@ class Store:
             if pdir.is_dir():
                 shutil.rmtree(pdir)
             shutil.rmtree(self.compare_root / pid, ignore_errors=True)
+            shutil.rmtree(self.cache_root / pid, ignore_errors=True)
             if repo.is_dir():
                 shutil.rmtree(repo)
         self._refresh_index()

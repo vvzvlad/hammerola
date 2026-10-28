@@ -8,8 +8,9 @@ back leaves metrics.json empty on a build that measured it, a unit that never
 returns has to be killed by the parent, and a name has to survive a pickle to
 end up in the timings table.
 
-Nothing here imports cadquery, and every test runs on a machine that has no CAD
-kernel at all. The model.py these tests write has `parts()` and `views()`
+Nothing here imports cadquery but the distance cache's test, which skips
+without it; every other test runs on a machine that has no CAD kernel at all.
+The model.py these tests write has `parts()` and `views()`
 because `load_model` insists on them, and geometry that is a plain number -- the
 mechanism under test is the queue, the budget, the merge and the process
 boundary, and none of it knows what a solid is.
@@ -285,6 +286,37 @@ def test_the_worker_caps_the_occt_pool_before_it_imports_the_model(
     assert "5" in lines[min(capped)], (
         "the worker capped at some other number than the one the build process "
         "is running with")
+
+
+def test_a_worker_answers_its_distances_from_the_build_processs_cache(
+        model_project, monkeypatch, capfd, tmp_path):
+    """The patch is per interpreter, so a spawned worker installs it again,
+    from the path the build process hands over. Two runs on one file are two
+    builds: the second takes the distance the first one measured.
+
+    The one test in this file that needs the CAD kernel: the unit measures."""
+    pytest.importorskip("cadquery", exc_type=ImportError,
+                        reason="the unit measures with the CAD kernel")
+    cache = str(tmp_path / "cache" / "distance.sqlite")
+    monkeypatch.setattr(checkunits.distcache, "installed_path", lambda: cache)
+    model_project("""
+        @checklib.check("gap")
+        def check_gap():
+            import cadquery as cq
+            left = cq.Workplane().box(1, 1, 1).val()
+            right = cq.Workplane().box(1, 1, 1).translate((5, 0, 0)).val()
+            assert abs(left.distance(right) - 4.0) < 1e-9
+    """)
+    capfd.readouterr()
+
+    for _build in range(2):
+        assert checkunits.run_units(CheckReport(0, 0)) == CheckReport(1, 0)
+
+    said = [line.split(": ", 1)[1] for line in capfd.readouterr().out.splitlines()
+            if "distance cache" in line]
+    assert said == [
+        "distance cache: 0 of 1 distances answered from the cache",
+        "distance cache: 1 of 1 distances answered from the cache"]
 
 
 # --------------------------------------------------------------------------

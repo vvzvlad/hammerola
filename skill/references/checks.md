@@ -128,6 +128,20 @@ the table the hub prints, on a failed build too. Measure before cutting: in one
 model 52% of a 495-second checks phase sat in ONE loop, while the check
 suspected beforehand took 8.9 s against a predicted ~150.
 
+**A distance the hub has measured before costs nothing.** Every
+`shape.distance(other)` and `BRepExtrema_DistShapeShape` in a project's builds
+is remembered by the exact geometry and placement of the two bodies, and a
+repeat is answered from that memory. The log says how many, under the build:
+`distance cache: 1060 of 1060 distances answered from the cache`. A build that
+moved one part pays only for the distances that part is in; the first build
+after a change to a body everything is measured against pays for all of them.
+What stays slow when every distance was answered is the check's own work —
+building the bodies it measures, boxes, booleans — and that is what the section
+table points at. (One model's checks phase went from 80 s to 14 s with all
+1060 distances answered.) Read a fast build as that, never as a check that
+stopped running, and never thin a clearance check for speed before reading that
+line.
+
 **The cost of a boolean's shape is measured, not read about**: its sign flips
 with the geometry. One `Common` against a compound of 13 bodies was five times
 dearer than 13 separate cuts on one model, and three times cheaper on 13 plain
