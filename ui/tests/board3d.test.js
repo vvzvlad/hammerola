@@ -11,8 +11,8 @@ import * as THREE from '../../static/_v/three.module.js'
 import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
 import { GLTFLoader } from '../../static/_v/GLTFLoader.js'
 import {
-  designatorOf, disposeModel, exportRoot, frameBox, fromPart, light, loadThree, mergeByMaterial, partOf, partPlace,
-  partsOf, pickedPart, plainColours, sharedGeometries,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, mergeByMaterial,
+  partOf, partPlace, partsOf, pickedPart, plainColours, sharedGeometries,
 } from '../src/board3d.js'
 
 const vec3 = (count, offset) => ({ bufferView: offset, componentType: 5126, count, type: 'VEC3' })
@@ -200,6 +200,16 @@ describe('a KiCad export', () => {
     expect(metals()).toEqual({ mat_0: 1, mat_1: 0.5, mat_36: 0 })
     plainColours(scene, parser)
     expect(metals()).toEqual({ mat_0: 0, mat_1: 0.5, mat_36: 0 })
+  })
+
+  it('makes the board\'s translucent layers write depth, and leaves a part\'s material as it was', async () => {
+    const { scene } = await load()
+    const depth = () => Object.fromEntries(meshesOf([scene]).map((mesh) => [mesh.material.name, mesh.material.depthWrite]))
+    // the loader turns depth writing off for BLEND; mat_1 stands for a translucent part
+    meshesOf(partsOf(scene).get('C523')).find((mesh) => mesh.material.name === 'mat_1').material.depthWrite = false
+    expect(depth()).toEqual({ mat_0: true, mat_1: false, mat_36: false })
+    layersWriteDepth(exportRoot(scene))
+    expect(depth()).toEqual({ mat_0: true, mat_1: false, mat_36: true })
   })
 
   it('lights a whole part in copies of its materials, never in those other parts share', async () => {

@@ -255,6 +255,29 @@ export function plainColours(scene, parser) {
 }
 
 /**
+ * Make the board's own layers write depth.
+ *
+ * KiCad writes the body, the solder mask and the silkscreen translucent
+ * (`alphaMode: BLEND`; the copper is opaque), and for such a material the loader
+ * turns depth writing off. three draws translucent meshes back to front by the
+ * depth of each one's centre, the middle of its box: the silkscreen's is 25 µm
+ * over the mask's and close beside it, so a turn of the camera reorders the two,
+ * and without depth the mask, coming second, paints over the silkscreen, as a
+ * bottom layer does through the body. With depth written, a layer that comes
+ * second is drawn only where it is nearer, so the silkscreen stays on the mask
+ * from every side, and the mask, drawn over the opaque copper, still shows the
+ * tracks through it. The parts are left as the loader makes them.
+ */
+export function layersWriteDepth(root) {
+  for (const node of root.children) {
+    if (designatorOf(node)) continue;
+    node.traverse((object) => {
+      if (object.isMesh) for (const material of [].concat(object.material)) material.depthWrite = true;
+    });
+  }
+}
+
+/**
  * Light a part in `colour`, or put it back (`colour` null).
  *
  * Parts share materials (every 0603 capacitor's body is one), so lighting one
