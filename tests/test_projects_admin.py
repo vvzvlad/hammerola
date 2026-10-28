@@ -251,3 +251,16 @@ def test_removing_a_project_takes_its_comparisons_with_it(hub):
 
     assert not entry.exists()
     assert not (hub.store.compare_root / "proj1").exists()
+
+
+def test_removing_a_project_takes_its_distance_cache_with_it(hub):
+    """The whole directory: sqlite keeps its `-wal` and `-shm` beside the file."""
+    _publish(hub)
+    cache = hub.store.distance_cache_path("proj1")
+    cache.parent.mkdir(parents=True)
+    for name in (cache.name, f"{cache.name}-wal", f"{cache.name}-shm"):
+        (cache.parent / name).write_bytes(b"")
+
+    assert _remove(hub, "proj1").status_code == 200
+
+    assert not cache.parent.exists()

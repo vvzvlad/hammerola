@@ -149,7 +149,8 @@ class BuildOutcome:
 
 
 def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
-              preview_mode="iso", force=False, baseline=None):
+              preview_mode="iso", force=False, baseline=None,
+              distance_cache=None):
     """Build the model in `project_dir` into `out_dir`, in a process of its own.
 
     `project_dir` is an untrusted tree (SPEC 8A.2 step 2). It contributes only
@@ -165,6 +166,10 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
 
     `baseline` is the `dev` slot's metrics.json, which the build diffs against.
     It is copied into the scratch directory and the copy is passed to the child.
+
+    `distance_cache` is the project's distance cache
+    (`src/cadbuild/distcache.py`), passed as the path in the store and never
+    copied: it is meant to outlive the build and answer the next one.
     """
     project_dir = Path(project_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -197,8 +202,8 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
         # is compared against the previous `dev` (the publish that overwrites
         # the slot happens after this returns, `jobs._build_and_publish`), and
         # so a parallel build swapping the slot (`store._swap_dev_slot`, two
-        # renames) cannot change what is read halfway. Scratch is the only
-        # channel for handing the child a file.
+        # renames) cannot change what is read halfway. The copy goes into
+        # scratch, so it is removed with the build.
         #
         # A failed copy costs only the comparison: the child runs without
         # `--baseline`, the "nothing to compare against" branch.
@@ -210,6 +215,8 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
                 pass
             else:
                 target += ["--baseline", str(copy)]
+        if distance_cache is not None:
+            target += ["--distance-cache", str(distance_cache)]
 
         process = run_isolated(
             target, limits=limits,

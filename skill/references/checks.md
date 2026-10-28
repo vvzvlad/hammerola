@@ -126,7 +126,27 @@ timeout raised past the hub's ceiling, or in the background.
 **When it is slow, mark `checks()` up with `checklib.section("...")`** and read
 the table the hub prints, on a failed build too. Measure before cutting: in one
 model 52% of a 495-second checks phase sat in ONE loop, while the check
-suspected beforehand took 8.9 s against a predicted ~150.
+suspected beforehand took 8.9 s against a predicted ~150. A row that dominates
+is split before its cost is put down to anything: wrap each step inside its
+loop in a section of its own. A label used again adds up over the iterations; a
+section inside another counts its own time, and the outer row includes it.
+(The time left in one wire clearance check was put down to building the wire
+tubes, by the names of the functions; split, more than half of it was boxes
+and faces rebuilt for every wire piece.)
+
+**A distance the hub has measured before costs nothing.** Every
+`shape.distance(other)` and `BRepExtrema_DistShapeShape` in a project's builds
+is remembered by the exact geometry and placement of the two bodies, and a
+repeat is answered from that memory. The log says how many, under the build:
+`distance cache: 1060 of 1060 distances answered from the cache`. A build that
+moved one part pays only for the distances that part is in; the first build
+after a change to a body everything is measured against pays for all of them.
+What stays slow when every distance was answered is the check's own work —
+building the bodies it measures, boxes, booleans — and that is what the section
+table points at. (One model's checks phase went from 80 s to 14 s with all
+1060 distances answered.) Read a fast build as that, never as a check that
+stopped running, and never thin a clearance check for speed before reading that
+line.
 
 **The cost of a boolean's shape is measured, not read about**: its sign flips
 with the geometry. One `Common` against a compound of 13 bodies was five times
@@ -200,6 +220,17 @@ def build_lid():
 It is safe because CadQuery returns new objects; never cache a builder whose
 result you mutate.
 
+**What a check derives from a body is derived once, not once per pair.** A loop
+of pieces against bodies recomputes whatever depends on one side only.
+`BoundingBox()` is not a stored field: it computes an optimal box on every
+call. Faces built from a mesh's triangles and numpy's min and max over a mesh
+are the same. Put each under `@cache` or above the loop. A shape is a valid
+`@cache` key while nothing moves it in place: its hash is its TShape and
+location, so `move()` or `locate()` changes it while it sits in the cache. (One
+wire clearance check rebuilt the boxes and the board faces for every wire
+piece; computed once, the checks phase went from 132 s to 80 s, every printed
+line unchanged.)
+
 **Triangulating a shape leaves the mesh on it, and `BoundingBox()` then
 measures the mesh**, which reads bigger: a cylinder r=5 h=10 read `zlen`
 10.000000, then 10.003108 after `mesh(0.1)`, on its flat axis. How much, and on
@@ -217,6 +248,7 @@ inside `checks()`.**
 skips pairs whose bounding boxes cannot touch; your filter can only remove pairs
 it was meant to see.
 
-**Profile with section marks or a sampling profiler, not `cProfile`**: the
-kernel spends ~89% of its time in a thread pool a main-thread profiler cannot
-see, so it reports a slow build as fast.
+**`cProfile` names functions, not lines.** It does count the kernel's time:
+while OCC's thread pool computes, the main thread waits inside the OCC call and
+the wait lands on that call. Which line of `model.py` made the call, only
+section marks say.

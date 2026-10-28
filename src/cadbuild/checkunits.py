@@ -34,6 +34,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import distcache
 from .errors import BuildError
 from .modelchecks import CheckReport, fail_site, print_check_sections
 from .modeltext import MAX_MESSAGE_CHARS, shown, shown_text
@@ -260,7 +261,8 @@ def run_units(report):
     readers = [reader for reader, _writer in channels]
     workers = [
         context.Process(target=_work,
-                        args=(root, threads, tasks, channels[index][1], index),
+                        args=(root, threads, distcache.installed_path(), tasks,
+                              channels[index][1], index),
                         name=f"check-unit-{index}", daemon=True)
         for index in range(CHECK_WORKERS)
     ]
@@ -453,7 +455,7 @@ def _print_timings(ordered, failed):
         print(f"  {shown_text(result.name)}: {result.seconds:.1f}s{note}")
 
 
-def _work(root, threads, tasks, results, index):
+def _work(root, threads, distance_cache, tasks, results, index):
     """One persistent worker: import the model once, then pull units forever.
 
     Persistence is the design: the model is imported once per worker and its
@@ -471,9 +473,14 @@ def _work(root, threads, tasks, results, index):
 
     No `dump_traceback_later`: the unit budget is a deadline the parent holds
     (see `_collect`).
+
+    The distance cache is not inherited either: `distance_cache` is the one
+    the build process installed (`distcache.installed_path`), or None.
     """
     faulthandler.enable()
     _cap_occt_threads(threads, index)
+    if distance_cache is not None:
+        distcache.install(distance_cache)
 
     from . import checklib
     from . import paths
@@ -487,6 +494,10 @@ def _work(root, threads, tasks, results, index):
     while True:
         name = tasks.get()
         if name is None:
+            hits, total = distcache.counts()
+            if total:
+                print(f"check unit worker {index}: distance cache: {hits} of "
+                      f"{total} distances answered from the cache", flush=True)
             return
         # No index in the message: the channel it arrives on IS the worker.
         results.send((_STARTED, name))
