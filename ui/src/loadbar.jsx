@@ -1,7 +1,9 @@
 // What a document view shows while its file comes in: the bytes received so
-// far against the file's size, as a label and a thin bar under it, in the place
-// and the font of the note the view draws there (BoardView3D.jsx, KicadView.jsx,
-// GerberView.jsx, DocumentView.jsx).
+// far against the file's size, as a label and a bar under it, in the middle of
+// the view (BoardView3D.jsx, KicadView.jsx, GerberView.jsx, DocumentView.jsx).
+// It covers the nearest positioned box, so a view draws it in its own
+// positioned shell (markdown, which has none, in a box of its own) rather than
+// inside the note it gives an error.
 //
 // THE SIZE IS THE DOCUMENT'S `bytes` in meta.json (src/render.py), not the
 // answer's `Content-Length`: the proxy compresses the answer, so that header
@@ -10,7 +12,7 @@
 
 import React from 'react';
 
-import { css } from './style.jsx';
+import { css, MONO } from './style.jsx';
 
 /** A running count of bytes, told to `onBytes` at most once per animation
  *  frame however many chunks land in it: the returned function counts `n`
@@ -74,9 +76,13 @@ export const painted = () => new Promise((resolve) => {
   else requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)));
 });
 
-const TRACK = 'width:200px;max-width:100%;height:3px;margin-top:8px;border-radius:2px;overflow:hidden;'
-  + 'background:var(--line)';
-const FILL = 'height:100%;background:var(--accent)';
+// No width transition on the fill: width animates on the main thread, so the
+// reading after `painted` would freeze the bar short of full.
+const CENTER = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
+  + 'justify-content:center;gap:12px;padding:24px 28px;box-sizing:border-box;pointer-events:none;'
+  + `font:400 12.5px ${MONO};color:var(--text-muted)`;
+const TRACK = 'width:260px;max-width:100%;height:4px;border-radius:2px;overflow:hidden;background:var(--line)';
+const FILL = 'height:100%;border-radius:2px;background:var(--accent)';
 
 /** `received` of `total` bytes in the unit the total reads in: megabytes from
  *  one, else kilobytes, as a document's size is written (`docSize`). */
@@ -85,15 +91,17 @@ function amount(received, total) {
   return `${(received / unit).toFixed(1)} / ${(total / unit).toFixed(1)} ${name}`;
 }
 
-/** The label and the bar, to go inside a view's note: `received` of `total`
- *  bytes, never past a full bar, or, once every byte is in (`done`) and until
- *  the view is drawn, a full bar under `Preparing…`. */
+/** The label and the bar, centred over the view's positioned shell:
+ *  `received` of `total` bytes, never past a full bar, or, once every byte is
+ *  in (`done`) and until the view is drawn, a full bar under `Preparing…`. */
 export function loadBar(received, total, done) {
   const share = done ? 1 : Math.min(1, received / total) || 0;
-  return [
-    <div key="label">{done ? 'Preparing…' : `Loading… ${amount(received, total)}`}</div>,
-    <div key="bar" data-loadbar="" style={css(TRACK)}>
-      <div style={{ ...css(FILL), width: `${share * 100}%` }} />
-    </div>,
-  ];
+  return (
+    <div data-loading="" style={css(CENTER)}>
+      <div>{done ? 'Preparing…' : `Loading… ${amount(received, total)}`}</div>
+      <div data-loadbar="" style={css(TRACK)}>
+        <div style={{ ...css(FILL), width: `${share * 100}%` }} />
+      </div>
+    </div>
+  );
 }
