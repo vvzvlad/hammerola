@@ -38,20 +38,25 @@ export function variantChoices(listing, pid, current) {
   return { label: here ? here.label : current, rows };
 }
 
+// 220px, the caption included: any wider and on a phone the revision button
+// no longer fits beside it and the header breaks into one more row.
 const BUTTON = 'display:flex;align-items:center;gap:6px;max-width:220px;padding:5px 10px;'
   + `border:1px solid var(--line);border-radius:6px;background:var(--card-bg);font:500 12px ${SANS};cursor:pointer`;
 const LABEL = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
 
 /**
- * The switcher: a button naming the variant on screen, and its menu while
- * `open`. `onToggle(event)` opens and shuts it; a click anywhere else is the
- * page's to shut it with. Nothing at all for `choices` null.
+ * The switcher: a button naming the variant on screen, captioned `variant`
+ * so a reader sees it is a choice of variants and not a label of the build,
+ * and its menu while `open`. `onToggle(event)` opens and shuts it; a click
+ * anywhere else is the page's to shut it with. Nothing at all for `choices`
+ * null.
  */
 export function VariantSwitch({ choices, open, onToggle, narrow }) {
   if (!choices) return null;
   return (
     <div style={css('position:relative;flex:none;min-width:0')}>
       <div onClick={onToggle} title="Variant" style={css(BUTTON)}>
+        <span style={css(`${FAINT_MONO};flex:none`)}>variant</span>
         <span style={css(LABEL)}>{choices.label}</span>
         <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>
       </div>
