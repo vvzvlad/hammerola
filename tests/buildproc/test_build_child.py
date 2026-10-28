@@ -755,6 +755,63 @@ def test_the_child_hands_the_parsed_baseline_on_to_the_build(tmp_path,
         "there is nothing to compare against -- and not as a missing argument")
 
 
+def test_the_distance_cache_is_installed_before_the_build_and_counted_after(
+        tmp_path, monkeypatch, capsys):
+    """`--distance-cache` from `run_build`'s argv to `distcache.install` in the child.
+
+    The path in the store goes over as it is, unlike the baseline: the cache
+    outlives the build. The composition is checked with the process never
+    started, and `_run` in this process with the same replacements as the
+    baseline test above; `distcache` imports no kernel at module scope.
+    """
+    from src.buildproc import runner
+    from src.cadbuild import build as build_module
+    from src.cadbuild import distcache, paths
+
+    composed = []
+
+    def recording_run_isolated(target_argv, **kw):
+        composed.append(list(target_argv))
+        return runner.ProcessResult(
+            exit_code=child.EXIT_BUILD_FAILED, signal=None, timed_out=False,
+            log="", log_truncated=False, dropped_bytes=0,
+            duration_seconds=0.0, stragglers=False)
+
+    monkeypatch.setattr(runner, "run_isolated", recording_run_isolated)
+    cache = tmp_path / "cache" / "distance.sqlite"
+    for distance_cache in (cache, None):
+        runner.run_build(tmp_path, tmp_path / "out", pid="abc123def456",
+                         limits=TEST_LIMITS,
+                         distance_cache=distance_cache)
+    named, absent = composed
+    assert named[named.index("--distance-cache") + 1] == str(cache)
+    assert "--distance-cache" not in absent
+
+    events = []
+
+    def recording_build(out_dir, **keywords):
+        events.append("build")
+        return "abc123def456", {}, ["model.stl"]
+
+    monkeypatch.setattr(child, "_cap_occt_threads", lambda threads: None)
+    monkeypatch.setattr(child, "_absolutise_sys_path", lambda: None)
+    monkeypatch.setattr(child.faulthandler, "enable", lambda: None)
+    monkeypatch.setattr(build_module, "build", recording_build)
+    monkeypatch.setattr(distcache, "install",
+                        lambda path: events.append(f"install {path}"))
+    monkeypatch.setattr(distcache, "counts", lambda: (2, 3))
+    monkeypatch.setattr(paths, "_root", None)
+    monkeypatch.chdir(tmp_path)
+
+    argv = ["buildproc", "--project", str(tmp_path), "--out",
+            str(tmp_path / "out"), "--result", str(tmp_path / "result.json")]
+    assert child._run(argv + ["--distance-cache", str(cache)]) == child.EXIT_OK
+    assert events == [f"install {cache}", "build"]
+    assert ("distance cache: 2 of 3 distances answered from the cache"
+            in capsys.readouterr().err)
+    assert child._parse(argv[1:])["distance_cache"] is None
+
+
 def test_the_exit_codes_do_not_collide():
     """Every code this component assigns means exactly one thing.
 

@@ -30,6 +30,22 @@
   receiving side, but it runs INSIDE the build process, so `src/render.py` still
   transcribes `cadbuild.parts.KINDS` as `PART_KINDS` rather than importing it and
   `tests/cadbuild/test_naming.py` is what holds the two equal
+- `src/cadbuild/distcache.py` — distances an earlier build of the same project
+  measured, answered again. For the build `install` puts a subclass in place of
+  OCP's `BRepExtrema_DistShapeShape`, under both names it is found by (OCP's
+  module and `cadquery.occ_impl.shapes`, which imports it at its own import), so
+  `Shape.distance`, a model's own call and `checklib.swept_clearance` all go
+  through it with no edit to any model. `Perform` looks the value up in
+  `data/cache/<pid>/distance.sqlite` under a key made of both shapes'
+  `BinTools` bytes, written when the shape is loaded (`LoadS1`/`LoadS2`) and
+  never remembered for later, because a shape changes in place (`move`,
+  `BRep_Builder.Add`); then the settings and the kernel's version. The solution
+  itself (points, supports) is never stored, and asking for it runs the kernel.
+  The build process (`src/buildproc/child.py`, `--distance-cache`) and each
+  check unit worker install it, and each prints how many distances the cache
+  answered.
+  A sqlite or OS error is one warning line and the build goes on without the
+  cache (SPEC §4, the row on distances measured in a build)
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
   `log.txt` beside it), `BuildTask` is what the pre-receive hook hands over
@@ -292,7 +308,12 @@
   `data/sources/<digest>/` holds the archive and the log of a revision published
   before git, kept by the hub of that time: the import reads them, and the pass
   at start (`Store.drop_sources`), after the imports of that start, deletes
-  each one its import commits give back
+  each one its import commits give back.
+  `data/cache/<pid>/` holds the project's caches, one directory for all of
+  them: written by its build processes, read by nothing on the serving side,
+  never served. Today it is one file, `distance.sqlite`, the distance cache
+  (`src/cadbuild/distcache.py`). It goes when the project is removed, the
+  directory whole, because sqlite keeps its `-wal` and `-shm` beside the file
 - `templates/` — page templates that ship inside the image: `index.html`,
   `build.html`, `pointer.html`, one per URL the hub serves
 - `static/` — the viewer payload that ships inside the image (`static/_v/`):

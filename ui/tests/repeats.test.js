@@ -547,13 +547,17 @@ describe('the Move row of the part menu', () => {
     // Neither door into this menu writes `sel` — a right-click selects nothing,
     // from the tree or from the scene — so Move chosen on the pins while the LID
     // stood selected would have stood the widget on the lid.
-    const { c, row } = moveOn('/model/pin', { sel: '/model/lid', selName: 'lid' })
+    const { c, row } = moveOn('/model/pin', { sel: '/model/lid', selName: 'lid',
+                                              expanded: {} })
 
     row.onClick(click)
 
     expect(c.state.sel).toBe('/model/pin')
     expect(c.state.selName).toBe('pin')
     expect(c.state.tool).toBe('move')
+    // The menu also opens on the part in the scene, where its row may sit in a
+    // folded group: the groups above it open.
+    expect(c.state.expanded['/model']).toBe(true)
     // AND THE VIEWPORT IS TOLD, which is what `set` buys over `setState`: it is
     // holding both the tool and the selection, and a page that only wrote them
     // on this side would arm a drag the library never heard about.

@@ -275,7 +275,7 @@ class CompareTask:
 
 
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
-                    baseline: Path | None):
+                    baseline: Path | None, distance_cache: Path):
     """The call the worker makes into `run_build`, written down ONCE.
 
     Every test substitutes the builder, so a test binds this expression
@@ -286,9 +286,14 @@ def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
     against, or None when the project has none. It is a PATH IN THE STORE and
     the build process never opens it: `run_build` copies the file into its own
     scratch first (see there for why the copy is the correctness).
+
+    `distance_cache` is the project's distance cache
+    (`store.distance_cache_path`), also a path in the store, which the build
+    process opens itself: it is shared by every build of the project.
     """
     return (sources, staging), {"pid": pid, "force": force,
-                                "baseline": baseline}
+                                "baseline": baseline,
+                                "distance_cache": distance_cache}
 
 
 def compare_arguments(old_dir: Path, new_dir: Path, pid: str, *,
@@ -858,7 +863,8 @@ class BuildQueue:
                 args, keywords = build_arguments(
                     task.sources, staging, task.pid, force=task.force,
                     baseline=self._store.dev_metrics_path(task.pid,
-                                                          task.variant))
+                                                          task.variant),
+                    distance_cache=self._store.distance_cache_path(task.pid))
                 outcome = self._run_build(*args, **keywords)
                 if outcome.ok:
                     docsbuild.name_views(staging, view_names)

@@ -4,7 +4,7 @@
     python -m src.buildproc.child --project DIR --out DIR --result FILE \
                                   [--preview-mode iso] [--occt-threads N] \
                                   [--hang-dump-seconds N] [--force true|false] \
-                                  [--baseline FILE]
+                                  [--baseline FILE] [--distance-cache FILE]
 
 Runs behind the fence: the wrapper set the rlimits and exec'd this, the parent
 holds a wall-clock timer, and the environment carries no credential
@@ -16,7 +16,7 @@ Before `build()`, in this order:
   2. cap the OCCT thread pool, before anything imports cadquery and creates
      the pool at one thread per core;
   3. chdir into the model's tree and pin it as the project root;
-  4. import the build half;
+  4. import the build half and install the project's distance cache;
   5. re-arm the hang watchdog, so its budget measures the model rather than
      the age of this process, then run the build.
 
@@ -72,6 +72,9 @@ _OPTIONS = {
     # process's scratch by the parent (`runner.run_build`), never a path into
     # the store. Absent when there is no `dev` build to compare against.
     "--baseline": "baseline",
+    # The project's distance cache in the store (`src/cadbuild/distcache.py`),
+    # opened by this process itself: it outlives the build, unlike scratch.
+    "--distance-cache": "distance_cache",
 }
 
 # `--force` takes a value because the parser only understands `--key value`
@@ -150,7 +153,7 @@ def _run(argv):
     # 4. Imported only now: this module must stay importable without the CAD
     # stack, which is what the tests of the surrounding machinery run on.
     try:
-        from src.cadbuild import paths
+        from src.cadbuild import distcache, paths
         from src.cadbuild.build import build
         from src.cadbuild.errors import BuildError
     except Exception:
@@ -160,6 +163,11 @@ def _run(argv):
     # Pinned rather than searched for: `project_root()` would walk up from the
     # working directory, and the directory above an upload is the hub's staging.
     paths.set_project_root(opts["project"])
+
+    # Before step 5: installing imports cadquery, a cost of the start and not
+    # of the model.
+    if opts["distance_cache"] is not None:
+        distcache.install(opts["distance_cache"])
 
     # 5. Re-arm the watchdog before the build half imports model.py, so
     # `hang_dump_seconds` means "the model has been stuck this long", not "this
@@ -187,6 +195,7 @@ def _run(argv):
         # The expected failure: the model does not build or a gate refused it.
         # Its own exit code because the hub reports it as the pusher's problem,
         # not ours (SPEC 8A.2 step 6).
+        _say_distance_cache(distcache.counts())
         _say(f"build failed: {exc}")
         return EXIT_BUILD_FAILED
     except BaseException:  # noqa: B036 -- see below
@@ -196,6 +205,7 @@ def _run(argv):
         # read the model's chosen number as if the machinery had produced it.
         _print_exc_quietly()
         return EXIT_CRASHED
+    _say_distance_cache(distcache.counts())
 
     # A claim, not a report (see the module docstring): only which files under
     # --out this build considers shippable. The project id comes from the push
@@ -209,6 +219,14 @@ def _run(argv):
         return EXIT_CRASHED
     _say(f"build ok: {pid}, {len(files)} files")
     return EXIT_OK
+
+
+def _say_distance_cache(counts):
+    """How many of the build's distances the cache answered, once it measured any."""
+    hits, total = counts
+    if total:
+        _say(f"distance cache: {hits} of {total} distances answered from the "
+             f"cache")
 
 
 def _parse(args):

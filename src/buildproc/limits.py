@@ -261,8 +261,10 @@ class Limits:
     # `_default_occt_threads` derives it from the container's cores at runtime;
     # `cpu_seconds` follows by formula and test_build_ceilings.py checks it.
     #
-    # Profile with a sampling profiler: OCC spends ~89% of its time in the pool,
-    # invisible to `cProfile` watching the main thread.
+    # `cProfile` counts the pool's time: the main thread waits inside the OCC
+    # call (a boolean's `Build`) while the pool computes, and that wall time
+    # lands on the call. What it cannot show is the pool threads' CPU time, so
+    # compare its total with the clock, not with CPU time.
     occt_threads: int = DEFAULT_OCCT_THREADS
     # `faulthandler.dump_traceback_later(N, exit=True)` in the child; None
     # disables it. Must stay under `wall_seconds` (`__post_init__` enforces it)

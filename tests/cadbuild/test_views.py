@@ -18,8 +18,9 @@ import pytest
 from src.cadbuild.errors import BuildError
 from src.cadbuild.hubspec import MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS
 from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
-from src.cadbuild.views import (at_viewer_precision, interference_pairs,
-                                prepare_views, shaped_document)
+from src.cadbuild.views import (MESH_DECIMALS, at_viewer_precision,
+                                interference_pairs, prepare_views,
+                                shaped_document)
 
 from fakes import Location, Mesh, Vector, catalogue, part, turned
 
@@ -960,15 +961,15 @@ def test_a_view_with_no_mesh_in_it_keeps_the_box_the_tessellator_measured():
     assert shaped_document(doc, prepared[0])["bb"] == doc["bb"]
 
 
-# Shortened to what the browser keeps
+# Rounded to MESH_DECIMALS
 # --------------------------------------------------------------------------
 
 def measured_document(**shape):
     """A leaf inside a group, with numbers no rounding would leave alone.
 
-    Round coordinates would hide the bug these tests are about: every float
-    here needs more decimals than a float32 holds, so a buffer that came back
-    unshortened is visible rather than merely likely.
+    Round coordinates would hide the bug these tests are about: the floats
+    here need more decimals than MESH_DECIMALS, so a buffer that came back
+    unrounded is visible rather than merely likely.
     """
     leaf = {"name": "body", "id": "/Group/housing/body", "key": "body",
             "color": "#c8102e", "alpha": 0.5533333333333333,
@@ -1002,23 +1003,25 @@ def mesh_of(doc):
     return doc["parts"][0]["parts"][0]["shape"]
 
 
-def test_every_number_written_is_the_one_the_browser_would_have_kept():
+def test_every_number_moves_by_at_most_half_a_step_and_is_written_short():
     """The whole specification, and the reason this is allowed to drop digits.
 
-    The viewer loads these buffers into a `Float32Array`, so a coordinate
-    written to float64 precision is truncated on arrival anyway. What is
-    written has to be float32-equal to what the tessellator measured: the same
-    mesh, spelled shorter.
+    Each number is rounded to MESH_DECIMALS: it may move by half a step (0.05
+    um on a coordinate), and it carries no more decimals than that.
     """
+    half_step = 0.5 * 10.0 ** -MESH_DECIMALS
+
+    def holds(before, after):
+        assert np.allclose(before, after, rtol=0.0, atol=half_step * (1 + 1e-9))
+        assert all(value == round(value, MESH_DECIMALS) for value in after)
+
     was = mesh_of(measured_document())
     now = mesh_of(at_viewer_precision(measured_document()))
     for name in ("vertices", "normals", "obj_vertices"):
-        assert np.array_equal(np.asarray(was[name], dtype=np.float32),
-                              np.asarray(now[name], dtype=np.float32))
+        holds(was[name], now[name])
         assert now[name] != was[name], f"{name} kept its float64 spelling"
     for before, after in zip(was["edges"], now["edges"]):
-        assert np.array_equal(np.asarray(before, dtype=np.float32),
-                              np.asarray(after, dtype=np.float32))
+        holds(before, after)
     assert now["edges"] != was["edges"]
 
 
@@ -1026,9 +1029,9 @@ def test_nothing_but_the_mesh_buffers_is_rewritten():
     """Two halves of one rule: only floats, and only floats inside `shape`.
 
     The indices beside them are what the viewer reads into a `Uint32Array`, so
-    a shortened one is a different mesh rather than the same one written
+    a rounded one is a different mesh rather than the same one written
     shorter. Everything outside `shape` is nobody's buffer at all -- a `loc`
-    cut to float32 would move the part.
+    rounded to MESH_DECIMALS would move the part.
     """
     was = measured_document()["parts"][0]["parts"][0]
     now = at_viewer_precision(measured_document())["parts"][0]["parts"][0]
@@ -1055,7 +1058,7 @@ def test_a_buffer_that_is_empty_or_absent_survives(shape):
 
 
 def test_the_document_really_gets_shorter():
-    """The point of the whole thing: 6.65 MB -> 4.27 MB on a real mesh."""
+    """The point of the whole thing: fewer digits, a smaller file."""
     assert len(json.dumps(at_viewer_precision(measured_document()))) < \
         len(json.dumps(measured_document()))
 
@@ -1132,11 +1135,8 @@ def test_a_real_export_is_a_document_the_hub_would_accept(out_dir):
     # The one claim about the NUMBERS, and it belongs here because this is the
     # only test that runs the real exporter: every other one calls
     # `at_viewer_precision` directly, so dropping its call out of export_views
-    # would leave them green while every view file silently grew back. The
-    # predicate has to go through `str`, not `np.float32(v) == v` -- the
-    # tessellator already emits float32 values, so the comparison alone is true
-    # of the long form as well.
-    assert all(value == float(str(np.float32(value)))
+    # would leave them green while every view file silently grew back.
+    assert all(value == round(value, MESH_DECIMALS)
                for value in board["shape"]["vertices"])
 
 
@@ -1166,9 +1166,11 @@ def test_a_real_export_with_a_mesh_in_it_is_a_document_the_hub_would_accept(
         return cq.Workplane("XY").box(10, 10, 10.1).translate((x, 0, 0))
 
     # Standing well clear of both parts, so the widened box is visibly the
-    # union rather than whatever the solids alone measured.
+    # union rather than whatever the solids alone measured. The odd offset
+    # gives the mesh coordinates more decimals than MESH_DECIMALS, so an
+    # unrounded mesh buffer fails the last assertion.
     scan = trimesh.creation.box(extents=(6, 6, 6))
-    scan.apply_translation((100.0, 0.0, 0.0))
+    scan.apply_translation((100.123456, 0.0, 0.0))
     cat = {"lid": {"shape": box(0), "mesh": None, "kind": "printable",
                    "color": None, "note": None},
            "cap": {"shape": box(20), "mesh": None, "kind": "printable",
@@ -1195,10 +1197,11 @@ def test_a_real_export_with_a_mesh_in_it_is_a_document_the_hub_would_accept(
     # 12 triangles for a box, and the mesh's own coordinates: nothing moved it,
     # because `at` is refused on a mesh and its `loc` is the identity.
     assert leaves[1]["shape"]["triangles_per_face"] == [12]
-    assert max(leaves[1]["shape"]["vertices"]) == pytest.approx(103.0)
+    assert max(leaves[1]["shape"]["vertices"]) == \
+        pytest.approx(103.123456, abs=1e-4)
     assert leaves[1]["loc"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
     # The scene's own extent, which the tessellator measured without the mesh.
-    assert doc["bb"]["xmax"] == pytest.approx(103.0)
-    # And the mesh buffers were shortened like every other one in the file.
-    assert all(value == float(str(np.float32(value)))
+    assert doc["bb"]["xmax"] == pytest.approx(103.123456, abs=1e-4)
+    # And the mesh buffers were rounded like every other one in the file.
+    assert all(value == round(value, MESH_DECIMALS)
                for value in leaves[1]["shape"]["vertices"])

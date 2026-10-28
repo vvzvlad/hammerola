@@ -20,17 +20,30 @@ hub reads its EDIT_TOKEN through src/settings.py.
 """
 
 import json
+import sys
 
 import pytest
 
-from src.cadbuild import checklib, paths
+from src.cadbuild import checklib, distcache, paths
+
+
+def _distance_cache_is_clean():
+    """No patch on either name the kernel's class is looked up by, and nothing
+    `distcache.install` remembers: connection, path, version, counters, warning."""
+    patched = [name for name in distcache._MODULES
+               if getattr(getattr(sys.modules.get(name), distcache._NAME, None),
+                          "__module__", None) == distcache.__name__]
+    return (not patched and distcache._original is None
+            and distcache._connection is None and distcache._path is None
+            and distcache._version is None
+            and distcache.counts() == (0, 0) and not distcache._warned)
 
 
 @pytest.fixture(autouse=True)
 def guard_module_state():
     """Fail the test that dirties shared state, not the one that trips over it.
 
-    Five pieces of module-level mutable state live in this package, and every
+    Six pieces of module-level mutable state live in this package, and every
     one of them is read by something far away from where it is written:
 
       * `paths._root` -- the project this run is about. Set by the fixture
@@ -62,6 +75,10 @@ def guard_module_state():
         publishes it as `assembly.clearance` -- exactly the same distance
         `_INTERFERENCE` is read from, and the same failure: a gap left behind
         turns up inside an unrelated test's metrics.
+      * `distcache` -- the subclass it puts in place of the kernel's
+        `BRepExtrema_DistShapeShape`, its sqlite connection and the counts it
+        keeps. A patch left behind answers every later test's
+        distances out of a cache file in a deleted tmp_path.
 
     `isolated_project` REQUESTS this fixture by name rather than merely being
     declared after it, and that is the only thing that gets the ordering right:
@@ -79,17 +96,17 @@ def guard_module_state():
     """
     assert (paths._root is None and checklib._INTERFERENCE == {}
             and checklib._SECTIONS == {} and checklib._CLEARANCE == {}
-            and checklib._UNITS == {}), (
+            and checklib._UNITS == {} and _distance_cache_is_clean()), (
         "src.cadbuild module state was already dirty when this test started, so "
         "an EARLIER test left it behind; this test is where it surfaced, not "
         "where it was caused")
     yield
     assert (paths._root is None and checklib._INTERFERENCE == {}
             and checklib._SECTIONS == {} and checklib._CLEARANCE == {}
-            and checklib._UNITS == {}), (
+            and checklib._UNITS == {} and _distance_cache_is_clean()), (
         "this test left src.cadbuild module state behind (paths._root, "
-        "checklib._INTERFERENCE, checklib._SECTIONS, checklib._CLEARANCE or "
-        "checklib._UNITS). Without this assertion the failure would have landed "
+        "checklib._INTERFERENCE, checklib._SECTIONS, checklib._CLEARANCE, "
+        "checklib._UNITS or distcache). Without this assertion the failure would have landed "
         "on some unrelated test later, under one particular collection order")
 
 
