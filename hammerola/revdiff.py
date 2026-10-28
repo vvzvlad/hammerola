@@ -26,7 +26,9 @@ from hammerola import project, repo
 from hammerola.hub import HubError
 from hammerola.sources import SHORT_ID_CHARS, hub_for, resolve_revision
 from hammerola.metricsdiff import (METRICS_NAME, PHYSICAL_FIELDS, metrics_diff,
-                                   moved_fields, unchanged_code_moved_geometry)
+                                   moved_fields, toolchain_diff,
+                                   unchanged_code_moved_geometry,
+                                   unchanged_code_note)
 
 
 def run(args) -> int:
@@ -143,11 +145,9 @@ def _print_geometry(before, after) -> None:
     # source.
     shifted = unchanged_code_moved_geometry(before, after)
     if shifted:
-        print(f"  ! the geometry moved while the model's code did not "
-              f"({', '.join(shifted)}).")
-        print("    The same source built into a different solid: compare the "
-              "CAD stack the two")
-        print("    builds ran on, or the model is not deterministic.")
+        print(f"  {unchanged_code_note(before, after, shifted)}")
+    for line in toolchain_diff(before, after):
+        print(f"  {line}")
 
 
 def _print_code(root, pid: str, old: str, new: str) -> None:
