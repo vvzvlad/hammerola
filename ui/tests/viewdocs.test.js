@@ -28,7 +28,7 @@ import CopyLink from '../src/copylink.jsx'
 import DocumentView, { DocumentLayers } from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
-import { STATE, VIEWPORT_TAG } from '../src/events.js'
+import { ERROR, MODEL, PROGRESS, STATE, VIEWPORT_TAG } from '../src/events.js'
 import { css } from '../src/style.jsx'
 import { DocFile, documentRows, menuRow, SheetRows, toolBar, viewList, viewMenuStyle } from '../src/viewlist.jsx'
 import { guardSubscribers } from './addressguard.js'
@@ -856,5 +856,48 @@ describe('a comment on a KiCad design', () => {
     row(0)
     row(1)
     expect([c.state.doc, c.state.docFocus]).toEqual([null, null])
+  })
+})
+
+describe('the bar over the model while its view file comes in', () => {
+  /** The page with its own listeners on the window, where the viewport's
+   *  events bubble up to. */
+  const mounted = () => {
+    // `readNotes` on mount, with no `localStorage` in this runner
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const c = makeComponent(HammerolaViewer, {
+      setState: replaceState, sync: vi.fn(),
+      state: { meta: meta(), view: 'closed', rail: null, menu: { id: null, x: 0, y: 0 }, token: null },
+    })
+    c.load = vi.fn(async () => {})
+    c.captureHome = vi.fn()
+    c.componentDidMount()
+    onTestFinished(() => {
+      c.componentWillUnmount()
+      vi.restoreAllMocks()
+    })
+    return c
+  }
+  const tell = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }))
+  const coming = (received, done) => ({ view: 'closed', received, total: 40_700_000, done })
+  const bars = (c) => collect(c.render(), (el) => ('data-loading' in el.props ? el : undefined))
+
+  it('says how much is in until the view renders or fails, and is not drawn without a size', () => {
+    const c = mounted()
+    tell(PROGRESS, coming(2_100_000, false))
+    expect(drawn(c)).toContain('Loading… 2.1 / 40.7 MB')
+    tell(PROGRESS, coming(40_700_000, true))
+    expect(drawn(c)).toContain('Preparing…')
+    tell(MODEL, { tree: { id: '/model', name: 'model', children: [] }, view: 'closed', live: false })
+    expect(bars(c)).toEqual([])
+
+    tell(PROGRESS, coming(2_100_000, false))
+    expect(bars(c)).toHaveLength(1)
+    tell(ERROR, { stage: 'load', view: 'closed', message: 'closed.json -> HTTP 503' })
+    expect(bars(c)).toEqual([])
+
+    // A comparison's scene, which meta.json gives no size.
+    tell(PROGRESS, { view: 'compare:closed', received: 2_100_000, done: false })
+    expect(bars(c)).toEqual([])
   })
 })

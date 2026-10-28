@@ -73,7 +73,7 @@ import React from 'react';
 
 import {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
-  PLACE, PIN, MODEL, ERROR, TOOL, VIEWPORT_TAG,
+  PLACE, PIN, MODEL, ERROR, TOOL, PROGRESS, VIEWPORT_TAG,
 } from './events.js';
 // The page's address and its history, every read of them and every write.
 import {
@@ -126,6 +126,9 @@ import { chromeView } from './chromeview.js';
 // `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
 // document the page cannot draw under the extension it is named by.
 import { COMMENTABLE, docExt, DocumentLayers, FILE_TYPE } from './DocumentView.jsx';
+// The bar the document views draw while their file comes in, drawn over the
+// model while the viewport fetches a view file.
+import { loadBar } from './loadbar.jsx';
 // The type the downloads menu knows the board's Gerbers by.
 import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
@@ -1032,6 +1035,9 @@ export default class HammerolaViewer extends React.Component {
     this.state = {
       // -- what the hub said
       meta: null, builds: null, tree: null, error: null, viewError: null,
+      // The view file the viewport is fetching, as its last PROGRESS told it
+      // (`{view, received, total, done}`), until the view renders or fails.
+      modelLoad: null,
       // `variants.json`, the switcher's list (variants.jsx), or null until it
       // comes and when it does not.
       variants: null,
@@ -1417,6 +1423,9 @@ export default class HammerolaViewer extends React.Component {
       // `onModel` is one: this map is built in `componentDidMount`, so anything
       // decided inside it can only be reached by mounting the whole page.
       [ERROR]: (e) => this.onViewError(e.detail),
+      // The view file coming in. `setState`, not `set()`: this tells the
+      // viewport nothing, and `set()` would send it `hmr:state` once a frame.
+      [PROGRESS]: (e) => this.setState({ modelLoad: e.detail }),
       // The hold key, which the viewport owns. Display only — writing `cut` into
       // the tool this interface owns would make the release ambiguous, since the
       // viewport reports back the tool IT believes we set when the key comes up.
@@ -2633,6 +2642,7 @@ export default class HammerolaViewer extends React.Component {
       ...stagedSelection(overlay, tree, s, compared),
       view: compared ? s.view : (d.view || s.view),
       viewError: null,
+      modelLoad: null,
       // Both belonged to the scene that has just been torn down: the
       // viewport clears its own tape and offsets on every load, and a
       // measurement left here would describe a model that is gone. The moves
@@ -2759,6 +2769,7 @@ export default class HammerolaViewer extends React.Component {
   onViewError(detail) {
     this.setState({
       viewError: (detail && detail.message) || 'the viewport could not render this view',
+      modelLoad: null,
       ...(this._refit ? { tree: null } : null),
     });
   }
@@ -3352,7 +3363,8 @@ export default class HammerolaViewer extends React.Component {
    *  only when the last `sync` did hold it: a document that has its file at
    *  mount (a file the page does not draw) tells it before the page's own
    *  first `sync`, which then hands the view over itself, and a second
-   *  `hmr:state` before the model is drawn starts its load again. */
+   *  `hmr:state` before the model is drawn is one the viewport has to ignore
+   *  (`fetching` in viewport/element.js). */
   docReady() {
     if (this._modelFree) return;
     this._modelFree = true;
@@ -4741,7 +4753,8 @@ export default class HammerolaViewer extends React.Component {
    * The document id is taken as a load takes it (`docOpen` looks it up).
    * Through `set`, because closing a document releases a viewport held behind
    * it (`sync`), and one `set` for both, because a second `hmr:state` before
-   * the model is drawn would start its load again.
+   * the model is drawn is one the viewport has to ignore (`fetching` in
+   * viewport/element.js).
    */
   followEntry() {
     const views = (this.state.meta && this.state.meta.views) || [];
@@ -5220,6 +5233,9 @@ export default class HammerolaViewer extends React.Component {
       viewError: s.viewError || '',
       viewErrorStyle: 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:420px;padding:14px 16px;background:var(--card-bg);border:1px solid var(--danger-line);border-radius:9px;box-shadow:0 8px 28px var(--shadow);z-index:14;text-align:center;display:' + (s.viewError ? 'block' : 'none'),
       retryView: () => this.retryView(),
+      // The view file on its way in, or null: drawn only against a size the
+      // build published, which a comparison's scene does not have.
+      modelLoad: s.modelLoad && s.modelLoad.total > 0 ? s.modelLoad : null,
 
       notCompare: !s.compare, compare: s.compare,
       hasTree: !!tree,
@@ -6025,6 +6041,11 @@ export default class HammerolaViewer extends React.Component {
               ref: this.host,
               style: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
             })}
+
+            {/* The view file the viewport is fetching, in the middle of the
+                model. A document laid over the model covers it: its layer
+                stands at z-index 16 (`DOC_LAYER`), the bar has none. */}
+            {v.modelLoad && loadBar(v.modelLoad.received, v.modelLoad.total, v.modelLoad.done)}
 
             {/* A document chosen in the view list, laid OVER the model rather
                 in place of it: the viewport stays mounted underneath, camera,
