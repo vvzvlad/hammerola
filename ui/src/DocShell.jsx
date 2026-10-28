@@ -95,7 +95,8 @@ const BAR = `${BAR_LAYER}18`;
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
  * the document when its view can do them (`tools`, `onTools` in
  * DocumentView.jsx) and are out of service when it cannot. A narrow window
- * keeps the list and Fit. `onRename(doc)`, with the token, puts a pencil
+ * keeps the list and Fit. AR, which only the model's page has, is not drawn
+ * here. `onRename(doc)`, with the token, puts a pencil
  * before each row's name (`documentRows`). Pure.
  */
 export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename }) {

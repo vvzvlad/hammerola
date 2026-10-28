@@ -285,8 +285,8 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     c.state = { ...c.state, ar }
     return c
   }
-  /** The row `View in AR` the page drew, if any. */
-  const arRows = (c) => collect(c.render(), (el) => (el.key === 'ar' ? el : undefined))
+  /** The button `View in AR` the page drew, if any. */
+  const arButtons = (c) => collect(c.render(), (el) => (el.key === 'ar' ? el : undefined))
   /** A promise and the hand that settles it, for an export still running. */
   const deferred = () => {
     let resolve
@@ -324,31 +324,25 @@ describe('View in AR, in a browser with AR Quick Look', () => {
   /** Long enough for a settled export to have been acted on. */
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-  it('is a row of the menu, which a strip of two views has to become to hold it', () => {
-    expect(component({ views: someViews(2) }).computed().arRow).toBe(null)
+  it('is a button of the bar, and a strip of two views stays a strip', () => {
+    expect(component({ views: someViews(2) }).computed().arBtn).toBe(null)
     const c = arPage()
-    expect(c.computed().viewMenu).toBe(true)
-    const [row] = arRows(c)
-    expect(texts(row)).toContain('View in AR')
-    expect(typeof row.props.onClick).toBe('function')
-  })
-
-  it('makes no file as the menu opens or closes', () => {
-    const { c, usdz } = exporting()
-    c.computed().viewsToggle(click)
-    c.computed().viewsToggle(click)
-    expect(usdz).not.toHaveBeenCalled()
-    expect(c.state.ar).toBe(null)
+    expect(c.computed().viewMenu).toBe(false)
+    const [button] = arButtons(c)
+    expect(texts(button)).toContain('AR')
+    expect(typeof button.props.onClick).toBe('function')
+    // A phone's window is narrow, where the bar keeps only the views and Fit.
+    expect(arButtons(arPage({ narrow: true }))).toHaveLength(1)
   })
 
   it('makes the file on a tap and hands it to Quick Look at 1:1 through a link Safari takes for one', async () => {
     const { blobs, clicked } = quickLook()
     const file = deferred()
     const { c, usdz } = exporting(file)
-    arRows(c)[0].props.onClick(click)
-    // out of service, and saying so, while the file is made
-    expect(c.computed().arRow).toEqual({ onClick: null, hint: 'preparing…' })
-    expect(arRows(c)[0].props.onClick).toBeUndefined()
+    arButtons(c)[0].props.onClick(click)
+    // out of service while the file is made
+    expect(c.computed().arBtn).toEqual({ onClick: null })
+    expect(arButtons(c)[0].props.onClick).toBeUndefined()
     await vi.waitFor(() => expect(usdz).toHaveBeenCalledTimes(1))
     file.resolve(new Uint8Array(3))
     await vi.waitFor(() => expect(c.state.ar).toBe(null))
@@ -361,25 +355,25 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     expect(URL.revokeObjectURL.mock.calls).toEqual([['blob:https://hub/1']])
   })
 
-  it('says it failed where no file could be made, opens nothing and can be tapped again', async () => {
+  it('says in a toast it failed where no file could be made, opens nothing and can be tapped again', async () => {
     const { blobs, clicked } = quickLook()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const file = deferred()
     const { c } = exporting(file)
-    c.computed().arRow.onClick()
+    c.toast = vi.fn()
+    c.computed().arBtn.onClick()
     file.resolve(null)
-    await vi.waitFor(() => expect(c.state.ar).toEqual({ failed: true }))
-    expect([blobs, clicked]).toEqual([[], []])
-    const [row] = arRows(c)
-    expect(texts(row)).toContain('failed')
-    expect(typeof row.props.onClick).toBe('function')
+    await vi.waitFor(() => expect(c.toast).toHaveBeenCalledWith('Could not make the AR file'))
+    expect([blobs, clicked, c.state.ar]).toEqual([[], [], null])
+    const [button] = arButtons(c)
+    expect(typeof button.props.onClick).toBe('function')
   })
 
   it('writes nothing once the page is gone', async () => {
     const { blobs, clicked } = quickLook()
     const file = deferred()
     const { c, usdz } = exporting(file)
-    c.computed().arRow.onClick()
+    c.computed().arBtn.onClick()
     await vi.waitFor(() => expect(usdz).toHaveBeenCalledTimes(1))
     c.componentWillUnmount()
     const writes = c.setState.mock.calls.length
@@ -388,11 +382,12 @@ describe('View in AR, in a browser with AR Quick Look', () => {
     expect([c.setState.mock.calls.length, blobs, clicked]).toEqual([writes, [], []])
   })
 
-  it('has no row over a document, which is not the model', () => {
+  it('stays in the bar over a document, which is not the model, out of service', () => {
     const doc = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
     const c = arPage()
     c.state = { ...c.state, doc: 'notes.md', meta: { ...c.state.meta, documents: [doc] } }
-    expect(c.computed().arRow).toBe(null)
-    expect(arRows(c)).toHaveLength(0)
+    expect(c.computed().arBtn.onClick).toBe(null)
+    const [button] = arButtons(c)
+    expect(button.props.onClick).toBeUndefined()
   })
 })

@@ -59,9 +59,6 @@ export const GROUP_HEAD = `padding:8px 14px 3px;font:600 10px ${MONO};color:var(
 /** The heading the model's views stand under. */
 export const VIEWS_GROUP = '3D VIEWS';
 
-/** The heading `View in AR` stands under, the last of the card (`arGroup`). */
-export const AR_GROUP = 'AR';
-
 /** The heading a document's row stands under: a member of a KiCad design under
  *  KICAD — its schematic, board and the board's 3D model are one design the
  *  page moves between (`Show in …`), not three kinds of file — a file the page
@@ -366,24 +363,6 @@ export class SheetRows extends React.Component {
   }
 }
 
-// The row `View in AR` (`viewList`) out of service while its file is made.
-const AR_OFF = `${menuRow(false)};${OFF}`;
-
-/**
- * The heading and the row of `View in AR` (`arRow` in chromeview.js), where
- * the browser has AR Quick Look and a model view is on screen: a row like the
- * card's others, whose `onClick` makes the file and opens Quick Look
- * (`openAr` in HammerolaViewer.jsx). Without `onClick` it is out of service;
- * `hint` says why, or that the last try failed.
- */
-const arGroup = (ar) => [
-  <div key="group:ar" style={css(GROUP_HEAD)}>{AR_GROUP}</div>,
-  <div key="ar" onClick={ar.onClick || undefined} style={css(ar.onClick ? menuRow(false) : AR_OFF)}>
-    <span style={css(DOC_LABEL)}>View in AR</span>
-    <span style={css(DOC_HINT)}>{ar.hint}</span>
-  </div>,
-];
-
 /**
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
@@ -401,10 +380,8 @@ const arGroup = (ar) => [
  * It is also what shrinks when the bar is short of room (`FLOAT_BAR`): a shrink
  * far above the other controls' and no minimum width, so the name is cut before
  * any other label wraps.
- *
- * `ar` is the card's last group, `View in AR` (`arGroup`), or null.
  */
-export function viewList({ label, open, onToggle, views = [], documents = [], wide = true, ar = null }) {
+export function viewList({ label, open, onToggle, views = [], documents = [], wide = true }) {
   return (
     <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
@@ -414,7 +391,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
       <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, wide))}>
         {/* One array per group, so that a view and a document sharing a key
             are siblings of different arrays rather than of one. */}
-        {[...menuGroups(views, documents).map(([head, rows]) => [
+        {menuGroups(views, documents).map(([head, rows]) => [
           <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
           ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
             <div key={t.key} onClick={t.onClick} className={t.onRename ? RENAME_HOST : undefined}
@@ -426,7 +403,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
               <span style={css(DOC_HINT)}>{t.hint}</span>
             </div>
           ))),
-        ]), ...(ar ? [arGroup(ar)] : [])]}
+        ])}
       </div>
     </div>
   );
@@ -522,9 +499,7 @@ export function DocFile({ href }) {
  * (chromeview.js), the page of documents builds them (`docBar` in
  * DocShell.jsx):
  *   the views    `viewMenu` (a menu rather than a strip), `viewLabel`,
- *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`, and
- *                `arRow`, the menu's `View in AR` (`viewList`), which only
- *                the model's page has;
+ *                `viewsOpen`, `viewsToggle`, `viewTabs`, `docRows`;
  *   the document `docHref`, the address the open document's file downloads
  *                from (`docUrl` in DocumentView.jsx), or null with none open:
  *                Download (a link that takes the file) and Copy link for it,
@@ -536,7 +511,10 @@ export function DocFile({ href }) {
  *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
  *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
  *                and `tSettings`. A tool out of service is drawn `OFF` and
- *                takes no click, so its handler may be absent.
+ *                takes no click, so its handler may be absent. And `arBtn`,
+ *                `View in AR` beside Fit (`{ onClick }`, `onClick` null out of
+ *                service), or null: only the model's page has it, and only in
+ *                a browser with AR Quick Look.
  * `menus` are the cards `Add primitive` and Settings open (`proposal`,
  * `settings`), which only the model's page has. Pure. What it returns goes
  * straight into the layer (`BAR_LAYER`): the bar alone, or with a document
@@ -559,12 +537,12 @@ function floatBar(b, menus) {
     <div style={css(FLOAT_BAR)}>
       {/* A STRIP WHILE THE VIEWS FIT AND NOTHING ELSE NEEDS A ROW, ELSE A
           MENU (`viewMenu` in chromeview.js): the views past `VIEW_TABS_MAX`,
-          the build's documents under them, `View in AR` last. A pill's
+          the build's documents under them. A pill's
           tooltip starts with the view's whole name: a short bar cuts its
           caption, and the strip has no menu to read it in. */}
       {b.viewMenu ? (
         viewList({ label: b.viewLabel, open: b.viewsOpen, onToggle: b.viewsToggle,
-          views: b.viewTabs, documents: b.docRows, wide: b.showTools, ar: b.arRow })
+          views: b.viewTabs, documents: b.docRows, wide: b.showTools })
       ) : (
         <div className={b.renameView ? RENAME_HOST : undefined} style={css(TAB_STRIP)}>
           {b.viewTabs.map((t) => (
@@ -615,6 +593,15 @@ function floatBar(b, menus) {
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
         Fit
       </div>
+      {/* View in AR, beside Fit at every width (`arBtn` in chromeview.js):
+          on every view, out of service where it cannot be, so the bar keeps
+          its shape from view to view (AGENTS.md). */}
+      {b.arBtn && (
+        <div key="ar" onClick={b.arBtn.onClick || undefined} title="view the model in AR at 1:1" style={css(quietBtn(!b.arBtn.onClick))}>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" /><path d="M2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" /></svg>
+          AR
+        </div>
+      )}
       {b.showTools && (
         <>
           <div onClick={b.grabFrame} title="save the current frame as a PNG" style={css(b.frameBtnStyle)}>
