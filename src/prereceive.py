@@ -28,6 +28,12 @@ push is not (`Store.promote_dev`). A draft,
 whether or not the hub has the branch yet. A variant's name is the branch's,
 held to `SAFE_ID`: it is a segment of the variant's address.
 
+A deleted branch takes its variant with it, except `main`, whose deletion is
+refused as any other ref's is. The answer only queues the variant
+(`Store.queue_variant_removal`): git deletes the ref after it and the push can
+still fail, so the variant goes at the end of the request
+(`githttp.end_of_request`).
+
 No lock of its own: git writes the ref, and of two pushes racing for one branch
 the loser gets `! [remote rejected]` with its revision already published.
 
@@ -58,18 +64,21 @@ from src.errors import PublishError
 from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR, STATE_DONE,
                       STATE_FAILED, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
                       BuildTask)
-from src.store import (BRANCH_PREFIX, DEV_LINK, JSON_TMP_PREFIX,
-                       PAYLOAD_DIGEST_FILE, SOURCE_PREFIX, Store, build_path,
-                       git_failure, published_stamp, run_git)
+from src.store import (BRANCH_PREFIX, DEV_LINK, DRAFT_PREFIX, JSON_TMP_PREFIX,
+                       MAIN_BRANCH, MAIN_REF, PAYLOAD_DIGEST_FILE,
+                       SOURCE_PREFIX, Store, build_path, git_failure,
+                       published_stamp, run_git)
 
 # What git writes for a ref that does not exist on one side of an update.
 ZERO = "0" * 40
 
-DRAFT_PREFIX = "refs/drafts/"
-
 # The refusal of a branch or a draft whose name cannot be a variant's.
 VARIANT_NAME_REFUSAL = ("variant (branch) name must be letters, digits, - and "
                         "_, up to 64")
+
+# The refusal of a push deleting the default variant's branch.
+MAIN_DELETION_REFUSAL = (f"the default variant {MAIN_BRANCH} cannot be deleted; "
+                         f"hammerola rm removes the whole project")
 
 PROJECT_FILE = "project.json"
 
@@ -156,6 +165,7 @@ class Plan:
     target: str | None   # the commit to build, None for nothing
     variant: str         # the branch, or the variant of the draft
     unchanged: bool = False
+    delete: bool = False  # the branch is deleted, and its variant goes with it
 
 
 def parse(body: bytes, store: Store) -> HookRequest:
@@ -223,6 +233,15 @@ def run(store: Store, jobs, builds, request: HookRequest, say) -> bool:
         logger.warning(f"push {request.pid} {refusal.ref}: refused: {refusal}")
         say(str(refusal))
         return False
+    # The commit each deleted branch stands on: what only it reached goes
+    # (`Store.remove_variant`).
+    tips = {ref: old for old, new, ref in request.updates}
+    for plan in plans:
+        if plan.delete:
+            say(f"removing the variant {plan.variant} with every revision no "
+                f"other variant has")
+            store.queue_variant_removal(request.pid, plan.variant,
+                                        tips[plan.ref])
     return True
 
 
@@ -230,7 +249,16 @@ def _look(store: Store, repo, pid: str, env: dict, old: str, new: str,
           ref: str) -> Plan | None:
     """The first pass over one ref: refuse it, or say what to build for it."""
     if new == ZERO:
-        raise Refused(ref, f"{ref} cannot be deleted on this hub")
+        if ref == MAIN_REF:
+            raise Refused(ref, MAIN_DELETION_REFUSAL)
+        if not ref.startswith(BRANCH_PREFIX):
+            raise Refused(ref, f"{ref} cannot be deleted on this hub")
+        name = ref[len(BRANCH_PREFIX):]
+        if not store.valid_variant(name):
+            raise Refused(ref, VARIANT_NAME_REFUSAL)
+        # Nothing to build: `run` queues the variant once every ref is
+        # accepted, and it is removed after git has deleted the branch.
+        return Plan(ref, False, "", None, name, delete=True)
     if ref.startswith(BRANCH_PREFIX):
         draft, name = False, ref[len(BRANCH_PREFIX):]
     elif ref.startswith(DRAFT_PREFIX):

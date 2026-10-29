@@ -1,9 +1,11 @@
 """On-disk layout and atomic publication.
 
-Nothing here ever deletes a published build: there is no retention window and no
-age ceiling (SPEC 5.3, 7.3). Every build URL is served with a year of
-`immutable`, so a pasted link resolves for as long as the volume does; the
-volume grows monotonically, and running out of space is manual work.
+Nothing here deletes a published build on its own: there is no retention window
+and no age ceiling (SPEC 5.3, 7.3). A build goes only when a person removes its
+project (`remove_project`) or its variant (`remove_variant`). Every build URL
+is served with a year of `immutable`, so a pasted link resolves until its
+project or its variant is removed; the volume grows monotonically, and running
+out of space is manual work.
 
 It grows by what changed rather than by what was pushed: after every publish
 `_dedupe` makes each file of a project's builds with the same sha256 a hard link
@@ -250,6 +252,10 @@ REPO_SUFFIX = ".git"
 MAIN_BRANCH = "main"
 BRANCH_PREFIX = "refs/heads/"
 MAIN_REF = f"{BRANCH_PREFIX}{MAIN_BRANCH}"
+# A variant's draft, `refs/drafts/<variant>`: a commit published into that
+# variant's `dev` slot (src/prereceive.py). Here and not there, because
+# `remove_variant` deletes it and prereceive imports this module.
+DRAFT_PREFIX = "refs/drafts/"
 
 # The trailer of an imported commit: `Hammerola-Import: <pid>/<build>`. A key of
 # the hub's own, so a trailer an author writes means nothing here; the pid is in
@@ -303,7 +309,9 @@ LATEST_LINK_PREFIX = ".latest-"  # a symlink about to be renamed over `latest`
 # A directory renamed out of the way while a new one takes its name: the `dev`
 # slot, a comparison cache entry, a repository the import replaces. POSIX
 # cannot replace a non-empty directory under a fixed name in one step — see
-# `_swap_dev_slot`. Published builds are never parked: they are never deleted.
+# `_swap_dev_slot`. Published builds are never parked: nothing replaces one
+# under its name, and one that goes (`remove_project`, `remove_variant`) is
+# removed outright.
 TRASH_PREFIX = ".trash-"
 # Any atomic write this module makes, for as long as it is not yet renamed into
 # place — a rule rather than a list, because naming three of them invites the
@@ -544,6 +552,11 @@ class Store:
         # repository's is taken first.
         self._repo_locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
+        # `{pid: {variant: tip}}`: the variants whose branch a push is deleting,
+        # queued by the pre-receive hook's answer and taken at the end of that
+        # push (`queue_variant_removal`). Under `_locks_guard`: the hook's
+        # answer and the git request run on different threads.
+        self._removals: dict[str, dict[str, str]] = {}
         # The root index spans every project, so it gets its own global lock.
         self._index_lock = threading.Lock()
         # `{pid: why}` for every project whose import failed in this process.
@@ -1031,13 +1044,15 @@ class Store:
                 return name
         return None
 
-    def _reached(self, pid: str, branch: str, names) -> set:
-        """The builds among `names` whose commits `branch` reaches, through
-        every parent: the imported versions stand behind `connect`'s merge as
-        its second parent."""
+    def _reached(self, pid: str, branch: str, names,
+                 tip: str | None = None) -> set:
+        """The builds among `names` whose commits `branch` reaches — or
+        `tip`, the commit a deleted branch stood on — through every parent:
+        the imported versions stand behind `connect`'s merge as its second
+        parent."""
         found = set()
         for sha, values in _trailed_log(self.repo_dir(pid),
-                                        f"{BRANCH_PREFIX}{branch}"):
+                                        tip or f"{BRANCH_PREFIX}{branch}"):
             name = self._built_name(pid, sha, values, names)
             if name is not None:
                 found.add(name)
@@ -2375,6 +2390,80 @@ class Store:
         self._refresh_index()
         logger.info(f"removed project {pid}: {builds} builds")
         return {"pid": pid, "builds": builds}
+
+    def queue_variant_removal(self, pid: str, variant: str, tip: str) -> None:
+        """Remember that the push now answered deletes `variant`'s branch,
+        which stands on `tip`.
+
+        Nothing is removed here. The pre-receive hook is answered before git
+        moves any ref, and the push can still fail after the answer, so the
+        variant goes at the end of the same request (`githttp.end_of_request`
+        takes the queue with `take_variant_removals` and hands each variant to
+        `remove_variant`), which removes it only if the branch is really gone.
+        """
+        with self._locks_guard:
+            self._removals.setdefault(pid, {})[variant] = tip
+
+    def take_variant_removals(self, pid: str) -> dict:
+        """`{variant: tip}` queued for `pid`, the queue left empty."""
+        with self._locks_guard:
+            return self._removals.pop(pid, {})
+
+    def remove_variant(self, pid: str, variant: str, tip: str) -> int | None:
+        """Delete one variant whose branch a push has deleted. -> how many
+        builds went, or None when nothing was removed.
+
+        THE VARIANT AND WHAT ONLY IT HAS, for the reason `remove_project`
+        removes a project whole: a revision is a permanent URL, and taking one
+        away is the owner's decision to drop the variant it belongs to, never a
+        tidying of the volume. A revision goes when no remaining branch
+        reaches its commit and either the deleted branch did, from `tip`, the
+        commit it stood on (its commits stay in the repository until git
+        collects garbage, which the hub never asks for; without them only the
+        second rule applies), or this variant published it (`variant` in its
+        meta.json; a build older than variants has none and is the
+        default's). The first catches a revision of a variant deleted earlier
+        that only this branch still reached; the second, one this variant
+        published and its branch never reached, a push that lost a race. One
+        merged into another variant stays and is listed in that one's history.
+        The files of a build are hard links shared with other builds
+        (`_dedupe`), so removing its directory leaves theirs whole.
+
+        With the revisions go the variant's draft, `refs/drafts/<variant>`,
+        and its directory (`.variants/<variant>/`: its `latest`, `dev/` and
+        `builds.json`), and the comparisons of the whole project, a cache keyed
+        by revisions removed as `remove_project` removes it. Comments, the
+        project's proposal and its caches under `cache/<pid>/` stay.
+
+        None while the branch is still in the repository — git did not delete
+        it, and the push failed after the hook accepted it — and for the
+        default variant, which only `remove_project` takes away. Locked as
+        `remove_project` is. The variants' lists are not rewritten here:
+        `recompute` follows at the end of the push.
+        """
+        repo = self.repo_dir(pid)
+        with self._repo_lock_for(pid), self._lock_for(pid):
+            branches = self._branches(pid)
+            if variant == MAIN_BRANCH or variant in branches:
+                return None
+            metas = self.builds_of(pid)
+            names = {meta["commit"] for meta in metas}
+            kept = set().union(*(self._reached(pid, branch, names)
+                                 for branch in branches))
+            had = self._reached(pid, variant, names, tip)
+            doomed = [meta["commit"] for meta in metas
+                      if (meta.get("variant") == variant
+                          or meta["commit"] in had)
+                      and meta["commit"] not in kept]
+            for name in doomed:
+                shutil.rmtree(self.build_dir(pid, name))
+            # A no-op when the variant has no draft.
+            run_git(repo, "update-ref", "-d", f"{DRAFT_PREFIX}{variant}")
+            shutil.rmtree(self.variant_dir(pid, variant), ignore_errors=True)
+            shutil.rmtree(self.compare_root / pid, ignore_errors=True)
+        self._refresh_index()
+        logger.info(f"removed variant {pid} {variant}: {len(doomed)} builds")
+        return len(doomed)
 
 
 def _contents(meta: dict) -> str:

@@ -55,11 +55,13 @@ REMOTE_USER = "hammerola"
 
 # Without a hook in `core.hooksPath` git accepts every push without a word;
 # ci/smoke.py checks the image carries it. Push options reach the hook only
-# when they are advertised (`git push -o force`).
+# when they are advertised (`git push -o force`). Deletions are the hook's to
+# decide: a variant's branch may go, `main` and every other ref may not
+# (`prereceive._look`); `receive.denyDeletes` would refuse the branch after the
+# hook accepted it.
 SERVER_CONFIG = (
     ("receive.fsckObjects", "true"),
     ("receive.denyNonFastForwards", "true"),
-    ("receive.denyDeletes", "true"),
     ("receive.advertisePushOptions", "true"),
     ("core.hooksPath", str(HOOKS_DIR)),
 )
@@ -323,10 +325,20 @@ def end_of_request(store: Store, request: GitRequest) -> None:
     follows them (`Store.recompute`). A push is one of the two requests that
     can move a ref; the other is a name changed on the page (`POST
     /api/v1/projects/<pid>/names`, `prereceive.commit_name`), which
-    recomputes the same way.
+    recomputes the same way. Before that, each variant whose branch the push
+    deleted is removed (`Store.remove_variant`): here, once git is done, and
+    not in the hook's answer, which comes before git moves the ref.
     """
     if request.path_info.endswith(f"/{RECEIVE_PACK}"):
         try:
+            removals = store.take_variant_removals(request.pid)
+            for variant, tip in sorted(removals.items()):
+                try:
+                    store.remove_variant(request.pid, variant, tip)
+                except Exception:
+                    logger.exception(f"git {request.pid}: the variant "
+                                     f"{variant} could not be removed after "
+                                     f"the push")
             store.recompute(request.pid)
         except Exception:
             logger.exception(f"git {request.pid}: the project could not be "
