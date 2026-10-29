@@ -52,7 +52,8 @@ NOT_FOR_THE_AGENT = {
 # Flags of OTHER programs the document shows a command of: the `kicad-cli` lines
 # that make the 3D model and the Gerbers of a board, which are the author's to
 # type on his own machine, and the `git` a version is published with (`git pull
-# --no-rebase` after a refused push, `git status --ignored`), and the
+# --no-rebase` after a refused push, `git status --ignored`, the `git push
+# --delete` that removes a variant), and the
 # `solidcraft-cli mcp` line that registers SolidCraft's MCP server. No parser of
 # ours has them (asserted below, so a name that comes to mean one of ours is no
 # longer excused).
@@ -60,7 +61,7 @@ OTHER_PROGRAMS = {
     "--board-plot-params", "--excellon-separate-th",
     "--include-pads", "--include-silkscreen", "--include-soldermask",
     "--include-tracks", "--include-zones", "--subst-models",
-    "--ignored", "--no-rebase", "--rebase",
+    "--delete", "--ignored", "--no-rebase", "--rebase",
     "--allow-any-path",
 }
 

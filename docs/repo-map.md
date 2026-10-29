@@ -122,7 +122,9 @@
   threshold (`_sweep_repos`); removed with the project
 - `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
   #128): the ref updates of one push, checked in two passes. The first refuses
-  without building — a deleted ref, a branch or draft whose name is no variant
+  without building — a deleted `main` or draft (any other deleted branch is
+  queued for `Store.remove_variant`, run once git has deleted it,
+  `githttp.end_of_request`), a branch or draft whose name is no variant
   (`SAFE_ID`), a forced push, no `project.json` with the project's id, a
   symlink or a submodule; the second builds the newest commit of each branch
   that touched the project's directory, and each draft (`refs/drafts/<branch>`),

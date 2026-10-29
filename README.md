@@ -217,8 +217,10 @@ with a merge that changes no file. It prints the push for the branch checked
 out: `git push hammerola-<pid> <branch>` publishes a revision of that branch's
 variant, and `hammerola build` writes the draft of that branch — of `main` into
 `/project/<pid>/dev/`, of any other into `/project/<pid>/v/<branch>/dev/`. A
-branch name is letters, digits, `-` and `_`; the hub refuses any other, and a
-pushed branch stays a variant for good.
+branch name is letters, digits, `-` and `_`; the hub refuses any other. A
+pushed branch stays a variant until `git push --delete hammerola-<pid>
+<branch>` removes it with every revision no other variant has; `main` cannot
+be removed this way.
 
 Both ways of publishing are a `git push` that waits for the build and prints
 what the build printed: `git push hammerola-<pid> main` publishes a revision,
