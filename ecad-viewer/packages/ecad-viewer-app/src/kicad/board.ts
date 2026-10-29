@@ -354,6 +354,20 @@ export class KicadPCB implements BoardNode {
             }
             bbox = BBox.combine([bbox, item.bbox]);
         }
+        // KiCad cuts the board along Edge.Cuts inside footprints too, and a
+        // board converted from Eagle can carry its outline that way, in its
+        // "board shape" parts. Their geometry is footprint-local, placed
+        // with the same transform the painter and `Footprint.bbox` use.
+        for (const fp of this.footprints) {
+            const matrix = Matrix3.translation(
+                fp.at.position.x,
+                fp.at.position.y,
+            ).rotate_self(Angle.deg_to_rad(fp.at.rotation));
+            for (const item of fp.drawings) {
+                if (item.layer != "Edge.Cuts") continue;
+                bbox = BBox.combine([bbox, item.bbox.transform(matrix)]);
+            }
+        }
         return bbox;
     }
 
