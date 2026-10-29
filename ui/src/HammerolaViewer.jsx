@@ -149,8 +149,8 @@ import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './ren
 import { revisionView } from './revisionview.js';
 import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
 // The Copy link at the end of each file row of both menus, and Open in Bambu
-// Studio before it on a 3MF's row.
-import BambuLink from './bambu.jsx';
+// Studio before it on a 3MF's row; the 3MF group is where the beds are offered.
+import BambuLink, { BAMBU_FORMAT } from './bambu.jsx';
 import CopyLink from './copylink.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 // And the comments the page of a build with no model holds too: the queue
@@ -524,6 +524,12 @@ const PRINT_FIRST = ['STL', '3MF', 'STEP'];
 const GERBERS_GROUP = 'GERBERS';
 
 /**
+ * The rows of the `print` view's beds, first among the 3MFs: `print plate`
+ * when there is one, `print plate 1`, `print plate 2`, … when there are several.
+ */
+const PLATE_LABEL = 'print plate';
+
+/**
  * `meta.parts` as ordered groups of one FORMAT each, rows ordered by part.
  *
  * Flat, this menu is one row per file — thirty of them on a ten-part build, in
@@ -533,12 +539,15 @@ const GERBERS_GROUP = 'GERBERS';
  *
  * The row's name is the catalogue key, the part's name.
  *
- * The catalogue only, which keeps whole-build meshes out of this menu.
- * `overview` and `preview` on a view (`assembled.stl`, `print.stl` and their
- * pictures) are declared for a client to fetch, not as buttons. `print.stl` as
- * a button would be wrong: the `print` view may hold mocks of purchased parts,
- * and a public button invites slicing them. `assembled.stl` is on screen in 3D
- * already.
+ * Of what a view declares, only `plates` is offered: the `print` view's beds,
+ * a 3MF each (`{"1": "print.3mf", "2": "print-2.3mf"}`), each part an object of
+ * its own where the view laid it out, so a whole bed opens in a slicer in one
+ * go. Their rows come first in the 3MF group, ahead of the parts and in bed
+ * order, and like every 3MF row each gets Open in Bambu Studio. `overview` and
+ * `preview` (`assembled.stl`, `print.stl` and their pictures) are declared for
+ * a client to fetch, not as buttons: `assembled.stl` is on screen in 3D
+ * already, and `print.stl`, the beds glued into one mesh, is there for the
+ * picture the build draws of them — a bed is offered as its 3MF.
  *
  * A Map because the group key is an extension out of a pushed document, so
  * `__proto__` is reachable and an object literal would silently store nothing
@@ -551,7 +560,7 @@ const GERBERS_GROUP = 'GERBERS';
  * taken the way an STL is, and lands beside a part's exports when it shares
  * their extension. Both are ordered like any other format.
  */
-export function groupDownloads(parts, documents) {
+export function groupDownloads(parts, documents, views) {
   const groups = new Map();
   Object.entries((parts && typeof parts === 'object') ? parts : {})
     .forEach(([key, record]) => {
@@ -572,6 +581,15 @@ export function groupDownloads(parts, documents) {
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push({ label: String(doc.name || doc.file), file: doc.file });
   });
+  const beds = (Array.isArray(views) ? views : [])
+    .filter((view) => view && view.plates && typeof view.plates === 'object')
+    .flatMap((view) => Object.entries(view.plates))
+    .filter(([number, file]) => /^[1-9][0-9]*$/.test(number) && typeof file === 'string' && file)
+    .sort(([a], [b]) => Number(a) - Number(b));
+  const plates = beds.map(([number, file]) => ({
+    label: beds.length === 1 ? PLATE_LABEL : `${PLATE_LABEL} ${number}`, file,
+  }));
+  if (plates.length && !groups.has(BAMBU_FORMAT)) groups.set(BAMBU_FORMAT, []);
   const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   const rank = (ext) => {
     const at = PRINT_FIRST.indexOf(ext);
@@ -581,7 +599,8 @@ export function groupDownloads(parts, documents) {
     .sort((a, b) => (rank(a) - rank(b)) || text(a, b))
     .map((ext) => ({
       ext,
-      files: groups.get(ext).slice().sort((a, b) => text(a.label, b.label)),
+      files: [...(ext === BAMBU_FORMAT ? plates : []),
+              ...groups.get(ext).slice().sort((a, b) => text(a.label, b.label))],
     }));
 }
 
@@ -5160,7 +5179,8 @@ export default class HammerolaViewer extends React.Component {
     });
 
     // -- the downloads, out of the part catalogue: key -> {extension -> file},
-    //    and the board's Gerbers among the build's documents
+    //    the board's Gerbers among the build's documents, and the beds of the
+    //    `print` view
     //
     // With the key to the build on screen, asked of `PAGE.slot` here rather
     // than kept: the address moves under a revision switch, and builds.json
@@ -5169,7 +5189,7 @@ export default class HammerolaViewer extends React.Component {
     const filesKey = filesKeyFor(s.builds, PAGE.slot, this._linkKey);
     const { downloadGroups, anyDownloads, dlShown } = downloadsView(catalogue, {
       groupDownloads, downloadAll: this.downloadAll.bind(this), key: filesKey,
-      documents: meta && meta.documents,
+      documents: meta && meta.documents, views: meta && meta.views,
     });
 
     // -- the project's comment queue, as `loadFeed` fetched it

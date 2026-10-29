@@ -302,7 +302,7 @@ def catalogue(**kinds):
 
 
 def node(key, obj=None, alpha=1.0, at=None, color="#000000", deformed=None,
-         label=None):
+         label=None, plate=1):
     """One leaf, in the shape prepare_views produces.
 
     A `Mesh` handed over as `obj` makes a MESH leaf, whose `shape` is None --
@@ -318,6 +318,7 @@ def node(key, obj=None, alpha=1.0, at=None, color="#000000", deformed=None,
         "alpha": alpha,
         "at": at,
         "deformed": deformed,
+        "plate": plate,
         "label": label or repr(key),
     }
 

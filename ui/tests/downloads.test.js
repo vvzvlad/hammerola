@@ -5,15 +5,14 @@
 // names the files that were exported for it: `{key: {kind, files: {extension:
 // filename}}}`. Nothing is reconstructed from filenames.
 //
-// What the build publishes about itself reaches neither menu. The whole-view
-// mesh and picture (`assembled.stl`, `assembled_preview.png`) are fields on a
-// VIEW, and a part's own render is `preview` inside its catalogue record, one
-// key away from `files`. They exist so a client can be told the files are there
-// — the hub lists no directory — and a picture is looked at rather than
-// downloaded. `print.stl` is the one where a button would be actively wrong:
-// the plate is whatever the `print` view holds, nothing requires that to be
-// printable parts only, and a button on a public page invites somebody to slice
-// a plate with a mock of a purchased bearing on it.
+// What the build publishes about itself reaches neither menu, but for the beds.
+// The whole-view mesh and picture (`assembled.stl`, `assembled_preview.png`)
+// are fields on a VIEW, and a part's own render is `preview` inside its
+// catalogue record, one key away from `files`. They exist so a client can be
+// told the files are there — the hub lists no directory — and a picture is
+// looked at rather than downloaded. `print.stl` is the beds glued into one mesh
+// for the picture; what a slicer is offered is each bed's own 3MF, the
+// `plates` of the `print` view, at the head of the 3MF group.
 //
 // The menu itself is assembled through the real `computed()` rather than
 // re-derived here. What is under test is a decision — which rows a row menu gets
@@ -320,6 +319,30 @@ describe('groupDownloads', () => {
     expect(groups[4].files).toEqual([{ label: 'Glass, cut list', file: 'cut/glass.dxf' }])
     // A listed file of a format the parts already export joins that group.
     expect(groups[0].files.map((f) => f.label)).toEqual(['Bought bracket', 'plate', 'post'])
+  })
+
+  it('offers the one bed of the print view first among the 3MFs, as `print plate`', () => {
+    // Ahead of the parts, not sorted in among them: `plate` < `post` <
+    // `print plate`, so a row filed by its label would come third.
+    const groups = groupDownloads(PARTS, undefined, [
+      { id: 'assembled', overview: 'assembled.stl' },
+      { id: 'print', overview: 'print.stl', plates: { 1: 'print.3mf' } },
+    ])
+    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
+    expect(groups[1].files).toEqual([{ label: 'print plate', file: 'print.3mf' },
+                                     { label: 'plate', file: 'plate.3mf' },
+                                     { label: 'post', file: 'post.3mf' }])
+    // The glued mesh stays a picture's, not a button.
+    expect(groups[0].files.map((f) => f.file)).toEqual(['plate.stl', 'post.stl'])
+  })
+
+  it('numbers the beds when there are several, in bed order and not in text order', () => {
+    const groups = groupDownloads(PARTS, undefined, [
+      { id: 'print', plates: { 10: 'print-10.3mf', 2: 'print-2.3mf', 1: 'print.3mf' } },
+    ])
+    expect(groups[1].files.map((f) => f.label)).toEqual(
+      ['print plate 1', 'print plate 2', 'print plate 10', 'plate', 'post'])
+    expect(groups[1].files[2].file).toBe('print-10.3mf')
   })
 
   it('answers an absent, empty or unusable catalogue with no groups at all', () => {

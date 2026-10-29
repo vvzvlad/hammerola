@@ -64,8 +64,8 @@ EXPECTED_ARTEFACTS = (
     "meta.json", "metrics.json", "assembled.json", "print.json",
     "base.stl", "base.step", "base.3mf", "lid.stl", "lid.step", "lid.3mf",
     # The whole-build artefacts and the pictures, which must be written and
-    # declared.
-    "assembled.stl", "print.stl",
+    # declared. One bed, so one 3MF of it.
+    "assembled.stl", "print.stl", "print.3mf",
     "assembled_preview.png", "print_preview.png",
     "base_preview.png", "lid_preview.png",
     # The band-less cut of each whole-view render, for the project card. Only

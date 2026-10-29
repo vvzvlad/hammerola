@@ -14,8 +14,9 @@ belongs to one of two owners:
     `{extension: filename}` (the STL, STEP and 3MF a printable was exported to)
     and `preview` is that part's picture. Other record kinds carry neither;
   * a VIEW, under `views`, addressed by its `id`. `overview` is the mesh of the
-    whole view (`assembled.stl`, and `print.stl` for a `print` view) and
-    `preview` is its picture.
+    whole view (`assembled.stl`, and `print.stl` for a `print` view), `plates`
+    is the `print` view's beds for a slicer, `{bed number: filename}`
+    (`print.3mf`, `print-2.3mf`, ...), and `preview` is its picture.
 
 A DOCUMENT, under `documents`, owns one `file`: the files project.json lists to
 be read, published under their paths in the tree (`docs/cut-list.md`) and
@@ -24,8 +25,9 @@ the files its `kicad` names: a schematic's sheets, and the project either one
 is published with. A model's build carries documents after its views; a build
 with no model (`"kind": "documents"`) carries nothing else.
 
-The build page draws download buttons only for a printable's `files`, so every
-declared pointer here is fetchable without implying a button.
+The build page draws download buttons only for a printable's `files` and a
+view's `plates`, so every declared pointer here is fetchable without implying a
+button.
 
 A view's `file` is not fetched: it is the viewer's tessellation payload, of no use
 outside the browser. A view's `card` is not fetched either: it is `preview` cropped
@@ -66,7 +68,7 @@ ONE, MANY = False, True
 # always declares its `file` too, so that message is never theirs to say.
 DECLARING_FIELDS = {
     "part": {"files": MANY, "preview": ONE},
-    "view": {"overview": ONE, "preview": ONE},
+    "view": {"overview": ONE, "plates": MANY, "preview": ONE},
     "document": {"file": ONE},
 }
 
@@ -223,10 +225,11 @@ def _brief(value) -> str:
 def _pointers(record: dict, owner: str, where: str):
     """Every `(field, filename)` one record names, in the declared order.
 
-    A field of the wrong shape is a refusal, never a drop or a fetch. `files` is the
-    only multi-name field and the hub publishes it only as a non-empty object of
-    `{extension: filename}`; a string there (`"files": "assembled.stl"`) passes the
-    file-name rule, so it is refused here rather than by the caller.
+    A field of the wrong shape is a refusal, never a drop or a fetch. `files` and
+    `plates` are the multi-name fields and the hub publishes each only as a
+    non-empty object of `{label: filename}`; a string there (`"files":
+    "assembled.stl"`) passes the file-name rule, so it is refused here rather than
+    by the caller.
     One-name fields (`preview`, `overview`) are handed on whole, and the file-name
     rule in `run` is the right check for them.
     """

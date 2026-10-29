@@ -386,7 +386,30 @@ def test_an_unknown_reference_key_is_said_out_loud(capsys):
     prepare([one_view(parts=[{"part": "body", "alfa": 0.5, "notes": "typo"}])])
     printed = capsys.readouterr().out
     assert "'alfa'" in printed and "'notes'" in printed
-    assert "Known keys: alpha, at, deformed, part, shape" in printed
+    assert "Known keys: alpha, at, deformed, part, plate, shape" in printed
+
+
+# --------------------------------------------------------------------------
+# Beds of the `print` view
+# --------------------------------------------------------------------------
+
+def test_a_reference_is_on_bed_one_unless_it_names_another():
+    prepared = prepare([one_view(), one_view(vid="print", parts=[
+        "body", {"part": "body", "plate": 2}])])
+    assert [node["plate"] for node in prepared[1]["nodes"]] == [1, 2]
+
+
+def test_a_plate_that_is_not_a_bed_number_is_refused():
+    """Beds are counted from 1. `True` is an int to python and a bed to nobody."""
+    for bad in (0, -1, True, 2.0, "2"):
+        assert "not a bed number" in refusal([one_view(), one_view(
+            vid="print", parts=[{"part": "body", "plate": bad}])]), bad
+
+
+def test_a_plate_outside_the_print_view_is_said_out_loud(capsys):
+    """Correct and read by nothing, as `nested_ok` outside the plate is."""
+    prepare([one_view(parts=[{"part": "body", "plate": 2}])])
+    assert "only the 'print' view is split into beds" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

@@ -47,7 +47,7 @@ import json
 import time
 
 from . import checklib
-from .artifacts import ASSEMBLED_VIEW_ID, PRINT_VIEW_ID
+from .artifacts import ASSEMBLED_VIEW_ID, FIRST_PLATE, PRINT_VIEW_ID
 from .errors import BuildError
 from .geometry import as_shapes
 from .hubspec import (MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS, MEMBER_RE,
@@ -61,7 +61,8 @@ from .parts import KIND_MOCK, catalogue_colors
 VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok",
                        "absent_ok"})
 # ...and every key one REFERENCE is read for. Only `part` is required.
-REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed"})
+REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed",
+                            "plate"})
 # ...and a GROUP is exactly these two, both required.
 GROUP_KEYS = frozenset({"group", "parts"})
 
@@ -86,7 +87,7 @@ def prepare_views(views, catalogue):
          "absent_ok":       {key: "reason"},
          "tree":            groups and leaf indices, for the export,
          "nodes":           [{"key", "shape", "mesh", "color", "alpha", "at",
-                              "deformed", "label"}, ...]}
+                              "deformed", "plate", "label"}, ...]}
 
     `nodes` IS THE FLAT LIST OF LEAVES and it is what every gate reads; `tree`
     holds the author's grouping and is read only when the view file is written.
@@ -439,6 +440,24 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
             "viewer clamps silently rather than telling you."
         )
 
+    # The bed of the `print` view this reference goes on, a 3MF per bed
+    # (`assembly.export_plate_3mfs`). A bool is an int to python and is refused
+    # all the same: `True` is not a bed anybody counted to.
+    plate = entry.get("plate", FIRST_PLATE)
+    if isinstance(plate, bool) or not isinstance(plate, int) or plate < 1:
+        raise BuildError(
+            f'{spot}: "plate" is {plate!r}, which is not a bed number. Beds '
+            f"are counted from 1, and a reference that names none is on bed "
+            f"{FIRST_PLATE}: {{\"part\": \"pin\", \"at\": here, \"plate\": 2}}."
+        )
+    if "plate" in entry and vid != PRINT_VIEW_ID:
+        # Not an error, as `nested_ok` outside the plate is not: a correct
+        # value in a view nothing splits into beds.
+        print(
+            f'warning: {spot} says "plate", which only the {PRINT_VIEW_ID!r} '
+            "view is split into beds by. Nothing here is put on any bed."
+        )
+
     unknown = sorted(set(entry) - REFERENCE_KEYS)
     if unknown:
         # A warning for the reason the view-level one is: a misspelt "alfa"
@@ -461,6 +480,7 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
         "alpha": alpha,
         "at": at,
         "deformed": reason,
+        "plate": plate,
     })
     return len(nodes) - 1
 

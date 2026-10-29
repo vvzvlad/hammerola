@@ -8,7 +8,8 @@ import shutil
 import time
 
 from .artifacts import ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, PREVIEW_SUFFIX, PRINT_VIEW_ID
-from .assembly import export_assembled, export_print_plate, render_previews
+from .assembly import (export_assembled, export_plate_3mfs, export_print_plate,
+                       render_previews)
 from .checkunits import run_units
 from .gate import (check_assembled_coverage, check_interference,
                    check_print_layout)
@@ -199,6 +200,8 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     parts = {ASSEMBLED_STEM: assembled_parts}
     # None without a plate; `collect_metrics` then writes no `print_bbox_mm`.
     plate_bbox = None
+    # The beds for a slicer, `{"1": "print.3mf", ...}`; None without a plate.
+    plate_files = None
     if plate is None:
         # No `warning:` prefix: a single part already in print orientation has
         # no `print` view, and that is fine. It names both missing files,
@@ -209,9 +212,11 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
         plate_bodies, plate_bbox = plate
         stems.append(PRINT_VIEW_ID)
         parts[PRINT_VIEW_ID] = plate_bodies
+        # From the part STLs `export_printables` wrote above.
+        plate_files = export_plate_3mfs(prepared, out_dir)
     # Despite the name, this phase includes fusing the `print` view into one
-    # compound, measuring it and writing an STL. No picture is drawn here (see
-    # the previews phase).
+    # compound, measuring it and writing an STL, and writing a 3MF per bed.
+    # No picture is drawn here (see the previews phase).
     phase = _phase("rendering", phase)
 
     print("tessellating views:")
@@ -259,6 +264,8 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
             continue
         if stem in overview:
             entry["overview"] = overview[stem]
+        if entry["id"] == PRINT_VIEW_ID and plate_files is not None:
+            entry["plates"] = plate_files
         if stem in previews:
             entry["preview"] = previews[stem]
         if stem in cards:
@@ -323,6 +330,8 @@ def build(out_dir, preview_mode="iso", force=False, baseline=None):
     shipped.append(f"{ASSEMBLED_STEM}.stl")
     if plate is not None:
         shipped.append(f"{PRINT_VIEW_ID}.stl")
+    if plate_files is not None:
+        shipped += plate_files.values()
     shipped += written
     # The cards: a file nothing declares is not served, so a card missing here
     # is a view pointing at a name the hub refuses (422).

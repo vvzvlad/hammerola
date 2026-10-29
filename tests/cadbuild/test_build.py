@@ -49,6 +49,7 @@ def files_named_in(meta):
         named.add(view["file"])
         named.update(view[key] for key in ("overview", "preview", "card")
                      if key in view)
+        named.update(view.get("plates", {}).values())
     for part in meta["parts"].values():
         named.update(part.get("files", {}).values())
         if "preview" in part:
@@ -122,6 +123,13 @@ def driven(monkeypatch):
         # the CATALOGUE too, because the box is the product's own envelope and
         # a leaf's kind is what keeps the scenery out of it.
         ("export_assembled", lambda prepared, out_dir, cat: (1, None)),
+        # A 3MF per bed, out of the part STLs the faked `export_printables`
+        # never wrote; one bed, as the real one answers for a `print` view
+        # whose references name none.
+        ("export_plate_3mfs", lambda prepared, out_dir: (
+            {"1": f"{PRINT_VIEW_ID}.3mf"}
+            if any(view["id"] == PRINT_VIEW_ID for view in prepared)
+            else None)),
         ("export_views", lambda prepared, out_dir: [
             {"id": view["id"], "name": view["id"], "file": f"{view['id']}.json",
              "parts": ["base"]} for view in prepared]),
@@ -460,6 +468,11 @@ def test_a_build_with_a_print_view_declares_the_plate_and_says_nothing(
     assert f"{PRINT_VIEW_ID}.stl" in files
     assert f"{PRINT_VIEW_ID}{PREVIEW_SUFFIX}" in files
     assert f"base{PREVIEW_SUFFIX}" in files
+    # The beds for a slicer, on the list and on the `print` view alone.
+    assert f"{PRINT_VIEW_ID}.3mf" in files
+    assert view_named(meta, PRINT_VIEW_ID)["plates"] == {
+        "1": f"{PRINT_VIEW_ID}.3mf"}
+    assert "plates" not in view_named(meta, ASSEMBLED_VIEW_ID)
 
 
 def test_a_whole_view_is_drawn_from_the_document_the_browser_itself_loads(
