@@ -152,11 +152,11 @@ describe('the BOM on screen', () => {
   const untick = (view, value) => collect(the(view, 'data-entry', value), (el) => (el.type === 'input' ? el : undefined))[0]
     .props.onChange()
 
-  it('sorts by the column whose name is clicked, a second click the other way, and not by its ▾', () => {
+  it('sorts by the column whose name is clicked, a second click the other way, and not by its funnel', () => {
     const view = shown()
     const click = (name) => the(view, 'data-sort', name).props.onClick()
-    expect(heads(view).map((el) => texts(el))).toEqual([['Refs', '▲', '▾'], ['Value', '▾'], ['Footprint', '▾'],
-      ['Qty', '▾'], ['DNP', '▾'], ['Datasheet', '▾']])
+    expect(heads(view).map((el) => texts(el))).toEqual([['Refs', '▲'], ['Value'], ['Footprint'],
+      ['Qty'], ['DNP'], ['Datasheet']])
     click('Value')
     expect(rows(view)).toEqual(['C1 C2 C10', 'C5', 'R1 R3', 'R2', 'J_CAN1', 'U1'])
     click('Value')
@@ -166,7 +166,7 @@ describe('the BOM on screen', () => {
     expect([view.state.sort, view.state.popup.column]).toEqual([{ column: 'Value', descending: true }, 'Qty'])
   })
 
-  it('filters from a head\'s ▾, every value checked at first, the table following each tick', () => {
+  it('filters from a head\'s funnel, every value checked at first, the table following each tick', () => {
     const view = shown()
     the(view, 'data-funnel', 'Refs').props.onClick()
     expect(entries(view)).toEqual([['C', '4', true], ['J', '1', true], ['R', '3', true], ['U', '1', true]])

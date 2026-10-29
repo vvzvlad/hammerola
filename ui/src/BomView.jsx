@@ -11,7 +11,7 @@
 // view (AGENTS.md).
 //
 // EACH COLUMN'S HEAD: a click on its name sorts by it, a second the other way
-// (it opens sorted by designator, as KiCad lists them); its ▾ opens the
+// (it opens sorted by designator, as KiCad lists them); its funnel opens the
 // column's filter under it, drawn after Grist's: a field that searches the
 // entries, `All · None` (the one that is the state already out of service), an
 // order of the entries by value or by count, then an entry per value of the
@@ -19,7 +19,8 @@
 // which is no filter; an unchecked one hides its parts, at once. `Close`, and a
 // click outside, keep what is checked; `Cancel`, and Escape, put back what was
 // checked when it opened, and that Escape is taken, so the design under it
-// does nothing with it. A column filtered shows it on its ▾. Values within a
+// does nothing with it. A column filtered has its funnel filled with the
+// accent. Values within a
 // column are any of those checked, the columns and the search all at once.
 //
 // THE TABLE has kicad-cli's default columns and the datasheet. A designator
@@ -81,8 +82,13 @@ const HEAD = `border:1px solid var(--line);padding:4px 6px 4px 10px;text-align:l
   + 'background:var(--sunken-bg);white-space:nowrap';
 const HEAD_NAME = 'cursor:pointer;user-select:none';
 const ARROW = 'margin-left:4px;color:var(--text-muted)';
-const funnel = (on) => `margin-left:4px;padding:0 4px;border-radius:4px;font:400 11px/16px ${SANS};cursor:pointer;user-select:none;`
-  + (on ? 'background:var(--accent-bg);color:var(--accent-text)' : 'color:var(--text-faint)');
+const funnel = (on) => 'display:inline-flex;vertical-align:middle;margin-left:6px;padding:3px;border-radius:4px;cursor:pointer;'
+  + (on ? 'background:var(--accent);color:#fff' : 'background:var(--line);color:var(--text-soft)');
+const FUNNEL_ICON = (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+    <path d="M2 2.5h12l-4.5 5.5v5l-3 1.5V8L2 2.5z" />
+  </svg>
+);
 const CELL = 'border:1px solid var(--line);padding:4px 10px;vertical-align:top';
 const LINK = 'color:var(--accent-text);cursor:pointer';
 // A column's filter, a card in the page's colours.
@@ -114,7 +120,7 @@ export default class BomView extends React.Component {
     // with what its column had unchecked when it opened and the text its
     // entries are searched for, or null; `byCount`: its entries by count.
     this.state = { query: '', excluded: NO_FILTER, grouped: true, sort: BOM_SORT, popup: null, byCount: false };
-    // The open filter's card and its column's ▾, which a press outside of
+    // The open filter's card and its column's funnel, which a press outside of
     // closes it.
     this.block = null;
     this.card = null;
@@ -286,7 +292,7 @@ export default class BomView extends React.Component {
                     <span data-funnel={name} title="Filter"
                           ref={popup && popup.column === name ? this.setFunnel : undefined}
                           style={css(funnel(filters[name].some((entry) => excluded[name].includes(entry.key))))}
-                          onClick={() => this.toggle(name)}>▾</span>
+                          onClick={() => this.toggle(name)}>{FUNNEL_ICON}</span>
                   </th>
                 ))}
               </tr>

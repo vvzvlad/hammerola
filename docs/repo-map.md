@@ -617,7 +617,7 @@
   and the filters, the grouping and the sort (`bomTable`)
 - `ui/src/BomView.jsx` — the BOM on screen, a member `KicadView` draws and keeps
   mounted: a search field and a grouping switch over a table whose every head
-  sorts it by a click on its name and filters it from its ▾, a list of the
+  sorts it by a click on its name and filters it from its funnel, a list of the
   column's values with checkboxes drawn after Grist's filter, all its own
   state; a
   designator selects the part and opens the board (`onPart`), a datasheet
