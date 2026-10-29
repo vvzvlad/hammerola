@@ -11,14 +11,20 @@
 // its own.
 //
 // THE TABLE (BomView.jsx) is drawn from the PARTS, those rows split one per
-// designator (`bomParts`): the search and the filters keep some of them
-// (`filterParts`), the parts kept are put back into a row per footprint, value
-// and DNP where the reader groups them (`groupParts`), and the rows are sorted
-// by a column (`sortRows`), all in `bomTable`. So a group a filter cuts lists
-// the designators kept, and its Qty counts them. A part's type is the letters
-// its designator starts with (`partType`), its package what its footprint's
-// name says of it (`partPackage`), and a value sorts by its magnitude where it
-// has one (`valueMagnitude`).
+// designator (`bomParts`): the search and the filters of the columns keep some
+// of them (`filterParts`), the parts kept are put back into a row per
+// footprint, value and DNP where the reader groups them (`groupParts`), the
+// Qty filter keeps some of those rows, and the rows are sorted by a column
+// (`sortRows`), all in `bomTable`. So a group a filter cuts lists the
+// designators kept, and its Qty counts them.
+//
+// A COLUMN'S FILTER is the values its entries name (`bomFilters`) that the
+// reader unchecked (`excluded`): every entry checked is no filter. Refs
+// filters by the part's type, the letters its designator starts with
+// (`partType`); Footprint by its package, what its footprint's name says of it
+// (`partPackage`); Value, DNP and Datasheet by what the cell shows, an empty
+// cell an entry of its own (''); Qty by the row's Qty, after the grouping. A
+// value sorts by its magnitude where it has one (`valueMagnitude`).
 
 /** The type of a BOM's document. */
 export const BOM_TYPE = 'bom';
@@ -121,34 +127,26 @@ export const bomParts = (items, datasheet) => items.flatMap((item) => item.refer
   references: [ref], value: item.value, footprint: item.footprint, dnp: item.dnp, qty: 1, datasheet: datasheet(ref),
 })));
 
-const typeOf = (part) => partType(part.references[0]);
-const packageOf = (part) => partPackage(part.footprint);
+const dnpText = (row) => (row.dnp ? 'DNP' : '');
+const sheetText = (row) => (row.datasheet ? row.datasheet.text : '');
 
-/** The chips of a filter over every part: each name `nameOf` gives a part,
- *  with how many parts have it, in natural order. */
-function chips(parts, nameOf) {
-  const counts = new Map();
-  for (const part of parts) counts.set(nameOf(part), (counts.get(nameOf(part)) || 0) + 1);
-  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => compareNatural(a.name, b.name));
-}
+/** What each column's filter reads of a part: its type, its value, its
+ *  package, its DNP and its datasheet as the cells show them. Qty is a row's. */
+const PART_KEYS = {
+  Refs: (part) => partType(part.references[0]),
+  Value: (part) => part.value,
+  Footprint: (part) => partPackage(part.footprint),
+  DNP: dnpText,
+  Datasheet: sheetText,
+};
 
-/** The type filter's chips (`partType`) and the package filter's
- *  (`partPackage`), with their parts' counts. */
-export const typeChips = (parts) => chips(parts, typeOf);
-export const packageChips = (parts) => chips(parts, packageOf);
-
-/** The DNP switch's three ways: every part, those fitted, those not. */
-export const DNP_WAYS = ['all', 'without', 'only'];
-
-/** The parts the reader's search and filters keep: the search, a text found
- *  in the designator, value, footprint, or datasheet value or the text its
- *  cell shows (a document's name), ignoring case;
- *  each filter's chips, any of them; the DNP switch. All of them at once. */
-export function filterParts(parts, { query, types, packages, dnp }) {
+/** The parts the reader's search and the columns' filters keep: the search, a
+ *  text found in the designator, value, footprint, or datasheet value or the
+ *  text its cell shows (a document's name), ignoring case; each column's
+ *  filter, a value it has not unchecked (`excluded`). All of them at once. */
+export function filterParts(parts, { query, excluded }) {
   const text = query.trim().toLowerCase();
-  return parts.filter((part) => (!types.length || types.includes(typeOf(part)))
-    && (!packages.length || packages.includes(packageOf(part)))
-    && (dnp === 'all' || part.dnp === (dnp === 'only'))
+  return parts.filter((part) => Object.entries(PART_KEYS).every(([column, keyOf]) => !excluded[column].includes(keyOf(part)))
     && (!text || [part.references[0], part.value, part.footprint,
       part.datasheet ? `${part.datasheet.value} ${part.datasheet.text}` : '']
       .some((one) => one.toLowerCase().includes(text))));
@@ -169,9 +167,6 @@ export function groupParts(parts) {
   });
 }
 
-const dnpText = (row) => (row.dnp ? 'DNP' : '');
-const sheetText = (row) => (row.datasheet ? row.datasheet.text : '');
-
 /** The table's columns, kicad-cli's default (`sch export bom`) and the
  *  datasheet, each with the order a click on its head sorts the rows in. */
 const ORDERS = {
@@ -183,6 +178,36 @@ const ORDERS = {
   Datasheet: (a, b) => compareNatural(sheetText(a), sheetText(b)),
 };
 export const BOM_COLUMNS = Object.keys(ORDERS);
+
+/** No column filtered: no value of any unchecked. */
+export const NO_FILTER = Object.fromEntries(BOM_COLUMNS.map((column) => [column, []]));
+
+/** Each value `keyOf` gives one of `list`, with how many of them have it, in
+ *  the order `order` puts the values in. */
+function entries(list, keyOf, order) {
+  const counts = new Map();
+  for (const one of list) counts.set(keyOf(one), (counts.get(keyOf(one)) || 0) + 1);
+  return [...counts].map(([key, count]) => ({ key, count })).sort((a, b) => order(a.key, b.key));
+}
+
+/** The entries of each column's filter over the whole BOM, `{ key, count }`
+ *  in the column's own order: the values its filter reads of the parts, each
+ *  with its parts' count, and for Qty the rows' Qty, grouped as the reader
+ *  has them, each with its rows' count. */
+export function bomFilters(parts, grouped) {
+  return {
+    Refs: entries(parts, PART_KEYS.Refs, compareNatural),
+    Value: entries(parts, PART_KEYS.Value, compareValues),
+    Footprint: entries(parts, PART_KEYS.Footprint, compareNatural),
+    Qty: entries(grouped ? groupParts(parts) : parts, (row) => row.qty, (a, b) => a - b),
+    DNP: entries(parts, PART_KEYS.DNP, compareNatural),
+    Datasheet: entries(parts, PART_KEYS.Datasheet, compareNatural),
+  };
+}
+
+/** `list` of entries by their value, as given, or by their count, the
+ *  greatest first. */
+export const entryOrder = (list, byCount) => (byCount ? [...list].sort((a, b) => b.count - a.count) : list);
 
 /** The order the table opens in: by designator, as KiCad lists them. */
 export const BOM_SORT = { column: 'Refs', descending: false };
@@ -199,8 +224,9 @@ export function sortRows(rows, { column, descending }) {
 
 /** The rows the table draws for `parts` as the reader set it (`view`: the
  *  search, the filters, `grouped`, `sort`): a row per part, or per group of
- *  them. */
+ *  them, those whose Qty is not unchecked. */
 export function bomTable(parts, view) {
   const kept = filterParts(parts, view);
-  return sortRows(view.grouped ? groupParts(kept) : kept, view.sort);
+  const rows = (view.grouped ? groupParts(kept) : kept).filter((row) => !view.excluded.Qty.includes(row.qty));
+  return sortRows(rows, view.sort);
 }

@@ -613,11 +613,13 @@
   schematic it has loaded (`getBomItems`, `static/_v/PROVENANCE.md`, "Our
   edits"), put in KiCad's order of designators by `bomRows`; and the table's
   pure half: the rows split into a part per designator, its type and package,
-  a value's magnitude, the search and the filters, the grouping and the sort
-  (`bomTable`)
+  a value's magnitude, each column's filter entries (`bomFilters`), the search
+  and the filters, the grouping and the sort (`bomTable`)
 - `ui/src/BomView.jsx` — the BOM on screen, a member `KicadView` draws and keeps
-  mounted: a search field, a DNP switch, a grouping switch and chips by type
-  and by package over a table whose heads sort it, all its own state; a
+  mounted: a search field and a grouping switch over a table whose every head
+  sorts it by a click on its name and filters it from its ▾, a list of the
+  column's values with checkboxes drawn after Grist's filter, all its own
+  state; a
   designator selects the part and opens the board (`onPart`), a datasheet
   opens the build's document in `KicadView`'s window (`onDatasheet`, from
   `kicadsheets.js`) or a web address in a new tab
