@@ -1,10 +1,10 @@
 // The BOM of a KiCad design on screen: a table of the parts the schematic's
 // element counts (kicadbom.js), and what the reader narrows and orders it
 // with. KicadView.jsx draws it as the design's BOM member and hands it the
-// rows (`items`), the parts' datasheets and what a click on a designator or a
-// datasheet does; the search, the filters, the grouping and the order are this
-// component's, and KicadView keeps it mounted while the BOM is off screen, so
-// they are as the reader left them when it is back.
+// rows (`items`), the parts' datasheets and prices and what a click on a
+// designator or a datasheet does; the search, the filters, the grouping and
+// the order are this component's, and KicadView keeps it mounted while the BOM
+// is off screen, so they are as the reader left them when it is back.
 //
 // OVER THE TABLE: a search field and a switch that groups identical parts into
 // a row. Nothing of it is in the page's bar, which keeps its size on every
@@ -23,12 +23,16 @@
 // Values within a
 // column are any of those checked, the columns and the search all at once.
 //
-// THE TABLE has kicad-cli's default columns and the datasheet. A designator
-// selects its part across the design and opens the board where the design
-// lists one (`onPart`), else it is plain text. A datasheet that names a
-// document of the build (kicadsheets.js) opens it in KicadView's window over
-// the BOM (`onDatasheet`), as the part's menu does; a web address opens in a
-// new tab, shown by its host.
+// THE TABLE has kicad-cli's default columns, the datasheet, the price and the
+// sum. A designator selects its part across the design and opens the board
+// where the design lists one (`onPart`), else it is plain text. A datasheet
+// that names a document of the build (kicadsheets.js) opens it in KicadView's
+// window over the BOM (`onDatasheet`), as the part's menu does; a web address
+// opens in a new tab, shown by its host. Price is the part's `Price` field as
+// written (`prices`), a group's that of its first part naming one; Sum is what
+// the row's parts' prices add up to (`priceOf` in kicadbom.js). Under the rows,
+// where any part of the BOM has a price, a total: the Sum of the rows shown,
+// DNP ones left out, and how many of their parts have no price (`bomTotal`).
 //
 // THE LAYOUT: the controls and the table one block in the middle of the page,
 // as wide as the wider of them and never wider than the page; the controls are
@@ -41,7 +45,7 @@
 import React from 'react';
 
 import {
-  BOM_COLUMNS, BOM_SORT, bomFilters, bomParts, bomTable, entryOrder, NO_FILTER, nextSort,
+  amountText, BOM_COLUMNS, BOM_SORT, bomFilters, bomParts, bomTable, bomTotal, entryOrder, NO_FILTER, nextSort, sumText,
 } from './kicadbom.js';
 import { datasheetDocument } from './kicadsheets.js';
 import { OFF, ON_ACCENT_EDGE, SEGMENTED, SUNKEN } from './panelstyle.js';
@@ -90,6 +94,7 @@ const FUNNEL_ICON = (
   </svg>
 );
 const CELL = 'border:1px solid var(--line);padding:4px 10px;vertical-align:top';
+const TOTAL = `${CELL};font-weight:600`;
 const LINK = 'color:var(--accent-text);cursor:pointer';
 // A column's filter, a card in the page's colours.
 const POPUP = 'position:absolute;top:0;left:0;z-index:1;width:250px;max-width:100%;box-sizing:border-box;'
@@ -264,9 +269,10 @@ export default class BomView extends React.Component {
   render() {
     const { items, hasBoard, onPart } = this.props;
     const { query, excluded, grouped, sort, popup } = this.state;
-    const parts = bomParts(items, (ref) => datasheetOf(ref, this.props));
+    const parts = bomParts(items, (ref) => datasheetOf(ref, this.props), (ref) => this.props.prices.get(ref));
     const rows = bomTable(parts, this.state);
     const filters = bomFilters(parts, grouped);
+    const { priced, total, unpriced } = bomTotal(parts, rows);
     return (
       <div ref={this.setBlock} style={css(BLOCK)}>
         <div style={css(CONTROLS)}>
@@ -312,9 +318,21 @@ export default class BomView extends React.Component {
                     <td key={i} style={css(CELL)}>{cell}</td>
                   ))}
                   <td style={css(CELL)}>{this.datasheetCell(row.datasheet)}</td>
+                  <td style={css(CELL)}>{row.price}</td>
+                  <td style={css(CELL)}>{sumText(row)}</td>
                 </tr>
               ))}
             </tbody>
+            {priced && (
+              <tfoot>
+                <tr>
+                  <td colSpan={BOM_COLUMNS.indexOf('Sum')} style={css(TOTAL)}>
+                    {`Total${unpriced ? ` · ${unpriced} ${unpriced === 1 ? 'part' : 'parts'} without a price` : ''}`}
+                  </td>
+                  <td style={css(TOTAL)}>{amountText(total)}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
         {popup && this.popup(filters)}

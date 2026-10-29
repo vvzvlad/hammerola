@@ -61,7 +61,11 @@ hang a datasheet on a part, put the PDF in the project, list it
 `Datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape
 brings the design back as it was), and the design's BOM view links it in its Datasheet
 column. A web address in the field gets no menu item and no window; only the BOM's
-Datasheet column shows it, as a link that opens in a new tab. A missing sheet, a sheet
+Datasheet column shows it, as a link that opens in a new tab. To price a part, add a
+`Price` field to its symbol (a field of your own, as `LCSC` is: the price of one piece,
+`0.12` or `12 ₽`): the BOM view shows it in its Price column, multiplies it by the
+quantity in its Sum column and adds the rows up under the table, DNP parts left out.
+KiCad has no price field of its own. A missing sheet, a sheet
 outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
 the push, naming the file. The files open to the link without a key: whoever has it can

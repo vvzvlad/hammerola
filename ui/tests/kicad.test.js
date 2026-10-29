@@ -1711,9 +1711,11 @@ describe('the BOM of a design', () => {
       { references: ['C4'], value: '1u', footprint: 'C_0603', qty: 1, dnp: false },
     ]
     // The root sheet names a datasheet for two parts: a document of the build,
-    // by its path from the project's directory, and a web address.
+    // by its path from the project's directory, and a web address; and a price
+    // for one of them.
     const SHEET = `(kicad_sch (version 20250610)
-      (symbol (lib_id "Device:R") (property "Reference" "R2") (property "Datasheet" "../ds/ne555.pdf"))
+      (symbol (lib_id "Device:R") (property "Reference" "R2") (property "Datasheet" "../ds/ne555.pdf")
+        (property "Price" "0,5 ₽"))
       (symbol (lib_id "Device:C") (property "Reference" "C3") (property "Datasheet" "https://www.ti.com/lit/ds/c3.pdf")))`
     /** The view on the BOM of `documents` once the files are in, its
      *  schematic's element computing `ITEMS`. */
@@ -1734,6 +1736,8 @@ describe('the BOM of a design', () => {
     it('lists the schematic\'s parts, a designator opening the board with its part selected once the page hands it down', async () => {
       const { view, elements } = await opened(listed)
       expect(ofType(table(view), BomView)[0].props).toMatchObject({ items: bomRows(ITEMS), hasBoard: true })
+      // the prices the schematic's `Price` fields give, read from its file
+      expect(ofType(table(view), BomView)[0].props.prices).toEqual(new Map([['R2', '0,5 ₽']]))
       expect(links(view).map((el) => el.props['data-ref'])).toEqual(['C3', 'C4', 'R2', 'R10'])
       // the part is selected in every view at once, hidden as they are, and the
       // board asked again once the page, answering later, has it on screen
@@ -1760,8 +1764,9 @@ describe('the BOM of a design', () => {
 
     it('opens a datasheet of the build in the window over it, and a web one in a new tab', async () => {
       const { view } = await opened(listed)
+      // each row's Datasheet cell, before Price and Sum
       const cells = collect(bomOf(view), (el) => (el.type === 'tr' && el.key !== null ? el : undefined))
-        .map((row) => collect(row, (el) => (el.type === 'td' ? el : undefined)).at(-1))
+        .map((row) => collect(row, (el) => (el.type === 'td' ? el : undefined)).at(-3))
       // a grouped row's is its first designator's: R2's, not R10's
       const [web, none, doc] = cells.map((cell) => collect(cell, (el) => el)[1])
       expect(web.props).toMatchObject({ href: 'https://www.ti.com/lit/ds/c3.pdf', target: '_blank', rel: 'noopener noreferrer',

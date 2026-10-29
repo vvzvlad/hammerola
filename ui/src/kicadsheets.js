@@ -25,7 +25,10 @@
 // THE BOM (BomView.jsx) shows a web address too, where no document is named:
 // `partWebDatasheets` reads the `http://` and `https://` values the same way,
 // the schematic's over the board's, and leaves `partDatasheets` as the menu
-// reads it.
+// reads it. Its Price column is the part's `Price` field, one of the author's
+// own as `LCSC` and `MPN` are (KiCad has no field for a price): `partPrices`
+// reads it the same way, the schematic's over the board's, the first unit
+// naming one, an empty one none.
 //
 // Text in, a map out: a file that does not parse gives no entries and throws
 // nothing.
@@ -55,13 +58,13 @@ function symbolReferences(symbol) {
   return references.filter(Boolean);
 }
 
-/** The parts `root` names a datasheet for, as `[designator, value]`, each
- *  value one `keep` takes: the placed symbols of a schematic (not its
+/** The parts `root` gives field `name` a value for, as `[designator, value]`,
+ *  each value one `keep` takes: the placed symbols of a schematic (not its
  *  `lib_symbols`), the footprints of a board. */
-function partsOf(root, keep) {
+function partsOf(root, name, keep) {
   const parts = [];
   const take = (node, references) => {
-    const value = property(node, 'Datasheet');
+    const value = property(node, name);
     if (!EMPTY.has(value) && keep(value)) for (const reference of references) parts.push([reference, value]);
   };
   if (head(root) === 'kicad_sch') {
@@ -82,9 +85,9 @@ function parsed(text) {
   }
 }
 
-/** Designator → `Datasheet` value `keep` takes, from a design's files' texts
- *  by path (`partDatasheets`). */
-function datasheetsOf(texts, keep) {
+/** Designator → value of field `name` that `keep` takes, from a design's
+ *  files' texts by path (`partDatasheets`). */
+function fieldsOf(texts, name, keep) {
   const sheets = new Map();
   const board = new Map();
   for (const [path, text] of Object.entries(texts)) {
@@ -92,7 +95,7 @@ function datasheetsOf(texts, keep) {
     const into = kind === 'kicad_sch' ? sheets : kind === 'kicad_pcb' ? board : null;
     const root = into && typeof text === 'string' && parsed(text);
     if (!root || head(root) !== kind) continue;
-    for (const [reference, value] of partsOf(root, keep)) if (!into.has(reference)) into.set(reference, value);
+    for (const [reference, value] of partsOf(root, name, keep)) if (!into.has(reference)) into.set(reference, value);
   }
   for (const [reference, value] of board) if (!sheets.has(reference)) sheets.set(reference, value);
   return sheets;
@@ -104,11 +107,15 @@ function datasheetsOf(texts, keep) {
  * value found for a designator stands, so a part drawn as several units gives
  * that of the first unit naming one; a schematic's stands over a board's.
  */
-export const partDatasheets = (texts) => datasheetsOf(texts, (value) => !isWeb(value));
+export const partDatasheets = (texts) => fieldsOf(texts, 'Datasheet', (value) => !isWeb(value));
 
 /** Designator → `Datasheet` value that is an `http://` or `https://` address,
  *  read as `partDatasheets` reads the others. */
-export const partWebDatasheets = (texts) => datasheetsOf(texts, (value) => HTTP.test(value));
+export const partWebDatasheets = (texts) => fieldsOf(texts, 'Datasheet', (value) => HTTP.test(value));
+
+/** Designator → `Price` value, any text, read as `partDatasheets` reads the
+ *  `Datasheet` one. */
+export const partPrices = (texts) => fieldsOf(texts, 'Price', () => true);
 
 const directory = (path) => path.slice(0, Math.max(path.lastIndexOf('/'), 0));
 

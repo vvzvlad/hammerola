@@ -220,7 +220,7 @@ import DocumentView from './DocumentView.jsx';
 import { BOM_TYPE, bomRows } from './kicadbom.js';
 import { netIndex } from './kicadnets.js';
 import { sheetName } from './kicadpages.js';
-import { datasheetBase, datasheetDocument, partDatasheets, partWebDatasheets } from './kicadsheets.js';
+import { datasheetBase, datasheetDocument, partDatasheets, partPrices, partWebDatasheets } from './kicadsheets.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import {
   CARD_BORDER, CARD_LOOK, CARD_PAD, ELLIPSIS, GROUP_HEAD, GROUP_LINE, GROUP_PAD, menuRow, POP_SHADOW_HIGH, ROW_LINE, ROW_PAD,
@@ -629,8 +629,9 @@ export default class KicadView extends React.Component {
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
       tools3d: null, received: 0, got: false, bom: [],
-      // Each part's `Datasheet` value that is a web address, for the BOM.
-      webDatasheets: new Map(),
+      // Each part's `Datasheet` value that is a web address, and its `Price`
+      // value, for the BOM.
+      webDatasheets: new Map(), prices: new Map(),
     };
     // What the bar can do with a drawn view on screen, one object for both, and
     // the last thing the page was told (`report`).
@@ -1268,7 +1269,7 @@ export default class KicadView extends React.Component {
         // of its `schematics`.
         const root = members[SCH] && members[SCH].kicad.schematics[0];
         this.setState({ datasheets: partDatasheets(byPath), webDatasheets: partWebDatasheets(byPath),
-          nets: netIndex(byPath, root) });
+          prices: partPrices(byPath), nets: netIndex(byPath, root) });
         return loaded;
       })
       .then(() => {
@@ -1384,7 +1385,9 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, menu, hover, sheet, received, got, bom, datasheets, webDatasheets } = this.state;
+    const {
+      ready, error, selected, menu, hover, sheet, received, got, bom, datasheets, webDatasheets, prices,
+    } = this.state;
     // The 2D views' loading and failure, over them and over the BOM, which is
     // read out of the schematic's: the 3D view says its own.
     const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
@@ -1420,7 +1423,7 @@ export default class KicadView extends React.Component {
             the table where it was scrolled to, searched, filtered and sorted. */}
         {members[BOM] && ready && !error && (
           <div data-view={BOM} style={css(`${BOM_PAGE};visibility:${showing === BOM ? 'visible' : 'hidden'}`)}>
-            <BomView items={bom} datasheets={datasheets} webDatasheets={webDatasheets}
+            <BomView items={bom} datasheets={datasheets} webDatasheets={webDatasheets} prices={prices}
                      base={datasheetBase(Object.values(members))} documents={this.props.documents}
                      hasBoard={Boolean(members[PCB])} onPart={(ref) => this.showPart(ref)}
                      onDatasheet={(doc) => this.setState({ sheet: { doc, from: side } })} />
