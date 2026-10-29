@@ -164,11 +164,13 @@
 //
 // THE BOM is the schematic's bill of materials as the viewer computes it from
 // the files the schematic's element is handed (`getBomItems`, an edit of ours:
-// static/_v/PROVENANCE.md, "Our edits"), read once the viewers have them and
-// drawn as a table in the page's colours: kicad-cli's default columns, a row
-// per footprint, value and DNP, the designators in KiCad's order (`bomRows` in
-// kicadbom.js). Until then it shows the load bar, as the 2D views do. Once
-// read it stays mounted, hidden off screen as every member's view is, so Back
+// static/_v/PROVENANCE.md, "Our edits"), read once the viewers have them, put
+// in KiCad's order (`bomRows` in kicadbom.js) and drawn by BomView.jsx: a
+// table in the page's colours, searched, filtered, grouped and sorted as the
+// reader asks, a datasheet of the build opening in the datasheet's window
+// below as its menu opens it, a web address in a new tab. Until then it shows
+// the load bar, as the 2D views do. Once read it stays mounted, hidden off
+// screen as every member's view is, so Back
 // from the board finds the table where it was scrolled to; it has nothing for
 // Fit and Frame, nor takes a comment (`COMMENTABLE` in DocumentView.jsx). A
 // designator selects its part in every view, as a click on the part in one
@@ -210,11 +212,12 @@ import React from 'react';
 
 import { parse, subscribe, unsubscribe } from './address.js';
 import BoardView3D from './BoardView3D.jsx';
+import BomView from './BomView.jsx';
 import DocumentView from './DocumentView.jsx';
 import { BOM_TYPE, bomRows } from './kicadbom.js';
 import { netIndex } from './kicadnets.js';
 import { sheetName } from './kicadpages.js';
-import { datasheetBase, datasheetDocument, partDatasheets } from './kicadsheets.js';
+import { datasheetBase, datasheetDocument, partDatasheets, partWebDatasheets } from './kicadsheets.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
@@ -586,17 +589,11 @@ const SHEET_NAME = `flex:1;min-width:0;${ELLIPSIS};font:600 12px ${SANS};color:v
 const SHEET_CLOSE = 'width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;'
   + `border-radius:6px;font:400 19px/1 ${SANS};color:var(--text-muted);cursor:pointer;user-select:none`;
 const SHEET_BODY = 'position:relative;flex:1;min-height:0;overflow:auto';
-// The BOM: a table as a markdown document's is drawn (docmd.js), over the whole
-// view area and scrolling inside it. The view area already stops above the
-// page's bar (`DOC_LAYER` in viewlist.jsx), so the bar covers no row of it.
-const BOM_PAGE = 'position:absolute;inset:0;overflow:auto;padding:24px 28px;box-sizing:border-box';
-const BOM_TABLE = `border-collapse:collapse;font:400 12.5px ${SANS};color:var(--text)`;
-const BOM_HEAD = `border:1px solid var(--line);padding:4px 10px;text-align:left;font:600 12px ${SANS};`
-  + 'background:var(--sunken-bg)';
-const BOM_CELL = 'border:1px solid var(--line);padding:4px 10px;vertical-align:top';
-const BOM_REF = 'color:var(--accent-text);cursor:pointer';
-/** The BOM's columns: kicad-cli's default (`sch export bom`). */
-const BOM_COLUMNS = ['Refs', 'Value', 'Footprint', 'Qty', 'DNP'];
+// The BOM (BomView.jsx) over the whole view area, scrolling down inside it and
+// never sideways: a table wider than the area scrolls in its own box. The view
+// area already stops above the page's bar (`DOC_LAYER` in viewlist.jsx), so
+// the bar covers no row of it.
+const BOM_PAGE = 'position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;padding:24px 28px;box-sizing:border-box';
 
 /** One design: a view per member, the one on screen, and the links between
  *  them. */
@@ -617,6 +614,8 @@ export default class KicadView extends React.Component {
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
       tools3d: null, received: 0, got: false, bom: [],
+      // Each part's `Datasheet` value that is a web address, for the BOM.
+      webDatasheets: new Map(),
     };
     // What the bar can do with a drawn view on screen, one object for both, and
     // the last thing the page was told (`report`).
@@ -1243,7 +1242,8 @@ export default class KicadView extends React.Component {
         // it. The root schematic is the schematic member's own file, the first
         // of its `schematics`.
         const root = members[SCH] && members[SCH].kicad.schematics[0];
-        this.setState({ datasheets: partDatasheets(byPath), nets: netIndex(byPath, root) });
+        this.setState({ datasheets: partDatasheets(byPath), webDatasheets: partWebDatasheets(byPath),
+          nets: netIndex(byPath, root) });
         return loaded;
       })
       .then(() => {
@@ -1357,7 +1357,7 @@ export default class KicadView extends React.Component {
   render() {
     const side = this.side();
     const members = this.members();
-    const { ready, error, selected, menu, hover, sheet, received, got, bom } = this.state;
+    const { ready, error, selected, menu, hover, sheet, received, got, bom, datasheets, webDatasheets } = this.state;
     // The 2D views' loading and failure, over them and over the BOM, which is
     // read out of the schematic's: the 3D view says its own.
     const total = drawnViews(members).reduce((sum, view) => sum + members[view].bytes, 0);
@@ -1387,35 +1387,16 @@ export default class KicadView extends React.Component {
           </div>
         )}
         {/* The BOM, once the schematic's element has its files. A designator is
-            a link to the part on the board where the design lists one. Kept
-            mounted off screen, as every member's view is, so that Back from the
-            board finds the table where it was scrolled to. */}
+            a link to the part on the board where the design lists one, a
+            datasheet of the build opens in the window over it. Kept mounted off
+            screen, as every member's view is, so that Back from the board finds
+            the table where it was scrolled to, searched, filtered and sorted. */}
         {members[BOM] && ready && !error && (
           <div data-view={BOM} style={css(`${BOM_PAGE};visibility:${showing === BOM ? 'visible' : 'hidden'}`)}>
-            <table style={css(BOM_TABLE)}>
-              <thead>
-                <tr>{BOM_COLUMNS.map((name) => <th key={name} style={css(BOM_HEAD)}>{name}</th>)}</tr>
-              </thead>
-              <tbody>
-                {bom.map((row) => (
-                  <tr key={row.references[0]}>
-                    <td style={css(BOM_CELL)}>
-                      {row.references.map((ref, i) => (
-                        <React.Fragment key={ref}>
-                          {i > 0 && ', '}
-                          {members[PCB] ? (
-                            <span data-ref={ref} style={css(BOM_REF)} onClick={() => this.showPart(ref)}>{ref}</span>
-                          ) : ref}
-                        </React.Fragment>
-                      ))}
-                    </td>
-                    {[row.value, row.footprint, row.qty, row.dnp ? 'DNP' : ''].map((cell, i) => (
-                      <td key={i} style={css(BOM_CELL)}>{cell}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <BomView items={bom} datasheets={datasheets} webDatasheets={webDatasheets}
+                     base={datasheetBase(Object.values(members))} documents={this.props.documents}
+                     hasBoard={Boolean(members[PCB])} onPart={(ref) => this.showPart(ref)}
+                     onDatasheet={(doc) => this.setState({ sheet: { doc, from: side } })} />
           </div>
         )}
         {note}

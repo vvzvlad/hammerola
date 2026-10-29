@@ -28,6 +28,7 @@ vi.mock('/_v/ecad-viewer.js', () => ({}))
 
 import { navigate, parse, respell } from '../src/address.js'
 import BoardView3D from '../src/BoardView3D.jsx'
+import BomView from '../src/BomView.jsx'
 import DocumentView, { docHint, DocumentLayers, documentBody, docViewKey } from '../src/DocumentView.jsx'
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
@@ -1660,11 +1661,17 @@ describe('the BOM of a design', () => {
     const ITEMS = [
       { references: ['R10', 'R2'], value: '10k', footprint: 'R_0603', qty: 2, dnp: false },
       { references: ['C3'], value: '100n', footprint: 'C_0603', qty: 1, dnp: true },
+      { references: ['C4'], value: '1u', footprint: 'C_0603', qty: 1, dnp: false },
     ]
+    // The root sheet names a datasheet for two parts: a document of the build,
+    // by its path from the project's directory, and a web address.
+    const SHEET = `(kicad_sch (version 20250610)
+      (symbol (lib_id "Device:R") (property "Reference" "R2") (property "Datasheet" "../ds/ne555.pdf"))
+      (symbol (lib_id "Device:C") (property "Reference" "C3") (property "Datasheet" "https://www.ti.com/lit/ds/c3.pdf")))`
     /** The view on the BOM of `documents` once the files are in, its
      *  schematic's element computing `ITEMS`. */
     async function opened(documents) {
-      vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+      vi.stubGlobal('fetch', vi.fn(async (url) => new Response(url === `${BASE}hw/board.kicad_sch` ? SHEET : `<${url}>`)))
       const { view, elements } = mounted(documents.find((one) => one.type === 'bom'), documents)
       elements[SCH].getBomItems = () => ITEMS
       view.componentDidMount()
@@ -1672,19 +1679,20 @@ describe('the BOM of a design', () => {
       onTestFinished(() => view.componentWillUnmount())
       return { view, elements }
     }
-    const links = (view) => collect(view.render(), (el) => (el.props['data-ref'] ? el : undefined))
     const table = (view) => collect(view.render(), (el) => (el.props['data-view'] === BOM ? el : undefined))[0]
+    /** The BOM's own drawing, from the props the view hands it. */
+    const bomOf = (view) => new BomView(ofType(table(view), BomView)[0].props).render()
+    const links = (view) => collect(bomOf(view), (el) => (el.props['data-ref'] ? el : undefined))
 
     it('lists the schematic\'s parts, a designator opening the board with its part selected once the page hands it down', async () => {
       const { view, elements } = await opened(listed)
-      expect(texts(table(view))).toEqual(['Refs', 'Value', 'Footprint', 'Qty', 'DNP',
-        'C3', '100n', 'C_0603', '1', 'DNP', 'R2', ', ', 'R10', '10k', 'R_0603', '2', ''])
-      expect(links(view).map((el) => el.props['data-ref'])).toEqual(['C3', 'R2', 'R10'])
+      expect(ofType(table(view), BomView)[0].props).toMatchObject({ items: bomRows(ITEMS), hasBoard: true })
+      expect(links(view).map((el) => el.props['data-ref'])).toEqual(['C3', 'C4', 'R2', 'R10'])
       // the part is selected in every view at once, hidden as they are, and the
       // board asked again once the page, answering later, has it on screen
       const answer = view.props.onOpen
       view.props.onOpen = vi.fn()
-      links(view)[2].props.onClick()
+      links(view)[3].props.onClick()
       expect(view.props.onOpen.mock.calls).toEqual([['hw__board.kicad_pcb']])
       expect(elements[SCH].requestCrossProbe.mock.calls).toEqual([[designator(SCH, 'R10')]])
       expect(elements[PCB].requestCrossProbe.mock.calls).toEqual([[designator(PCB, 'R10')]])
@@ -1703,10 +1711,24 @@ describe('the BOM of a design', () => {
       expect(view.props.onTools.mock.lastCall).toEqual([null])
     })
 
-    it('lists the designators of a design with no board as plain text', async () => {
+    it('opens a datasheet of the build in the window over it, and a web one in a new tab', async () => {
+      const { view } = await opened(listed)
+      const cells = collect(bomOf(view), (el) => (el.type === 'tr' && el.key !== null ? el : undefined))
+        .map((row) => collect(row, (el) => (el.type === 'td' ? el : undefined)).at(-1))
+      // a grouped row's is its first designator's: R2's, not R10's
+      const [web, none, doc] = cells.map((cell) => collect(cell, (el) => el)[1])
+      expect(web.props).toMatchObject({ href: 'https://www.ti.com/lit/ds/c3.pdf', target: '_blank', rel: 'noopener noreferrer',
+        children: 'www.ti.com' })
+      expect([none, texts(cells[1]), texts(doc)]).toEqual([undefined, [''], ['ds/ne555.pdf']])
+      doc.props.onClick()
+      expect(view.state.sheet).toEqual({ doc: pdf, from: BOM })
+      expect(collect(view.render(), (el) => el.props['data-sheet'])).toEqual([pdf.id])
+      expect(view.props.onOpen).not.toHaveBeenCalled()
+    })
+
+    it('hands a design with no board its designators as plain text', async () => {
       const { view } = await opened(withBoms([schematic(), pdf]))
-      expect(links(view)).toEqual([])
-      expect(texts(table(view))).toContain('R10')
+      expect(ofType(table(view), BomView)[0].props.hasBoard).toBe(false)
     })
   })
 })

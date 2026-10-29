@@ -5,7 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { datasheetBase, datasheetDocument, datasheetPath, partDatasheets } from '../src/kicadsheets.js'
+import {
+  datasheetBase, datasheetDocument, datasheetPath, partDatasheets, partWebDatasheets,
+} from '../src/kicadsheets.js'
 
 const field = (name, value) => `(property "${name}" "${value}" (at 0 0 0) (effects (font (size 1.27 1.27))))`
 /** A placed symbol; `paths` are the references of its sheet's placements. */
@@ -52,6 +54,16 @@ describe('a part\'s datasheet', () => {
         footprint('U3', 'file://${KIPRJMOD}/ds/u3.pdf')),
     }
     expect(read(texts)).toEqual({ U1: '${KIPRJMOD}/ds/tpa3250.pdf', U2: 'ds/u2.pdf', U3: 'file://${KIPRJMOD}/ds/u3.pdf' })
+  })
+
+  it('has its web address read apart, for the BOM, the schematic\'s over the board\'s', () => {
+    const texts = {
+      'hw/a.kicad_sch': sheet(symbol('U1', 'https://www.ti.com/u1.pdf'), symbol('U2', 'ds/u2.pdf'), symbol('U4', 'ftp://h/u4')),
+      'hw/a.kicad_pcb': board(footprint('U1', 'http://board/u1.pdf'), footprint('U2', 'HTTP://board/u2.pdf'),
+        footprint('U3', 'ds/u3.pdf')),
+    }
+    expect(Object.fromEntries(partWebDatasheets(texts)))
+      .toEqual({ U1: 'https://www.ti.com/u1.pdf', U2: 'HTTP://board/u2.pdf' })
   })
 
   it('is none for text that does not parse, and nothing is thrown', () => {
