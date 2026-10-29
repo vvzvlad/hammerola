@@ -25,6 +25,19 @@ CARD_SUFFIX = "_card.png"
 PRINT_VIEW_ID = "print"
 ASSEMBLED_VIEW_ID = "assembled"
 
+# The `print` view is split into beds by `"plate": N` on a reference, and the
+# bed a reference names nothing about is this one. Each bed is a 3MF of its own
+# (`assembly.export_plate_3mfs`), because a slicer reads no beds out of a 3MF
+# it did not write: bed 1 is `print.3mf`, bed N `print-N.3mf`.
+FIRST_PLATE = 1
+
+
+def plate_file(number):
+    """The 3MF a bed of the `print` view is written to."""
+    if number == FIRST_PLATE:
+        return f"{PRINT_VIEW_ID}.3mf"
+    return f"{PRINT_VIEW_ID}-{number}.3mf"
+
 # Mesh quality for the STL download and for the watertightness gate.
 STL_TOLERANCE = 0.01
 STL_ANGULAR_TOLERANCE = 0.1

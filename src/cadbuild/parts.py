@@ -27,6 +27,8 @@ model.py). Never both: one key is one piece of geometry, and two of them under
 one name would be two parts sharing an identity.
 """
 
+import re
+
 from .artifacts import ASSEMBLED_STEM, PRINT_VIEW_ID
 from .errors import BuildError
 from .geometry import as_shape
@@ -74,6 +76,12 @@ RESERVED_STEMS = {
     ASSEMBLED_STEM: "the glued-together assembly",
     PRINT_VIEW_ID: "the print plate",
 }
+
+# ...and the stems of the beds after the first, `print-2` and on
+# (`artifacts.plate_file`): a printable under one of them would export its own
+# 3MF to the file of a bed, or a bed's over it. Unconditional for the reason
+# RESERVED_STEMS is.
+PLATE_STEM_RE = re.compile(rf"\A{re.escape(PRINT_VIEW_ID)}-[0-9]+\Z")
 
 
 def check_stem(stem, made):
@@ -127,6 +135,12 @@ def _check_key(key):
             f"catalogue key {key!r} is reserved: {key}.stl is the name this "
             f"build keeps for {RESERVED_STEMS[key]}. Call the part something "
             "else."
+        )
+    if PLATE_STEM_RE.match(key):
+        raise BuildError(
+            f"catalogue key {key!r} is reserved: {key}.3mf is the name this "
+            f"build keeps for a bed's 3MF, one per bed of the {PRINT_VIEW_ID!r} "
+            "view. Call the part something else."
         )
     return key
 

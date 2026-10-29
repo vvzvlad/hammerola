@@ -210,6 +210,14 @@ def test_a_part_called_print_collides_with_the_plate():
     assert "collides with" not in message
 
 
+def test_a_part_called_after_a_bed_collides_with_that_bed_s_3mf():
+    """`print-2.3mf` is the second bed of the `print` view, and a printable
+    keyed `print-2` would export its own 3MF under that very name."""
+    message = refusal({"print-2": entry()})
+    assert "'print-2' is reserved" in message
+    assert "print-2.3mf" in message
+
+
 def test_the_reservation_applies_to_every_kind():
     """The key is a node name in every view file and a key in meta.json, so it
     would read as the build's own artefact whether or not anything is exported

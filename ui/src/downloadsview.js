@@ -1,6 +1,7 @@
 /**
  * The downloads menu, built out of the part catalogue: key -> {extension -> file},
- * and of the build's documents, of which the board's Gerbers are offered.
+ * of the build's documents, of which the board's Gerbers are offered, and of
+ * the views, of which the `print` view's beds are offered (`plates`).
  *
  * Returns `downloadGroups`, which `chromeView` puts back in the object because
  * the menu hangs off a header button, and `anyDownloads`, which the row
@@ -11,7 +12,7 @@
  * part; one spelling of the address keeps files from downloading under the
  * wrong name.
  *
- * The catalogue and the documents are the whole input (no `s`): the menu shows
+ * The catalogue, the documents and the views are the whole input (no `s`): the menu shows
  * what the build ships, not anything the reader did. `groupDownloads` stays beside the
  * component, where the tests reach for it. `key` is `filesKeyFor`'s answer for
  * the build on screen; without one the hub refuses every part's file, so the
@@ -55,14 +56,14 @@ export function filesKeyFor(builds, slot, fromAddress) {
 }
 
 export function downloadsView(catalogue, deps) {
-  const { groupDownloads, downloadAll, key, documents } = deps;
+  const { groupDownloads, downloadAll, key, documents, views } = deps;
 
   // A row is controls side by side: the link, filling it, then, for a 3MF,
   // Open in Bambu Studio (bambu.jsx), and its Copy link at the end
   // (copylink.jsx), neither of which may sit inside the `<a>`.
   const dlRowStyle = 'display:flex;align-items:center';
   const dlLinkStyle = `display:flex;flex:1;min-width:0;align-items:center;gap:10px;padding:6px 4px 6px 22px;text-decoration:none;color:var(--text);font:400 12px ${SANS}`;
-  const downloadGroups = groupDownloads(catalogue, documents).map((g) => ({
+  const downloadGroups = groupDownloads(catalogue, documents, views).map((g) => ({
     key: g.ext,
     ext: g.ext,
     files: g.files.map((f) => ({

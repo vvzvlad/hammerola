@@ -25,8 +25,9 @@ def overview_meshes(plate):
     """`{stem: filename}` for the MESHES that are about the WHOLE build.
 
     Two at most, the glued assembly and the print plate, and neither is a
-    download button: the assembly is already on the page in 3D, and a plate
-    button would invite slicing the plate. Not in the parts map, because these
+    download button: the assembly is already on the page in 3D, and the plate
+    is offered to a slicer as a 3MF per bed (`assembly.export_plate_3mfs`),
+    each part an object of its own. Not in the parts map, because these
     stems are not catalogue keys (parts.RESERVED_STEMS). Separate from
     `previews` because both are keyed by stem and `assembled` names a file in
     each.

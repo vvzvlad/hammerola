@@ -269,17 +269,17 @@ def test_missing_meta_json_is_422(hub):
 
 
 # -- every place this document names a file ----------------------------------
-# There are TEN and they are enumerated here once. A view names its own file,
-# its overview, its picture and the card cut of that picture; a part names what
-# it was exported to and its own picture; a document of a documents build names
-# its file, a KiCad schematic among them its sheets and its project, and a DXF
-# the picture drawn of it.
+# There are ELEVEN and they are enumerated here once. A view names its own file,
+# its overview, the 3MF of each bed of a `print` view, its picture and the card
+# cut of that picture; a part names what it was exported to and its own picture;
+# a document of a documents build names its file, a KiCad schematic among them
+# its sheets and its project, and a DXF the picture drawn of it.
 #
 # ONE LIST FOR EVERY TEST BELOW, rather than a parametrize per test: a pointer
 # that quietly stops being checked is a 404 under an immutable URL, and per-test
 # lists go stale one entry at a time.
-FILE_POINTERS = ("view file", "view overview", "view preview", "view card",
-                 "part files", "part preview", "document file",
+FILE_POINTERS = ("view file", "view overview", "view plates", "view preview",
+                 "view card", "part files", "part preview", "document file",
                  "kicad schematic", "kicad project", "document preview")
 
 # The KiCad schematic the two KiCad pointers sit in, and the DXF the preview
@@ -298,7 +298,7 @@ PART_EXPORT_BYTES = b"solid lid\nendsolid lid\n"
 
 
 def _pointing_at(where, name):
-    """meta.json fields naming `name` in one of the ten places, and nowhere else.
+    """meta.json fields naming `name` in one of the eleven places, and nowhere else.
 
     Returns kwargs for `meta_bytes`, so the document around the pointer is the
     ordinary one — a catalogue of one printable and a view that selects it. A
@@ -311,6 +311,8 @@ def _pointing_at(where, name):
         view["file"] = name
     elif where == "view overview":
         view["overview"] = name
+    elif where == "view plates":
+        view["plates"] = {"1": name}
     elif where == "view preview":
         view["preview"] = name
     elif where == "view card":
@@ -358,10 +360,10 @@ def _pointing_archive(fields, extra=None):
     return members
 
 
-def test_the_ten_file_pointers_are_the_ten_the_document_has():
+def test_the_eleven_file_pointers_are_the_eleven_the_document_has():
     """The list above, checked against the document rather than trusted.
 
-    `_pointing_at` refuses a name it does not know, so an eleventh pointer added
+    `_pointing_at` refuses a name it does not know, so a twelfth pointer added
     to `build_meta` without a row here would be checked by nothing below and this
     would not notice — the list has to be compared against something. What it is
     compared against is the number of places `build_meta` calls the shared name
@@ -402,6 +404,22 @@ def test_a_pointer_at_a_missing_file_is_422(hub, where):
     assert r.status_code == 422, where
     assert "absent.stl" in r.json()["error"], where
     assert not (hub.project_dir("proj1") / "abc123").exists()
+
+
+@pytest.mark.parametrize("plates,said", [
+    ({}, "must be a non-empty object"),
+    (PART_EXPORT, "must be a non-empty object"),
+    ({"0": PART_EXPORT}, "names a bed '0'"),
+    ({"one": PART_EXPORT}, "names a bed 'one'"),
+])
+def test_beds_that_are_not_numbered_files_are_refused(hub, plates, said):
+    """`plates` is `{bed number: file}`, beds counted from 1, as the build
+    writes it; the file itself is held to the rule every pointer is."""
+    fields = _pointing_at("view plates", PART_EXPORT)
+    fields["views"][0]["plates"] = plates
+    r = hub.publish("proj1", "abc123", tar_gz(_pointing_archive(fields)))
+    assert r.status_code == 422, plates
+    assert said in r.json()["error"], r.json()["error"]
 
 
 # -- what a view SELECTS out of the catalogue --------------------------------

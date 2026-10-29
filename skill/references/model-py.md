@@ -73,8 +73,8 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
   `mesh.apply_transform(...)`. **The key IS the part's identity**: its export
   stem, its row in the viewer's tree, what views point at, its entry in
   `meta.json`; there is no display name. Letters, digits, dot, dash and
-  underscore, a letter or digit first, up to 128 characters; `assembled` and
-  `print` are reserved. An unknown key in a record (a misspelt `colour`) is a
+  underscore, a letter or digit first, up to 128 characters; `assembled`,
+  `print` and `print-<number>` (the files of the beds) are reserved. An unknown key in a record (a misspelt `colour`) is a
   warning, and the part is painted by its kind.
 * **`kind` is required and has no default**: `printable` is exported with
   download buttons; `hardware` is bought and goes into the product (a screw, a
@@ -109,7 +109,18 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
   the reason required and logged. A `mock` is never asked; **`hardware` is** —
   a screw biting into its printed hole is a declared overlap.
 
-  **`print` is optional and is the bed.** Printables only; `at` may move a part
+  **`print` is the bed, and it is downloaded whole.** The build writes
+  `print.3mf` from it: each reference an object of its own, where its `at` put
+  it, standing on z = 0, offered on the page as `print plate` under 3MF and
+  opened in Bambu Studio in one click. So a model of more than one printable
+  lays out every one of them here, as many copies as one product takes; without
+  a `print` view there is only each part's own 3MF. When the owner has named
+  the printer and the parts do not fit its bed, split them over beds:
+  `{"part": "pin", "at": ..., "plate": 2}` puts a reference on bed 2 (no
+  `plate` is bed 1), and each bed is a file of its own — `print.3mf`,
+  `print-2.3mf`, … Lay the beds side by side in the view, clear of each other,
+  and assert each bed's footprint against the printer in `checks()`; the hub
+  does not know the printer. Not knowing it, keep one bed. Printables only; `at` may move a part
   and turn it about Z and nothing else — a tilt re-orients it, a mirror makes
   another part. No two parts inside one another unless declared:
   `"nested_ok": [("shim", "ring")]`. Both lists name CATALOGUE KEYS and cover
@@ -180,7 +191,7 @@ a plate or an assembly, `N parts`.
 
 **`hammerola artifacts <build>`** brings every picture worth looking at into
 `.hammerola/`, with each part's STL/STEP/3MF, `assembled.stl` and, given a
-`print` view, `print.stl`. It takes `dev` and `latest` too, so it works straight
+`print` view, `print.stl` and the 3MF of each bed. It takes `dev` and `latest` too, so it works straight
 after a `build`. Never assemble a picture's URL by hand: the command asks the
 build what it published.
 

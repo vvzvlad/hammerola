@@ -9,10 +9,11 @@ import time
 
 from .artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, CARD_SUFFIX,
                         PREVIEW_SUFFIX, PRINT_VIEW_ID, STL_ANGULAR_TOLERANCE,
-                        STL_TOLERANCE)
+                        STL_TOLERANCE, plate_file)
 from .errors import BuildError
 from .geometry import as_shapes, drop_mesh
 from .parts import KIND_MOCK
+from .threemf import write_3mf
 
 
 # --------------------------------------------------------------------------
@@ -179,8 +180,9 @@ def print_plate_shape(prepared):
 
     The `print` view shows what is laid out on the bed, in print orientation.
     It is tessellated for the viewer (`print.json`); this shape is behind
-    `print.stl` (for a slicer) and `print_preview.png`, the picture an agent
-    looks at to catch a part lying face down.
+    `print.stl`, the glued bed `print_preview.png` is drawn from -- the picture
+    an agent looks at to catch a part lying face down. A slicer gets a 3MF per
+    bed instead (`export_plate_3mfs`).
 
     `None`, not an error, without such a view: it is optional, and a
     single-part model already in print orientation has none.
@@ -251,6 +253,86 @@ def export_print_plate(prepared, out_dir):
     bodies = sum(len(as_shapes(obj, PRINT_VIEW_ID)) for obj in objects)
     print(f"  {path.name}: {bodies} parts, {path.stat().st_size / 1e6:.2f} MB")
     return bodies, bbox
+
+
+def export_plate_3mfs(prepared, out_dir):
+    """Write a 3MF per bed of the `print` view, for a slicer.
+
+    Returns `{"1": "print.3mf", "2": "print-2.3mf", ...}` -- the bed number as
+    meta.json keys it, in bed order, for every bed some reference is on -- or
+    None without a `print` view. A reference names its bed with `"plate": N`
+    and is on bed 1 without one (`views._read_reference`); bed N is written to
+    `artifacts.plate_file(N)`. A file per bed, because a slicer reads no beds
+    out of a 3MF it did not write.
+
+    Each part on a bed is an object of its own where the view put it, so the
+    bed opens in a slicer laid out. Built from the `<key>.stl` files
+    `export_printables` already wrote and gated (closed, one body) rather than
+    by meshing the shapes again, so a bed holds the very mesh each part's own
+    download holds. One object per catalogue key on the bed and one build item
+    per reference: five references to `pin` are one object placed five times,
+    and a slicer loads them as five instances of one part.
+
+    Every item stands on z = 0: the turn and the X and Y of the shift are the
+    reference's `at`, and Z lifts the lowest point of the key's mesh onto the
+    bed. `gate.check_print_layout` lets `at` only translate and turn about Z,
+    so the turn moves no point up or down. One height, because Bambu Studio
+    offers to merge objects whose lowest points differ into one multi-part
+    object (`Model::looks_like_multipart_object`); X and Y as the view has
+    them, because it centres the objects of a file it did not write on its bed
+    as one group (`center_instances_around_point`), keeping where they stand
+    relative to each other -- and beds laid side by side in the view each land
+    in the middle of their own.
+
+    Every leaf here is a printable with a solid shape of the catalogue's
+    (`gate.check_print_layout`, `views._refuse_deformed_on_the_plate`), so its
+    key's STL is on disk.
+    """
+    nodes = _view_nodes(prepared, PRINT_VIEW_ID)
+    if nodes is None:
+        return None
+    # Imported at the point of use: the no-view path needs no mesh library.
+    import trimesh
+
+    meshes, beds = {}, {}
+    for node in nodes:
+        key = node["key"]
+        if key not in meshes:
+            meshes[key] = trimesh.load(str(out_dir / f"{key}.stl"),
+                                       force="mesh")
+        lift = -float(meshes[key].bounds[0][2])
+        beds.setdefault(node["plate"], []).append(
+            (key, _placement(node["at"], lift)))
+
+    written = {}
+    for number in sorted(beds):
+        items = beds[number]
+        objects = {key: (meshes[key].vertices, meshes[key].faces)
+                   for key, _matrix in items}
+        path = out_dir / plate_file(number)
+        write_3mf(path, objects, items)
+        print(f"  {path.name}: {len(items)} parts, {len(objects)} objects, "
+              f"{path.stat().st_size / 1e6:.2f} MB")
+        written[str(number)] = path.name
+    return written
+
+
+def _placement(at, lift):
+    """`[R | t]` acting on a column vector: a reference's `at`, Z set to `lift`.
+
+    Read off the `gp_Trsf` as `gate._turns_about_z_only` reads it, 3 rows by 4
+    columns, the fourth the shift. On the `print` view that gate has already
+    refused an `at` that is not a `cq.Location` (or None) turning about Z.
+    """
+    if at is None:
+        rows = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0]]
+    else:
+        trsf = at.wrapped.Transformation()
+        rows = [[float(trsf.Value(row, col)) for col in (1, 2, 3, 4)]
+                for row in (1, 2, 3)]
+    rows[2][3] = lift
+    return rows + [[0.0, 0.0, 0.0, 1.0]]
 
 
 def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):

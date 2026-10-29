@@ -50,6 +50,11 @@
   answered.
   A sqlite or OS error is one warning line and the build goes on without the
   cache (SPEC §4, the row on distances measured in a build)
+- `src/cadbuild/threemf.py` — the 3MF of a bed of the `print` view, one object
+  per part and one build item per reference, written on the standard library:
+  trimesh's 3MF exporter needs lxml, which the image does not carry, and
+  cadquery's writer puts every mesh under one build item (SPEC §4, the row on
+  the `print` view downloaded as 3MF)
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
   `log.txt` beside it, and `snapshot.png` for a snapshot), `BuildTask` is what

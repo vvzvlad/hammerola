@@ -84,6 +84,10 @@ ASSEMBLED_VIEW = {
     "parts": sorted(CATALOGUE), "overview": "assembled.stl",
     "preview": "assembled_preview.png", "card": "assembled_card.png",
 }
+# The beds of the `print` view, a 3MF each, under their numbers.
+PLATES = {"1": "print.3mf", "2": "print-2.3mf"}
+PRINT_VIEW = {"id": "print", "name": "print", "file": "print.json",
+              "parts": ["lid"], "plates": dict(PLATES)}
 # What a fetch of that build has to land on the disk, and nothing else. Built
 # out of LID_FILES so the two cannot spell a name differently.
 #
@@ -94,18 +98,19 @@ ASSEMBLED_VIEW = {
 # the sheet that carries those, and the cropped twin beside it on their disk
 # would answer nothing (`hammerola/artifacts.py`, `DECLARING_FIELDS`).
 FETCHED = sorted([*LID_FILES.values(), "lid_preview.png",
-                  "assembled.stl", "assembled_preview.png"])
+                  "assembled.stl", "assembled_preview.png", *PLATES.values()])
 
 
 def with_artifacts(root, **kw):
     """A model directory declaring a file in every field there is to declare in.
 
-    ALL FIVE deliberately — `files` and `preview` on a part, `overview`,
-    `preview` and `card` on a view — because of the five only ONE is drawn on
-    the build page (a printable's `files`) and one more is fetched by the hub's
-    front page (a view's `card`), so THIS COMMAND IS THE ONLY READER of the
-    remaining three. A walk that quietly stopped following any of those three
-    would be invisible to every other test in the repository — and the card is
+    ALL SIX deliberately — `files` and `preview` on a part, `overview`,
+    `plates`, `preview` and `card` on a view — because of the six only TWO are
+    drawn on the build page (a printable's `files` and a view's `plates`) and
+    one more is fetched by the hub's front page (a view's `card`), so THIS
+    COMMAND IS THE ONLY READER of the remaining three. A walk that quietly
+    stopped following any of those three would be invisible to every other test
+    in the repository — and the card is
     here for the opposite reason: it must be declared and must NOT be fetched,
     which only a fixture that declares it can pin (see `FETCHED`).
 
@@ -119,11 +124,15 @@ def with_artifacts(root, **kw):
     (model / "assembled.stl").write_bytes(b"solid all\nendsolid all\n")
     (model / "assembled_preview.png").write_bytes(PNG)
     (model / "assembled_card.png").write_bytes(PNG)
+    for number, name in PLATES.items():
+        (model / name).write_bytes(f"PK bed {number}".encode())
     (model / "meta.json").write_bytes(
-        meta_bytes(views=[dict(ASSEMBLED_VIEW)], parts=CATALOGUE))
+        meta_bytes(views=[dict(ASSEMBLED_VIEW), dict(PRINT_VIEW)],
+                   parts=CATALOGUE))
     # The view file names exactly the keys the view declares, in both
     # directions — the hub refuses anything else (`render._match_selection`).
     (model / "assembled.json").write_bytes(view_bytes(keys=sorted(CATALOGUE)))
+    (model / "print.json").write_bytes(view_bytes(keys=PRINT_VIEW["parts"]))
     return model
 
 
@@ -205,10 +214,10 @@ def test_artifacts_brings_back_the_pictures_and_the_whole_build_meshes(
     assert (fetched / "assembled.stl").is_file()
     assert (fetched / "assembled_preview.png").is_file()
     assert "view 'assembled'" in out
-    # FIVE FILES OUT OF SIX POINTERS, counted once each and reported as such —
-    # `shim` names `lid.stl` too, so the count and the report are what the dedup
-    # shows up in. Nothing on the disk can say it: both spellings write one file,
-    # so the directory holds five names either way.
+    # SEVEN FILES OUT OF EIGHT POINTERS, counted once each and reported as such
+    # — `shim` names `lid.stl` too, so the count and the report are what the
+    # dedup shows up in. Nothing on the disk can say it: both spellings write one
+    # file, so the directory holds seven names either way.
     assert f"{len(FETCHED)} files" in out
     assert out.count("lid.stl") == 1, out
 

@@ -6,9 +6,9 @@ Three callers import the name rule (`unservable_reason`):
     `/project/<pid>/<commit>/<path>` (`_safe_build_path` in src/app.py, through
     `unservable_path_reason`) and for `/_v/<name>` (`_safe_name`);
   * the publishing half, for every name a push DECLARES (`_check_declared_file`
-    in src/render.py: a view's `file`, `overview`, `preview` and `card`, and a
-    catalogue record's `files` and `preview`, each a single name at the top of
-    the build; a document's `file`, a path);
+    in src/render.py: a view's `file`, `overview`, `plates`, `preview` and
+    `card`, and a catalogue record's `files` and `preview`, each a single name
+    at the top of the build; a document's `file`, a path);
   * the client, for every name the hub's answer hands back, before writing it to
     the author's disk (`hammerola/artifacts.py`).
 

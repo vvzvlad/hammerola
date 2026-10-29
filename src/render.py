@@ -41,6 +41,11 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 # textContent, and this is the second line of that defence.
 SAFE_LABEL = re.compile(r"\A[A-Za-z0-9._-]{1,32}\Z")
 
+# A bed of the `print` view, as a key of that view's `plates`: a number counted
+# from 1, written the way `cadbuild.build` writes one. ASCII digits only, which
+# `str.isdigit` is not.
+PLATE_NUMBER = re.compile(r"\A[1-9][0-9]*\Z")
+
 # Free-text fields shown on the index and the build page. Long enough for a real
 # title, short enough that one push cannot push every other card off the screen.
 MAX_TEXT = 200
@@ -435,10 +440,10 @@ def _check_declared_file(name, files: dict, where: str, *,
                          path: bool = False) -> None:
     """Every file this document points at, wherever it is pointed at from.
 
-    Callers: a view's `file`, `overview`, `preview` and `card`, a catalogue
-    record's exported `files` and `preview`, and a document's `file` and a
-    DXF's `preview`. They all claim "this build wrote a file called that, and
-    the hub will hand it back". Each check below is a way a push could be
+    Callers: a view's `file`, `overview`, `plates`, `preview` and `card`, a
+    catalogue record's exported `files` and `preview`, and a document's `file`
+    and a DXF's `preview`. They all claim "this build wrote a file called that,
+    and the hub will hand it back". Each check below is a way a push could be
     accepted and then serve something other than what was measured here, so
     they apply to every pointer together.
 
@@ -1239,6 +1244,24 @@ def _model_body(raw: dict, staging: Path, files: dict) -> dict:
             _check_declared_file(
                 overview, files, f"the mesh of view {view_id!r}")
             entry["overview"] = overview
+        # The `print` view's beds for a slicer, a 3MF per bed keyed by its
+        # number: `{"1": "print.3mf", "2": "print-2.3mf"}`. Optional for the
+        # same reason, and refused rather than dropped when empty, as a part's
+        # `files` is.
+        plates = view.get("plates")
+        if plates is not None:
+            where = f"the plates of view {view_id!r}"
+            if not isinstance(plates, dict) or not plates:
+                raise ValueError(
+                    f"{where} must be a non-empty object mapping a bed number "
+                    f"-> filename")
+            for number, plate in plates.items():
+                if not PLATE_NUMBER.match(number):
+                    raise ValueError(
+                        f"{where} names a bed {number!r}, which must match "
+                        f"{PLATE_NUMBER.pattern}")
+                _check_declared_file(plate, files, f"bed {number} of {where}")
+            entry["plates"] = dict(plates)
         preview = view.get("preview")
         if preview is not None:
             _check_declared_file(
