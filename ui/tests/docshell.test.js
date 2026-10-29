@@ -920,8 +920,8 @@ describe('comments on the page of a build with no model', () => {
     shell.componentDidMount()
     await vi.waitFor(() => expect(shell.state.feed).toHaveLength(3))
     expect(fetch).toHaveBeenCalledWith('/api/v1/comments?project=docs0001', { headers: { 'X-Hammerola-Token': 'sekrit' } })
-    const button = collect(drawn(shell), (el) => (el.props.onClick && texts(el)[0] === 'Comments' ? el : undefined))[0]
-    expect(texts(button)).toEqual(['Comments', '2'])
+    const button = collect(drawn(shell), (el) => (el.props.onClick && el.props.title === 'Comments' ? el : undefined))[0]
+    expect(texts(button)).toEqual(['2'])
     expect(css(values(shell).railStyle).display).toBe('none')
     button.props.onClick(CLICK)
     expect(css(values(shell).railStyle).display).toBe('flex')
@@ -988,7 +988,8 @@ describe('comments on the page of a build with no model', () => {
     const shell = opened()
     // wide: the wordmark, the revision and the button, and no menu
     const wide = drawn(shell)
-    expect(texts(header(wide))).toEqual(['hammerola', BUILD.title, 'abc1234', 'Comments', '0'])
+    // the comments button is its icon and the count, the word in its tooltip
+    expect(texts(header(wide))).toEqual(['hammerola', BUILD.title, 'abc1234', '0'])
     expect(menus(wide)).toEqual([])
 
     shell.state.narrow = true

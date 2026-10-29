@@ -438,12 +438,13 @@ export const COMMENT_ICON = (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /></svg>
 );
 
-/** The header's button that opens the rail, wearing the count of open comments. */
+/** The header's button that opens the rail: the icon and the count of open
+ *  comments, with the word in its tooltip. The menu's row on a narrow window
+ *  spells the word out. */
 export function commentsButton(v) {
   return (
-    <div onClick={v.railToggle} style={css(v.railBtnStyle)}>
+    <div onClick={v.railToggle} title="Comments" style={css(v.railBtnStyle)}>
       {COMMENT_ICON}
-      Comments
       <span style={css(v.railCountStyle)}>{v.openCount}</span>
     </div>
   );

@@ -138,6 +138,14 @@ function header(c) {
   return found[0]
 }
 
+/** Every theme control on the page: the wide button is an icon alone, so it
+ *  and the menu's row are found by the tooltip both carry. */
+function themeControls(over) {
+  const c = component(over)
+  const title = c.computed().themeTitle
+  return collect(c.render(), (el) => (el.props.title === title ? el : undefined))
+}
+
 /** Every header menu on the page, as `[button, card]`: the children of the
  *  element holding the button titled "Menu". */
 const menus = (c) => collect(c.render(), (el) => {
@@ -357,8 +365,9 @@ describe('the header row', () => {
     // Comments and the theme into one menu, the title beside the mark.
     const wide = component()
     expect(menus(wide)).toEqual([])
-    const buttons = collect(header(wide), (el) => (el.props.onClick ? texts(el).join(' ') : undefined))
-    expect(buttons).toEqual(expect.arrayContaining(['Editing on', 'Comments 0', 'Light']))
+    // An icon-only button is named by its tooltip.
+    const buttons = collect(header(wide), (el) => (el.props.onClick ? el.props.title || texts(el).join(' ') : undefined))
+    expect(buttons).toEqual(expect.arrayContaining(['Editing on', 'Comments', wide.computed().themeTitle]))
 
     const c = component({ narrow: true })
     expect(menus(c)).toHaveLength(1)
@@ -515,8 +524,8 @@ describe('the toolbar on a narrow window', () => {
     // comments, so it survives the narrow branch and the one preference on the
     // page stays reachable at the width where a reader is most likely to want
     // the dark one. The block below says WHERE it survives.
-    expect(wide).toContain('Light')
-    expect(narrow).toContain('Light')
+    expect(themeControls({})).toHaveLength(1)
+    expect(themeControls({ narrow: true })).toHaveLength(1)
   })
 
   it('draws no rules with nothing left between them', () => {
@@ -568,11 +577,12 @@ describe('the theme button', () => {
     // row, which is the one part of this page drawn at every width, and it is
     // drawn after the comments control rather than somewhere else in the same
     // row. Either one alone is satisfiable by the wrong arrangement.
+    // Wide, both are icons, named by their tooltips.
     const wide = component()
-    const said = texts(header(wide))
+    const said = collect(header(wide), (el) => el.props.title)
     expect(said).toContain('Comments')
-    expect(said).toContain('Light')
-    expect(said.indexOf('Light'), 'the theme button is in the header but not '
+    expect(said).toContain(wide.computed().themeTitle)
+    expect(said.indexOf(wide.computed().themeTitle), 'the theme button is in the header but not '
       + 'beside the comments').toBeGreaterThan(said.indexOf('Comments'))
     // IN THE MARKUP IS NOT ON THE SCREEN: a control can be taken away by
     // `display:none` rather than by being left out, so a reading that only
@@ -596,9 +606,7 @@ describe('the theme button', () => {
     // A button left behind in the floating strip would keep every assertion
     // above green and give one setting two controls, which disagree the moment
     // one of them is used.
-    for (const over of [{}, { narrow: true }]) {
-      expect(texts(component(over).render()).filter((t) => t === 'Light')).toHaveLength(1)
-    }
+    for (const over of [{}, { narrow: true }]) expect(themeControls(over)).toHaveLength(1)
   })
 
   it('is drawn for a reader who has no comments button at all', () => {
@@ -609,7 +617,7 @@ describe('the theme button', () => {
     const c = component({ token: null })
     expect(css(c.computed().railBtnStyle).display).toBe('none')
     expect(css(c.computed().themeBtnStyle).display).toBe('flex')
-    expect(texts(header(c))).toContain('Light')
+    expect(collect(header(c), (el) => el.props.title)).toContain(c.computed().themeTitle)
     // Narrow, their menu has no Comments row and still the theme's.
     const [[, card]] = menus(component({ token: null, narrow: true }))
     expect(texts(card)).not.toContain('Comments')

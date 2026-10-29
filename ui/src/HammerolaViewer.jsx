@@ -5821,7 +5821,6 @@ export default class HammerolaViewer extends React.Component {
             {!v.headFolded && (
               <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
                 {v.themeDark ? MOON_ICON : SUN_ICON}
-                {v.themeLabel}
               </div>
             )}
           </div>

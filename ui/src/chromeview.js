@@ -461,8 +461,9 @@ export function chromeView(s, props, deps) {
     // click reaching `rootClick` dismisses a menu left open elsewhere — the
     // header's menu, when the click is on its row.
     //
-    // The label names the current mode, like the access button beside the
-    // token; the tooltip names the mode it switches to.
+    // The button is the icon of the current mode alone, sun or moon, and the
+    // tooltip says the mode in words and the one it switches to. The label
+    // names the current mode on the menu's row on a narrow window.
     themeDark: s.theme === 'dark',
     themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
     themeTitle: s.theme === 'dark'
