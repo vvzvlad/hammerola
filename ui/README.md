@@ -153,9 +153,9 @@ another sheet of its schematic, with the same part or net selected, the part's
 items apart from the net's;
 the schematic's BOM, which `src/kicadbom.js` lists after it, is a member of the
 design too: `src/BomView.jsx`, a table of the parts the viewer counts in the
-schematic, searched, filtered by type, package and DNP, grouped or not and
-sorted by any column, each designator opening the board with that part
-selected and each datasheet opening its document or its web address;
+schematic, searched, grouped or not, and sorted and filtered by any column
+from its head, each designator opening the board with that part selected and
+each datasheet opening its document or its web address;
 the board has a panel of its own over the top left of its canvas,
 `src/PcbPanel.jsx`: layers, presets, the opacity of the zone fills and the net
 of the last click;
