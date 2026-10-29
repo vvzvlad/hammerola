@@ -478,10 +478,11 @@ made on the laptop with
 in one is selected in the others. A right click on a part, a pad or a net in any
 view, and on the schematic a left click on a net too — a label, a power symbol,
 a sheet pin, a wire — opens one menu: a row for every place it can be shown —
-the part in each view (`C507 · Main board`), its datasheet, every place of the
-net on every sheet (`amp:+12V`) and the net on the board (`+12V · Main board`).
-The menu opens on the row of what was clicked; the arrows ‹ › and a click on a
-row go to that place, switching the view or the sheet, and the menu stays open.
+under `PART C507` the part in each view and its datasheet, under `NET +12V` every
+place of the net on every sheet and the net on the board.
+The menu opens on the row of what was clicked; the arrows ‹ › step from place to
+place and a click on a row goes there, switching the view or the sheet, and the menu
+stays open.
 A part has a datasheet when its `Datasheet` field names a PDF the project lists
 (`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above): its row opens the PDF in a window
 over the design. The board view has its own panel of layers and lights the whole

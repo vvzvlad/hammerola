@@ -55,7 +55,7 @@ const PENCIL_LOOK = 'font-size:11px;line-height:1;color:var(--text-faint);cursor
 const PENCIL = `flex:none;display:inline-block;margin-left:5px;${PENCIL_LOOK}`;
 // In a menu row the pencil stands in the row's left padding, before the name,
 // where a click meant for the row does not land; the row (`menuRow` in
-// viewlist.jsx) is positioned.
+// panelstyle.js) is positioned.
 const PENCIL_LEAD = `position:absolute;left:8px;top:50%;transform:translateY(-50%);${PENCIL_LOOK}`;
 
 // The pencil shows only while the pointer is over the element that carries

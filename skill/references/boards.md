@@ -47,11 +47,12 @@ Entries with the same path minus the extension are ONE design: `hw/main.kicad_sc
 picks the same part, by its reference, in the others (a click on nothing or Escape
 clears it everywhere). A right click on a part, a pad or a net in any entry, and on
 the schematic a left click on a net too (a label, a power symbol, a sheet pin, a
-wire), opens one menu with a row for every place it can be shown: the part in each
-listed entry (`C507 · <caption>`), its datasheet, every place of the net on every
-sheet (`<sheet>:+12V`; global labels and power symbols of one name, hierarchical
-labels of one name with their sheet pins) and the net on the board
-(`+12V · <caption>`). It opens on the row of what was clicked; the arrows ‹ › go from
+wire), opens one menu with a row for every place it can be shown: under `PART C507`
+the part in each listed entry (`<caption>`) and its datasheet, under `NET +12V` every
+place of the net on every sheet (`<sheet>`, or `<sheet>:<name>` for another net
+of the same run of wires; global labels and power symbols of one
+name, hierarchical labels of one name with their sheet pins) and the net on the board
+(`<caption>`). It opens on the row of what was clicked; the arrows ‹ › go from
 place to place, past the datasheet, and a click on a row goes there, switching the
 entry or the sheet with the part or net selected, and the menu stays open. An entry without siblings is a design of one. To
 hang a datasheet on a part, put the PDF in the project, list it

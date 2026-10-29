@@ -45,9 +45,8 @@
 :root {
   /* -- surfaces ------------------------------------------------------------
    * The page, and everything raised off it. `--card-bg` is the white of a
-   * card, a panel, a popover, a menu and an input — but for the menu a click
-   * opens on a KiCad design, which is `--menu-*` below; `--hover-bg` is what
-   * any of them turns into under the pointer.
+   * card, a panel, a popover, a menu and an input; `--hover-bg` is what any of
+   * them turns into under the pointer.
    *
    * TWO RECESSED FILLS AND NOT ONE, and which to reach for is decided by what
    * the fill has to do rather than by how deep it looks:
@@ -93,17 +92,6 @@
    * tooltip is read as a label the interface is speaking, not as part of it. */
   --tooltip-bg: rgba(28, 31, 35, .88);
   --tooltip-text: #f2f3f5;
-
-  /* The menu a click opens on a KiCad design's schematic, board or 3D model
-   * (ui/src/KicadView.jsx), in the colours of the KiCad viewer's own list of
-   * a net's places (`--pop-menu-*` in
-   * ecad-viewer/packages/ecad-viewer-app/src/kc-ui/kc-ui.css, and the shadow
-   * its panel writes in kc-schematic/selection-pop-menu.ts), so the two are
-   * one menu to the eye. THE SAME IN BOTH THEMES, as that list is. */
-  --menu-bg: rgba(57, 8, 27, .8);
-  --menu-fg: #f8f8f0;
-  --menu-fg-hover: #69ddd1;
-  --menu-shadow: rgba(0, 0, 0, .3);
 
   /* -- ink -----------------------------------------------------------------
    * Four levels and no more: body text, a secondary line beside it, the mono
@@ -251,11 +239,6 @@
 
   --tooltip-bg: rgba(242, 244, 246, .92);
   --tooltip-text: #1c1f23;
-
-  --menu-bg: rgba(57, 8, 27, .8);
-  --menu-fg: #f8f8f0;
-  --menu-fg-hover: #69ddd1;
-  --menu-shadow: rgba(0, 0, 0, .3);
 
   --text: #f2f4f6;
   --text-soft: #c3c8cf;

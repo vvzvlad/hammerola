@@ -89,24 +89,24 @@
 //     via, a zone, on the schematic a label, a power symbol, a sheet pin, a
 //     wire joined to one of them — and on the schematic by the LEFT BUTTON on
 //     what has a net too, at the press. A pad of the board is a part and a
-//     net. A part has a row `<ref> · <name>` for every listed member, the one
-//     clicked in included; a net a row `<sheet>:<name>` for every place of it
-//     on every sheet, and `<net> · <name>` for the board. A power symbol
-//     (`#PWR`) is no part, being on the schematic only, but the net its
-//     `Value` names; a power flag (`#FLG`) is neither. The element's own list
-//     on a click on a label or a sheet pin, which goes by the label's name
-//     alone, is off (`show-selection-panel="false"`).
+//     net. The rows stand in groups, each under its heading: a part's under
+//     `PART <ref>`, a row for every listed member, the one clicked in
+//     included, named by the member; a net's under `NET <net>`, a row for
+//     every place of it on every sheet, named by its sheet — `<sheet>:<name>`
+//     for a place of another net of a wire run — and the board's, named by
+//     the board. A power symbol (`#PWR`) is no part, being on the schematic
+//     only, but the net its `Value` names; a power flag (`#FLG`) is neither.
+//     The element's own list on a click on a label or a sheet pin, which goes
+//     by the label's name alone, is off (`show-selection-panel="false"`).
 //
-// THE MENU STEPS. It is drawn as the viewer's own list of a net's places is
-// (kc-schematic/selection-pop-menu.ts in ecad-viewer/): a head with the active
-// row's name, ‹ and › and `n / N`, the rows under it, the active one lit. It
-// opens on the row of what was clicked: the part's row of the view clicked
-// in, the place clicked, the board's row for a net clicked on the board. ‹ and
-// › make the place before or after it the active row, round the ends of the
-// list and past a datasheet's row (`step`), and so does a click on a place's
-// row; each step shows what its row names (`go`), and the menu stays open over
-// whatever member the step puts on screen. `n / N` counts the places, a
-// datasheet not among them. With fewer than two rows it does not open.
+// THE MENU STEPS. Its head is one line, the active row's name between ‹ and
+// ›; the rows are under it, the active one lit. It opens on the row of what
+// was clicked: the part's row of the view clicked in, the place clicked, the
+// board's row for a net clicked on the board. ‹ and › make the place before or
+// after it the active row, round the ends of the list and past a datasheet's
+// row (`step`), and so does a click on a place's row; each step shows what its
+// row names (`go`), and the menu stays open over whatever member the step puts
+// on screen. With fewer than two rows it does not open.
 //
 // WHAT IS ONE NET is read from the sheets' texts and the board's (kicadnets.js):
 // the occurrences of one name on the board, `board` — global labels and power
@@ -128,8 +128,8 @@
 // `selected`. A net no sheet names has from the board one row of the
 // schematic, and the viewer looks the net up. The board is asked for a net a
 // sheet names by the board's name of it (`/amp/OUT_C` for a local label
-// `OUT_C` on the sheet `amp`); the rows show the name clicked, a label's own
-// or the one the board reported.
+// `OUT_C` on the sheet `amp`); the net's heading shows the name clicked, a
+// label's own or the one the board reported.
 //
 // WHAT IS UNDER THE POINTER at a right click is the element's own hit test,
 // `selectAt`: it selects there what a left click there selects, and the
@@ -139,10 +139,11 @@
 // raycast.
 //
 // THE MENU is one at a time, inside the view area and over the datasheet's
-// window, in the colours of the viewer's list (`--menu-*` in
-// static/_v/tokens.css) and its font. It goes on Escape (after that window), a
-// press anywhere else, a resize, and when the design is hidden; the wheel
-// moves the drawing under it and leaves it open.
+// window, drawn as the page's own menu card is, the list of views in the
+// bottom bar (`CARD_LOOK`, `menuRow` and `GROUP_HEAD` in panelstyle.js). It
+// goes on Escape (after that window), a press anywhere else, a resize, and
+// when the design is hidden; the wheel moves the drawing under it and leaves
+// it open.
 //
 // THE WHEEL ON THE SCHEMATIC AND THE BOARD, and HOW A SELECTION LOOKS there,
 // are the viewer's own doing: both are edits of ours to its source in
@@ -221,7 +222,9 @@ import { netIndex } from './kicadnets.js';
 import { sheetName } from './kicadpages.js';
 import { datasheetBase, datasheetDocument, partDatasheets, partWebDatasheets } from './kicadsheets.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
-import { ELLIPSIS, POP_SHADOW_HIGH } from './panelstyle.js';
+import {
+  CARD_BORDER, CARD_LOOK, CARD_PAD, ELLIPSIS, GROUP_HEAD, GROUP_LINE, GROUP_PAD, menuRow, POP_SHADOW_HIGH, ROW_LINE, ROW_PAD,
+} from './panelstyle.js';
 import PcbPanel from './PcbPanel.jsx';
 import { css, MONO, SANS } from './style.jsx';
 import { typingTarget } from './viewport/holdkey.js';
@@ -407,32 +410,40 @@ const SHOWS = { designator: [SCH, PCB, BOARD3D] };
 /**
  * The menu for what view `from` reported selected (`detail`; the 3D view's
  * part as `{ reference }`), with the sheets' nets `nets`: `rows`, each
- * `{ title, label, view, id, request }`, the request its view is asked, or a
- * datasheet's `{ title, label, id, doc }`; and `active`, the row of what was
- * clicked. `title` is what the head shows while the row is active. The part
- * (`crossProbeRequest`) has a row per member that shows parts, `from`
- * included, then the document its datasheet names (`sheet`, or null). The net
- * has a row per place of it on the sheets — from the schematic, of every net
- * of a wire run (`boards`) — or from the board, where no sheet names it, one
- * row the viewer looks it up for; then the board's, which asks for the net by
- * the board's name of it. Null under two rows: nowhere to step.
+ * `{ group, title, label, view, id, request }`, the request its view is
+ * asked, or a datasheet's `{ group, title, label, id, doc }`; and `active`,
+ * the row of what was clicked. `group` is the heading the row stands under,
+ * `title` what the head shows while the row is active. The part
+ * (`crossProbeRequest`), under `PART <ref>`, has a row per member that shows
+ * parts, `from` included, named by the member, then the document its
+ * datasheet names (`sheet`, or null). The net, under `NET <name>`, has a row
+ * per place of it on the sheets — from the schematic, of every net of a wire
+ * run (`boards`) — named by its sheet, and `<sheet>:<name>` where the place
+ * is of another net than the heading's (`head`, the board's name of it); or
+ * from the board, where no sheet names it, one row the viewer looks it up
+ * for, named by the schematic; then the board's, named by the board, which
+ * asks for the net by the board's name of it. Null under two rows: nowhere
+ * to step.
  */
 export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
   const { part, net } = crossProbeRequest(detail, null, nets);
   const rows = [];
   let active = 0;
-  const add = (view, title, label, request) => rows.push({ title, label, view, id: members[view].id,
+  const add = (group, view, title, label, request) => rows.push({ group, title, label, view, id: members[view].id,
     request: { ...request, targetContext: view } });
   if (part) {
+    const group = `PART ${part.value}`;
     for (const view of SHOWS.designator.filter((one) => members[one])) {
       if (view === from) active = rows.length;
-      add(view, part.value, `${part.value} · ${members[view].name}`, part);
+      add(group, view, part.value, members[view].name, part);
     }
-    if (sheet) rows.push({ title: part.value, label: `Datasheet · ${sheet.name}`, id: sheet.id, doc: sheet });
+    if (sheet) rows.push({ group, title: part.value, label: `Datasheet · ${sheet.name}`, id: sheet.id, doc: sheet });
   }
   if (net) {
+    const group = `NET ${net.value}`;
     const own = from === SCH ? nets.byUuid.get(detail.uuid) : undefined;
-    const boards = from === SCH ? (own && own.boards) || [own ? own.board : net.value] : [net.value];
+    const head = own ? own.board : net.value;
+    const boards = (own && own.boards) || [head];
     const places = nets.occurrences.filter((one) => boards.includes(one.board));
     // The place clicked; for a wire, which is no place, the one its run's net
     // is named after, whose sheet, name and board its entry carries.
@@ -442,82 +453,90 @@ export function menuFor(from, detail, members, sheet = null, nets = NO_NETS) {
     if (from === SCH && !part) active = rows.length + Math.max(0, clicked >= 0 ? clicked : naming);
     if (members[SCH] && places.length) {
       for (const one of places) {
-        add(SCH, one.name, `${sheetName(one.sheet)}:${one.name}`, { kind: 'net', value: one.name, sheet: one.sheet,
-          uuid: one.uuid });
+        const label = one.board === head ? sheetName(one.sheet) : `${sheetName(one.sheet)}:${one.name}`;
+        add(group, SCH, one.name, label, { kind: 'net', value: one.name, sheet: one.sheet, uuid: one.uuid });
       }
     } else if (members[SCH] && from !== SCH) {
-      add(SCH, net.value, `${net.value} · ${members[SCH].name}`, { kind: 'net', value: net.value });
+      add(group, SCH, net.value, members[SCH].name, { kind: 'net', value: net.value });
     }
     if (members[PCB]) {
       if (from === PCB && !part) active = rows.length;
-      add(PCB, net.value, `${net.value} · ${members[PCB].name}`, { kind: 'net', value: own ? own.board : net.value });
+      add(group, PCB, net.value, members[PCB].name, { kind: 'net', value: head });
     }
   }
   return rows.length >= 2 ? { rows, active } : null;
 }
 
 /** The menu's box, known before it is drawn, so that where it fits is too. It
- *  is drawn as the viewer's own list of a net's places is
- *  (`kc-schematic/selection-pop-menu.ts` in ecad-viewer/), in its font and
- *  its spacing: `BOX_PAD` around everything and `GAP` between the head and
- *  the rows; in the head the name over the arrows and the count, `GAP` apart,
- *  and a rule `GAP` under them; each row `ITEM_PAD` inside and `GAP` from the
- *  next, the rows scrolling past `LIST_MAX`. Every line is `LINE` high where
- *  the viewer's are of the font's `normal` height, and an arrow `BUTTON_PAD`
- *  inside a 1px border, so that the height is known before the menu is drawn.
- *  At least `MENU_WIDTH` wide, wider where a line needs it, and `MENU_PAD` of
- *  it the box's and the rows' padding on either side. A row's font is what
- *  `labelsWidth` measures its line in. */
-const LIST_FONT = '"Segoe UI",Helvetica,Arial,sans-serif';
-const ITEM_FONT = '400 12px';
-const LINE = 15;
-const BOX_PAD = [8, 10];
-const ITEM_PAD = [2, 4];
+ *  is the page's menu card (`CARD_LOOK` in panelstyle.js), `CARD_EDGE` its
+ *  border and padding above and below. In the head an arrow `BUTTON_PAD`
+ *  inside a 1px border either side of the name, `HEAD_GAP` from it,
+ *  `HEAD_PAD` round them (top, sides, bottom) and a 1px rule under them; then
+ *  the list, scrolling past `LIST_MAX`: the rows, a group's heading over the
+ *  first of each group (`opensGroup`). A row is `menuRow`'s, `MENU_ROW` high,
+ *  and a heading `GROUP_HEAD`'s, `MENU_GROUP` high, counted from the numbers
+ *  those styles are drawn with (panelstyle.js); the head's lines are a row's
+ *  line high. `LIST_MAX` keeps the whole card inside the lowest view area
+ *  (`AREA_MIN`) with `MENU_MARGIN` to spare. At least `MENU_WIDTH` wide, wider
+ *  where what it holds needs it (`menuWidth`). */
+const LINE = ROW_LINE;
+const CARD_EDGE = CARD_BORDER + CARD_PAD;
 const BUTTON_PAD = [2, 8];
-const GAP = 6;
-const LIST_MAX = 220;
-const MENU_WIDTH = 160;
-const MENU_PAD = 2 * BOX_PAD[1] + 2 * ITEM_PAD[1];
-const MENU_HEAD = LINE + GAP + (LINE + 2 * BUTTON_PAD[0] + 2) + GAP + 1;
-const MENU_ROW = LINE + 2 * ITEM_PAD[0];
+const HEAD_PAD = [2, 8, 8];
+const HEAD_GAP = 8;
+const MENU_WIDTH = 200;
+const MENU_HEAD = HEAD_PAD[0] + (LINE + 2 * BUTTON_PAD[0] + 2) + HEAD_PAD[2] + 1;
+const MENU_ROW = 2 * ROW_PAD + ROW_LINE;
+const MENU_GROUP = GROUP_PAD[0] + GROUP_LINE + GROUP_PAD[1];
 /** How far the menu keeps from the view area's edges. */
 const MENU_MARGIN = 8;
+/** The view area's least height (`SHELL`). */
+const AREA_MIN = 320;
+const LIST_MAX = AREA_MIN - 2 * MENU_MARGIN - 2 * CARD_EDGE - MENU_HEAD;
 /** The room left for the list's scroll bar where the system keeps one on
  *  screen rather than over the rows. */
 const SCROLL_BAR = 16;
-const listHeight = (rows) => Math.min(LIST_MAX, rows * MENU_ROW + (rows - 1) * GAP);
-export const menuHeight = (rows) => 2 * BOX_PAD[0] + MENU_HEAD + GAP + listHeight(rows);
+/** Does row `index` of `rows` start a group, and so stand under its heading? */
+const opensGroup = (rows, index) => index === 0 || rows[index].group !== rows[index - 1].group;
+const listHeight = (rows) => Math.min(LIST_MAX, rows.length * MENU_ROW
+  + rows.filter((row, index) => opensGroup(rows, index)).length * MENU_GROUP);
+/** The menu's height for its `rows` (`menuFor`). */
+export const menuHeight = (rows) => 2 * CARD_EDGE + MENU_HEAD + listHeight(rows);
 
-/** How wide the widest of `labels` is drawn in the font of the menu's rows:
- *  measured in a hidden line laid out in the page, so 0 where nothing is laid
- *  out. The family is spelled out: the page's font properties are set on the
- *  element it mounts into, not on `body`. A row ends with what mostly tells
- *  it from its neighbours, a place's name or a member's, which a cut would
- *  hide. */
-function labelsWidth(labels) {
-  const line = document.createElement('span');
-  line.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${ITEM_FONT} ${LIST_FONT}`;
-  document.body.appendChild(line);
-  let widest = 0;
-  for (const label of labels) {
-    line.textContent = label;
-    widest = Math.max(widest, line.getBoundingClientRect().width);
-  }
+/** How wide the menu of `rows` has to be for nothing in it to be cut: the
+ *  card's border round the widest of its rows, its group headings, and its
+ *  head with the longest name between the arrows. Each is laid out in its own
+ *  style in a hidden line inside `host`, the view area, where the page's font
+ *  variables are set (they are not on `body`); 0 where nothing is laid out. A
+ *  net's name may be long and its place's sheet ends a row, both what a cut
+ *  would hide. */
+function menuWidth(rows, host) {
+  const line = document.createElement('div');
+  host.appendChild(line);
+  const widest = (style, texts) => texts.reduce((most, text) => {
+    line.style.cssText = `${style};position:absolute;visibility:hidden;width:max-content;white-space:nowrap`;
+    line.textContent = text;
+    return Math.max(most, line.getBoundingClientRect().width);
+  }, 0);
+  const arrow = widest(menuArrow(false), ['‹', '›']);
+  const head = 2 * HEAD_PAD[1] + 2 * (arrow + HEAD_GAP) + widest(MENU_NAME, rows.map((row) => row.title));
+  const width = 2 * CARD_BORDER + Math.max(head, widest(menuRow(false), rows.map((row) => row.label)),
+    widest(GROUP_HEAD, rows.map((row) => row.group)));
   line.remove();
-  return widest;
+  return width;
 }
 
 /**
- * Where a menu opened at `x`,`y` of an area `area` wide and high goes: right of
- * and below the pointer where that fits, else left of or above it, and never
- * past the area's edges; as wide as its widest line (`text`, in px) needs and
- * narrower where the area is. Rows that scroll leave room for the list's
- * scroll bar, which a system that keeps scroll bars on screen draws inside
- * that width.
+ * Where a menu of `rows` (`menuFor`) opened at `x`,`y` of an area `area` wide
+ * and high goes: right of and below the pointer where that fits, else left of
+ * or above it, and never past the area's edges; as wide as what it holds
+ * needs (`need`, in px, `menuWidth`) and narrower where the area is. Rows that
+ * scroll leave room for the list's scroll bar, which a system that keeps
+ * scroll bars on screen draws inside that width.
  */
-export function menuPlace(x, y, rows, area, text = 0) {
+export function menuPlace(x, y, rows, area, need = 0) {
   const bar = listHeight(rows) === LIST_MAX ? SCROLL_BAR : 0;
-  const width = Math.max(0, Math.min(Math.max(MENU_WIDTH, Math.ceil(text) + MENU_PAD + bar),
+  const width = Math.max(0, Math.min(Math.max(MENU_WIDTH, Math.ceil(need) + bar),
     area.width - 2 * MENU_MARGIN));
   const height = menuHeight(rows);
   const fit = (at, size, room) => Math.max(MENU_MARGIN,
@@ -548,39 +567,29 @@ export function selectedDatasheet(designator, datasheets, members, documents) {
   return value ? datasheetDocument(value, datasheetBase(Object.values(members)), documents) : null;
 }
 
-const SHELL = 'position:relative;height:100%;min-height:320px';
+const SHELL = `position:relative;height:100%;min-height:${AREA_MIN}px`;
 const VIEWER = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
-// The menu as the viewer's own list of a net's places is drawn (`menuHeight`),
-// in a box of a known size (`menuPlace`), over the datasheet's window: an arrow
-// or a row under the pointer takes the list's hover ink, and the active row
-// that ink on a tint of it.
-const RULE = 'color-mix(in srgb, var(--menu-fg) 20%, transparent)';
-const ARROW_RULE = 'color-mix(in srgb, var(--menu-fg) 35%, transparent)';
-const ACTIVE_FILL = 'color-mix(in srgb, var(--menu-fg-hover) 18%, transparent)';
+// The menu as the page's menu card (`menuHeight`), in a box of a known size
+// (`menuPlace`), over the datasheet's window: the head ‹, the active row's
+// name and › on one line over a rule, then the list, positioned so that a
+// row's `offsetTop` is measured in it (`componentDidUpdate`). An arrow under
+// the pointer takes the accent's ink and edge, a row the soft accent fill,
+// the active row keeping its own. A row, a heading or the head's name is cut
+// only where the view area is narrower than the card needs (`menuWidth`).
 const menuBox = ({ left, top, width }) => `position:absolute;left:${left}px;top:${top}px;width:${width}px;`
-  + `z-index:3;box-sizing:border-box;display:flex;flex-direction:column;gap:${GAP}px;`
-  + `padding:${BOX_PAD[0]}px ${BOX_PAD[1]}px;`
-  + 'background:var(--menu-bg);color:var(--menu-fg);border-radius:5px;box-shadow:0 0 10px var(--menu-shadow)';
-const MENU_TOP = `display:flex;flex-direction:column;gap:${GAP}px;padding-bottom:${GAP}px;`
-  + `border-bottom:1px solid ${RULE}`;
-const MENU_NAME = `font:600 12px/${LINE}px ${LIST_FONT};${ELLIPSIS}`;
-const MENU_CONTROLS = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
-const menuArrow = (hover) => `font:${ITEM_FONT}/${LINE}px ${LIST_FONT};margin:0;`
-  + `padding:${BUTTON_PAD[0]}px ${BUTTON_PAD[1]}px;border:1px solid ${hover ? 'var(--menu-fg-hover)' : ARROW_RULE};`
-  + `border-radius:3px;background:transparent;color:${hover ? 'var(--menu-fg-hover)' : 'var(--menu-fg)'};`
+  + `z-index:3;box-sizing:border-box;${CARD_LOOK}`;
+const MENU_TOP = `display:flex;align-items:center;gap:${HEAD_GAP}px;`
+  + `padding:${HEAD_PAD[0]}px ${HEAD_PAD[1]}px ${HEAD_PAD[2]}px;border-bottom:1px solid var(--line-soft)`;
+const MENU_NAME = `flex:1;min-width:0;text-align:center;font:600 12px/${LINE}px ${SANS};color:var(--text);${ELLIPSIS}`;
+const menuArrow = (hover) => `font:400 12px/${LINE}px ${SANS};margin:0;`
+  + `padding:${BUTTON_PAD[0]}px ${BUTTON_PAD[1]}px;border:1px solid ${hover ? 'var(--accent-line)' : 'var(--line)'};`
+  + `border-radius:3px;background:transparent;color:${hover ? 'var(--accent-text)' : 'var(--text-soft)'};`
   + 'cursor:pointer';
-const MENU_COUNT = `font:400 11px/${LINE}px ${LIST_FONT};font-variant-numeric:tabular-nums`;
-const MENU_LIST = `max-height:${LIST_MAX}px;overflow-y:auto`;
-/** The head's count: the active row among the places of `menu`, the rows the
- *  arrows step through, which a datasheet's row is not. */
-const placeCount = ({ rows, active }) => `${rows.slice(0, active + 1).filter((row) => !row.doc).length} / `
-  + `${rows.filter((row) => !row.doc).length}`;
-const menuRow = (hover, active, first) => `font:${ITEM_FONT}/${LINE}px ${LIST_FONT};`
-  + `padding:${ITEM_PAD[0]}px ${ITEM_PAD[1]}px;border-radius:3px;`
-  + (first ? '' : `margin-top:${GAP}px;`) + `${ELLIPSIS};cursor:pointer;user-select:none;`
-  + `transition:color .3s,background-color .2s;color:${hover || active ? 'var(--menu-fg-hover)' : 'var(--menu-fg)'};`
-  + `background:${active ? ACTIVE_FILL : 'transparent'}`;
+const MENU_LIST = `position:relative;max-height:${LIST_MAX}px;overflow-y:auto`;
+const MENU_GROUP_HEAD = `${GROUP_HEAD};${ELLIPSIS}`;
+const menuItem = (hover, active) => `${menuRow(active)};display:block;${ELLIPSIS};user-select:none`
+  + (hover && !active ? ';background:var(--accent-bg-soft)' : '');
 // The datasheet's window, in the page's colours: a veil over the whole view
 // area, which a click on closes, and the window 12px in from its edges, no
 // wider than a page of a datasheet needs.
@@ -1030,8 +1039,7 @@ export default class KicadView extends React.Component {
       return;
     }
     const area = this.shell ? this.shell.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
-    const text = labelsWidth(menu.rows.map((row) => row.label));
-    const box = menuPlace(x - area.left, y - area.top, menu.rows.length, area, text);
+    const box = menuPlace(x - area.left, y - area.top, menu.rows, area, this.shell ? menuWidth(menu.rows, this.shell) : 0);
     this.setState({ menu: { ...menu, from, ...box }, hover: -1 });
   }
 
@@ -1327,13 +1335,15 @@ export default class KicadView extends React.Component {
     // The menu goes with the design, and stays over every member a step puts
     // on screen; the datasheet's window goes with its view off the screen, and
     // with the design. The menu's active row is brought to the middle of its
-    // list on open and on every step, each a menu of its own.
+    // list on open and on every step, each a menu of its own, where it is
+    // drawn: the groups' headings stand between the rows.
     if (this.state.menu && !visible) this.closeMenu();
     if (this.state.sheet && (!visible || this.state.sheet.from !== this.side())) this.closeSheet();
     const { menu } = this.state;
     if (menu && this.listNode && menu !== this.centred) {
       this.centred = menu;
-      this.listNode.scrollTop = menu.active * (MENU_ROW + GAP) + (MENU_ROW - listHeight(menu.rows.length)) / 2;
+      const row = this.listNode.querySelectorAll('[data-show]')[menu.active];
+      this.listNode.scrollTop = row.offsetTop + (row.offsetHeight - this.listNode.clientHeight) / 2;
     }
     // Opened on the 3D view and moved off it before the `.glb` came in: the
     // files of the view now on screen wait for nothing.
@@ -1421,27 +1431,26 @@ export default class KicadView extends React.Component {
           <div data-menu={menu.from} ref={this.setMenu} style={css(menuBox(menu))}
                onContextMenu={(event) => event.preventDefault()}>
             <div style={css(MENU_TOP)}>
+              <button type="button" title="Previous" style={css(menuArrow(hover === 'previous'))}
+                      onMouseEnter={() => this.setState({ hover: 'previous' })}
+                      onMouseLeave={() => this.setState({ hover: -1 })}
+                      onClick={() => this.step(-1)}>‹</button>
               <div style={css(MENU_NAME)}>{menu.rows[menu.active].title}</div>
-              <div style={css(MENU_CONTROLS)}>
-                <button type="button" title="Previous" style={css(menuArrow(hover === 'previous'))}
-                        onMouseEnter={() => this.setState({ hover: 'previous' })}
-                        onMouseLeave={() => this.setState({ hover: -1 })}
-                        onClick={() => this.step(-1)}>‹</button>
-                <span style={css(MENU_COUNT)}>{placeCount(menu)}</span>
-                <button type="button" title="Next" style={css(menuArrow(hover === 'next'))}
-                        onMouseEnter={() => this.setState({ hover: 'next' })}
-                        onMouseLeave={() => this.setState({ hover: -1 })}
-                        onClick={() => this.step(1)}>›</button>
-              </div>
+              <button type="button" title="Next" style={css(menuArrow(hover === 'next'))}
+                      onMouseEnter={() => this.setState({ hover: 'next' })}
+                      onMouseLeave={() => this.setState({ hover: -1 })}
+                      onClick={() => this.step(1)}>›</button>
             </div>
             <div ref={this.setList} style={css(MENU_LIST)}>
-              {menu.rows.map((row, index) => (
+              {menu.rows.flatMap((row, index) => [
+                ...(opensGroup(menu.rows, index)
+                  ? [<div key={`group:${index}`} style={css(MENU_GROUP_HEAD)}>{row.group}</div>] : []),
                 <div key={index} data-show={row.view || 'datasheet'} title={row.label}
-                     style={css(menuRow(index === hover, index === menu.active, index === 0))}
+                     style={css(menuItem(index === hover, index === menu.active))}
                      onMouseEnter={() => this.setState({ hover: index })}
                      onMouseLeave={() => this.setState({ hover: -1 })}
-                     onClick={() => this.go(index)}>{row.label}</div>
-              ))}
+                     onClick={() => this.go(index)}>{row.label}</div>,
+              ])}
             </div>
           </div>
         )}

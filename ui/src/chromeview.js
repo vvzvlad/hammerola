@@ -27,12 +27,12 @@ import {
 import { headRow } from './headmenu.jsx';
 import { BOM_TYPE } from './kicadbom.js';
 import {
-  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, RELATIVE, btn, popover, tab,
+  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, RELATIVE, btn, menuRow, popover, tab,
 } from './panelstyle.js';
 import { dropMoves, emptyProposal } from './proposal.js';
 import { clearToken, writeRetina, writeToken } from './store.js';
 import { MONO, SANS } from './style.jsx';
-import { BAR_LAYER, DOC_LAYER, documentRows, menuRow, quietBtn } from './viewlist.jsx';
+import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn } from './viewlist.jsx';
 import { variantChoices } from './variants.jsx';
 
 export function chromeView(s, props, deps) {

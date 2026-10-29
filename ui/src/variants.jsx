@@ -12,10 +12,9 @@
 import React from 'react';
 
 import { buildPath } from './hub.js';
-import { FAINT_MONO, popover } from './panelstyle.js';
+import { FAINT_MONO, GROUP_HEAD, menuRow, popover } from './panelstyle.js';
 import { Pencil, RENAME_HOST } from './rename.jsx';
 import { css, SANS } from './style.jsx';
-import { GROUP_HEAD, menuRow } from './viewlist.jsx';
 
 /**
  * What the switcher shows for `listing` (`variants.json`) on a page of

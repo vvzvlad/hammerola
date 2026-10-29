@@ -17,8 +17,9 @@
  *
  * PUNCTUATION IS PART OF THE NAME, and a call site cannot see it. Most names
  * here are finished declarations and end in neither `;` nor `:` — whoever
- * continues them adds one. Six are PREFIXES that end in `;` and are meant to be
- * continued: `SWATCH`, `CARD`, `PILL`, `NOTE_BOX`, `DIALOG_BTN`, `BADGE_SANS`.
+ * continues them adds one. Seven are PREFIXES that end in `;` and are meant to
+ * be continued: `SWATCH`, `CARD`, `CARD_LOOK`, `PILL`, `NOTE_BOX`,
+ * `DIALOG_BTN`, `BADGE_SANS`.
  * `popover`'s `tail` is of the second kind and carries its own,
  * unlike its `pad`, `radius` and `shadow`, which are VALUES it punctuates: a
  * `tail` written without one runs into the property after it, and `css()` drops
@@ -203,6 +204,36 @@ export const SPAN_MONO = `flex:1;font:400 10px ${MONO};color:var(--text-muted)`;
 export const BODY_MONO = `font:400 11px/1.55 ${MONO};color:var(--text);overflow-wrap:anywhere`;
 export const WARN_CAPS = `font:600 9px ${MONO};color:var(--warn-soft);letter-spacing:.07em`;
 export const WARN_BODY = `font:400 11.5px/1.5 ${SANS};color:var(--text-soft);margin-top:3px`;
+
+/* -- the page's menu card -------------------------------------------------- *
+ *
+ * The card of the bottom bar's list of views and of its submenu of sheets
+ * (viewlist.jsx), the variant switcher's rows (variants.jsx), and the menu a
+ * click opens on a KiCad design (KicadView.jsx). That menu knows its height
+ * before it is drawn (`menuHeight`) and counts it from the numbers below, the
+ * card's border and padding, a row's and a heading's line and padding, so the
+ * styles are drawn from them and the line heights are written out. */
+export const CARD_BORDER = 1;
+export const CARD_PAD = 6;
+export const ROW_LINE = 15;
+export const ROW_PAD = 7;
+export const GROUP_LINE = 12;
+/** A group heading's padding above and below. */
+export const GROUP_PAD = [8, 3];
+export const CARD_LOOK = `background:var(--card-bg);border:${CARD_BORDER}px solid var(--line);border-radius:9px;`
+  + `box-shadow:0 10px 34px var(--shadow);padding:${CARD_PAD}px 0;`;
+/** One row of the card: a view's or a document's in the list of views, the
+ *  same shape for both so the two halves read as one list, and a schematic's
+ *  sheet in its submenu (`SheetRows` in viewlist.jsx). Set in from its group's
+ *  heading (`GROUP_HEAD`), as a file row of the Downloads menu is. Positioned,
+ *  for the rename pencil that stands in its left padding (`Pencil` with
+ *  `lead`, rename.jsx). */
+export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:${ROW_PAD}px 14px ${ROW_PAD}px 22px;`
+  + `position:relative;font:400 12px/${ROW_LINE}px ${SANS};cursor:pointer;`
+  + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
+/** A group's heading: the Downloads menu's (`headStyle` in downloadsview.js). */
+export const GROUP_HEAD = `padding:${GROUP_PAD[0]}px 14px ${GROUP_PAD[1]}px;font:600 10px/${GROUP_LINE}px ${MONO};`
+  + 'color:var(--text-muted);letter-spacing:.08em';
 
 /* -- the layer panel over a board ------------------------------------------ *
  *

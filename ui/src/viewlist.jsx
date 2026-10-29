@@ -43,21 +43,11 @@ import { BOM_TYPE } from './kicadbom.js';
 import { schematicSheets } from './kicadpages.js';
 import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.jsx';
 import {
-  DIALOG_BTN, ELLIPSIS, FAINT_MONO, INK, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
+  CARD_LOOK, DIALOG_BTN, ELLIPSIS, FAINT_MONO, GROUP_HEAD, menuRow, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE,
+  TAB_OFF, TAB_ON,
 } from './panelstyle.js';
 import { Pencil, RENAME_HOST } from './rename.jsx';
-import { css, MONO, SANS } from './style.jsx';
-
-/** One row of the list, a view's or a document's: the same shape for both, so
- *  the two halves read as one list. Set in from its group's heading
- *  (`GROUP_HEAD`), as a file row of the Downloads menu is; a schematic's
- *  sheet has the same row (`SheetRows`). Positioned, for the rename pencil
- *  that stands in its left padding (`Pencil` with `lead`, rename.jsx). */
-export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:7px 14px 7px 22px;position:relative;font:400 12px ${SANS};cursor:pointer;`
-  + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
-
-/** A group's heading: the Downloads menu's (`headStyle` in downloadsview.js). */
-export const GROUP_HEAD = `padding:8px 14px 3px;font:600 10px ${MONO};color:var(--text-muted);letter-spacing:.08em`;
+import { css, SANS } from './style.jsx';
 
 /** The heading the model's views stand under. */
 export const VIEWS_GROUP = '3D VIEWS';
@@ -121,10 +111,6 @@ export function menuGroups(views, documents) {
  *  rather than allowed to push. */
 export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
   + (open ? TAB_ON : TAB_OFF);
-
-// How the card looks, and the submenu of a schematic's sheets beside it
-// (`SheetRows`).
-const CARD_LOOK = 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;';
 
 /**
  * The card. Opens upwards, unlike every other popover on these pages: the bar
