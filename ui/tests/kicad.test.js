@@ -5,12 +5,12 @@
 // Which member is on screen is the page's: a row each in its list of views
 // (viewlist.jsx), handed down as `doc`. A click that selects a part selects it
 // in the other views too, without asking the page for anything; a click on
-// nothing puts out everything. `Show in …` of the right-click menu asks the
-// page to open another member (`onOpen`, with its id) and selects there once
-// the page has answered; a part's datasheet opens in a window over the design
-// and asks the page for nothing. A net on the schematic, by either button,
-// opens the viewer's own list of its places (`showNetList`), whose board row
-// does what the menu's `Show in …` does.
+// nothing puts out everything. A click on a part or a net opens one menu of
+// rows, which ‹ › and a click on a row step through: a row of another member
+// asks the page to open it (`onOpen`, with its id) and selects there once the
+// page has answered, a row of the view on screen asks its element at once, and
+// a part's datasheet opens in a window over the design, asking the page for
+// nothing. The menu stays open over every member a step brings.
 //
 // The viewers themselves (static/_v/ecad-viewer.js, BoardView3D.jsx) need a GPU
 // and are checked in a browser; here the two elements are plain DOM elements
@@ -33,7 +33,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK,
-  drawingOf, drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, netList, PAGE_EVENT, PAN_SLOP, PCB, SCH,
+  drawingOf, drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
   SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
 import { loadMeta } from '../src/hub.js'
@@ -90,7 +90,6 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.setActive = vi.fn()
       element.clearSelection = vi.fn()
       element.replaceSources = vi.fn(async () => {})
-      element.showNetList = vi.fn(() => true)
     }
     // The canvas the viewer draws on, and the element's hit test: `selectAt`
     // reports what is under the point, as the viewer's own click does.
@@ -119,9 +118,14 @@ function rightClick(element, x, y, moved = 0, button = 2) {
   canvas.dispatchEvent(at('pointerdown', 0))
   canvas.dispatchEvent(at('pointerup', moved))
 }
-/** The menu as drawn, and its items. */
+/** The menu as drawn, its rows, their lines, its head (the active row's name,
+ *  ‹, `n / N`, ›), and a press of its arrow `title` (`Previous`, `Next`). */
 const menuOf = (view) => collect(view.render(), (el) => (el.props['data-menu'] ? el : undefined))[0]
 const itemsOf = (view) => collect(menuOf(view), (el) => (el.props['data-show'] ? el : undefined))
+const linesOf = (view) => (menuOf(view) ? itemsOf(view).flatMap((item) => texts(item)) : null)
+const headOf = (view) => texts(menuOf(view)).slice(0, 4)
+const arrow = (view, title) => collect(menuOf(view), (el) => (el.props.title === title ? el : undefined))[0]
+  .props.onClick()
 const ESCAPE = () => new KeyboardEvent('keydown', { key: 'Escape' })
 
 /** The 3D view as drawn: its props, and the box that shows or hides it. */
@@ -304,7 +308,7 @@ describe('what is on screen downloads first', () => {
     view.componentWillUnmount()
   })
 
-  it('keeps `Show in …` from the 3D view for the schematic until it has its files', async () => {
+  it('keeps the schematic\'s row of the menu from the 3D view until the schematic has its files', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
     const { view, elements } = mounted(DOCS[2])
     view.componentDidMount()
@@ -451,11 +455,18 @@ describe('the schematic\'s page', () => {
     { projectPath: PSU_A, name: 'psu', parentProjectPath: ROOT },
     { projectPath: PSU_B, name: 'psu', parentProjectPath: AMP },
   ]
-  // What the amp sheet draws: a part, and a net of `Show … · amp`.
+  // What the amp sheet draws: a part, and a net, a place of which is a row of
+  // the menu, beside its place on the root sheet and the board's row.
   const ON_AMP = ['U7', 'AMP_FAULT']
-  const FAULT = { targetContext: SCH, kind: 'net', value: 'AMP_FAULT', net: 'AMP_FAULT',
-    sheet: 'hw/sub/amp.kicad_sch', uuid: 'fault-amp' }
-  const SHOW_FAULT = { view: SCH, id: SHEET, label: 'Show net AMP_FAULT in hw/board.kicad_sch · amp', request: FAULT }
+  const FAULT = { targetContext: SCH, kind: 'net', value: 'AMP_FAULT', sheet: 'hw/sub/amp.kicad_sch', uuid: 'fault-amp' }
+  const SHOW_FAULT = { title: 'AMP_FAULT', label: 'amp:AMP_FAULT', view: SCH, id: SHEET, request: FAULT }
+  const FAULT_MENU = { from: SCH, active: 0, rows: [
+    { title: 'AMP_FAULT', label: 'board:AMP_FAULT', view: SCH, id: SHEET,
+      request: { ...FAULT, sheet: 'hw/board.kicad_sch', uuid: 'fault-root' } },
+    SHOW_FAULT,
+    { title: 'AMP_FAULT', label: 'AMP_FAULT · hw/board.kicad_pcb', view: PCB, id: BOARD,
+      request: { targetContext: PCB, kind: 'net', value: 'AMP_FAULT' } },
+  ] }
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -712,17 +723,30 @@ describe('the schematic\'s page', () => {
     expect([sch.page, sch.clearSelection.mock.calls]).toEqual([AMP, [[{ keepHighlights: true }], [{ keepHighlights: true }]]])
   })
 
-  it('moves with `Show … · <sheet>` from the board inside the one entry that opens the schematic', async () => {
+  it('moves with a place stepped to from the board inside the one entry that opens the schematic', async () => {
     window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?d=${BOARD}`)
     const { view, sch } = await opened(DOCS[1])
     answering(view)
     const push = vi.spyOn(window.history, 'pushState')
-    view.setState({ menu: { from: PCB } })
-    view.choose(SHOW_FAULT)
+    view.setState({ menu: { ...FAULT_MENU, from: PCB, active: 2 } })
+    view.go(1)
     expect(push).toHaveBeenCalledTimes(1)
     expect([sch.page, window.location.search]).toEqual([AMP, `?d=${SHEET}&s=amp`])
     await go(-1)
     expect(window.location.search).toBe(`?d=${BOARD}`)
+  })
+
+  it('moves with a place stepped to over the schematic on screen as the reader\'s own step, the selection kept', async () => {
+    window.history.replaceState(null, '', `${BASE}?d=${SHEET}`)
+    const { view, sch } = await opened()
+    const push = vi.spyOn(window.history, 'pushState')
+    sch.clearSelection.mockClear()
+    view.setState({ menu: FAULT_MENU })
+    view.go(1)
+    expect([sch.requestCrossProbe.mock.lastCall, view.props.onOpen.mock.calls, sch.clearSelection.mock.calls])
+      .toEqual([[FAULT], [], []])
+    expect([push.mock.calls.length, sch.page, window.location.search, view.state.menu.active])
+      .toEqual([1, AMP, `?d=${SHEET}&s=amp`, 1])
   })
 
   it('is the address\'s when the page shows again the design it kept hidden, which nothing writes meanwhile', async () => {
@@ -861,37 +885,43 @@ describe('the link between the schematic and the board', () => {
 
 })
 
-describe('the right-click menu', () => {
+describe('the menu', () => {
   const C523 = { sourceContext: SCH, itemType: 'symbol', reference: 'C523' }
 
-  it('offers every other member that can show the part or the net, named after it', () => {
+  it('has a row per member for a part, the one clicked in included and active, and for a net the drawings', () => {
     const offered = (from, detail, views) => {
       const menu = menuFor(from, detail, Object.fromEntries(views.map((view) => [view, { id: `id-${view}`, name: view }])))
-      const shows = [menu && menu.part, menu && menu.net && `net ${menu.net}`].filter(Boolean).join(' · ')
-      return menu && `${shows}: ${menu.items.map((item) => `${item.label} (${item.id})`).join(', ')}`
+      return menu && menu.rows.map((row, i) => `${i === menu.active ? '*' : ''}${row.label} (${row.id})`).join(', ')
     }
     const all = [SCH, PCB, BOARD3D]
     const pad = { itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' }
     const track = { itemType: 'track', net: '+5V', netCode: 14 }
     expect([
-      offered(SCH, C523, all), offered(PCB, pad, all), offered(BOARD3D, { reference: 'L101' }, all),
-      // a net: the drawings only, never the 3D model
+      offered(SCH, C523, all), offered(PCB, { itemType: 'footprint', reference: 'U501' }, all),
+      offered(BOARD3D, { reference: 'L101' }, all),
+      // a pad: its part's rows, active on the board's, then its net's
+      offered(PCB, pad, all),
+      // a track: the net in the drawings only, never the 3D model
       offered(PCB, track, all),
       // no board, no 3D model
-      offered(SCH, C523, [SCH, BOARD3D]), offered(BOARD3D, { reference: 'L101' }, [SCH, BOARD3D]),
-      offered(PCB, pad, [SCH, PCB]), offered(PCB, track, [PCB, BOARD3D]),
-      // neither a part nor a net, a design of one, a power symbol (never on the board)
-      offered(SCH, { itemType: 'wire' }, all), offered(SCH, { itemType: '' }, all), offered(PCB, pad, [PCB]),
+      offered(SCH, C523, [SCH, BOARD3D]), offered(PCB, pad, [SCH, PCB]), offered(PCB, track, [PCB, BOARD3D]),
+      // neither a part nor a net, a part of a design of one, a power symbol and flag no sheet names
+      offered(SCH, { itemType: 'wire' }, all), offered(SCH, { itemType: '' }, all), offered(SCH, C523, [SCH]),
       offered(SCH, { itemType: 'symbol', reference: '#PWR0101' }, all), offered(SCH, { itemType: 'pin', reference: '#FLG0101', pin: '1' }, all),
     ]).toEqual([
-      'C523: Show C523 in PCB (id-PCB), Show C523 in 3D (id-3D)',
-      'U501 · net GND: Show U501 in SCH (id-SCH), Show U501 in 3D (id-3D), Show net GND in SCH (id-SCH)',
-      'L101: Show L101 in SCH (id-SCH), Show L101 in PCB (id-PCB)',
-      'net +5V: Show net +5V in SCH (id-SCH)',
-      'C523: Show C523 in 3D (id-3D)', 'L101: Show L101 in SCH (id-SCH)',
-      'U501 · net GND: Show U501 in SCH (id-SCH), Show net GND in SCH (id-SCH)', null,
+      '*C523 · SCH (id-SCH), C523 · PCB (id-PCB), C523 · 3D (id-3D)',
+      'U501 · SCH (id-SCH), *U501 · PCB (id-PCB), U501 · 3D (id-3D)',
+      'L101 · SCH (id-SCH), L101 · PCB (id-PCB), *L101 · 3D (id-3D)',
+      'U501 · SCH (id-SCH), *U501 · PCB (id-PCB), U501 · 3D (id-3D), GND · SCH (id-SCH), GND · PCB (id-PCB)',
+      '+5V · SCH (id-SCH), *+5V · PCB (id-PCB)',
+      '*C523 · SCH (id-SCH), C523 · 3D (id-3D)',
+      'U501 · SCH (id-SCH), *U501 · PCB (id-PCB), GND · SCH (id-SCH), GND · PCB (id-PCB)', null,
       null, null, null, null, null,
     ])
+    // each asks its view for the part by its designator, the net by its name
+    expect(menuFor(PCB, pad, { [SCH]: { id: 's' }, [PCB]: { id: 'p' } }).rows.map((row) => row.request)).toEqual([
+      designator(SCH, 'U501'), designator(PCB, 'U501'),
+      { targetContext: SCH, kind: 'net', value: 'GND' }, { targetContext: PCB, kind: 'net', value: 'GND' }])
   })
 
   it('asks the element what is under a right click, selects it, and opens there', () => {
@@ -904,7 +934,8 @@ describe('the right-click menu', () => {
     expect(view3d(view).three.props.selected).toBe('C523')
     // at the pointer, in the view area
     expect(menuOf(view).props.style).toMatchObject({ position: 'absolute', left: '300px', top: '200px' })
-    expect(texts(menuOf(view))).toEqual(['C523', 'Show C523 in hw/board.kicad_pcb', 'Show C523 in hw/board.glb'])
+    expect(texts(menuOf(view))).toEqual(['C523', '‹', '1 / 3', '›', 'C523 · hw/board.kicad_sch',
+      'C523 · hw/board.kicad_pcb', 'C523 · hw/board.glb'])
     expect(view.props.onOpen).not.toHaveBeenCalled()
   })
 
@@ -920,7 +951,7 @@ describe('the right-click menu', () => {
     expect(menuOf(view)).toBeDefined()
   })
 
-  it('an item opens its member and selects the same part or net there, once the page hands it down', () => {
+  it('a row of another member opens it and selects the same part or net there, once the page hands it down', () => {
     const { view, elements } = mounted()
     // drawn: the viewers have their files
     view.setState({ ready: true })
@@ -929,31 +960,47 @@ describe('the right-click menu', () => {
     // the page answers later: nothing more is asked of the board until it does
     const answer = view.props.onOpen
     view.props.onOpen = vi.fn()
-    itemsOf(view)[0].props.onClick()
+    itemsOf(view)[1].props.onClick()
     view.componentDidUpdate()
-    expect([view.props.onOpen.mock.calls, elements[PCB].requestCrossProbe.mock.calls.length, menuOf(view)])
-      .toEqual([[['hw__board.kicad_pcb']], 1, undefined])
+    expect([view.props.onOpen.mock.calls, elements[PCB].requestCrossProbe.mock.calls.length])
+      .toEqual([[['hw__board.kicad_pcb']], 1])
     view.props.onOpen = answer
     answer('hw__board.kicad_pcb')
     expect(elements[PCB].requestCrossProbe).toHaveBeenCalledTimes(2)
     expect(elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith(designator(PCB, 'C523'))
     expect(elements[PCB].setActive).toHaveBeenLastCalledWith(true)
 
-    // a part on the board, shown in the 3D model
-    elements[PCB].under = { sourceContext: PCB, itemType: 'footprint', reference: 'U501' }
-    rightClick(elements[PCB], 100, 100)
-    expect(texts(menuOf(view))).toEqual(['U501', 'Show U501 in hw/board.kicad_sch', 'Show U501 in hw/board.glb'])
-    itemsOf(view)[1].props.onClick()
-    expect([view.props.doc.id, view3d(view).three.props]).toMatchObject(['hw__board.glb', { active: true, selected: 'U501' }])
-
-    // a track's net, shown in the schematic only
-    view.props = { ...view.props, doc: DOCS[1] }
+    // a track's net, shown in the schematic
     elements[PCB].under = { sourceContext: PCB, itemType: 'track', net: 'GND', netCode: 1 }
     rightClick(elements[PCB], 100, 100)
-    expect(texts(menuOf(view))).toEqual(['net GND', 'Show net GND in hw/board.kicad_sch'])
+    expect(texts(menuOf(view))).toEqual(['GND', '‹', '2 / 2', '›', 'GND · hw/board.kicad_sch', 'GND · hw/board.kicad_pcb'])
     itemsOf(view)[0].props.onClick()
     expect(view.props.onOpen).toHaveBeenLastCalledWith('hw__board.kicad_sch')
     expect(elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: SCH, kind: 'net', value: 'GND' })
+  })
+
+  it('steps with ‹ › round its ends, each step shown, and stays open over the member a step brings', () => {
+    const { view, elements } = mounted()
+    view.setState({ ready: true })
+    elements[SCH].under = C523
+    rightClick(elements[SCH], 300, 250)
+    for (const context of [SCH, PCB]) elements[context].requestCrossProbe.mockClear()
+    // the row of the view on screen: its element asked at once, the page nothing
+    itemsOf(view)[0].props.onClick()
+    expect([elements[SCH].requestCrossProbe.mock.calls, view.props.onOpen.mock.calls]).toEqual([[[designator(SCH, 'C523')]], []])
+    const seen = []
+    for (const title of ['Next', 'Next', 'Next', 'Previous']) {
+      arrow(view, title)
+      seen.push([view.props.doc.id, headOf(view)[2]])
+    }
+    expect(seen).toEqual([['hw__board.kicad_pcb', '2 / 3'], ['hw__board.glb', '3 / 3'], ['hw__board.kicad_sch', '1 / 3'],
+      ['hw__board.glb', '3 / 3']])
+    expect(elements[PCB].requestCrossProbe.mock.calls).toEqual([[designator(PCB, 'C523')]])
+    expect(elements[SCH].requestCrossProbe.mock.lastCall).toEqual([designator(SCH, 'C523')])
+    // the 3D model on screen is handed the part, the page asked for nothing
+    view.props.onOpen.mockClear()
+    itemsOf(view)[2].props.onClick()
+    expect([view.props.onOpen.mock.calls, view3d(view).three.props.selected, headOf(view)[0]]).toEqual([[], 'C523', 'C523'])
   })
 
   it('from the 3D model offers both drawings, and opens nothing for a design without them', () => {
@@ -961,7 +1008,7 @@ describe('the right-click menu', () => {
     view3d(view).three.props.onSelect('L101')
     view3d(view).three.props.onMenu('L101', 700, 640)
     // no room right of or below the pointer: left of and above it
-    expect(menuOf(view).props.style).toMatchObject({ left: '540px', top: `${590 - menuHeight(2)}px` })
+    expect(menuOf(view).props.style).toMatchObject({ left: '540px', top: `${590 - menuHeight(3)}px` })
     itemsOf(view)[0].props.onClick()
     expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
     expect(elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(designator(SCH, 'L101'))
@@ -971,7 +1018,7 @@ describe('the right-click menu', () => {
     expect(menuOf(lone.view)).toBeUndefined()
   })
 
-  it('goes on Escape, a press elsewhere, the wheel, a resize and its view leaving the screen; one at a time', () => {
+  it('goes on Escape, a press elsewhere and a resize, not on the wheel nor another member on screen; one at a time', () => {
     const { view, elements } = mounted()
     // in the page, where a press on a view reaches the document
     document.body.append(...Object.values(elements))
@@ -995,18 +1042,17 @@ describe('the right-click menu', () => {
     expect(menuOf(view)).toBeDefined()
     document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
     expect(menuOf(view)).toBeUndefined()
+    // the wheel moves the drawing under it: nothing takes it
     opened()
-    view.render().props.onWheelCapture()
-    expect(menuOf(view)).toBeUndefined()
-    opened()
+    elements[SCH].dispatchEvent(new WheelEvent('wheel', { bubbles: true }))
+    expect([menuOf(view), view.render().props.onWheelCapture]).toEqual([expect.anything(), undefined])
     window.dispatchEvent(new Event('resize'))
     expect(menuOf(view)).toBeUndefined()
     // the page shows another member
     opened()
     view.props = { ...view.props, doc: DOCS[1] }
-    expect(menuOf(view)).toBeUndefined()
     view.componentDidUpdate()
-    expect(view.state.menu).toBeNull()
+    expect([menuOf(view).props['data-menu'], headOf(view)[2]]).toEqual([SCH, '1 / 3'])
     view.componentWillUnmount()
     view.props = { ...view.props, doc: DOCS[0] }
     opened()
@@ -1031,6 +1077,8 @@ describe('the right-click menu', () => {
     // a line wider than the menu widens it, as far as the area lets it
     expect(menuPlace(100, 100, 2, { width: 800, height: 600 }, 287.2).width).toBe(316)
     expect(menuPlace(10, 10, 1, { width: 300, height: 300 }, 400).width).toBe(284)
+    // rows that scroll leave room for the list's scroll bar beside that line
+    expect(menuPlace(100, 100, 12, { width: 800, height: 600 }, 287.2).width).toBe(332)
   })
 
   it('does nothing without a sibling, or once an element is detached', () => {
@@ -1081,113 +1129,119 @@ describe('a net across the schematic\'s sheets', () => {
     const element = elements[view.side()]
     element.under = { sourceContext: view.side(), ...detail }
     rightClick(element, 300, 250)
-    return menuOf(view) ? texts(menuOf(view)) : null
+    return linesOf(view)
   }
-  const net = (value, sheet, uuid) => ({ targetContext: SCH, kind: 'net', value, net: value, sheet, uuid })
-  /** The viewer's list for `detail` clicked on the schematic (`netList`), of the
-   *  design's members `members`: the uuids of its places, then its board row's
-   *  line and the board's name of the net it asks for. */
-  const listed = (detail, members = designMembers(DOCS, DOCS[0])) => {
-    const list = netList({ sourceContext: SCH, ...detail }, members, NETS)
-    return list && [...list.items.map((one) => one.uuid),
-      ...(list.board ? [`${list.board.label} → ${list.board.request.value}`] : [])]
+  const net = (value, sheet, uuid) => ({ targetContext: SCH, kind: 'net', value, sheet, uuid })
+  /** The menu for `detail` clicked on the schematic (`menuFor`), of the
+   *  design's members `members`: its rows, the active one starred, a place's
+   *  as its uuid, the board's as its line and the board's name of the net. */
+  const rowsOf = (detail, members = designMembers(DOCS, DOCS[0])) => {
+    const menu = menuFor(SCH, { sourceContext: SCH, ...detail }, members, null, NETS)
+    return menu && menu.rows.map((row, i) => (i === menu.active ? '*' : '')
+      + (row.request.uuid || `${row.label} → ${row.request.value}`))
   }
   /** The design without its board. */
   const NO_BOARD = designMembers([DOCS[0], DOCS[2]], DOCS[0])
 
-  it('a power symbol is its net: every place of it on every sheet, and the board; a power flag none', () => {
-    const places = ['pwr-board', 'pwr-power', 'pwr-power-2', 'Show net +12V in hw/board.kicad_pcb → +12V']
-    expect(listed({ itemType: 'symbol', reference: '#PWR0101', uuid: 'pwr-board' })).toEqual(places)
-    expect(listed({ itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' })).toEqual(places)
-    expect(listed({ itemType: 'symbol', reference: '#FLG0201', uuid: 'flg-power' })).toBeNull()
+  it('a power symbol is its net: every place of it on every sheet, the one clicked active, and the board; a power flag none', () => {
+    const board = '+12V · hw/board.kicad_pcb → +12V'
+    expect(rowsOf({ itemType: 'symbol', reference: '#PWR0101', uuid: 'pwr-board' }))
+      .toEqual(['*pwr-board', 'pwr-power', 'pwr-power-2', board])
+    expect(rowsOf({ itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' }))
+      .toEqual(['pwr-board', '*pwr-power', 'pwr-power-2', board])
+    expect(rowsOf({ itemType: 'symbol', reference: '#FLG0201', uuid: 'flg-power' })).toBeNull()
+    // a place's row is `<sheet>:<name>`, asked for on its sheet at its occurrence
+    const menu = menuFor(SCH, { itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' },
+      designMembers(DOCS, DOCS[0]), null, NETS)
+    expect(menu.rows.slice(0, 2).map((row) => [row.title, row.label, row.request])).toEqual([
+      ['+12V', 'board:+12V', net('+12V', 'hw/board.kicad_sch', 'pwr-board')],
+      ['+12V', 'power:+12V', net('+12V', 'hw/sub/power.kicad_sch', 'pwr-power')]])
   })
 
-  it('a pad of the board is its part and its net, the net on every sheet it is on', () => {
-    expect(offered(withNets(DOCS[1]), { itemType: 'pad', reference: 'C507', pin: '1', net: '+12V', netCode: 4, uuid: 'pad' }))
-      .toEqual(['C507 · net +12V', 'Show C507 in hw/board.kicad_sch', 'Show C507 in hw/board.glb',
-        'Show net +12V in hw/board.kicad_sch · board', 'Show net +12V in hw/board.kicad_sch · power'])
+  it('a pad of the board is its part and its net, the net at every place of it on every sheet', () => {
+    const one = withNets(DOCS[1])
+    expect(offered(one, { itemType: 'pad', reference: 'C507', pin: '1', net: '+12V', netCode: 4, uuid: 'pad' }))
+      .toEqual(['C507 · hw/board.kicad_sch', 'C507 · hw/board.kicad_pcb', 'C507 · hw/board.glb',
+        'board:+12V', 'power:+12V', 'power:+12V', '+12V · hw/board.kicad_pcb'])
+    expect(headOf(one.view)).toEqual(['C507', '‹', '2 / 7', '›'])
   })
 
-  it('a global label, and the wire it is on, lists its namesakes and every place of the net of the sheet pin wired to it', () => {
+  it('a global label, and the wire it is on, has its namesakes and every place of the net of the sheet pin wired to it', () => {
+    // a wire, no place itself, opens on the place its net is named after
     for (const detail of [{ itemType: 'global-label', net: 'AMP_CLIP_OTW', uuid: 'clip-board' }, { itemType: 'wire', uuid: 'wire-clip' }]) {
-      expect(listed(detail)).toEqual(['clip-board', 'pin-fault-power', 'pin-fault-dsp', 'clip-power', 'fault-power',
-        'fault-dsp', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb → AMP_CLIP_OTW'])
+      expect(rowsOf(detail)).toEqual(['*clip-board', 'pin-fault-power', 'pin-fault-dsp', 'clip-power', 'fault-power',
+        'fault-dsp', 'AMP_CLIP_OTW · hw/board.kicad_pcb → AMP_CLIP_OTW'])
     }
+    // that place is not the first one of the net
+    const nets = netIndex({
+      'hw/board.kicad_sch': `(kicad_sch ${global('AMP_CLIP_OTW', 'clip-board')} ${sheetSymbol('power')})`,
+      'hw/sub/power.kicad_sch': `(kicad_sch ${global('AMP_CLIP_OTW', 'clip-power', '50.8 25.4 0')}`
+        + ' (wire (pts (xy 50.8 25.4) (xy 63.5 25.4)) (uuid "wire-power")))',
+    }, 'hw/board.kicad_sch')
+    const menu = menuFor(SCH, { sourceContext: SCH, itemType: 'wire', uuid: 'wire-power' },
+      designMembers(DOCS, DOCS[0]), null, nets)
+    expect(menu.rows[menu.active].request.uuid).toBe('clip-power')
   })
 
-  it('is as wide as its longest line needs, so the sheet a line ends with is not cut', () => {
+  it('is as wide as its longest line needs, so the name a line ends with is not cut', () => {
     // a page that lays a line out 7px a character; jsdom lays out nothing
     const rect = vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function () { return { width: this.textContent.length * 7 } })
     const one = withNets(DOCS[1])
-    const lines = offered(one, { itemType: 'pad', reference: 'C507', pin: '1', net: '+12V', netCode: 4, uuid: 'pad' })
+    const lines = offered(one, { itemType: 'track', net: '/dsp/AMP_FAULT', netCode: 1 })
     rect.mockRestore()
-    // the longest line is not the first item's
-    const longest = Math.max(...lines.slice(1).map((line) => line.length))
-    expect([longest > lines[1].length, menuOf(one.view).props.style.width]).toEqual([true, `${longest * 7 + 28}px`])
+    // the longest line is not the first row's
+    const longest = Math.max(...lines.map((line) => line.length))
+    expect([longest > lines[0].length, menuOf(one.view).props.style.width]).toEqual([true, `${longest * 7 + 28}px`])
   })
 
-  it('a local label is a net of its own sheet, a net no sheet names none: no list without the board', () => {
+  it('a local label is a net of its own sheet: no menu without the board, nor for a net no sheet names', () => {
     const local = { itemType: 'label', net: 'AMP_CLIP_OTW', uuid: 'clip-local' }
     const unnamed = { itemType: 'global-label', net: 'EFUSE_PGOOD' }
-    expect([listed(local), listed(unnamed), listed(local, NO_BOARD), listed(unnamed, NO_BOARD)]).toEqual([
-      ['clip-local', 'Show net AMP_CLIP_OTW in hw/board.kicad_pcb → /dsp/AMP_CLIP_OTW'],
-      ['Show net EFUSE_PGOOD in hw/board.kicad_pcb → EFUSE_PGOOD'], null, null])
+    expect([rowsOf(local), rowsOf(unnamed), rowsOf(local, NO_BOARD), rowsOf(unnamed, NO_BOARD)]).toEqual([
+      ['*clip-local', 'AMP_CLIP_OTW · hw/board.kicad_pcb → /dsp/AMP_CLIP_OTW'], null, null, null])
   })
 
   it('a hierarchical label, and a sheet pin of its name, are one net with its namesakes and the root\'s pins, the board asked by its name', () => {
-    for (const detail of [{ itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' },
-      { itemType: 'sheet-pin', net: 'AMP_FAULT', uuid: 'pin-fault-power' }]) {
-      expect(listed(detail)).toEqual(['pin-fault-power', 'pin-fault-dsp', 'fault-power', 'fault-dsp',
-        'Show net AMP_FAULT in hw/board.kicad_pcb → /dsp/AMP_FAULT'])
-    }
+    const board = 'AMP_FAULT · hw/board.kicad_pcb → /dsp/AMP_FAULT'
+    expect(rowsOf({ itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-power' }))
+      .toEqual(['pin-fault-power', 'pin-fault-dsp', '*fault-power', 'fault-dsp', board])
+    expect(rowsOf({ itemType: 'sheet-pin', net: 'AMP_FAULT', uuid: 'pin-fault-power' }))
+      .toEqual(['*pin-fault-power', 'pin-fault-dsp', 'fault-power', 'fault-dsp', board])
   })
 
-  it('a track of a hierarchical net is shown on every sheet that carries it, the root through its pin', () => {
+  it('a track is shown at every place of its net, the root through its pin, each asked for there', () => {
     const one = withNets(DOCS[1])
-    expect(offered(one, { itemType: 'track', net: '/dsp/AMP_FAULT', netCode: 1 })).toEqual(['net /dsp/AMP_FAULT',
-      'Show net /dsp/AMP_FAULT in hw/board.kicad_sch · board', 'Show net /dsp/AMP_FAULT in hw/board.kicad_sch · power',
-      'Show net /dsp/AMP_FAULT in hw/board.kicad_sch · dsp'])
-    itemsOf(one.view)[0].props.onClick()
-    expect(one.elements[SCH].requestCrossProbe)
-      .toHaveBeenLastCalledWith(net('/dsp/AMP_FAULT', 'hw/board.kicad_sch', 'pin-fault-power'))
-  })
-
-  it('an item of a sheet from the board opens the schematic and asks it for the first occurrence there', () => {
-    const one = withNets(DOCS[1])
-    offered(one, { itemType: 'track', net: '+12V', netCode: 4 })
-    itemsOf(one.view)[1].props.onClick()
+    expect(offered(one, { itemType: 'track', net: '/dsp/AMP_FAULT', netCode: 1 })).toEqual(['board:AMP_FAULT',
+      'board:AMP_FAULT', 'power:AMP_FAULT', 'dsp:AMP_FAULT', '/dsp/AMP_FAULT · hw/board.kicad_pcb'])
+    expect(headOf(one.view)).toEqual(['/dsp/AMP_FAULT', '‹', '5 / 5', '›'])
+    itemsOf(one.view)[2].props.onClick()
     expect(one.view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_sch')
-    expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('+12V', 'hw/sub/power.kicad_sch', 'pwr-power'))
+    expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('AMP_FAULT', 'hw/sub/power.kicad_sch', 'fault-power'))
   })
 
-  it('opens the viewer\'s own list for a net of the schematic, by either button, and our menu for a part', () => {
+  it('opens for a net of the schematic by either button, the left at the press, and for a part by the right alone', () => {
     const { view, elements } = withNets()
     const sch = elements[SCH]
     // a left click on a power symbol: the press, then the viewer's own click
     sch.under = { sourceContext: SCH, itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' }
     rightClick(sch, 120, 80, 0, 0)
     click(sch, sch.under)
-    const [left] = sch.showNetList.mock.lastCall
-    expect({ ...left, actions: left.actions.map((action) => action.label) }).toEqual({
-      items: [{ sheet: 'hw/board.kicad_sch', name: '+12V', uuid: 'pwr-board' },
-        { sheet: 'hw/sub/power.kicad_sch', name: '+12V', uuid: 'pwr-power' },
-        { sheet: 'hw/sub/power.kicad_sch', name: '+12V', uuid: 'pwr-power-2' }],
-      activeUuid: 'pwr-power', actions: ['Show net +12V in hw/board.kicad_pcb'], at: { x: 120, y: 80 },
-    })
-    // a right click on a part opens our menu, and no list
+    expect([menuOf(view).props.style.left, menuOf(view).props.style.top, headOf(view), linesOf(view)]).toEqual(['120px',
+      '30px', ['+12V', '‹', '2 / 4', '›'], ['board:+12V', 'power:+12V', 'power:+12V', '+12V · hw/board.kicad_pcb']])
+    // a left click on a part opens nothing, a right one its menu
     sch.under = { sourceContext: SCH, itemType: 'symbol', reference: 'C523', uuid: 'c523' }
+    rightClick(sch, 300, 250, 0, 0)
+    click(sch, sch.under)
+    expect(headOf(view)[0]).toBe('+12V')
     rightClick(sch, 300, 250)
-    expect([texts(menuOf(view)), sch.showNetList.mock.calls.length])
-      .toEqual([['C523', 'Show C523 in hw/board.kicad_pcb', 'Show C523 in hw/board.glb'], 1])
-    // a right click on a label: the list at the pointer, our menu shut
+    expect(linesOf(view)).toEqual(['C523 · hw/board.kicad_sch', 'C523 · hw/board.kicad_pcb', 'C523 · hw/board.glb'])
+    // a right click on a label: at the pointer, on the place clicked
     sch.under = { sourceContext: SCH, itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-dsp' }
     rightClick(sch, 300, 250)
-    const [right] = sch.showNetList.mock.lastCall
-    expect([right.items.map((item) => item.uuid), right.activeUuid, right.at, menuOf(view)])
-      .toEqual([['pin-fault-power', 'pin-fault-dsp', 'fault-power', 'fault-dsp'], 'fault-dsp', { x: 300, y: 250 }, undefined])
+    expect([menuOf(view).props.style.top, headOf(view)]).toEqual(['200px', ['AMP_FAULT', '‹', '4 / 5', '›']])
     // its board row opens the board, which is asked for the net by the board's name of it
-    right.actions[0].run()
+    itemsOf(view).at(-1).props.onClick()
     expect(view.props.onOpen).toHaveBeenCalledWith('hw__board.kicad_pcb')
     expect(elements[PCB].requestCrossProbe).toHaveBeenLastCalledWith({ targetContext: PCB, kind: 'net', value: '/dsp/AMP_FAULT' })
   })
@@ -1213,10 +1267,10 @@ describe('a net across the schematic\'s sheets', () => {
         one.view.props.onOpen(DOCS[0].id)
         one.elements[SCH].under = { sourceContext: SCH, ...detail }
         rightClick(one.elements[SCH], 300, 250)
-        const [{ actions: [row] }] = one.elements[SCH].showNetList.mock.lastCall
-        row.run()
-        expect([row.label, one.elements[PCB].requestCrossProbe.mock.lastCall])
-          .toEqual([`Show net ${detail.net} in hw/board.kicad_pcb`, [{ targetContext: PCB, kind: 'net', value: board }]])
+        const row = itemsOf(one.view).at(-1)
+        row.props.onClick()
+        expect([texts(row), one.elements[PCB].requestCrossProbe.mock.lastCall])
+          .toEqual([[`${detail.net} · hw/board.kicad_pcb`], [{ targetContext: PCB, kind: 'net', value: board }]])
       }
       one.view.componentWillUnmount()
     })
@@ -1238,34 +1292,35 @@ describe('a part\'s datasheet', () => {
     view.props = { ...view.props, doc: view.members()[context] }
     elements[context].under = { sourceContext: context, ...detail }
     rightClick(elements[context], 300, 250)
-    return menuOf(view) ? texts(menuOf(view)) : null
+    return linesOf(view)
   }
 
-  it('is the last item of a part\'s menu, in every view, when its field names a document of the build', () => {
+  it('is a row of a part\'s menu after its members, in every view, when its field names a document of the build', () => {
     const one = withSheets()
-    const sheet = 'Open datasheet · TPA3250'
+    const sheet = 'Datasheet · TPA3250'
     expect(offered(one, SCH, { itemType: 'symbol', reference: 'U501' }))
-      .toEqual(['U501', 'Show U501 in hw/board.kicad_pcb', 'Show U501 in hw/board.glb', sheet])
-    expect(offered(one, PCB, { itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' })).toEqual(['U501 · net GND',
-      'Show U501 in hw/board.kicad_sch', 'Show U501 in hw/board.glb', 'Show net GND in hw/board.kicad_sch', sheet])
+      .toEqual(['U501 · hw/board.kicad_sch', 'U501 · hw/board.kicad_pcb', 'U501 · hw/board.glb', sheet])
+    expect(offered(one, PCB, { itemType: 'pad', reference: 'U501', pin: '3', net: 'GND' })).toEqual(['U501 · hw/board.kicad_sch',
+      'U501 · hw/board.kicad_pcb', 'U501 · hw/board.glb', sheet, 'GND · hw/board.kicad_sch', 'GND · hw/board.kicad_pcb'])
     // in the menu's own rows, and nothing drawn for it anywhere else
-    expect(itemsOf(one.view).map((item) => item.props['data-show'])).toEqual([SCH, BOARD3D, SCH, 'datasheet'])
-    expect(itemsOf(one.view).at(-1).props.style).toEqual(itemsOf(one.view)[1].props.style)
+    expect(itemsOf(one.view).map((item) => item.props['data-show'])).toEqual([SCH, PCB, BOARD3D, 'datasheet', SCH, PCB])
+    expect(itemsOf(one.view)[3].props.style).toEqual(itemsOf(one.view)[2].props.style)
     expect(collect(one.view.render(), (el) => el.props['data-datasheet'])).toEqual([])
     one.view.props = { ...one.view.props, doc: docs[2] }
     view3d(one.view).three.props.onMenu('U501', 300, 250)
-    expect(texts(menuOf(one.view)).at(-1)).toBe(sheet)
-    // a path from the schematic's directory; no document, a net, a power symbol: no item
+    expect(linesOf(one.view).at(-1)).toBe(sheet)
+    // a path from the schematic's directory; no document, a net, a power symbol: no row
     expect([
       offered(one, PCB, { itemType: 'footprint', reference: 'C1' }), offered(one, PCB, { itemType: 'footprint', reference: 'R104' }),
       offered(one, PCB, { itemType: 'track', net: 'GND' }), offered(one, SCH, { itemType: 'symbol', reference: '#PWR01' }),
-    ].map((items) => items && items.at(-1))).toEqual(['Open datasheet · ds/ne555.pdf', 'Show R104 in hw/board.glb',
-      'Show net GND in hw/board.kicad_sch', null])
+    ].map((lines) => lines && lines.at(-1))).toEqual(['Datasheet · ds/ne555.pdf', 'R104 · hw/board.glb',
+      'GND · hw/board.kicad_pcb', null])
   })
 
-  it('is the whole menu of a part with no other member', () => {
+  it('is the menu, beside the part\'s own row, of a part with no other member', () => {
     const lone = withSheets(schematic(), [schematic(), pdf, tpa])
-    expect(offered(lone, SCH, { itemType: 'symbol', reference: 'U501' })).toEqual(['U501', 'Open datasheet · TPA3250'])
+    expect(offered(lone, SCH, { itemType: 'symbol', reference: 'U501' })).toEqual(['U501 · hw/board.kicad_sch',
+      'Datasheet · TPA3250'])
     expect(offered(lone, SCH, { itemType: 'symbol', reference: 'R104' })).toBeNull()
   })
 
@@ -1291,8 +1346,8 @@ describe('a part\'s datasheet', () => {
     it('drawn as the page draws a document, the page asked for nothing and the design left as it was', () => {
       const { view, elements } = opened()
       const shown = windowOf(view)
-      expect([view.props.onOpen.mock.calls, view.props.doc.id, view.state.menu, view.state.selected])
-        .toEqual([[], 'hw__board.kicad_pcb', null, 'U501'])
+      expect([view.props.onOpen.mock.calls, view.props.doc.id, view.state.menu.active, view.state.selected])
+        .toEqual([[], 'hw__board.kicad_pcb', 3, 'U501'])
       expect([elements[PCB].clearSelection.mock.calls, elements[SCH].clearSelection.mock.calls]).toEqual([[], []])
       expect(shown.body.props).toMatchObject({ doc: tpa, base: BASE })
       // the viewer's own keys (`[`, `]`) stand aside for an open dialog of the page
@@ -1314,16 +1369,27 @@ describe('a part\'s datasheet', () => {
       expect([windowOf(view), view.state.selected]).toEqual([undefined, 'U501'])
     })
 
-    it('Escape closes it alone and is taken, the part left selected; the next one puts the part out', () => {
+    it('Escape closes it alone and is taken, the menu and the part left; the next the menu, the third puts the part out', () => {
       const { view, elements } = opened()
       view.listen(true)
       const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
       window.dispatchEvent(escape)
-      expect([windowOf(view), escape.defaultPrevented, view.state.selected, elements[PCB].clearSelection.mock.calls])
-        .toEqual([undefined, true, 'U501', []])
+      expect([windowOf(view), escape.defaultPrevented, Boolean(menuOf(view)), view.state.selected,
+        elements[PCB].clearSelection.mock.calls]).toEqual([undefined, true, true, 'U501', []])
+      window.dispatchEvent(ESCAPE())
+      expect([menuOf(view), view.state.selected]).toEqual([undefined, 'U501'])
       window.dispatchEvent(ESCAPE())
       expect([view.state.selected, elements[PCB].clearSelection.mock.calls.length]).toEqual([null, 1])
       view.componentWillUnmount()
+    })
+
+    it('goes on a step off its row and comes back on a step onto it, over the member then on screen', () => {
+      const { view } = opened()
+      arrow(view, 'Next')
+      expect([windowOf(view), view.props.doc.id, headOf(view)[2]]).toEqual([undefined, 'hw__board.kicad_sch', '1 / 4'])
+      arrow(view, 'Previous')
+      expect([windowOf(view).body.props.doc, view.props.doc.id, view.props.onOpen.mock.calls])
+        .toEqual([tpa, 'hw__board.kicad_sch', [['hw__board.kicad_sch']]])
     })
 
     it('goes when its view leaves the screen', () => {

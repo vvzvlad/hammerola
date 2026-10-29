@@ -64,7 +64,7 @@ export const VIEWS_GROUP = '3D VIEWS';
 
 /** The heading a document's row stands under: a member of a KiCad design under
  *  KICAD — its schematic, the schematic's BOM, board and the board's 3D model
- *  are one design the page moves between (`Show in …`), not four kinds of
+ *  are one design the page moves between (its menu's rows), not four kinds of
  *  file — a file the page does not draw under its extension, as the Downloads
  *  menu groups it, any other document under its type. */
 export function docGroup(doc) {

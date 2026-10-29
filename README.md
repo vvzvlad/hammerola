@@ -475,20 +475,21 @@ design. The schematic is listed by its root sheet and brings every sheet it
 names, either of the two brings the `.kicad_pro` beside it, and the `.glb` is
 made on the laptop with
 `kicad-cli pcb export glb`, not on the hub. The views are linked: a part clicked
-in one is selected in the others, and a right click on a part opens a menu that
-shows it in the other views — `Show C507 in Main board`. On the schematic a
-click on a net, left or right — a label, a power symbol, a sheet pin, a wire —
-lists every place of it on every sheet, with arrows to step through them and
-`Show net +12V in Main board` as the last row; on the board a right click on a
-net offers an item per sheet it is on. The board
-view has its own panel of layers and lights the whole net of a clicked track or
-pad; the 3D view turns like the model does. A part whose `Datasheet` field names
-a PDF the project lists (`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above) gets
-`Open datasheet` in the same menu, which opens it in a window over the design.
+in one is selected in the others. A right click on a part, a pad or a net in any
+view, and on the schematic a left click on a net too — a label, a power symbol,
+a sheet pin, a wire — opens one menu: a row for every place it can be shown —
+the part in each view (`C507 · Main board`), its datasheet, every place of the
+net on every sheet (`amp:+12V`) and the net on the board (`+12V · Main board`).
+The menu opens on the row of what was clicked; the arrows ‹ › and a click on a
+row go to that place, switching the view or the sheet, and the menu stays open.
+A part has a datasheet when its `Datasheet` field names a PDF the project lists
+(`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above): its row opens the PDF in a window
+over the design. The board view has its own panel of layers and lights the whole
+net of a clicked track or pad; the 3D view turns like the model does.
 
-![The board with its layer panel, a net lit and the right-click menu of a part](docs/images/kicad-board.png)
+![The board with its layer panel, a net lit and the menu of a pad: the part in every view, its datasheet, the net's places and the net on the board](docs/images/kicad-board.png)
 
-![The schematic, opened from that menu with the same part selected](docs/images/kicad-schematic.png)
+![The schematic, stepped to with ‹ in that menu, the same part selected and the menu still open](docs/images/kicad-schematic.png)
 
 ![The 3D model of the board](docs/images/kicad-3d.png)
 

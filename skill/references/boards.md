@@ -45,19 +45,19 @@ no routing).
 Entries with the same path minus the extension are ONE design: `hw/main.kicad_sch`,
 `hw/main.kicad_pcb` and `hw/main.glb` above. Picking a part in one of them (a click)
 picks the same part, by its reference, in the others (a click on nothing or Escape
-clears it everywhere), and a right click on a part, or on a net on the board (a
-track, a pad), opens a menu with an item for every other listed entry of the
-design, the part's (`Show C507 in <caption>`) apart from the net's
-(`Show net +12V in <caption>`), and for a net on schematic sheets one per sheet it
-is on (`… · <sheet>`); choosing one opens it with the part or net selected there.
-On the schematic a click on a net, left or right (a label, a power symbol, a sheet
-pin, a wire), lists every place of that net on every sheet (global labels and power
-symbols of one name, hierarchical labels of one name with their sheet pins), with
-arrows to step through them and `Show net +12V in <caption>` of the board as the
-last row. An entry without siblings is a design of one. To hang a datasheet on a part, put the PDF in the project, list it
+clears it everywhere). A right click on a part, a pad or a net in any entry, and on
+the schematic a left click on a net too (a label, a power symbol, a sheet pin, a
+wire), opens one menu with a row for every place it can be shown: the part in each
+listed entry (`C507 · <caption>`), its datasheet, every place of the net on every
+sheet (`<sheet>:+12V`; global labels and power symbols of one name, hierarchical
+labels of one name with their sheet pins) and the net on the board
+(`+12V · <caption>`). It opens on the row of what was clicked; the arrows ‹ › and a
+click on a row go there, switching the entry or the sheet with the part or net
+selected, and the menu stays open. An entry without siblings is a design of one. To
+hang a datasheet on a part, put the PDF in the project, list it
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
-`.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's right-click menu then has
-`Open datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape
+`.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's menu then has
+`Datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape
 brings the design back as it was). A web address in the field is not
 a link. A missing sheet, a sheet outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse

@@ -102,8 +102,8 @@ export function chromeView(s, props, deps) {
   // A document over the model that takes a comment (`COMMENTABLE`): a place
   // taken on it is the comment's place, which arming the tool says how to take.
   const docCommentable = !!docOpen && COMMENTABLE.has(docOpen.type);
-  // Opening a document: what its row does, what `Show in …` of a KiCad
-  // design's right-click menu does with the other member's id, and what a
+  // Opening a document: what its row does, what a row of a KiCad design's
+  // menu (KicadView.jsx) does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
   // says it as `?d=` (`pushChoice`). Given a schematic's `sheet` — a row of
   // its sheets in the list (`SheetRows` in viewlist.jsx) — the address names
@@ -547,8 +547,8 @@ export function chromeView(s, props, deps) {
     })),
     // The documents below the views (viewlist.jsx): a row each but for a
     // hidden one. Choosing one lays it over the model (`docOpen`), which stays
-    // mounted underneath with its camera, cut and hidden parts; `Show in …` of
-    // a KiCad design's right-click menu opens the other member the same way
+    // mounted underneath with its camera, cut and hidden parts; a row of a
+    // KiCad design's menu (KicadView.jsx) opens the other member the same way
     // (`onDocOpen`). The choice is a step of history whose address names it as
     // `?d=` (`pushChoice`), which opens it on arrival (`load`), a hidden one too.
     docRows,

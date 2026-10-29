@@ -536,15 +536,15 @@
   element its own (`designSources`), and it is where the views are LINKED: a
   single click selecting a part in one view selects it in the others
   (`ecad-viewer:selection`), a click on nothing or Escape clears it in all of
-  them, and a right click opens a menu with the part's items apart from its
-  net's (`menuFor` says which views take which; a `#PWR` power symbol is its
-  net, and a net on several sheets — global labels, power symbols, hierarchical
-  labels of one name — has an item per sheet it is on, the clicked one left
-  out, read by `kicadnets.js`) whose choice asks the
-  page to open the sibling (`onOpen`) and, once it is on screen, calls
-  `requestCrossProbe` on its element with the designator, the net, or the net's
-  sheet and occurrence; another sheet of the schematic on screen is asked for
-  straight away. A change of the schematic's sheet is told to the page as the
+  them, and a click — right on every view, left too on a net of the
+  schematic — opens one menu (`menuFor`): a row per member for a part, its
+  datasheet, a row per place of a net on every sheet (read by `kicadnets.js`;
+  a `#PWR` power symbol is its net) and the board's, opened on the row of what
+  was clicked and stepped through with ‹ ›. A step to another member asks the
+  page to open it (`onOpen`) and, once it is on screen, calls
+  `requestCrossProbe` on its element with the designator, the net, or the
+  place's sheet and occurrence; a step on the view on screen asks its element
+  straight away, and the menu stays open. A change of the schematic's sheet is told to the page as the
   value of `s=` (`onSheet`), which writes it into the address; the component
   reads the address and follows Back and Forward through `address.js` and
   writes no history itself. What is under a right click is the element's own answer
@@ -622,7 +622,7 @@
   uuid, each with the name the board gives
   its net (`/amp/OUT_C` for a local label on the sheet `amp`; hierarchical labels
   of one name share the one the board has), which `KicadView` asks the board for
-  and gives a net's menu an item per other sheet with the same board name on
+  and lists as a row per place of the net on every sheet in its menu
 - `ui/src/sexpr.js` — the reader of KiCad's s-expressions that `kicadnets.js`
   and `kicadsheets.js` read a design's texts with
 - `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into

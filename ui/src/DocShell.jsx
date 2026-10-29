@@ -7,8 +7,8 @@
 // The document is drawn by DocumentView.jsx, which the model's page uses too,
 // through its `DocumentLayers`: a KiCad design opened on the page stays
 // mounted, hidden, while another document is on screen, and comes back without
-// fetching its files again. The page holds which document is open — `Show in
-// …` of a KiCad design's right-click menu opens the other member through the
+// fetching its files again. The page holds which document is open — a row of
+// a KiCad design's menu (KicadView.jsx) opens the other member through the
 // same door a row does (`onPick`) — what the bar's Fit and Frame can do with it
 // (`tools`), and whether the window is narrow, which takes the bar down to the
 // list and Fit as on the model's page.
@@ -125,8 +125,8 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
 
 /**
  * The whole page, from what the shell holds. Pure. `onPick(id)` opens a
- * document: what a row of the list does, and `Show in …` of a KiCad design's
- * right-click menu; `onPick(id, sheet)` a schematic on a sheet, what a row of
+ * document: what a row of the list does, and a row of a KiCad design's menu
+ * (KicadView.jsx); `onPick(id, sheet)` a schematic on a sheet, what a row of
  * its sheets does (`SheetRows` in viewlist.jsx); `viewsOpen` says the list is
  * open, `onToggle` opens or shuts it and `onClose` shuts it, from a click
  * anywhere else on the page. `tools` is what the open document's view told

@@ -1,8 +1,7 @@
 // The nets the sheets of a KiCad design's schematic name, where they name them,
-// and the name the board gives each. KicadView.jsx reads from this which sheets
-// a net is on, for the items of its right-click menu that show the net on
-// another sheet, and the board's name of it, for the item that shows it on the
-// board.
+// and the name the board gives each. KicadView.jsx reads from this every place
+// of a net on the sheets, for the rows of its menu that show the net there,
+// and the board's name of it, for the row that shows it on the board.
 //
 // AN OCCURRENCE is something placed on a sheet that names a net: its sheet (the
 // file's path, as the viewer is handed it), the name, its uuid, its kind — a
@@ -16,8 +15,8 @@
 // order its file holds them; one with no uuid cannot be aimed at and is left
 // out.
 //
-// A WIRE is an entry of `byUuid` and not of `occurrences`, so a sheet's item
-// still aims at something named: `{ sheet, name, uuid, kind: 'wire', board,
+// A WIRE is an entry of `byUuid` and not of `occurrences`, so the menu for a
+// wire still opens on something named: `{ sheet, name, uuid, kind: 'wire', board,
 // boards }`, the name and the board of the occurrence on its run KiCad names the
 // net after: the strongest kind (`NAMING`), the first name among equals
 // (`candidate_cmp` in eeschema/connection_graph.cpp). A run is the wires KiCad

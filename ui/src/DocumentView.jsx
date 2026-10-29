@@ -18,7 +18,7 @@
 //   board,
 //   board3d    a member of a KiCad design, drawn with the design's other
 //              listed members linked to it (KicadView.jsx); the build's
-//              `documents` say which those are, and its right-click menu
+//              `documents` say which those are, and its menu
 //              and the BOM's designators ask the page to open one (`onOpen`,
 //              with its id). A `bom` is a schematic's parts list, which the
 //              page lists after it (kicadbom.js), not a document of the hub's
