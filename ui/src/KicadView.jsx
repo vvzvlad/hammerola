@@ -102,10 +102,11 @@
 // row's name, ‹ and › and `n / N`, the rows under it, the active one lit. It
 // opens on the row of what was clicked: the part's row of the view clicked
 // in, the place clicked, the board's row for a net clicked on the board. ‹ and
-// › make the row before or after it the active one, round the ends of the
-// list, and so does a click on a row; each step shows what its row names
-// (`go`), and the menu stays open over whatever member the step puts on
-// screen. With fewer than two rows there is nowhere to step: it does not open.
+// › make the place before or after it the active row, round the ends of the
+// list and past a datasheet's row (`step`), and so does a click on a place's
+// row; each step shows what its row names (`go`), and the menu stays open over
+// whatever member the step puts on screen. `n / N` counts the places, a
+// datasheet not among them. With fewer than two rows it does not open.
 //
 // WHAT IS ONE NET is read from the sheets' texts and the board's (kicadnets.js):
 // the occurrences of one name on the board, `board` — global labels and power
@@ -182,12 +183,13 @@
 // `Datasheet · <name>`, when the part's KiCad `Datasheet` field names a
 // document of the build, listed or hidden (kicadsheets.js); a part with a
 // datasheet and no other member has a menu of its own row and that one.
-// Stepped to, it opens the document in a window over the view area, drawn as
-// the page draws a document (DocumentView.jsx), and asks the page for nothing:
-// the design under it keeps its view, its selection and its camera, and a step
-// to another row, or closing the window, is the way back. One window at a
-// time; it goes on its `×`, a click beside it and Escape — which then closes
-// the window only — and when its view leaves the screen.
+// The arrows pass it over (the owner: no datasheet by the arrows); a click on
+// it opens the document in a window over the view area, drawn as the page
+// draws a document (DocumentView.jsx), and asks the page for nothing: the
+// design under it keeps its view, its selection and its camera, the menu its
+// active row, and a step to a place, or closing the window, is the way back.
+// One window at a time; it goes on its `×`, a click beside it and Escape —
+// which then closes the window only — and when its view leaves the screen.
 //
 // COMMENTS (`comment`, handed by both pages: comments.jsx). With the page's
 // Comment tool armed (`on`) the drawn view on screen is in the viewer's
@@ -570,6 +572,10 @@ const menuArrow = (hover) => `font:${ITEM_FONT}/${LINE}px ${LIST_FONT};margin:0;
   + 'cursor:pointer';
 const MENU_COUNT = `font:400 11px/${LINE}px ${LIST_FONT};font-variant-numeric:tabular-nums`;
 const MENU_LIST = `max-height:${LIST_MAX}px;overflow-y:auto`;
+/** The head's count: the active row among the places of `menu`, the rows the
+ *  arrows step through, which a datasheet's row is not. */
+const placeCount = ({ rows, active }) => `${rows.slice(0, active + 1).filter((row) => !row.doc).length} / `
+  + `${rows.filter((row) => !row.doc).length}`;
 const menuRow = (hover, active, first) => `font:${ITEM_FONT}/${LINE}px ${LIST_FONT};`
   + `padding:${ITEM_PAD[0]}px ${ITEM_PAD[1]}px;border-radius:3px;`
   + (first ? '' : `margin-top:${GAP}px;`) + `${ELLIPSIS};cursor:pointer;user-select:none;`
@@ -1029,22 +1035,33 @@ export default class KicadView extends React.Component {
     this.setState({ menu: { ...menu, from, ...box }, hover: -1 });
   }
 
-  /** The menu's row `index`, counted round the ends of the list as the
-   *  viewer's list counts (`#select_index`), made the active one: a datasheet
-   *  opens in the window over the view area, the page asked for nothing; any
-   *  other row closes that window and shows what it names (`show`). The menu
-   *  stays open. */
+  /** The menu's row `index`, clicked or stepped to (`step`). A datasheet
+   *  opens in the window over the view area, the page asked for nothing, and
+   *  the active row stays where it was: a datasheet is no place to step to.
+   *  Any other row is made the active one, closes that window and shows what
+   *  it names (`show`). The menu stays open. */
   go(index) {
     const { menu } = this.state;
-    const active = ((index % menu.rows.length) + menu.rows.length) % menu.rows.length;
-    const row = menu.rows[active];
-    this.setState({ menu: { ...menu, active } });
+    const row = menu.rows[index];
     if (row.doc) {
       this.setState({ sheet: { doc: row.doc, from: this.side() } });
       return;
     }
+    this.setState({ menu: { ...menu, active: index } });
     this.closeSheet();
     this.show(row);
+  }
+
+  /** ‹ (`delta` -1) or › (+1): the place before or after the active row,
+   *  counted round the ends of the list as the viewer's list counts
+   *  (`#select_index`), a datasheet's row passed over. */
+  step(delta) {
+    const { rows, active } = this.state.menu;
+    let index = active;
+    do {
+      index = (((index + delta) % rows.length) + rows.length) % rows.length;
+    } while (rows[index].doc);
+    this.go(index);
   }
 
   /** A row `{ view, id, request }` stepped to in the menu, or a designator of
@@ -1409,12 +1426,12 @@ export default class KicadView extends React.Component {
                 <button type="button" title="Previous" style={css(menuArrow(hover === 'previous'))}
                         onMouseEnter={() => this.setState({ hover: 'previous' })}
                         onMouseLeave={() => this.setState({ hover: -1 })}
-                        onClick={() => this.go(menu.active - 1)}>‹</button>
-                <span style={css(MENU_COUNT)}>{`${menu.active + 1} / ${menu.rows.length}`}</span>
+                        onClick={() => this.step(-1)}>‹</button>
+                <span style={css(MENU_COUNT)}>{placeCount(menu)}</span>
                 <button type="button" title="Next" style={css(menuArrow(hover === 'next'))}
                         onMouseEnter={() => this.setState({ hover: 'next' })}
                         onMouseLeave={() => this.setState({ hover: -1 })}
-                        onClick={() => this.go(menu.active + 1)}>›</button>
+                        onClick={() => this.step(1)}>›</button>
               </div>
             </div>
             <div ref={this.setList} style={css(MENU_LIST)}>

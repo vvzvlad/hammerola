@@ -1347,8 +1347,9 @@ describe('a part\'s datasheet', () => {
     it('drawn as the page draws a document, the page asked for nothing and the design left as it was', () => {
       const { view, elements } = opened()
       const shown = windowOf(view)
+      // the menu stays on the board's row: a datasheet is no place
       expect([view.props.onOpen.mock.calls, view.props.doc.id, view.state.menu.active, view.state.selected])
-        .toEqual([[], 'hw__board.kicad_pcb', 3, 'U501'])
+        .toEqual([[], 'hw__board.kicad_pcb', 1, 'U501'])
       expect([elements[PCB].clearSelection.mock.calls, elements[SCH].clearSelection.mock.calls]).toEqual([[], []])
       expect(shown.body.props).toMatchObject({ doc: tpa, base: BASE })
       // the viewer's own keys (`[`, `]`) stand aside for an open dialog of the page
@@ -1384,13 +1385,19 @@ describe('a part\'s datasheet', () => {
       view.componentWillUnmount()
     })
 
-    it('goes on a step off its row and comes back on a step onto it, over the member then on screen', () => {
+    it('is passed over by the arrows, which close it and count the places alone, and opened by its row', () => {
       const { view } = opened()
-      arrow(view, 'Next')
-      expect([windowOf(view), view.props.doc.id, headOf(view)[2]]).toEqual([undefined, 'hw__board.kicad_sch', '1 / 4'])
-      arrow(view, 'Previous')
-      expect([windowOf(view).body.props.doc, view.props.doc.id, view.props.onOpen.mock.calls])
-        .toEqual([tpa, 'hw__board.kicad_sch', [['hw__board.kicad_sch']]])
+      expect(headOf(view)[2]).toBe('2 / 3')
+      const seen = []
+      for (const title of ['Next', 'Next', 'Previous']) {
+        arrow(view, title)
+        seen.push([Boolean(windowOf(view)), view.props.doc.id, headOf(view)[2]])
+      }
+      expect(seen).toEqual([[false, 'hw__board.glb', '3 / 3'], [false, 'hw__board.kicad_sch', '1 / 3'],
+        [false, 'hw__board.glb', '3 / 3']])
+      // over the member then on screen
+      itemsOf(view).at(-1).props.onClick()
+      expect([windowOf(view).body.props.doc, view.props.doc.id, headOf(view)[2]]).toEqual([tpa, 'hw__board.glb', '3 / 3'])
     })
 
     it('goes when its view leaves the screen', () => {

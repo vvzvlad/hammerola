@@ -51,9 +51,9 @@ wire), opens one menu with a row for every place it can be shown: the part in ea
 listed entry (`C507 · <caption>`), its datasheet, every place of the net on every
 sheet (`<sheet>:+12V`; global labels and power symbols of one name, hierarchical
 labels of one name with their sheet pins) and the net on the board
-(`+12V · <caption>`). It opens on the row of what was clicked; the arrows ‹ › and a
-click on a row go there, switching the entry or the sheet with the part or net
-selected, and the menu stays open. An entry without siblings is a design of one. To
+(`+12V · <caption>`). It opens on the row of what was clicked; the arrows ‹ › go from
+place to place, past the datasheet, and a click on a row goes there, switching the
+entry or the sheet with the part or net selected, and the menu stays open. An entry without siblings is a design of one. To
 hang a datasheet on a part, put the PDF in the project, list it
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
 `.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's menu then has
