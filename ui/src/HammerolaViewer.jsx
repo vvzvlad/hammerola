@@ -5730,98 +5730,101 @@ export default class HammerolaViewer extends React.Component {
           </div>
 
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
-          {!v.headFolded && <div style={css(FILL)} />}
 
-          {/* downloads: whole-build files, exactly the ones meta.json names,
-              for a reader holding the key that opens them */}
-          {v.dlShown && (
+          {/* The controls on the right, one group that wraps as a whole
+              (`controlsStyle` in chromeview.js). */}
+          <div style={css(v.controlsStyle)}>
+            {/* downloads: whole-build files, exactly the ones meta.json names,
+                for a reader holding the key that opens them */}
+            {v.dlShown && (
+              <div style={css(v.headWrapStyle)}>
+                {!v.headFolded && (
+                  <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
+                    {DOWNLOAD_ICON}
+                    Downloads
+                  </div>
+                )}
+                {/* One block per FORMAT, each with a link that takes the whole
+                    group: on a ten-part build the flat list was thirty rows in no
+                    useful order, and "every STL" meant aiming at every third one. */}
+                <div style={css(v.dlMenuStyle)}>
+                  {v.downloadGroups.map((g) => (
+                    <React.Fragment key={g.key}>
+                      <div style={css(g.headStyle)}>
+                        <span style={css(FILL)}>{g.ext}</span>
+                        <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
+                      </div>
+                      {g.files.map((f) => (
+                        <div key={f.key} style={css(f.rowStyle)}>
+                          <a href={f.href} download style={css(f.style)}>
+                            <span style={css(FILL)}>{f.label}</span>
+                            <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
+                          </a>
+                          {f.bambu && <BambuLink href={f.href} style={f.bambuStyle} />}
+                          <CopyLink href={f.href} style={f.copyStyle} />
+                        </div>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                  {v.downloadGroups.length === 0 && (
+                    <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
+                      This build ships no files to download.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* access: the token is what turns a viewer into the customer */}
             <div style={css(v.headWrapStyle)}>
               {!v.headFolded && (
-                <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
-                  {DOWNLOAD_ICON}
-                  Downloads
+                <div onClick={v.tokenToggle} style={css(v.tokenBtnStyle)}>
+                  {LOCK_ICON}
+                  {v.tokenLabel}
                 </div>
               )}
-              {/* One block per FORMAT, each with a link that takes the whole
-                  group: on a ten-part build the flat list was thirty rows in no
-                  useful order, and "every STL" meant aiming at every third one. */}
-              <div style={css(v.dlMenuStyle)}>
-                {v.downloadGroups.map((g) => (
-                  <React.Fragment key={g.key}>
-                    <div style={css(g.headStyle)}>
-                      <span style={css(FILL)}>{g.ext}</span>
-                      <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
+              <div onClick={(e) => e.stopPropagation()} style={css(v.tokenPopStyle)}>
+                <div style={css(`font:600 12.5px ${SANS};margin-bottom:4px`)}>
+                  {v.viewer ? 'Enter your token' : 'Editing is on'}
+                </div>
+                <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft);margin-bottom:9px`)}>
+                  {v.viewer
+                    ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.'
+                    : 'The token is stored in this browser, for the whole site. Remove it to go back to viewing.'}
+                </div>
+                {v.viewer ? (
+                  <>
+                    <input type="password" value={v.tokenDraft} onChange={v.tokenType}
+                           placeholder="paste the token"
+                           style={css(`width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;outline:none;padding:8px 10px;font:400 12px ${MONO};background:var(--card-bg)`)} />
+                    <div style={css('display:flex;justify-content:flex-end;margin-top:9px')}>
+                      <span onClick={v.tokenSave} style={css(ACCENT_BTN)}>Save</span>
                     </div>
-                    {g.files.map((f) => (
-                      <div key={f.key} style={css(f.rowStyle)}>
-                        <a href={f.href} download style={css(f.style)}>
-                          <span style={css(FILL)}>{f.label}</span>
-                          <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
-                        </a>
-                        {f.bambu && <BambuLink href={f.href} style={f.bambuStyle} />}
-                        <CopyLink href={f.href} style={f.copyStyle} />
-                      </div>
-                    ))}
-                  </React.Fragment>
-                ))}
-                {v.downloadGroups.length === 0 && (
-                  <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
-                    This build ships no files to download.
+                  </>
+                ) : (
+                  <div style={css('display:flex;justify-content:flex-end')}>
+                    <span onClick={v.tokenClear} style={css(`padding:6px 14px;border:1px solid var(--line);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;color:var(--danger);background:var(--card-bg)`)}>Remove token</span>
                   </div>
                 )}
               </div>
             </div>
-          )}
 
-          {/* access: the token is what turns a viewer into the customer */}
-          <div style={css(v.headWrapStyle)}>
+            {!v.headFolded && commentsButton(v)}
+
+            {/* Light or dark for the whole page — here because #35 says here, and
+                drawn immediately after the comments so it stands against them.
+                For every reader, deliberately: the comments button is taken away
+                by a missing token, and this is the one control in the row that
+                belongs to the person rather than to what they are allowed to do.
+                On a narrow window it is the menu's row after Comments. `computed()`
+                has the whole argument. */}
             {!v.headFolded && (
-              <div onClick={v.tokenToggle} style={css(v.tokenBtnStyle)}>
-                {LOCK_ICON}
-                {v.tokenLabel}
+              <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
+                {v.themeDark ? MOON_ICON : SUN_ICON}
+                {v.themeLabel}
               </div>
             )}
-            <div onClick={(e) => e.stopPropagation()} style={css(v.tokenPopStyle)}>
-              <div style={css(`font:600 12.5px ${SANS};margin-bottom:4px`)}>
-                {v.viewer ? 'Enter your token' : 'Editing is on'}
-              </div>
-              <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft);margin-bottom:9px`)}>
-                {v.viewer
-                  ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.'
-                  : 'The token is stored in this browser, for the whole site. Remove it to go back to viewing.'}
-              </div>
-              {v.viewer ? (
-                <>
-                  <input type="password" value={v.tokenDraft} onChange={v.tokenType}
-                         placeholder="paste the token"
-                         style={css(`width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;outline:none;padding:8px 10px;font:400 12px ${MONO};background:var(--card-bg)`)} />
-                  <div style={css('display:flex;justify-content:flex-end;margin-top:9px')}>
-                    <span onClick={v.tokenSave} style={css(ACCENT_BTN)}>Save</span>
-                  </div>
-                </>
-              ) : (
-                <div style={css('display:flex;justify-content:flex-end')}>
-                  <span onClick={v.tokenClear} style={css(`padding:6px 14px;border:1px solid var(--line);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;color:var(--danger);background:var(--card-bg)`)}>Remove token</span>
-                </div>
-              )}
-            </div>
           </div>
-
-          {!v.headFolded && commentsButton(v)}
-
-          {/* Light or dark for the whole page — here because #35 says here, and
-              drawn immediately after the comments so it stands against them.
-              For every reader, deliberately: the comments button is taken away
-              by a missing token, and this is the one control in the row that
-              belongs to the person rather than to what they are allowed to do.
-              On a narrow window it is the menu's row after Comments. `computed()`
-              has the whole argument. */}
-          {!v.headFolded && (
-            <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
-              {v.themeDark ? MOON_ICON : SUN_ICON}
-              {v.themeLabel}
-            </div>
-          )}
 
           {/* The header's menu on a narrow window (`headFolded` in chromeview.js):
               the controls above as rows, in the owner's order. Parts is here

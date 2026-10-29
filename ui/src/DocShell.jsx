@@ -166,22 +166,24 @@ export function DocPage({
           {!narrow && <span style={css(WORDMARK)}>hammerola</span>}
         </a>
         <div style={css(HEADER_RULE)} />
-        {/* Narrow, from a basis of 0 and with no spacer after it, as the model
-            page's title (`titleColStyle` in chromeview.js says why). */}
+        {/* Sized as the model page's title, and the revision and Comments
+            after it are one group, as its controls are (`titleColStyle` and
+            `controlsStyle` in chromeview.js say why). */}
         <div className={onRename ? RENAME_HOST : undefined}
-             style={css(`display:flex;align-items:center;gap:2px;flex:${narrow ? '1 1 0' : '0 1 auto'};min-width:0`)}>
+             style={css(`display:flex;align-items:center;gap:2px;min-width:0;flex:${narrow ? '1 1 0' : '1 1 200px;max-width:max-content'}`)}>
           <div style={css(`${TITLE};min-width:0`)}>{title}</div>
           {onRename && <Pencil title="Rename project" onClick={() => onRename({ kind: 'project', name: title })} />}
         </div>
         <VariantSwitch choices={variants} open={variantsOpen} onToggle={onVariants} narrow={narrow}
                        onRename={onRename && ((row) => onRename({ kind: 'variant', variant: row.key, name: row.label }))} />
-        {!narrow && <div style={css('flex:1')} />}
         {!narrow && (
-          <span title={meta.commit} style={css(`${HEAD_MONO};color:var(--text-soft)`)}>
-            {meta.dev ? 'dev' : shortId(meta.commit)}
-          </span>
+          <div style={css('display:flex;align-items:center;gap:12px;margin-left:auto;flex:none')}>
+            <span title={meta.commit} style={css(`${HEAD_MONO};color:var(--text-soft)`)}>
+              {meta.dev ? 'dev' : shortId(meta.commit)}
+            </span>
+            {comments && commentsButton(comments)}
+          </div>
         )}
-        {!narrow && comments && commentsButton(comments)}
         {narrow && headMenu(headMenuOpen, onHeadMenu, (
           <>
             <div title={meta.commit} style={css(`${headRow(false)};cursor:default`)}>

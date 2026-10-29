@@ -196,15 +196,27 @@ export function chromeView(s, props, deps) {
     renameTitle: askRename && (() => askRename({ kind: 'project', variant, name: title })),
     // The title column must be able to shrink, or the title's
     // `text-overflow:ellipsis` never fires and a long model name pushes the row
-    // past the window edge. Wide, `0 1 auto`: shrink allowed, grow refused,
-    // because a title that claimed the leftover room would push the picker
-    // away from it. Narrow, `1 1 0`: a wrapping row is filled by max-content
-    // sizes, so a long title at its own width goes to a line of its own; from
-    // a basis of 0 it never breaks the line and takes the room the mark, the
-    // variants and the menu's button leave — which is why the spacer before
-    // the controls is not drawn there, as it would split that room.
+    // past the window edge. A wrapping row is filled by flex-basis sizes before
+    // anything shrinks, so a title on an `auto` basis at its full width breaks
+    // the line and pushes controls onto a second one instead of being cut.
+    // Wide, `1 1 200px` capped at `max-content`: in the line it counts as
+    // 200px (or its own width, if shorter), so the row keeps one line until
+    // the title would be cut below that, and then the controls move down as
+    // one group (`controlsStyle`) rather than the title shrinking to a word.
+    // It grows from there up to its own width and no further: a title that
+    // claimed all of the leftover room would push the picker away from it.
+    // Narrow, `1 1 0` uncapped: it never breaks the line and takes the room
+    // the mark, the variants and the menu's button leave.
     titleColStyle: 'display:flex;flex-direction:column;gap:1px;min-width:0;flex:'
-      + (narrow ? '1 1 0' : '0 1 auto'),
+      + (narrow ? '1 1 0' : '1 1 200px;max-width:max-content'),
+    // Downloads, the token, Comments and the theme, as one group pushed to the
+    // right edge by its auto margin: when the row has to wrap they go to the
+    // second line together and stay right-aligned, instead of the last one or
+    // two breaking off to the left. Narrow, the buttons are rows of the
+    // header's menu and the group holds only the sheets, so it lays nothing
+    // out (`display:contents`).
+    controlsStyle: narrow ? 'display:contents'
+      : 'display:flex;align-items:center;gap:12px;margin-left:auto;flex:none',
     // The variants beside the title (variants.jsx), for every reader: the list
     // needs no token. Null, and nothing drawn, on a project of one variant.
     variantChoices: variantChoices(s.variants, PAGE.pid, variant),
