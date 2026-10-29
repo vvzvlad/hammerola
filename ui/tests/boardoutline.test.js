@@ -28,4 +28,34 @@ describe('the outline a board view fits', () => {
     // close, not equal: cos 90° is 6e-17 in floating point
     for (const [got, want] of [[x, 3], [y, -140], [x2, 100], [y2, 0]]) expect(got).toBeCloseTo(want, 9)
   })
+
+  it('counts an arc where it runs, as KiCad does', () => {
+    // A 20 x 10 frame with two arcs of radius 1 inside it: one turning 90° to 180°, as the
+    // rounded corner in WB-MGU's ADD1 does, one turning 180° to 270°. kicad-cli fitted to
+    // this board grows it by one stroke width, so neither arc reaches past the frame.
+    const arc = (start, mid, end) => `(gr_arc (start ${start}) (mid ${mid}) (end ${end})`
+      + ' (stroke (width 0.254) (type solid)) (layer "Edge.Cuts"))'
+    const board = new KicadPCB('arcs.kicad_pcb', new BoardParser().parse('(kicad_pcb\n\t(version 20260206)\n'
+      + '\t(generator "pcbnew")\n\t(layers (0 "F.Cu" signal) (25 "Edge.Cuts" user))\n'
+      + `\t${edge('gr', 0, 0, 20, 0)}\n\t${edge('gr', 20, 0, 20, 10)}\n`
+      + `\t${edge('gr', 20, 10, 0, 10)}\n\t${edge('gr', 0, 10, 0, 0)}\n`
+      + `\t${arc('5 1.5', '4.2928932 1.2071068', '4 0.5')}\n`
+      + `\t${arc('14 9.5', '14.2928932 8.7928932', '15 8.5')}\n)\n`))
+    const { x, y, x2, y2 } = board.bbox
+    for (const [got, want] of [[x, 0], [y, 0], [x2, 20], [y2, 10]]) expect(got).toBeCloseTo(want, 6)
+  })
+
+  it('reaches as far as an arc bulges, whichever way it runs', () => {
+    // A 20 x 10 frame whose short sides are half circles bulging 5 out: the right one turning
+    // from 90° back through 0° to -90°, the left one from -90° through -180° to -270°. Only
+    // where each crosses its axis reaches the frame's edge; kicad-cli fits this board to 30 x 10.
+    const arc = (start, mid, end) => `(gr_arc (start ${start}) (mid ${mid}) (end ${end})`
+      + ' (stroke (width 0.254) (type solid)) (layer "Edge.Cuts"))'
+    const board = new KicadPCB('bulge.kicad_pcb', new BoardParser().parse('(kicad_pcb\n\t(version 20260206)\n'
+      + '\t(generator "pcbnew")\n\t(layers (0 "F.Cu" signal) (25 "Edge.Cuts" user))\n'
+      + `\t${edge('gr', 0, 0, 20, 0)}\n\t${arc('20 10', '25 5', '20 0')}\n`
+      + `\t${edge('gr', 20, 10, 0, 10)}\n\t${arc('0 0', '-5 5', '0 10')}\n)\n`))
+    const { x, y, x2, y2 } = board.bbox
+    for (const [got, want] of [[x, -5], [y, 0], [x2, 25], [y2, 10]]) expect(got).toBeCloseTo(want, 6)
+  })
 })

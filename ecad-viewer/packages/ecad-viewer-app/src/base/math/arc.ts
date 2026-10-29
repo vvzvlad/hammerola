@@ -99,8 +99,21 @@ export class Arc {
         return res;
     }
 
+    /**
+     * The radial at `angle`, measured as the arc's angles are (`Vec2.angle`,
+     * atan2 in document space) and as `to_polyline` draws it. Not
+     * `Angle.rotate_point`: that turns the other way, KiCad's RotatePoint,
+     * and would put every point mirrored about the centre's horizontal.
+     */
+    #radial(angle: Angle) {
+        return new Vec2(
+            Math.cos(angle.radians) * this.radius,
+            Math.sin(angle.radians) * this.radius,
+        );
+    }
+
     get start_radial() {
-        return this.start_angle.rotate_point(new Vec2(this.radius, 0));
+        return this.#radial(this.start_angle);
     }
 
     get start_point() {
@@ -108,7 +121,7 @@ export class Arc {
     }
 
     get end_radial() {
-        return this.end_angle.rotate_point(new Vec2(this.radius, 0));
+        return this.#radial(this.end_angle);
     }
 
     get end_point() {
@@ -122,7 +135,7 @@ export class Arc {
     }
 
     get mid_radial() {
-        return this.mid_angle.rotate_point(new Vec2(this.radius, 0));
+        return this.#radial(this.mid_angle);
     }
 
     get mid_point() {
@@ -182,30 +195,16 @@ export class Arc {
      * Get a bounding box that encloses the entire arc.
      */
     get bbox(): BBox {
-        // An arc's bbox contains at least three points: the radial for the
-        // start angle, the radial for the end angle, and the radial inbetween.
-        // However, that doesn't cover all cases. Whenever the arc crosses an
-        // axis, the radial at that axis must also be included.
-        const points = [this.start_point, this.mid_point, this.end_point];
+        // The two ends, plus the radial at every axis the arc sweeps across:
+        // those are the only places its extent can lie. The sweep may run
+        // either way and below zero, as `to_polyline` allows.
+        const quarter = Math.PI / 2;
+        const from = Math.min(this.start_angle.radians, this.end_angle.radians);
+        const to = Math.max(this.start_angle.radians, this.end_angle.radians);
+        const points = [this.start_point, this.end_point];
 
-        if (this.start_angle.degrees < 0 && this.end_angle.degrees >= 0) {
-            points.push(this.center.add(new Vec2(this.radius, 0)));
-        }
-
-        if (this.start_angle.degrees < 90 && this.end_angle.degrees >= 90) {
-            points.push(this.center.add(new Vec2(0, this.radius)));
-        }
-
-        if (this.start_angle.degrees < 180 && this.end_angle.degrees >= 180) {
-            points.push(this.center.add(new Vec2(-this.radius, 0)));
-        }
-
-        if (this.start_angle.degrees < 270 && this.end_angle.degrees >= 270) {
-            points.push(this.center.add(new Vec2(0, this.radius)));
-        }
-
-        if (this.start_angle.degrees < 360 && this.end_angle.degrees >= 360) {
-            points.push(this.center.add(new Vec2(0, this.radius)));
+        for (let k = Math.ceil(from / quarter); k * quarter <= to; k++) {
+            points.push(this.center.add(this.#radial(new Angle(k * quarter))));
         }
 
         return BBox.from_points(points);
