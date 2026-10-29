@@ -18,7 +18,7 @@ import {
     normalize_variant_name,
     resolve_variant_request,
 } from "../kicanvas/project";
-import { NetRef } from "../kicad/net_ref";
+import type { NetRef } from "../kicad/net_ref";
 import {
     EcadHighlightChangeEvent,
     resolve_board_net,
@@ -3319,30 +3319,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 dnp: item.DNP,
             }),
         );
-    }
-
-    /**
-     * Open the schematic's own list of a net's places, which the host names:
-     * each `{ sheet, name, uuid }`, `sheet` the file's name as the project
-     * holds it, the list on `activeUuid`, with the host's rows `actions`
-     * under it, at the client point `at` (else where the pointer last
-     * moved). A place chosen in it is framed as one of a label's namesakes
-     * is. False where there is no schematic.
-     */
-    public showNetList(list: {
-        items: { sheet: string; name: string; uuid: string }[];
-        activeUuid?: string;
-        actions?: { label: string; run: () => void }[];
-        at?: { x: number; y: number };
-    }): boolean {
-        if (!this.#schematic_app) return false;
-        this.#schematic_app.pop_up_label_ref_menu(
-            list.items.map((item) => new NetRef(item.sheet, item.name, item.uuid)),
-            list.activeUuid,
-            list.actions,
-            list.at,
-        );
-        return true;
     }
 
     public getPcbViewState(): EcadPcbViewState | null {

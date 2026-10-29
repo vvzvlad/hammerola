@@ -154,12 +154,6 @@ interface FitterSelections {
     items: unknown[];
     /** Currently selected label uuid for sch label instance navigation. */
     activeUuid?: string;
-    /** Rows a host adds under the schematic's list of a label's places:
-     *  each a line and what a click on it runs. */
-    actions?: { label: string; run: () => void }[];
-    /** The client point the schematic's list opens at, in place of the
-     *  pointer's last move. */
-    at?: { x: number; y: number };
 }
 
 export class KiCanvasContextMenuEvent extends KiCanvasEvent<FitterSelections> {

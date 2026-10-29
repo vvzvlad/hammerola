@@ -131,42 +131,9 @@ export class SchSelectionPopMenu extends KCUIElement {
                     transparent
                 );
             }
-
-            /* The host's rows, under the list and parted from it as the
-               header is, drawn as its rows are. */
-            .modal-actions {
-                list-style-type: none;
-                margin: 0;
-                padding: 6px 0 0;
-                border-top: 1px solid
-                    color-mix(in srgb, var(--pop-menu-fg) 20%, transparent);
-            }
-
-            .modal-actions:first-child {
-                padding-top: 0;
-                border-top: none;
-            }
-
-            .modal-actions li {
-                color: var(--pop-menu-fg);
-                margin-bottom: 6px;
-                cursor: pointer;
-                padding: 2px 4px;
-                border-radius: 3px;
-                transition: color 0.3s;
-            }
-
-            .modal-actions li:last-child {
-                margin-bottom: 0;
-            }
-
-            .modal-actions li:hover {
-                color: var(--pop-menu-fg-hover);
-            }
         `,
     ];
     #net_items: NetRef[] = [];
-    #actions: { label: string; run: () => void }[] = [];
     #index = 0;
     #content: HTMLDivElement;
     #pos: Vec2 | null = null;
@@ -203,8 +170,7 @@ export class SchSelectionPopMenu extends KCUIElement {
 
         this.addEventListener(KiCanvasFitterMenuEvent.type, (e) => {
             this.#net_items = e.detail.items as NetRef[];
-            this.#actions = e.detail.actions ?? [];
-            if (!this.#net_items.length && !this.#actions.length) {
+            if (!this.#net_items.length) {
                 this.hidden = true;
                 return;
             }
@@ -215,12 +181,8 @@ export class SchSelectionPopMenu extends KCUIElement {
                 : 0;
             this.#index = found >= 0 ? found : 0;
 
-            // At the point the host names, else where the pointer last moved.
-            const at = e.detail.at
-                ? new Vec2(e.detail.at.x, e.detail.at.y)
-                : this.#pos?.copy();
-            if (!at) return;
-            this.#anchor = at;
+            if (!this.#pos) return;
+            this.#anchor = this.#pos.copy();
             // Shown first: the panel is placed by its own size and the
             // host's box, and a hidden element has neither.
             this.hidden = false;
@@ -258,17 +220,6 @@ export class SchSelectionPopMenu extends KCUIElement {
             );
             content.style.top = `${y - host.top}px`;
             content.style.left = `${x - host.left}px`;
-            // The list scrolls past a few rows: the active one is brought
-            // into its middle, so a net of many places opens on the one
-            // clicked and the arrows step in view.
-            const list = content.querySelector<HTMLElement>(".modal-list");
-            const active = list?.querySelector<HTMLElement>("li.active");
-            if (list && active) {
-                list.scrollTop =
-                    active.offsetTop -
-                    list.offsetTop -
-                    (list.clientHeight - active.offsetHeight) / 2;
-            }
         });
     }
 
@@ -345,22 +296,7 @@ export class SchSelectionPopMenu extends KCUIElement {
             list.appendChild(selection);
         }
 
-        if (this.#net_items.length) this.#content.appendChild(list);
-
-        if (this.#actions.length) {
-            const actions = html`<ul
-                class="modal-actions"></ul>` as HTMLUListElement;
-            for (const action of this.#actions) {
-                const row = html`<li>${action.label}</li>` as HTMLLIElement;
-                row.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    this.hidden = true;
-                    action.run();
-                });
-                actions.appendChild(row);
-            }
-            this.#content.appendChild(actions);
-        }
+        this.#content.appendChild(list);
         return html`${this.#content}`;
     }
 }
