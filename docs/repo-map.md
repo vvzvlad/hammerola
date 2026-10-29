@@ -613,8 +613,9 @@
   schematic it has loaded (`getBomItems`, `static/_v/PROVENANCE.md`, "Our
   edits"), put in KiCad's order of designators by `bomRows`; and the table's
   pure half: the rows split into a part per designator, its type and package,
-  a value's magnitude, each column's filter entries (`bomFilters`), the search
-  and the filters, the grouping and the sort (`bomTable`)
+  a value's magnitude, the number a `Price` field says (`priceOf`), each
+  column's filter entries (`bomFilters`), the search and the filters, the
+  grouping and the sort (`bomTable`), and the total under the table (`bomTotal`)
 - `ui/src/BomView.jsx` — the BOM on screen, a member `KicadView` draws and keeps
   mounted: a search field and a grouping switch over a table whose every head
   sorts it by a click on its name and filters it from its funnel, a list of the
@@ -622,11 +623,13 @@
   state; a
   designator selects the part and opens the board (`onPart`), a datasheet
   opens the build's document in `KicadView`'s window (`onDatasheet`, from
-  `kicadsheets.js`) or a web address in a new tab
+  `kicadsheets.js`) or a web address in a new tab; the Price and Sum columns and
+  the total under the table
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
-  matched to a listed document (`KicadView` offers it as an item of the part's menu and shows it in a window over the view)
+  matched to a listed document (`KicadView` offers it as an item of the part's menu and shows it in a window over the view);
+  and each part's `Price` field for the BOM (`partPrices`)
 - `ui/src/kicadnets.js` — where the sheets of a schematic name a net: each
   sheet's global, local and hierarchical labels, power symbols (`#PWR`, the
   net their `Value`) and the sheet pins of its sheet symbols, by sheet and by

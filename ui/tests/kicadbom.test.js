@@ -1,6 +1,7 @@
 // The BOM's table (ui/src/BomView.jsx) and its pure half (ui/src/kicadbom.js):
-// a part per designator, its type and package, a value's magnitude, each
-// column's filter in its head, and the search, the grouping and the sort.
+// a part per designator, its type and package, a value's magnitude, a price,
+// each column's filter in its head, the search, the grouping, the sort and the
+// total.
 // KicadView's side — the rows read from the schematic's element, a designator
 // opening the board, a datasheet's cell and window — is in kicad.test.js. The
 // footprints and designators are those of a real board.
@@ -9,7 +10,8 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import BomView from '../src/BomView.jsx'
 import {
-  BOM_SORT, bomFilters, bomParts, bomTable, compareValues, entryOrder, NO_FILTER, partPackage, partType, valueMagnitude,
+  amountText, BOM_SORT, bomFilters, bomParts, bomTable, bomTotal, compareValues, entryOrder, NO_FILTER, partPackage,
+  partType, priceOf, valueMagnitude,
 } from '../src/kicadbom.js'
 import { collect, texts } from './eltree.js'
 
@@ -51,6 +53,12 @@ describe('a part of the BOM', () => {
       '4k7', '10k', '1M', '1N4148', '74HC595', 'BC847', 'NE555'])
     expect(['NE555', '1N4148', '74HC595', '', '1.5KE6.8CA'].map(valueMagnitude)).toEqual([null, null, null, null, null])
   })
+
+  it('has the price its `Price` field\'s first number says, and an amount is written to four decimals', () => {
+    const prices = ['12 ₽', '$0.20', '0,15', '1 200,50 ₽', '1 200', '1 200,5', '1 000', '2 pcs for 3', 'n/a', '']
+    expect(prices.map(priceOf)).toEqual([12, 0.2, 0.15, 1200.5, 1200, 1200.5, 1000, 2, null, null])
+    expect([0.1 + 0.2, 120, 12.345678, 0.012].map(amountText)).toEqual(['0.3', '120', '12.3457', '0.012'])
+  })
 })
 
 // Two groups the viewer made of one footprint and value, apart by DNP, and a
@@ -66,12 +74,16 @@ const ITEMS = [
 const SHEET = { value: 'https://www.ti.com/lit/ds/tps54331.pdf', text: 'www.ti.com' }
 // A datasheet of the build, its cell showing the document's name, not the field.
 const DOC_SHEET = { value: '${KIPRJMOD}/ds/cl.pdf', text: 'Samsung MLCC' }
-const PARTS = bomParts(ITEMS, (ref) => ({ U1: SHEET, C5: DOC_SHEET })[ref] || null)
+// Prices that differ within C1 C2 C10, none for R1 (the first of its group) and
+// J_CAN1, no number in C5's, and one for the DNP R2.
+const PRICES = { C1: '0,5 ₽', C2: '0.25', C10: '1.25', C5: 'n/a', R3: '2', R2: '3', U1: '$4' }
+const PARTS = bomParts(ITEMS, (ref) => ({ U1: SHEET, C5: DOC_SHEET })[ref] || null, (ref) => PRICES[ref])
 const VIEW = { query: '', excluded: NO_FILTER, grouped: true, sort: BOM_SORT }
 /** The rows `bomTable` gives for the reader's `patch` and the values unchecked
- *  by column, `excluded`, as `designators qty`. */
-const table = (patch, excluded = {}) => bomTable(PARTS, { ...VIEW, ...patch, excluded: { ...NO_FILTER, ...excluded } })
-  .map((row) => `${row.references.join(' ')} ${row.qty}`)
+ *  by column, `excluded`. */
+const rowsOf = (patch, excluded = {}) => bomTable(PARTS, { ...VIEW, ...patch, excluded: { ...NO_FILTER, ...excluded } })
+/** Those rows as `designators qty`. */
+const table = (patch, excluded) => rowsOf(patch, excluded).map((row) => `${row.references.join(' ')} ${row.qty}`)
 /** Entries as `value:count`. */
 const flat = (list) => list.map(({ key, count }) => `${key}:${count}`)
 
@@ -100,8 +112,11 @@ describe('the BOM\'s table', () => {
       Qty: ['1:4', '2:1', '3:1'],
       DNP: [':8', 'DNP:1'],
       Datasheet: [':7', 'Samsung MLCC:1', 'www.ti.com:1'],
+      Price: ['0.25:1', '0,5 ₽:1', '1.25:1', '2:1', '3:1', '$4:1', ':2', 'n/a:1'],
+      Sum: ['2:2', '3:1', '4:1', ':2'],
     })
-    expect(filters(false).Qty).toEqual(['1:9'])
+    expect([filters(false).Qty, filters(false).Sum])
+      .toEqual([['1:9'], ['0.25:1', '0.5:1', '1.25:1', '2:1', '3:1', '4:1', ':3']])
     // by count, the greatest first, values level as they were
     expect(flat(entryOrder(bomFilters(PARTS, true).Value, true)))
       .toEqual(['100nF 25V X7R:3', '4k7:3', '10uF:1', 'CAN:1', 'TPS54331:1'])
@@ -114,6 +129,7 @@ describe('the BOM\'s table', () => {
     // an empty cell is a value of its own
     expect(table({}, { Datasheet: [''] })).toEqual(['C5 1', 'U1 1'])
     expect(table({}, { Refs: ['J', 'R', 'U'], Datasheet: ['Samsung MLCC'] })).toEqual(['C1 C2 C10 3'])
+    expect(table({}, { Price: ['', 'n/a'] })).toEqual(['C1 C2 C10 3', 'R2 1', 'R3 1', 'U1 1'])
     expect(table({}, { Refs: ['C', 'J', 'R', 'U'] })).toEqual([])
   })
 
@@ -123,19 +139,41 @@ describe('the BOM\'s table', () => {
       table({}, { Refs: r, DNP: ['', 'DNP'] })]).toEqual([['R1 R3 2', 'R2 1'], ['R1 R3 2'], ['R2 1'], []])
   })
 
-  it('filters by Qty the rows the grouping makes of the parts kept', () => {
+  it('filters by Qty and by Sum the rows the grouping makes of the parts kept', () => {
     expect(table({}, { Qty: [1, 3] })).toEqual(['R1 R3 2'])
-    // C1 C2 C10 cut to two by the search
+    // C1 C2 C10 cut to two by the search, whose prices add up to 1.75
     expect(table({ query: 'c1' }, { Qty: [1, 3] })).toEqual(['C1 C10 2'])
     expect(table({ grouped: false }, { Qty: [1] })).toEqual([])
+    expect(table({}, { Sum: ['2'] })).toEqual(['C5 1', 'J_CAN1 1', 'R2 1', 'U1 1'])
+    expect(table({ query: 'c1' }, { Sum: ['2'] })).toEqual(['C1 C10 2'])
+  })
+
+  it('sums a row\'s parts\' prices, a group\'s Price cell being that of its first part naming one', () => {
+    expect(rowsOf({}).map((row) => [row.references.join(' '), row.price, row.sum])).toEqual([['C1 C2 C10', '0,5 ₽', 2],
+      ['C5', 'n/a', null], ['J_CAN1', '', null], ['R1 R3', '2', 2], ['R2', '3', 3], ['U1', '$4', 4]])
+  })
+
+  it('sorts by Price and by Sum by their number, rows with none last', () => {
+    const by = (column) => table({ sort: { column, descending: false } })
+    expect(by('Price')).toEqual(['C1 C2 C10 3', 'R1 R3 2', 'R2 1', 'U1 1', 'J_CAN1 1', 'C5 1'])
+    // level sums in KiCad's order
+    expect(by('Sum')).toEqual(['C1 C2 C10 3', 'R1 R3 2', 'R2 1', 'U1 1', 'C5 1', 'J_CAN1 1'])
+  })
+
+  it('totals the Sum of the fitted rows shown, counting their parts with no price', () => {
+    // R2's 3 left out: it is DNP
+    expect(bomTotal(PARTS, rowsOf({}))).toEqual({ priced: true, total: 8, unpriced: 3 })
+    expect(bomTotal(PARTS, rowsOf({}, { Refs: ['C'] }))).toEqual({ priced: true, total: 6, unpriced: 2 })
+    const none = bomParts(ITEMS, () => null, () => undefined)
+    expect(bomTotal(none, bomTable(none, VIEW))).toEqual({ priced: false, total: 0, unpriced: 8 })
   })
 })
 
 describe('the BOM on screen', () => {
   /** The table with `props`, its state written at once, as React would. */
   function shown(props = {}) {
-    const view = new BomView({ items: ITEMS, datasheets: new Map(), webDatasheets: new Map(), base: '', documents: [],
-      hasBoard: true, onPart: vi.fn(), onDatasheet: vi.fn(), ...props })
+    const view = new BomView({ items: ITEMS, datasheets: new Map(), webDatasheets: new Map(), prices: new Map(), base: '',
+      documents: [], hasBoard: true, onPart: vi.fn(), onDatasheet: vi.fn(), ...props })
     view.setState = (patch) => Object.assign(view.state, patch)
     onTestFinished(() => view.componentWillUnmount())
     return view
@@ -156,7 +194,7 @@ describe('the BOM on screen', () => {
     const view = shown()
     const click = (name) => the(view, 'data-sort', name).props.onClick()
     expect(heads(view).map((el) => texts(el))).toEqual([['Refs', '▲'], ['Value'], ['Footprint'],
-      ['Qty'], ['DNP'], ['Datasheet']])
+      ['Qty'], ['DNP'], ['Datasheet'], ['Price'], ['Sum']])
     click('Value')
     expect(rows(view)).toEqual(['C1 C2 C10', 'C5', 'R1 R3', 'R2', 'J_CAN1', 'U1'])
     click('Value')
@@ -229,6 +267,19 @@ describe('the BOM on screen', () => {
     opened('Refs', 'U')
     window.dispatchEvent(new Event('resize'))
     expect([view.state.popup, view.state.excluded.Refs]).toEqual([null, ['U']])
+  })
+
+  it('draws each row\'s Price and Sum, and under them the total where any part has a price', () => {
+    const view = shown({ prices: new Map(Object.entries(PRICES)) })
+    expect(pick(view, (el) => el.type === 'tr' && el.key !== null).map((row) => texts(row).slice(-2)))
+      .toEqual([['0,5 ₽', '2'], ['n/a', ''], ['', ''], ['2', '2'], ['3', '3'], ['$4', '4']])
+    const total = () => pick(view, (el) => el.type === 'tfoot').map((el) => texts(el))
+    expect(total()).toEqual([['Total · 3 parts without a price', '8']])
+    view.setState({ excluded: { ...NO_FILTER, Refs: ['C', 'J'] } })
+    expect(total()).toEqual([['Total · 1 part without a price', '6']])
+    view.setState({ excluded: { ...NO_FILTER, Refs: ['C', 'J', 'R'] } })
+    expect(total()).toEqual([['Total', '4']])
+    expect(pick(shown(), (el) => el.type === 'tfoot')).toEqual([])
   })
 
   it('searches and groups from over the table', () => {

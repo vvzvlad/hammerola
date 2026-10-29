@@ -1,25 +1,29 @@
 // A KiCad part's datasheet (ui/src/kicadsheets.js): the `Datasheet` field of its
 // placed symbol and of its footprint, read from the design's texts, and the
-// listed document the value names. The files are synthetic s-expressions shaped
-// as KiCad writes them; the menu item KicadView offers from this is in kicad.test.js.
+// listed document the value names; and its `Price` field, read the same way. The
+// files are synthetic s-expressions shaped as KiCad writes them; the menu item
+// KicadView offers from this is in kicad.test.js.
 
 import { describe, expect, it } from 'vitest'
 
 import {
-  datasheetBase, datasheetDocument, datasheetPath, partDatasheets, partWebDatasheets,
+  datasheetBase, datasheetDocument, datasheetPath, partDatasheets, partPrices, partWebDatasheets,
 } from '../src/kicadsheets.js'
 
 const field = (name, value) => `(property "${name}" "${value}" (at 0 0 0) (effects (font (size 1.27 1.27))))`
+/** A field `name` where `value` is given, else none. */
+const optional = (name, value) => (value === undefined ? '' : field(name, value))
 /** A placed symbol; `paths` are the references of its sheet's placements. */
-const symbol = (reference, datasheet, { unit = 1, paths = [] } = {}) => `\t(symbol (lib_id "Device:R") (at 1 1 0) (unit ${unit})
-\t\t${field('Reference', reference)}\n\t\t${field('Datasheet', datasheet)}
+const symbol = (reference, datasheet, { unit = 1, paths = [], price } = {}) => `\t(symbol (lib_id "Device:R") (at 1 1 0) (unit ${unit})
+\t\t${field('Reference', reference)}\n\t\t${field('Datasheet', datasheet)} ${optional('Price', price)}
 \t\t(instances (project "p" ${paths.map((ref, i) => `(path "/s${i}" (reference "${ref}") (unit ${unit}))`).join(' ')})))\n`
 // The library's copy of a symbol carries a datasheet of its own, and a
 // `Reference` that is a prefix rather than a part.
 const LIBRARY = `\t(lib_symbols (symbol "Device:R" ${field('Reference', 'R')} ${field('Datasheet', 'ds/library.pdf')}
 \t\t(symbol "R_1_1" (pin passive line (number "1")))))\n`
 const sheet = (...symbols) => `(kicad_sch\n\t(version 20250610)\n${LIBRARY}${symbols.join('')})\n`
-const footprint = (reference, datasheet) => `\t(footprint "R_0603" (layer "F.Cu")\n\t\t${field('Reference', reference)}\n\t\t${field('Datasheet', datasheet)})\n`
+const footprint = (reference, datasheet, price) => `\t(footprint "R_0603" (layer "F.Cu")\n\t\t${field('Reference', reference)}
+\t\t${field('Datasheet', datasheet)} ${optional('Price', price)})\n`
 const board = (...footprints) => `(kicad_pcb\n\t(version 20241229)\n${footprints.join('')})\n`
 
 const read = (texts) => Object.fromEntries(partDatasheets(texts))
@@ -76,6 +80,18 @@ describe('a part\'s datasheet', () => {
     }
     expect(read(texts)).toEqual({ R1: 'ds/r.pdf' })
     expect(read({})).toEqual({})
+  })
+})
+
+describe('a part\'s price', () => {
+  it('is the `Price` field of its placed symbol, else of its footprint, an empty one none', () => {
+    const texts = {
+      'hw/a.kicad_sch': sheet(symbol('R1', '', { price: ' 12 ₽ ' }), symbol('R2', '', { price: '~' }), symbol('R3', ''),
+        symbol('U1', '', { price: '' }), symbol('U1', '', { unit: 2, price: '$0.20' })),
+      'hw/a.kicad_pcb': board(footprint('R1', '', '15 ₽'), footprint('R2', '', '0,15'), footprint('R4', '', '1 200,50'),
+        footprint('R5', '', '')),
+    }
+    expect(Object.fromEntries(partPrices(texts))).toEqual({ R1: '12 ₽', R2: '0,15', U1: '$0.20', R4: '1 200,50' })
   })
 })
 

@@ -14,17 +14,23 @@
 // designator (`bomParts`): the search and the filters of the columns keep some
 // of them (`filterParts`), the parts kept are put back into a row per
 // footprint, value and DNP where the reader groups them (`groupParts`), the
-// Qty filter keeps some of those rows, and the rows are sorted by a column
-// (`sortRows`), all in `bomTable`. So a group a filter cuts lists the
-// designators kept, and its Qty counts them.
+// Qty and Sum filters keep some of those rows, and the rows are sorted by a
+// column (`sortRows`), all in `bomTable`. So a group a filter cuts lists the
+// designators kept, its Qty counts them and its Sum adds up their prices.
 //
 // A COLUMN'S FILTER is the values its entries name (`bomFilters`) that the
 // reader unchecked (`excluded`): every entry checked is no filter. Refs
 // filters by the part's type, the letters its designator starts with
 // (`partType`); Footprint by its package, what its footprint's name says of it
-// (`partPackage`); Value, DNP and Datasheet by what the cell shows, an empty
-// cell an entry of its own (''); Qty by the row's Qty, after the grouping. A
-// value sorts by its magnitude where it has one (`valueMagnitude`).
+// (`partPackage`); Value, DNP, Datasheet and Price by what the cell shows, an
+// empty cell an entry of its own (''); Qty and Sum by the row's, after the
+// grouping. A value sorts by its magnitude where it has one (`valueMagnitude`).
+//
+// THE PRICE is the part's `Price` field as written (kicadsheets.js), per
+// piece; what it adds up to is the first number in it (`priceOf`), in no
+// currency. A row's Sum is the sum of its parts' prices, so a group whose parts
+// differ in price still sums right; Price and Sum sort by the number, and the
+// total under the table is the Sum of the fitted rows shown (`bomTotal`).
 
 /** The type of a BOM's document. */
 export const BOM_TYPE = 'bom';
@@ -112,32 +118,67 @@ export function valueMagnitude(value) {
   return whole ? Number(`${whole}.${fraction}`) * SCALE[point] : Number(number) * (prefix ? SCALE[prefix] : 1);
 }
 
-/** Two values by magnitude, those with none after, in natural order. */
-export function compareValues(a, b) {
-  const [one, two] = [valueMagnitude(a), valueMagnitude(b)];
+/** Two numbers, a null after any number; 0 for two level. */
+function compareNumbers(one, two) {
   if (one !== null && two !== null && one !== two) return one < two ? -1 : 1;
   if ((one === null) !== (two === null)) return one === null ? 1 : -1;
-  return compareNatural(a, b);
+  return 0;
 }
 
+/** Two values by magnitude, those with none after, in natural order. */
+export const compareValues = (a, b) => compareNumbers(valueMagnitude(a), valueMagnitude(b)) || compareNatural(a, b);
+
+/** A price's number: digits, the spaces between them dropped (`1 200`; `\s`
+ *  takes the no-break and thin ones too), and a fraction after a point or a
+ *  comma. */
+const PRICE = /\d+(?:\s+\d+)*(?:[.,]\d+)?/;
+
+/** The number a `Price` field's text says, the first in it (`1 200,50 ₽`:
+ *  1200.5, `$0.20`: 0.2), a comma read as the decimal point; null where it
+ *  has none. The currency is not read. */
+export function priceOf(text) {
+  const found = PRICE.exec(text);
+  return found ? Number(found[0].replace(/\s/g, '').replace(',', '.')) : null;
+}
+
+/** Two prices' texts by their number, those with none after, in natural
+ *  order. */
+const comparePrices = (a, b) => compareNumbers(priceOf(a), priceOf(b)) || compareNatural(a, b);
+
+/** An amount as the table writes it: rounded to four decimals, no trailing
+ *  zeros (0.012, 120, 12.3457). */
+export const amountText = (amount) => String(Number(amount.toFixed(4)));
+
 /** The parts of the rows `items`: one per designator, as a row of one, with
- *  its row's value, footprint and DNP and the datasheet `datasheet(ref)` gives
- *  it (`{ value, text, … }` or null). */
-export const bomParts = (items, datasheet) => items.flatMap((item) => item.references.map((ref) => ({
-  references: [ref], value: item.value, footprint: item.footprint, dnp: item.dnp, qty: 1, datasheet: datasheet(ref),
-})));
+ *  its row's value, footprint and DNP, the datasheet `datasheet(ref)` gives it
+ *  (`{ value, text, … }` or null), and the `Price` value `price(ref)` gives it
+ *  (a text or nothing) as `price`, its number as `sum` (or null), and
+ *  `unpriced`, 1 where it has no number. */
+export const bomParts = (items, datasheet, price) => items.flatMap((item) => item.references.map((ref) => {
+  const text = price(ref) || '';
+  const sum = priceOf(text);
+  return {
+    references: [ref], value: item.value, footprint: item.footprint, dnp: item.dnp, qty: 1, datasheet: datasheet(ref),
+    price: text, sum, unpriced: sum === null ? 1 : 0,
+  };
+}));
 
 const dnpText = (row) => (row.dnp ? 'DNP' : '');
 const sheetText = (row) => (row.datasheet ? row.datasheet.text : '');
 
+/** The Sum cell of `row`: its sum as the table writes it, empty for none. */
+export const sumText = (row) => (row.sum === null ? '' : amountText(row.sum));
+
 /** What each column's filter reads of a part: its type, its value, its
- *  package, its DNP and its datasheet as the cells show them. Qty is a row's. */
+ *  package, its DNP, its datasheet and its price as the cells show them. Qty
+ *  and Sum are a row's. */
 const PART_KEYS = {
   Refs: (part) => partType(part.references[0]),
   Value: (part) => part.value,
   Footprint: (part) => partPackage(part.footprint),
   DNP: dnpText,
   Datasheet: sheetText,
+  Price: (part) => part.price,
 };
 
 /** The parts the reader's search and the columns' filters keep: the search, a
@@ -153,8 +194,10 @@ export function filterParts(parts, { query, excluded }) {
 }
 
 /** `parts` put into a row per footprint, value and DNP, as the viewer groups
- *  them: the designators in KiCad's order, counted as its Qty, and the
- *  datasheet of the first. */
+ *  them: the designators in KiCad's order, counted as its Qty, the datasheet
+ *  of the first, the `Price` text of the first that has one, the sum of the
+ *  prices of those that have one (null where none has) and the count of those
+ *  that have none. */
 export function groupParts(parts) {
   const groups = new Map();
   for (const part of parts) {
@@ -163,12 +206,19 @@ export function groupParts(parts) {
   }
   return [...groups.values()].map((group) => {
     const sorted = [...group].sort((a, b) => compareRefs(a.references[0], b.references[0]));
-    return { ...sorted[0], references: sorted.map((part) => part.references[0]), qty: sorted.length };
+    const priced = sorted.filter((part) => part.sum !== null);
+    return {
+      ...sorted[0], references: sorted.map((part) => part.references[0]), qty: sorted.length,
+      price: (sorted.find((part) => part.price) || sorted[0]).price,
+      sum: priced.length ? priced.reduce((sum, part) => sum + part.sum, 0) : null,
+      unpriced: sorted.length - priced.length,
+    };
   });
 }
 
-/** The table's columns, kicad-cli's default (`sch export bom`) and the
- *  datasheet, each with the order a click on its head sorts the rows in. */
+/** The table's columns, kicad-cli's default (`sch export bom`), the datasheet,
+ *  the price and the sum, each with the order a click on its head sorts the
+ *  rows in. */
 const ORDERS = {
   Refs: (a, b) => compareRefs(a.references[0], b.references[0]),
   Value: (a, b) => compareValues(a.value, b.value),
@@ -176,6 +226,8 @@ const ORDERS = {
   Qty: (a, b) => a.qty - b.qty,
   DNP: (a, b) => compareNatural(dnpText(a), dnpText(b)),
   Datasheet: (a, b) => compareNatural(sheetText(a), sheetText(b)),
+  Price: (a, b) => comparePrices(a.price, b.price),
+  Sum: (a, b) => compareNumbers(a.sum, b.sum),
 };
 export const BOM_COLUMNS = Object.keys(ORDERS);
 
@@ -192,16 +244,19 @@ function entries(list, keyOf, order) {
 
 /** The entries of each column's filter over the whole BOM, `{ key, count }`
  *  in the column's own order: the values its filter reads of the parts, each
- *  with its parts' count, and for Qty the rows' Qty, grouped as the reader
- *  has them, each with its rows' count. */
+ *  with its parts' count, and for Qty and Sum the rows' Qty and Sum cell,
+ *  grouped as the reader has them, each with its rows' count. */
 export function bomFilters(parts, grouped) {
+  const rows = grouped ? groupParts(parts) : parts;
   return {
     Refs: entries(parts, PART_KEYS.Refs, compareNatural),
     Value: entries(parts, PART_KEYS.Value, compareValues),
     Footprint: entries(parts, PART_KEYS.Footprint, compareNatural),
-    Qty: entries(grouped ? groupParts(parts) : parts, (row) => row.qty, (a, b) => a - b),
+    Qty: entries(rows, (row) => row.qty, (a, b) => a - b),
     DNP: entries(parts, PART_KEYS.DNP, compareNatural),
     Datasheet: entries(parts, PART_KEYS.Datasheet, compareNatural),
+    Price: entries(parts, PART_KEYS.Price, comparePrices),
+    Sum: entries(rows, sumText, comparePrices),
   };
 }
 
@@ -224,9 +279,23 @@ export function sortRows(rows, { column, descending }) {
 
 /** The rows the table draws for `parts` as the reader set it (`view`: the
  *  search, the filters, `grouped`, `sort`): a row per part, or per group of
- *  them, those whose Qty is not unchecked. */
+ *  them, those whose Qty and Sum are not unchecked. */
 export function bomTable(parts, view) {
   const kept = filterParts(parts, view);
-  const rows = (view.grouped ? groupParts(kept) : kept).filter((row) => !view.excluded.Qty.includes(row.qty));
+  const rows = (view.grouped ? groupParts(kept) : kept)
+    .filter((row) => !view.excluded.Qty.includes(row.qty) && !view.excluded.Sum.includes(sumText(row)));
   return sortRows(rows, view.sort);
+}
+
+/** The total under the table: `total`, the Sum of the `rows` shown that are
+ *  fitted (a DNP part is not mounted, so not bought), and `unpriced`, how many
+ *  of their parts have no price; `priced`, whether any of `parts`, the whole
+ *  BOM, has one, as the total is drawn only then. */
+export function bomTotal(parts, rows) {
+  const fitted = rows.filter((row) => !row.dnp);
+  return {
+    priced: parts.some((part) => part.sum !== null),
+    total: fitted.reduce((total, row) => total + (row.sum || 0), 0),
+    unpriced: fitted.reduce((count, row) => count + row.unpriced, 0),
+  };
 }

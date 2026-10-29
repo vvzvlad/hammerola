@@ -155,11 +155,13 @@ the schematic's BOM, which `src/kicadbom.js` lists after it, is a member of the
 design too: `src/BomView.jsx`, a table of the parts the viewer counts in the
 schematic, searched, grouped or not, and sorted and filtered by any column
 from its head, each designator opening the board with that part selected and
-each datasheet opening its document or its web address;
+each datasheet opening its document or its web address, each part's `Price`
+field priced into its row's Sum and the total under the table;
 the board has a panel of its own over the top left of its canvas,
 `src/PcbPanel.jsx`: layers, presets, the opacity of the zone fills and the net
 of the last click;
-`src/kicadsheets.js` reads each part's `Datasheet` field, and the part's menu
+`src/kicadsheets.js` reads each part's `Datasheet` field (and its `Price` for
+the BOM), and the part's menu
 has an item that opens the listed document it names in a window over the view;
 `src/kicadnets.js` reads where each sheet names a net and what the board calls
 it, and a net's menu has an item per other sheet the same net is on; both
