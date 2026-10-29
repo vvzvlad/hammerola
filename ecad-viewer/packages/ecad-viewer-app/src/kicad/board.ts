@@ -196,7 +196,8 @@ export class KicadPCB implements BoardNode {
                     this.drawings.push(new GrText(d as B.I_GrText, this));
                 } else if ("center" in d) {
                     this.drawings.push(new GrCircle(d as B.I_Circle));
-                } else if ("mid" in d) {
+                } else if ("mid" in d || "angle" in d) {
+                    // A KiCad 5 arc has no mid: centre, start and angle.
                     this.drawings.push(new GrArc(d as B.I_Arc));
                 } else if ("pts" in d) {
                     this.drawings.push(new GrPoly(d as B.I_Poly));
@@ -576,7 +577,12 @@ export class Zone implements BoardNode {
         this.fill = data.fill ? new ZoneFill(data.fill) : undefined;
         this.polygons = data.polygons?.map((p) => new Poly(p)) ?? [];
         this.filled_polygons =
-            data.filled_polygons?.map((p) => new FilledPolygon(p)) ?? undefined;
+            data.filled_polygons?.map((p) => {
+                const fill = new FilledPolygon(p);
+                // KiCad 5 writes a fill without its layer: a zone had one.
+                fill.layer ??= this.layer;
+                return fill;
+            }) ?? undefined;
         this.tstamp = data.tstamp ?? "";
         this.uuid = data.uuid;
     }
@@ -1036,7 +1042,7 @@ export class Footprint implements BoardNode {
             for (const d of data.drawings) {
                 if ("center" in d) {
                     this.drawings.push(new FpCircle(d as B.I_Circle, this));
-                } else if ("mid" in d) {
+                } else if ("mid" in d || "angle" in d) {
                     this.drawings.push(new FpArc(d as B.I_Arc, this));
                 } else if ("pts" in d) {
                     this.drawings.push(new FpPoly(d as B.I_Poly, this));
@@ -1922,7 +1928,7 @@ export class Pad implements CrossHightAble, BoardNode {
             for (const prim of data.primitives) {
                 if ("center" in prim) {
                     this.primitives.push(new GrCircle(prim, this));
-                } else if ("mid" in prim) {
+                } else if ("mid" in prim || "angle" in prim) {
                     this.primitives.push(new GrArc(prim, this));
                 } else if ("pts" in prim) {
                     this.primitives.push(new GrPoly(prim, this));

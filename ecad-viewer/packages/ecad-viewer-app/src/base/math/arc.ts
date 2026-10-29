@@ -58,45 +58,25 @@ export class Arc {
         end: Vec2,
         width: number,
     ) {
-        console.log(
-            "MathArc.from_center_start_end: center",
-            center,
-            "start",
-            start,
-            "end",
-            end,
-        );
-        // See EDA_SHAPE::CalcArcAngles - normalizes the start and end angle so
-        // that start < end and their values are between -360 and +360.
+        // See EDA_SHAPE::CalcArcAngles: the arc runs from start the way the
+        // angles grow, so the end is raised by whole turns until it is past
+        // the start.
         const radius = start.sub(center).magnitude;
         const start_radial = start.sub(center);
         const end_radial = end.sub(center);
-        let start_angle = start_radial.kicad_angle;
-        let end_angle = end_radial.kicad_angle;
+        const start_angle = start_radial.kicad_angle;
+        const end_angle = end_radial.kicad_angle;
 
         if (end_angle.degrees == start_angle.degrees) {
             // This is a circle, not a zero-length arc.
             end_angle.degrees = start_angle.degrees + 360;
         }
 
-        if (start_angle.degrees > end_angle.degrees) {
-            if (end_angle.degrees < 0) {
-                end_angle = end_angle.normalize();
-            } else {
-                start_angle = start_angle
-                    .normalize()
-                    .sub(Angle.from_degrees(-360));
-            }
+        while (end_angle.degrees < start_angle.degrees) {
+            end_angle.degrees += 360;
         }
 
-        const res = new Arc(center, radius, start_angle, end_angle, width);
-        console.log(
-            "MathArc.from_center_start_end: result",
-            res.start_point,
-            res.mid_point,
-            res.end_point,
-        );
-        return res;
+        return new Arc(center, radius, start_angle, end_angle, width);
     }
 
     /**

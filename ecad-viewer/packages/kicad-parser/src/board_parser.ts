@@ -650,10 +650,10 @@ function parseBoardVariant(expr: Parseable): B.I_BoardVariant {
     return variant;
 }
 
-function parseFootprint(expr: Parseable): B.I_Footprint {
+function parseFootprint(expr: Parseable, start = "footprint"): B.I_Footprint {
     return parse_expr(
         expr,
-        P.start("footprint"),
+        P.start(start),
         P.positional("library_link", T.string),
         P.pair("version", T.number),
         P.pair("embedded_fonts", T.boolean),
@@ -828,7 +828,8 @@ export class BoardParser {
                 (e as any[]).slice(1).map((entry) => parseBoardVariant(entry)),
             ),
             P.collection("footprints", "footprint", T.item(parseFootprint)),
-            P.collection("footprints", "module", T.item(parseFootprint)), // Support legacy module
+            // KiCad 5 writes a footprint as `module`.
+            P.collection("footprints", "module", T.item(parseFootprint, "module")),
             P.collection("zones", "zone", T.item(parseZone)),
             P.collection("segments", "segment", T.item(parseLineSegment)),
             P.collection("segments", "arc", T.item(parseArcSegment)),
