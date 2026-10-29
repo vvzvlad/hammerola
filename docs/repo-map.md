@@ -611,7 +611,16 @@
   (`loadMeta` in `hub.js`), under the schematic's file, so `KicadView` draws it
   as a member of that design; the rows are what the viewer computes from the
   schematic it has loaded (`getBomItems`, `static/_v/PROVENANCE.md`, "Our
-  edits"), put in KiCad's order of designators by `bomRows`
+  edits"), put in KiCad's order of designators by `bomRows`; and the table's
+  pure half: the rows split into a part per designator, its type and package,
+  a value's magnitude, the search and the filters, the grouping and the sort
+  (`bomTable`)
+- `ui/src/BomView.jsx` — the BOM on screen, a member `KicadView` draws and keeps
+  mounted: a search field, a DNP switch, a grouping switch and chips by type
+  and by package over a table whose heads sort it, all its own state; a
+  designator selects the part and opens the board (`onPart`), a datasheet
+  opens the build's document in `KicadView`'s window (`onDatasheet`, from
+  `kicadsheets.js`) or a web address in a new tab
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and

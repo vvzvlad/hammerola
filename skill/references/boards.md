@@ -58,8 +58,9 @@ last row. An entry without siblings is a design of one. To hang a datasheet on a
 `"hidden": true`, and set the part's `Datasheet` field to its path relative to the
 `.kicad_pro` (`${KIPRJMOD}/ds/tpa3250.pdf`): the part's right-click menu then has
 `Open datasheet · <caption>`, which opens the PDF in a window over the view (× or Escape
-brings the design back as it was). A web address in the field is not
-a link. A missing sheet, a sheet outside the project or under a name the
+brings the design back as it was), and the design's BOM view links it in its Datasheet
+column. A web address in the field gets no menu item and no window; only the BOM's
+Datasheet column shows it, as a link that opens in a new tab. A missing sheet, a sheet outside the project or under a name the
 alphabet refuses, more than 64 schematics or more than 8 levels of sheets refuse
 the push, naming the file. The files open to the link without a key: whoever has it can
 download the whole editable design.
