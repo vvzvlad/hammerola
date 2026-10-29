@@ -19,8 +19,8 @@
 // which is no filter; an unchecked one hides its parts, at once. `Close`, and a
 // click outside, keep what is checked; `Cancel`, and Escape, put back what was
 // checked when it opened, and that Escape is taken, so the design under it
-// does nothing with it. A column filtered has its funnel filled with the
-// accent. Values within a
+// does nothing with it. A column filtered has its funnel in the accent.
+// Values within a
 // column are any of those checked, the columns and the search all at once.
 //
 // THE TABLE has kicad-cli's default columns and the datasheet. A designator
@@ -83,7 +83,7 @@ const HEAD = `border:1px solid var(--line);padding:4px 6px 4px 10px;text-align:l
 const HEAD_NAME = 'cursor:pointer;user-select:none';
 const ARROW = 'margin-left:4px;color:var(--text-muted)';
 const funnel = (on) => 'display:inline-flex;vertical-align:middle;margin-left:6px;padding:3px;border-radius:4px;cursor:pointer;'
-  + (on ? 'background:var(--accent);color:#fff' : 'background:var(--line);color:var(--text-soft)');
+  + (on ? 'color:var(--accent)' : 'color:var(--text-soft)');
 const FUNNEL_ICON = (
   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
     <path d="M2 2.5h12l-4.5 5.5v5l-3 1.5V8L2 2.5z" />
