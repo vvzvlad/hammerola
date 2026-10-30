@@ -16,7 +16,7 @@ from harness import (BROKEN, TOKEN, commit_all, comment_payload, git,
                      picky_builder, project_files, push, start_hub, stop_hub,
                      write_files)
 
-from src.prereceive import VARIANT_NAME_REFUSAL
+from src.prereceive import MAIN_DELETION_REFUSAL, VARIANT_NAME_REFUSAL
 
 CEILING = "Потолочный корпус"
 AUTH = {"X-Hammerola-Token": TOKEN}
@@ -369,3 +369,153 @@ def test_the_variants_come_back_whole_at_start(tmp_path):
             "name": "ceiling", "label": CEILING}
     finally:
         stop_hub(hub)
+
+
+def test_a_deleted_branch_takes_its_variant_and_only_what_it_alone_has(
+        hub, tmp_path):
+    """`git push --delete` of a branch removes its revision, its draft and
+    its addresses; the revision it shares with `main` stays."""
+    work = tmp_path / "work"
+    first = repository(work, "varD")
+    assert push(hub, work, "varD").returncode == 0
+    own = branch(work, "varD", "stand", "Стенд проверки")
+    assert push(hub, work, "varD", "stand").returncode == 0
+    wip = draft(work, "varD", "wip")
+    assert push(hub, work, "varD", f"{wip}:refs/drafts/stand",
+                extra=("--force",)).returncode == 0
+
+    pushed = push(hub, work, "varD", "stand", extra=("--delete",))
+
+    assert pushed.returncode == 0, pushed.stderr
+    assert ("remote: removing the variant stand with every revision no other "
+            "variant has") in pushed.stderr
+    assert [v["name"] for v in hub.get("/project/varD/variants.json").json()
+            ["variants"]] == ["main"]
+    assert hub.get(f"/project/varD/{own}/meta.json").status_code == 404
+    assert hub.get("/project/varD/v/stand/latest/").status_code == 404
+    assert hub.get(f"/project/varD/{first}/meta.json").status_code == 200
+    assert hub.get("/project/varD/latest/").status_code == 200
+    assert git("--git-dir", hub.store.repo_dir("varD"), "for-each-ref",
+               "refs/drafts/").stdout == ""
+
+
+def test_a_revision_merged_into_another_variant_outlives_its_branch(
+        hub, tmp_path):
+    """The deleted variant published both revisions; `main` reaches the
+    first, so only the second goes."""
+    work = tmp_path / "work"
+    repository(work, "varF")
+    assert push(hub, work, "varF").returncode == 0
+    merged = branch(work, "varF", "stand", "Стенд проверки")
+    assert push(hub, work, "varF", "stand").returncode == 0
+    git("-C", work, "switch", "--quiet", "main")
+    git("-C", work, "merge", "--quiet", "--ff-only", "stand")
+    assert push(hub, work, "varF", "main").returncode == 0
+    git("-C", work, "switch", "--quiet", "stand")
+    write_files(work, files("varF", "c", "Стенд проверки"))
+    alone = commit_all(work, "stand alone")
+    assert push(hub, work, "varF", "stand").returncode == 0
+
+    pushed = push(hub, work, "varF", "stand", extra=("--delete",))
+
+    assert pushed.returncode == 0, pushed.stderr
+    assert hub.get(f"/project/varF/{alone}/meta.json").status_code == 404
+    assert meta(hub, "/project/varF/latest/")["commit"] == merged
+    listed = hub.get("/project/varF/builds.json", headers=AUTH)
+    assert merged in [b["commit"] for b in listed.json()["builds"]]
+
+
+def test_a_variant_cut_from_a_deleted_one_takes_its_revision_with_it(
+        hub, tmp_path):
+    """`stand2` was cut from `stand`; once both are gone, so is the revision
+    `stand` published that only `stand2` still reached."""
+    work = tmp_path / "work"
+    repository(work, "varG")
+    assert push(hub, work, "varG").returncode == 0
+    inherited = branch(work, "varG", "stand", "Стенд проверки")
+    assert push(hub, work, "varG", "stand").returncode == 0
+    branch(work, "varG", "stand2", "Стенд 2", marker="c")
+    assert push(hub, work, "varG", "stand2").returncode == 0
+
+    assert push(hub, work, "varG", "stand",
+                extra=("--delete",)).returncode == 0
+    assert hub.get(f"/project/varG/{inherited}/meta.json").status_code == 200
+    assert push(hub, work, "varG", "stand2",
+                extra=("--delete",)).returncode == 0
+
+    assert hub.get(f"/project/varG/{inherited}/meta.json").status_code == 404
+    listed = hub.get("/project/varG/builds.json", headers=AUTH)
+    assert inherited not in [b["commit"] for b in listed.json()["builds"]]
+
+
+def test_a_variant_whose_branch_is_still_there_is_not_removed(hub, tmp_path):
+    """What `remove_variant` is handed when git kept the branch after the
+    hook accepted its deletion."""
+    work = tmp_path / "work"
+    repository(work, "varH")
+    assert push(hub, work, "varH").returncode == 0
+    own = branch(work, "varH", "stand", "Стенд проверки")
+    assert push(hub, work, "varH", "stand").returncode == 0
+
+    assert hub.store.remove_variant("varH", "stand", own) is None
+    assert hub.get(f"/project/varH/{own}/meta.json").status_code == 200
+    assert hub.get("/project/varH/v/stand/latest/").status_code == 200
+
+
+def test_a_revision_a_refused_push_left_survives_another_variant_s_removal(
+        hub, tmp_path):
+    """`other`'s revision published before its push was refused has no
+    branch on the hub, and it is no revision of `stand`."""
+    work = tmp_path / "work"
+    repository(work, "varI")
+    assert push(hub, work, "varI").returncode == 0
+    branch(work, "varI", "stand", "Стенд проверки")
+    assert push(hub, work, "varI", "stand").returncode == 0
+    git("-C", work, "switch", "--quiet", "main")
+    stray = branch(work, "varI", "other", marker="c")
+    write_files(work, {BROKEN: b"x"})
+    broken = commit_all(work, "broken draft")
+    assert push(hub, work, "varI", f"{stray}:refs/heads/other",
+                f"{broken}:refs/drafts/other").returncode != 0
+    assert hub.get(f"/project/varI/{stray}/meta.json").status_code == 200
+
+    assert push(hub, work, "varI", "stand",
+                extra=("--delete",)).returncode == 0
+
+    assert hub.get(f"/project/varI/{stray}/meta.json").status_code == 200
+
+
+def test_a_revision_of_a_refused_push_goes_with_its_variant(hub, tmp_path):
+    """`stand`'s second revision published before the push was refused, so
+    its branch never reached it; it is still `stand`'s."""
+    work = tmp_path / "work"
+    repository(work, "varJ")
+    assert push(hub, work, "varJ").returncode == 0
+    branch(work, "varJ", "stand", "Стенд проверки")
+    assert push(hub, work, "varJ", "stand").returncode == 0
+    write_files(work, files("varJ", "c", "Стенд проверки"))
+    lost = commit_all(work, "lost")
+    write_files(work, {BROKEN: b"x"})
+    broken = commit_all(work, "broken draft")
+    assert push(hub, work, "varJ", f"{lost}:refs/heads/stand",
+                f"{broken}:refs/drafts/stand").returncode != 0
+    assert hub.get(f"/project/varJ/{lost}/meta.json").status_code == 200
+
+    assert push(hub, work, "varJ", "stand",
+                extra=("--delete",)).returncode == 0
+
+    assert hub.get(f"/project/varJ/{lost}/meta.json").status_code == 404
+
+
+def test_the_default_variant_cannot_be_deleted(hub, tmp_path):
+    work = tmp_path / "work"
+    first = repository(work, "varE")
+    assert push(hub, work, "varE").returncode == 0
+
+    pushed = push(hub, work, "varE", "main", extra=("--delete",))
+
+    assert pushed.returncode != 0
+    assert f"remote: {MAIN_DELETION_REFUSAL}" in pushed.stderr
+    assert git("--git-dir", hub.store.repo_dir("varE"), "rev-parse",
+               "refs/heads/main").stdout.strip() == first
+    assert meta(hub, "/project/varE/latest/")["commit"] == first

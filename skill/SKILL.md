@@ -162,9 +162,12 @@ switches between them by the project's title.
   case"` in its `project.json` (without the key the switcher shows the branch
   name), publish it with `git push hammerola-<pid> <name>`. Its `latest` is
   `/project/<pid>/v/<name>/latest/`.
-* A pushed branch stays a variant for good and is visible to everyone with the
-  link: the hub never deletes a branch. **Never push a working branch that is
-  not a variant.**
+* A pushed branch is a variant, visible to everyone with the link, until it is
+  deleted. **Never push a working branch that is not a variant.**
+* `git push --delete hammerola-<pid> <name>` removes the variant: its draft and
+  every revision no other variant has, whose links stop resolving. Only on
+  the owner's word for that variant. `main` cannot be removed this way;
+  `hammerola rm` removes the whole project.
 * `build` writes the draft of the branch checked out, from a worktree too:
   `/project/<pid>/v/<branch>/dev/`, the address it prints, and `/dev/` is
   `main`'s alone. A branch name is letters, digits, `-` and `_` — no `/`: the

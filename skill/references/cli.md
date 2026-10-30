@@ -78,6 +78,11 @@ about a build; not both.
 cannot be undone. One build cannot be removed: that would break a permanent URL.
 Never run it to "clean up"; ask the owner.
 
+One variant is removed with git: `git push --delete hammerola-<pid> <branch>`
+takes the branch, its draft and every revision no other variant has; their
+links stop resolving, and it cannot be undone either. `main` cannot be removed
+this way. Never delete a project to get rid of one variant.
+
 ## Set up, once per machine
 
 `<hub>` is the address you were given. It has no default: never guess one, or
