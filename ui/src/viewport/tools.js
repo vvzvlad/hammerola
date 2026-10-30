@@ -404,14 +404,20 @@ export function installTools(vp) {
    * It does not emit a pick: the menu is about the part under the cursor, the
    * selection about the part the reader chose, and a tree row's menu also
    * leaves the selection alone.
+   *
+   * Where no part is under the cursor, a printer's bed of the `print` view may
+   * be (beds.js), and its number goes up as `plate`: the page offers that
+   * bed's 3MF. A part standing on a bed keeps its own menu.
    */
   function openMenu(g, event) {
     const at = canvasXY(g.canvas, event);
     if (!at) return;
     const entity = entityAt(g, event, at[0], at[1]);
+    const plate = entity ? null : vp.beds.bedAt(event);
     emit(vp, EVENT_MENU, {
       id: entity ? entity.id : null,
       name: entity ? entity.name : null,
+      ...(plate === null ? null : { plate }),
       // The cursor, where a context menu opens, in client coordinates: the
       // menu is `position: fixed` on the page.
       x: event.clientX,

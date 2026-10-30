@@ -44,6 +44,7 @@ reads the flat list of leaves.
 """
 
 import json
+import math
 import time
 
 from . import checklib
@@ -59,7 +60,7 @@ from .parts import KIND_MOCK, catalogue_colors
 # Every key a view dict is read for. Anything else is reported as unknown, so a
 # misspelt exemption (`nestedok`) is not silently ignored.
 VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok",
-                       "absent_ok"})
+                       "absent_ok", "bed"})
 # ...and every key one REFERENCE is read for. Only `part` is required.
 REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed",
                             "plate"})
@@ -85,6 +86,7 @@ def prepare_views(views, catalogue):
          "nested_ok":       {frozenset((key, key)), ...},
          "interference_ok": {frozenset((key, key)): "reason"},
          "absent_ok":       {key: "reason"},
+         "bed":             (width, depth) of the printer's bed in mm, or None,
          "tree":            groups and leaf indices, for the export,
          "nodes":           [{"key", "shape", "mesh", "color", "alpha", "at",
                               "deformed", "plate", "label"}, ...]}
@@ -178,6 +180,14 @@ def prepare_views(views, catalogue):
             )
         declared = view.get("absent_ok")
         absent_ok = absent_parts(() if declared is None else declared, vid)
+        declared = view.get("bed")
+        bed = None if declared is None else _bed_size(declared, vid)
+        if bed is not None and vid != PRINT_VIEW_ID:
+            print(
+                f"warning: view {vid!r} declares a bed, which only the "
+                f"{PRINT_VIEW_ID!r} view is drawn on. Nothing here is put on "
+                "any printer's bed."
+            )
 
         unknown_keys = sorted(set(view) - VIEW_KEYS)
         if unknown_keys:
@@ -197,6 +207,7 @@ def prepare_views(views, catalogue):
             "nested_ok": nested_ok,
             "interference_ok": interference_ok,
             "absent_ok": absent_ok,
+            "bed": bed,
             "tree": tree,
             "nodes": nodes,
         })
@@ -761,6 +772,30 @@ def absent_parts(declared, vid):
     return allowed
 
 
+def _bed_size(declared, vid):
+    """The printer's bed a view declares -> `(width, depth)` in millimetres.
+
+        "bed": (256, 256)
+
+    The page draws a bed of this size under each bed of the `print` view
+    (`assembly.export_plate_3mfs` says where), so the reader sees what hangs
+    over its edge. A tuple or a list of two finite positive numbers; a bool is
+    an int to python and is refused all the same, as a bed number is.
+    """
+    sides = (list(declared) if isinstance(declared, (list, tuple))
+             else None)
+    if (sides is None or len(sides) != 2
+            or any(isinstance(side, bool) or not isinstance(side, (int, float))
+                   or not math.isfinite(side) or side <= 0
+                   for side in sides)):
+        raise BuildError(
+            f'view {vid!r}: "bed" is {declared!r}, which is not a bed. It is '
+            "the printer's bed, width and depth in millimetres, as two "
+            'positive numbers: "bed": (256, 256).'
+        )
+    return (float(sides[0]), float(sides[1]))
+
+
 def _check_pair_keys(pair, keys, vid, argument):
     """Both halves of an exemption have to be parts this view actually shows."""
     unknown = sorted(x for x in pair if x not in keys)
@@ -866,7 +901,8 @@ def shaped_document(doc, view):
     """The tessellated document with `key` and `at` stamped on, groups put back.
 
     A leaf of a reference that brought a shape of its own also gets
-    `"deformed": true`.
+    `"deformed": true`, and every leaf of the `print` view its bed,
+    `"plate": N`.
 
     Separated from the export so the whole rewrite can be tested without a CAD
     kernel: what goes in is a JSON document and what comes out is one.
@@ -907,6 +943,11 @@ def shaped_document(doc, view):
         # `cadbuild.measure` measures it on this leaf's mesh.
         if node["deformed"] is not None:
             leaf["deformed"] = True
+        # The bed this leaf is printed on, which the page groups the tree's
+        # rows by. Only in the `print` view, the one split into beds; the
+        # leaf's id stays the path the author's tree gives it.
+        if view["id"] == PRINT_VIEW_ID:
+            leaf["plate"] = node["plate"]
         leaves.append(leaf)
 
     def rebuild(entries, parent_id):

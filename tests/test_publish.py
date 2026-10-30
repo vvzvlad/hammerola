@@ -422,6 +422,41 @@ def test_beds_that_are_not_numbered_files_are_refused(hub, plates, said):
     assert said in r.json()["error"], r.json()["error"]
 
 
+# The printer's bed of a view whose one bed is `"1"`, as `_pointing_at` builds it.
+PRINTER_BED = {"size_mm": [256, 256.5], "centres": {"1": [11, 2.5, -3]}}
+
+
+def test_the_printer_s_bed_is_published_on_its_view(hub):
+    fields = _pointing_at("view plates", PART_EXPORT)
+    fields["views"][0]["bed"] = PRINTER_BED
+    r = hub.publish("proj1", "abc123", tar_gz(_pointing_archive(fields)))
+    assert r.status_code == 201, r.text
+    meta = json.loads(
+        (hub.project_dir("proj1") / "abc123" / "meta.json").read_text())
+    assert meta["views"][0]["bed"] == PRINTER_BED
+
+
+@pytest.mark.parametrize("bed,said", [
+    ([256, 256], "must be an object"),
+    ({**PRINTER_BED, "size_mm": [256]}, "must be two positive numbers"),
+    ({**PRINTER_BED, "size_mm": [0, 256]}, "must be two positive numbers"),
+    ({**PRINTER_BED, "size_mm": [True, 256]}, "must be two positive numbers"),
+    ({**PRINTER_BED, "centres": {}}, "must name the same beds"),
+    ({**PRINTER_BED, "centres": {"1": [0, 0, 0], "2": [0, 0, 0]}},
+     "must name the same beds"),
+    ({**PRINTER_BED, "centres": {"1": [0, 0]}}, "must be three numbers"),
+    ({**PRINTER_BED, "centres": {"1": [0, "0", 0]}}, "must be three numbers"),
+])
+def test_a_printer_s_bed_the_page_cannot_draw_is_refused(hub, bed, said):
+    """The page reads these numbers straight into its scene, and a centre is
+    for a bed that has a file: the keys are those of `plates`."""
+    fields = _pointing_at("view plates", PART_EXPORT)
+    fields["views"][0]["bed"] = bed
+    r = hub.publish("proj1", "abc123", tar_gz(_pointing_archive(fields)))
+    assert r.status_code == 422, bed
+    assert said in r.json()["error"], r.json()["error"]
+
+
 # -- what a view SELECTS out of the catalogue --------------------------------
 # `views[].parts` is a list of catalogue keys, so "what is in this tab" can be
 # answered without fetching a multi-megabyte view file.

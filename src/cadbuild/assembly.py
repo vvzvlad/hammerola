@@ -258,12 +258,22 @@ def export_print_plate(prepared, out_dir):
 def export_plate_3mfs(prepared, out_dir):
     """Write a 3MF per bed of the `print` view, for a slicer.
 
-    Returns `{"1": "print.3mf", "2": "print-2.3mf", ...}` -- the bed number as
-    meta.json keys it, in bed order, for every bed some reference is on -- or
-    None without a `print` view. A reference names its bed with `"plate": N`
-    and is on bed 1 without one (`views._read_reference`); bed N is written to
-    `artifacts.plate_file(N)`. A file per bed, because a slicer reads no beds
-    out of a 3MF it did not write.
+    Returns `(plates, bed)`, or None without a `print` view. `plates` is
+    `{"1": "print.3mf", "2": "print-2.3mf", ...}` -- the bed number as
+    meta.json keys it, in bed order, for every bed some reference is on. `bed`
+    is None unless the view declares the printer's bed (`"bed": (x, y)`), and
+    then `{"size_mm": [x, y], "centres": {"1": [cx, cy, zmin], ...}}`, keyed as
+    `plates` is: the page draws a bed of that size under each bed's parts,
+    centred on the box round them as the view places them, at their lowest
+    point. Centred because Bambu Studio puts a file's objects in the middle of
+    its bed as one group (below), so the drawn bed stands where the slicer's
+    will. Measured on the same meshes and the reference's whole `at`, its
+    height included, not the lift the file gets: the bed is drawn in the view.
+
+    A reference names its bed with `"plate": N` and is on bed 1 without one
+    (`views._read_reference`); bed N is written to `artifacts.plate_file(N)`.
+    A file per bed, because a slicer reads no beds out of a 3MF it did not
+    write.
 
     Each part on a bed is an object of its own where the view put it, so the
     bed opens in a slicer laid out. Built from the `<key>.stl` files
@@ -288,14 +298,16 @@ def export_plate_3mfs(prepared, out_dir):
     (`gate.check_print_layout`, `views._refuse_deformed_on_the_plate`), so its
     key's STL is on disk.
     """
-    nodes = _view_nodes(prepared, PRINT_VIEW_ID)
-    if nodes is None:
+    view = next((view for view in prepared if view["id"] == PRINT_VIEW_ID),
+                None)
+    if view is None:
         return None
     # Imported at the point of use: the no-view path needs no mesh library.
+    import numpy
     import trimesh
 
-    meshes, beds = {}, {}
-    for node in nodes:
+    meshes, beds, boxes = {}, {}, {}
+    for node in view["nodes"]:
         key = node["key"]
         if key not in meshes:
             meshes[key] = trimesh.load(str(out_dir / f"{key}.stl"),
@@ -303,6 +315,14 @@ def export_plate_3mfs(prepared, out_dir):
         lift = -float(meshes[key].bounds[0][2])
         beds.setdefault(node["plate"], []).append(
             (key, _placement(node["at"], lift)))
+        # Where the part stands in the view: corners [low, high] of the box
+        # round every part on this bed so far.
+        placed = trimesh.transform_points(meshes[key].vertices,
+                                          _placement(node["at"]))
+        low, high = placed.min(axis=0), placed.max(axis=0)
+        box = boxes.get(node["plate"])
+        boxes[node["plate"]] = (low, high) if box is None else (
+            numpy.minimum(box[0], low), numpy.maximum(box[1], high))
 
     written = {}
     for number in sorted(beds):
@@ -314,11 +334,17 @@ def export_plate_3mfs(prepared, out_dir):
         print(f"  {path.name}: {len(items)} parts, {len(objects)} objects, "
               f"{path.stat().st_size / 1e6:.2f} MB")
         written[str(number)] = path.name
-    return written
+    if view["bed"] is None:
+        return written, None
+    centres = {str(number): [float(low[0] + high[0]) / 2,
+                             float(low[1] + high[1]) / 2, float(low[2])]
+               for number, (low, high) in sorted(boxes.items())}
+    return written, {"size_mm": list(view["bed"]), "centres": centres}
 
 
-def _placement(at, lift):
-    """`[R | t]` acting on a column vector: a reference's `at`, Z set to `lift`.
+def _placement(at, lift=None):
+    """`[R | t]` acting on a column vector: a reference's `at`, Z set to `lift`
+    when one is given.
 
     Read off the `gp_Trsf` as `gate._turns_about_z_only` reads it, 3 rows by 4
     columns, the fourth the shift. On the `print` view that gate has already
@@ -331,7 +357,8 @@ def _placement(at, lift):
         trsf = at.wrapped.Transformation()
         rows = [[float(trsf.Value(row, col)) for col in (1, 2, 3, 4)]
                 for row in (1, 2, 3)]
-    rows[2][3] = lift
+    if lift is not None:
+        rows[2][3] = lift
     return rows + [[0.0, 0.0, 0.0, 1.0]]
 
 

@@ -26,6 +26,7 @@ import { installPinchGuard } from "./pinch.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
+import { createBeds, framedWithBeds } from "./beds.js";
 import { createGizmo } from "./gizmo.js";
 import { createHandle } from "./handle.js";
 import { createPins } from "./pins.js";
@@ -323,10 +324,10 @@ export class HmrViewport extends HTMLElement {
     this.viewcube = createViewCube(this);
     this.appendChild(this.viewcube.root);
 
-    // The section grip, the move tool's arrows/quads/dot, its rotation handles
-    // and the comment arrows are meshes in the library's own scene
-    // (`scene3d.js`), so they have no root to append; their lifecycle lines are
-    // in `show()`.
+    // The section grip, the move tool's arrows/quads/dot, its rotation handles,
+    // the comment arrows and the printer's beds are meshes in the library's own
+    // scene (`scene3d.js`), so they have no root to append; their lifecycle
+    // lines are in `show()`.
     //
     // A press goes by paint band, not by this order: `joinPresses`
     // (scene3d.js) asks the top band first, and the move tool's arrows are on
@@ -335,6 +336,7 @@ export class HmrViewport extends HTMLElement {
     this.handle = createHandle(this);
     this.rings = createRings(this);
     this.pins = createPins(this);
+    this.beds = createBeds(this);
 
     setPointingDevice(this, initialPointingDevice(), false);
 
@@ -424,6 +426,7 @@ export class HmrViewport extends HTMLElement {
     // beside the one `scene3d.js` keeps for each widget.
     if (this.rings) this.rings.destroy();
     if (this.pins) this.pins.destroy();
+    if (this.beds) this.beds.destroy();
     try {
       if (this.viewer) this.viewer.dispose();
     } catch (error) {
@@ -726,15 +729,23 @@ export class HmrViewport extends HTMLElement {
         this.gizmo.detach();
         this.rings.detach();
         this.pins.detach();
+        this.beds.detach();
         this.viewer.clear();
       }
-      this.viewer.render(scene, renderOptions, viewerOptions);
+      // The meta.json entry of the view being drawn, for its beds: none for a
+      // view that declares none, and none for a comparison's scene. The scene
+      // is framed on them as well as on the parts.
+      const entry = (Array.isArray(this.state.views) ? this.state.views : [])
+        .find((one) => one && one.id === named);
+      this.viewer.render(framedWithBeds(scene, entry), renderOptions, viewerOptions);
       // And back into the new THREE.Scene `render()` just built. The namespace
       // is handed over here because this is where the page has it.
       this.handle.attach(library.THREE);
       this.gizmo.attach(library.THREE);
       this.rings.attach(library.THREE);
       this.pins.attach(library.THREE);
+      this.beds.attach(library.THREE);
+      this.beds.setBeds(entry);
       // Kept for the comment tool, which casts a ray at the picked part for the
       // exact normal under the click (`meshNormalAt` in tools.js).
       this.three = library.THREE;

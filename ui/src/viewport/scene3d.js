@@ -40,7 +40,7 @@ import { ndcAt } from "./camera.js";
 import { internals } from "./internals.js";
 
 /** Where each widget is drawn relative to the model and to each other: bottom
- *  to top comment arrows, rings, grip, manipulator.
+ *  to top the printer's beds, comment arrows, rings, grip, manipulator.
  *
  * The three controls are above the library's own: its edges and translucent
  * faces are at 999 (viewer/src/scene/nestedgroup.ts:523), its highlight points
@@ -57,15 +57,19 @@ import { internals } from "./internals.js";
  * opaque part; at 1000 or above an arrow behind glass would be painted over the
  * glass at full strength.
  *
- * Four bands because the band is also the press order: `joinPresses` gives a
+ * The beds (beds.js) are depth-tested objects of the model too, under the
+ * arrows, and take no press.
+ *
+ * Five bands because the band is also the press order: `joinPresses` gives a
  * contested press to the highest band that takes it, so the widget on top is
- * the one that answers. The comment arrows are the bottom one: a control
- * standing over an arrow keeps its press.
+ * the one that answers. The comment arrows are the bottom one that takes any:
+ * a control standing over an arrow keeps its press.
  *
  * Each widget's own ladder still works inside its band: three carries a group's
  * `renderOrder` down as `groupOrder` and sorts on it before each mesh's own, so
  * the bands need only be distinct; the tens are for readability.
  */
+export const BEDS_ORDER = 980;
 export const PINS_ORDER = 990;
 export const RINGS_ORDER = 1011;
 export const HANDLE_ORDER = 1021;

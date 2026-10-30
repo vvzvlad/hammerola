@@ -828,6 +828,9 @@ export function fakeViewport(viewer, state = {}) {
     // pushed a step at, where every drag rounds to the grid's own.
     snapSteps: new Map(),
     overlay: { refresh: vi.fn() },
+    // The printer's beds (beds.js), none of which is under any pixel unless a
+    // test stands one there.
+    beds: { bedAt: vi.fn(() => null) },
   }
 }
 

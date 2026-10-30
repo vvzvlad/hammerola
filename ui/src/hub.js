@@ -748,10 +748,11 @@ export function buildKey(meta) {
 }
 
 // -- the part tree ----------------------------------------------------------
-// It arrives on `hmr:model` as `{id, name, color, children?, key?, known?}`
-// nested as deep as the model nests — the shape `treeFromShapes` builds from
-// the pushed view file; `children` is a group's field and `key`/`known` are a
-// leaf's. This is the assembly structure; reading it is a walk.
+// It arrives on `hmr:model` as `{id, name, color, children?, key?, known?,
+// plate?}` nested as deep as the model nests — the shape `treeFromShapes`
+// builds from the pushed view file; `children` is a group's field and
+// `key`/`known`/`plate` are a leaf's. This is the assembly structure; reading
+// it is a walk.
 
 /** Same ceiling the hub refuses a push over (render.MAX_VIEW_DEPTH). */
 const MAX_DEPTH = 64;
@@ -801,6 +802,79 @@ const runsOf = (children) => {
   return runs;
 };
 
+// -- the beds of the `print` view --------------------------------------------
+// The build writes on every leaf of the `print` view the bed it is printed on
+// (`"plate": N`, `views.shaped_document`), and the tree shows each bed as a row
+// of its own under the view's root, with the parts on it underneath.
+
+/** What the `print` view's beds are called, in the tree and in the menus. */
+export const PLATE_LABEL = 'print plate';
+
+/** The name of bed `number` among `count`: `print plate` where it is the only
+ *  one, `print plate N` among several. */
+export const plateLabel = (number, count) => (
+  count === 1 ? PLATE_LABEL : `${PLATE_LABEL} ${number}`);
+
+/** The bed a raw LEAF is printed on, or null for a group and for a leaf of a
+ *  view that is not split into beds. */
+const plateOf = (raw) => (
+  raw && typeof raw === 'object' && !Array.isArray(raw.children)
+    && Number.isInteger(raw.plate) ? raw.plate : null);
+
+/**
+ * The raw tree with a row per bed put in under its root, in bed order, each
+ * holding the author's tree cut down to the leaves on that bed: a group with
+ * none on it is left out, and a group spanning beds is under each with its
+ * share. What is on no bed — the proposal's bodies, staged under the root —
+ * stays under the root after the beds. A tree whose leaves name no bed comes
+ * back as it is.
+ *
+ * The leaves are the scene's own objects, so each keeps its path. A group under
+ * several beds keeps its path on the first, and on each further bed is
+ * `<path>~<bed>`: an id that stays put from build to build while the group
+ * stays on that bed, which a count of the rows before it would not. A bed row is
+ * a group carrying its bed as `plate`, and carries no id: `indexTree` spells it
+ * as the root's path plus its name, which has a space no name the build writes
+ * can have.
+ */
+function onBeds(root) {
+  const children = root && Array.isArray(root.children) ? root.children : null;
+  if (!children) return root;
+  const numbers = new Set();
+  const collect = (raw) => {
+    if (raw && Array.isArray(raw.children)) raw.children.forEach(collect);
+    else if (plateOf(raw) !== null) numbers.add(plateOf(raw));
+  };
+  children.forEach(collect);
+  if (!numbers.size) return root;
+  // The group paths already under an earlier bed, filled in bed order.
+  const placed = new Set();
+  const cut = (list, keep, plate) => list.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object') return [];
+    if (!Array.isArray(raw.children)) return keep(raw) ? [raw] : [];
+    const kept = cut(raw.children, keep, plate);
+    if (!kept.length) return [];
+    const copy = { ...raw, children: kept };
+    if (typeof raw.id === 'string' && raw.id) {
+      if (placed.has(raw.id)) copy.id = `${raw.id}~${plate}`;
+      placed.add(raw.id);
+    }
+    return [copy];
+  });
+  const beds = [...numbers].sort((a, b) => a - b);
+  return {
+    ...root,
+    children: [
+      ...beds.map((plate) => ({
+        name: plateLabel(plate, beds.length),
+        plate,
+        children: cut(children, (raw) => plateOf(raw) === plate, plate),
+      })),
+      ...cut(children, (raw) => plateOf(raw) === null),
+    ],
+  };
+}
+
 /**
  * The viewport's tree, indexed so rows can be rendered and addressed.
  *
@@ -827,6 +901,10 @@ const runsOf = (children) => {
  *
  * `known: false` means the viewport found no such path in the library's state
  * map. The row is still drawn: a missing row reads as a build with fewer parts.
+ *
+ * In the `print` view the root's rows are its beds (`onBeds`): `plate` is the
+ * bed a bed row stands for, and null on every other row. A bed is in no scene,
+ * so its row's id is no path the viewport knows.
  *
  * `key` is the row's catalogue entry in `meta.parts` (files, note, kind), copied
  * untouched; `id` is the path the viewport operates on. `key` is `null` on a
@@ -878,6 +956,8 @@ export function indexTree(root) {
       key: typeof raw.key === 'string' && raw.key ? raw.key : null,
       color: typeof raw.color === 'string' ? raw.color : null,
       isNode: !!children,
+      // A leaf's own `plate` is what put it under its bed, not a bed row.
+      plate: children && Number.isInteger(raw.plate) ? raw.plate : null,
       known: raw.known !== false,
       depth,
       parent,
@@ -903,7 +983,7 @@ export function indexTree(root) {
     return id;
   };
 
-  walk([{ raw: root, at: 0 }], null, 0);
+  walk([{ raw: onBeds(root), at: 0 }], null, 0);
   return { nodes, roots, leaves };
 }
 
