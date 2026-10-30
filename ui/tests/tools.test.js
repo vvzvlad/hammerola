@@ -450,6 +450,25 @@ describe('the right button: a menu or a pan', () => {
     expect(details(vp, EVENT_MENU)).toEqual([{ id: null, name: null, x: 10, y: 10 }])
   })
 
+  it('names the printer\'s bed under empty space, and never one under a part', () => {
+    // The page offers that bed's 3MF (`sceneMenu`); a part standing on the bed
+    // keeps its own menu, so the bed is not even asked about.
+    const vp = toolViewport({ tool: null })
+    vp.beds.bedAt.mockReturnValue(2)
+
+    rightDown(vp, [10, 10])
+    pointerUp([10, 10])
+    pickEntity.mockReturnValueOnce(PLATE)
+    rightDown(vp, [140, 90])
+    pointerUp([140, 90])
+
+    expect(details(vp, EVENT_MENU)).toEqual([
+      { id: null, name: null, plate: 2, x: 10, y: 10 },
+      { id: '/model/plate', name: 'plate', x: 140, y: 90 },
+    ])
+    expect(vp.beds.bedAt).toHaveBeenCalledTimes(1)
+  })
+
   it('does not move the selection while opening a menu', () => {
     // A tree row's menu leaves the selection alone, and one menu with two
     // behaviours is worse than either. A PICK going out beside the menu is

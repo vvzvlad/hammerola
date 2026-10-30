@@ -84,8 +84,8 @@ import {
   JOB_DONE, JOB_FAILED, anchorFor, askHub, buildPath, compareBase, decodeCamera,
   encodeCamera, isDefaultPointerPage, isPointerPage, buildKey,
   countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
-  loadJob, loadMeta, loadBuilds, loadVariants, pageFrom, pageVariant, rereadPage,
-  rowsByKey, shortId, startCompare, mb,
+  loadJob, loadMeta, loadBuilds, loadVariants, pageFrom, pageVariant, plateLabel,
+  rereadPage, rowsByKey, shortId, startCompare, mb,
 } from './hub.js';
 // `readTheme`/`writeTheme` come from here, not the viewport: the theme is the
 // whole interface's palette, per-reader state like the token, the notes and the
@@ -147,7 +147,7 @@ import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './ren
 // part that the header's menu builds for all of them, and `filesKeyFor`
 // because both menus put the same key into it.
 import { revisionView } from './revisionview.js';
-import { downloadsView, fileHref, filesKeyFor } from './downloadsview.js';
+import { downloadsView, fileHref, filesKeyFor, plateFiles } from './downloadsview.js';
 // The Copy link at the end of each file row of both menus, and Open in Bambu
 // Studio before it on a 3MF's row; the 3MF group is where the beds are offered.
 import BambuLink, { BAMBU_FORMAT } from './bambu.jsx';
@@ -236,6 +236,14 @@ const VIEWPORT_CSS = `
 const DOWNLOAD_ICON = (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
 );
+// The same arrow at the end of a bed's row in the tree, at the size and in the
+// ink of the Open in Bambu Studio and Copy link after it (bambu.jsx,
+// copylink.jsx), each padded alike.
+const ROW_DOWNLOAD_ICON = (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
+);
+const ROW_FILE_PAD = 'padding:0 3px';
+const ROW_DOWNLOAD = `flex:none;display:flex;align-items:center;text-decoration:none;color:var(--text-faint);${ROW_FILE_PAD}`;
 const LOCK_ICON = (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2.5" y="7" width="11" height="7" rx="1.5" /><path d="M5 7V4.8a3 3 0 0 1 6 0V7" /></svg>
 );
@@ -524,12 +532,6 @@ const PRINT_FIRST = ['STL', '3MF', 'STEP'];
 const GERBERS_GROUP = 'GERBERS';
 
 /**
- * The rows of the `print` view's beds, first among the 3MFs: `print plate`
- * when there is one, `print plate 1`, `print plate 2`, … when there are several.
- */
-const PLATE_LABEL = 'print plate';
-
-/**
  * `meta.parts` as ordered groups of one FORMAT each, rows ordered by part.
  *
  * Flat, this menu is one row per file — thirty of them on a ten-part build, in
@@ -587,7 +589,7 @@ export function groupDownloads(parts, documents, views) {
     .filter(([number, file]) => /^[1-9][0-9]*$/.test(number) && typeof file === 'string' && file)
     .sort(([a], [b]) => Number(a) - Number(b));
   const plates = beds.map(([number, file]) => ({
-    label: beds.length === 1 ? PLATE_LABEL : `${PLATE_LABEL} ${number}`, file,
+    label: plateLabel(number, beds.length), file,
   }));
   if (plates.length && !groups.has(BAMBU_FORMAT)) groups.set(BAMBU_FORMAT, []);
   const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -4769,6 +4771,11 @@ export default class HammerolaViewer extends React.Component {
    * No id is empty space, and closes the menu: there are no view-level items,
    * and a menu with one greyed-out sentence is no better than none.
    *
+   * Where no part is under the cursor and a bed of the `print` view is
+   * (`plate`, viewport/beds.js), the menu is that bed's 3MF (`rowMenu`) — for a
+   * reader holding the key to the files, as the Downloads menu is. Without it
+   * the bed is empty space.
+   *
    * A method rather than a closure inside the handler map so it can be called
    * without mounting the component — the map is built in `componentDidMount`,
    * which loads a build and starts a poll.
@@ -4776,7 +4783,14 @@ export default class HammerolaViewer extends React.Component {
   sceneMenu(detail) {
     const d = detail || {};
     const id = d.id || null;
-    this.setState({ menu: id ? { id, ...menuAt(d.x, d.y) } : null });
+    const s = this.state;
+    const plate = !id && Number.isInteger(d.plate)
+      && filesKeyFor(s.builds, PAGE.slot, this._linkKey)
+      && plateFiles(s.meta, s.view)[d.plate] ? d.plate : null;
+    this.setState({
+      menu: id ? { id, ...menuAt(d.x, d.y) }
+        : plate !== null ? { plate, ...menuAt(d.x, d.y) } : null,
+    });
   }
 
   /**
@@ -5071,6 +5085,15 @@ export default class HammerolaViewer extends React.Component {
 
     const overlayPath = this.overlayRoot(tree);
 
+    // With the key to the build on screen, asked of `PAGE.slot` here rather
+    // than kept: the address moves under a revision switch, and builds.json
+    // carries a key for every address it can move to. Asked before the tree's
+    // rows, because a bed's row carries its 3MF.
+    const filesKey = filesKeyFor(s.builds, PAGE.slot, this._linkKey);
+    // The beds of the view on screen, `{"1": "print.3mf", ...}`: the 3MF a
+    // bed's row and its menu in the scene offer, as the Downloads menu does.
+    const plates = plateFiles(meta, s.view);
+
     // -- the tree: a flat list of rows, indented by depth
     const rows = [];
 
@@ -5105,6 +5128,12 @@ export default class HammerolaViewer extends React.Component {
       const meta_ = node.isNode
         ? (eye === 'part' ? `${visible}/${leaves.length}` : String(leaves.length))
         : (node.known ? '' : '?');
+      // A BED OF THE `print` VIEW (`indexTree`) is a group row to the eye and
+      // the ghost square, which act on the parts on it, and no part: it is not
+      // selected and opens no part menu. Its 3MF is on it for a reader holding
+      // the key, as in the Downloads menu.
+      const bed = node.plate !== null;
+      const plateFile = bed && filesKey ? plates[node.plate] : '';
       rows.push({
         key: node.id,
         rowStyle: HOLDABLE + 'display:inline-flex;align-items:center;gap:2px;height:24px;padding:0 6px 0 3px;margin:0 0 1px ' + (node.depth * 16) + 'px;border-radius:4px;background:' + (selected ? 'var(--accent-bg)' : 'var(--float-bg-soft)') + ';cursor:default',
@@ -5127,8 +5156,11 @@ export default class HammerolaViewer extends React.Component {
         // the right (`visible/total` while some but not all are hidden, bare
         // otherwise).
         name: node.isNode ? node.name : countedName(node.name, node.leaves.length),
-        nameStyle: 'white-space:nowrap;cursor:pointer;padding-right:4px;font:' + (node.isNode ? '600 12px ' : '400 12px ') + MONO + ';color:' + (eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
+        nameStyle: 'white-space:nowrap;cursor:' + (bed ? 'default' : 'pointer') + ';padding-right:4px;font:' + (node.isNode ? '600 12px ' : '400 12px ') + MONO + ';color:' + (eye === 'off' ? 'var(--text-faint)' : 'var(--text)'),
         meta: meta_,
+        // The bed's 3MF, its Open in Bambu Studio and its Copy link, at the
+        // end of its row; '' on every other row and without the key.
+        plateHref: plateFile ? fileHref(plateFile, filesKey) : '',
         // Said out loud rather than dropped: a leaf the viewport could not match
         // to the library's own state map is a row nothing can be done to, and a
         // tree missing a row reads as a build with fewer parts.
@@ -5145,11 +5177,11 @@ export default class HammerolaViewer extends React.Component {
         // For every other row the two lists are the same object.
         onVis: stop(() => this.setVisibility({ hidden: this.toggle(s.hidden, leaves) })),
         onGhost: stop(() => this.setVisibility({ ghost: this.toggle(s.ghost, leaves) })),
-        onSelect: stop(() => this.set({ sel: node.id, selName: node.name })),
+        onSelect: bed ? undefined : stop(() => this.set({ sel: node.id, selName: node.name })),
         // The other door into this menu is a right-click on the part in the
         // SCENE (`sceneMenu`), and the two share `menuAt` so they cannot open in
         // different places.
-        onMenu: stop((e) => {
+        onMenu: bed ? undefined : stop((e) => {
           e.preventDefault();
           markMenu(e.nativeEvent);
           this.setState({ menu: { id: node.id, ...menuAt(e.clientX, e.clientY) } });
@@ -5180,13 +5212,8 @@ export default class HammerolaViewer extends React.Component {
 
     // -- the downloads, out of the part catalogue: key -> {extension -> file},
     //    the board's Gerbers among the build's documents, and the beds of the
-    //    `print` view
-    //
-    // With the key to the build on screen, asked of `PAGE.slot` here rather
-    // than kept: the address moves under a revision switch, and builds.json
-    // carries a key for every address it can move to.
+    //    `print` view, with the key asked above the tree
     const catalogue = (meta && meta.parts) || null;
-    const filesKey = filesKeyFor(s.builds, PAGE.slot, this._linkKey);
     const { downloadGroups, anyDownloads, dlShown } = downloadsView(catalogue, {
       groupDownloads, downloadAll: this.downloadAll.bind(this), key: filesKey,
       documents: meta && meta.documents, views: meta && meta.views,
@@ -5249,7 +5276,7 @@ export default class HammerolaViewer extends React.Component {
     // handed the whole state and reads the subject out of that one field.
     const menu = rowMenu(s, {
       tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref, filesKey,
-      clearSection, stop, SECTION_ROW,
+      plates, clearSection, stop, SECTION_ROW,
       noteFor, partRecord, fileList,
       node: this.node.bind(this),
       expandedTo: this.expandedTo.bind(this),
@@ -5933,6 +5960,15 @@ export default class HammerolaViewer extends React.Component {
                       <span style={css(row.dotStyle)} />
                       <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
                       <span title={row.metaTitle} style={css(row.metaStyle)}>{row.meta}</span>
+                      {/* A bed's 3MF, with the controls its row in the
+                          Downloads menu has, for a reader holding the key. */}
+                      {row.plateHref && (
+                        <>
+                          <a href={row.plateHref} download title="Download" style={css(ROW_DOWNLOAD)}>{ROW_DOWNLOAD_ICON}</a>
+                          <BambuLink href={row.plateHref} style={ROW_FILE_PAD} />
+                          <CopyLink href={row.plateHref} style={ROW_FILE_PAD} />
+                        </>
+                      )}
                     </div>
                   ))}
                   {/* Not an empty tree — a tree that has not arrived. It comes up

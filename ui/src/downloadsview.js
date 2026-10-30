@@ -55,6 +55,17 @@ export function filesKeyFor(builds, slot, fromAddress) {
   return fromAddress && fromAddress.slot === slot && fromAddress.key ? fromAddress.key : '';
 }
 
+/**
+ * The beds of view `viewId` as meta.json declares them, `{"1": "print.3mf",
+ * ...}`, or `{}` for a view with none: the 3MF a bed's row in the tree and its
+ * menu in the scene offer, the file its row in this menu offers.
+ */
+export function plateFiles(meta, viewId) {
+  const views = meta && Array.isArray(meta.views) ? meta.views : [];
+  const view = views.find((entry) => entry && entry.id === viewId);
+  return view && view.plates && typeof view.plates === 'object' ? view.plates : {};
+}
+
 export function downloadsView(catalogue, deps) {
   const { groupDownloads, downloadAll, key, documents, views } = deps;
 

@@ -21,6 +21,7 @@ avoids an import cycle with the thing that calls it.
 import gzip
 import html
 import json
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -1172,6 +1173,45 @@ def _kicad(raw, name: str, shown_as: str, files: dict) -> dict:
     return design
 
 
+def _printer_bed(bed, plates, view_id: str) -> dict:
+    """A view's `bed`, `{"size_mm": [x, y], "centres": {"1": [x, y, z]}}`, checked.
+
+    The page reads these numbers straight into a scene, so each is a finite
+    real number (a bool is refused: python counts it as one), the size is
+    positive, and the centres name exactly the beds `plates` names — a centre
+    for a bed with no file would draw a bed nothing is printed on.
+    """
+    where = f"the printer's bed of view {view_id!r}"
+
+    def numbers(value, count):
+        return (isinstance(value, list) and len(value) == count
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                        and math.isfinite(v) for v in value))
+
+    if not isinstance(bed, dict):
+        raise ValueError(f"{where} must be an object with `size_mm` and "
+                         f"`centres`")
+    size = bed.get("size_mm")
+    if not numbers(size, 2) or not all(side > 0 for side in size):
+        raise ValueError(f"{where} has a size {size!r}, which must be two "
+                         f"positive numbers")
+    centres = bed.get("centres")
+    beds = set(plates) if isinstance(plates, dict) else set()
+    if not isinstance(centres, dict) or set(centres) != beds:
+        raise ValueError(
+            f"{where} centres beds "
+            f"{sorted(centres) if isinstance(centres, dict) else centres!r}, "
+            f"and the view's plates are {sorted(beds)}: the two must name the "
+            f"same beds")
+    for number, centre in centres.items():
+        if not numbers(centre, 3):
+            raise ValueError(f"{where} centres bed {number} at {centre!r}, "
+                             f"which must be three numbers")
+    return {"size_mm": list(size),
+            "centres": {number: list(centre)
+                        for number, centre in centres.items()}}
+
+
 def _model_body(raw: dict, staging: Path, files: dict) -> dict:
     """`views` and `parts`: what a build of a model publishes.
 
@@ -1262,6 +1302,13 @@ def _model_body(raw: dict, staging: Path, files: dict) -> dict:
                         f"{PLATE_NUMBER.pattern}")
                 _check_declared_file(plate, files, f"bed {number} of {where}")
             entry["plates"] = dict(plates)
+        # The printer's bed the page draws under each of those beds: its size,
+        # and where each bed's parts are centred and stand, keyed as `plates`
+        # is (`cadbuild.assembly.export_plate_3mfs`). Optional: only a `print`
+        # view whose model names its printer has one.
+        bed = view.get("bed")
+        if bed is not None:
+            entry["bed"] = _printer_bed(bed, plates, view_id)
         preview = view.get("preview")
         if preview is not None:
             _check_declared_file(

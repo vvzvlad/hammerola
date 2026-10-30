@@ -125,11 +125,11 @@ def driven(monkeypatch):
         ("export_assembled", lambda prepared, out_dir, cat: (1, None)),
         # A 3MF per bed, out of the part STLs the faked `export_printables`
         # never wrote; one bed, as the real one answers for a `print` view
-        # whose references name none.
+        # whose references name none, and no printer's bed, as for one that
+        # declares none. Asked only once a plate was exported, which a test
+        # may fake without a `print` view; the map then lands on no view.
         ("export_plate_3mfs", lambda prepared, out_dir: (
-            {"1": f"{PRINT_VIEW_ID}.3mf"}
-            if any(view["id"] == PRINT_VIEW_ID for view in prepared)
-            else None)),
+            {"1": f"{PRINT_VIEW_ID}.3mf"}, None)),
         ("export_views", lambda prepared, out_dir: [
             {"id": view["id"], "name": view["id"], "file": f"{view['id']}.json",
              "parts": ["base"]} for view in prepared]),
@@ -473,6 +473,22 @@ def test_a_build_with_a_print_view_declares_the_plate_and_says_nothing(
     assert view_named(meta, PRINT_VIEW_ID)["plates"] == {
         "1": f"{PRINT_VIEW_ID}.3mf"}
     assert "plates" not in view_named(meta, ASSEMBLED_VIEW_ID)
+    # No printer named, no bed drawn.
+    assert "bed" not in view_named(meta, PRINT_VIEW_ID)
+
+
+def test_the_printer_s_bed_goes_on_the_print_view_alone(
+        with_a_plate, monkeypatch, out_dir):
+    """As `plates` does: the page draws it under that view's beds."""
+    bed = {"size_mm": [256.0, 256.0], "centres": {"1": [11.0, 2.0, -3.0]}}
+    monkeypatch.setattr(build_module, "export_plate_3mfs",
+                        lambda prepared, out_dir: (
+                            {"1": f"{PRINT_VIEW_ID}.3mf"}, bed))
+
+    _pid, meta, _files = build(out_dir)
+
+    assert view_named(meta, PRINT_VIEW_ID)["bed"] == bed
+    assert "bed" not in view_named(meta, ASSEMBLED_VIEW_ID)
 
 
 def test_a_whole_view_is_drawn_from_the_document_the_browser_itself_loads(

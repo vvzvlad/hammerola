@@ -122,8 +122,8 @@ def test_an_unknown_view_key_is_said_out_loud(capsys):
     prepare([one_view(nestedok=[("a", "b")])])
     printed = capsys.readouterr().out
     assert "'nestedok'" in printed
-    assert ("Known keys: absent_ok, id, interference_ok, name, nested_ok, "
-            "parts") in printed
+    assert ("Known keys: absent_ok, bed, id, interference_ok, name, "
+            "nested_ok, parts") in printed
 
 
 def test_absent_ok_is_read_into_key_and_reason():
@@ -410,6 +410,39 @@ def test_a_plate_outside_the_print_view_is_said_out_loud(capsys):
     """Correct and read by nothing, as `nested_ok` outside the plate is."""
     prepare([one_view(parts=[{"part": "body", "plate": 2}])])
     assert "only the 'print' view is split into beds" in capsys.readouterr().out
+
+
+def test_every_leaf_of_the_print_view_carries_its_bed_and_no_other_does():
+    """What the page groups the tree's rows by. The ids are the author's tree's,
+    so comments, measurements and comparisons find the parts as before."""
+    prepared = prepare([one_view(), one_view(vid="print", parts=[
+        "body", {"part": "body", "plate": 2}])])
+    printed = shaped_document(flat_document("body", "body(2)"), prepared[1])
+    assert [leaf["plate"] for leaf in printed["parts"]] == [1, 2]
+    assert [leaf["id"] for leaf in printed["parts"]] == [
+        "/Group/body", "/Group/body(2)"]
+    assembled = shaped_document(flat_document("body"), prepared[0])
+    assert "plate" not in assembled["parts"][0]
+
+
+def test_the_printer_s_bed_is_kept_as_two_millimetre_numbers():
+    for bed in ((256, 256), [180.5, 180]):
+        prepared = prepare([one_view(), one_view(vid="print", bed=bed)])
+        assert prepared[1]["bed"] == (float(bed[0]), float(bed[1]))
+    assert prepare([one_view()])[0]["bed"] is None
+
+
+def test_a_bed_that_is_not_two_positive_numbers_is_refused():
+    """`True` is an int to python and a side to nobody."""
+    for bad in ((256,), (256, 256, 10), (0, 256), (-1, 256), (True, 256),
+                (float("inf"), 256), ("256", 256), "256x256", 256):
+        assert "is not a bed" in refusal([one_view(), one_view(
+            vid="print", bed=bad)]), bad
+
+
+def test_a_bed_outside_the_print_view_is_said_out_loud(capsys):
+    prepare([one_view(bed=(256, 256))])
+    assert "only the 'print' view is drawn on" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

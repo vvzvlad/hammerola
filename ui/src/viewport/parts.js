@@ -64,6 +64,9 @@ export function treeFromShapes(shapes, states) {
     // A leaf the library does not know is marked rather than dropped: a missing
     // row reads as a build with fewer parts.
     row.known = known === null || Object.hasOwn(known, path);
+    // The bed of the `print` view the leaf is printed on, which the tree puts
+    // it under (`indexTree` in hub.js); absent on a leaf of any other view.
+    if (Number.isInteger(node.plate)) row.plate = node.plate;
     return row;
   };
   return walk(shapes, "");

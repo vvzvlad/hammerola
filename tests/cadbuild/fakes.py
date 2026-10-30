@@ -324,7 +324,7 @@ def node(key, obj=None, alpha=1.0, at=None, color="#000000", deformed=None,
 
 
 def view(vid, nodes, nested_ok=frozenset(), interference_ok=None, tree=None,
-         absent_ok=None):
+         absent_ok=None, bed=None):
     """A view in the shape prepare_views hands to the gates."""
     nodes = list(nodes)
     return {
@@ -334,6 +334,7 @@ def view(vid, nodes, nested_ok=frozenset(), interference_ok=None, tree=None,
         "nested_ok": nested_ok,
         "interference_ok": dict(interference_ok or {}),
         "absent_ok": dict(absent_ok or {}),
+        "bed": bed,
         "tree": list(range(len(nodes))) if tree is None else tree,
         "nodes": nodes,
     }

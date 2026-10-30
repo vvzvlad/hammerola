@@ -7,8 +7,8 @@ placed by an item's `transform` under the 3MF rule, a ROW vector times the
 matrix. A writer that put the matrix down untransposed passes every count and
 turns a part the wrong way, so the turn is asserted as a point that moves.
 
-The writer needs no kernel. The last test does -- a real `cq.Location` turn,
-read off its `gp_Trsf` as the build reads it -- and skips without one; CI's
+The writer needs no kernel. The last two tests do -- a real `cq.Location` turn,
+read off its `gp_Trsf` as the build reads it -- and skip without one; CI's
 test image carries it.
 """
 
@@ -99,15 +99,14 @@ def test_a_quarter_turn_moves_x_onto_y(tmp_path):
     assert placed(item, (1.0, 0.0, 0.0)) == (5.0, 1.0, 0.0)
 
 
-def test_each_bed_is_a_file_of_its_own_with_every_part_on_z_zero(tmp_path):
-    """Two beds: two files, and in each only the references on that bed.
+def two_beds(tmp_path, bed=None):
+    """Two beds of a `print` view, the parts' STLs written where the build
+    writes them: a pin turned a quarter about Z and lifted, a pin as it is,
+    and a lid on bed 2.
 
     The pin's mesh reaches 3 mm below its origin and the lid's starts 4 mm
-    above it, and the turned pin's `at` lifts it by 7 mm: every item still
-    stands on z = 0, because the lift is the lowest point of its key's mesh,
-    not the height the view gave. X and Y are the view's, turn included: the
-    pin spans x 1..5 in its own frame, so a quarter turn about Z puts it at
-    y 1..5 round x = 20, and the turn the other way at y -5..-1.
+    above it, and the turned pin's `at` lifts it by 7 mm. The pin spans x 1..5
+    in its own frame, so the quarter turn puts it at y 1..5 round x = 20.
     """
     cq = pytest.importorskip(
         "cadquery", exc_type=ImportError,
@@ -122,12 +121,22 @@ def test_each_bed_is_a_file_of_its_own_with_every_part_on_z_zero(tmp_path):
     lid.apply_translation((0.0, 0.0, 5.0))
     lid.export(str(tmp_path / "lid.stl"))
     turned = cq.Location(cq.Vector(20.0, 0.0, 7.0), cq.Vector(0.0, 0.0, 1.0), 90)
-    prepared = [view(PRINT_VIEW_ID, [
+    return [view(PRINT_VIEW_ID, [
         node("pin", at=turned), node("pin"),
-        node("lid", at=cq.Location(cq.Vector(300.0, 0.0, 0.0)), plate=2)])]
+        node("lid", at=cq.Location(cq.Vector(300.0, 0.0, 0.0)), plate=2)],
+        bed=bed)]
 
-    written = export_plate_3mfs(prepared, tmp_path)
 
+def test_each_bed_is_a_file_of_its_own_with_every_part_on_z_zero(tmp_path):
+    """Two beds: two files, and in each only the references on that bed.
+
+    Every item stands on z = 0, because the lift is the lowest point of its
+    key's mesh, not the height the view gave. X and Y are the view's, turn
+    included, and the turn the other way would put the pin at y -5..-1.
+    """
+    written, bed = export_plate_3mfs(two_beds(tmp_path), tmp_path)
+
+    assert bed is None
     assert written == {"1": f"{PRINT_VIEW_ID}.3mf", "2": f"{PRINT_VIEW_ID}-2.3mf"}
     first = read_model(tmp_path / written["1"])
     second = read_model(tmp_path / written["2"])
@@ -151,3 +160,22 @@ def test_each_bed_is_a_file_of_its_own_with_every_part_on_z_zero(tmp_path):
     lid_on_two = [placed(items_of(second)[0], corner)
                   for corner in vertices_of(objects_of(second)[0])]
     assert min(x for x, _y, _z in lid_on_two) == pytest.approx(295.0)
+
+
+def test_a_declared_bed_is_centred_on_each_bed_s_parts_where_the_view_stands_them(
+        tmp_path):
+    """The box round each bed's parts AS THE VIEW PLACES THEM, turn and height
+    included, not lifted to z = 0 as in the file: the bed is drawn in the view.
+
+    Bed 1 is the turned pin (x 19..21, y 1..5, z 4..10) and the plain one
+    (x 1..5, y -1..1, z -3..3): centred on (11, 2), standing at -3. A turn the
+    other way would put the centre at y -2, and the file's lift at z 0. Bed 2
+    is the lid alone, x 295..305, y -5..5, from z 4.
+    """
+    _written, bed = export_plate_3mfs(two_beds(tmp_path, bed=(256.0, 220.0)),
+                                      tmp_path)
+
+    assert bed["size_mm"] == [256.0, 220.0]
+    assert sorted(bed["centres"]) == ["1", "2"]
+    assert bed["centres"]["1"] == pytest.approx([11.0, 2.0, -3.0])
+    assert bed["centres"]["2"] == pytest.approx([300.0, 0.0, 4.0])

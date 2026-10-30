@@ -15,14 +15,14 @@
  * also needs (`partRecord`, `fileList`, `noteFor`).
  */
 import { BAMBU_FORMAT } from './bambu.jsx';
-import { countedName } from './hub.js';
+import { countedName, plateLabel } from './hub.js';
 import { SANS } from './style.jsx';
 
 export function rowMenu(s, deps) {
   const {
     // -- what `computed()` has already worked out
     tree, viewer, narrow, compared, catalogue, anyDownloads, fileHref, filesKey,
-    clearSection, stop, SECTION_ROW,
+    plates, clearSection, stop, SECTION_ROW,
     // -- the lookups that stay beside the component
     noteFor, partRecord, fileList,
     // -- the page's own doors
@@ -35,6 +35,10 @@ export function rowMenu(s, deps) {
   // `null` for it (`SECTION_ROW` is no tree path), which keeps the part items
   // (Isolate, files, Copy name) off; `sectionItems` below are the cut's own.
   const secMenu = !!(s.menu && s.menu.id === SECTION_ROW);
+  // A bed of the `print` view, clicked in the scene, is the other: `plate`
+  // instead of an id, written by `sceneMenu` only where there is a key and a
+  // file for it. `bedItems` below are its own.
+  const bedMenu = s.menu && Number.isInteger(s.menu.plate) ? s.menu.plate : null;
 
   // Whether there is a section for Delete to clear: any of the four fields
   // `clearSection` writes differs from its cleared value. Not `s.secOn`: the
@@ -50,10 +54,12 @@ export function rowMenu(s, deps) {
   // count: its `leaves` is every leaf underneath (`indexTree`), so `housing ×7`
   // would name the wrong quantity.
   //
-  // The section heads its menu with the word on its row.
-  const mName = secMenu ? SECTION_ROW : (mNode && !mNode.isNode
-    ? countedName(mNode.name, mNode.leaves.length)
-    : (mNode ? mNode.name : ''));
+  // The section heads its menu with the word on its row, and a bed with the
+  // format its row is offered under in the Downloads menu.
+  const mName = secMenu ? SECTION_ROW : bedMenu !== null ? BAMBU_FORMAT
+    : (mNode && !mNode.isNode
+      ? countedName(mNode.name, mNode.leaves.length)
+      : (mNode ? mNode.name : ''));
   const mKey = (mNode && mNode.key) || '';
   // Through `noteFor`: a bare lookup of a part called `constructor` returns a
   // function, and the `slice` below would throw and take the page down.
@@ -210,7 +216,14 @@ export function rowMenu(s, deps) {
       }
     }, 'top'),
   ];
-  const menuItems = secMenu ? sectionItems : partItems;
+  // A bed's one row is its row of the Downloads menu: its name, its 3MF, Open
+  // in Bambu Studio and Copy link.
+  const bedItems = bedMenu === null ? [] : [{
+    ...mi(plateLabel(bedMenu, Object.keys(plates).length), plates[bedMenu],
+          () => {}, '', fileHref(plates[bedMenu], filesKey)),
+    bambu: true, bambuStyle: 'padding:7px 4px',
+  }];
+  const menuItems = secMenu ? sectionItems : bedMenu !== null ? bedItems : partItems;
 
   return {
     menuStyle: 'position:fixed;width:230px;background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 40px var(--shadow);padding:2px 0 6px;z-index:60;display:' + (s.menu ? 'block' : 'none') + ';left:' + (s.menu ? s.menu.x : 0) + 'px;top:' + (s.menu ? s.menu.y : 0) + 'px',

@@ -187,6 +187,9 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.rings = {
     refresh: vi.fn(), endDrag: vi.fn(), attach: vi.fn(), detach: vi.fn(),
   }
+  // The printer's beds, handed the view's meta.json entry on every render and
+  // carried across a scene the library disposes like the arrows.
+  vp.beds = { setBeds: vi.fn(), attach: vi.fn(), detach: vi.fn() }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
   // reason the note above `calledWithViewport` gives about `getAttributeNames`.
@@ -1766,6 +1769,32 @@ describe('the overlay laid over the model', () => {
     expect(vp.pins.attach).toHaveBeenCalledTimes(2)
     expect(vp.pins.attach.mock.invocationCallOrder[1])
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[1])
+  })
+
+  it('lays down the beds of the view shown, framed with the parts, and takes them out before the scene goes', async () => {
+    // The arrows' ordering, for the arrows' reason. The beds are the ones the
+    // meta.json entry of the view on screen declares, and the camera is framed
+    // on them as well as on the parts.
+    const { vp, viewer } = staging()
+    const entry = { id: 'a', file: 'a.json', bed: { size_mm: [8, 6], centres: { 1: [0, 0, 0] } } }
+    vp.state.views = [entry]
+    await vp.show(model(), { view: 'a', token: 0 })
+    expect(vp.beds.detach, 'nothing to leave on a first render').not.toHaveBeenCalled()
+    expect(vp.beds.setBeds).toHaveBeenLastCalledWith(entry)
+    expect(rendered(viewer).scene.bb)
+      .toEqual({ xmin: -4, xmax: 4, ymin: -3, ymax: 3, zmin: 0, zmax: 1 })
+
+    await vp.show(model(), { view: 'gone', token: 0 })
+
+    expect(vp.beds.detach).toHaveBeenCalledTimes(1)
+    expect(vp.beds.detach.mock.invocationCallOrder[0])
+      .toBeLessThan(viewer.clear.mock.invocationCallOrder[0])
+    expect(vp.beds.attach).toHaveBeenCalledTimes(2)
+    expect(vp.beds.attach.mock.invocationCallOrder[1])
+      .toBeGreaterThan(viewer.render.mock.invocationCallOrder[1])
+    // A view not in the list declares no beds, and is framed on its parts.
+    expect(vp.beds.setBeds).toHaveBeenLastCalledWith(undefined)
+    expect(rendered(viewer).scene.bb).toEqual(model().bb)
   })
 
   it('does not take the load token off a fetch that is already on its way', async () => {

@@ -115,12 +115,15 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
   opened in Bambu Studio in one click. So a model of more than one printable
   lays out every one of them here, as many copies as one product takes; without
   a `print` view there is only each part's own 3MF. When the owner has named
-  the printer and the parts do not fit its bed, split them over beds:
+  the printer, write its bed on the view in millimetres — `{"id": "print",
+  "bed": (256, 256), "parts": [...]}` — and the page draws a bed of that size
+  under each bed's parts, centred as Bambu Studio centres them: what hangs over
+  the edge shows. If the parts do not fit, split them over beds:
   `{"part": "pin", "at": ..., "plate": 2}` puts a reference on bed 2 (no
   `plate` is bed 1), and each bed is a file of its own — `print.3mf`,
-  `print-2.3mf`, … Lay the beds side by side in the view, clear of each other,
-  and assert each bed's footprint against the printer in `checks()`; the hub
-  does not know the printer. Not knowing it, keep one bed. Printables only; `at` may move a part
+  `print-2.3mf`, … Lay the beds side by side in the view, their centres at
+  least a bed's width apart so the drawn beds do not overlap, and assert each bed's footprint against the printer in `checks()`; the hub
+  checks no size. Not knowing the printer, write no `bed` and keep one bed. Printables only; `at` may move a part
   and turn it about Z and nothing else — a tilt re-orients it, a mirror makes
   another part. No two parts inside one another unless declared:
   `"nested_ok": [("shim", "ring")]`. Both lists name CATALOGUE KEYS and cover
