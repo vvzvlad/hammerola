@@ -26,7 +26,10 @@ side at one scale. The straight views are what the dimensions are read from.
 
 **The call** goes to OpenRouter's image API with the person's OpenRouter key,
 substituted into the command from wherever he keeps secrets and never printed.
-No key: ask once, and end the turn there.
+**No OpenRouter key: hand the person the prompt**, whole and ready to paste, and
+ask him either to draw the picture with an image generator of his own and send
+it, or to give you an OpenRouter key — and end the turn there. A picture he
+sends back goes into `ref/` like any picture he sends (`references/brief.md`).
 
 ```sh
 OPENROUTER_API_KEY=... python3 - ref/concept-01.txt ref/concept-01 [reference.png ...] <<'EOF'
