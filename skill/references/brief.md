@@ -5,8 +5,8 @@ the person. `SKILL.md` carries the few rules that lose a session on their own;
 here is the rest of them, and what to do with a comment or a proposal left on
 a build.
 
-Contents: before there is any geometry — say-back and block preview,
-fastening, hardware, stock cut to length, a picture the person sent,
+Contents: before there is any geometry — say-back, concept picture and block
+preview, fastening, hardware, stock cut to length, a picture the person sent,
 provenance of every number · comments on a build · proposals.
 
 ## Before there is any geometry
@@ -18,8 +18,10 @@ the first solid existed.
 different objects. Say back what the object is as a shape, what it touches and
 what holds it, what passes through it from end to end — water, air, silicone, a
 trigger over its full stroke and back — and how it is made past the printer,
-and end the turn there: the say-back is a question. Once he has answered,
-commit a **block preview**: the whole layout in boxes and
+and end the turn there: the say-back is a question. When the look of the part
+is free, an image model draws a concept picture once he has answered, and the
+block preview follows the picture he picks (`references/concept.md`). Once he
+has answered — or picked — commit a **block preview**: the whole layout in boxes and
 cylinders, as a catalogue and an `assembled` view. It closes this phase, is not
 optional, and is the project's first revision. The part goes in as a
 `printable` box of its overall size, its surroundings beside it as `mock` and

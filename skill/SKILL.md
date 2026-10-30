@@ -22,6 +22,7 @@ else sits beside it and is read at the moment it applies — the files are in
 | Moment | File |
 |---|---|
 | Before any geometry: what he said, what it touches, where the numbers come from, comments and proposals on a build | `references/brief.md` |
+| A part whose look is free: a concept picture from an image model; building the model from any picture | `references/concept.md` |
 | Writing or fixing `checks()`; a build that is slow or killed | `references/checks.md` |
 | Writing `model.py`: the contract, the record types, CadQuery's traps | `references/model-py.md` |
 | Modelling the part in SolidCraft through its MCP server instead of CadQuery | `references/solidcraft.md` |
@@ -55,7 +56,7 @@ zero words of apology.
 
 Nearly all the wasted time in the reviewed sessions was decided here, before
 the first solid existed. The whole of it is in `references/brief.md`; these
-five lose the session on their own.
+lose the session on their own.
 
 **A word is not a specification.** "Bracket", "mount", "holder" each name five
 different objects. Say back what the object is as a shape, what it touches and
@@ -66,6 +67,13 @@ commit a **block preview**: the whole layout in boxes and cylinders, as a
 catalogue and an `assembled` view. It closes this phase, is not optional, and
 is the project's first revision. ("Semicircular bracket" went into geometry
 36 seconds after it was read, and 3 h 48 min of work was thrown away.)
+
+**A look is drawn by an image model, not invented in code.** When what the
+person will see is free — a case on a desk, a housing, a figure — an image
+model draws a concept picture once the say-back is answered, and the block
+preview and the geometry are built from the picture he picks. A form written
+straight into code comes out as boxes and cylinders. How to draw the picture
+and take a model off it: `references/concept.md`.
 
 **A constraint that is not a body does not exist.** Bought hardware, the wall,
 the hand, the hose, the panel behind — all are modelled, though none is

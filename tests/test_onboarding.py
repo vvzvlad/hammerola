@@ -297,8 +297,13 @@ def test_the_skill_names_no_deployment(hub):
     is an address too, and it is the shape a copy-paste out of a browser leaves.
     So the second check looks for a hostname in front of any path this service
     actually serves.
+
+    An address of a service outside the hub that the skill calls by name — the
+    image model of `references/concept.md` — is no deployment of this one, and
+    is taken out of the text before either check.
     """
-    text = one_text(served_skill_files(hub))
+    text = re.sub(r"(?:https://)?openrouter\.ai/\S*", "",
+                  one_text(served_skill_files(hub)))
     assert "://" not in text
     bare = re.findall(
         r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?=/(?:start|api|project|index))",

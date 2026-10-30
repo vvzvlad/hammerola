@@ -451,8 +451,9 @@
   work is pushed. The rest is the model contract (pointing at `model_template/`
   as the example rather than restating it) and the four rules whose breach
   breaks a push — only what is committed is published, a `checklib.py` of one's
-  own, dependencies, and the fact that `model.py` is executed by the hub. It carries no address: the reader
-  substitutes their own hub
+  own, dependencies, and the fact that `model.py` is executed by the hub. It carries no hub address —
+  the reader substitutes their own hub; the one address in it is the outside
+  image model `references/concept.md` calls
 - `ui/` — the React sources for the browser UI, and one of the three places node
   is used here (`viewer/` and `ecad-viewer/` below are the others). Built
   twice, by two toolchains that must not disagree: `make ui` for a workstation and the Dockerfile's `ui`
