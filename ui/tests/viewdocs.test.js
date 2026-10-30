@@ -128,9 +128,9 @@ describe('the documents in the list of views', () => {
 
   it('gather under one heading per type wherever the project lists them, a KiCad design under one', () => {
     // The owner's "чтобы одинаковые типы группировались в группы": notes listed
-    // around the schematic, a board and two CSVs of a plain file.
+    // around the schematic, a board and two CSVs, a text file each.
     const note = (name) => ({ ...DOCS[0], id: name, name, file: `${name}.md` })
-    const csv = (name) => ({ id: name, name, type: 'file', file: `fab/${name}.csv`, bytes: 4600 })
+    const csv = (name) => ({ id: name, name, type: 'text', file: `fab/${name}.csv`, bytes: 4600 })
     const listed = [note('note'), KICAD[0], note('wiring'), csv('BOM'), KICAD[1], note('stackup'), csv('CPL')]
     const shown = drawn(component({ meta: meta(listed), viewsOpen: true }))
     expect(shown.slice(shown.indexOf('3D VIEWS'), shown.lastIndexOf('4.6 kB') + 1)).toEqual(['3D VIEWS', 'closed', '1 parts · 0.0 MB',

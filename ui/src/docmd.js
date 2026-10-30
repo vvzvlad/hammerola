@@ -35,11 +35,13 @@ export const NOWRAP_CLASS = 'md-nowrap';
 
 // How long a cell's text may be and still read as one value (`495.0 × 428.5`,
 // `1 620 ₽`): such a cell does not break, and a longer one wraps as prose.
-const SHORT_CELL = 24;
+// The table of a CSV document keeps its cells by the same rule (DocumentView.jsx).
+export const SHORT_CELL = 24;
 
 // What the browser's defaults leave unreadable or out of the palette. Every
-// colour is a role in static/_v/tokens.css.
-const TAG_STYLE = {
+// colour is a role in static/_v/tokens.css. A CSV document's table is drawn
+// in the same table, header and cell (DocumentView.jsx).
+export const TAG_STYLE = {
   // A bare address has nowhere to break and in a table widens its column past
   // the page; `anywhere` (not `break-word`) also lets the cell shrink to fit.
   a: 'color:var(--accent-text);overflow-wrap:anywhere',

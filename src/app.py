@@ -369,6 +369,10 @@ BUILD_CONTENT_TYPES = {
     # The 3D model of a board, and a board's Gerbers (`render.DOCUMENT_TYPES`).
     ".glb": "model/gltf-binary",
     ".zip": "application/zip",
+    # The text documents, which the page reads and shows as they are; `.json`
+    # among them keeps its own type, above.
+    **{suffix: "text/plain; charset=utf-8" for suffix in render.TEXT_SUFFIXES
+       if suffix != ".json"},
 }
 
 # A build file opens to anybody holding the build's address for one of two

@@ -37,7 +37,7 @@ import React from 'react';
 
 import { parse } from './address.js';
 import CopyLink, { WORDS_CLASS } from './copylink.jsx';
-import { docExt, docHint, docSize, FILE_TYPE } from './DocumentView.jsx';
+import { docExt, docHint, docSize, namedByExt } from './DocumentView.jsx';
 import { shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { schematicSheets } from './kicadpages.js';
@@ -55,11 +55,11 @@ export const VIEWS_GROUP = '3D VIEWS';
 /** The heading a document's row stands under: a member of a KiCad design under
  *  KICAD — its schematic, the schematic's BOM, board and the board's 3D model
  *  are one design the page moves between (its menu's rows), not four kinds of
- *  file — a file the page does not draw under its extension, as the Downloads
- *  menu groups it, any other document under its type. */
+ *  file — a file the page does not draw and a text file under its extension,
+ *  as the Downloads menu groups them, any other document under its type. */
 export function docGroup(doc) {
   if (viewOf(doc)) return 'KICAD';
-  return (doc.type === FILE_TYPE ? docExt(doc) : doc.type).toUpperCase();
+  return (namedByExt(doc) ? docExt(doc) : doc.type).toUpperCase();
 }
 
 /** What a row says beside its name once the heading has said the type: a

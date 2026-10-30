@@ -24,8 +24,10 @@
 //              page lists after it (kicadbom.js), not a document of the hub's
 //   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
 //              layer by layer (GerberView.jsx)
-//   file       anything else a build lists — a DXF for the glass shop, a CSV
-//              of measurements, a firmware image: its name and what it is,
+//   text       a JSON, a log, a config and the like, fetched and shown as it
+//              is, in monospace; a CSV as a table, its first row the header
+//   file       anything else a build lists — a DXF for the glass shop, a
+//              firmware image: its name and what it is,
 //              since the page draws nothing of it; a DXF has the picture the
 //              hub drew of it (`preview`) above them
 //
@@ -41,14 +43,15 @@
 // by handing the page `{ fit, frame }` once it can — `fit()` moves the view,
 // `frame()` answers a promise of a PNG blob — and the page greys both while it
 // holds none. The Gerbers, the board and the schematic, and the board's 3D
-// model can; a markdown page, an image and a file in a frame cannot. The view
+// model can; a markdown page, a text file, an image and a file in a frame
+// cannot. The view
 // on screen of a KiCad design says it again for each member, and again when it
 // is shown after being kept hidden (KicadView.jsx); this component says null as
 // it comes and as it goes, so a document starts grey whatever was on screen
 // before it — a design kept hidden says nothing. A document drawn where no bar
 // is — the datasheet's window in KicadView.jsx — tells nobody.
 //
-// WHEN IT HAS ITS FILE (`onReady`), the page is told: a markdown text in,
+// WHEN IT HAS ITS FILE (`onReady`), the page is told: a markdown or a text file in,
 // a picture or a frame loaded, a KiCad design's files for the view on screen
 // in (KicadView.jsx), a zip of Gerbers in; a failure tells it too, and a file
 // the page does not draw tells it at once. A model's page opened on this
@@ -69,8 +72,9 @@
 import React from 'react';
 
 import { follow, format, parse, respell } from './address.js';
+import { parseCsv } from './csv.js';
 import {
-  findQuote, markdownElements, NOWRAP_CLASS, offsetOf, quoteOf, rangeOf, textIndex,
+  findQuote, markdownElements, NOWRAP_CLASS, offsetOf, quoteOf, rangeOf, SHORT_CELL, TAG_STYLE, textIndex,
 } from './docmd.js';
 import { GERBERS_TYPE } from './gerber.js';
 import GerberView from './GerberView.jsx';
@@ -83,6 +87,15 @@ import { css, MONO, SANS } from './style.jsx';
 /** A document the page does not draw, whatever its extension (`FILE_TYPE` in
  *  src/render.py, held to this spelling by tests/test_documents.py). */
 export const FILE_TYPE = 'file';
+
+/** A text file, shown as it is (`TEXT_TYPE` in src/render.py, held to this
+ *  spelling by tests/test_documents.py). */
+export const TEXT_TYPE = 'text';
+
+/** Whether a document is called by its extension (`docExt`): a file the page
+ *  does not draw, and a text file, whose type is one word for a CSV and a log
+ *  alike. */
+export const namedByExt = (doc) => doc.type === FILE_TYPE || doc.type === TEXT_TYPE;
 
 /** The types of document both pages leave a comment on, each with what
  *  arming the Comment tool over it says to do: the tool is in service over
@@ -122,10 +135,10 @@ export function docBase(base, doc) {
 /** A file's size as a reader reads it: megabytes from one, else kilobytes. */
 export const docSize = (bytes) => (bytes >= 1e6 ? mb(bytes) : `${(bytes / 1e3).toFixed(1)} kB`);
 
-/** What a file the page does not draw is called by: its extension, lower case
- *  and without the dot (`dxf`), else its type, for a name that carries none.
- *  Asked of a `FILE_TYPE` document only — the rest are named by what the page
- *  makes of them, which is what their type says. */
+/** What a file the page does not draw, or a text file, is called by: its
+ *  extension, lower case and without the dot (`dxf`, `csv`), else its type, for
+ *  a name that carries none. Asked of those only (`namedByExt`) — the rest are
+ *  named by what the page makes of them, which is what their type says. */
 export function docExt(doc) {
   const dot = doc.file.lastIndexOf('.');
   const ext = dot > doc.file.lastIndexOf('/') + 1 ? doc.file.slice(dot + 1).toLowerCase() : '';
@@ -137,11 +150,11 @@ export function docExt(doc) {
 
 /** What a document is labelled with beside its name: a KiCad schematic its
  *  sheet count, its BOM, a board and its 3D model what they are, any other its
- *  type and size. A plain file says its extension in place of the word `file`,
- *  which would be the same word on every such file. The caption on the card of
- *  a file the page does not draw; in the list of views only a KiCad member's
- *  row carries it, the others standing under their type (`docGroup` in
- *  viewlist.jsx). */
+ *  type and size. A plain file and a text file say their extension in place of
+ *  the word `file` or `text`, which would be the same word on every such file.
+ *  The caption on the card of a file the page does not draw; in the list of
+ *  views only a KiCad member's row carries it, the others standing under their
+ *  type (`docGroup` in viewlist.jsx). */
 export function docHint(doc) {
   if (doc.type === 'schematic') {
     const sheets = doc.kicad.schematics.length;
@@ -150,7 +163,7 @@ export function docHint(doc) {
   if (doc.type === BOM_TYPE) return 'BOM';
   if (doc.type === 'board') return 'board';
   if (doc.type === 'board3d') return '3D';
-  return [doc.type === FILE_TYPE ? docExt(doc) : doc.type, docSize(doc.bytes)].join(' · ');
+  return [namedByExt(doc) ? docExt(doc) : doc.type, docSize(doc.bytes)].join(' · ');
 }
 
 /** What a page keys the drawing of `doc` by: a member of a KiCad design by the
@@ -191,6 +204,37 @@ const FRAME = 'display:block;border:0;width:100%;height:100%;background:var(--pa
 const ARTICLE = 'max-width:860px;margin:0 auto;padding:24px 28px 48px;font-size:15px;line-height:1.55;user-select:text';
 const PICTURE = 'display:block;max-width:100%;margin:24px auto;background:var(--paper-bg)';
 const NOTE = `padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
+// A text file as it is: every line as written, none wrapped, so a long one
+// scrolls the layer sideways; as wide as its longest line, so the padding
+// stands to the right of it too. Selectable for the article's reason.
+const PLAIN = `margin:0;padding:24px 28px 48px;width:max-content;min-width:100%;box-sizing:border-box;`
+  + `font:400 12.5px/1.55 ${MONO};color:var(--text);white-space:pre;tab-size:4;user-select:text`;
+// A CSV's table on the same sheet, in the cells markdown's tables are drawn
+// in: a long cell wraps at its spaces and after its commas; one with neither,
+// a footprint name or an address, keeps its width, and a table too wide for
+// the page scrolls the layer sideways.
+const SHEET = `padding:24px 28px 48px;font:400 13px/1.45 ${SANS};color:var(--text);user-select:text`;
+const CSV_TABLE = `${TAG_STYLE.table};margin:0`;
+
+/** A CSV text as a table: its first row the header, a short cell on one line
+ *  as in a markdown table (`SHORT_CELL`, docmd.js). A long one may break
+ *  after each comma: a parts list writes its designators `C105,C112,…` with
+ *  no space, which would otherwise hold the column at the whole list's width. */
+function csvTable(text) {
+  const [head = [], ...body] = parseCsv(text);
+  const cell = (Tag, style) => (value, i) => (value.length <= SHORT_CELL
+    ? <Tag key={i} style={css(style)} className={NOWRAP_CLASS}>{value}</Tag>
+    : <Tag key={i} style={css(style)}>{value.split(',').flatMap((part, at) => (at ? [',', <wbr key={at} />, part] : [part]))}</Tag>);
+  return (
+    <div style={css(SHEET)}>
+      <style>{DOC_CSS}</style>
+      <table style={css(CSV_TABLE)}>
+        <thead><tr>{head.map(cell('th', `${TAG_STYLE.th};text-align:left`))}</tr></thead>
+        <tbody>{body.map((row, r) => <tr key={r}>{row.map(cell('td', TAG_STYLE.td))}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
 // The box the load bar centres itself in: the whole area the document is drawn in.
 const LOADING = 'position:relative;height:100%';
 
@@ -212,7 +256,8 @@ const PREVIEW_SHEET = 'display:flex;flex-direction:column;align-items:center;gap
 const PREVIEW = 'flex:1;min-height:0;width:100%;object-fit:contain';
 
 // A table cell short enough to read as one value (`495.0 × 428.5`) keeps it on
-// one line (`docmd.js` marks it). A class and not an inline style, so that the
+// one line (`docmd.js` marks it in a markdown table, `csvTable` in a CSV's). A
+// class and not an inline style, so that the
 // rule is one line in one place rather than a property on every short cell.
 // The comments' quotes are underlined over a wash of the accent, the open one
 // in a stronger one.
@@ -301,7 +346,7 @@ export function docLinks(base, documents, onOpen, views) {
  *  build's) and `onOpen` (the page's door for opening one by id) are for a
  *  member of a KiCad design and for a markdown link to another document,
  *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
- *  the file, `received` the bytes of a markdown text in so far, `addressDoc`
+ *  the file, `received` the bytes of a markdown or a text file in so far, `addressDoc`
  *  the page's reading of which document an address names, for a schematic's
  *  sheet in it (KicadView.jsx), `onSheet` the page's door for writing
  *  that sheet, `comment` what a KiCad design and the Gerbers need for the
@@ -324,6 +369,12 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
         {markdownElements(text, docBase(base, doc), docLinks(base, documents, onOpen, views))}
       </article>
     );
+  }
+  if (doc.type === TEXT_TYPE) {
+    if (error) return <div style={css(NOTE)}>{error}</div>;
+    if (text === null) return <div style={css(LOADING)}>{loadBar(received, doc.bytes, false)}</div>;
+    if (docExt(doc) === 'csv') return csvTable(text);
+    return <pre style={css(PLAIN)}>{text}</pre>;
   }
   if (doc.type === 'image') {
     return <img src={docUrl(base, doc)} alt={doc.name} style={css(PICTURE)} onLoad={onReady} onError={onReady} />;
@@ -358,7 +409,8 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
 }
 
 /**
- * One document, holding the text of a markdown one while it is fetched.
+ * One document, holding the text of a markdown one or a text file while it is
+ * fetched.
  *
  * A markdown one takes the page's comments (`comment`, comments.jsx) itself.
  * With the Comment tool armed (`on`) a selection made in the article is the
@@ -481,7 +533,7 @@ export default class DocumentView extends React.Component {
     const { doc, base } = this.props;
     this.props.onTools(null);
     if (doc.type === FILE_TYPE) this.props.onReady();
-    if (doc.type !== 'markdown') return;
+    if (doc.type !== 'markdown' && doc.type !== TEXT_TYPE) return;
     const count = meter((received) => {
       if (!this._gone) this.setState({ received });
     });

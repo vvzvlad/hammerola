@@ -73,8 +73,9 @@
 - `src/docsbuild.py` — the documents a project publishes to be read (issue
   #122): the paths its `project.json` lists under `documents`, published under
   the same paths. The extension decides only how the page shows one (markdown,
-  PDF, pictures, HTML, SVG, a KiCad schematic, board or 3D model and a zip of
-  Gerbers — `render.DOCUMENT_TYPES`); any other extension publishes as
+  PDF, pictures, HTML, SVG, a KiCad schematic, board or 3D model, a zip of
+  Gerbers and a text file — `render.DOCUMENT_TYPES`, `render.TEXT_SUFFIXES`,
+  issue #133); any other extension publishes as
   `render.FILE_TYPE`, a row that downloads the file (issue #125); a `.dxf`
   among them, unless listed with `download`, also gets a picture, `<path>.svg`, drawn here with ezdxf when the
   list is checked and named by the entry's `preview`, and
@@ -524,7 +525,9 @@
   to another listed document or to the page's own address (`?v=open`) opening
   it on the page through `docLinks`, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
-  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, and anything the page
+  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, a text file (`TEXT_TYPE`)
+  fetched like markdown and shown as it is in a `<pre>`, a CSV among them as a
+  table (rows read by `ui/src/csv.js`, cells styled as markdown's), and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
   and size, under the picture of a DXF when the entry carries `preview`; every
   document is downloaded from the strip at the bottom (`DocFile`). Both pages

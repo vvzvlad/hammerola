@@ -460,16 +460,19 @@ the same menu with no model behind it.
 
 **The extension decides only how a document is shown.** Markdown is drawn, and
 a link in it to another listed document opens that document on the page; a PDF,
-a picture, HTML and SVG are shown as they are; `.kicad_sch`, `.kicad_pcb`,
-`.glb` and `.zip` are the board, below. A file of any other extension — a CSV of
-measurements, a supplier's STEP, a firmware image — is a plain file: choosing it
-shows its name, extension and size instead of drawing it, and on a model's
-build page the Downloads menu offers it under its extension, beside the STL. A
+a picture, HTML and SVG are shown as they are; a CSV is drawn as a table, its
+first row the header, and any other text file — `.txt`, `.tsv`, `.json`, `.xml`,
+`.yaml`, `.yml`, `.toml`, `.ini`, `.log` — as its text, in monospace;
+`.kicad_sch`, `.kicad_pcb`, `.glb` and `.zip` are the board, below. A file of
+any other extension — a supplier's STEP, a firmware image — is a plain file:
+choosing it shows its name, extension and size instead of drawing it. On a
+model's build page the Downloads menu offers a text file and a plain file under
+its extension, beside the STL. A
 `.dxf` is a plain file with a picture: the hub draws an SVG of it when the push
 is checked, publishes it at `<path>.svg`, and the page shows that picture above
 the file's name and size.
 
-![A CSV listed as a document: its name, extension and size, with Download and Copy link](docs/images/plain-file.png)
+![A CSV listed as a document: a parts list drawn as a table, with Download and Copy link](docs/images/csv-table.png)
 
 **A KiCad board is up to three documents with one name.** A schematic, its board
 and the board's 3D model whose paths differ only by the extension are one

@@ -13,9 +13,9 @@ between two of them works as it does in the tree. Nothing is found by
 extension: a file is a document because the list says so. The EXTENSION decides
 only how the page shows it (`render.DOCUMENT_TYPES`: markdown, PDF, pictures,
 HTML, SVG, a KiCad schematic, a KiCad board, the 3D model of a board, a zip of
-Gerbers); any other extension publishes as `render.FILE_TYPE`, a row that
-downloads the file instead of drawing it — a supplier's STEP, a CSV of
-measurements.
+Gerbers, a text file — CSV, JSON, a log); any other extension publishes as
+`render.FILE_TYPE`, a row that downloads the file instead of drawing it — a
+supplier's STEP, a firmware image.
 
 A DXF, the one the glass shop cuts from, is such a file too, and the page
 shows a picture of it: an SVG the hub draws of it

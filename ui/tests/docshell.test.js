@@ -15,7 +15,9 @@ vi.mock('/_v/ecad-viewer.js', () => ({}))
 import { composerView } from '../src/comments.jsx'
 import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
-import DocumentView, { docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE } from '../src/DocumentView.jsx'
+import DocumentView, {
+  docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE, TEXT_TYPE,
+} from '../src/DocumentView.jsx'
 import KicadView, { DRAFT_MARK, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
@@ -300,6 +302,30 @@ describe('one document, as both pages draw it', () => {
     expect(ofType(tree, 'img')).toEqual([])
   })
 
+  it('shows a text file as it is, and calls it by its extension', () => {
+    const log = doc('logs/stand.log', TEXT_TYPE, 3200)
+    // Nothing in it is read as markup: a markdown heading stays its line.
+    const tree = documentBody(log, BASE, '# start\n  R1,  2', '')
+    expect(ofType(tree, 'pre').map(text)).toEqual(['# start\n  R1,  2'])
+    expect(ofType(tree, 'h1')).toEqual([])
+    expect(text(documentBody(log, BASE, null, '', [], undefined, undefined, undefined, 1600)))
+      .toBe('Loading… 1.6 / 3.2 kB')
+    expect(text(documentBody(log, BASE, null, 'logs/stand.log did not load: HTTP 404')))
+      .toBe('logs/stand.log did not load: HTTP 404')
+    expect(docHint(log)).toBe('log · 3.2 kB')
+  })
+
+  it('draws a CSV as a table, its first row the header', () => {
+    const bom = doc('fab/bom.csv', TEXT_TYPE, 3200)
+    const tree = documentBody(bom, BASE, 'Comment,Designator\n100n,"C105,C112"\n1u,"C301,C302,C303,C304,C305,C306"\n', '')
+    expect(ofType(tree, 'pre')).toEqual([])
+    expect(ofType(tree, 'th').map(text)).toEqual(['Comment', 'Designator'])
+    // a long cell keeps its text whole, commas and all, however it breaks
+    expect(ofType(ofType(tree, 'tbody'), 'tr').map((row) => ofType(row, 'td').map(text)))
+      .toEqual([['100n', 'C105,C112'], ['1u', 'C301,C302,C303,C304,C305,C306']])
+    expect(docHint(bom)).toBe('csv · 3.2 kB')
+  })
+
   it('shows the picture the hub drew of a DXF above its name', () => {
     const tree = documentBody({ ...cutPlan, preview: 'cut/glass.dxf.svg' }, BASE, null, '')
     const [img] = ofType(tree, 'img')
@@ -336,6 +362,13 @@ describe('one document, as both pages draw it', () => {
       expect(fetch).toHaveBeenCalledWith(`${BASE}docs/cut-list.md`)
       await vi.waitFor(() => expect(view.state.text).toBe('# Fetched'))
       expect(ofType(view.render(), 'h1').map(text)).toEqual(['Fetched'])
+    })
+
+    it('fetches a text file, shows what came and tells the page', async () => {
+      const view = mounted(doc('logs/stand.log', TEXT_TYPE))
+      expect(fetch).toHaveBeenCalledWith(`${BASE}logs/stand.log`)
+      await vi.waitFor(() => expect(view.props.onReady).toHaveBeenCalledTimes(1))
+      expect(ofType(view.render(), 'pre').map(text)).toEqual(['# Fetched'])
     })
 
     it('fetches nothing for a document the browser draws itself', () => {

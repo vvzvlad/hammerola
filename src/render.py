@@ -74,10 +74,19 @@ PART_KINDS = (KIND_PRINTABLE, "hardware", "mock")
 # its shell by that word alone (`DOCUMENTS_KIND` in `ui/src/DocShell.jsx`).
 DOCUMENTS_KIND = "documents"
 
+# A text file, which the page shows as it is, in monospace, and a CSV as a
+# table (`ui/src/DocumentView.jsx`): a parts list, a log, a config. The hub
+# serves each as plain text but `.json`, which keeps `application/json`, the
+# type every view file of a build is served as (`app.BUILD_CONTENT_TYPES`).
+TEXT_TYPE = "text"
+TEXT_SUFFIXES = (".txt", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
+                 ".toml", ".ini", ".log")
+
 # What the page DRAWS, by extension. Not what may be listed: a document of any
 # other extension is published as `FILE_TYPE` below. `app.OPEN_SUFFIXES` and
 # `app.BUILD_CONTENT_TYPES` cover every key (tests/test_documents.py).
 DOCUMENT_TYPES = {
+    **dict.fromkeys(TEXT_SUFFIXES, TEXT_TYPE),
     ".md": "markdown",
     ".pdf": "pdf",
     ".png": "image",
@@ -101,8 +110,8 @@ SCHEMATIC_TYPE = DOCUMENT_TYPES[".kicad_sch"]
 BOARD_TYPE = DOCUMENT_TYPES[".kicad_pcb"]
 
 # A document the page does not draw: a file published to be taken rather than
-# read — the DXF a glass shop cuts from, a CSV of measurements, a supplier's
-# STEP the model does not build. The page gives it a row that downloads the
+# read — the DXF a glass shop cuts from, a firmware image, a supplier's STEP
+# the model does not build. The page gives it a row that downloads the
 # file instead of showing it, and the hub serves it to a plain link like every
 # other document (`app.OPEN_SUFFIXES`). A DXF not listed with `download` also
 # carries `preview`, the path of the SVG the hub drew of it (`dxf_preview`,

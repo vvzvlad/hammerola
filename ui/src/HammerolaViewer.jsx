@@ -123,9 +123,10 @@ import { HOLDABLE, installLongPress, markMenu } from './longpress.js';
 import { chromeView } from './chromeview.js';
 // And one of the build's documents, laid over the model when it is chosen in
 // the view list; drawn as the documents page draws it.
-// `FILE_TYPE` and `docExt` come with it for the downloads menu, which offers a
-// document the page cannot draw under the extension it is named by.
-import { COMMENTABLE, docExt, DocumentLayers, FILE_TYPE } from './DocumentView.jsx';
+// `namedByExt` and `docExt` come with it for the downloads menu, which offers a
+// document the page cannot draw, and a text file, under the extension it is
+// named by.
+import { COMMENTABLE, docExt, DocumentLayers, namedByExt } from './DocumentView.jsx';
 // The bar the document views draw while their file comes in, drawn over the
 // model while the viewport fetches a view file.
 import { loadBar } from './loadbar.jsx';
@@ -557,10 +558,11 @@ const GERBERS_GROUP = 'GERBERS';
  *
  * Two kinds of document reach this menu, both out of `meta.documents`. Every
  * zip of Gerbers (`GERBERS_TYPE`) is a row of one GERBERS group, named by its
- * title. Every document the page cannot draw (`FILE_TYPE`) is a row under its
- * own extension in capitals — DXF, CSV — so a cut list for the glass shop is
- * taken the way an STL is, and lands beside a part's exports when it shares
- * their extension. Both are ordered like any other format.
+ * title. Every document the page cannot draw (`FILE_TYPE`) and every text file
+ * (`TEXT_TYPE`) is a row under its own extension in capitals — DXF, CSV — so a
+ * cut list for the glass shop is taken the way an STL is, and lands beside a
+ * part's exports when it shares their extension. Both are ordered like any
+ * other format.
  */
 export function groupDownloads(parts, documents, views) {
   const groups = new Map();
@@ -578,7 +580,7 @@ export function groupDownloads(parts, documents, views) {
     .filter((doc) => doc.type === GERBERS_TYPE)
     .map((doc) => ({ label: String(doc.name || doc.file), file: doc.file }));
   if (gerbers.length) groups.set(GERBERS_GROUP, [...(groups.get(GERBERS_GROUP) || []), ...gerbers]);
-  listed.filter((doc) => doc.type === FILE_TYPE).forEach((doc) => {
+  listed.filter(namedByExt).forEach((doc) => {
     const group = docExt(doc).toUpperCase();
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push({ label: String(doc.name || doc.file), file: doc.file });

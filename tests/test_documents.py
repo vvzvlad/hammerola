@@ -367,6 +367,26 @@ def test_a_dxf_is_shown_by_a_picture_the_hub_draws_unless_it_is_for_download(hub
     assert hub.get(f"{base}/cut/door.dxf.svg").status_code == 404
 
 
+def test_a_text_file_is_published_to_be_read_and_served_as_text(hub):
+    """A parts list, a config and a log are shown on the page as their text,
+    so each is served as something the page reads, without a key; listed for
+    `download`, a text file is a plain file like any other."""
+    texts = {"fab/bom.csv": b"Ref,Qty\nR1,2\n", "cfg.json": b'{"a": 1}\n',
+             "logs/run.log": b"ok\n"}
+    listed = ["fab/bom.csv", "cfg.json", {"file": "logs/run.log", "download": True}]
+    revision = published(hub, documents_tree(listed, **texts))
+    base = f"/project/docs0001/{revision}"
+    meta = hub.get(f"{base}/meta.json").json()
+    assert [(d["file"], d["type"]) for d in meta["documents"]] == [
+        ("fab/bom.csv", "text"), ("cfg.json", "text"), ("logs/run.log", "file")]
+    for name, ctype in (("fab/bom.csv", "text/plain; charset=utf-8"),
+                        ("cfg.json", "application/json")):
+        reply = hub.get(f"{base}/{name}")
+        assert (reply.status_code, reply.content, reply.headers["Content-Type"]) == (
+            200, texts[name], ctype), name
+        assert "Content-Disposition" not in reply.headers, name
+
+
 def test_a_part_export_the_list_does_not_name_stays_closed(model_hub):
     """What opens a file is this build's own list, not the extension's absence
     from `OPEN_SUFFIXES`: a build may now list a `.dxf` and its `.stl` exports
@@ -616,7 +636,7 @@ def test_a_document_id_is_its_path_and_two_paths_never_share_one(tmp_path):
      "extension makes it 'markdown' or 'file'"),
     # An extension the page draws nothing of: a plain file is all it may be,
     # and claiming a drawing would hand it to that drawing's renderer.
-    (lambda doc: doc.update(file="notes.txt"), "extension makes it 'file'"),
+    (lambda doc: doc.update(file="cut.dxf"), "extension makes it 'file'"),
     (lambda doc: doc.update(file="../list.md"), "has the segment '..'"),
     (lambda doc: doc.update(hidden=1), "has a `hidden` that is not true or false"),
     # A file the build declared, and not the one a DXF's picture is.
@@ -625,13 +645,12 @@ def test_a_document_id_is_its_path_and_two_paths_never_share_one(tmp_path):
 ])
 def test_a_document_entry_that_lies_about_its_file_is_refused(
         tmp_path, change, message):
-    for name in ("list.md", "notes.txt", "cut.dxf"):
+    for name in ("list.md", "cut.dxf"):
         (tmp_path / name).write_text("x", encoding="utf-8")
     doc = {"name": "list.md", "type": "markdown", "file": "list.md"}
     change(doc)
     raw = {"kind": "documents", "documents": [doc]}
-    files = {"list.md": "0" * 64, "notes.txt": "0" * 64, "../list.md": "0" * 64,
-             "cut.dxf": "0" * 64}
+    files = {"list.md": "0" * 64, "../list.md": "0" * 64, "cut.dxf": "0" * 64}
     with pytest.raises(ValueError, match=re.escape(message)):
         render.build_meta(pid="docs0001", commit="abc", raw=raw,
                           staging=tmp_path, files=files, published="now")
@@ -677,6 +696,15 @@ def test_the_page_and_the_hub_spell_the_plain_file_type_the_same_way():
     source = (ROOT / "ui" / "src" / "DocumentView.jsx").read_text(encoding="utf-8")
     spelled = re.search(r"export const FILE_TYPE = '([^']+)'", source)
     assert spelled and spelled.group(1) == render.FILE_TYPE
+
+
+def test_the_page_and_the_hub_spell_the_text_type_the_same_way():
+    # Renamed on one side only, a CSV is drawn in a frame in the browser's own
+    # colours rather than as the page's table, stands under TEXT rather than
+    # CSV, and leaves the Downloads menu.
+    source = (ROOT / "ui" / "src" / "DocumentView.jsx").read_text(encoding="utf-8")
+    spelled = re.search(r"export const TEXT_TYPE = '([^']+)'", source)
+    assert spelled and spelled.group(1) == render.TEXT_TYPE
 
 
 def test_the_page_and_the_hub_spell_the_gerbers_type_the_same_way():

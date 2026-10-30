@@ -2,7 +2,8 @@
 // far against the file's size, as a label and a bar under it, in the middle of
 // the view (BoardView3D.jsx, KicadView.jsx, GerberView.jsx, DocumentView.jsx).
 // It covers the nearest positioned box, so a view draws it in its own
-// positioned shell (markdown, which has none, in a box of its own) rather than
+// positioned shell (markdown and a text file, which have none, in a box of
+// their own) rather than
 // inside the note it gives an error.
 //
 // THE SIZE IS THE DOCUMENT'S `bytes` in meta.json (src/render.py), not the
