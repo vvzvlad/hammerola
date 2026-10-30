@@ -20,12 +20,14 @@ project's title), and optionally `"hidden": true` or `"download": true`. Each
 path is a file of the project and is published under the same path; nothing
 unlisted is. Its EXTENSION decides only how the page shows it: a `.md`, `.pdf`,
 `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.html`, `.htm`, `.svg`, `.kicad_sch`,
-`.kicad_pcb`, `.glb` or `.zip` is drawn; a file of any other extension — a DXF
-for the glass shop, a supplier's STEP, a CSV of measurements, a firmware image —
-keeps its row in the menu and shows its name, extension and size instead of
-drawing it, and a
-model's build page also offers it in Downloads under its extension (DXF, CSV),
-beside the STL. A `.dxf` is that kind of file too, with one addition: the hub
+`.kicad_pcb`, `.glb` or `.zip` is drawn; a `.csv` is drawn as a table, its
+first row the header; any other text file — `.txt`, `.tsv`, `.json`, `.xml`,
+`.yaml`, `.yml`, `.toml`, `.ini`, `.log` — is shown as its text, as it is, in
+monospace; a file of any other extension — a DXF for the glass shop, a
+supplier's STEP, a firmware image — keeps its row in the menu and shows its
+name, extension and size instead of drawing it. A model's build page also offers
+a text file and such a plain file in Downloads under its extension (CSV, DXF),
+beside the STL. A `.dxf` is such a plain file too, with one addition: the hub
 draws a picture of it at publish time and the page shows that picture. The picture is published as `<path>.svg` (`cut/glass.dxf.svg`),
 so nothing else may be listed at that path; a DXF the hub cannot read, or one
 with nothing drawn in it, refuses the push, naming it, and
