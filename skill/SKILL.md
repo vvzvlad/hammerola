@@ -29,6 +29,7 @@ else sits beside it and is read at the moment it applies — the files are in
 | Putting a dimension on the drawing: shrinkage, minimum walls, orientation, fasteners | `references/printing.md` |
 | A file published beside the model: document, drawing, PDF, picture, report, or any file to hand over (DXF, STEP, CSV) | `references/documents.md` |
 | A KiCad schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
+| Designing a board an agent will bring up and test with no person at the bench; test points for the flying probe | `references/testable-boards.md` |
 | Starting a project, fetching a revision back, removing one, setting up a machine | `references/cli.md` |
 
 ## Talking to the person
