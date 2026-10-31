@@ -176,8 +176,8 @@ ground path is the shortest there is — the probe-tip adaptor Tektronix asks
 for, printed on the board. Its symbol `TP_Probe` has two pins, the net and
 GND, and a field `Probe` that says what the bench measures there ("rail
 3.3 V", "BCLK 3.072 MHz"); the check refuses an empty one. All points on ONE
-side — the bottom when the assembly is single-sided — and ≥ 1.5 mm from any
-edge.
+side — the bottom when the assembly is single-sided — and ≥ 2.0 mm from any
+edge (the ring reaches 1.6 mm out, 0.4 mm of board remains).
 
 **Keep-out around a point**: 0.38 mm + 0.268 × the height of the neighbour
 (the probe comes in at 16°) — 3 mm beside a 10 mm part. Nothing under
