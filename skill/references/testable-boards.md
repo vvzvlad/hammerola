@@ -170,7 +170,7 @@ waveform, timing, analog, fast lines. A net already on a header or terminal
 block needs none.
 
 **The point is coaxial**: `TP_Probe_Coax_D3.2mm`, the signal Ø 1.0 mm at the
-centre, GND a ring Ø 1.6–3.2 mm around it with a 0.4 mm gap for the trace.
+centre, GND a ring Ø 1.6–3.2 mm around it with a 0.6 mm gap for the trace.
 The head is a centre pin with a ring contact, so rotation is free and the
 ground path is the shortest there is — the probe-tip adaptor Tektronix asks
 for, printed on the board. Its symbol `TP_Probe` has two pins, the net and
