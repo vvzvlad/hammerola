@@ -60,4 +60,6 @@ overwrite what the model's build wrote refuses the push, naming it.
 `"download": true` publishes an entry as a plain file whatever its extension, so a
 zip of stand logs is taken rather than read as a board's Gerbers, which share the
 one extension the page unpacks. A schematic or a board listed that way brings
-neither its sheets nor its `.kicad_pro`: there is nothing to draw them for.
+neither its sheets nor its `.kicad_pro`: there is nothing to draw them for. A
+text file listed that way is still shown as its text: the page knows it by its
+extension.
