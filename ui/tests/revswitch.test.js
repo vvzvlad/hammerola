@@ -149,8 +149,8 @@ function component(over = {}) {
  *
  * `window.location` is a getter here, so the whole object can be replaced, and
  * must be: jsdom refuses a write to `location.href`, logs it and leaves every
- * field unchanged, so it cannot be observed otherwise. The three reads the code
- * makes are delegated to the real one.
+ * field unchanged, so it cannot be observed otherwise. The reads the code makes
+ * are delegated to the real one; a `replace` is recorded as `replace <address>`.
  */
 function watchNavigation() {
   const real = Object.getOwnPropertyDescriptor(window, 'location')
@@ -162,7 +162,8 @@ function watchNavigation() {
     get pathname() { return at().pathname },
     get search() { return at().search },
     get origin() { return at().origin },
-    reload() { went.push('reload') },
+    get hash() { return at().hash },
+    replace(value) { went.push(`replace ${value}`) },
   }
   Object.defineProperty(window, 'location', { configurable: true, get: () => view })
   onTestFinished(() => Object.defineProperty(window, 'location', real))
@@ -2677,7 +2678,10 @@ describe('a target that will not load', () => {
     expect(c.state.viewError).toBeFalsy()
   })
 
-  it('reloads the entry Back put on the address bar when its build has no model', async () => {
+  it('loads the entry Back put on the address bar in its place when its build has no model', async () => {
+    // What the bar shows is what loads, its fragment dropped; the path stays
+    // the fixture's, which `guardPage` holds `PAGE` to after the test.
+    window.history.replaceState(null, '', `${path(A)}?d=notes.md#intro`)
     const went = watchNavigation()
     const c = component()
     const push = vi.spyOn(history, 'pushState')
@@ -2685,7 +2689,7 @@ describe('a target that will not load', () => {
 
     await c.switchBuild('proj1', B, { push: false })
 
-    expect(went).toEqual(['reload'])
+    expect(went).toEqual([`replace ${path(A)}?d=notes.md`])
     expect(push).not.toHaveBeenCalled()
     expect(PAGE.slot).toBe(A)
     expect(c.state.viewError).toBeFalsy()

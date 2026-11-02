@@ -1964,9 +1964,12 @@ export default class HammerolaViewer extends React.Component {
     // A BUILD WITH NO MODEL IS THE OTHER SHELL'S: `main.jsx` mounts DocShell
     // for it, and only a page load gets there. A pick loads its address on the
     // document open here and that document's sheet, as the picker of that page
-    // keeps them; Back or Forward onto it loads the address the browser shows.
+    // keeps them; Back or Forward onto it loads the address the browser shows,
+    // in place of its entry. Without the hash: the address shown, fragment and
+    // all, would only scroll to the fragment. Such a build has no
+    // camera to keep, so the swap this page does to keep one has nothing to do.
     if (meta && meta.kind === DOCUMENTS_KIND) {
-      if (!push) { location.reload(); return; }
+      if (!push) { location.replace(format({ ...parse(), hash: '' })); return; }
       location.href = format(fresh(path, {
         doc: this.state.doc, sheet: this.state.doc ? parse().sheet : null }));
       return;
