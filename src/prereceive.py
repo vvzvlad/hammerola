@@ -17,6 +17,10 @@ Two passes over the refs:
   first failed build refuses the push; what published before it stays a
   revision.
 
+The line naming a build's address — `published:`, or `unchanged:` for a draft
+whose tree the slot holds — ends with the number of the project's open comments
+and the command that reads them, when there are any (`_comments_note`).
+
 A branch is a variant of the project. It publishes the newest commit of its
 first-parent line after the old tip that touched the project's directory,
 under its sha, unless that commit is built already; its `latest` follows the
@@ -132,6 +136,13 @@ SLOW_BUILD_WARNING = (
     "  \"Keeping checks fast enough to run\", in the skill's\n"
     "  references/checks.md, has all three.")
 
+# The tail of a push's address line while the project has open comments. An
+# agent reads the queue when it starts, and a comment written while it works
+# reaches it only here. It rides on the address line because a pusher who
+# filters the output keeps that line.
+OPEN_COMMENTS_NOTE = (" — open comments: {count}, read them with "
+                      "`hammerola comments`")
+
 
 class Refused(Exception):
     """A ref this push may not carry. The message is the phrase the pusher reads."""
@@ -202,11 +213,14 @@ def parse(body: bytes, store: Store) -> HookRequest:
     return HookRequest(pid, tuple(updates), dict(quarantine), tuple(options))
 
 
-def run(store: Store, jobs, builds, request: HookRequest, say) -> bool:
+def run(store: Store, jobs, builds, comments, request: HookRequest,
+        say) -> bool:
     """Answer one push, line by line through `say`. -> whether it may go in.
 
-    The verdict line is the caller's to write. Every refusal is one phrase to
-    the pusher and the line `push <pid> <ref>: refused: <why>` in the log.
+    `comments` is the hub's comment queue (`src.comments.CommentStore`), read
+    for `_comments_note`. The verdict line is the caller's to write. Every
+    refusal is one phrase to the pusher and the line `push <pid> <ref>:
+    refused: <why>` in the log.
     """
     repo = store.repo_dir(request.pid)
     env = request.quarantine
@@ -217,18 +231,22 @@ def run(store: Store, jobs, builds, request: HookRequest, say) -> bool:
         for plan in plans:
             if plan.unchanged:
                 say(f"unchanged: "
-                    f"{build_path(request.pid, DEV_LINK, plan.variant)}")
+                    f"{build_path(request.pid, DEV_LINK, plan.variant)}"
+                    f"{_comments_note(comments, request.pid)}")
             elif plan.target is not None and (
                     plan.draft
                     or store.built_build(request.pid, plan.target, env) is None):
                 # Asked again for a branch: an earlier ref of this push, a
                 # second branch at the same commit, may have built it.
-                if not plan.draft and _reuse_draft(store, jobs, repo,
-                                                   request.pid, env, plan,
-                                                   force, say):
-                    continue
-                _build(store, jobs, builds, repo, request.pid, env, plan, force,
-                       say)
+                url = None if plan.draft else _reuse_draft(
+                    store, jobs, repo, request.pid, env, plan, force, say)
+                if url is None:
+                    url = _build(store, jobs, builds, repo, request.pid, env,
+                                 plan, force, say)
+                # Counted after the build, which takes minutes: a comment
+                # written meanwhile is in the count.
+                say(f"published: {url}"
+                    f"{_comments_note(comments, request.pid)}")
     except Refused as refusal:
         logger.warning(f"push {request.pid} {refusal.ref}: refused: {refusal}")
         say(str(refusal))
@@ -297,6 +315,12 @@ def _look(store: Store, repo, pid: str, env: dict, old: str, new: str,
     return Plan(ref, draft, directory, target, name)
 
 
+def _comments_note(comments, pid: str) -> str:
+    """`OPEN_COMMENTS_NOTE` for the project's open comments, "" for none."""
+    count = len(comments.list(project=pid, status="open"))
+    return OPEN_COMMENTS_NOTE.format(count=count) if count else ""
+
+
 def _is_ancestor(repo, old: str, new: str, env: dict) -> bool:
     try:
         run_git(repo, "merge-base", "--is-ancestor", old, new, env=env)
@@ -361,8 +385,9 @@ def revision_message(subject: str) -> str | None:
 
 
 def _reuse_draft(store: Store, jobs, repo, pid: str, env: dict, plan: Plan,
-                 force: bool, say) -> bool:
-    """Publish a branch's target from its variant's draft slot. -> whether it did.
+                 force: bool, say) -> str | None:
+    """Publish a branch's target from its variant's draft slot. -> the address
+    it was published at, or None when it was not.
 
     When the slot holds the target's tree, the draft has built and checked it
     already: the revision is the slot's build with the draft's log, and
@@ -389,10 +414,9 @@ def _reuse_draft(store: Store, jobs, repo, pid: str, env: dict, plan: Plan,
     except PublishError as error:
         raise Refused(plan.ref, error.message) from error
     if answer is None:
-        return False
+        return None
     say(f"reused the draft build of this tree for {plan.ref}: not built again")
-    say(f"published: {answer[1]['url']}")
-    return True
+    return answer[1]["url"]
 
 
 def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
@@ -453,7 +477,6 @@ def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
     _say_duration(record, say)
     if record["state"] != STATE_DONE:
         raise Refused(plan.ref, record.get("error") or "the build failed")
-    say(f"published: {record['build_url']}")
     return record["build_url"]
 
 

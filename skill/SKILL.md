@@ -157,7 +157,10 @@ published nothing. **Everything a person is shown is a pushed commit**, the
 block preview included. **Hand over its URL every
 time** — `published: /project/<pid>/<sha>/` in the push's output, under the
 hub's address — not once at the end, or the person waits or prints something
-superseded. The commit's subject is what a person picks a revision by.
+superseded. The commit's subject is what a person picks a revision by. When
+the line goes on with `— open comments: N` and the command that reads them, a
+person has left notes on a build that nobody resolved: read them with
+`hammerola comments` before the next change (`references/brief.md`).
 
 It pushes the local branch `main` from any worktree: there is no need to switch
 to it. `main` is the project's default variant, and its addresses are the

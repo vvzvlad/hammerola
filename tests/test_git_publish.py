@@ -15,9 +15,9 @@ import time
 from pathlib import Path
 
 import pytest
-from harness import (BROKEN, TOKEN, TOKEN_CONFIG, commit_all, copying_builder,
-                     git, picky_builder, project_files, push, start_hub,
-                     stop_hub, write_files)
+from harness import (BROKEN, TOKEN, TOKEN_CONFIG, comment_payload, commit_all,
+                     copying_builder, git, picky_builder, project_files, push,
+                     start_hub, stop_hub, write_files)
 
 from src import githttp, prereceive
 from src.buildproc import STATUS_CPU_EXHAUSTED, STATUS_TIMEOUT
@@ -291,6 +291,49 @@ def test_a_commit_back_to_a_revision_s_tree_reuses_its_copy_in_the_slot(
                                     headers={"X-Hammerola-Token": TOKEN}).text
                       for name in (first, sha))
     assert log == first_log != ""
+
+
+NOTE = " — open comments: {}, read them with `hammerola comments`"
+
+
+def test_the_address_line_counts_the_open_comments(picky_hub, tmp_path):
+    """On every address a push answers with — a build, a draft, a draft the
+    slot holds, a commit published from the slot — and on none once every
+    comment is resolved."""
+    work = tmp_path / "work"
+    first = working_copy(work, "note1")
+    assert "open comments" not in push(picky_hub, work, "note1").stderr
+    ids = [picky_hub.post_comment("note1", first, comment_payload()).json()["id"]
+           for _ in range(2)]
+
+    write_files(work, {"notes.md": b"lid"})
+    second = commit_all(work, "a lid")
+    pushed = push(picky_hub, work, "note1")
+    assert (f"remote: published: /project/note1/{second}/" + NOTE.format(2)
+            in pushed.stderr)
+
+    assert picky_hub.read_comments(f"/{ids[0]}/resolve",
+                                   method="POST").status_code == 200
+    write_files(work, {"notes.md": b"a thicker lid"})
+    draft = commit_all(work, "hammerola draft")
+    again = commit_all(work, "hammerola draft, again")
+    for sha, word in ((draft, "published"), (again, "unchanged")):
+        pushed = push(picky_hub, work, "note1", f"{sha}:refs/drafts/main",
+                      extra=("--force",))
+        assert (f"remote: {word}: /project/note1/dev/" + NOTE.format(1)
+                in pushed.stderr)
+    pushed = push(picky_hub, work, "note1")
+    assert REUSED in pushed.stderr
+    assert (f"remote: published: /project/note1/{draft}/" + NOTE.format(1)
+            in pushed.stderr)
+
+    assert picky_hub.read_comments(f"/{ids[1]}/resolve",
+                                   method="POST").status_code == 200
+    write_files(work, {"notes.md": b"no lid"})
+    commit_all(work, "no lid")
+    pushed = push(picky_hub, work, "note1")
+    assert pushed.returncode == 0, pushed.stderr
+    assert "open comments" not in pushed.stderr
 
 
 @pytest.mark.parametrize("spoil", ["no job", "unknown job", "empty log"])

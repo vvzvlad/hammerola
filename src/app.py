@@ -1510,7 +1510,8 @@ class HubHandler(BaseHTTPRequestHandler):
 
         try:
             accepted = prereceive.run(self.server.store, self.server.jobs,
-                                      self.server.builds, request, say)
+                                      self.server.builds,
+                                      self.server.comment_store, request, say)
         except Exception:
             logger.exception(f"push {request.pid}: the hook could not be "
                              f"answered")

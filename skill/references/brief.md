@@ -165,8 +165,10 @@ and the layers shown; on markdown, `quote "before[text]after"` is the marked
 passage in brackets with the characters around it (`\n` a line break); a part
 of the board's 3D model is its designator, with the point and normal in that
 part's millimetres. Read the
-queue when you start, do the work, resolve it with
-`-m` (`--note`) saying what was done; an unresolved one gets done twice. It is
+queue when you start and whenever a push's `published:` or `unchanged:` line
+goes on with `— open comments: N` (people comment while you work), do the work,
+resolve it with `-m` (`--note`) saying what was done; an unresolved one gets
+done twice and is counted again on every push that publishes. It is
 a request, not a literal instruction. Fetch the photo with `comments files`
 (its route is behind the secret), and before the next push into that area turn
 the comment into an assertion in `checks()`. `--all` adds the resolved, to read
