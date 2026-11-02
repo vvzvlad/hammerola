@@ -4,8 +4,10 @@
 // one of a build with no model (DocShell.jsx). It holds what belongs to
 // neither and hands it down as props: the build on screen (`meta`, which the
 // model's page reports through `onBuild` on its load and a swap in place),
-// the token the header's Save and Remove write, the theme its toggle sets and
-// the variant's `builds.json`, read with the token; and it draws the rename
+// the token the header's Save and Remove write, the theme its toggle sets,
+// whether the header draws its strip of projects (`tabStrip`, which the model
+// page's Settings card sets through `onTabStrip`) and the variant's
+// `builds.json`, read with the token; and it draws the rename
 // window a pencil opens. The page tells the header it changed (`onHeader`);
 // each shuts the other's menus (`shutHeader`, `shutPage`).
 
@@ -16,7 +18,7 @@ import HammerolaViewer from './HammerolaViewer.jsx';
 import Header from './Header.jsx';
 import { buildKey, loadBuilds, PAGE, pageVariant } from './hub.js';
 import { RENAME_CSS, RenameWindow, saveRename } from './rename.jsx';
-import { readTheme, readToken, writeTheme } from './store.js';
+import { readTabStrip, readTheme, readToken, writeTabStrip, writeTheme } from './store.js';
 import { css, FONTS, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 
 // position:fixed, because this is the WHOLE page: build.html carries nothing
@@ -31,7 +33,9 @@ const BODY = 'position:relative;flex:1;min-height:0';
 export default class BuildPage extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { meta: props.meta, token: readToken(), theme: readTheme(), builds: null, rename: null };
+    this.state = {
+      meta: props.meta, token: readToken(), theme: readTheme(), tabStrip: readTabStrip(), builds: null, rename: null,
+    };
     this.header = React.createRef();
     this.page = React.createRef();
     this.gone = false;
@@ -43,6 +47,7 @@ export default class BuildPage extends React.Component {
     // The list was read under the token, so it goes with it.
     this.onToken = (token) => this.setState(token ? { token } : { token: null, builds: null });
     this.onTheme = (value) => this.setState({ theme: writeTheme(value) });
+    this.onTabStrip = (on) => this.setState({ tabStrip: writeTabStrip(on) });
     // A rename goes on the branch of the page's variant unless the subject
     // names another (a variant's row).
     this.onRename = (subject) => this.setState({ rename: { variant: pageVariant(PAGE, this.state.meta), ...subject } });
@@ -86,16 +91,17 @@ export default class BuildPage extends React.Component {
   }
 
   render() {
-    const { meta, token, theme, builds, rename } = this.state;
+    const { meta, token, theme, tabStrip, builds, rename } = this.state;
     const Page = meta && meta.kind === DOCUMENTS_KIND ? DocShell : HammerolaViewer;
     return (
       <div style={{ ...css(ROOT), ...FONTS }}>
         <style>{RENAME_CSS}</style>
-        <Header ref={this.header} meta={meta} token={token} theme={theme} builds={builds}
+        <Header ref={this.header} meta={meta} token={token} theme={theme} tabStrip={tabStrip} builds={builds}
                 parts={this.parts} onToken={this.onToken} onTheme={this.onTheme}
                 onRename={this.onRename} shutPage={this.shutPage} />
         <div style={css(BODY)}>
           <Page ref={this.page} meta={meta} token={token} theme={theme} builds={builds}
+                tabStrip={tabStrip} onTabStrip={this.onTabStrip}
                 onBuild={this.onBuild} onHeader={this.onHeader} shutHeader={this.shutHeader}
                 onRename={this.onRename} />
         </div>

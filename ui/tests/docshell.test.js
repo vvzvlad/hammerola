@@ -1038,7 +1038,7 @@ describe('comments on the page of a build with no model', () => {
   it('is under the header the model\'s page has: the status, Downloads, the token, Comments, the theme and the tabs', () => {
     const shell = opened({ meta: { ...BUILD, documents: [...BUILD.documents, GERBERS] } })
     const tabs = [{ pid: 'docs0001', title: 'Shopping', seen: 2 }, { pid: 'other', title: 'Other', seen: 1 }]
-    const h = headerOn(shell, { props: { builds: KEYED }, state: { tabs } })
+    const h = headerOn(shell, { props: { builds: KEYED, tabStrip: true }, state: { tabs } })
     expect(texts(h.render())).toEqual(expect.arrayContaining(['hammerola', BUILD.title, 'abc123', 'pinned build',
       'Downloads', 'Editing on', 'Shopping', 'Other']))
     // the theme and the comments are icons, named by their tooltips

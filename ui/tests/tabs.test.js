@@ -79,7 +79,7 @@ afterEach(() => {
  * and those are `<a>` elements too. What is left under `/project/` is the strip
  * and nothing else, which is what makes the readings below exact.
  */
-function component({ tabs = [], narrow = false } = {}) {
+function component({ tabs = [], narrow = false, tabStrip = true } = {}) {
   const page = makeComponent(HammerolaViewer, {
     state: {
       meta: {
@@ -92,7 +92,7 @@ function component({ tabs = [], narrow = false } = {}) {
       narrow,
     },
   })
-  return Object.assign(headerOn(page, { state: { tabs } }), { page })
+  return Object.assign(headerOn(page, { state: { tabs }, props: { tabStrip } }), { page })
 }
 
 /** One entry as the store hands it over. */
@@ -173,6 +173,12 @@ describe('how a project reaches the strip', () => {
     expect(readTabs()).toEqual(before)
   })
 
+  it('is recorded while Settings has the strip off, so turning it on shows it full', () => {
+    const c = component({ tabStrip: false })
+    c.componentDidUpdate({ ...c.props, meta: null })
+    expect(readTabs().map((t) => t.pid)).toEqual(['proj1'])
+  })
+
   it('falls back to the latin name when the model gave the project no title', () => {
     // `meta.title` is optional on the wire and defaults to `project` server-side;
     // a strip of blank pills is what reading only the first would give.
@@ -216,6 +222,15 @@ describe('a strip with fewer than two tabs', () => {
     expect(c.view().tabsShown).toBe(false)
     expect(tabHrefs(c)).toEqual([])
     expect(tabHrefs(component({ tabs: two }))).toHaveLength(2)
+  })
+
+  it('is not drawn while Settings has it off, however many there are', () => {
+    // The owner: the strip is in the way, so it is drawn only on the reader's
+    // word, the "Project tabs" row of the Settings card.
+    const two = [entry('proj1', 'Fixture bracket', 1000), entry('alpha', 'Alpha', 900)]
+    const c = component({ tabs: two, tabStrip: false })
+    expect(c.view().tabsShown).toBe(false)
+    expect(tabHrefs(c)).toEqual([])
   })
 })
 

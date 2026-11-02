@@ -1,7 +1,7 @@
 // ui/src/store.js — everything these pages remember in the browser: the token,
 // the notes, which pointer the reader was last on, how the front page's list of
-// projects is arranged, the strip of projects this browser has been in, and
-// whether the model is drawn at retina resolution.
+// projects is arranged, the strip of projects this browser has been in, whether
+// that strip is drawn, and whether the model is drawn at retina resolution.
 //
 // The storage is a double. This runner has no `localStorage`: Node's global of
 // that name is undefined unless started with `--localstorage-file`, and it wins
@@ -24,8 +24,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clearToken, forgetTab, readNotes, readProjectSort, readProjectView, readRetina,
-  readTabs, readToken, rememberPointer, rememberTab, TAB_CAP, writeNotes,
-  writeProjectSort, writeProjectView, writeRetina, writeToken,
+  readTabs, readTabStrip, readToken, rememberPointer, rememberTab, TAB_CAP, writeNotes,
+  writeProjectSort, writeProjectView, writeRetina, writeTabStrip, writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
@@ -35,6 +35,7 @@ const VIEW_KEY = 'hammerola.projects_view'
 const SORT_KEY = 'hammerola.projects_sort'
 const TABS_KEY = 'hammerola.tabs'
 const RETINA_KEY = 'hammerola.retina'
+const TAB_STRIP_KEY = 'hammerola.tab_strip'
 
 /** The smallest thing store.js can tell from the real one, plus a way to fail. */
 function fakeStorage({ failing = false } = {}) {
@@ -569,5 +570,29 @@ describe('the retina setting', () => {
     writeRetina(false)
     writeRetina(true)
     expect(readRetina()).toBe(true)
+  })
+})
+
+// -- whether the strip of projects is drawn ----------------------------------
+// One site-wide key, and NOTHING STORED IS OFF: the owner found the strip in
+// the way, so a browser that never chose does not get it.
+
+describe('the project tabs setting', () => {
+  it('reads OFF where nothing was stored', () => {
+    expect(readTabStrip()).toBe(false)
+  })
+
+  it('reads ON once it was turned on, under one site-wide key', () => {
+    expect(writeTabStrip(true)).toBe(true)
+    expect([...storage.cells.keys()]).toEqual([TAB_STRIP_KEY])
+    expect(readTabStrip()).toBe(true)
+  })
+
+  it('reads OFF again once it was turned back off, and keeps the strip itself', () => {
+    rememberTab('a', 'A')
+    writeTabStrip(true)
+    expect(writeTabStrip(false)).toBe(false)
+    expect(readTabStrip()).toBe(false)
+    expect(readTabs().map((t) => t.pid)).toEqual(['a'])
   })
 })

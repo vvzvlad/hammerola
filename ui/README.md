@@ -129,8 +129,8 @@ symptom otherwise is a green gate and a 404 in the browser.
 `src/BuildPage.jsx` is the build page's root, which `src/main.jsx` mounts: the
 header, `src/Header.jsx` — the title, the variants, the revision picker,
 Downloads, the token, Comments, the theme and the tab strip — over the page the
-build has, and the token, the theme, `builds.json` and the rename window, which
-belong to neither page.
+build has, and the token, the theme, whether the header draws its tab strip,
+`builds.json` and the rename window, which belong to neither page.
 `src/HammerolaViewer.jsx` is the model's page — the tree, the panels and every
 gesture the reader has on a build. Its view model is cut into one module per
 panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,

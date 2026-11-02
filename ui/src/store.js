@@ -1,12 +1,13 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Seven things are kept, all under the `hammerola.` prefix the rest of the site
-// uses (`hammerola.pointing_device`, viewport/options.js). Six live in
+// Eight things are kept, all under the `hammerola.` prefix the rest of the site
+// uses (`hammerola.pointing_device`, viewport/options.js). Seven live in
 // `localStorage`; the theme is a cookie because the server has to know it to
-// send the page already painted (see the theme section). Two of the six are
+// send the page already painted (see the theme section). Two of the seven are
 // keyed by project (notes, the pointer) so that editing one model and viewing
 // another do not collide; the token, the project-list arrangement, the tab
-// strip and the retina setting are one key for the whole site.
+// strip, whether it is drawn and the retina setting are one key for the whole
+// site.
 //
 // EVERY access goes through the two functions at the top and the cookie's two
 // at the bottom. `localStorage` and `document.cookie` THROW on the getter in a
@@ -277,6 +278,24 @@ const RETINA_KEY = `${NS}retina`;
 export const readRetina = () => read(RETINA_KEY) !== 'off';
 
 export const writeRetina = (on) => write(RETINA_KEY, on ? 'on' : 'off');
+
+// -- whether the header draws the strip of projects --------------------------
+// The Settings card's "Project tabs". The owner found the strip in the way, so
+// it is off until the reader turns it on. Off, the strip is still recorded
+// (`rememberTab`), so turning it on brings back the projects this browser has
+// been in. One key for the whole site, like the strip it is about.
+//
+// Nothing stored reads as off; only the exact word `on` turns it on.
+
+const TAB_STRIP_KEY = `${NS}tab_strip`;
+
+export const readTabStrip = () => read(TAB_STRIP_KEY) === 'on';
+
+/** -> the answer, so BuildPage sets its state from the write (as `writeTheme`). */
+export const writeTabStrip = (on) => {
+  write(TAB_STRIP_KEY, on ? 'on' : 'off');
+  return !!on;
+};
 
 // -- the theme ---------------------------------------------------------------
 // Which of the two palettes this reader is in, per browser.

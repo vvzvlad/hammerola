@@ -27,6 +27,10 @@ import { writeRetina } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn } from './viewlist.jsx';
 
+/** A checkbox of the Settings card, drawn like the section panel's hatch box. */
+const settingsBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;'
+  + (on ? ON_ACCENT : BLANK_BOX);
+
 export function chromeView(s, props, deps) {
   const {
     // -- what `computed()` has already worked out; `variant` is the one this
@@ -395,7 +399,9 @@ export function chromeView(s, props, deps) {
     // `stop()`ed toggle that shuts the other menus, a card measured upwards,
     // `rootClick`/Escape to dismiss — and SHOWN WITHOUT A TOKEN: what it holds
     // is about this browser's screen rather than about the model. Out of
-    // service under a document: the resolution it sets is the model's canvas'.
+    // service under a document, as on the documents page (`docBar` in
+    // DocShell.jsx): the resolution it sets is the model's canvas', so the
+    // project tabs, which are about the whole site, are switched from a model.
     tSettings: stop(() => {
       setState({ settingsOpen: !s.settingsOpen, viewsOpen: false, opsOpen: false, menu: null });
       shutHeader();
@@ -416,9 +422,14 @@ export function chromeView(s, props, deps) {
       set({ retina: !s.retina });
       writeRetina(!s.retina);
     },
-    retinaBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;'
-      + (s.retina ? ON_ACCENT : BLANK_BOX),
+    retinaBox: settingsBox(s.retina),
     retinaMark: s.retina ? '✓' : '',
+    // Whether the header draws its strip of projects. BuildPage's answer, not
+    // this page's: the header belongs to neither page, so the answer comes down
+    // as a prop, and the row hands the flip back up, as the theme does.
+    toggleTabStrip: () => props.onTabStrip(!props.tabStrip),
+    tabStripBox: settingsBox(props.tabStrip),
+    tabStripMark: props.tabStrip ? '✓' : '',
     // FIT AND FRAME ACT ON WHAT IS ON SCREEN: the model, or the document over
     // it through what its view told the page it can do (`docTools`, `onTools`
     // in DocumentView.jsx). Over a document whose view cannot — a page of text,

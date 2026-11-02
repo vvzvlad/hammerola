@@ -5,7 +5,7 @@
 // whose state is written in place: nothing is mounted. A prop BuildPage does
 // not hand down reaches nobody, and a page drawn without it still renders.
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 vi.mock('../src/hub.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -61,6 +61,34 @@ describe('the build page', () => {
         expect(header.props[door], door).toBe(b[door])
       }
     }
+  })
+
+  it('hands both whether the strip of projects is drawn, as this browser chose it, and stores the page\'s flip', () => {
+    // One answer for the header that draws the strip and the Settings row that
+    // ticks it, read from storage and written back there. The storage double is
+    // required: this runner has no `localStorage`, and store.js reads its
+    // absence as "nothing chosen", which is the very answer under test.
+    const cells = new Map([['hammerola.tab_strip', 'on']])
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (k) => (cells.has(k) ? cells.get(k) : null),
+        setItem: (k, v) => { cells.set(k, String(v)) },
+        removeItem: (k) => { cells.delete(k) },
+      },
+      configurable: true, writable: true,
+    })
+    onTestFinished(() => { delete globalThis.localStorage })
+
+    const { b, header, page } = drawn(MODEL)
+    expect([header.props.tabStrip, page.props.tabStrip]).toEqual([true, true])
+    expect(page.props.onTabStrip).toBe(b.onTabStrip)
+
+    b.setState = (patch) => Object.assign(b.state, patch)
+    b.onTabStrip(false)
+    expect(cells.get('hammerola.tab_strip')).toBe('off')
+    const [after, pageAfter] = collect(b.render(),
+      (el) => ([Header, HammerolaViewer].includes(el.type) ? el : undefined))
+    expect([after.props.tabStrip, pageAfter.props.tabStrip]).toEqual([false, false])
   })
 
   it('reads the variant\'s list with the token on mount, and redraws the header over the page now there', async () => {

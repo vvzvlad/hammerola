@@ -50,13 +50,13 @@ export const SHUT = { variantsOpen: false, headMenu: false, tokenPop: false, dlO
 
 /**
  * The header's values. `s` is its state (`Header`), `p` what it is drawn from:
- * `meta`, `token`, `theme` and `builds` (BuildPage's), `parts` (the page's
+ * `meta`, `token`, `theme`, `tabStrip` and `builds` (BuildPage's), `parts` (the page's
  * `headerParts()`) and `linkKey`, the key to the files the address carried.
  * `act` holds its doors: `stop`, `setState`, `shutPage`, `onToken(token)`,
  * `onTheme(theme)`, `onRename(subject)`, `closeTab(pid)`, `downloadAll(hrefs)`.
  */
 export function headerView(s, p, act) {
-  const { meta, token, theme, builds, parts, linkKey } = p;
+  const { meta, token, theme, tabStrip, builds, parts, linkKey } = p;
   const { stop, setState, shutPage, onToken, onTheme, onRename, closeTab, downloadAll } = act;
   const viewer = !token;
   const narrow = !!s.narrow;
@@ -263,12 +263,14 @@ export function headerView(s, p, act) {
     toggleTheme: () => onTheme(theme === 'dark' ? 'light' : 'dark'),
 
     // -- the strip under the header: the projects this browser has been in.
-    // Below two tabs it is not drawn: a strip whose only link is the project on
-    // screen is noise. Nor on a narrow window, at the owner's word. The active
-    // tab is the address (`PAGE.pid`) and nothing else (store.js says why). It
-    // wraps: the root is `overflow:hidden`, so a strip that cannot wrap loses
-    // its tail silently. Same rule as `static/_v/site.css`.
-    tabsShown: openTabs.length > 1 && !narrow,
+    // Drawn only where the reader turned it on in Settings (`tabStrip`,
+    // store.js says why it starts off). Below two tabs it is not drawn: a strip
+    // whose only link is the project on screen is noise. Nor on a narrow
+    // window, at the owner's word. The active tab is the address (`PAGE.pid`)
+    // and nothing else (store.js says why). It wraps: the root is
+    // `overflow:hidden`, so a strip that cannot wrap loses its tail silently.
+    // Same rule as `static/_v/site.css`.
+    tabsShown: !!tabStrip && openTabs.length > 1 && !narrow,
     tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
       + HEADER_BAR,
     tabs: openTabs.map((t) => ({
@@ -295,7 +297,7 @@ export function headerView(s, p, act) {
 }
 
 /**
- * The header. Props: `meta`, `token`, `theme` and `builds` (BuildPage's);
+ * The header. Props: `meta`, `token`, `theme`, `tabStrip` and `builds` (BuildPage's);
  * `parts()`, the page's `headerParts()`; `onToken(token)` and `onTheme(theme)`,
  * the token and the theme taken; `onRename(subject)`, the rename window opened;
  * `shutPage()`, the page's menus shut. Nothing is drawn before a build.
@@ -403,9 +405,9 @@ export default class Header extends React.Component {
 
   /** The values the header is drawn from (`headerView`). */
   view() {
-    const { meta, token, theme, builds } = this.props;
+    const { meta, token, theme, tabStrip, builds } = this.props;
     return headerView(this.state, {
-      meta, token, theme, builds, parts: this.props.parts(), linkKey: this.linkKey,
+      meta, token, theme, tabStrip, builds, parts: this.props.parts(), linkKey: this.linkKey,
     }, {
       stop: (fn) => (e) => { e.stopPropagation(); fn(e); },
       setState: (patch) => this.setState(patch),

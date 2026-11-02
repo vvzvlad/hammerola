@@ -5837,6 +5837,10 @@ export default class HammerolaViewer extends React.Component {
                       <span style={css(v.retinaBox)}>{v.retinaMark}</span>
                       <span>Retina resolution</span>
                     </div>
+                    <div onClick={v.toggleTabStrip} style={css(v.settingsRowStyle)}>
+                      <span style={css(v.tabStripBox)}>{v.tabStripMark}</span>
+                      <span>Project tabs</span>
+                    </div>
                   </div>
                 ),
               })}

@@ -125,6 +125,22 @@ describe('the Settings card', () => {
     expect(readRetina()).toBe(true)
   })
 
+  it('hands the flip of Project tabs up to BuildPage, which owns the answer', () => {
+    // The header is not this page's, so the row writes nothing here: it calls
+    // BuildPage's door, and its tick is the prop that comes back down.
+    const onTabStrip = vi.fn()
+    const off = makeComponent(HammerolaViewer, { props: { tabStrip: false, onTabStrip } })
+    expect(texts(off.render())).toContain('Project tabs')
+    expect(off.computed().tabStripMark).toBe('')
+    off.computed().toggleTabStrip(click)
+    expect(onTabStrip).toHaveBeenLastCalledWith(true)
+
+    const on = makeComponent(HammerolaViewer, { props: { tabStrip: true, onTabStrip } })
+    expect(on.computed().tabStripMark).toBe('✓')
+    on.computed().toggleTabStrip(click)
+    expect(onTabStrip).toHaveBeenLastCalledWith(false)
+  })
+
   it('comes up with the answer this browser remembered', () => {
     // The last link of "remembered": a page built after the reader turned it
     // off must start off, or the model is drawn at 2x under an unticked box.
