@@ -1,8 +1,9 @@
-// The page of a build with no model: a header, the document, and the bar
-// floating at the bottom — the model's page's bar, drawn by the same code
-// (`toolBar` in viewlist.jsx), its list of views here with the build's
-// documents only. `ui/src/main.jsx` mounts it instead of HammerolaViewer when
-// the build's meta.json says `"kind": "documents"` (src/render.py).
+// The page of a build with no model: the document, and the bar floating at the
+// bottom — the model's page's bar, drawn by the same code (`toolBar` in
+// viewlist.jsx), its list of views here with the build's documents only.
+// BuildPage.jsx mounts it under the header (Header.jsx) instead of
+// HammerolaViewer when the build's meta.json says `"kind": "documents"`
+// (src/render.py).
 //
 // The document is drawn by DocumentView.jsx, which the model's page uses too,
 // through its `DocumentLayers`: a KiCad design opened on the page stays
@@ -31,22 +32,15 @@
 // document that takes one (`COMMENTABLE` in DocumentView.jsx), takes a place
 // on it into the composer and sends the draft; the header's Comments opens
 // the rail of the project's queue, whose row opens its document at its place
-// (`pick`), and a mark on the drawing opens its row. The reader does not
-// change on this page: the token is read once, and nothing here sets it.
+// (`pick`), and a mark on the drawing opens its row. The reader is the token
+// BuildPage holds (`props.token`), which the header's Save and Remove change.
 //
-// THE VARIANTS of the project are switched beside the title, as on the model's
-// page and by the same code (variants.jsx), from `variants.json`, which needs
-// no token. With the token, a pencil by the title, a variant's row and a
-// document's row renames it, in the model page's window (rename.jsx).
-//
-// THE REVISIONS are picked after the variants, as on the model's page and by
-// the same code (revisions.jsx, revisionview.js), from the variant's
-// `builds.json`, which is behind the token: without it the button is a label,
-// and nothing is asked. A row is a link to its revision's address on the
-// document and the sheet on screen (`d=`, `s=`), so a switch is a page load,
-// which mounts the shell the revision needs (main.jsx); the row of the build
-// on screen is no link. No row carries a tick or a Share icon: a comparison is
-// of the model's STEP, and this page has no Share window.
+// The header reads this page through `headerParts()`: the comments' button,
+// the toast, and the revision picker's rows as links (`revisions.href`) to
+// their revision's address on the document and the sheet on screen (`d=`,
+// `s=`), so a switch is a page load, which mounts the page the revision needs.
+// No row carries a tick or a Share icon: a comparison is of the model's STEP,
+// and this page has no Share window.
 //
 // `DocPage` is the drawing and takes everything as props, so a test reads the
 // tree it returns without mounting anything (ui/tests/docshell.test.js).
@@ -55,21 +49,15 @@ import React from 'react';
 
 import { format, fresh, navigate, parse, respell, subscribe, unsubscribe } from './address.js';
 import {
-  closeComment, COMMENT_ICON, commentRail, commentsButton, composerCard, composerView, docComment, docDraft,
+  closeComment, commentRail, composerCard, composerView, docComment, docDraft,
   docFrame, railView, readFeed, sendDraft,
 } from './comments.jsx';
 import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
-import { headMenu, headRow } from './headmenu.jsx';
-import { buildKey, buildPath, loadBuilds, loadVariants, PAGE, pageVariant } from './hub.js';
+import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
-import { btn, HEADER_BAR, HEADER_RULE, TITLE, TOAST_MS, toastStyle, WORDMARK } from './panelstyle.js';
-import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
-import { revisionView } from './revisionview.js';
-import { revisionHead, revisionPicker, revisionRow } from './revisions.jsx';
-import { readToken } from './store.js';
-import { css, FONTS, Mark, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
-import { VariantSwitch, variantChoices } from './variants.jsx';
+import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
+import { css, FONTS, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, toolBar } from './viewlist.jsx';
 
 /** What a build with no model says it is, in meta.json's `kind`. The hub
@@ -85,13 +73,10 @@ export function pickDocument(documents, wanted) {
   return documents.find((doc) => doc.id === wanted) || defaultDocument(documents);
 }
 
-const SHELL = `position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px`;
-// Wraps, as the model page's header does: with a long title a row that cannot
-// wrap cuts the comments button off a window just past the breakpoint. Below
-// it the revision and Comments are rows of the header's menu (`DocPage`).
-const HEADER = `min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:0 16px;${HEADER_BAR}`;
-// Under the header the document's stage and the comment rail beside it, which
-// covers the stage on a narrow window (`railView` in comments.jsx).
+// The box under the header (BuildPage.jsx), filled whole.
+const SHELL = `position:absolute;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px`;
+// The document's stage and the comment rail beside it, which covers the stage
+// on a narrow window (`railView` in comments.jsx).
 const BODY = 'flex:1;display:flex;min-height:0;position:relative';
 const STAGE = 'position:relative;flex:1;min-width:0';
 // The bar's layer over the document's (`DOC_LAYER`, 16), as on the model's page.
@@ -148,76 +133,18 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
  * of the comments (`DocShell.comments`): what the open document is handed for
  * them (`docComment`), the composer's, the rail's and its button's, and the
  * ref the composer's textarea is focused through (`box`); with none the page
- * draws no comments. `toast` is what the toast says, or null. `variants` is
- * the switcher's choices (`variantChoices` in variants.jsx), null for none;
- * `variantsOpen` says its menu is open and `onVariants` opens or shuts it.
- * `onRename(subject)`, with the token, is what a pencil by the title, a
- * variant's row and a document's row asks to rename (`{kind, variant, id,
- * name}`); `renaming` is the subject of the rename window while it is open,
- * whose Save is `onRenameSave(name)` and whose Cancel is `onRenameClose`
- * (rename.jsx). `revRows` are the revision picker's rows (`revisionView` in
- * revisionview.js); `revOpen` says its card is open and `onRevisions` opens or
- * shuts it. On a narrow window the header is one row, as on the model's
- * page: the mark without the wordmark, the title, the variants and the
- * header's menu (headmenu.jsx), whose rows are the revision and Comments;
- * `headMenuOpen` says the menu is open and `onHeadMenu` opens or shuts it.
+ * draws no comments. `toast` is what the toast says, or null.
+ * `onRename(subject)`, with the token, is what the pencil on a document's row
+ * asks to rename (`{kind, id, name}`, rename.jsx).
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
-  tool, onComment, comments, toast, variants = null, variantsOpen = false, onVariants,
-  onRename, renaming = null, onRenameSave, onRenameClose, headMenuOpen = false, onHeadMenu,
-  revOpen = false, onRevisions, revRows = [],
+  tool, onComment, comments, toast, onRename,
 }) {
   const doc = pickDocument(meta.documents, active);
-  const title = meta.title || meta.project;
   const renameDoc = onRename && ((one) => onRename({ kind: 'document', id: one.id, name: one.name }));
-  // The revision picker's values, as the model's page has them (`chromeView`).
-  // The dot is the colour of a build up to date: this page does not ask the
-  // hub whether a newer one came.
-  const rev = {
-    ...revisionHead({ narrow, viewer, open: revOpen, built: meta.built, onToggle: onRevisions, dot: 'var(--ok)' }),
-    headFolded: narrow, revRows, revEmpty: revRows.length === 0,
-  };
   return (
     <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
-      <style>{RENAME_CSS}</style>
-      <div style={css(HEADER)}>
-        <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
-          <Mark />
-          {!narrow && <span style={css(WORDMARK)}>hammerola</span>}
-        </a>
-        <div style={css(HEADER_RULE)} />
-        {/* Sized as the model page's title, and Comments at the right edge
-            are one group, as its controls are (`titleColStyle` and
-            `controlsStyle` in chromeview.js say why). */}
-        <div className={onRename ? RENAME_HOST : undefined}
-             style={css(`display:flex;align-items:center;gap:2px;min-width:0;flex:${narrow ? '1 1 0' : '1 1 200px;max-width:max-content'}`)}>
-          <div style={css(`${TITLE};min-width:0`)}>{title}</div>
-          {onRename && <Pencil title="Rename project" onClick={() => onRename({ kind: 'project', name: title })} />}
-        </div>
-        <VariantSwitch choices={variants} open={variantsOpen} onToggle={onVariants} narrow={narrow}
-                       onRename={onRename && ((row) => onRename({ kind: 'variant', variant: row.key, name: row.label }))} />
-        {/* Wide, the button and its card; narrow, the card alone, a sheet the
-            menu's row opens (`revisionPicker`). */}
-        {revisionPicker(rev)}
-        {!narrow && (
-          <div style={css('display:flex;align-items:center;gap:12px;margin-left:auto;flex:none')}>
-            {comments && commentsButton(comments)}
-          </div>
-        )}
-        {narrow && headMenu(headMenuOpen, onHeadMenu, (
-          <>
-            {revisionRow(rev)}
-            {comments && !viewer && (
-              <div onClick={comments.railToggle} style={css(headRow(false))}>
-                {COMMENT_ICON}
-                Comments
-                <span style={css(comments.railCountStyle)}>{comments.openCount}</span>
-              </div>
-            )}
-          </>
-        ))}
-      </div>
       <div style={css(BODY)}>
         <div style={css(STAGE)}>
           <DocumentLayers build={buildKey(meta)} doc={doc} layer={DOC_LAYER} documents={meta.documents} base={base}
@@ -233,13 +160,13 @@ export function DocPage({
         </div>
         {comments && commentRail(comments)}
       </div>
-      {renaming && <RenameWindow subject={renaming} onSave={onRenameSave} onClose={onRenameClose} />}
     </div>
   );
 }
 
 /** The page, holding which document is open, and the comments. `meta` is
- *  required: main.jsx has read it to choose this shell. */
+ *  required: BuildPage.jsx has read it to choose this page. BuildPage's doors
+ *  (`onHeader`, `shutHeader`, `onRename`) are HammerolaViewer's too. */
 export default class DocShell extends React.Component {
   constructor(props) {
     super(props);
@@ -261,32 +188,15 @@ export default class DocShell extends React.Component {
       // toast says.
       feed: [], activePin: null, composer: null, sending: false, rail: false, tool: null,
       docFocus: null, docLost: {}, toast: null,
-      // `variants.json` once it comes (`loadVariants` in hub.js), and the
-      // switcher's menu open; what the rename window renames while it is open.
-      variants: null, variantsOpen: false, rename: null,
-      // The header's menu open, on a narrow window (`DocPage`).
-      headMenu: false,
-      // The variant's `builds.json` once it comes (`loadBuilds` in hub.js),
-      // and the revision picker's card open.
-      builds: null, revOpen: false,
     };
-    // Who the reader is does not change on this page, which has no token
-    // control: the token is read once.
-    this.token = readToken();
-    this.viewer = !this.token;
     // The composer's textarea, focused when the composer opens.
     this.compBox = React.createRef();
     this.tt = undefined;
-    // True once the page has gone, for the lists of variants and builds
-    // landing after.
-    this.gone = false;
     this.onTools = (tools) => this.setState({ tools });
     this.mq = null;
     // Narrowing puts an armed tool down, as on the model's page: its button
-    // leaves the bar, and a phone has no Escape to put it down with. Widening
-    // puts the header's menu down, which the wide header does not draw.
-    this.onNarrow = (event) => this.setState(event.matches ? { narrow: true, tool: null }
-      : { narrow: false, headMenu: false });
+    // leaves the bar, and a phone has no Escape to put it down with.
+    this.onNarrow = (event) => this.setState(event.matches ? { narrow: true, tool: null } : { narrow: false });
     // Back and Forward through the documents picked (`pick`): the entry's
     // document, read as the constructor reads it.
     this.onPop = (at) => this.set({ active: this.addressDoc(at) });
@@ -304,17 +214,19 @@ export default class DocShell extends React.Component {
     // (KicadView.jsx).
     window.addEventListener('keydown', this.onKey, true);
     // The queue takes the token, so a reader without one asks for nothing.
-    if (this.token) this.loadFeed();
-    // So do the revisions; a failure leaves the picker empty.
-    if (this.token) {
-      loadBuilds(this.token, pageVariant(PAGE, this.props.meta)).then((builds) => {
-        if (!this.gone) this.setState({ builds });
-      }, (error) => console.warn('builds', error));
+    if (this.props.token) this.loadFeed();
+  }
+
+  /** The token the header saved or removed, followed: the queue asked for
+   *  under a new one; with none, what only a reader holding it has goes — the
+   *  queue, the draft and the armed tool. And the header told the page
+   *  changed, which it reads (`headerParts`). */
+  componentDidUpdate(prev) {
+    if (prev.token !== this.props.token) {
+      if (this.props.token) this.loadFeed();
+      else this.setState({ feed: [], composer: null, tool: null });
     }
-    // The variants need none.
-    loadVariants(PAGE.pid).then((variants) => {
-      if (!this.gone) this.setState({ variants });
-    });
+    this.props.onHeader();
   }
 
   componentWillUnmount() {
@@ -322,7 +234,11 @@ export default class DocShell extends React.Component {
     unsubscribe(this.onPop);
     window.removeEventListener('keydown', this.onKey, true);
     clearTimeout(this.tt);
-    this.gone = true;
+  }
+
+  /** No token, no edits: no composer, no Comment, no pencils. */
+  viewer() {
+    return !this.props.token;
   }
 
   /** The document on screen. */
@@ -374,7 +290,7 @@ export default class DocShell extends React.Component {
 
   /** The project's comment queue, fetched (`readFeed` in comments.jsx). */
   loadFeed(quiet = false) {
-    return readFeed(this, this.token, quiet);
+    return readFeed(this, this.props.token, quiet);
   }
 
   /** A fresh draft in the composer, which takes the keyboard; the tool goes
@@ -388,7 +304,7 @@ export default class DocShell extends React.Component {
   /** A place taken on document `doc` with the Comment tool: the composer's
    *  draft hangs there (`docDraft` in comments.jsx). */
   docArea(doc, place) {
-    if (this.viewer) return;
+    if (this.viewer()) return;
     this.openComposer(docDraft(doc, place, this.state.composer));
   }
 
@@ -397,7 +313,7 @@ export default class DocShell extends React.Component {
   sendComment() {
     return sendDraft(this, {
       build: this.props.meta,
-      token: this.token,
+      token: this.props.token,
       frame: () => docFrame(this.state.tools),
       camera: () => null,
     });
@@ -405,11 +321,12 @@ export default class DocShell extends React.Component {
 
   /** Close an item in the queue (`closeComment` in comments.jsx). */
   resolveComment(id) {
-    return closeComment(this, this.token, id);
+    return closeComment(this, this.props.token, id);
   }
 
   /** The bar's Comment: the tool armed, saying how to take a place on the
-   *  document on screen (`COMMENTABLE`), or put down; the list shuts. */
+   *  document on screen (`COMMENTABLE`), or put down; the list shuts, and the
+   *  header's menus with the click reaching the page (`onClose`). */
   toggleComment() {
     const arming = this.state.tool !== 'comment';
     this.setState({ tool: arming ? 'comment' : null, viewsOpen: false });
@@ -425,7 +342,8 @@ export default class DocShell extends React.Component {
     this.setState({ tool: null });
   }
 
-  /** The values of the comments (`DocPage`'s `comments`), built by the code
+  /** The values of the comments (`DocPage`'s `comments`, the header's
+   *  button reads its own from them, `headerParts`), built by the code
    *  the model's page builds its own with (comments.jsx, feedview.js). A
    *  row opens its document as a row of the list does (`pick`); this page has
    *  no model, so a row of a comment on one opens nothing. */
@@ -445,77 +363,70 @@ export default class DocShell extends React.Component {
     });
     return {
       docComment: docComment(s, {
-        on: s.tool === 'comment' && !this.viewer,
+        on: s.tool === 'comment' && !this.viewer(),
         docArea: (doc, place) => this.docArea(doc, place),
         set, setState,
       }),
       ...composerView(s, {
-        viewer: this.viewer, docOpen: this.docOnScreen(), tools: s.tools, stop, set, setState,
+        viewer: this.viewer(), docOpen: this.docOnScreen(), tools: s.tools, stop, set, setState,
         toast: (said) => this.toast(said),
         sendComment: () => this.sendComment(),
       }),
-      ...railView({ open: s.rail, viewer: this.viewer, narrow: s.narrow, threads, openCount, stop, setState }),
+      ...railView({ open: s.rail, viewer: this.viewer(), narrow: s.narrow, threads, openCount, stop, setState }),
       box: this.compBox,
     };
   }
 
-  /** The revision picker's rows (`revisionView` in revisionview.js), from
-   *  `builds.json` once it came: each but the build on screen's a link to the
-   *  address of its revision of the variant on screen, on the document and
-   *  the sheet the address names (`d=`, `s=`). */
-  revisions() {
-    const at = parse();
+  /** The page's menus a toggle of the header shuts (Header.jsx): the list of
+   *  documents. */
+  closeMenus() {
+    if (this.state.viewsOpen) this.setState({ viewsOpen: false });
+  }
+
+  /** What the header says of this page and does through it (Header.jsx): the
+   *  revision picker's rows as links, each but the build on screen's to the
+   *  address of its revision of the variant on screen, on the document and the
+   *  sheet the address names (`d=`, `s=`); the comments' button; what the
+   *  token opens here; the toast. */
+  headerParts() {
     const variant = pageVariant(PAGE, this.props.meta);
-    return revisionView(this.state, this.state.builds || {}, {
-      href: (id) => format(fresh(buildPath(PAGE.pid, id, variant), { doc: at.doc, sheet: at.sheet })),
-    }).revRows;
+    return {
+      revisions: {
+        href: (id) => {
+          const at = parse();
+          return format(fresh(buildPath(PAGE.pid, id, variant), { doc: at.doc, sheet: at.sheet }));
+        },
+      },
+      comments: this.comments(),
+      // The documents are open to every reader (`OPEN_SUFFIXES` and
+      // `_listed_document` in src/app.py); the token opens the comments.
+      tokenHint: 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens writing a comment. Without one you can still read and download every document; the other files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.',
+      toast: (said) => this.toast(said),
+    };
   }
 
   render() {
+    const viewer = this.viewer();
     return <DocPage meta={this.props.meta} active={this.state.active}
                     base={PAGE.base} onPick={(id, sheet) => this.pick(id, sheet)}
-                    narrow={this.state.narrow} viewer={this.viewer}
+                    narrow={this.state.narrow} viewer={viewer}
                     tools={this.state.tools} onTools={this.onTools} addressDoc={this.addressDoc}
                     onSheet={this.onSheet} viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();
-                      this.setState({ viewsOpen: !this.state.viewsOpen, variantsOpen: false, headMenu: false,
-                        revOpen: false });
+                      this.setState({ viewsOpen: !this.state.viewsOpen });
+                      this.props.shutHeader();
                     }}
                     onClose={() => {
-                      if (this.state.viewsOpen || this.state.variantsOpen || this.state.headMenu || this.state.revOpen) {
-                        this.setState({ viewsOpen: false, variantsOpen: false, headMenu: false, revOpen: false });
-                      }
+                      if (this.state.viewsOpen) this.setState({ viewsOpen: false });
+                      this.props.shutHeader();
                     }}
                     tool={this.state.tool} onComment={this.onComment}
                     comments={this.comments()} toast={this.state.toast}
-                    variants={variantChoices(this.state.variants, PAGE.pid,
-                                             pageVariant(PAGE, this.props.meta))}
-                    variantsOpen={this.state.variantsOpen}
-                    onVariants={(e) => {
-                      e.stopPropagation();
-                      this.setState({ variantsOpen: !this.state.variantsOpen, viewsOpen: false, headMenu: false,
-                        revOpen: false });
-                    }}
-                    headMenuOpen={this.state.headMenu}
-                    onHeadMenu={(e) => {
-                      e.stopPropagation();
-                      this.setState({ headMenu: !this.state.headMenu, viewsOpen: false, variantsOpen: false,
-                        revOpen: false });
-                    }}
-                    revOpen={this.state.revOpen}
-                    onRevisions={(e) => {
-                      e.stopPropagation();
-                      this.setState({ revOpen: !this.state.revOpen, viewsOpen: false, variantsOpen: false,
-                        headMenu: false });
-                    }}
-                    revRows={this.revisions()}
-                    onRename={this.viewer ? undefined : (subject) => this.setState({
-                      rename: { variant: pageVariant(PAGE, this.props.meta), ...subject },
-                      viewsOpen: false, variantsOpen: false, headMenu: false, revOpen: false })}
-                    renaming={this.state.rename}
-                    onRenameSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.token,
-                      (said) => this.toast(said))}
-                    onRenameClose={() => this.setState({ rename: null })} />;
+                    onRename={viewer ? undefined : (subject) => {
+                      this.setState({ viewsOpen: false });
+                      this.props.shutHeader();
+                      this.props.onRename(subject);
+                    }} />;
   }
 }

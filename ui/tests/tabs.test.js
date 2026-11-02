@@ -13,8 +13,10 @@
 //     the anchor, so `preventDefault` is needed: stopping React's bubbling alone
 //     would let the browser follow the link.
 //
-// Nothing is mounted: the real prototype runs with the state spelled out, and
-// what `computed()` and `render()` drew is read off the returned elements
+// Nothing is mounted but for the arrival on mount: the header (Header.jsx)
+// runs on its real prototype over a model page with the state spelled out
+// (`headerOn` in component.js), and what `view()` and `render()` drew is read
+// off the returned elements
 // (ui/tests/eltree.js). The layout around them is checked from Python against
 // the source (tests/test_ui_source.py).
 //
@@ -22,30 +24,25 @@
 // `localStorage`, and store.js reads its absence as "nothing remembered". So the
 // close tests assert what survives as well as what went.
 
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 // `vi.hoisted` and ONE MUTABLE OBJECT, exactly as ui/tests/header.test.js does
-// it and for the same reason: `PAGE.pid` is read at the moment `computed()`
-// runs, so moving the address is a field assignment rather than a re-mock.
+// it and for the same reason: `PAGE.pid` is read at the moment `view()` runs,
+// so moving the address is a field assignment rather than a re-mock.
 const { PAGE } = vi.hoisted(() => ({
   PAGE: { pid: 'proj1', slot: 'latest', base: '/project/proj1/latest/' },
 }))
 
-// The two hub fetches `load()` makes are mocked and nothing else is, exactly as
-// ui/tests/revswitch.test.js does it: they are the only things in this file that
-// would talk to a hub. Every other test here never reaches them.
 vi.mock('../src/hub.js', async (importOriginal) => ({
   ...(await importOriginal()),
   PAGE,
-  loadMeta: vi.fn(),
-  loadBuilds: vi.fn(),
 }))
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { loadBuilds, loadMeta } from '../src/hub.js'
+import Header from '../src/Header.jsx'
 import { tab } from '../src/panelstyle.js'
 import { forgetTab, readTabs, rememberTab } from '../src/store.js'
-import { makeComponent } from './component.js'
+import { headerOn, makeComponent } from './component.js'
 import { collect, links } from './eltree.js'
 
 /** The smallest thing store.js can tell from the real one. */
@@ -75,14 +72,15 @@ afterEach(() => {
 })
 
 /**
- * The component as `computed()` and `render()` see it, holding `tabs`.
+ * The header as `view()` and `render()` see it, holding `tabs`, over a model
+ * page (`page`).
  *
  * `parts: {}` deliberately: a build that ships no files draws no download rows,
  * and those are `<a>` elements too. What is left under `/project/` is the strip
  * and nothing else, which is what makes the readings below exact.
  */
 function component({ tabs = [], narrow = false } = {}) {
-  return makeComponent(HammerolaViewer, {
+  const page = makeComponent(HammerolaViewer, {
     state: {
       meta: {
         project: 'fixture', title: 'Fixture bracket', commit: 'abc1234',
@@ -91,9 +89,10 @@ function component({ tabs = [], narrow = false } = {}) {
                   parts: [], gzip: 1000 }],
       },
       rail: null, menu: { id: null, x: 0, y: 0 },
-      tabs, narrow,
+      narrow,
     },
   })
+  return Object.assign(headerOn(page, { state: { tabs } }), { page })
 }
 
 /** One entry as the store hands it over. */
@@ -122,43 +121,63 @@ const clickEvent = () => ({
 // -- how a project gets onto the strip in the first place ---------------------
 //
 // Every other test hands the strip its tabs, so the one line that fills it,
-// `rememberTab` in `load()`, needs its own test. This runs the real `load()`
-// over the real store, mocking only the two hub fetches.
+// `rememberTab` in the header's `arrive`, needs its own test. This runs the
+// header's update over the real store, as the build reaches it from BuildPage.
 
 describe('how a project reaches the strip', () => {
-  /** `load()` over a hub that answers with the fixture and no build history. */
-  const arrive = async (meta) => {
+  /** The header given its first build, as BuildPage hands one down. */
+  const arrive = (meta) => {
     const c = component()
-    if (meta) c.state.meta = meta
-    loadMeta.mockResolvedValue(c.state.meta)
-    // A project with no builds.json is a project with an empty picker, which
-    // `load()` treats as a non-event — the same shape revswitch.test.js uses.
-    loadBuilds.mockResolvedValue(null)
-    await c.load()
+    if (meta) c.props.meta = meta
+    c.componentDidUpdate({ ...c.props, meta: null })
     return c
   }
 
-  it('is recorded by arriving, under the name meta.json gives the project', async () => {
-    const c = await arrive()
+  it('is recorded by arriving, under the name meta.json gives the project', () => {
+    arrive()
     expect(readTabs().map((t) => t.pid)).toEqual(['proj1'])
     expect(readTabs()[0].title).toBe('Fixture bracket')
   })
 
-  it('seeds the strip the page draws from the store, in the same breath', async () => {
+  it('is recorded on mount when the build came with the page', () => {
+    // main.jsx reads meta.json before it mounts, so the header is born with
+    // its build and has no update to arrive in.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('null')))
+    const h = new Header({ ...component().props })
+    h.setState = (patch) => { Object.assign(h.state, patch) }
+    h.componentDidMount()
+    onTestFinished(() => {
+      h.componentWillUnmount()
+      vi.unstubAllGlobals()
+    })
+    expect(readTabs().map((t) => t.pid)).toEqual(['proj1'])
+    expect(h.state.tabs.map((t) => t.pid)).toEqual(['proj1'])
+  })
+
+  it('seeds the strip the page draws from the store, in the same breath', () => {
     // Two halves of one arrival and both are needed: the write puts this project
     // in storage, and the read is what the row on screen is built from. A write
     // with no re-read draws the strip this browser had BEFORE it got here.
     rememberTab('alpha', 'Alpha')
-    const c = await arrive()
+    const c = arrive()
     expect(c.state.tabs.map((t) => t.pid)).toEqual(['alpha', 'proj1'])
   })
 
-  it('falls back to the latin name when the model gave the project no title', async () => {
+  it('is not recorded again for a build swapped in place', () => {
+    // The same project, already on the strip: a second record would refresh the
+    // stamp of a reader who never left, which is what eviction reads (store.js).
+    const c = arrive()
+    const before = readTabs()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+    c.componentDidUpdate({ ...c.props })
+    expect(readTabs()).toEqual(before)
+  })
+
+  it('falls back to the latin name when the model gave the project no title', () => {
     // `meta.title` is optional on the wire and defaults to `project` server-side;
     // a strip of blank pills is what reading only the first would give.
-    const c = component()
-    const { title, ...untitled } = c.state.meta
-    await arrive(untitled)
+    const { title, ...untitled } = component().props.meta
+    arrive(untitled)
     expect(readTabs()[0].title).toBe('fixture')
   })
 })
@@ -168,7 +187,7 @@ describe('how a project reaches the strip', () => {
 describe('a strip with fewer than two tabs', () => {
   it('is not drawn at all when nothing has been remembered', () => {
     const c = component({ tabs: [] })
-    expect(c.computed().tabsShown).toBe(false)
+    expect(c.view().tabsShown).toBe(false)
     expect(tabHrefs(c)).toEqual([])
   })
 
@@ -177,7 +196,7 @@ describe('a strip with fewer than two tabs', () => {
     // of chrome that navigates nowhere. NOT `display:none` — absent: the row it
     // would occupy is taken off the page rather than left standing empty.
     const c = component({ tabs: [entry('proj1', 'Fixture bracket', 1000)] })
-    expect(c.computed().tabsShown).toBe(false)
+    expect(c.view().tabsShown).toBe(false)
     expect(tabHrefs(c)).toEqual([])
   })
 
@@ -185,7 +204,7 @@ describe('a strip with fewer than two tabs', () => {
     const c = component({
       tabs: [entry('proj1', 'Fixture bracket', 1000), entry('alpha', 'Alpha', 900)],
     })
-    expect(c.computed().tabsShown).toBe(true)
+    expect(c.view().tabsShown).toBe(true)
     expect(tabHrefs(c)).toHaveLength(2)
   })
 
@@ -194,7 +213,7 @@ describe('a strip with fewer than two tabs', () => {
     // takes the model's height.
     const two = [entry('proj1', 'Fixture bracket', 1000), entry('alpha', 'Alpha', 900)]
     const c = component({ tabs: two, narrow: true })
-    expect(c.computed().tabsShown).toBe(false)
+    expect(c.view().tabsShown).toBe(false)
     expect(tabHrefs(c)).toEqual([])
     expect(tabHrefs(component({ tabs: two }))).toHaveLength(2)
   })
@@ -244,7 +263,7 @@ describe('what a tab links at', () => {
     const c = component({
       tabs: [entry('alpha', 'Alpha', 900), entry('proj1', 'Fixture bracket', 1000)],
     })
-    const v = c.computed()
+    const v = c.view()
     expect(v.tabs.map((t) => t.label)).toEqual(['Alpha', 'Fixture bracket'])
   })
 
@@ -255,7 +274,7 @@ describe('what a tab links at', () => {
     // would evict a tab nobody can see. Hence `flex-wrap`.
     const full = Array.from({ length: 10 }, (unused, i) => (
       entry(`p${i}`, `Project number ${i}`, 1000 + i)))
-    const v = component({ tabs: full }).computed()
+    const v = component({ tabs: full }).view()
     expect(v.tabs).toHaveLength(10)
     expect(v.tabsStyle).toContain('flex-wrap:wrap')
     expect(v.tabsStyle).not.toContain('overflow:hidden')
@@ -272,10 +291,10 @@ describe('which tab is drawn as the active one', () => {
   ]
 
   /** The view switcher's chosen pill, held to the shared helper in `activePids`. */
-  const activePill = (c) => c.computed().viewTabs[0].style
+  const activePill = (c) => c.page.computed().viewTabs[0].style
 
   /** A tab's key is its pid — the strip is keyed by what it links at. */
-  const pids = (c) => c.computed().tabs.map((t) => t.key)
+  const pids = (c) => c.view().tabs.map((t) => t.key)
 
   // The chosen pill both strips start with: each adds its own layout after it
   // (the views' strip its shrinking, this one its link's), so the shared part is
@@ -285,7 +304,7 @@ describe('which tab is drawn as the active one', () => {
   const activePids = (c) => {
     const pill = tab(true)
     expect(activePill(c).startsWith(pill)).toBe(true)
-    return c.computed().tabs.filter((t) => t.style.startsWith(pill)).map((t) => t.key)
+    return c.view().tabs.filter((t) => t.style.startsWith(pill)).map((t) => t.key)
   }
 
   it('is the one whose pid is in the address, and there is exactly one', () => {
@@ -372,7 +391,7 @@ describe('closing a tab', () => {
     expect(PAGE.pid).toBe('proj1')
     expect(PAGE.base).toBe('/project/proj1/latest/')
     expect(readTabs().map((t) => t.pid)).toEqual(['alpha', 'beta'])
-    expect(c.computed().title).toBe('Fixture bracket')
+    expect(c.view().title).toBe('Fixture bracket')
     expect(tabHrefs(c)).toEqual(['/project/alpha/', '/project/beta/'])
   })
 
@@ -381,7 +400,7 @@ describe('closing a tab', () => {
     closers(c)[0].props.onClick(clickEvent())
     closers(c)[0].props.onClick(clickEvent())
     expect(readTabs().map((t) => t.pid)).toEqual(['beta'])
-    expect(c.computed().tabsShown).toBe(false)
+    expect(c.view().tabsShown).toBe(false)
     expect(tabHrefs(c)).toEqual([])
   })
 

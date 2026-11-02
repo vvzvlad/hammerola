@@ -47,16 +47,15 @@ const { A, B, C } = vi.hoisted(() => {
   return { A: a, B: b, C: 'c'.repeat(64) }
 })
 
-// `loadMeta` and `loadBuilds` are mocked for the shared-link block at the end,
-// which is the only one here that runs the real `load()`; every other test in
-// this file never reaches them.
+// `loadMeta` is mocked for the shared-link block at the end, which is the only
+// one here that runs the real `load()`; every other test in this file never
+// reaches it.
 vi.mock('../src/hub.js', async (importOriginal) => ({
   ...(await importOriginal()),
   loadCompareReport: vi.fn(),
   startCompare: vi.fn(),
   loadJob: vi.fn(),
   loadMeta: vi.fn(),
-  loadBuilds: vi.fn(),
 }))
 
 import HammerolaViewer, { compareRows, compareSummary } from '../src/HammerolaViewer.jsx'
@@ -68,9 +67,9 @@ import { emptyProposal, moves } from '../src/proposal.js'
 import { HmrViewport } from '../src/viewport/element.js'
 import {
   COMPARE_GROUPS, DIFF_COLOURS, PAGE, compareBase, indexTree, isPointerPage,
-  loadBuilds, loadCompareReport, loadJob, loadMeta, rereadPage, startCompare,
+  loadCompareReport, loadJob, loadMeta, rereadPage, startCompare,
 } from '../src/hub.js'
-import { drained as settled, makeComponent, replaceState } from './component.js'
+import { drained as settled, headerOn, makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
 import { guardSubscribers } from './addressguard.js'
 
@@ -82,7 +81,6 @@ beforeEach(() => {
   startCompare.mockReset()
   loadJob.mockReset()
   loadMeta.mockReset()
-  loadBuilds.mockReset()
 })
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -1278,13 +1276,15 @@ describe('runCompare', () => {
   it('is what the Compare button presses, on the two rows that are ticked', async () => {
     loadCompareReport.mockResolvedValue(REPORT)
     const c = page({ cmp: [A, B] })
+    // The button is the header's (Header.jsx), on the picker's card.
+    const header = headerOn(c, { state: { revOpen: true } })
 
-    c.computed().startCompare({ stopPropagation() {} })
+    header.view().startCompare({ stopPropagation() {} })
     await settled()
 
     expect(c.state.compare).toBe(true)
     expect(c.state.cmpPair).toEqual([A, B])
-    expect(c.state.revOpen).toBe(false)
+    expect(header.state.revOpen).toBe(false)
   })
 })
 
@@ -1391,7 +1391,8 @@ const BUILDS = {
   ],
 }
 
-const rowFor = (c, key) => c.computed().revRows.find((r) => r.key === key)
+/** The picker's row `key` in the header over the page `c`. */
+const rowFor = (c, key) => headerOn(c).view().revRows.find((r) => r.key === key)
 
 describe('the compare ticks in the picker', () => {
   it('ticks the commit `latest` stands for, and never `latest` itself', () => {
@@ -1425,7 +1426,7 @@ describe('the compare ticks in the picker', () => {
 
     rowFor(c, 'latest').onCmp({ stopPropagation() {} })
     rowFor(c, B).onCmp({ stopPropagation() {} })
-    c.computed().startCompare({ stopPropagation() {} })
+    headerOn(c).view().startCompare({ stopPropagation() {} })
     await settled()
 
     expect(c.state.cmpPair).toEqual([A, B])
@@ -1669,12 +1670,12 @@ describe('a comparison opened by its own URL', () => {
 
   it('loads <a>\'s documents and boots straight into the comparison', async () => {
     // The whole claim in one test: the page that comes up is `<a>`'s — its
-    // meta.json, its builds.json, its picker with both rows ticked — and the
-    // panel is already measuring the pair the link names, on the view a build
-    // page would have opened by itself.
+    // meta.json, its picker with both rows ticked — and the panel is already
+    // measuring the pair the link names, on the view a build page would have
+    // opened by itself. builds.json is BuildPage's to read, and the pair needs
+    // none of it: a comparison address names commits, never a pointer.
     opened(`/project/proj1/${A}/compare/${B}/`)
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(null)
     loadCompareReport.mockResolvedValue(REPORT)
     const c = page({ watch: true })
 
@@ -1683,7 +1684,6 @@ describe('a comparison opened by its own URL', () => {
 
     // No argument: `loadMeta` then asks under `PAGE.base`, which is `<a>`'s.
     expect(loadMeta).toHaveBeenCalledWith()
-    expect(loadBuilds).toHaveBeenCalled()
     expect(c.state.meta).toBe(META)
     expect(c.state.compare).toBe(true)
     expect(c.state.cmpPair).toEqual([A, B])
@@ -1735,7 +1735,6 @@ describe('a comparison opened by its own URL', () => {
     // what the LOAD leaves behind for the way out to read.
     opened(`/project/proj1/${A}/compare/${B}/`)
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(BUILDS)
     loadCompareReport.mockResolvedValue(REPORT)
     const c = page()
     c.schedulePoll = vi.fn()
@@ -1777,7 +1776,7 @@ describe('a comparison entered in the page', () => {
     loadCompareReport.mockResolvedValue(REPORT)
     const c = page({ cmp: [A, B] })
 
-    c.computed().startCompare({ stopPropagation() {} })
+    headerOn(c).view().startCompare({ stopPropagation() {} })
 
     expect(window.location.pathname).toBe(`/project/proj1/${A}/compare/${B}/`)
     // PUSH and not replace: this is somewhere the reader went, so Back is what
@@ -1795,7 +1794,7 @@ describe('a comparison entered in the page', () => {
     loadCompareReport.mockResolvedValue(REPORT)
     const c = page({ cmp: [A, B], view: 'printables' })
 
-    c.computed().startCompare({ stopPropagation() {} })
+    headerOn(c).view().startCompare({ stopPropagation() {} })
 
     expect(window.location.pathname).toBe(`/project/proj1/${A}/compare/${B}/`)
     expect(window.location.search).toBe('?v=printables')
@@ -1812,7 +1811,7 @@ describe('a comparison entered in the page', () => {
       opened(`/project/proj1/${A}/`)
       const c = page({ cmp: [A, B], doc, meta: listing })
 
-      c.computed().startCompare({ stopPropagation() {} })
+      headerOn(c).view().startCompare({ stopPropagation() {} })
 
       expect(window.location.search, doc).toBe(query)
     }
@@ -1925,7 +1924,7 @@ describe('a comparison entered in the page', () => {
     // The watch, re-armed — and the chip, which is drawn from the same answer.
     expect(isPointerPage()).toBe(true)
     expect(c.schedulePoll).toHaveBeenCalled()
-    expect(c.computed().statusText).toBe('up to date')
+    expect(headerOn(c).view().statusText).toBe('up to date')
     // AND THE ADDRESS MOVES FIRST, which is what the one payload the viewport
     // gets is read off: `sync` builds it out of `PAGE.base`, so a page that
     // closed the panel before it moved would point the element at the commit's
@@ -2014,7 +2013,6 @@ describe('back and forward through a comparison', () => {
     // `PAGE` has to be re-derived from the BAR, since the address the swap
     // composes for itself is the build's and this entry is a comparison's.
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(null)
     loadCompareReport.mockResolvedValue(REPORT)
     opened(`/project/proj1/${C}/`)
     const c = mounted()
@@ -2038,7 +2036,6 @@ describe('back and forward through a comparison', () => {
     // because `syncCompare` re-derives it a second time one step later and would
     // hide the difference.
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(null)
     opened(`/project/proj1/${C}/`)
     const c = page()
     window.history.replaceState(null, '', `/project/proj1/${A}/compare/${B}/`)
@@ -2055,7 +2052,6 @@ describe('back and forward through a comparison', () => {
     // page has to be the pointer's again, live reload and all. What Back must
     // never land on is `/latest/compare/<b>/`, which the hub answers 404.
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(BUILDS)
     loadCompareReport.mockResolvedValue(REPORT)
     opened('/project/proj1/latest/')
     const c = mounted({ builds: BUILDS })
@@ -2080,7 +2076,6 @@ describe('back and forward through a comparison', () => {
     // door is never opened — and what it must not do is lay an entry on top of
     // the one the reader came back to, which would cost them Forward.
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(BUILDS)
     loadCompareReport.mockResolvedValue(REPORT)
     opened('/project/proj1/latest/')
     const c = mounted({ builds: BUILDS })
@@ -2222,7 +2217,6 @@ describe('back and forward through a comparison', () => {
     // run it after every entry rather than only after the ones that changed the
     // mode: a Back between two builds must not open a panel or push anything.
     loadMeta.mockResolvedValue(META)
-    loadBuilds.mockResolvedValue(null)
     const push = vi.spyOn(history, 'pushState')
     opened(`/project/proj1/${C}/`)
     const c = mounted()

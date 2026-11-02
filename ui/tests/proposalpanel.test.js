@@ -25,7 +25,7 @@ import {
 import { SHAPE_OPS } from '../src/proposalgeom.js'
 import { css } from '../src/style.jsx'
 import { treeFromShapes } from '../src/viewport/parts.js'
-import { makeComponent, replaceState } from './component.js'
+import { headerOn, makeComponent, replaceState, tokenControl } from './component.js'
 import { collect, texts, titles } from './eltree.js'
 import { guardSubscribers } from './addressguard.js'
 
@@ -351,13 +351,14 @@ describe('the Add primitive button', () => {
     // anywhere else. Both of these open UPWARDS out of the same floating
     // toolbar, so two of them at once would stand on top of each other.
     const { c } = panel()
-    c.setState({ viewsOpen: true, revOpen: true })
+    const header = headerOn(c, { state: { revOpen: true } })
+    c.setState({ viewsOpen: true })
 
     c.computed().tProposal(click)
 
     expect(c.state.opsOpen).toBe(true)
     expect(c.state.viewsOpen).toBe(false)
-    expect(c.state.revOpen).toBe(false)
+    expect(header.state.revOpen).toBe(false)
 
     c.computed().tProposal(click)
     expect(c.state.opsOpen).toBe(false)
@@ -380,11 +381,11 @@ describe('the Add primitive button', () => {
 
   it('goes when the token does, and takes its body off the model with it', () => {
     // The button is hidden without a token, like Move, because everything the
-    // proposal produces is stored behind that token. `tokenClear` must shut the
+    // proposal produces is stored behind that token. Giving it up must shut the
     // menu too, or nothing could close it and a body would stay over the model.
     const { c, el } = panel({ proposal: withBlock(), opsOpen: true })
 
-    c.computed().tokenClear(click)
+    tokenControl(c).tokenClear(click)
 
     expect(c.state.token).toBeNull()
     expect(c.state.opsOpen).toBe(false)
@@ -1115,12 +1116,11 @@ describe('the proposal as a branch of the tree', () => {
     // token back, press `add a box`, and nothing appears on the model — turned
     // away by a flag set before they left.
     const { c, el } = panel({ proposal: withBlock() })
-    c.computed().tokenClear(click)
+    tokenControl(c).tokenClear(click)
     expect(c.state.proposalOff).toBe(true)
     el.setOverlay.mockClear()
 
-    c.setState({ tokenDraft: 'sekrit again' })
-    c.computed().tokenSave(click)
+    tokenControl(c, { tokenDraft: 'sekrit again' }).tokenSave(click)
 
     expect(c.state.proposalOff).toBe(false)
     expect(overlay(el)).toEqual(['korpus'])
@@ -1137,7 +1137,7 @@ describe('the proposal as a branch of the tree', () => {
     expect(overlay(el)).toEqual(['korpus'])
     expect(pushed(el)).not.toEqual([])
 
-    c.computed().tokenClear(click)
+    tokenControl(c).tokenClear(click)
 
     expect(c.state.proposalOff).toBe(true)
     expect(el.clearOverlay).toHaveBeenCalled()

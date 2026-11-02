@@ -20,11 +20,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import BuildPage from '../src/BuildPage.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { DEFAULT_THEME, readTheme, writeTheme } from '../src/store.js'
 import * as viewport from '../src/viewport/options.js'
 import { displayOptions } from '../src/viewport/options.js'
-import { makeComponent } from './component.js'
+import { headerOn, makeComponent } from './component.js'
 
 const THEME_COOKIE = 'hammerola.theme'
 
@@ -218,7 +219,7 @@ describe('what the library is started with', () => {
   it('is the one implementation, with no second name pointing at it', () => {
     // The viewport must not export `readTheme`/`writeTheme`: a second
     // implementation would read the same cookie, pass every test above, and
-    // write no attribute. HammerolaViewer.jsx imports them from store.js.
+    // write no attribute. BuildPage.jsx imports them from store.js.
     //
     // The test above is the other half: `displayOptions.theme` still follows
     // `writeTheme`, so the viewport reaches the one implementation.
@@ -230,31 +231,33 @@ describe('what the library is started with', () => {
 // -- the button, which stands beside the comments ----------------------------
 //
 // Where it is drawn is ui/tests/narrow.test.js's (both widths, header row read
-// off the render). Here: what the button says and what pressing it does.
+// off the render). Here: what the button says and what pressing it does, down
+// the chain it goes through — the header's toggle asks BuildPage for the other
+// mode (`onTheme`), BuildPage stores it and keeps what storage took, and the
+// model's page shows the theme it is handed on the live scene.
 //
-// The component is built as in ui/tests/downloads.test.js: the prototype, a
-// full state object, and the real `computed()`.
-//
-// `setState` is the one thing replaced: `Object.create(prototype)` has no
-// updater behind it, so React's would throw, and the assertions want the
-// patch rather than a re-render.
+// Nothing is mounted: the three are their real prototypes, and React's one job
+// here — handing BuildPage's new theme down to the page and telling it so — is
+// done by hand in `setState` below.
 
-/** The component, with a fake viewport element under `el()`. */
-function component({ theme = 'light', viewer = {} } = {}) {
-  return makeComponent(HammerolaViewer, {
+/** The header over the model's page, BuildPage's `onTheme` between them; the
+ *  page has a fake viewport element under `el()`. */
+function chain({ theme = 'light', viewer = {} } = {}) {
+  const page = makeComponent(HammerolaViewer, {
     host: { current: viewer === null ? null : { viewer } },
-    patches: [],
-    // The shared `mergeState`, plus the recording the assertions below read.
-    setState: (c) => vi.fn((patch) => {
-      c.patches.push(patch)
-      Object.assign(c.state, patch)
-    }),
-    state: {
-      menu: { id: null, x: 0, y: 0 },
-      token: null,
-      theme,
-    },
+    props: { theme },
+    state: { menu: { id: null, x: 0, y: 0 }, token: null },
   })
+  const build = new BuildPage({ meta: null })
+  build.state.theme = theme
+  build.setState = (patch) => {
+    Object.assign(build.state, patch)
+    const before = page.props
+    page.props = { ...before, theme: build.state.theme }
+    page.componentDidUpdate(before)
+  }
+  const header = headerOn(page, { props: { theme, onTheme: build.onTheme } })
+  return { page, build, header }
 }
 
 describe('the theme toggle', () => {
@@ -264,14 +267,14 @@ describe('the theme toggle', () => {
     // would say which theme is on.
     //
     // It says "interface", not "canvas": the theme covers the whole page.
-    const light = component({ theme: 'light' }).computed()
+    const light = chain({ theme: 'light' }).header.view()
     expect(light.themeLabel).toBe('Light')
     expect(light.themeDark).toBe(false)
     expect(light.themeTitle).toContain('interface is light')
     expect(light.themeTitle).toContain('click for dark')
     expect(light.themeTitle).not.toContain('canvas')
 
-    const dark = component({ theme: 'dark' }).computed()
+    const dark = chain({ theme: 'dark' }).header.view()
     expect(dark.themeLabel).toBe('Dark')
     expect(dark.themeDark).toBe(true)
     expect(dark.themeTitle).toContain('interface is dark')
@@ -281,10 +284,10 @@ describe('the theme toggle', () => {
 
   it('stores the answer, shows it, and tells the live scene', () => {
     const viewer = { setTheme: vi.fn() }
-    const c = component({ theme: 'light', viewer })
-    c.computed().toggleTheme()
+    const { build, header } = chain({ theme: 'light', viewer })
+    header.view().toggleTheme()
     expect(stored()).toBe('dark')
-    expect(c.patches).toEqual([{ theme: 'dark' }])
+    expect(build.state.theme).toBe('dark')
     // Through the VIEWER and not the element: the library resolves the theme
     // once, at construction, and re-asserts that value at the end of every
     // render, so an option or an attribute set from outside holds only until the
@@ -294,38 +297,32 @@ describe('the theme toggle', () => {
 
   it('turns back, so the button is a toggle and not a one-way trip', () => {
     const viewer = { setTheme: vi.fn() }
-    const c = component({ theme: 'dark', viewer })
-    c.computed().toggleTheme()
+    chain({ theme: 'dark', viewer }).header.view().toggleTheme()
     expect(stored()).toBe('light')
     expect(viewer.setTheme).toHaveBeenCalledWith('light')
   })
 
   it('shows what writeTheme TOOK, not what it was handed', () => {
     // THE WHOLE POINT OF THAT FUNCTION'S RETURN VALUE, and the assertion has to
-    // go through `applyTheme` rather than the toggle to make it: the toggle only
+    // go through `onTheme` rather than the toggle to make it: the toggle only
     // ever asks for 'light' or 'dark', both of which storage accepts unchanged,
     // so nothing a click can do tells "stores the return" from "stores its own
-    // argument" apart. `applyTheme` is the method the toggle is one line of, and
-    // it is reachable with a value storage corrects — which is how a button ends
-    // up naming a theme the canvas under it is not in.
+    // argument" apart. `onTheme` is reachable with a value storage corrects —
+    // which is how a button ends up naming a theme the canvas under it is not in.
     const viewer = { setTheme: vi.fn() }
-    const c = component({ theme: 'dark', viewer })
-    c.applyTheme('midnight')
-    expect(c.state.theme).toBe('light')
+    const { build } = chain({ theme: 'dark', viewer })
+    build.onTheme('midnight')
+    expect(build.state.theme).toBe('light')
     expect(stored()).toBe('light')
     expect(viewer.setTheme).toHaveBeenCalledWith('light')
   })
 
-  it('is one line over applyTheme, and asks it for the OTHER mode', () => {
-    const c = component({ theme: 'light' })
-    c.applyTheme = vi.fn()
-    c.computed().toggleTheme()
-    expect(c.applyTheme).toHaveBeenCalledWith('dark')
-
-    const dark = component({ theme: 'dark' })
-    dark.applyTheme = vi.fn()
-    dark.computed().toggleTheme()
-    expect(dark.applyTheme).toHaveBeenCalledWith('light')
+  it('asks for the OTHER mode', () => {
+    const onTheme = vi.fn()
+    const page = makeComponent(HammerolaViewer)
+    headerOn(page, { props: { theme: 'light', onTheme } }).view().toggleTheme()
+    headerOn(page, { props: { theme: 'dark', onTheme } }).view().toggleTheme()
+    expect(onTheme.mock.calls).toEqual([['dark'], ['light']])
   })
 
   it('still stores and shows it with no viewport on the page', () => {
@@ -333,10 +330,10 @@ describe('the theme toggle', () => {
     // adapter mounted, a viewport that has not rendered, an older library with
     // no `setTheme`. The setting has to survive all three — the next page load
     // comes up in it.
-    for (const c of [component({ viewer: null }), component({ viewer: {} }),
-                     component({ viewer: { setTheme: 'not a function' } })]) {
-      c.computed().toggleTheme()
-      expect(c.state.theme).toBe('dark')
+    for (const viewer of [null, {}, { setTheme: 'not a function' }]) {
+      const { build, header } = chain({ viewer })
+      header.view().toggleTheme()
+      expect(build.state.theme).toBe('dark')
       expect(stored()).toBe('dark')
       clearJar()
     }
@@ -344,11 +341,11 @@ describe('the theme toggle', () => {
 
   it('survives a viewer whose setTheme throws', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const c = component({
+    const { build, header } = chain({
       viewer: { setTheme: () => { throw new Error('older library') } },
     })
-    expect(() => c.computed().toggleTheme()).not.toThrow()
-    expect(c.state.theme).toBe('dark')
+    expect(() => header.view().toggleTheme()).not.toThrow()
+    expect(build.state.theme).toBe('dark')
     expect(stored()).toBe('dark')
     expect(warn).toHaveBeenCalled()
   })

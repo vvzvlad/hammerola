@@ -3,6 +3,8 @@
  *  HammerolaViewer — the build page: tree, section, measure, move, comments
  * ============================================================================
  *
+ * The model's page, under the header (Header.jsx); BuildPage.jsx holds both.
+ *
  * Where each piece of data comes from:
  *
  *   PARTS / NODES  -> the part tree the viewport hands over on `hmr:model`,
@@ -11,7 +13,8 @@
  *                     side does not fetch the view file: the viewport fetches
  *                     it to render, and the tree is inside that document.
  *   REVS           -> /project/<pid>/builds.json, which carries the pointers
- *                     (`has_dev`, `latest`) beside the history of commits.
+ *                     (`has_dev`, `latest`) beside the history of commits;
+ *                     BuildPage reads it and hands it down (`props.builds`).
  *   DIFF           -> two documents computed on request: `scene.json`, an
  *                     ordinary view payload for the viewport already on the
  *                     page, and `report.json`, the list of parts the panel
@@ -38,8 +41,9 @@
  *   viewerMode     -> derived, not a prop: it is `no token`.
  *
  * THE TOKEN. Whoever has it can edit and comment; whoever does not gets the
- * interface to look with. It is typed in by the person, kept in localStorage
- * per project, and removable. Closed without it: the reader's own note on a
+ * interface to look with. It is typed into the header by the person, kept in
+ * localStorage, and removable; BuildPage hands it down (`props.token`,
+ * `takeToken`). Closed without it: the reader's own note on a
  * part, moving a part, and comments entirely. Open always: orbiting, the tree,
  * the section, measuring, the downloads, the frame grab — and the author's
  * note, which is published content.
@@ -85,15 +89,13 @@ import {
   JOB_DONE, JOB_FAILED, anchorFor, askHub, buildPath, compareBase, decodeCamera,
   encodeCamera, isDefaultPointerPage, isPointerPage, buildKey,
   countedName, compareView, hubBody, hubTrouble, indexTree, loadCompareReport,
-  loadJob, loadMeta, loadBuilds, loadVariants, pageFrom, pageVariant, plateLabel,
+  loadJob, loadMeta, pageFrom, pageVariant,
   rereadPage, rowsByKey, shortId, startCompare, mb,
 } from './hub.js';
-// `readTheme`/`writeTheme` come from here, not the viewport: the theme is the
-// whole interface's palette, per-reader state like the token, the notes and the
-// tabs, and this is the one module that reaches the cookie.
+// The reader's notes, the pointer they were last on and the Settings card's
+// answer: per-reader state, which store.js is the one module to keep.
 import {
-  readToken, readNotes, writeNotes, rememberPointer,
-  readTabs, rememberTab, forgetTab, readTheme, writeTheme, readRetina,
+  readNotes, writeNotes, rememberPointer, readRetina,
 } from './store.js';
 // The proposal: a rough body the reader assembles out of numbers so the agent
 // has something to design against or to copy — the motor the bracket has to
@@ -124,63 +126,52 @@ import { HOLDABLE, installLongPress, markMenu } from './longpress.js';
 import { chromeView } from './chromeview.js';
 // And one of the build's documents, laid over the model when it is chosen in
 // the view list; drawn as the documents page draws it.
-// `namedByExt` and `docExt` come with it for the downloads menu, which offers a
-// document the page cannot draw, and a text file, under the extension it is
-// named by.
-import { COMMENTABLE, docExt, DocumentLayers, namedByExt } from './DocumentView.jsx';
+import { COMMENTABLE, DocumentLayers } from './DocumentView.jsx';
 // The bar the document views draw while their file comes in, drawn over the
 // model while the viewport fetches a view file.
 import { loadBar } from './loadbar.jsx';
-// The type the downloads menu knows the board's Gerbers by.
-import { GERBERS_TYPE } from './gerber.js';
 import { savePng, toolBar } from './viewlist.jsx';
-import { VariantSwitch } from './variants.jsx';
 // `View in AR`: whether the browser has AR Quick Look, and the type its file
 // is handed over under; the frame waited for before the file is made. Where
 // there is no Quick Look, whether WebXR has AR (`xrSupported`) and the
 // session the tap asks it for (`requestXr`).
 import { AR_FRAGMENT, arSupported, openQuickLook, requestXr, USDZ_TYPE, xrSupported } from './ar.js';
 import { painted } from './loadbar.jsx';
-// The pencils and the window that rename a name of the project.
-import { Pencil, RENAME_CSS, RENAME_HOST, RenameWindow, saveRename } from './rename.jsx';
-// And the four panels that answer to little more than the state: the revision
-// picker, the downloads menu, the comment rail and the comparison. `fileHref`
-// comes with the downloads because the row menu builds the same link for one
-// part that the header's menu builds for all of them, and `filesKeyFor`
-// because both menus put the same key into it.
-import { revisionView } from './revisionview.js';
-import { downloadsView, fileHref, filesKeyFor, plateFiles } from './downloadsview.js';
+// And the panels that answer to little more than the state: whether the build
+// ships files, the comment rail and the comparison. `fileHref` comes with the
+// downloads because the row menu builds the same link for one part that the
+// header's menu builds for all of them, `filesKeyFor` because both menus put
+// the same key into it, and `fileList` because both read a part's files.
+import { downloadsView, fileHref, fileList, filesKeyFor, plateFiles } from './downloadsview.js';
 // The Copy link at the end of each file row of both menus, and Open in Bambu
 // Studio before it on a 3MF's row; the 3MF group is where the beds are offered.
-import BambuLink, { BAMBU_FORMAT } from './bambu.jsx';
+import BambuLink from './bambu.jsx';
 import CopyLink from './copylink.jsx';
-import { dropStaleFocus, feedView } from './feedview.js';
+import { dropStaleFocus, feedView, openComments } from './feedview.js';
 // And the comments the page of a build with no model holds too: the queue
 // fetched and written, a draft on a document, what a document is handed for
-// them, and the composer, the comments button and the rail.
+// them, and the composer, the values of the header's comments button and the
+// rail.
 import {
-  closeComment, COMMENT_ICON, commentRail, commentsButton, composerCard, composerView, docComment, docDraft,
-  docFrame, readFeed, sendDraft,
+  closeComment, commentRail, composerCard, composerView, docComment, docDraft,
+  docFrame, railView, readFeed, sendDraft,
 } from './comments.jsx';
 import { comparePanel } from './compareview.js';
-// The header's menu a narrow window folds the header's controls into, which
-// the page of a build with no model draws too.
-import { headMenu } from './headmenu.jsx';
-// The revision picker's button, its row of that menu and its card, which the
-// page of a build with no model draws too.
-import { revisionPicker, revisionRow } from './revisions.jsx';
+// The look of a row of the header's narrow menu, for the one this page adds
+// to it (Parts, `headerParts`).
+import { headRow } from './headmenu.jsx';
 // The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
 // were spelled out once per call site.
 import {
   ACCENT_BTN, BLANK_BOX, CARD, DIALOG_BTN, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN,
-  HEADER_RULE, HEAD_MONO, HEAD_SANS, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK,
+  HEAD_MONO, HEAD_SANS, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK,
   ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, ROW,
-  ROW_LABELLED, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TITLE, TOOL_SQUARE,
-  WARN_BODY, WARN_CAPS, WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover, TOAST_MS, toastStyle,
+  ROW_LABELLED, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TOOL_SQUARE,
+  WARN_BODY, WARN_CAPS, chip, eyeDot, eyeOuter, ghostIcon, popover, TOAST_MS, toastStyle,
 } from './panelstyle.js';
 import {
-  css, FONTS, SANS, MONO, Mark, NARROW, PAGE_BG, PAGE_FG,
+  css, FONTS, SANS, MONO, NARROW, PAGE_BG, PAGE_FG,
 } from './style.jsx';
 // The one question this file's keydown handler cannot answer for itself: is the
 // reader in a field. Imported rather than repeated because the rule is subtle —
@@ -236,27 +227,17 @@ const VIEWPORT_CSS = `
 }
 `;
 
-// The header's icons drawn twice: on its buttons on a wide window and on the
-// rows of the header's menu on a narrow one (headmenu.jsx).
-const DOWNLOAD_ICON = (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
-);
-// The same arrow at the end of a bed's row in the tree, at the size and in the
-// ink of the Open in Bambu Studio and Copy link after it (bambu.jsx,
+// The download arrow at the end of a bed's row in the tree, at the size and in
+// the ink of the Open in Bambu Studio and Copy link after it (bambu.jsx,
 // copylink.jsx), each padded alike.
 const ROW_DOWNLOAD_ICON = (
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.5v9M4.5 7L8 10.5 11.5 7M2 13.5h12" /></svg>
 );
 const ROW_FILE_PAD = 'padding:0 3px';
 const ROW_DOWNLOAD = `flex:none;display:flex;align-items:center;text-decoration:none;color:var(--text-faint);${ROW_FILE_PAD}`;
-const LOCK_ICON = (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2.5" y="7" width="11" height="7" rx="1.5" /><path d="M5 7V4.8a3 3 0 0 1 6 0V7" /></svg>
-);
-const MOON_ICON = (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6 5.9 5.9 0 1 0 13.4 9.9z" /></svg>
-);
-const SUN_ICON = (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3.1" /><path d="M8 1.2v1.7M8 13.1v1.7M1.2 8h1.7M13.1 8h1.7M3.2 3.2l1.2 1.2M11.6 11.6l1.2 1.2M12.8 3.2l-1.2 1.2M4.4 11.6l-1.2 1.2" /></svg>
+// The Parts row of the header's narrow menu (`headerParts`).
+const PARTS_ICON = (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h12M4.5 8H14M4.5 13H14" /></svg>
 );
 
 // How often a pointer page asks whether a newer build has landed. Below a
@@ -498,121 +479,6 @@ export function partRecord(parts, key) {
 }
 
 /**
- * The files of one catalogue record, as `[{ext, file}]`.
- *
- * `files` is the whole answer; nothing is derived from a filename. The hub
- * publishes `{extension: filename}` per part (`_catalogue` in src/render.py);
- * cutting a filename at its last dot breaks on parts with a dot in the name.
- *
- * Only `files`: `preview`, the part's own render, sits in the same record and
- * is declared for `hammerola artifacts` to fetch, not offered as a download.
- *
- * The pair is checked rather than trusted: a filename that is not a non-empty
- * string makes a row that downloads nothing, which is worse than not being
- * offered at all.
- */
-function fileList(record) {
-  const files = record && typeof record.files === 'object' && record.files
-    ? record.files : null;
-  if (!files) return [];
-  return Object.entries(files)
-    .filter(([ext, file]) => ext && typeof file === 'string' && file)
-    .map(([ext, file]) => ({ ext, file }));
-}
-
-/**
- * The formats that go to a printer, first, in the order a part reaches one.
- *
- * STL is what a slicer is opened with, 3MF is the same mesh with the print
- * settings on it, and STEP is the solid — the thing you take when you are going
- * to EDIT the part rather than make it. The header's menu is opened far more
- * often for the first than for the last, and an alphabetical list puts 3MF at
- * the top and STL at the bottom, which is the exact reverse. Anything the hub
- * grows later lands after these three, alphabetically, so a new format is
- * ordered rather than wherever the object happened to be iterated.
- */
-const PRINT_FIRST = ['STL', '3MF', 'STEP'];
-
-/** The heading the board's Gerbers are offered under, among the formats. */
-const GERBERS_GROUP = 'GERBERS';
-
-/**
- * `meta.parts` as ordered groups of one FORMAT each, rows ordered by part.
- *
- * Flat, this menu is one row per file — thirty of them on a ten-part build, in
- * the order the hub happened to write them, so picking out every STL means
- * aiming at every third row. Grouped, the same thirty rows are three groups a
- * reader can take whole.
- *
- * The row's name is the catalogue key, the part's name.
- *
- * Of what a view declares, only `plates` is offered: the `print` view's beds,
- * a 3MF each (`{"1": "print.3mf", "2": "print-2.3mf"}`), each part an object of
- * its own where the view laid it out, so a whole bed opens in a slicer in one
- * go. Their rows come first in the 3MF group, ahead of the parts and in bed
- * order, and like every 3MF row each gets Open in Bambu Studio. `overview` and
- * `preview` (`assembled.stl`, `print.stl` and their pictures) are declared for
- * a client to fetch, not as buttons: `assembled.stl` is on screen in 3D
- * already, and `print.stl`, the beds glued into one mesh, is there for the
- * picture the build draws of them — a bed is offered as its 3MF.
- *
- * A Map because the group key is an extension out of a pushed document, so
- * `__proto__` is reachable and an object literal would silently store nothing
- * under it.
- *
- * Two kinds of document reach this menu, both out of `meta.documents`. Every
- * zip of Gerbers (`GERBERS_TYPE`) is a row of one GERBERS group, named by its
- * title. Every plain file (`FILE_TYPE`) and every text file
- * (`TEXT_TYPE`) is a row under its own extension in capitals — DXF, CSV — so a
- * cut list for the glass shop is taken the way an STL is, and lands beside a
- * part's exports when it shares their extension. Both are ordered like any
- * other format.
- */
-export function groupDownloads(parts, documents, views) {
-  const groups = new Map();
-  Object.entries((parts && typeof parts === 'object') ? parts : {})
-    .forEach(([key, record]) => {
-      fileList(record).forEach(({ ext, file }) => {
-        const group = ext.toUpperCase();
-        if (!groups.has(group)) groups.set(group, []);
-        groups.get(group).push({ label: key, file });
-      });
-    });
-  const listed = (Array.isArray(documents) ? documents : [])
-    .filter((doc) => doc && typeof doc.file === 'string' && doc.file);
-  const gerbers = listed
-    .filter((doc) => doc.type === GERBERS_TYPE)
-    .map((doc) => ({ label: String(doc.name || doc.file), file: doc.file }));
-  if (gerbers.length) groups.set(GERBERS_GROUP, [...(groups.get(GERBERS_GROUP) || []), ...gerbers]);
-  listed.filter(namedByExt).forEach((doc) => {
-    const group = docExt(doc).toUpperCase();
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push({ label: String(doc.name || doc.file), file: doc.file });
-  });
-  const beds = (Array.isArray(views) ? views : [])
-    .filter((view) => view && view.plates && typeof view.plates === 'object')
-    .flatMap((view) => Object.entries(view.plates))
-    .filter(([number, file]) => /^[1-9][0-9]*$/.test(number) && typeof file === 'string' && file)
-    .sort(([a], [b]) => Number(a) - Number(b));
-  const plates = beds.map(([number, file]) => ({
-    label: plateLabel(number, beds.length), file,
-  }));
-  if (plates.length && !groups.has(BAMBU_FORMAT)) groups.set(BAMBU_FORMAT, []);
-  const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-  const rank = (ext) => {
-    const at = PRINT_FIRST.indexOf(ext);
-    return at < 0 ? PRINT_FIRST.length : at;
-  };
-  return Array.from(groups.keys())
-    .sort((a, b) => (rank(a) - rank(b)) || text(a, b))
-    .map((ext) => ({
-      ext,
-      files: [...(ext === BAMBU_FORMAT ? plates : []),
-              ...groups.get(ext).slice().sort((a, b) => text(a.label, b.label))],
-    }));
-}
-
-/**
  * How many parts one view shows, out of the summary the hub publishes for it.
  *
  * `views[].parts` is a list of catalogue keys, so the tab strip and subtitle
@@ -625,85 +491,6 @@ export function groupDownloads(parts, documents, views) {
  */
 function viewPartCount(view) {
   return Array.isArray(view && view.parts) ? view.parts.length : 0;
-}
-
-/**
- * The gap between two downloads handed to the browser in one gesture.
- *
- * Not a workaround for a block — see the note beside the group menu's button for
- * what a browser actually does — but for the fact that each of these is a
- * separate navigation the browser has to notice: fired in one synchronous burst,
- * anchors pointing at different files can be coalesced into one download, and
- * which ones survive depends on the engine. A fifth of a second is under the
- * threshold at which a person reads the sequence as slow and well over the
- * threshold at which the browser reads it as one event.
- */
-export const DOWNLOAD_GAP_MS = 200;
-
-/** One `<a download>`, clicked and thrown away. The default `click` below. */
-function clickHref(href) {
-  const a = document.createElement('a');
-  a.href = href;
-  // Empty rather than a name: the href is a file under the build's own
-  // directory, so the browser takes the name off the URL — which is the name the
-  // build published, and the page has no better one to offer.
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
-/**
- * Hand the browser every href in turn, spaced by `delay`.
- *
- * The first one fires synchronously: a download is allowed because it is
- * inside the gesture that asked for it, and a timer would leave that gesture
- * behind. The rest follow on the clock; a browser that asks about the second
- * file asks once for the site and remembers.
- *
- * `click` and `schedule` are arguments so tests can drive it with fake timers
- * and a fake clicker — order and spacing are all it promises.
- *
- * `signal` cancels it. A chain outlives its gesture by `gap` × (N − 1), and
- * every href was captured off `PAGE.base` at the press, so a reader who
- * switches revision or leaves would keep receiving the old build's files. The
- * abort is checked at the top of every step (an already-aborted signal hands
- * over nothing) and clears the pending timer — a real `clearTimeout` by
- * default, a no-op under an injected `schedule`, where the flag does the work.
- *
- * The listener is removed when the chain ends normally because the signal
- * outlives it: one controller serves the whole page (`downloadAll`), and each
- * finished chain would otherwise leave a listener holding its `list` and
- * `timer`. `{once: true}` covers only an abort that fires.
- */
-export function sequentialDownload(hrefs, options) {
-  const o = options || {};
-  const click = o.click || clickHref;
-  const schedule = o.schedule || ((fn, ms) => setTimeout(fn, ms));
-  const gap = Number.isFinite(o.delay) ? o.delay : DOWNLOAD_GAP_MS;
-  const list = (Array.isArray(hrefs) ? hrefs : []).filter(Boolean);
-  const signal = o.signal || null;
-  let at = 0;
-  let timer = null;
-  // Set while this chain is listening; called at every way out of `step`, which
-  // is what makes an empty list and an already-aborted signal leave nothing on
-  // the signal either.
-  let unlisten = null;
-  const done = () => { if (unlisten) { unlisten(); unlisten = null; } };
-  const step = () => {
-    if (at >= list.length || (signal && signal.aborted)) { done(); return; }
-    click(list[at]);
-    at += 1;
-    if (at < list.length) timer = schedule(step, gap);
-    else done();
-  };
-  if (signal) {
-    const cancel = () => { clearTimeout(timer); unlisten = null; };
-    signal.addEventListener('abort', cancel, { once: true });
-    unlisten = () => signal.removeEventListener('abort', cancel);
-  }
-  step();
-  return list.length;
 }
 
 /**
@@ -1077,8 +864,6 @@ export default class HammerolaViewer extends React.Component {
     this._modelSeen = undefined;    // a model event has landed at all
     this._proposalRecord = undefined; // what `loadProposal` read, for `adoptProposal`
     this._proposalSent = undefined; // the payload last written, so a save can be skipped
-    // -- the download chain in flight, which `cancelDownloads` aborts
-    this._dl = undefined;
     // -- true once `sync` no longer holds the model back for a document, and
     // whether the last `sync` did
     this._modelFree = undefined;
@@ -1087,14 +872,12 @@ export default class HammerolaViewer extends React.Component {
     // once, as nothing changes the answer while the page is open.
     this.arCapable = arSupported();
     this.state = {
-      // -- what the hub said
-      meta: null, builds: null, tree: null, error: null, viewError: null,
+      // -- what the hub said; `builds.json` is BuildPage's, held here as it
+      // comes down (`componentDidUpdate`)
+      meta: null, builds: props.builds, tree: null, error: null, viewError: null,
       // The view file the viewport is fetching, as its last PROGRESS told it
       // (`{view, received, total, done}`), until the view renders or fails.
       modelLoad: null,
-      // `variants.json`, the switcher's list (variants.jsx), or null until it
-      // comes and when it does not.
-      variants: null,
       pending: null,          // a newer build, seen by the poll, not applied
       // A revision picked from the picker is on the wire. It exists to take the
       // banner's Switch out of service for exactly that window — see
@@ -1117,10 +900,8 @@ export default class HammerolaViewer extends React.Component {
       // dismissed by `rootClick` and by Escape like the other menus of the
       // chrome. NO COUNT OF THEM HERE — `chromeview.js` says why: a number in
       // a sentence has been wrong twice already, because nothing fails when a
-      // menu is added beside it. `headMenu` is the header's menu on a narrow
-      // window (headmenu.jsx), which holds the header's controls as rows.
-      revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false,
-      settingsOpen: false, variantsOpen: false, headMenu: false,
+      // menu is added beside it. The header's menus are its own (Header.jsx).
+      viewsOpen: false, opsOpen: false, settingsOpen: false,
       // `View in AR` (`openAr`, `openXr`): `{ busy }` while the file is made
       // or while the WebXR session starts and runs, else null.
       ar: null,
@@ -1132,9 +913,6 @@ export default class HammerolaViewer extends React.Component {
       // is its first checkbox; `camera`, the Current view box, is absent until
       // ticked; null while it is closed.
       share: null,
-      // The rename window (rename.jsx): what it renames, `{kind, variant, id,
-      // name}`, while it is open; null while it is closed.
-      rename: null,
       cmp: [], compare: false, diffShow: 'both',
       // -- the comparison: five fields answering five questions.
       //
@@ -1235,27 +1013,14 @@ export default class HammerolaViewer extends React.Component {
       // tells the agent there is one to read, so it must be current: every save
       // raises or lowers it, the delete lowers it.
       proposalHeld: null, proposalStands: false,
-      // -- who the reader is
-      // No project id: the secret is one string for the whole hub since step 0,
-      // so keying it per project stored N copies of it (see store.js).
-      token: readToken(), tokenPop: false, tokenDraft: '',
-      // -- and what they want to look at the model against. Read here so the
-      // first paint is already the reader's answer: the same read seeds the
-      // options the viewport starts the library with (viewport/options.js), so
-      // the button below never has to correct a canvas that came up wrong.
-      theme: readTheme(),
-      // -- where this browser has been lately: the strip under the header.
-      // Empty here and seeded in `load()`, unlike `theme` above, because an
-      // arrival cannot be recorded until `meta` says what this project is
-      // CALLED — see there. Nothing is lost by the wait: below two entries the
-      // strip is not drawn at all.
-      tabs: [],
+      // -- who the reader is: the token BuildPage read, which the header's
+      // Save and Remove change and this page follows (`takeToken`).
+      token: props.token,
       // -- and how much room there is to draw all of that in. Read here so the
-      // first paint is already the narrow one on a phone, the way `theme` above
-      // is already the reader's: a header that lays itself out wide and then
-      // reflows is a page that looks broken for one frame. `computed()` is the
-      // only reader; see `style.jsx` (NARROW) for why this is a boolean in
-      // state rather than a `@media` block.
+      // first paint is already the narrow one on a phone: a page that lays
+      // itself out wide and then reflows looks broken for one frame.
+      // `computed()` is the only reader; see `style.jsx` (NARROW) for why this
+      // is a boolean in state rather than a `@media` block.
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
       // Does the reader want the tree on screen? Asked only in the narrow
       // branch, where the tree covers the model it describes rather than
@@ -1512,7 +1277,8 @@ export default class HammerolaViewer extends React.Component {
     // thing on this page to lose, and Escape gets pressed by reflex. An Escape
     // that closed something is taken (`preventDefault()`): a KiCad design laid
     // over the model puts its selection out on an Escape nobody took
-    // (KicadView.jsx), and listens after this page.
+    // (KicadView.jsx), and listens after this page. The header's menus are the
+    // header's to shut (Header.jsx).
     //
     // Ctrl+Z and Cmd+Z take back the last thing done, of either kind: hiding,
     // ghosting or isolating in the tree, or a build part or proposal body
@@ -1545,10 +1311,8 @@ export default class HammerolaViewer extends React.Component {
         return;
       }
       if (e.key !== 'Escape') return;
-      const shut = { menu: null, secPop: false, revOpen: false, dlOpen: false,
-                     viewsOpen: false, opsOpen: false, settingsOpen: false,
-                     variantsOpen: false, notePop: null, tokenPop: false, tool: null,
-                     share: null, headMenu: false };
+      const shut = { menu: null, secPop: false, viewsOpen: false, opsOpen: false,
+                     settingsOpen: false, notePop: null, tool: null, share: null };
       // An armed tool is not on screen under an open document — the document
       // covers the model and the tool's button is out of service — so it does
       // not count as something this Escape closed; the Comment tool over a
@@ -1598,9 +1362,7 @@ export default class HammerolaViewer extends React.Component {
     // Escape key, so Measure would turn every touch into a measurement point
     // and Move would drag where an orbit was meant. Through `this.set`, since
     // the viewport holds the tool too and must be told; the wide direction is a
-    // plain `setState`, since nothing is taken away. It puts the header's menu
-    // down: the wide header draws no menu, and a flag left up would bring it
-    // back open on the next crossing into narrow.
+    // plain `setState`, since nothing is taken away.
     this._mq = window.matchMedia ? window.matchMedia(NARROW) : null;
     if (this._mq) {
       this._narrow = (e) => (e.matches
@@ -1611,7 +1373,7 @@ export default class HammerolaViewer extends React.Component {
         // for a menu that is not on screen, and the first click anywhere is
         // spent putting it down again.
         ? this.set({ narrow: true, tool: null, opsOpen: false, settingsOpen: false })
-        : this.setState({ narrow: false, headMenu: false }));
+        : this.setState({ narrow: false }));
       this._mq.addEventListener('change', this._narrow);
     }
 
@@ -1654,11 +1416,107 @@ export default class HammerolaViewer extends React.Component {
     // pressed while the first is queued starts a second — and `pause` keeps a
     // timer per wait for exactly that reason.
     (this._cmpWaits || new Set()).forEach(clearTimeout);
-    // And so does a download chain still stepping. It touches no state, so it
-    // survives an unmount perfectly happily — and goes on handing the browser
-    // files of a build nobody is looking at any more.
-    this.cancelDownloads();
     this._gone = true;
+  }
+
+  /** What comes down from BuildPage, followed: the token (`takeToken`), the
+   *  variant's `builds.json`, the theme on the live scene (`showTheme`); and
+   *  the header told the page changed, which it reads (`headerParts`). */
+  componentDidUpdate(prev) {
+    if (prev.token !== this.props.token) this.takeToken(this.props.token);
+    if (prev.builds !== this.props.builds) this.setState({ builds: this.props.builds });
+    if (prev.theme !== this.props.theme) this.showTheme(this.props.theme);
+    this.props.onHeader();
+  }
+
+  /**
+   * The token the header saved or removed. Saved: the queue and the stored
+   * proposal, behind the same token, are asked for from the callback, where
+   * `this.state.token` is the new one (`loadProposal` says why these are the
+   * only two doors), and `proposalOff` is cleared, or `stageProposal` would
+   * refuse the next `add a box`. Removed: what was fetched under it goes, and
+   * what only an editor has — the composer, the note editor, the `Add
+   * primitive` menu, an armed tool. The proposal comes off the model through
+   * its eye (`proposalOff`); both pushes carry their own answer, `setState`
+   * not having landed. The branch stays, so the eye can put it back.
+   */
+  takeToken(token) {
+    if (token) {
+      this.setState({ token, proposalOff: false }, () => {
+        this.loadFeed();
+        this.loadProposal();
+        this.stageProposal(this.state.proposal || emptyProposal());
+      });
+      return;
+    }
+    this.setState({ token: null, composer: null, notePop: null, feed: [],
+                    opsOpen: false, settingsOpen: false, proposalOff: true, builds: null });
+    this.proposalOverlay(null);
+    this.proposalMoves(dropMoves(this.state.proposal));
+    this.set({ tool: null });
+  }
+
+  /** The page's menus a click that nothing stopped shuts (`rootClick`), and a
+   *  click on the header or a toggle of one of its cards (Header.jsx): the
+   *  part menu, the list of views, `Add primitive` and Settings. */
+  closeMenus() {
+    this.setState({ menu: null, viewsOpen: false, opsOpen: false, settingsOpen: false });
+  }
+
+  /**
+   * What the header says of this page and does through it (Header.jsx): the
+   * line under the title, that the page watches for a newer build (`watching`,
+   * the poll, `schedulePoll`) and that one is waiting (`pending`), the revision
+   * picker's doors, the comments' button, the Parts row of its narrow menu,
+   * and the toast.
+   */
+  headerParts() {
+    const s = this.state;
+    const stop = (fn) => (e) => { e.stopPropagation(); fn(e); };
+    const viewer = this.viewer();
+    const narrow = !!s.narrow;
+    const documents = (s.meta && Array.isArray(s.meta.documents)) ? s.meta.documents : [];
+    const docOpen = documents.some((d) => d.id === s.doc);
+    const cmpReady = s.cmp.length === 2;
+    return {
+      subtitle: s.meta ? this.subtitle() : '',
+      tokenHint: 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.',
+      watching: true,
+      pending: !!s.pending,
+      revisions: {
+        cmp: s.cmp,
+        commitOf: (name) => this.commitOf(name),
+        // Two at most: a third tick lets go of the oldest.
+        toggleCmp: (commit) => {
+          let picked = s.cmp.includes(commit) ? s.cmp.filter((x) => x !== commit) : s.cmp.concat(commit);
+          if (picked.length > 2) picked = picked.slice(-2);
+          this.setState({ cmp: picked });
+        },
+        pick: (id) => {
+          this.switchBuild(PAGE.pid, id).catch((error) => console.error('switch', error));
+        },
+        // The Share window opens without the files; the menus under it shut.
+        share: (id) => this.setState({
+          menu: null, viewsOpen: false, opsOpen: false, settingsOpen: false, share: { id, files: false } }),
+        startCompare: () => this.compareRevisions(s.cmp),
+        // SHORTENED, like every other place this site prints a revision: a
+        // commit is 64 characters and this label is a button in a 430px card.
+        cmpLabel: cmpReady ? `${shortId(s.cmp[0])} → ${shortId(s.cmp[1])}` : '',
+      },
+      comments: railView({
+        open: s.rail === null ? this.props.commentsOpen : s.rail, viewer, narrow,
+        threads: [], openCount: openComments(s.feed), stop, setState: (patch) => this.setState(patch),
+      }),
+      // Parts, a row of the narrow menu only: wide, the tree is on screen. Not
+      // while two revisions are compared, the panel standing in the tree's
+      // place, nor under a document, which hides the tree with the model.
+      menuRows: [{
+        key: 'parts', label: 'Parts', icon: PARTS_ICON,
+        style: headRow(s.treeOpen) + (!narrow || s.compare || docOpen ? ';display:none' : ''),
+        onClick: stop(() => this.setState({ treeOpen: !s.treeOpen })),
+      }],
+      toast: (said) => this.toast(said),
+    };
   }
 
   /**
@@ -1692,39 +1550,18 @@ export default class HammerolaViewer extends React.Component {
   }
 
   async load() {
-    // The switcher's list, with no token: every reader switches variants. Not
-    // waited for, as the page is whole without it.
-    loadVariants(PAGE.pid).then((variants) => {
-      if (!this._gone) this.setState({ variants });
-    });
     const meta = await loadMeta();
-    // Asked for only with a token: the list is behind it, so a reader holding a
-    // shared link sees that build and no picker (`builds` stays null). The
-    // list of the variant this page is of, which on a revision its meta.json
-    // says (`pageVariant`).
-    const builds = !this.state.token ? null : await loadBuilds(
-      this.state.token, pageVariant(PAGE, meta)).catch((error) => {
-      // A project with no builds.json is a project whose picker is empty, not a
-      // page that failed: the model in front of the reader is unaffected.
-      console.warn('builds', error);
-      return null;
-    });
     const { view: wanted, doc } = parse();
     const opening = meta.views.find((v) => v.id === wanted) || meta.views[0];
     // `?d=` opens one of the build's documents over the model, as `?v=` opens a
     // view; the model loads underneath either way. An id the build does not
     // list is ignored (`docOpen` in chromeview.js looks it up).
-    // The arrival on the tab strip, recorded here rather than in
-    // `componentDidMount` because this is the first moment a human-readable
-    // project name exists; before `meta` lands there is only `PAGE.pid`.
-    //
-    // On arrival only. The in-place revision switch and the poll's refresh
-    // replace `meta` without this line: same project, already on the strip.
-    rememberTab(PAGE.pid, meta.title || meta.project);
     // `view` is what makes the viewport fetch and render: it starts null on both
-    // sides, so this first sync is also the load.
-    this.setState({ meta, builds, view: opening.id, doc, tabs: readTabs() },
+    // sides, so this first sync is also the load. The header hears of the
+    // build (`onBuild`), whose meta.json may not have reached main.jsx.
+    this.setState({ meta, view: opening.id, doc },
                   () => {
+                    this.props.onBuild(meta);
                     this.sync();
                     this.schedulePoll(POLL_MS);
                     // A comparison link opens comparing. The address is the only thing that
@@ -1750,19 +1587,6 @@ export default class HammerolaViewer extends React.Component {
                       this.compareRevisions(two);
                     }
                   });
-  }
-
-  /**
-   * Forget one project, and go nowhere.
-   *
-   * Including the tab the reader is on: a tab is a link, so closing it forgets
-   * a link without leaving the page. The model stays, the address still names
-   * this project, and since the address alone says which tab is active nothing
-   * is left pointing at the forgotten one.
-   */
-  closeTab(pid) {
-    forgetTab(pid);
-    this.setState({ tabs: readTabs() });
   }
 
   // -- switching revisions in place -----------------------------------------
@@ -1822,7 +1646,7 @@ export default class HammerolaViewer extends React.Component {
     // is already on its way, so a bump here would kill the swap fetching it.
     const here = this._want || PAGE.base;
     if (path === here) {
-      this.setState({ revOpen: false });
+      this.props.shutHeader();
       // A `popstate` through the choices made in the menu of views, or between
       // the build on screen and a comparison of it, moves no build, so the view
       // and the document its entry names are put back here. With a swap still on
@@ -1848,7 +1672,8 @@ export default class HammerolaViewer extends React.Component {
       // The swap that just died raised `swapping` on its way out and is not
       // coming back to put it down; nobody else would, and the banner's Switch
       // would sit spent for the rest of the page's life.
-      this.setState({ revOpen: false, swapping: false });
+      this.props.shutHeader();
+      this.setState({ swapping: false });
       const views = (this.state.meta && this.state.meta.views) || [];
       // WHAT IS LEFT OUT OF STEP DEPENDS ON WHICH GESTURE CANCELLED, and the two
       // are exclusive: a `popstate` arrives with the address already correct and
@@ -1890,8 +1715,8 @@ export default class HammerolaViewer extends React.Component {
       return;
     }
 
-    // Closed before the fetch: it is the only sign the click landed while the
-    // page waits on the network.
+    // The header's picker is closed before the fetch: it is the only sign the
+    // click landed while the page waits on the network.
     //
     // It is not a lock. `revToggle` reopens the menu and `onPick` calls this
     // again, and `popstate` never goes through the picker, so two swaps can be
@@ -1902,7 +1727,8 @@ export default class HammerolaViewer extends React.Component {
     // that ignores rows looks frozen, and "a newer gesture overrules an older
     // one" is already this file's rule (see the deferred take below). Back is a
     // gesture like any other and is meant to win.
-    this.setState({ revOpen: false, swapping: true });
+    this.props.shutHeader();
+    this.setState({ swapping: true });
     // The number, taken after the guards above: they return without touching
     // anything, and a bump there would cancel a live swap for a gesture that did
     // nothing.
@@ -1961,8 +1787,8 @@ export default class HammerolaViewer extends React.Component {
     // an entry, moves `PAGE` and rebuilds the state, and the entry in particular
     // is not something a later correction can take back.
     if (this._gone || gen !== this._swapGen) return;
-    // A BUILD WITH NO MODEL IS THE OTHER SHELL'S: `main.jsx` mounts DocShell
-    // for it, and only a page load gets there. A pick loads its address on the
+    // A BUILD WITH NO MODEL IS THE OTHER SHELL'S: `BuildPage.jsx` mounts
+    // DocShell for it, and only a page load gets there. A pick loads its address on the
     // document open here and that document's sheet, as the picker of that page
     // keeps them; Back or Forward onto it loads the address the browser shows,
     // in place of its entry. Without the hash: the address shown, fragment and
@@ -2024,19 +1850,14 @@ export default class HammerolaViewer extends React.Component {
     // address naming a pair.
     rereadPage(push ? path : parse().path);
 
-    // Two things in flight were started against the old `PAGE.base` and cannot
-    // notice the move, so the swap stops them here, once the move is certain.
-    //
-    // The poll is cut off by generation rather than by a timer, because what has
-    // to be dropped is an answer that is already on the wire (`poll`).
+    // The poll was started against the old `PAGE.base` and cannot notice the
+    // move, so the swap cuts it off here, once the move is certain — by
+    // generation rather than by a timer, because what has to be dropped is an
+    // answer that is already on the wire (`poll`). Outside `leaveBuild`
+    // because it goes with the address, not the build: `takePending` opens
+    // another build without moving the address. The header's download chain
+    // goes with the address too (`componentDidUpdate` in Header.jsx).
     this._pollGen = (this._pollGen || 0) + 1;
-    // The download chain is cut off outright: its hrefs were built from the
-    // previous revision's base (`fileHref` reads `PAGE.base`).
-    //
-    // Both live outside `leaveBuild` because they go with the address, not the
-    // build: `takePending` opens another build without moving the address, so
-    // it wants that list and neither of these.
-    this.cancelDownloads();
 
     this.setState({
       meta,
@@ -2063,29 +1884,13 @@ export default class HammerolaViewer extends React.Component {
       // against a build that can never change.
       clearTimeout(this._poll);
       this.schedulePoll(POLL_MS);
-      // The picker's list catches up: builds.json is read once on mount, so
-      // without this a session of switching would show stale history and could
-      // not reach a newly published revision. And a revision of another
-      // variant is that variant's page, whose list is another file.
-      //
-      // After the swap, so the model does not wait on a list in a closed menu.
-      // Best effort, as on first load: a missing builds.json is an empty picker,
-      // not a failed page.
-      this.refreshBuilds();
+      // The header hears of the build, and the picker's list catches up
+      // (`takeBuild` in BuildPage.jsx): a session of switching would otherwise
+      // show stale history, and a revision of another variant is that
+      // variant's page, whose list is another file. After the swap, so the
+      // model does not wait on a list in a closed menu.
+      this.props.onBuild(meta);
     });
-  }
-
-  /** Re-read builds.json of the variant on screen into the picker — only with
-   *  a token, which it is behind. An answer for a variant the page has left
-   *  by the time it lands is dropped. */
-  refreshBuilds() {
-    if (!this.state.token) return;
-    const variant = this.variant();
-    loadBuilds(this.state.token, variant)
-      .then((builds) => {
-        if (!this._gone && variant === this.variant()) this.setState({ builds });
-      })
-      .catch((error) => console.warn('builds', error));
   }
 
   /** The variant this page is of (`pageVariant` in hub.js). */
@@ -2114,8 +1919,9 @@ export default class HammerolaViewer extends React.Component {
     // reaches this method (the generation is checked before the call), so this
     // cannot put back a destination a newer gesture has since chosen.
     this._want = PAGE.base;
+    this.props.shutHeader();
     this.setState({
-      revOpen: false, swapping: false,
+      swapping: false,
       viewError: `${shortId(slot)} did not load — still showing ${shortId(PAGE.slot)}`,
     });
   }
@@ -2158,6 +1964,8 @@ export default class HammerolaViewer extends React.Component {
     // build that has left, so it would otherwise stand over the new one saying
     // something that has stopped being true.
     clearTimeout(this._tt);
+    // And the header's menus, opened over the build that has left.
+    this.props.shutHeader();
     // Hidden and translucent parts are held as leaf ids, and an id is a solid
     // path that a rebuild is free to renumber; a name is what the person
     // recognises and meant. Read here, while the tree on screen is still the one
@@ -2220,8 +2028,7 @@ export default class HammerolaViewer extends React.Component {
         // choice of revisions.
         compare: false, cmpPair: null, cmpView: null, cmpStage: null,
         cmpError: null, cmpReport: null, cmpSel: null,
-        revOpen: false, dlOpen: false, viewsOpen: false, secPop: false,
-        tokenPop: false, tokenDraft: '', notePop: null, noteDraft: '',
+        viewsOpen: false, secPop: false, notePop: null, noteDraft: '',
         // It describes geometry that has just left the screen; the viewport
         // clears its own tape on every load. The offsets are the same kind of
         // thing and are not here: they live in the proposal document now, and
@@ -3007,8 +2814,9 @@ export default class HammerolaViewer extends React.Component {
     // An answer already on the wire could restore the offer, so it is cut off:
     // `poll` compares the generation after its await, as in `switchBuild`.
     this._pollGen = (this._pollGen || 0) + 1;
+    this.props.shutHeader();
     this.setState({
-      compare: true, revOpen: false, cmpPair: two, cmpView: view,
+      compare: true, cmpPair: two, cmpView: view,
       cmpStage: null, cmpError: null, cmpReport: null, cmpSel: null,
       pending: null, bannerGone: false,
     }, () => this.runCompare(two, view).catch(
@@ -4134,34 +3942,21 @@ export default class HammerolaViewer extends React.Component {
   }
 
   /**
-   * Light or dark for the whole page — remembered, and applied to the live scene.
+   * The theme BuildPage took from the header's toggle (`props.theme`), on the
+   * live scene.
    *
    * Every colour in the interface is a `var(--…)` (static/_v/tokens.css)
-   * resolving against `data-theme` on `<html>`, so this is three writes in
-   * three places:
-   *
-   *   * `writeTheme` sets the cookie and stamps the attribute — the attribute
-   *     repaints the interface without a re-render, and the server reads the
-   *     cookie so the next page arrives painted (ui/src/store.js);
-   *   * `setState` is for the button, which names the current mode; the
-   *     palette needs no React;
-   *   * `viewer.setTheme` is the canvas, which an attribute cannot reach.
-   *
-   * The canvas goes through `viewer`, not the element (the one place this file
-   * reaches past the element's imperative half): the library resolves the
-   * theme once at construction and re-asserts it after every render, so an
-   * outside attribute or option change lasts only until the next view switch.
-   * `setTheme` is the library's public API for this; the element has no method
-   * to forward it. `theme` also tints the grid and orientation marker, both off
-   * in this viewport (viewport/options.js), so here it is just the background.
-   *
-   * Guarded end to end, because every step of it is allowed to be missing: no
-   * adapter on the page, a viewport that has not rendered yet, an older library.
-   * The setting is still stored, and the next page load comes up in it.
+   * resolving against `data-theme` on `<html>`, which `writeTheme` stamps
+   * (BuildPage.jsx, store.js); the canvas is what an attribute cannot reach.
+   * It goes through `viewer`, not the element (the one place this file reaches
+   * past the element's imperative half): the library resolves the theme once
+   * at construction and re-asserts it after every render, so an outside
+   * attribute or option change lasts only until the next view switch.
+   * `setTheme` is the library's public API for this. Guarded end to end: no
+   * adapter on the page, a viewport that has not rendered yet, an older
+   * library. The setting is still stored, and the next page load comes up in it.
    */
-  applyTheme(value) {
-    const theme = writeTheme(value);
-    this.setState({ theme });
+  showTheme(theme) {
     try {
       const el = this.el();
       const viewer = el && el.viewer;
@@ -4294,6 +4089,7 @@ export default class HammerolaViewer extends React.Component {
       // renders the new geometry and puts them all back. Nothing here has to
       // arrange that beyond sending the new numbers.
       this.sync(gone.extra);
+      this.props.onBuild(next);
       this.toast(`Now viewing ${shortId(next.commit)}`);
     });
   }
@@ -4651,40 +4447,6 @@ export default class HammerolaViewer extends React.Component {
   saveNotes(notes) {
     writeNotes(PAGE.pid, notes);
     this.setState({ notes });
-  }
-
-  /** Every file of one format, handed over one at a time.
-   *
-   * A method so a test can take it over and read which hrefs the button would
-   * fire, in what order. The mechanism is `sequentialDownload`, tested on its
-   * own with a fake clock; `options` lets the same fake clock reach it through
-   * this method, which is how cancelling a page-started chain is tested.
-   *
-   * One signal for the whole page: two group links pressed in a row leave two
-   * chains running (thirty files take six seconds), both about the same build,
-   * so both must end together. A controller per chain would need a list nobody
-   * prunes; after a cancel the next press gets a fresh one from
-   * `cancelDownloads`.
-   */
-  downloadAll(hrefs, options) {
-    if (!this._dl) this._dl = new AbortController();
-    return sequentialDownload(hrefs, { ...(options || null), signal: this._dl.signal });
-  }
-
-  /** Stop handing over files: the addresses in the chain stopped describing
-   * what is on the screen.
-   *
-   * Called by `switchBuild` and `componentWillUnmount`, the two moments this
-   * page's address goes away: the hrefs are `PAGE.base` plus a file name
-   * (`fileHref`).
-   *
-   * Not by `takePending`: the banner moves `meta` but leaves `PAGE.base`, so a
-   * chain running across it still fetches from the pointer the reader pressed
-   * the button on, and cutting it would silently truncate a group download.
-   */
-  cancelDownloads() {
-    if (this._dl) this._dl.abort();
-    this._dl = null;
   }
 
   /** The line under the title: this view's part count, the build's total size.
@@ -5069,8 +4831,8 @@ export default class HammerolaViewer extends React.Component {
   /**
    * All derived values and handlers. render() below only lays them out.
    *
-   * Seven panels are built in their own modules — `proposalView`, `rowMenu`,
-   * `chromeView`, `revisionView`, `downloadsView`, `feedView`, `comparePanel` —
+   * Six panels are built in their own modules — `proposalView`, `rowMenu`,
+   * `chromeView`, `downloadsView`, `feedView`, `comparePanel` —
    * each a plain function of the state and a bag of this page's actions, whose
    * result is spread into or read out of the object below.
    *
@@ -5215,27 +4977,12 @@ export default class HammerolaViewer extends React.Component {
       : 'off';
     const secRange = Array.isArray(s.secRange) ? s.secRange : [-30, 30];
 
-    // -- the revision picker, from builds.json
-    //
-    // The fallback stays here while the rows moved out: the object below names
-    // exactly what builds.json carries, and `tests/test_ui_source.py` reads it
-    // from this file as text to check it against what `src/render.py` writes.
-    // So the picker is handed its fallback.
-    const info = s.builds || { has_dev: false, latest: null, builds: [] };
-    const { revRows, revEmpty } = revisionView(s, info, {
-      stop,
-      commitOf: this.commitOf.bind(this),
-      setState: this.setState.bind(this),
-      switchBuild: this.switchBuild.bind(this),
-    });
-
-    // -- the downloads, out of the part catalogue: key -> {extension -> file},
-    //    the board's Gerbers among the build's documents, and the beds of the
-    //    `print` view, with the key asked above the tree
+    // -- whether the build ships files at all, which the row menu's file rows
+    //    need: the header's Downloads menu, read off the same catalogue
+    //    (`downloadsView`), with the key asked above the tree
     const catalogue = (meta && meta.parts) || null;
-    const { downloadGroups, anyDownloads, dlShown } = downloadsView(catalogue, {
-      groupDownloads, downloadAll: this.downloadAll.bind(this), key: filesKey,
-      documents: meta && meta.documents, views: meta && meta.views,
+    const { anyDownloads } = downloadsView(catalogue, {
+      key: filesKey, documents: meta && meta.documents, views: meta && meta.views,
     });
 
     // -- the project's comment queue, as `loadFeed` fetched it
@@ -5362,39 +5109,24 @@ export default class HammerolaViewer extends React.Component {
       compareRevisions: this.compareRevisions.bind(this),
     });
 
-    // THE CHROME, BUILT NEXT DOOR — ui/src/chromeview.js. It is handed the four
-    // panels' own answers above rather than building them: the rail's count is
-    // drawn on a header button, the picker's rows inside a header menu, and a
-    // second count worked out up there could disagree with the rail it is about.
+    // THE CHROME, BUILT NEXT DOOR — ui/src/chromeview.js. It is handed the
+    // rail's own answers above rather than building them.
     const chrome = chromeView(s, this.props, {
       meta, viewer, narrow, stop, variant: this.variant(), arCapable: this.arCapable,
-      revRows, downloadGroups, dlShown, threads, openCount,
+      threads, openCount,
       viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
       set: this.set.bind(this),
       // Opening a document from the menu of views moves it without `set`.
       setState: (patch, done) => this.setState(dropStaleFocus(patch), done),
-      // THE STATE AS IT STANDS WHEN THE HANDLER RUNS, and not as it stood when
-      // this object was built: both readers of it are inside a `setState`
-      // callback, where the point is that the update has landed. See the token
-      // control, which is the only place it is spent.
-      stateNow: () => this.state,
       toast: this.toast.bind(this),
       toolsOff: this.toolsOff.bind(this),
-      subtitle: this.subtitle.bind(this),
-      applyTheme: this.applyTheme.bind(this),
-      closeTab: this.closeTab.bind(this),
-      compareRevisions: this.compareRevisions.bind(this),
+      shutHeader: () => this.props.shutHeader(),
+      onRename: (subject) => this.props.onRename(subject),
       fitView: this.fitView.bind(this),
       saveFrame: this.saveFrame.bind(this),
       showView: this.showView.bind(this),
-      loadFeed: this.loadFeed.bind(this),
-      loadProposal: this.loadProposal.bind(this),
-      refreshBuilds: this.refreshBuilds.bind(this),
       cameraParam: this.cameraParam.bind(this),
       pushChoice: this.pushChoice.bind(this),
-      proposalMoves: this.proposalMoves.bind(this),
-      proposalOverlay: this.proposalOverlay.bind(this),
-      stageProposal: this.stageProposal.bind(this),
       openAr: this.openAr.bind(this),
       openXr: this.openXr.bind(this),
     });
@@ -5409,13 +5141,18 @@ export default class HammerolaViewer extends React.Component {
     });
 
     return {
-      rootClick: () => this.setState({ menu: null, revOpen: false, dlOpen: false, viewsOpen: false, opsOpen: false, settingsOpen: false, variantsOpen: false, tokenPop: false, headMenu: false }),
+      // A click on the page that nothing stopped shuts its menus and the
+      // header's (`shutHeader`, BuildPage.jsx).
+      rootClick: () => {
+        this.closeMenus();
+        this.props.shutHeader();
+      },
 
       // -- the page's chrome ---------------------------------------------------
       //
-      // The header, the token control, the tab strip, the view switcher and the
-      // floating toolbar are `chromeView` in ui/src/chromeview.js: everything
-      // round the model that is not a panel about the model.
+      // The view switcher, the floating toolbar and the Share window are
+      // `chromeView` in ui/src/chromeview.js: everything round the model that is
+      // not a panel about the model. The header over the page is Header.jsx.
       ...chrome,
 
       viewError: s.viewError || '',
@@ -5684,7 +5421,7 @@ export default class HammerolaViewer extends React.Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ ...css(`position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:${PAGE_BG};color:${PAGE_FG};font:400 13px ${SANS};z-index:5`), ...FONTS }}>
+        <div style={{ ...css(`position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:${PAGE_BG};color:${PAGE_FG};font:400 13px ${SANS}`), ...FONTS }}>
           <div style={css('max-width:420px;padding:18px 20px;background:var(--card-bg);border:1px solid var(--line);border-radius:9px')}>
             <div style={css(`font:600 13px ${SANS};margin-bottom:6px`)}>This build did not load</div>
             <div style={css(`font:400 12px/1.6 ${MONO};color:var(--text-soft)`)}>{this.state.error}</div>
@@ -5697,194 +5434,10 @@ export default class HammerolaViewer extends React.Component {
     const v = this.computed();
 
     return (
-      // position:fixed, because this interface is the WHOLE page: build.html
-      // carries nothing but the div this mounts into, so there is no page
-      // layout to fit into and nothing underneath to leave visible.
-      <div onClick={v.rootClick} style={{ ...css(`position:fixed;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden;z-index:5`), ...FONTS }}>
+      // The box under the header (BuildPage.jsx), filled whole. No z-index of
+      // its own: the Share window over it has to cover the header too.
+      <div onClick={v.rootClick} style={{ ...css(`position:absolute;inset:0;display:flex;flex-direction:column;background:${PAGE_BG};color:${PAGE_FG};font-family:${SANS};font-size:13px;overflow:hidden`), ...FONTS }}>
         <style>{VIEWPORT_CSS}</style>
-        <style>{RENAME_CSS}</style>
-
-        {/* ── header: model, revision, status, downloads, access, comments ── */}
-        <div style={css(v.headerStyle)}>
-          <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
-            {/* `<Mark />`, not the same SVG written out again. It WAS written out
-                again — byte for byte, defaults and all — which is the third copy
-                of a logo that only style.jsx is supposed to own, and the two
-                pages carrying two of the copies link to each other. A mark that
-                changes when you navigate is one of the three reasons that module
-                exists. */}
-            <Mark />
-            {v.showWordmark && <span style={css(WORDMARK)}>hammerola</span>}
-          </a>
-          <div style={css(HEADER_RULE)} />
-          <div style={css(v.titleColStyle)}>
-            <div className={v.renameTitle ? RENAME_HOST : undefined}
-                 style={css('display:flex;align-items:center;gap:2px;min-width:0')}>
-              <div style={css(`${TITLE};min-width:0`)}>{v.title}</div>
-              {v.renameTitle && <Pencil title="Rename project" onClick={v.renameTitle} />}
-            </div>
-            {v.showSubtitle && <div style={css(`font:400 10.5px ${MONO};color:var(--text-muted);white-space:nowrap`)}>{v.subtitle}</div>}
-          </div>
-          <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
-                         onToggle={v.variantsToggle} narrow={v.narrowMenus} onRename={v.variantRename} />
-
-          {/* The revision, the downloads and the token: each a button with its
-              card on a wide window; on a narrow one the button is a row of the
-              header's menu below and the card a sheet (`revWrapStyle`). */}
-          {revisionPicker(v)}
-
-          {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
-
-          {/* The controls on the right, one group that wraps as a whole
-              (`controlsStyle` in chromeview.js). */}
-          <div style={css(v.controlsStyle)}>
-            {/* downloads: whole-build files, exactly the ones meta.json names,
-                for a reader holding the key that opens them */}
-            {v.dlShown && (
-              <div style={css(v.headWrapStyle)}>
-                {!v.headFolded && (
-                  <div onClick={v.dlToggle} style={css(v.dlBtnStyle)}>
-                    {DOWNLOAD_ICON}
-                    Downloads
-                  </div>
-                )}
-                {/* One block per FORMAT, each with a link that takes the whole
-                    group: on a ten-part build the flat list was thirty rows in no
-                    useful order, and "every STL" meant aiming at every third one. */}
-                <div style={css(v.dlMenuStyle)}>
-                  {v.downloadGroups.map((g) => (
-                    <React.Fragment key={g.key}>
-                      <div style={css(g.headStyle)}>
-                        <span style={css(FILL)}>{g.ext}</span>
-                        <span onClick={g.onAll} style={css(g.allStyle)}>download all</span>
-                      </div>
-                      {g.files.map((f) => (
-                        <div key={f.key} style={css(f.rowStyle)}>
-                          <a href={f.href} download style={css(f.style)}>
-                            <span style={css(FILL)}>{f.label}</span>
-                            <span style={css(`font:400 10.5px ${MONO};color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px`)}>{f.file}</span>
-                          </a>
-                          {f.bambu && <BambuLink href={f.href} style={f.bambuStyle} />}
-                          <CopyLink href={f.href} style={f.copyStyle} />
-                        </div>
-                      ))}
-                    </React.Fragment>
-                  ))}
-                  {v.downloadGroups.length === 0 && (
-                    <div style={css(`padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
-                      This build ships no files to download.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* access: the token is what turns a viewer into the customer */}
-            <div style={css(v.headWrapStyle)}>
-              {!v.headFolded && (
-                <div onClick={v.tokenToggle} style={css(v.tokenBtnStyle)}>
-                  {LOCK_ICON}
-                  {v.tokenLabel}
-                </div>
-              )}
-              <div onClick={(e) => e.stopPropagation()} style={css(v.tokenPopStyle)}>
-                <div style={css(`font:600 12.5px ${SANS};margin-bottom:4px`)}>
-                  {v.viewer ? 'Enter your token' : 'Editing is on'}
-                </div>
-                <div style={css(`font:400 11.5px/1.6 ${SANS};color:var(--text-soft);margin-bottom:9px`)}>
-                  {v.viewer
-                    ? 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.'
-                    : 'The token is stored in this browser, for the whole site. Remove it to go back to viewing.'}
-                </div>
-                {v.viewer ? (
-                  <>
-                    <input type="password" value={v.tokenDraft} onChange={v.tokenType}
-                           placeholder="paste the token"
-                           style={css(`width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;outline:none;padding:8px 10px;font:400 12px ${MONO};background:var(--card-bg)`)} />
-                    <div style={css('display:flex;justify-content:flex-end;margin-top:9px')}>
-                      <span onClick={v.tokenSave} style={css(ACCENT_BTN)}>Save</span>
-                    </div>
-                  </>
-                ) : (
-                  <div style={css('display:flex;justify-content:flex-end')}>
-                    <span onClick={v.tokenClear} style={css(`padding:6px 14px;border:1px solid var(--line);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer;color:var(--danger);background:var(--card-bg)`)}>Remove token</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {!v.headFolded && commentsButton(v)}
-
-            {/* Light or dark for the whole page — here because #35 says here, and
-                drawn immediately after the comments so it stands against them.
-                For every reader, deliberately: the comments button is taken away
-                by a missing token, and this is the one control in the row that
-                belongs to the person rather than to what they are allowed to do.
-                On a narrow window it is the menu's row after Comments. `computed()`
-                has the whole argument. */}
-            {!v.headFolded && (
-              <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.themeBtnStyle)}>
-                {v.themeDark ? MOON_ICON : SUN_ICON}
-              </div>
-            )}
-          </div>
-
-          {/* The header's menu on a narrow window (`headFolded` in chromeview.js):
-              the controls above as rows, in the owner's order. Parts is here
-              only: wide, the tree is on screen already, and a control that says
-              "Parts" beside a visible list of them is noise; narrow, the tree
-              lies over the model, so it starts closed and this row opens it. */}
-          {v.headFolded && headMenu(v.headMenuOpen, v.headMenuToggle, (
-            <>
-              {revisionRow(v)}
-              {v.dlShown && (
-                <div onClick={v.dlToggle} style={css(v.headRowStyle)}>
-                  {DOWNLOAD_ICON}
-                  Downloads
-                </div>
-              )}
-              <div onClick={v.tokenToggle} style={css(v.tokenRowStyle)}>
-                {LOCK_ICON}
-                {v.tokenLabel}
-              </div>
-              <div onClick={v.treeToggle} style={css(v.partsRowStyle)}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h12M4.5 8H14M4.5 13H14" /></svg>
-                Parts
-              </div>
-              {!v.viewer && (
-                <div onClick={v.railToggle} style={css(v.headRowStyle)}>
-                  {COMMENT_ICON}
-                  Comments
-                  <span style={css(v.railCountStyle)}>{v.openCount}</span>
-                </div>
-              )}
-              <div onClick={v.toggleTheme} title={v.themeTitle} style={css(v.headRowStyle)}>
-                {v.themeDark ? MOON_ICON : SUN_ICON}
-                {v.themeLabel}
-              </div>
-            </>
-          ))}
-        </div>
-
-        {/* ── the tab strip: the projects this browser has been in lately ──
-            Navigation memory next to the address and nothing more — plain
-            links, in the order they were opened, the one matching this page's
-            pid drawn as the active pill. */}
-        {v.tabsShown && (
-          <div style={css(v.tabsStyle)}>
-            {v.tabs.map((t) => (
-              <a key={t.key} href={t.href} title={t.label} style={css(t.style)}>
-                <span style={css(t.labelStyle)}>{t.label}</span>
-                {/* A bare span, the way every other close control on this page
-                    is written — a `<button>` inside an `<a>` is not markup a
-                    browser is required to make sense of. */}
-                <span onClick={t.onClose} title="forget this project"
-                      style={css('color:var(--text-faint);cursor:pointer;flex:none')}
-                >&#10005;</span>
-              </a>
-            ))}
-          </div>
-        )}
 
         <div style={css('flex:1;display:flex;min-height:0;position:relative')}>
 
@@ -6500,14 +6053,6 @@ export default class HammerolaViewer extends React.Component {
               </div>
             </div>
           </div>
-        )}
-
-        {/* ── the rename window, over the whole page like the Share window ── */}
-        {this.state.rename && (
-          <RenameWindow subject={this.state.rename}
-                        onSave={(name) => saveRename(PAGE.pid, this.state.rename, name, this.state.token,
-                          (said) => this.toast(said))}
-                        onClose={() => this.setState({ rename: null })} />
         )}
       </div>
     );

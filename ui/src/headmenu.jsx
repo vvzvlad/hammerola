@@ -1,12 +1,13 @@
-// The header's menu on a narrow window, on both pages: the model's page
-// (HammerolaViewer.jsx) and the page of a build with no model (DocShell.jsx).
+// The header's menu on a narrow window (Header.jsx), over both pages: the
+// model's page and the page of a build with no model.
 // At phone width the header is one row — the mark, the title, the variants and
 // this menu's button at its right end — and the controls the wide header lays
 // out beside the title are rows of the card under that button.
 //
 // `headMenu` is a plain function, like `commentsButton` in comments.jsx, so
-// what it returns is read as part of the page's own tree. The rows are the
-// page's: each calls what its wide button calls.
+// what it returns is read as part of the header's own tree. Each row calls what
+// its wide button calls; a row the page adds (`menuRows` of `headerParts`)
+// calls the page.
 
 import React from 'react';
 

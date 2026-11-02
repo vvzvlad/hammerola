@@ -12,7 +12,7 @@ import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
 import { readRetina } from '../src/store.js'
 import { css } from '../src/style.jsx'
-import { makeComponent, replaceState } from './component.js'
+import { headerOn, makeComponent, replaceState } from './component.js'
 import { texts } from './eltree.js'
 
 const click = { stopPropagation() {}, preventDefault() {} }
@@ -60,17 +60,15 @@ describe('the Settings card', () => {
   it('opens on its button and shuts the other popovers, token or not', () => {
     // Unlike `Add primitive` it is drawn for a reader with no token: what it
     // holds is about this screen, not about the model.
-    const c = component({
-      token: null, viewsOpen: true, opsOpen: true, revOpen: true, dlOpen: true,
-      tokenPop: true,
-    })
+    const c = component({ token: null, viewsOpen: true, opsOpen: true })
+    // and the header's, over the page
+    const header = headerOn(c, { state: { revOpen: true, dlOpen: true, tokenPop: true } })
     expect(css(c.computed().settingsMenuStyle).display).toBe('none')
 
     c.computed().tSettings(click)
     expect(c.state.settingsOpen).toBe(true)
-    for (const other of ['viewsOpen', 'opsOpen', 'revOpen', 'dlOpen', 'tokenPop']) {
-      expect(c.state[other], other).toBe(false)
-    }
+    for (const other of ['viewsOpen', 'opsOpen']) expect(c.state[other], other).toBe(false)
+    for (const other of ['revOpen', 'dlOpen', 'tokenPop']) expect(header.state[other], other).toBe(false)
     expect(css(c.computed().settingsMenuStyle).display).toBe('block')
     expect(texts(c.render())).toContain('Settings')
     expect(texts(c.render())).toContain('Retina resolution')

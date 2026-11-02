@@ -9,8 +9,9 @@
  * comments (`docComment`), and the composer, the header's comments button and
  * the rail: their values (`composerView`, `railView`) and their markup
  * (`composerCard`, `commentsButton`, `commentRail`), plain functions so that
- * what they return is read as part of the page's own tree. The rail's rows are
- * `feedView` in feedview.js.
+ * what they return is read as part of the tree that draws it — the page's, or
+ * the header's for the button (Header.jsx). The rail's rows are `feedView` in
+ * feedview.js.
  *
  * THE PAGE. What writes is handed the page's component as `page`: its
  * `state` (`composer`, `sending`, and on the model's page `view` and
@@ -401,9 +402,9 @@ export function composerView(s, { viewer, docOpen, tools, stop, set, setState, t
  */
 export function railView({ open, viewer, narrow, threads, openCount, stop, setState }) {
   return {
-    // The header's menu shuts with it: on a narrow window this is a row of it
-    // (headmenu.jsx).
-    railToggle: stop(() => setState({ rail: !open, headMenu: false })),
+    // On a narrow window this is a row of the header's menu, which the header
+    // shuts behind it (Header.jsx).
+    railToggle: stop(() => setState({ rail: !open })),
     railBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)' + (viewer ? ';display:none' : ''),
     // The two states differ by tone, not ink contrast. White on `--accent` is
     // 4.27:1 in both themes and cannot rise without moving the accent, and a

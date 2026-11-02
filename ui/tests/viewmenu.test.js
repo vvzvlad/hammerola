@@ -32,7 +32,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
 import { css } from '../src/style.jsx'
 import { viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
-import { makeComponent, replaceState } from './component.js'
+import { headerOn, makeComponent, replaceState } from './component.js'
 import { collect, texts } from './eltree.js'
 
 /** As many views as asked for, named the way a model's code names them. */
@@ -235,7 +235,7 @@ describe('the menu itself', () => {
     for (const under of [v.viewErrorStyle, v.secPopStyle, v.composerStyle]) {
       expect(layer(v.toolbarStyle)).toBeGreaterThan(layer(under))
     }
-    for (const over of [v.railStyle, v.headerStyle]) {
+    for (const over of [v.railStyle, headerOn(c).view().headerStyle]) {
       expect(layer(v.toolbarStyle)).toBeLessThan(layer(over))
     }
   })
@@ -262,16 +262,18 @@ describe('the menu itself', () => {
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {
+    // The header's Downloads over the page, and the page's list under it.
     const c = opened()
-    c.computed().dlToggle(click)
+    const header = headerOn(c)
+    header.view().dlToggle(click)
     expect(c.state.viewsOpen).toBe(false)
-    expect(c.state.dlOpen).toBe(true)
+    expect(header.state.dlOpen).toBe(true)
 
     c.computed().viewsToggle(click)
     expect(c.state.viewsOpen).toBe(true)
-    expect(c.state.dlOpen).toBe(false)
-    expect(c.state.revOpen).toBe(false)
-    expect(c.state.tokenPop).toBe(false)
+    expect(header.state.dlOpen).toBe(false)
+    expect(header.state.revOpen).toBe(false)
+    expect(header.state.tokenPop).toBe(false)
   })
 })
 

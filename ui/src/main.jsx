@@ -9,9 +9,8 @@
 // nothing, silently. `tests/test_ui_bundle.py` is what checks the two agree.
 import { createRoot } from 'react-dom/client'
 
-import DocShell, { DOCUMENTS_KIND } from './DocShell.jsx'
+import BuildPage from './BuildPage.jsx'
 import HammerolaEntry from './HammerolaEntry.jsx'
-import HammerolaViewer from './HammerolaViewer.jsx'
 import { loadMeta } from './hub.js'
 
 // Registers `<hmr-viewport>`: `customElements.define` runs at module scope in
@@ -22,21 +21,20 @@ import { loadMeta } from './hub.js'
 // settles. Order does not matter: an element defined later is upgraded in place.
 import './viewport/index.js'
 
-// The build page has two shells, and what the build is OF picks one: a build
-// with no model says `"kind": "documents"` in its meta.json (src/render.py) and
-// gets DocShell; a model gets HammerolaViewer, which shows the model's
-// documents in its own list of views. HammerolaViewer reads meta.json again
-// for itself; on a revision's address that second read is answered by the
-// browser's cache (a year of `immutable`). A meta.json that does not load goes
-// to HammerolaViewer, which has the error screen for it.
+// The build page is BuildPage: the header over one of two pages, and what the
+// build is OF picks the page — a build with no model says `"kind": "documents"`
+// in its meta.json (src/render.py) and gets DocShell; a model gets
+// HammerolaViewer, which shows the model's documents in its own list of views.
+// HammerolaViewer reads meta.json again for itself; on a revision's address
+// that second read is answered by the browser's cache (a year of `immutable`).
+// A meta.json that does not load goes to HammerolaViewer, which has the error
+// screen for it.
 const build = document.getElementById('hmr_root')
 if (build) {
   const root = createRoot(build)
   loadMeta().then(
-    (meta) => root.render(meta && meta.kind === DOCUMENTS_KIND
-      ? <DocShell meta={meta} />
-      : <HammerolaViewer />),
-    () => root.render(<HammerolaViewer />))
+    (meta) => root.render(<BuildPage meta={meta} />),
+    () => root.render(<BuildPage meta={null} />))
 }
 
 const index = document.getElementById('hmr_index')

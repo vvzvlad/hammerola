@@ -1,5 +1,5 @@
-// The revision picker, in the header of both pages that show a build
-// (HammerolaViewer.jsx, DocShell.jsx), right after the variants: a button
+// The revision picker, in the header over both pages that show a build
+// (Header.jsx), right after the variants: a button
 // naming the build on screen — a dot, the slot of its address, when it was
 // built — and the card it opens with the variant's pointers and builds
 // (`builds.json`, behind the token). On a narrow window the button is a row of
@@ -13,7 +13,7 @@
 // Share window.
 //
 // `revisionPicker` and `revisionRow` are plain functions, like `headMenu` and
-// `commentsButton`, so what they return is read as part of the page's own
+// `commentsButton`, so what they return is read as part of the header's own
 // tree. They draw from `revisionHead`'s values, the rows (`revRows`,
 // `revEmpty`) and whether the header is folded into its menu (`headFolded`).
 

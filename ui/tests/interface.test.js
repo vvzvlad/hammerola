@@ -26,6 +26,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
+import { DOORS } from './component.js'
 import { loadMeta } from '../src/hub.js'
 
 /** A build the banner is offering — meta.json as the poll would have read it. */
@@ -47,6 +48,8 @@ const NEWER = { ...NEXT, commit: 'def5678abc' }
  */
 function component({ busy = false, answer = null } = {}) {
   const c = Object.create(HammerolaViewer.prototype)
+  // BuildPage's doors, which a swap tells (`onBuild`) and shuts the header by.
+  c.props = DOORS()
   c.busy = busy
   c.host = {
     current: {

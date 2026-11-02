@@ -372,9 +372,10 @@ describe('the documents in the list of views', () => {
   })
 
   it('take the Parts row out of a narrow header\'s menu, and a comment in the rail brings the model back', () => {
-    const narrow = component({ narrow: true, doc: 'docs__cut-list.md' }).computed()
-    expect(css(narrow.partsRowStyle).display).toBe('none')
-    expect(css(component({ narrow: true }).computed().partsRowStyle).display).toBe('flex')
+    // The row the page adds to the header's menu (`headerParts`).
+    const parts = (over) => css(component(over).headerParts().menuRows.find((row) => row.key === 'parts').style)
+    expect(parts({ narrow: true, doc: 'docs__cut-list.md' }).display).toBe('none')
+    expect(parts({ narrow: true }).display).toBe('flex')
 
     const comment = {
       id: 'c1', pid: 'proj1', commit: 'abc1234', view: 'closed', part: null, key: null,

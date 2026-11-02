@@ -31,7 +31,7 @@ import {
 } from '../src/shrink.js'
 import { HmrViewport } from '../src/viewport/element.js'
 import * as THREE from '../../static/_v/three.module.js'
-import { drained as settled, makeComponent, replaceState } from './component.js'
+import { drained as settled, makeComponent, replaceState, tokenControl } from './component.js'
 import { collect, texts } from './eltree.js'
 import { fakeViewer } from './fakes.js'
 import { guardPage } from './pageguard.js'
@@ -551,14 +551,14 @@ describe('closing an item', () => {
 // -- the token, which is what there is to read the queue with -----------------
 
 describe('the token', () => {
-  /** The two controls are closures on `computed()`, wrapped in `stop()`. */
+  /** The two controls are the header's (`tokenControl`), wrapped in `stop()`. */
   const CLICK = { stopPropagation: () => {} }
 
   it('is what the queue arrives with, the moment it is entered', async () => {
     const fetching = answering(served([record()]))
-    const c = page({ token: null, tokenDraft: ' sekrit ' })
+    const c = page({ token: null })
 
-    c.computed().tokenSave(CLICK)
+    tokenControl(c, { tokenDraft: ' sekrit ' }).tokenSave(CLICK)
     await settled()
 
     expect(fetching).toHaveBeenCalledWith('/api/v1/comments?project=proj1',
@@ -571,7 +571,7 @@ describe('the token', () => {
     // longer has one may not read the queue at all.
     const c = page({ feed: [record()] })
 
-    c.computed().tokenClear(CLICK)
+    tokenControl(c).tokenClear(CLICK)
 
     expect(c.state.feed).toEqual([])
     expect(c.state.token).toBeNull()

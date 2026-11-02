@@ -8,13 +8,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { commentTarget } from '../src/comments.jsx'
-import { DocPage } from '../src/DocShell.jsx'
+import DocShell from '../src/DocShell.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import {
   buildPath, DEFAULT_VARIANT, pageFrom, pageVariant, projectCard, rereadPage, variantRoot,
 } from '../src/hub.js'
 import { VariantSwitch, variantChoices } from '../src/variants.jsx'
-import { makeComponent } from './component.js'
+import { DOORS, headerOn, makeComponent } from './component.js'
 import { collect, links, texts } from './eltree.js'
 import { guardPage } from './pageguard.js'
 
@@ -99,30 +99,29 @@ describe('the switcher', () => {
               views: [{ id: 'assembled', name: 'assembled', file: 'a.json', parts: [], gzip: 1 }] },
       builds: token ? { has_dev: false, latest: REV, builds: [{ commit: REV, built: '' }],
                         files_keys: { latest: 'key-of-latest', [REV]: 'key-of-rev' } } : null,
-      variants: LISTING, token,
+      token,
     },
   })
+  /** The header over a page, holding the list of variants. */
+  const head = (over) => headerOn(over, { state: { variants: LISTING } })
 
   it('is the same for a reader with no token (criterion 2)', () => {
-    const viewer = page(null).computed()
-    const owner = page('sekrit').computed()
+    const viewer = head(page(null)).view()
+    const owner = head(page('sekrit')).view()
     expect(viewer.variantChoices).toEqual(owner.variantChoices)
     expect(viewer.variantChoices.label).toBe('Потолочный корпус')
   })
 
   it('is beside the title on the page of documents too', () => {
-    const tree = DocPage({
-      meta: { title: 'Wall bracket', commit: REV, documents: [{ id: 'a.md', file: 'a.md', name: 'a.md', type: 'markdown' }] },
-      active: 'a.md', base: CEILING_LATEST, onPick: () => {},
-      variants: variantChoices(LISTING, 'proj1', 'ceiling'),
-    })
-    const [drawn] = collect(tree, (el) => (el.type === VariantSwitch ? el : undefined))
+    const shell = new DocShell({ ...DOORS(),
+      meta: { title: 'Wall bracket', commit: REV, documents: [{ id: 'a.md', file: 'a.md', name: 'a.md', type: 'markdown' }] } })
+    const [drawn] = collect(head(shell).render(), (el) => (el.type === VariantSwitch ? el : undefined))
     expect(texts(VariantSwitch(drawn.props))).toContain('Потолочный корпус')
   })
 
   it('shares `latest` of the variant on screen (criterion 7)', () => {
     const c = page('sekrit')
-    c.computed().revRows.find((r) => r.key === 'latest').onShare({ stopPropagation() {} })
+    head(c).view().revRows.find((r) => r.key === 'latest').onShare({ stopPropagation() {} })
     expect(c.computed().shareLink).toBe(`${location.origin}${CEILING_LATEST}`)
     c.computed().toggleShareFiles()
     expect(c.computed().shareLink).toBe(`${location.origin}${CEILING_LATEST}?files=key-of-latest`)

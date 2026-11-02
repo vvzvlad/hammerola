@@ -33,7 +33,7 @@ export function proposalView(s, deps) {
     toggleProposalEye, toggleMoveEye, removeProposal,
   } = deps;
 
-  // `|| emptyProposal()`, like `openTabs`'s `|| []` in chromeview.js: tests in
+  // `|| emptyProposal()`, like `openTabs`'s `|| []` in Header.jsx: tests in
   // ui/tests spell the state out by hand and may omit the field.
   const doc = s.proposal || emptyProposal();
   // The move nodes whose own eye is shut — page state, not the document's (see

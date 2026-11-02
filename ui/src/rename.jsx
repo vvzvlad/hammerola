@@ -1,5 +1,6 @@
 // Renaming the project, a variant, and a view or a document of a variant, on
-// both pages that show a build (HammerolaViewer.jsx, DocShell.jsx).
+// both pages that show a build: the window is BuildPage.jsx's, the pencils the
+// header's (Header.jsx) and the pages' (HammerolaViewer.jsx, DocShell.jsx).
 //
 // A name lives in the project's source. The hub commits the new one into
 // project.json on the variant's branch and publishes that commit as the

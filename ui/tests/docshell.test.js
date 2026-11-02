@@ -4,7 +4,8 @@
 // Read off the element trees the code returns (`eltree.js`), as the rest of this
 // directory does: `markdownElements`, `documentBody` and `DocPage` are pure; the
 // two components are driven on instances whose `setState` writes straight into
-// their state.
+// their state. The header over the page is Header.jsx's, built over the shell by
+// `headerOn` (component.js); BuildPage between them is driven the same way.
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -12,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 // nothing here, the schematic's element below carrying what it would define.
 vi.mock('/_v/ecad-viewer.js', () => ({}))
 
+import BuildPage from '../src/BuildPage.jsx'
+import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { composerView } from '../src/comments.jsx'
 import CopyLink from '../src/copylink.jsx'
 import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
@@ -24,8 +27,9 @@ import {
 } from '../src/docmd.js'
 import { rereadPage } from '../src/hub.js'
 import { revisionHead } from '../src/revisions.jsx'
-import { clearToken, writeToken } from '../src/store.js'
-import { collect, texts } from './eltree.js'
+import { clearToken } from '../src/store.js'
+import { DOORS, headerOn, makeComponent } from './component.js'
+import { collect, texts, titles } from './eltree.js'
 import { css } from '../src/style.jsx'
 import { DocFile, FILE_SPACER, FLOAT_BAR, viewMenuStyle } from '../src/viewlist.jsx'
 import { guardSubscribers } from './addressguard.js'
@@ -614,14 +618,16 @@ describe('the page of a build with no model', () => {
     expect(schematicView.key).toBe(layers(tree)[0].key)
   })
 
-  it('names the project and the revision its address names in the header', () => {
+  it('is under the header, which names the project and the revision its address names', () => {
     onTestFinished(() => rereadPage('/'))
     rereadPage(BASE)
-    const header = texts(page('list.md'))
+    const over = (meta) => texts(headerOn(new DocShell({ meta, ...DOORS() })).render())
+    const header = over(META)
     expect(header).toContain('Shopping list (shopping)')
     expect(header).toContain('abc123')
+    expect(texts(page('list.md'))).not.toContain('Shopping list (shopping)')
     rereadPage('/project/docs0001/dev/')
-    expect(texts(page('list.md', { meta: { ...META, dev: true, commit: 'dev' } }))).toContain('dev')
+    expect(over({ ...META, dev: true, commit: 'dev' })).toContain('dev')
   })
 
   it('puts the open document on the page, one instance per document', () => {
@@ -660,7 +666,7 @@ describe('the shell', () => {
   const mount = (search) => {
     window.history.replaceState(null, '', `${BASE}${search}`)
     rereadPage(BASE)
-    shell = new DocShell({ meta: META })
+    shell = new DocShell({ meta: META, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
   }
   /** The browser's own Back and Forward, which restore the entry tasks later. */
@@ -683,11 +689,9 @@ describe('the shell', () => {
   it('holds only the open document, which a row of the design\'s menu moves across a design', () => {
     window.history.replaceState(null, '', BASE)
     rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD })
+    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
-    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST,
-                                  variants: null, variantsOpen: false, rename: null, headMenu: false,
-                                  builds: null, revOpen: false })
+    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST })
     // the door a row of the menu on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
@@ -699,7 +703,7 @@ describe('the shell', () => {
   it('opens a hidden document the address names', () => {
     window.history.replaceState(null, '', `${BASE}?d=ds__ne555.pdf`)
     rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD })
+    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     expect(shell.state.active).toBe(DATASHEET.id)
   })
 
@@ -773,7 +777,7 @@ describe('the shell', () => {
   it('follows a markdown link to its own address as a step of history, and one naming only a view nowhere', async () => {
     window.history.replaceState(null, '', `${BASE}?d=list.md&files=k1`)
     rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD })
+    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     shell.componentDidMount()
     onTestFinished(() => shell.componentWillUnmount())
@@ -801,7 +805,7 @@ describe('the shell', () => {
   it('makes a sheet picked under the schematic a step whose address names it, on the schematic on screen too', () => {
     window.history.replaceState(null, '', `${BASE}?x=1`)
     rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD })
+    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     const push = vi.spyOn(window.history, 'pushState')
     onTestFinished(() => push.mockRestore())
@@ -826,7 +830,7 @@ describe('the shell', () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
     window.history.replaceState(null, '', `${BASE}?s=amp`)
     rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD })
+    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     // The design as the page draws it, its schematic's element switching sheets
     // as the viewer does, reporting the change inside `switchPage`.
@@ -887,10 +891,7 @@ describe('comments on the page of a build with no model', () => {
    *  null, its `setState` React's contract (a function patch, the callback
    *  after). The hub answers a request with what `answer(url, init)` gives,
    *  `[status, body]`. */
-  const opened = ({ search = '', token = 'sekrit', answer = () => [200, { comments: [] }] } = {}) => {
-    if (token) writeToken(token)
-    else clearToken()
-    onTestFinished(() => clearToken())
+  const opened = ({ search = '', token = 'sekrit', meta = BUILD, answer = () => [200, { comments: [] }] } = {}) => {
     vi.stubGlobal('fetch', vi.fn(async (url, init) => {
       const [status, body] = answer(url, init)
       return new Response(JSON.stringify(body), { status })
@@ -898,7 +899,7 @@ describe('comments on the page of a build with no model', () => {
     onTestFinished(() => vi.unstubAllGlobals())
     window.history.replaceState(null, '', `${BASE}${search}`)
     rereadPage(BASE)
-    const shell = new DocShell({ meta: BUILD })
+    const shell = new DocShell({ meta, token, ...DOORS() })
     shell.setState = (patch, done) => {
       Object.assign(shell.state, typeof patch === 'function' ? patch(shell.state) : patch)
       if (done) done()
@@ -969,7 +970,7 @@ describe('comments on the page of a build with no model', () => {
     shell.componentDidMount()
     await vi.waitFor(() => expect(shell.state.feed).toHaveLength(3))
     expect(fetch).toHaveBeenCalledWith('/api/v1/comments?project=docs0001', { headers: { 'X-Hammerola-Token': 'sekrit' } })
-    const button = collect(drawn(shell), (el) => (el.props.onClick && el.props.title === 'Comments' ? el : undefined))[0]
+    const button = collect(headerOn(shell).render(), (el) => (el.props.onClick && el.props.title === 'Comments' ? el : undefined))[0]
     expect(texts(button)).toEqual(['2'])
     expect(css(values(shell).railStyle).display).toBe('none')
     button.props.onClick(CLICK)
@@ -977,10 +978,9 @@ describe('comments on the page of a build with no model', () => {
     expect(values(shell).threads.map((t) => t.says)).toEqual(['on amp of Схема — near C1',
       'left on the model, which this build does not have', 'on amp of Схема — near C1'])
     expect(texts(drawn(shell))).toEqual(expect.arrayContaining(['too hot', 'too thin', 'on amp of Схема — near C1']))
-    // a reader without the token asks for nothing but the project's
-    // variants, which are public
+    // a reader without the token asks for nothing
     opened({ token: null }).componentDidMount()
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/project/docs0001/variants.json'])
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('opens a row\'s document at its place as a step of history, the sheet the reader\'s step where it was on screen, and a row on a model nowhere', () => {
@@ -1025,64 +1025,96 @@ describe('comments on the page of a build with no model', () => {
       '/api/v1/comments?project=docs0001'])
   })
 
-  it('folds the revision and Comments into the header\'s menu on a narrow window, as the model\'s page does', () => {
-    /** The header row: the element holding the link home. */
-    const header = (tree) => collect(tree, (el) => ([].concat(el.props.children)
-      .some((kid) => kid && kid.type === 'a' && kid.props.href === '/') ? el : undefined))[0]
-    /** The header's menus, as `[button, card]`. */
-    const menus = (tree) => collect(tree, (el) => {
-      const kids = [].concat(el.props.children)
-      return kids.some((kid) => kid && kid.props && kid.props.title === 'Menu') ? kids : undefined
-    })
-    const shell = opened()
-    // wide: the wordmark, the revision's button and its card, Comments, and no menu
-    const wide = drawn(shell)
-    const EMPTY = 'This project has no other builds yet.'
-    // the comments button is its icon and the count, the word in its tooltip
-    expect(texts(header(wide))).toEqual(['hammerola', BUILD.title, 'abc123', '2026-10-26 18:00', '▾', EMPTY, '0'])
-    expect(menus(wide)).toEqual([])
+  /** The header's menus, as `[button, card]`. */
+  const menus = (tree) => collect(tree, (el) => {
+    const kids = [].concat(el.props.children)
+    return kids.some((kid) => kid && kid.props && kid.props.title === 'Menu') ? kids : undefined
+  })
+  /** The build with the board's Gerbers, whose zip the header's Downloads
+   *  offers, and the list that holds the key to it. */
+  const GERBERS = { id: 'fab__g.zip', name: 'Gerbers', type: 'gerbers', file: 'fab/g.zip', bytes: 9 }
+  const KEYED = { has_dev: false, latest: null, builds: [], files_keys: { abc123: 'k1' } }
 
+  it('is under the header the model\'s page has: the status, Downloads, the token, Comments, the theme and the tabs', () => {
+    const shell = opened({ meta: { ...BUILD, documents: [...BUILD.documents, GERBERS] } })
+    const tabs = [{ pid: 'docs0001', title: 'Shopping', seen: 2 }, { pid: 'other', title: 'Other', seen: 1 }]
+    const h = headerOn(shell, { props: { builds: KEYED }, state: { tabs } })
+    expect(texts(h.render())).toEqual(expect.arrayContaining(['hammerola', BUILD.title, 'abc123', 'pinned build',
+      'Downloads', 'Editing on', 'Shopping', 'Other']))
+    // the theme and the comments are icons, named by their tooltips
+    expect(titles(h.render())).toEqual(expect.arrayContaining(['Comments', h.view().themeTitle]))
+    expect(h.view().downloadGroups.map((g) => g.ext)).toEqual(['GERBERS'])
+    expect(menus(h.render())).toEqual([])
+  })
+
+  it('folds into one menu on a narrow window, a row opening what it stands for and shutting the menu', () => {
+    const shell = opened()
     shell.state.narrow = true
-    const narrow = drawn(shell)
-    expect(texts(narrow)).not.toContain('hammerola')
-    const [[button, card]] = menus(narrow)
-    // everything the header says beside the title and the revisions' sheet is
-    // said inside the card
-    expect(texts(card)).toEqual(['abc123', '2026-10-26 18:00', '▾', 'Comments', '0'])
-    expect(texts(header(narrow))).toEqual([BUILD.title, EMPTY, ...texts(card)])
+    const h = headerOn(shell)
+    const [[button, card]] = menus(h.render())
+    expect(texts(h.render())).not.toContain('hammerola')
+    const ROWS = ['abc123', 'Editing on', 'Comments', 'Light']
+    expect(texts(card).filter((said) => ROWS.includes(said))).toEqual(ROWS)
     expect(card.props.style.display).toBe('none')
+    const row = (said) => collect(menus(h.render())[0][1],
+      (el) => (el.props.onClick && texts(el)[0] === said ? el : undefined))[0]
     button.props.onClick(CLICK)
-    expect(shell.state.headMenu).toBe(true)
-    expect(menus(drawn(shell))[0][1].props.style.display).toBe('block')
-    // the Comments row opens the rail and shuts the menu
-    const [comments] = collect(menus(drawn(shell))[0][1],
-      (el) => (el.props.onClick && texts(el)[0] === 'Comments' ? el : undefined))
-    comments.props.onClick(CLICK)
-    expect([shell.state.rail, shell.state.headMenu]).toEqual([true, false])
-    // the revision's row opens its sheet and shuts the menu; the variants, opened
-    // over the sheet, shut it in turn
+    expect(menus(h.render())[0][1].props.style.display).toBe('block')
+    // the Comments row opens the page's rail and shuts the menu
+    row('Comments').props.onClick(CLICK)
+    expect([shell.state.rail, h.state.headMenu]).toEqual([true, false])
+    // the revision's row opens its sheet; the variants, opened over the sheet, shut it in turn
     button.props.onClick(CLICK)
-    const [rev] = collect(menus(drawn(shell))[0][1],
-      (el) => (el.props.onClick && texts(el)[0] === 'abc123' ? el : undefined))
-    rev.props.onClick(CLICK)
-    expect([shell.state.revOpen, shell.state.headMenu]).toEqual([true, false])
-    shell.render().props.onVariants(CLICK)
-    expect([shell.state.variantsOpen, shell.state.revOpen]).toEqual([true, false])
-    shell.setState({ variantsOpen: false })
-    // and a click anywhere else shuts it too
+    row('abc123').props.onClick(CLICK)
+    expect([h.state.revOpen, h.state.headMenu]).toEqual([true, false])
+    h.view().variantsToggle(CLICK)
+    expect([h.state.variantsOpen, h.state.revOpen]).toEqual([true, false])
+    // a click on the page shuts it too
     button.props.onClick(CLICK)
     drawn(shell).props.onClick()
-    expect(shell.state.headMenu).toBe(false)
+    expect([h.state.variantsOpen, h.state.headMenu]).toEqual([false, false])
     // the title's pencil stops its click, so the rename window shuts it itself
     button.props.onClick(CLICK)
-    shell.render().props.onRename({ kind: 'project', name: BUILD.title })
-    expect([!!shell.state.rename, shell.state.headMenu]).toEqual([true, false])
-    shell.setState({ rename: null })
-    // and so does the window growing wide, where no menu is drawn: a flag
-    // left up would bring it back open on the way back to narrow
+    h.view().renameTitle()
+    expect([h.props.onRename.mock.calls.length, h.state.headMenu]).toEqual([1, false])
+    // and so does the window growing wide, where no menu is drawn
     button.props.onClick(CLICK)
-    shell.onNarrow({ matches: false })
-    expect([shell.state.narrow, shell.state.headMenu]).toEqual([false, false])
+    h.onNarrow({ matches: false })
+    expect([h.state.narrow, h.state.headMenu]).toEqual([false, false])
+  })
+
+  it('takes a token saved in the header: the queue and the revisions come under it, and the pencils', async () => {
+    const LIST = { has_dev: false, latest: null, builds: [] }
+    const shell = opened({ token: null,
+      answer: (url) => [200, url.endsWith('/builds.json') ? LIST : { comments: [stored()] }] })
+    onTestFinished(() => clearToken())
+    // BuildPage between the two, React's part done by hand: its state lands,
+    // its update runs, and what it holds goes down to the page.
+    const build = new BuildPage({ meta: BUILD })
+    build.setState = (patch, done) => {
+      const before = { ...build.state }
+      Object.assign(build.state, patch)
+      build.componentDidUpdate(build.props, before)
+      const prev = shell.props
+      shell.props = { ...prev, token: build.state.token, builds: build.state.builds }
+      shell.componentDidUpdate(prev)
+      if (done) done()
+    }
+    const h = headerOn(shell, { props: { onToken: build.onToken } })
+    const pencils = () => collect(drawn(shell), (el) => (el.props.title === 'Rename document' ? el : undefined)).length
+    expect(pencils()).toBe(0)
+    h.view().tokenToggle(CLICK)
+    h.view().tokenType({ target: { value: 'sekrit' } })
+    h.view().tokenSave(CLICK)
+    await vi.waitFor(() => expect([shell.state.feed, build.state.builds]).toEqual([[stored()], LIST]))
+    const asked = fetch.mock.calls.map(([url, init]) => [url, init && init.headers])
+    expect(asked).toEqual(expect.arrayContaining([
+      ['/project/docs0001/builds.json', { 'X-Hammerola-Token': 'sekrit' }],
+      ['/api/v1/comments?project=docs0001', { 'X-Hammerola-Token': 'sekrit' }]]))
+    expect(pencils()).toBeGreaterThan(0)
+    // and Remove takes the queue with it
+    headerOn(shell, { props: { onToken: build.onToken } }).view().tokenClear(CLICK)
+    expect([shell.state.feed, build.state.token, build.state.builds]).toEqual([[], null, null])
   })
 
   /** The header's revision picker as drawn: its button, known by its style
@@ -1096,15 +1128,12 @@ describe('comments on the page of a build with no model', () => {
   it('lists the variant\'s revisions under the header\'s button with the token, a row a link to its address on the document and sheet on screen', async () => {
     const OTHER = 'beef4567890'
     const builds = { has_dev: true, latest: OTHER, builds: [{ commit: OTHER, built: STAMP }, { commit: 'abc123', built: STAMP }] }
-    const shell = opened({ search: `?d=${SCHEMATIC.id}&s=amp`,
-      answer: (url) => [200, url.endsWith('/builds.json') ? builds : { comments: [] }] })
-    shell.componentDidMount()
-    await vi.waitFor(() => expect(shell.state.builds).toEqual(builds))
-    expect(fetch).toHaveBeenCalledWith('/project/docs0001/builds.json', { headers: { 'X-Hammerola-Token': 'sekrit' } })
-    const [button, shut] = picker(drawn(shell))
+    const shell = opened({ search: `?d=${SCHEMATIC.id}&s=amp` })
+    const h = headerOn(shell, { props: { builds } })
+    const [button, shut] = picker(h.render())
     expect(shut.props.style.display).toBe('none')
     button.props.onClick(CLICK)
-    const [, card] = picker(drawn(shell))
+    const [, card] = picker(h.render())
     expect(card.props.style.display).toBe('block')
     // the pointers on top and the builds below, each a page load of its
     // revision's address, the document and the sheet on screen kept
@@ -1113,19 +1142,19 @@ describe('comments on the page of a build with no model', () => {
       ['dev', `/project/docs0001/dev/${here}`], ['latest', `/project/docs0001/latest/${here}`],
       ['beef456', `/project/docs0001/${OTHER}/${here}`]])
     // the row of the build on screen is no link and has no click of its own:
-    // its click is the page's, which shuts the card
+    // its click is the header's, which shuts the card
     const [current] = collect(card, (el) => (texts(el)[0] === 'abc123' && texts(el)[1] === 'viewing'
       && texts(el).length === 4 ? el : undefined))
     expect([current.type, current.props.href, current.props.onClick]).toEqual(['span', undefined, undefined])
-    drawn(shell).props.onClick()
-    expect(shell.state.revOpen).toBe(false)
+    h.onClick()
+    expect(h.state.revOpen).toBe(false)
   })
 
   it('gives a reader without the token the revision as a label: no list asked for, no card', () => {
     const shell = opened({ token: null })
     shell.componentDidMount()
-    expect(fetch.mock.calls.map(([url]) => url)).not.toContain('/project/docs0001/builds.json')
-    const [label, card] = picker(drawn(shell), true)
+    expect(fetch).not.toHaveBeenCalled()
+    const [label, card] = picker(headerOn(shell).render(), true)
     expect([texts(label), label.props.onClick, card]).toEqual([['abc123', '2026-10-26 18:00'], undefined, false])
   })
 
@@ -1143,5 +1172,37 @@ describe('comments on the page of a build with no model', () => {
     // nothing armed: the Escape is the design's
     escape()
     expect(design.mock.results.map((one) => one.value)).toEqual([true, false])
+  })
+
+  it('is under a header that shuts its menus on Escape, taking it before a design under it hears it', () => {
+    const shell = opened()
+    const design = vi.fn((event) => event.defaultPrevented)
+    window.addEventListener('keydown', design)
+    onTestFinished(() => window.removeEventListener('keydown', design))
+    const h = headerOn(shell)
+    shell.componentDidMount()
+    h.componentDidMount()
+    onTestFinished(() => h.componentWillUnmount())
+    const escape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    h.setState({ revOpen: true })
+    escape()
+    expect(h.state.revOpen).toBe(false)
+    // nothing open: the Escape is the design's
+    escape()
+    expect(design.mock.results.map((one) => one.value)).toEqual([true, false])
+  })
+
+  it('is under a header that says a revision is pinned, and a pointer up to date only over the model\'s page, which watches for a newer build', () => {
+    const shell = opened()
+    const model = makeComponent(HammerolaViewer)
+    const chip = (page) => {
+      const v = headerOn(page).view()
+      return v.showStatus ? v.statusText : null
+    }
+    expect([chip(model), chip(shell)]).toEqual(['pinned build', 'pinned build'])
+    onTestFinished(() => rereadPage('/'))
+    rereadPage('/project/docs0001/latest/')
+    expect([chip(model), chip(shell)]).toEqual(['up to date', null])
+    expect(texts(headerOn(shell).render())).not.toContain('up to date')
   })
 })

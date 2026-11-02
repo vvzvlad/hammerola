@@ -1,7 +1,8 @@
-// The header of the build page, and the one panel that hangs off it — the three
-// answers `computed()` gives about WHICH BUILD this is and what is open beside
-// it. None of them is a layout question: they are values the component
-// computes, and each has to be computed in the right shape.
+// The header over the model's page (Header.jsx), and the panels that hang off
+// it — the answers `headerView` and the page's `computed()` give about WHICH
+// BUILD this is and what is open beside it. None of them is a layout question:
+// they are values the components compute, and each has to be computed in the
+// right shape.
 //
 //   * the revision button draws the slot shortened. On a pointer that reads
 //     `dev` or `latest`; on a pinned revision it is the digest of the sources —
@@ -14,7 +15,8 @@
 //
 // ALMOST NOTHING IS RENDERED HERE, the arrangement every file in this directory
 // uses: the instance is the real prototype with the state spelled out, and the
-// real `computed()` runs over it. The layout around these values is checked from
+// real `computed()` runs over it; the header over it is `headerOn`'s
+// (component.js), which reads the page through its `headerParts()`. The layout around these values is checked from
 // Python against the source (tests/test_ui_source.py).
 //
 // THE ONE EXCEPTION IS BELOW. `computed()` and `render()` are two halves of a
@@ -60,9 +62,10 @@ const onSlot = (slot) => {
 // Every test starts on the pinned revision; the two that want a pointer say so.
 beforeEach(() => onSlot(REV))
 
+import BuildPage from '../src/BuildPage.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds } from '../src/hub.js'
-import { makeComponent } from './component.js'
+import { headerOn, makeComponent } from './component.js'
 import { collect, texts } from './eltree.js'
 import { guardSubscribers } from './addressguard.js'
 
@@ -88,6 +91,9 @@ function component({ builds = null, rail = null, props = {} } = {}) {
     },
   })
 }
+
+/** What the header over the page `c` is drawn from. */
+const head = (c) => headerOn(c).view()
 
 // -- the line under the title, and the tab strip ------------------------------
 //
@@ -117,7 +123,7 @@ describe('what the header says about this build', () => {
     // src/cadbuild/views.py), asserted by
     // `test_a_real_export_is_a_document_the_hub_would_accept` in
     // tests/cadbuild/test_views.py.
-    expect(showing(VIEWS).computed().subtitle).toBe('3 parts · 2 views · 2.0 MB')
+    expect(head(showing(VIEWS)).subtitle).toBe('3 parts · 2 views · 2.0 MB')
   })
 
   it('says the same on every tab, without fetching a single view file', () => {
@@ -133,7 +139,7 @@ describe('what the header says about this build', () => {
     // down, and `${undefined} parts` would put the word "undefined" on the
     // page.
     const c = showing([{ id: 'assembled', name: 'assembled', file: 'a.json', gzip: 0 }])
-    expect(c.computed().subtitle).toBe('0 parts · 1 view · 0.0 MB')
+    expect(head(c).subtitle).toBe('0 parts · 1 view · 0.0 MB')
     expect(c.computed().viewTabs[0].hint).toBe('0 parts · 0.0 MB')
   })
 
@@ -145,7 +151,7 @@ describe('what the header says about this build', () => {
     // the header.
     const c = showing([{ id: 'assembled', name: 'assembled', file: 'a.json',
                         parts: 3, gzip: 0 }])
-    expect(c.computed().subtitle).toBe('0 parts · 1 view · 0.0 MB')
+    expect(head(c).subtitle).toBe('0 parts · 1 view · 0.0 MB')
     expect(c.computed().viewTabs[0].hint).toBe('0 parts · 0.0 MB')
   })
 })
@@ -154,7 +160,7 @@ describe('what the header says about this build', () => {
 
 describe('the revision in the header', () => {
   it('is cut to the length the rest of the site reads a revision at', () => {
-    const v = component().computed()
+    const v = head(component())
     expect(v.slot).toBe('e05f73b')
     expect(v.slot).toHaveLength(7)
   })
@@ -172,18 +178,18 @@ describe('the revision in the header', () => {
     // against `v.revToggle` would not work: `computed()` builds a fresh closure
     // on every call, and `render()` calls it again, so the handler on the
     // element is never the object this test holds.
-    const c = component()
-    expect(c.computed().slotTitle).toBe(REV)
+    const h = headerOn(component())
+    expect(h.view().slotTitle).toBe(REV)
 
-    const carrying = collect(c.render(), (el) => (el.props.title === REV ? el : undefined))
+    const carrying = collect(h.render(), (el) => (el.props.title === REV ? el : undefined))
     expect(carrying, 'the header computes the full digest and then draws nothing with '
       + 'it — nobody can read it or copy it out').toHaveLength(1)
 
-    expect(c.state.revOpen).toBe(false)
+    expect(h.state.revOpen).toBe(false)
     expect(typeof carrying[0].props.onClick, 'the element carrying the full digest '
       + 'does nothing when clicked, so it is not the revision button').toBe('function')
     carrying[0].props.onClick({ stopPropagation() {} })
-    expect(c.state.revOpen, 'the full digest hangs off some element that is not the '
+    expect(h.state.revOpen, 'the full digest hangs off some element that is not the '
       + 'revision button — it reads as a tooltip on the wrong thing').toBe(true)
   })
 
@@ -191,27 +197,27 @@ describe('the revision in the header', () => {
     // A tooltip repeating the word already under the cursor is noise, and
     // "shortened" and "worth a tooltip" have to stay the same question.
     onSlot('latest')
-    expect(component().computed().slotTitle).toBe('')
+    expect(head(component()).slotTitle).toBe('')
     onSlot('dev')
-    expect(component().computed().slotTitle).toBe('')
+    expect(head(component()).slotTitle).toBe('')
   })
 
   it('leaves a pointer name alone', () => {
     // `dev` and `latest` are the two slots that are not digests. Cutting them
     // would be cutting a word, and `dev` is three characters to begin with.
     onSlot('dev')
-    expect(component().computed().slot).toBe('dev')
+    expect(head(component()).slot).toBe('dev')
     onSlot('latest')
-    expect(component().computed().slot).toBe('latest')
+    expect(head(component()).slot).toBe('latest')
   })
 })
 
 // -- when it was built -------------------------------------------------------
 
 describe('the build picker', () => {
-  const rows = (built) => component({
+  const rows = (built) => head(component({
     builds: { has_dev: false, latest: null, builds: built },
-  }).computed().revRows
+  })).revRows
 
   it('says the time as well as the date', () => {
     // The list exists to choose BETWEEN builds, and `hammerola build` publishes
@@ -226,7 +232,7 @@ describe('the build picker', () => {
     // reads as two different facts about one build.
     const c = component({ builds: { has_dev: false, latest: null,
                                     builds: [{ commit: REV, built: '2026-08-27T18:20:00Z' }] } })
-    const v = c.computed()
+    const v = head(c)
     expect(v.revRows[0].date).toBe(v.slotDate)
   })
 
@@ -254,10 +260,9 @@ describe('the build picker', () => {
     // What this owns is that the two CALL SITES keep asking for different ones.
     const c = picker()
     c.state.sel = '/model'
-    const v = c.computed()
 
-    const current = v.revRows.find((r) => r.key === REV)
-    const [row] = v.rows
+    const current = head(c).revRows.find((r) => r.key === REV)
+    const [row] = c.computed().rows
     const tokenOf = (style) => (style.match(/background:(var\(--[\w-]+\))/) || [])[1]
 
     expect(tokenOf(current.style), 'the current revision row draws no background')
@@ -295,7 +300,7 @@ describe('the build picker', () => {
     const c = picker()
     c.switchBuild = vi.fn(() => Promise.resolve())
 
-    const row = c.computed().revRows.find((r) => r.key === OTHER)
+    const row = head(c).revRows.find((r) => r.key === OTHER)
     row.onPick({ stopPropagation() {} })
 
     expect(c.switchBuild).toHaveBeenCalledWith('proj1', OTHER)
@@ -309,8 +314,8 @@ describe('the build picker', () => {
     const c = picker()
     c.switchBuild = vi.fn(() => Promise.resolve())
 
-    c.computed().revRows.find((r) => r.key === 'dev').onPick({ stopPropagation() {} })
-    c.computed().revRows.find((r) => r.key === 'latest').onPick({ stopPropagation() {} })
+    head(c).revRows.find((r) => r.key === 'dev').onPick({ stopPropagation() {} })
+    head(c).revRows.find((r) => r.key === 'latest').onPick({ stopPropagation() {} })
 
     expect(c.switchBuild.mock.calls.map((call) => call[1])).toEqual(['dev', 'latest'])
   })
@@ -374,13 +379,13 @@ describe('a reader without the token', () => {
     // button must not pretend there is one.
     const c = component()
     c.state.token = null
-    const v = c.computed()
+    const v = head(c)
     expect(v.revPicker).toBe(false)
     expect(v.revToggle).toBeUndefined()
   })
 
   it('keeps the picker for the owner', () => {
-    const v = component().computed()
+    const v = head(component())
     expect(v.revPicker).toBe(true)
     expect(typeof v.revToggle).toBe('function')
   })
@@ -388,7 +393,7 @@ describe('a reader without the token', () => {
   it('is drawn no menu, and the owner is', () => {
     // The render half of the claim above: a computed flag nobody reads would
     // leave the rows and Compare on the page.
-    const compareButtons = (c) => collect(c.render(), (el) =>
+    const compareButtons = (c) => collect(headerOn(c).render(), (el) =>
       ([].concat(el.props.children).includes('Compare ') ? el : undefined))
     const viewer = component()
     viewer.state.token = null
@@ -397,12 +402,13 @@ describe('a reader without the token', () => {
   })
 
   it('never asks for the list of revisions', () => {
+    // BuildPage reads builds.json (`loadBuilds`), for the header and the page.
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     try {
-      const c = component()
-      c.state.token = null
-      c.refreshBuilds()
+      const page = Object.create(BuildPage.prototype)
+      page.state = { token: null, meta: component().state.meta }
+      page.loadBuilds()
     } finally {
       vi.unstubAllGlobals()
     }
@@ -441,7 +447,7 @@ describe('the Share window', () => {
       ...(keys ? { files_keys: keys } : {}),
     },
   })
-  const row = (c, key) => c.computed().revRows.find((r) => r.key === key)
+  const row = (c, key, h = headerOn(c)) => h.view().revRows.find((r) => r.key === key)
   /** The window opened from one row, as a click on its icon opens it. */
   const opened = (key, keys) => {
     const c = owner(keys)
@@ -476,9 +482,9 @@ describe('the Share window', () => {
 
   it('opens without the files, on the full commit, and closes the picker', () => {
     const c = owner()
-    c.state.revOpen = true
-    row(c, REV).onShare(click)
-    expect(c.state.revOpen).toBe(false)
+    const h = headerOn(c, { state: { revOpen: true } })
+    row(c, REV, h).onShare(click)
+    expect(h.state.revOpen).toBe(false)
     // The row SHOWS seven characters; the address needs all of them.
     expect(c.state.share).toEqual({ id: REV, files: false })
     const v = c.computed()
@@ -671,7 +677,58 @@ describe('the Share window', () => {
     // A copied address without the key, sent on, would lose its reader the
     // files without anybody noticing.
     const c = owner()
+    expect(texts(headerOn(c).render())).not.toContain('Copy link')
     expect(texts(c.render())).not.toContain('Copy link')
     expect(c.computed().copyLink).toBeUndefined()
+  })
+})
+
+// -- a click on the header and Escape ------------------------------------------
+
+describe('the header over the model\'s page', () => {
+  it('shuts the page\'s cards on a click, as a click on the page does', () => {
+    // The part menu, the list of views, Add primitive and Settings.
+    const c = component()
+    Object.assign(c.state, { menu: { id: '/model/lid', x: 0, y: 0 }, viewsOpen: true,
+                             opsOpen: true, settingsOpen: true })
+    headerOn(c).onClick()
+    expect([c.state.menu, c.state.viewsOpen, c.state.opsOpen, c.state.settingsOpen])
+      .toEqual([null, false, false, false])
+  })
+
+  it('shuts its menus on Escape with the page\'s layers, and takes it before a design under the page hears it', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('null')))
+    const c = component()
+    Object.assign(c, { load: vi.fn(async () => {}), loadFeed: vi.fn(),
+                       loadProposal: vi.fn(), sync: vi.fn() })
+    c.state.menu = null
+    const h = headerOn(c)
+    // KicadView's listener, on the window before both
+    const design = vi.fn((event) => event.defaultPrevented)
+    window.addEventListener('keydown', design)
+    c.componentDidMount()
+    h.componentDidMount()
+    const escape = () => document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    try {
+      // a menu of the header's alone, nothing of the page's open
+      h.setState({ dlOpen: true })
+      escape()
+      expect(h.state.dlOpen).toBe(false)
+      h.setState({ revOpen: true })
+      c.setState({ viewsOpen: true })
+      escape()
+      expect([h.state.revOpen, c.state.viewsOpen]).toEqual([false, false])
+      // nothing open: the Escape is the design's
+      escape()
+      expect(design.mock.results.map((one) => one.value)).toEqual([true, true, false])
+    } finally {
+      window.removeEventListener('keydown', design)
+      h.componentWillUnmount()
+      c.componentWillUnmount()
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    }
   })
 })

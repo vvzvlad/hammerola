@@ -1,7 +1,7 @@
 /**
- * The page's chrome: the header, the token control, the tab strip, the view
- * switcher and the floating toolbar — everything round the model that is not a
- * panel about the model.
+ * The model page's chrome: the Share window, the new-build banner's layer, the
+ * view switcher and the floating toolbar — everything round the model that is
+ * not a panel about the model. The header over it is Header.jsx's.
  *
  * One section of the build page's `computed()`: it takes the page's state, its
  * props and a bag of the page's actions, and returns the keys `render()` draws
@@ -11,30 +11,21 @@
  * action: `commentsOpen` is what the rail falls back to before the reader has
  * chosen, a fact about how the page was mounted.
  *
- * `deps` carries the writers and the two toggles (component methods, since
- * they write its state and push its viewport); `threads`, `openCount`,
- * `revRows` and `downloadGroups`, the other panels' answers drawn by controls
- * up here (the comments button's count, the picker's rows in the header
- * menu); and `narrow`, the layout every panel shares. `popover` and `tab`
- * come from ui/src/panelstyle.js.
+ * `deps` carries the writers (component methods, since they write its state
+ * and push its viewport); `shutHeader` and `onRename`, the doors to the
+ * header's menus and the rename window (BuildPage.jsx); `threads` and
+ * `openCount`, the feed's answers the rail draws; and `narrow`, the layout
+ * every panel shares. `tab` comes from ui/src/panelstyle.js.
  */
 import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
 import { COMMENTABLE, docUrl } from './DocumentView.jsx';
-import {
-  PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId,
-} from './hub.js';
-import { headRow } from './headmenu.jsx';
-import { revisionHead } from './revisions.jsx';
+import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
-import {
-  BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, RELATIVE, btn, menuRow, popover, tab,
-} from './panelstyle.js';
-import { dropMoves, emptyProposal } from './proposal.js';
-import { clearToken, writeRetina, writeToken } from './store.js';
+import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
+import { writeRetina } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn } from './viewlist.jsx';
-import { variantChoices } from './variants.jsx';
 
 export function chromeView(s, props, deps) {
   const {
@@ -42,18 +33,15 @@ export function chromeView(s, props, deps) {
     // page is of (`pageVariant` in hub.js), `arCapable` whether the browser has
     // AR Quick Look (`arSupported` in ar.js; WebXR's answer is `s.xrCapable`)
     meta, viewer, narrow, stop, variant, arCapable,
-    // -- the other panels' answers, drawn by controls that live up here
-    revRows, downloadGroups, dlShown, threads, openCount,
+    // -- the feed's answers, which the rail draws
+    threads, openCount,
     // -- the lookups and constants that stay beside the component
     viewPartCount, HOLD_KEY_LABEL, VIEW_TABS_MAX,
-    // -- the page's own doors
-    set, setState, stateNow, toast, toolsOff, subtitle,
-    applyTheme, closeTab, compareRevisions, fitView, saveFrame, showView,
-    loadFeed, loadProposal, proposalMoves, proposalOverlay, stageProposal,
-    refreshBuilds, cameraParam, pushChoice, openAr, openXr,
+    // -- the page's own doors, and BuildPage's: the header's menus and the
+    // rename window
+    set, setState, toast, toolsOff, shutHeader, onRename,
+    fitView, saveFrame, showView, cameraParam, pushChoice, openAr, openXr,
   } = deps;
-
-  const cmpReady = s.cmp.length === 2;
 
   // The tool really in force, which is not always `s.tool`: opening a
   // comparison does not disarm one (the three handlers guard themselves via
@@ -65,28 +53,15 @@ export function chromeView(s, props, deps) {
   const armed = toolsOff() && s.tool !== 'cut' ? null : s.tool;
 
   const setTool = (t) => () => {
-    set({ tool: s.tool === t ? null : t, revOpen: false, dlOpen: false, viewsOpen: false, menu: null });
+    set({ tool: s.tool === t ? null : t, viewsOpen: false, menu: null });
+    shutHeader();
     if (t === 'comment' && s.tool !== 'comment') {
       toast(docCommentable ? COMMENTABLE.get(docOpen.type) : 'Click a spot on the model to pin the task');
     }
     if (t === 'measure' && s.tool !== 'measure') toast('Click a part for its size, or two for the gap between them');
   };
 
-  // Two of these are reachable. `building` and `failed` need a job id this
-  // page does not have: `GET /api/v1/jobs/<id>` exists behind EDIT_TOKEN, but
-  // nothing tells a build page which job produced it. (The front page shows
-  // both words off the draft pointer, which a build page has no equivalent of.)
-  const status = s.pending
-    ? { text: 'new build ready', style: 'color:var(--accent-text);background:var(--accent-bg);border:1px solid var(--accent-line)', dot: 'var(--accent)' }
-    : { text: isPointerPage() ? 'up to date' : 'pinned build', style: 'color:var(--text-soft);background:transparent;border:1px solid transparent', dot: 'var(--ok)' };
-
   const railOpen = s.rail === null ? props.commentsOpen : s.rail;
-
-  // `|| []` because `computed()` runs over a state built by hand as often as
-  // over the constructor's: every test file in ui/tests spells the fields out,
-  // and a field added here would otherwise take down the ones written before
-  // it existed, at `.length`.
-  const openTabs = s.tabs || [];
 
   // The views this build declares, and the one on screen, read once: the
   // switcher below asks three separate questions of them — how many there
@@ -114,16 +89,16 @@ export function chromeView(s, props, deps) {
     setState({ doc: id, viewsOpen: false });
     pushChoice(s.view, id, sheet);
   };
-  // The rename window over the page (rename.jsx), opened by a pencil beside
-  // the title, a variant's row and a row of the views menu: with the token
+  // The rename window (rename.jsx, drawn by BuildPage.jsx), opened by a pencil
+  // on a row of the views menu, a document's row and the strip: with the token
   // only, since the hub takes a rename only with it. It starts at the name on
-  // screen, and the commit goes on the branch of `variant`, the page's own but
-  // for a variant's row. The menus shut under it, the header's menu too: the
-  // title's pencil stops its click, so `rootClick` does not shut that one.
-  const askRename = viewer ? null : (subject) => setState({
-    rename: subject, viewsOpen: false, variantsOpen: false, revOpen: false, dlOpen: false, tokenPop: false,
-    headMenu: false });
-  const title = (meta && (meta.title || meta.project)) || '';
+  // screen, and the commit goes on the branch of `variant`. The menus shut
+  // under it, the header's too.
+  const askRename = viewer ? null : (subject) => {
+    setState({ viewsOpen: false });
+    shutHeader();
+    onRename(subject);
+  };
   // A document listed `hidden` has no row (viewlist.jsx).
   const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta),
     askRename && ((doc) => askRename({ kind: 'document', variant, id: doc.id, name: doc.name })));
@@ -168,112 +143,6 @@ export function chromeView(s, props, deps) {
     }))}`;
 
   return {
-    // -- the header row ------------------------------------------------------
-    //
-    // `min-height` rather than `height`, and it wraps: with a long title the
-    // mark, title, revision picker and the controls are wider than a window
-    // just past the breakpoint, and the root is `overflow:hidden`, so a row
-    // that cannot wrap is silently cut off (the comments button would vanish).
-    // Below the breakpoint the controls are rows of the header's menu
-    // (`headFolded` below) and the row is one line. Same rule as
-    // `static/_v/site.css` on the resolver's copy of this header.
-    headerStyle: 'min-height:50px;flex:none;display:flex;flex-wrap:wrap;align-items:center;'
-      + 'gap:6px 12px;padding:0 16px;'
-      + `${HEADER_BAR};position:relative;z-index:30`,
-
-    // WHAT THE HEADER LETS GO OF FIRST, and each of these is chosen because
-    // the page still says it somewhere else. The wordmark sits beside a mark
-    // that stays and goes on linking home; the subtitle is a description of
-    // the build (parts, views, size) and not a control, with the same counts
-    // on the view tabs; and the status chip's dot is already on the revision's
-    // row of the header's menu, while the one status worth interrupting
-    // somebody for — a newer build — announces itself with the banner over the
-    // model.
-    showWordmark: !narrow,
-    showSubtitle: !narrow,
-    showStatus: !narrow,
-
-    title,
-    renameTitle: askRename && (() => askRename({ kind: 'project', variant, name: title })),
-    // The title column must be able to shrink, or the title's
-    // `text-overflow:ellipsis` never fires and a long model name pushes the row
-    // past the window edge. A wrapping row is filled by flex-basis sizes before
-    // anything shrinks, so a title on an `auto` basis at its full width breaks
-    // the line and pushes controls onto a second one instead of being cut.
-    // Wide, `1 1 200px` capped at `max-content`: in the line it counts as
-    // 200px (or its own width, if shorter), so the row keeps one line until
-    // the title would be cut below that, and then the controls move down as
-    // one group (`controlsStyle`) rather than the title shrinking to a word.
-    // It grows from there up to its own width and no further: a title that
-    // claimed all of the leftover room would push the picker away from it.
-    // Narrow, `1 1 0` uncapped: it never breaks the line and takes the room
-    // the mark, the variants and the menu's button leave.
-    titleColStyle: 'display:flex;flex-direction:column;gap:1px;min-width:0;flex:'
-      + (narrow ? '1 1 0' : '1 1 200px;max-width:max-content'),
-    // Downloads, the token, Comments and the theme, as one group pushed to the
-    // right edge by its auto margin: when the row has to wrap they go to the
-    // second line together and stay right-aligned, instead of the last one or
-    // two breaking off to the left. Narrow, the buttons are rows of the
-    // header's menu and the group holds only the sheets, so it lays nothing
-    // out (`display:contents`).
-    controlsStyle: narrow ? 'display:contents'
-      : 'display:flex;align-items:center;gap:12px;margin-left:auto;flex:none',
-    // The variants beside the title (variants.jsx), for every reader: the list
-    // needs no token. Null, and nothing drawn, on a project of one variant.
-    variantChoices: variantChoices(s.variants, PAGE.pid, variant),
-    variantRename: askRename && ((row) => askRename({ kind: 'variant', variant: row.key, name: row.label })),
-    variantsOpen: !!s.variantsOpen,
-    variantsToggle: stop(() => setState({
-      variantsOpen: !s.variantsOpen, revOpen: false, dlOpen: false, viewsOpen: false, tokenPop: false,
-      headMenu: false })),
-    narrowMenus: narrow,
-
-    // -- the header's menu, on a narrow window (headmenu.jsx) -----------------
-    //
-    // On a phone the header is one row: the mark, the title, the variants and
-    // this menu's button. The revision, Downloads, the token, Parts, Comments
-    // and the theme are rows of the menu, in that order. A row that opens
-    // something calls the toggle the wide header calls for it (Parts has no
-    // wide button: the tree is on screen there), and those toggles put the
-    // menu down (`headMenu: false`), so one press opens its sheet and shuts the
-    // menu. The theme's row opens nothing and does not stop its click, which
-    // reaches `rootClick` and shuts the menu. `headFolded` says the header is
-    // drawn this way;
-    // `headMenuOpen` (state `headMenu`) says the card is open.
-    headFolded: narrow,
-    headMenuOpen: !!s.headMenu,
-    headMenuToggle: stop(() => setState({
-      headMenu: !s.headMenu, revOpen: false, dlOpen: false, tokenPop: false, variantsOpen: false,
-      viewsOpen: false })),
-    // The revision picker's button, its row of the menu and its card
-    // (revisions.jsx), the button's dot in the status's colour; the card's rows
-    // are `revRows`.
-    ...revisionHead({
-      narrow, viewer, open: s.revOpen, built: meta && meta.built, dot: status.dot,
-      onToggle: stop(() => setState({
-        revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false,
-        headMenu: false })),
-    }),
-    // The wrappers the downloads and the token hang their cards off, as the
-    // revision picker's does (`revWrapStyle`). Wide, each holds its button and
-    // its card, measured from the button. Narrow, the buttons are rows of the
-    // menu and the cards are sheets along the bottom edge (`popover`), which
-    // need no button to hang off; `display:contents` keeps a wrapper left with
-    // only its card from taking a gap in the row.
-    headWrapStyle: narrow ? 'display:contents' : RELATIVE,
-    // The rows: the token lit while editing, as its button is.
-    tokenRowStyle: headRow(!viewer),
-    headRowStyle: headRow(false),
-    subtitle: meta ? subtitle() : '',
-    revRows,
-    revEmpty: revRows.length === 0,
-    // SHORTENED, like every other place this site prints a revision. A commit
-    // is the digest of its sources (SPEC 7.7), so `s.cmp` holds 64 characters
-    // per side and this label is a button in a 430px menu.
-    cmpLabel: cmpReady ? `${shortId(s.cmp[0])} → ${shortId(s.cmp[1])}` : '',
-    compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;` + (cmpReady ? ON_ACCENT : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
-    startCompare: stop(() => compareRevisions(s.cmp)),
-
     // -- the Share window, opened from a row of the revision picker ----------
     //
     // Over the whole page, built like the front page's delete confirmation:
@@ -312,192 +181,23 @@ export function chromeView(s, props, deps) {
       }),
     closeShare: () => setState({ share: null }),
 
-    statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
-    statusText: status.text,
-
-    downloadGroups,
-    // NO KEY, NO BUTTON: the hub would refuse every file in the menu.
-    dlShown,
-    dlToggle: stop(() => setState({
-      dlOpen: !s.dlOpen, revOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false,
-      headMenu: false })),
-    dlBtnStyle: btn(s.dlOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
-    // A sheet on a narrow window like the other two: there its button is a row
-    // of the header's menu, and the menu shuts as the sheet opens, so the card
-    // has no button left to hang off.
-    dlMenuStyle: popover({
-      narrow, anchor: 'right:0;top:40px', width: '250px', radius: '9px',
-      tail: 'padding:6px 0;', z: 40, open: s.dlOpen }),
-
-    // -- the token: the whole customer/viewer split, in one control
+    // The new-build banner's "you are viewing …": shortened, like every other
+    // place this site prints a revision.
+    slot: shortId(PAGE.slot),
     viewer,
-    tokenToggle: stop(() => setState({
-      tokenPop: !s.tokenPop, tokenDraft: '', revOpen: false, dlOpen: false, viewsOpen: false,
-      variantsOpen: false, headMenu: false })),
-    tokenBtnStyle: btn(false) + ';border:1px solid ' + (viewer ? 'var(--line);background:var(--card-bg)' : 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)'),
-    tokenLabel: viewer ? 'View only' : 'Editing on',
-    tokenPopStyle: popover({
-      narrow, anchor: 'right:0;top:40px', width: '320px', radius: '10px',
-      pad: '13px 14px', z: 40, open: s.tokenPop }),
-    tokenDraft: s.tokenDraft,
-    tokenType: (e) => setState({ tokenDraft: e.target.value }),
-    tokenSave: stop(() => {
-      const value = s.tokenDraft.trim();
-      if (!value) { toast('Paste the token first'); return; }
-      writeToken(value);
-      // The queue is behind the same token, so entering one is the moment it
-      // can be asked for — from the callback, because `stateNow().token` is
-      // still the old one until the update lands.
-      //
-      // `proposalOff` is cleared too, undoing the other half of `tokenClear`.
-      // That action hides the proposal as a default for a reader who stopped
-      // being an editor; kept across a round trip it would make `stageProposal`
-      // silently refuse the next `add a box`.
-      //
-      // Staged from the callback for the same reason as the feed: the flag is
-      // read inside those actions, so a push before this update landed would be
-      // refused by the very value being cleared.
-      setState({ token: value, tokenPop: false, tokenDraft: '',
-                      proposalOff: false },
-                    () => {
-                      loadFeed();
-                      // AND THE STORED PROPOSAL, which is behind the same
-                      // token: this is the second of the two doors the token
-                      // arrives through, and `loadProposal` says why there is
-                      // no third. From the callback for the reason the feed
-                      // is: the request reads `stateNow().token`.
-                      loadProposal();
-                      // And the revision list, behind the same token.
-                      refreshBuilds();
-                      stageProposal(stateNow().proposal || emptyProposal());
-                    });
-      toast('Editing is on in this browser');
-    }),
-    tokenClear: stop(() => {
-      clearToken();
-      // The feed goes with it: it was fetched under a token this browser no
-      // longer has, and a reader without one may not read the queue at all.
-      //
-      // The `Add primitive` menu closes too: its button is hidden without a
-      // token, like Move, so an open menu would have no way back.
-      //
-      // The proposal comes off the model through the eye, not a bare
-      // `proposalOverlay(null)`: `proposalOff` is the single answer to "is the
-      // proposal on the model", and both viewport actions read it. Clearing the
-      // overlay alone would leave the flag on, and the first edit through a
-      // branch row would call `setProposal` and stage the bodies back.
-      //
-      // Off because a reader giving up the token can no longer send what the
-      // bodies say. The branch stays, so the document can still be read and the
-      // eye can put it back: a default, not a permission gate.
-      //
-      // Both pushes carry their own answer instead of relying on the flag:
-      // `setState` has not landed when they run, so the actions would still read
-      // the old `proposalOff`. `null` and a document with no moves mean the same
-      // on either side of the update, so order does not matter. The moves need
-      // the second call because nothing else pushes here; without it displaced
-      // parts would stay displaced until a later edit sent a document.
-      setState({ token: null, tokenPop: false, tokenDraft: '',
-                      composer: null, notePop: null, feed: [],
-                      opsOpen: false, settingsOpen: false, proposalOff: true,
-                      // The revision list and its menu were read under it too.
-                      builds: null, revOpen: false });
-      proposalOverlay(null);
-      proposalMoves(dropMoves(stateNow().proposal));
-      set({ tool: null });
-      toast('Token removed — back to viewing');
-    }),
 
     // -- the tree, which on narrow is something you open ---------------------
     //
     // Wide, it floats over a corner of the model and there is room for both.
     // Narrow, it covers the thing it describes — so it starts closed and the
-    // Parts row of the header's menu is what opens it; wide, there is no such
-    // row. Its openness is state and only state; the constructor says why it
-    // is not remembered.
-    // Not while two revisions are compared either: the compare panel stands in
-    // the tree's place, so the row would open nothing. Nor under a document,
-    // which hides the tree with the rest of the model.
+    // Parts row the page adds to the header's menu is what opens it
+    // (`headerParts` in HammerolaViewer.jsx). Its openness is state and only
+    // state; the constructor says why it is not remembered.
     treeShown: !narrow || s.treeOpen,
-    treeToggle: stop(() => setState({ treeOpen: !s.treeOpen, headMenu: false })),
-    partsRowStyle: headRow(s.treeOpen) + (!narrow || s.compare || docOpen ? ';display:none' : ''),
 
-    // -- the comment rail and the header's button that opens it (comments.jsx)
+    // -- the comment rail (comments.jsx); the header's button that opens it
+    // reads the same values from `headerParts`
     ...railView({ open: railOpen, viewer, narrow, threads, openCount, stop, setState }),
-
-    // -- the theme, standing next to the comments ----------------------------
-    //
-    // In the header, not the floating strip: it changes the whole page, and the
-    // strip is not drawn on a phone (`showTools`), where a reader most likely
-    // wants the dark theme. There it is the row of the header's menu after
-    // Comments.
-    //
-    // Beside the comments button, not inside the rail: the rail is
-    // `display:none` while closed and for a reader with no token, while the
-    // header row — and on a narrow window its menu — is drawn for every
-    // reader.
-    //
-    // No `stop()`, unlike Comments and the menu's Parts row: those open
-    // something the same click must not close, this one opens nothing, so the
-    // click reaching `rootClick` dismisses a menu left open elsewhere — the
-    // header's menu, when the click is on its row.
-    //
-    // The button is the icon of the current mode alone, sun or moon, and the
-    // tooltip says the mode in words and the one it switches to. The label
-    // names the current mode on the menu's row on a narrow window.
-    themeDark: s.theme === 'dark',
-    themeLabel: s.theme === 'dark' ? 'Dark' : 'Light',
-    themeTitle: s.theme === 'dark'
-      ? 'the whole interface is dark — click for light'
-      : 'the whole interface is light — click for dark',
-    themeBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)',
-    toggleTheme: () => applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
-
-    // -- the strip under the header: the projects this browser has been in
-    //
-    // A row of its own, not part of the 50px header, which already carries a
-    // title, a picker, a status chip and four controls.
-    //
-    // Below two tabs it is not rendered at all: a strip whose only link is the
-    // project on screen is noise, and it costs 30px of model. Nor on a narrow
-    // window, at the owner's word: no tabs on a phone, where the pills stack
-    // into a column that takes the model's height.
-    //
-    // The active tab is derived from the address (`PAGE.pid`) and nothing else,
-    // so the highlight cannot disagree with the page (store.js says why).
-    // It wraps: ten pills at the 190px cap are close to 2000px and the root is
-    // `overflow:hidden`, so a non-wrapping strip would silently lose its tail.
-    // Same rule as `static/_v/site.css` on the resolver's header.
-    tabsShown: openTabs.length > 1 && !narrow,
-    tabsStyle: 'flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:5px 12px;'
-      + HEADER_BAR,
-    tabs: openTabs.map((t) => ({
-      key: t.pid,
-      // The pointer-less URL, exactly what a card on the front page links at:
-      // a tab is a PROJECT, and which revision of it opens is the reader's own
-      // remembered answer rather than this strip's to decide (hub.projectUrl).
-      href: projectUrl(t.pid),
-      label: t.title,
-      // The pill the view switcher is drawn with, so "the one you are on"
-      // reads the same way here as it does there rather than in a second
-      // visual language invented for one row.
-      style: tab(t.pid === PAGE.pid)
-        + ';display:flex;align-items:center;gap:7px;max-width:190px;text-decoration:none;color:inherit',
-      // Capped and ellipsised like the header's title: a model named after its
-      // whole assembly must not be able to push the page wider than the
-      // window, and ten of them must not push the strip off the side.
-      labelStyle: ELLIPSIS,
-      // BOTH CALLS, and `preventDefault` is the one that does the work here:
-      // the ✕ sits INSIDE the anchor, so stopping React's synthetic bubbling
-      // leaves the browser's own navigation entirely untouched and closing a
-      // tab would open it. `stopPropagation` is for the root's click handler,
-      // which would take the open menus down under a gesture about neither.
-      onClose: (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        closeTab(t.pid);
-      },
-    })),
 
     // Views come from the model's code: as many tabs as it declares.
     //
@@ -594,12 +294,14 @@ export function chromeView(s, props, deps) {
       + (docOpen ? '17' : '13'),
     docLayerStyle: DOC_LAYER,
     viewsOpen: !!s.viewsOpen,
-    viewsToggle: stop(() => setState({
-      viewsOpen: !s.viewsOpen, revOpen: false, dlOpen: false, tokenPop: false, menu: null,
-      variantsOpen: false, headMenu: false,
-      // The other menus in this toolbar, which open upwards from buttons a few
-      // pixels along: two of them at once would overlap.
-      opsOpen: false, settingsOpen: false })),
+    viewsToggle: stop(() => {
+      setState({
+        viewsOpen: !s.viewsOpen, menu: null,
+        // The other menus in this toolbar, which open upwards from buttons a few
+        // pixels along: two of them at once would overlap.
+        opsOpen: false, settingsOpen: false });
+      shutHeader();
+    }),
     // The toolbar's layer, raised while any of its menus is open so it covers
     // the overlays sharing the model's area — the "This view did not render"
     // card (14), the section panel (15) and the composer (16) — otherwise a
@@ -669,9 +371,10 @@ export function chromeView(s, props, deps) {
     // body is staged under is the comparison's, so those rows select by the
     // document's own node id (see `path` in `proposalRows`), and `measAdd`
     // refuses such a value by its shape.
-    tProposal: stop(() => setState({
-      opsOpen: !s.opsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
-      settingsOpen: false, tokenPop: false, menu: null, variantsOpen: false })),
+    tProposal: stop(() => {
+      setState({ opsOpen: !s.opsOpen, viewsOpen: false, settingsOpen: false, menu: null });
+      shutHeader();
+    }),
     proposalBtnStyle: btn(s.opsOpen, viewer, !!docOpen),
     // The card, drawn like the view switcher's: upwards from the button, no
     // `z-index` (the toolbar is its own stacking context), and no sheet on a
@@ -693,9 +396,10 @@ export function chromeView(s, props, deps) {
     // `rootClick`/Escape to dismiss — and SHOWN WITHOUT A TOKEN: what it holds
     // is about this browser's screen rather than about the model. Out of
     // service under a document: the resolution it sets is the model's canvas'.
-    tSettings: stop(() => setState({
-      settingsOpen: !s.settingsOpen, revOpen: false, dlOpen: false, viewsOpen: false,
-      opsOpen: false, tokenPop: false, menu: null, variantsOpen: false })),
+    tSettings: stop(() => {
+      setState({ settingsOpen: !s.settingsOpen, viewsOpen: false, opsOpen: false, menu: null });
+      shutHeader();
+    }),
     settingsBtnStyle: btn(s.settingsOpen, false, !!docOpen),
     // `right:0` AND NOT `left:0`: this is the last button in the bar, so a card
     // measured from its left edge would hang out past the toolbar's end rather

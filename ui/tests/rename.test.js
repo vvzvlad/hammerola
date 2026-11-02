@@ -1,15 +1,16 @@
-// Renaming on the pages (rename.jsx): the window, the request it makes, where
-// the page goes once the hub has published the name, and the pencils that
-// open it.
+// Renaming on the pages (rename.jsx): the window, which BuildPage.jsx draws, the
+// request it makes, where the page goes once the hub has published the name, and
+// the pencils on the header and on the model's page that open it.
 //
 // The page sits on `latest` of the variant `ceiling` (`guardPage`).
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
+import BuildPage from '../src/BuildPage.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { Pencil, RenameWindow } from '../src/rename.jsx'
 import { VariantSwitch, variantChoices } from '../src/variants.jsx'
-import { makeComponent } from './component.js'
+import { headerOn, makeComponent } from './component.js'
 import { collect, links } from './eltree.js'
 import { guardPage } from './pageguard.js'
 
@@ -29,8 +30,22 @@ const META = {
 
 /** The model's page on `latest` of `ceiling`, with or without the token. */
 const page = (token, state = {}) => makeComponent(HammerolaViewer, {
-  state: { meta: META, builds: null, variants: LISTING, token, view: 'assembled', ...state },
+  state: { meta: META, builds: null, token, view: 'assembled', ...state },
 })
+
+/** BuildPage over the model's page, its state written in place: the window is
+ *  BuildPage's, the toast the page's. The page's pencils and the header's
+ *  (`header`) open the window through BuildPage's `onRename`. */
+function buildPage(token) {
+  const b = new BuildPage({ meta: META })
+  Object.assign(b.state, { token })
+  b.setState = (patch) => Object.assign(b.state, patch)
+  const c = page(token)
+  c.props = { ...c.props, onRename: b.onRename }
+  b.page = { current: c }
+  b.header = headerOn(c, { state: { variants: LISTING }, props: { onRename: b.onRename } })
+  return b
+}
 
 /** The window, its state written in place as React would. */
 function renameWindow(onSave, onClose = () => {}) {
@@ -80,10 +95,10 @@ function hubAnswers(reply) {
   return fetch
 }
 
-/** The rename window the page draws, with `subject` open in it. */
-function openWindow(c, subject) {
-  c.state.rename = subject
-  return collect(c.render(), (el) => (el.type === RenameWindow ? el : undefined))[0]
+/** The rename window BuildPage draws, with `subject` open in it. */
+function openWindow(b, subject) {
+  b.state.rename = subject
+  return collect(b.render(), (el) => (el.type === RenameWindow ? el : undefined))[0]
 }
 
 describe('the rename window', () => {
@@ -153,9 +168,9 @@ describe('a rename sent from the page', () => {
     history.replaceState(null, '', `${CEILING_LATEST}?v=print&d=notes.md&c=1`)
     onTestFinished(() => history.replaceState(null, '', CEILING_LATEST))
     const went = watchNavigation()
-    const c = page('sekrit')
+    const b = buildPage('sekrit')
 
-    const win = openWindow(c, { kind: 'variant', variant: 'main', name: 'Wall bracket' })
+    const win = openWindow(b, { kind: 'variant', variant: 'main', name: 'Wall bracket' })
     expect(await win.props.onSave('Wall mk2')).toBe(true)
 
     const [url, init] = fetch.mock.calls[0]
@@ -169,33 +184,37 @@ describe('a rename sent from the page', () => {
     hubAnswers({ ok: false, status: 422,
                  json: async () => ({ error: 'the model or a gate refused the build (failed)' }) })
     const went = watchNavigation()
-    const c = page('sekrit')
+    const b = buildPage('sekrit')
+    const c = b.page.current
     const subject = { kind: 'view', variant: 'ceiling', id: 'assembled', name: 'assembled' }
 
-    expect(await openWindow(c, subject).props.onSave('Front')).toBe(false)
+    expect(await openWindow(b, subject).props.onSave('Front')).toBe(false)
     clearTimeout(c._tt)
 
     expect(c.state.toast).toBe('the model or a gate refused the build (failed)')
-    expect(c.state.rename).toBe(subject)
+    expect(b.state.rename).toBe(subject)
     expect(went).toEqual([])
   })
 })
 
 describe('the pencils', () => {
   it('are there only with the token, and each opens the window on its own name', () => {
-    const viewer = page(null).computed()
-    expect([viewer.renameTitle, viewer.variantRename, viewer.renameView, viewer.viewTabs[0].onRename,
-            viewer.docRows[0].onRename].some(Boolean)).toBe(false)
+    const viewer = buildPage(null)
+    const v = viewer.page.current.computed()
+    const head = viewer.header.view()
+    expect([head.renameTitle, head.variantRename, v.renameView, v.viewTabs[0].onRename,
+            v.docRows[0].onRename].some(Boolean)).toBe(false)
 
-    const c = page('sekrit')
+    const b = buildPage('sekrit')
+    const c = b.page.current
     c.computed().renameView()
-    expect(c.state.rename).toEqual({ kind: 'view', variant: 'ceiling', id: 'assembled', name: 'assembled' })
-    c.computed().renameTitle()
-    expect(c.state.rename).toEqual({ kind: 'project', variant: 'ceiling', name: 'Fixture bracket' })
-    c.computed().variantRename(c.computed().variantChoices.rows[0])
-    expect(c.state.rename).toEqual({ kind: 'variant', variant: 'main', name: 'Wall bracket' })
+    expect(b.state.rename).toEqual({ kind: 'view', variant: 'ceiling', id: 'assembled', name: 'assembled' })
+    b.header.view().renameTitle()
+    expect(b.state.rename).toEqual({ kind: 'project', variant: 'ceiling', name: 'Fixture bracket' })
+    b.header.view().variantRename(b.header.view().variantChoices.rows[0])
+    expect(b.state.rename).toEqual({ kind: 'variant', variant: 'main', name: 'Wall bracket' })
     c.computed().docRows[0].onRename()
-    expect(c.state.rename).toEqual({ kind: 'document', variant: 'ceiling', id: 'notes.md', name: 'notes.md' })
+    expect(b.state.rename).toEqual({ kind: 'document', variant: 'ceiling', id: 'notes.md', name: 'notes.md' })
   })
 
   it('in a variant\'s row, which is a link, renames that variant and does not follow the link', () => {

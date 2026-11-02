@@ -126,16 +126,22 @@ symptom otherwise is a green gate and a 404 in the browser.
 
 ## What is in here
 
-`src/HammerolaViewer.jsx` is the build page — the tree, the panels and every
+`src/BuildPage.jsx` is the build page's root, which `src/main.jsx` mounts: the
+header, `src/Header.jsx` — the title, the variants, the revision picker,
+Downloads, the token, Comments, the theme and the tab strip — over the page the
+build has, and the token, the theme, `builds.json` and the rename window, which
+belong to neither page.
+`src/HammerolaViewer.jsx` is the model's page — the tree, the panels and every
 gesture the reader has on a build. Its view model is cut into one module per
 panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,
-`revisionview`, `feedview`, `downloadsview` — each exporting the keys that
-`computed()` hands to `render()` (#103). `src/panelstyle.js` holds the inline
-style strings more than one of them spells, `src/style.jsx` the ones both pages
-do (#104).
+`feedview`, `downloadsview` — each exporting the keys that `computed()` hands to
+`render()` (#103); `revisionview` is the header's. `src/panelstyle.js` holds the
+inline style strings more than one of them spells, `src/style.jsx` the ones both
+pages do (#104).
 `src/HammerolaEntry.jsx` is the front page and the project page.
 `src/DocShell.jsx` is the page of a build with no model
-(`"kind": "documents"`); `src/main.jsx` mounts it instead of `HammerolaViewer`.
+(`"kind": "documents"`); `src/BuildPage.jsx` draws it instead of
+`HammerolaViewer`.
 Both pages draw one bar floating at the bottom, `src/viewlist.jsx`: the list of
 views (the model's views and then the build's documents, a row each but for a
 hidden one) and the tools beside it — Measure, Comment, Add primitive, Fit,

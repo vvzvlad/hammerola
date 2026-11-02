@@ -33,13 +33,14 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
   loadBuilds: vi.fn(),
 }))
 
+import BuildPage from '../src/BuildPage.jsx'
 import HammerolaViewer, { UNDO_DEPTH } from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
 import { PAGE, buildKey, indexTree, loadBuilds, loadMeta } from '../src/hub.js'
 import {
   addNode, bodies, emptyProposal, moveNodes, moves, turnNodes,
 } from '../src/proposal.js'
-import { makeComponent, replaceState } from './component.js'
+import { headerOn, makeComponent, replaceState } from './component.js'
 import { guardPage } from './pageguard.js'
 import { guardSubscribers } from './addressguard.js'
 
@@ -55,9 +56,9 @@ guardSubscribers()
 /** The mocks, back to what this file starts every test from. */
 beforeEach(() => {
   loadMeta.mockReset()
-  // The picker's list is refreshed after every swap. It answers with the same
-  // history the fixture starts from, so a test about something else does not
-  // have to say anything about it.
+  // BuildPage reads the picker's list again after every swap. It answers with
+  // the same history the fixture starts from, so a test about something else
+  // does not have to say anything about it.
   loadBuilds.mockReset()
   loadBuilds.mockResolvedValue(BUILDS())
 })
@@ -144,6 +145,22 @@ function component(over = {}) {
 }
 
 /**
+ * BuildPage over the page `c`, its state written in place: the build the page
+ * reports (`onBuild`) and the picker's list it reads under `token` when the
+ * build moves.
+ */
+function underBuildPage(c, token = 'sekrit') {
+  const b = new BuildPage({ meta: c.state.meta })
+  Object.assign(b.state, { token, builds: c.state.builds })
+  b.setState = (patch, done) => {
+    Object.assign(b.state, patch)
+    if (done) done()
+  }
+  c.props = { ...c.props, onBuild: b.onBuild }
+  return b
+}
+
+/**
  * Record what the page hands the browser as a navigation, without letting
  * jsdom try one.
  *
@@ -192,7 +209,7 @@ describe('picking a revision', () => {
     // THROUGH THE ROW, because the claim is about the picker and not about a
     // method: `computed()` builds the handler afresh on every call, so this is
     // the one the reader's click would reach.
-    const row = c.computed().revRows.find((r) => r.key === B)
+    const row = headerOn(c).view().revRows.find((r) => r.key === B)
     row.onPick({ stopPropagation() {} })
     await flush()
 
@@ -353,12 +370,13 @@ describe('picking a revision', () => {
     // — and, since the menu leaves the screen with it, what stops a second row
     // being picked while the first swap is still in flight, which would leave
     // two of them racing to push two entries and settle two different `PAGE`s.
-    const c = component({ revOpen: true })
+    const c = component()
+    const header = headerOn(c, { state: { revOpen: true } })
     let settle = null
     loadMeta.mockReturnValue(new Promise((resolve) => { settle = resolve }))
 
     const swapping = c.switchBuild('proj1', B)
-    expect(c.state.revOpen).toBe(false)
+    expect(header.state.revOpen).toBe(false)
 
     settle(build())
     await swapping
@@ -366,17 +384,20 @@ describe('picking a revision', () => {
 
   it('closes the picker and fetches nothing for the build already on screen',
     async () => {
-      const c = component({ revOpen: true })
+      const c = component()
+      const header = headerOn(c, { state: { revOpen: true } })
       await c.switchBuild('proj1', A)
-      expect(c.state.revOpen).toBe(false)
+      expect(header.state.revOpen).toBe(false)
       expect(loadMeta).not.toHaveBeenCalled()
       expect(loadBuilds).not.toHaveBeenCalled()
     })
 
   it('re-reads the history the picker itself lists', async () => {
     // `builds.json` is read once on mount, so a swap must reload it or a revision
-    // published meanwhile cannot be reached from the menu.
+    // published meanwhile cannot be reached from the menu. BuildPage reads it,
+    // on the build the page reports.
     const c = component()
+    const b = underBuildPage(c)
     const C = 'c'.repeat(64)
     loadMeta.mockResolvedValue(build())
     loadBuilds.mockResolvedValue({
@@ -388,14 +409,16 @@ describe('picking a revision', () => {
     await c.switchBuild('proj1', B)
     await flush()
 
-    expect(c.state.builds.builds.map((b) => b.commit)).toEqual([C, A, B])
-    expect(c.computed().revRows.some((r) => r.key === C)).toBe(true)
+    expect(b.state.builds.builds.map((one) => one.commit)).toEqual([C, A, B])
+    expect(headerOn(c, { props: { builds: b.state.builds } }).view().revRows.some((r) => r.key === C))
+      .toBe(true)
   })
 
   it('swaps anyway when that list will not load', async () => {
     // A menu is not worth a failed swap: the model is what the reader asked for
     // and the history is a list behind a button they are not looking at.
     const c = component()
+    const b = underBuildPage(c)
     loadMeta.mockResolvedValue(build())
     loadBuilds.mockRejectedValue(new Error('nope'))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -404,7 +427,7 @@ describe('picking a revision', () => {
     await flush()
 
     expect(c.state.meta.commit).toBe(B)
-    expect(c.state.builds).toEqual(BUILDS())
+    expect(b.state.builds).toEqual(BUILDS())
     expect(warn).toHaveBeenCalled()
   })
 })
@@ -429,7 +452,7 @@ describe('the message on a picker row', () => {
       },
     })
 
-    const rows = new Map(c.computed().revRows.map((r) => [r.key, r]))
+    const rows = new Map(headerOn(c).view().revRows.map((r) => [r.key, r]))
     expect(rows.get(A).message).toBe('the bracket got thicker')
     // Pushed before the field existed, or pushed without `-m`: the row draws
     // exactly as it drew when the spacer was in that place.
@@ -839,18 +862,19 @@ describe('a second revision picked while the first is fetching', () => {
     // would kill the fetch and leave nothing at all to land — the page frozen on
     // the old build with the picker closed and no error anywhere.
     const c = component()
+    const header = headerOn(c)
     const answers = held()
 
     const live = c.switchBuild('proj1', B)
     // The reader reopens the picker and clicks the row they already picked.
-    c.setState({ revOpen: true })
+    header.setState({ revOpen: true })
     await c.switchBuild('proj1', B)
     answers[path(B)].resolve(build())
     await live
 
     expect(c.state.meta.commit, 'the swap the click asked for was cancelled').toBe(B)
     expect(PAGE.slot).toBe(B)
-    expect(c.state.revOpen, 'the picker stayed open over a row that was clicked')
+    expect(header.state.revOpen, 'the picker stayed open over a row that was clicked')
       .toBe(false)
   })
 
@@ -1936,12 +1960,13 @@ describe('what does not survive', () => {
     const c = component({
       sel: '/model/plate', selName: 'plate',
       menu: { id: '/model/plate', x: 10, y: 20 },
-      revOpen: true, dlOpen: true, viewsOpen: true, secPop: true,
-      tokenPop: true, tokenDraft: 'x',
+      viewsOpen: true, secPop: true,
       notePop: 'plate', noteDraft: 'half a note',
       measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
     })
+    // and the header's, over the page
+    const header = headerOn(c, { state: { revOpen: true, dlOpen: true, tokenPop: true } })
     loadMeta.mockResolvedValue(build())
 
     await c.switchBuild('proj1', B)
@@ -1949,11 +1974,9 @@ describe('what does not survive', () => {
     expect(c.state.sel).toBeNull()
     expect(c.state.selName).toBe('')
     expect(c.state.menu).toBeNull()
-    expect(c.state.revOpen).toBe(false)
-    expect(c.state.dlOpen).toBe(false)
+    expect([header.state.revOpen, header.state.dlOpen, header.state.tokenPop]).toEqual([false, false, false])
     expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
-    expect(c.state.tokenPop).toBe(false)
     expect(c.state.notePop).toBeNull()
     expect(c.state.noteDraft).toBe('')
     expect(c.state.measure).toBeNull()
@@ -2159,12 +2182,13 @@ describe('taking the banner\'s build', () => {
     const c = offered({
       sel: '/model/plate', selName: 'plate',
       menu: { id: '/model/plate', x: 10, y: 20 },
-      revOpen: true, dlOpen: true, viewsOpen: true, secPop: true,
-      tokenPop: true, tokenDraft: 'x',
+      viewsOpen: true, secPop: true,
       notePop: 'plate', noteDraft: 'half a note',
       measure: { text: '3.00 mm', note: '', full: '3.00 mm' },
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
     })
+    // and the header's, over the page
+    const header = headerOn(c, { state: { revOpen: true, dlOpen: true, tokenPop: true } })
     delete c.sync
     const seen = []
     const listen = (event) => seen.push(event.detail)
@@ -2176,11 +2200,9 @@ describe('taking the banner\'s build', () => {
     expect(c.state.sel).toBeNull()
     expect(c.state.selName).toBe('')
     expect(c.state.menu).toBeNull()
-    expect(c.state.revOpen).toBe(false)
-    expect(c.state.dlOpen).toBe(false)
+    expect([header.state.revOpen, header.state.dlOpen, header.state.tokenPop]).toEqual([false, false, false])
     expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
-    expect(c.state.tokenPop).toBe(false)
     expect(c.state.notePop).toBeNull()
     expect(c.state.noteDraft).toBe('')
     expect(c.state.measure).toBeNull()
@@ -2224,8 +2246,9 @@ describe('taking the banner\'s build', () => {
 
   it('leaves a download chain running, because no href moved', () => {
     // The one thing the swap does that this does not: `leaveBuild` carries what
-    // goes with the build, while a download chain goes with the address
-    // (`fileHref` is `PAGE.base` plus a name, and `PAGE.base` does not move here).
+    // goes with the build, while the header's download chain goes with the
+    // address (`fileHref` is `PAGE.base` plus a name, and `PAGE.base` does not
+    // move here).
     // So downloads still in progress finish from the pointer the reader pressed
     // the button on. Cancelling them would leave a partial set of STLs with
     // nothing saying so, and mixing cannot be prevented here anyway: the pointer
@@ -2233,13 +2256,16 @@ describe('taking the banner\'s build', () => {
     const clicked = []
     const timers = []
     const c = offered()
+    const header = headerOn(c)
 
-    c.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
-                  { click: (href) => clicked.push(href),
-                    schedule: (fn, ms) => { timers.push({ fn, ms }) } })
+    header.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
+                       { click: (href) => clicked.push(href),
+                         schedule: (fn, ms) => { timers.push({ fn, ms }) } })
     expect(clicked).toHaveLength(1)
 
     c.takePending()
+    // the header drawn again over the build taken
+    header.componentDidUpdate(header.props)
     timers.shift().fn()
 
     expect(clicked, 'the chain was cut off by a gesture that changed no href')
@@ -2561,17 +2587,20 @@ describe('a download chain still handing over files', () => {
     const clicked = []
     const timers = []
     const c = component()
+    const header = headerOn(c)
     loadMeta.mockResolvedValue(build())
 
     // The fake clock hands back NOTHING, deliberately: a handle that happened to
     // be a small integer would be passed to `clearTimeout` on the cancel below,
     // and jsdom's own timer ids are small integers too.
-    c.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
-                  { click: (href) => clicked.push(href),
-                    schedule: (fn, ms) => { timers.push({ fn, ms }) } })
+    header.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
+                       { click: (href) => clicked.push(href),
+                         schedule: (fn, ms) => { timers.push({ fn, ms }) } })
     expect(clicked).toHaveLength(1)
 
     await c.switchBuild('proj1', B)
+    // the header drawn again over the build swapped in (`onBuild`)
+    header.componentDidUpdate(header.props)
     timers.shift().fn()
 
     expect(clicked, 'the rest of the chain downloaded the build that had left')
@@ -2635,6 +2664,7 @@ describe('a target that will not load', () => {
     // this page already has for "what you asked for is not what is on screen".
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const c = component()
+    const header = headerOn(c, { state: { revOpen: true } })
     const push = vi.spyOn(history, 'pushState')
     loadMeta.mockRejectedValue(new Error('meta.json -> HTTP 404'))
 
@@ -2645,7 +2675,7 @@ describe('a target that will not load', () => {
     expect(PAGE.base).toBe(path(A))
     expect(c.state.meta.commit).toBe(A)
     expect(c.state.viewError).toContain(B.slice(0, 7))
-    expect(c.state.revOpen).toBe(false)
+    expect(header.state.revOpen).toBe(false)
   })
 
   it('refuses a build that lists no views at all', async () => {
@@ -2707,10 +2737,11 @@ describe('a variant other than the default', () => {
     const c = component({ token: 'sekrit' })
     c.state.meta = { ...c.state.meta, variant: 'ceiling' }
     c.state.builds = { ...BUILDS(), latest: B }
+    underBuildPage(c)
     const push = vi.spyOn(history, 'pushState')
     loadMeta.mockResolvedValue({ ...build(), variant: 'ceiling' })
 
-    c.computed().revRows.find((r) => r.key === 'latest').onPick({ stopPropagation() {} })
+    headerOn(c).view().revRows.find((r) => r.key === 'latest').onPick({ stopPropagation() {} })
     await flush()
 
     expect(loadMeta).toHaveBeenCalledWith(true, CEILING_LATEST)
@@ -2724,6 +2755,7 @@ describe('a variant other than the default', () => {
     // `latest` as this variant's and fetch the wrong build.
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const c = component({ token: 'sekrit' })
+    underBuildPage(c)
     c.load = vi.fn(async () => {})
     c.componentDidMount()
     onTestFinished(() => c.componentWillUnmount())
@@ -2740,16 +2772,16 @@ describe('a variant other than the default', () => {
   })
 
   it('drops a list that lands for a variant the page has left', async () => {
-    const c = component({ token: 'sekrit' })
+    const b = underBuildPage(component({ token: 'sekrit' }))
     let answer
     loadBuilds.mockImplementation(() => new Promise((resolve) => { answer = resolve }))
-    c.refreshBuilds()
-    c.state.meta = { ...c.state.meta, variant: 'ceiling' }
+    b.loadBuilds()
+    b.state.meta = { ...b.state.meta, variant: 'ceiling' }
 
     answer({ ...BUILDS(), latest: 'stale' })
     await flush()
 
-    expect(c.state.builds.latest).toBe(null)
+    expect(b.state.builds.latest).toBe(null)
   })
 })
 

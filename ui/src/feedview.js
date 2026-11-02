@@ -2,9 +2,8 @@
  * The comment rail: the project's whole queue, as `loadFeed` fetched it.
  *
  * One section of the build page's `computed()`. It answers with `threads` and
- * `openCount`, which `chromeView` puts back in the object: the header button
- * that opens the rail wears the count, and a second tally could disagree with
- * the list.
+ * `openCount`; the header's button that opens the rail wears the count, taken
+ * by `openComments` here, so a second tally cannot disagree with the list.
  */
 import { anchorFor, rowsByKey, stamp } from './hub.js';
 import { sheetName } from './kicadpages.js';
@@ -34,6 +33,9 @@ const LOST = { part: 'the part is not on this board', text: 'the text has change
  */
 export const dropStaleFocus = (patch, moves = 'doc') => (patch && typeof patch === 'object' && moves in patch
   && !('docFocus' in patch) ? { ...patch, docFocus: null } : patch);
+
+/** How many comments of `feed` are open: the count the header's button wears. */
+export const openComments = (feed) => feed.filter((c) => c.status !== 'resolved').length;
 
 /**
  * The rail's rows and the count of open comments. `deps`: the build on screen
@@ -142,7 +144,7 @@ export function feedView(s, deps) {
       onResolve: stop(() => { if (!resolved) resolveComment(record.id); }),
     };
   });
-  const openCount = s.feed.filter((c) => c.status !== 'resolved').length;
+  const openCount = openComments(s.feed);
 
   return { threads, openCount };
 }

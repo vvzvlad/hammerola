@@ -10,7 +10,8 @@
 // empty node, a token in hand and the build picker it read — no other build in
 // it, but the key to the files of the build on screen, as the hub adds to
 // builds.json — nothing selected, nothing open, no section, no comparison, no
-// menu, and the light theme.
+// menu. BuildPage's doors (`onBuild`, `onHeader`, `shutHeader`, `onRename`)
+// are props that do nothing; the header over the page is `headerOn`'s.
 //
 // AND HOW TO DIFFER FROM IT: a fixture that needs something else PASSES IT AS
 // AN OVERRIDE. It does not get normalised onto the default, and the default
@@ -30,6 +31,7 @@
 
 import { vi } from 'vitest'
 
+import Header from '../src/Header.jsx'
 import { PAGE, indexTree } from '../src/hub.js'
 import { HmrViewport } from '../src/viewport/element.js'
 
@@ -151,13 +153,17 @@ const defaultState = () => ({
   sel: null, selName: '', hidden: [], ghost: [], expanded: {},
   secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
   secFace: null, secPop: false,
-  revOpen: false, dlOpen: false, cmp: [], compare: false, diffShow: 'both',
+  cmp: [], compare: false, diffShow: 'both',
   bannerGone: false, rail: false, menu: null,
   notePop: null, noteDraft: '', notes: {},
   feed: [], activePin: null, composer: null, sending: false,
   measure: null, toast: null,
-  token: 'sekrit', tokenPop: false, tokenDraft: '',
-  theme: 'light', tabs: [], narrow: false, treeOpen: false,
+  token: 'sekrit', narrow: false, treeOpen: false,
+})
+
+/** BuildPage's doors (BuildPage.jsx), as props that do nothing. */
+export const DOORS = () => ({
+  onBuild: () => {}, onHeader: () => {}, shutHeader: () => false, onRename: () => {},
 })
 
 /**
@@ -166,7 +172,8 @@ const defaultState = () => ({
  *
  * `overrides.state` is merged OVER the default state, one level deep — so
  * `meta` is replaced whole rather than patched, and a fixture that changes one
- * field of it spells the meta it means. Everything else in `overrides` is set
+ * field of it spells the meta it means; `overrides.props` over BuildPage's
+ * doors and the class's default props. Everything else in `overrides` is set
  * on the INSTANCE, which is where `sync`, `toast`, `schedulePoll` and the rest
  * of the spies go.
  *
@@ -174,9 +181,9 @@ const defaultState = () => ({
  * `replaceState` (see above) rather than a function of your own, unless the
  * fixture has to record the patches as well.
  */
-export function makeComponent(Klass, { state = {}, setState = mergeState, ...fields } = {}) {
+export function makeComponent(Klass, { state = {}, setState = mergeState, props = {}, ...fields } = {}) {
   const c = Object.create(Klass.prototype)
-  c.props = { ...Klass.defaultProps }
+  c.props = { ...DOORS(), ...Klass.defaultProps, ...props }
   // The five the constructor seeds and every page here needs: the ref
   // `render()` hangs the viewport off, the composer's textarea that a fresh
   // draft focuses, the fitted frame, the visibility a build swap carries
@@ -218,3 +225,42 @@ export function makeViewport(overrides = {}) {
   Object.assign(vp, overrides)
   return vp
 }
+
+/**
+ * The header over `page` (Header.jsx), built by its own constructor and never
+ * mounted: drawn from the page's build, token and `builds.json`, reading the
+ * page through its `headerParts()`, its toggles shutting the page's menus
+ * (`closeMenus`), and the page's `shutHeader` shutting its own. The other
+ * doors are spies. `state` is merged over the header's own (its menus shut, no
+ * variants, no tabs, the page's width); `props` over the props. `view()` is
+ * what it draws from (`headerView`).
+ */
+export function headerOn(page, { state = {}, props = {}, setState = mergeState } = {}) {
+  // The model's page keeps the build, the token and the list in its state; the
+  // page of documents has them as props only.
+  const has = (key) => (key in page.state ? page.state[key] : page.props[key])
+  const h = new Header({
+    meta: has('meta'), token: has('token'), theme: 'light', builds: has('builds') || null,
+    parts: () => page.headerParts(),
+    onToken: vi.fn(), onTheme: vi.fn(), onRename: vi.fn(),
+    shutPage: vi.fn(() => page.closeMenus()),
+    ...props,
+  })
+  h.state = { ...h.state, narrow: !!page.state.narrow, ...state }
+  h.setState = setState(h)
+  page.props = { ...page.props, shutHeader: () => h.shut() }
+  return h
+}
+
+/** BuildPage's part in a token the header saved or removed, done by hand:
+ *  `onToken` for `headerOn`, handing the token down to `page` as its prop and
+ *  running the page's update, as React would. */
+export const handDown = (page) => (token) => {
+  const before = page.props
+  page.props = { ...before, token }
+  page.componentDidUpdate(before)
+}
+
+/** The header's token control over `page`, its Save and Remove reaching the
+ *  page through `handDown`; `state` is the header's (`tokenDraft`). */
+export const tokenControl = (page, state = {}) => headerOn(page, { state, props: { onToken: handDown(page) } }).view()

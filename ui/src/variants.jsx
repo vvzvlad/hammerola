@@ -1,5 +1,5 @@
-// The switcher of the project's variants, in the header by the title of both
-// pages that show a build (HammerolaViewer.jsx, DocShell.jsx).
+// The switcher of the project's variants, in the header by the title
+// (Header.jsx), over both pages that show a build.
 //
 // A variant is a branch of the project's repository on the hub, and the list
 // is `variants.json` (`loadVariants` in hub.js), which needs no token: every

@@ -56,6 +56,10 @@ TOKENS_CSS = ROOT / "static" / "_v" / "tokens.css"
 EVENTS_JS = UI / "events.js"
 ADAPTER_EVENTS_JS = VIEWPORT / "events.js"
 COMPONENT = UI / "HammerolaViewer.jsx"
+# The build page's root: the header over whichever page the build has.
+BUILD_PAGE = UI / "BuildPage.jsx"
+# The header, which both pages are drawn under.
+HEADER = UI / "Header.jsx"
 # What both build pages fetch, post and draw comments with.
 COMMENTS = UI / "comments.jsx"
 
@@ -90,7 +94,8 @@ def _sibling_imports(path: Path) -> set[Path]:
 
 
 def page_draws_with() -> list[Path]:
-    """Everything the build page draws with: the component and what it imports.
+    """Everything the build page draws with: its root (BuildPage.jsx) and what it
+    imports — the header, both pages and their panels.
 
     Derived, not listed: a list goes stale towards checking less. Reached rather
     than owned, so modules the front page also imports (`style.jsx`,
@@ -103,7 +108,7 @@ def page_draws_with() -> list[Path]:
     sweep.
     """
     seen: set[Path] = set()
-    todo = [COMPONENT]
+    todo = [BUILD_PAGE]
     while todo:
         for path in _sibling_imports(todo.pop()):
             if path.is_file() and path.parent == UI and path not in seen:
@@ -111,10 +116,10 @@ def page_draws_with() -> list[Path]:
                 todo.append(path)
     # The floor is asserted here: the callers' backstop ("does the page spend a
     # palette token") is satisfied by HammerolaViewer.jsx alone.
-    assert seen, (
-        "page_draws_with() found nothing but the component. The derivation has "
-        "gone dark, so every check that takes it is back to sweeping one file")
-    return [COMPONENT] + sorted(seen)
+    assert {COMPONENT, HEADER, UI / "DocShell.jsx"} <= seen, (
+        "page_draws_with() no longer reaches the header and both pages. The "
+        "derivation has gone dark, so every check that takes it sweeps less")
+    return [BUILD_PAGE] + sorted(seen)
 
 
 def strip_comments(source: str) -> str:
@@ -187,8 +192,8 @@ def test_the_discovery_found_the_files():
     failure rather than a quiet skip.
     """
     names = {path.name for path in INTERFACE_FILES}
-    assert {"HammerolaViewer.jsx", "HammerolaEntry.jsx", "events.js", "hub.js",
-            "main.jsx", "store.js", "style.jsx"} <= names, (
+    assert {"BuildPage.jsx", "Header.jsx", "HammerolaViewer.jsx", "HammerolaEntry.jsx",
+            "events.js", "hub.js", "main.jsx", "store.js", "style.jsx"} <= names, (
         f"ui/src no longer holds the interface: {sorted(names)}")
     if not ADAPTER_FILES:
         pytest.skip("ui/src/viewport/ is empty — the cross-checks skip honestly")
@@ -572,12 +577,12 @@ def test_the_compare_legend_says_what_the_hub_says_not_compared_means():
 def test_the_build_picker_reads_the_fields_builds_json_carries():
     """The picker's fallback object names exactly what builds.json has.
 
-    It is the shape the component falls back to when builds.json is missing, so
-    it is also the list of fields it expects when it is not.
+    It is the shape the header falls back to when builds.json is missing, so it
+    is also the list of fields it expects when it is not.
     """
     render = read(ROOT / "src" / "render.py")
     written = set(re.findall(r'"(\w+)":', render))
-    fallback = re.search(r"const info = s\.builds \|\| \{([^}]+)\}", read(COMPONENT))
+    fallback = re.search(r"const info = p\.builds \|\| \{([^}]+)\}", read(HEADER))
     assert fallback, "the build picker no longer has a fallback shape"
     fields = set(re.findall(r"(\w+):", fallback.group(1)))
     assert fields <= written, (
@@ -1055,18 +1060,22 @@ def test_every_localstorage_access_is_guarded():
 
 
 def test_a_project_reaches_the_tab_strip_from_exactly_one_place():
-    """Exactly one `rememberTab(` call: the arrival is what the strip records.
+    """Exactly one `rememberTab(` call, the header's: the arrival is what the
+    strip records.
 
-    `ui/tests/tabs.test.js` drives `load()` and holds the recording itself; it
-    cannot see a second caller. The revision switch and the poll refresh also
-    replace `meta`, but recording there would refresh the stamp of a reader who
-    never left, and the stamp is the eviction's only input, so the wrong tab
-    would be evicted silently.
+    `ui/tests/tabs.test.js` drives the header's arrival and holds the recording
+    itself; it cannot see a second caller. The revision switch and the poll
+    refresh also replace `meta`, but recording there would refresh the stamp of a
+    reader who never left, and the stamp is the eviction's only input, so the
+    wrong tab would be evicted silently. Every interface file but store.js,
+    which defines it.
     """
-    calls = strip_comments(read(COMPONENT)).count("rememberTab(")
-    assert calls == 1, (
-        f"the interface records a tab from {calls} places, not one. The strip "
-        "is filled on arrival — where the project is first NAMED — and a "
+    callers = {path.name: strip_comments(read(path)).count("rememberTab(")
+               for path in INTERFACE_FILES if path.name != "store.js"}
+    callers = {name: count for name, count in callers.items() if count}
+    assert callers == {"Header.jsx": 1}, (
+        f"the interface records a tab from {callers}, not once in Header.jsx. "
+        "The strip is filled on arrival — where the project is first NAMED — and a "
         "second caller on a path that merely replaces `meta` refreshes the "
         "stamp of a reader who has not gone anywhere, which silently reorders "
         "what gets evicted")

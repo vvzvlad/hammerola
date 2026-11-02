@@ -479,16 +479,32 @@
   Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
   to another document or to the page's own address (`docLinks` in
   `DocumentView.jsx`)
+- `ui/src/BuildPage.jsx` — the build page's root, which `ui/src/main.jsx`
+  mounts at `hmr_root` with the build's meta.json: the header (`Header.jsx`)
+  and under it the page the build has, `HammerolaViewer.jsx` or, for
+  `"kind": "documents"`, `DocShell.jsx`. It holds what belongs to neither: the
+  build on screen (the model's page reports its load and a swap in place,
+  `onBuild`), the token, the theme, the variant's `builds.json` read under the
+  token, and the rename window; the token, the theme and the list go down to
+  both as props
+- `ui/src/Header.jsx` — the header over both pages: the mark, the title, the
+  variants, the revision picker, the build's status, Downloads (and the chain
+  that downloads a whole group), the token's Save and Remove, Comments and the
+  theme, folded into one menu on a narrow window, and under it the tab strip of
+  the projects this browser has been in (`rememberTab` on the build's
+  arrival). What it says of the page it reads from the page's `headerParts()`;
+  the two shut each other's menus (`shutHeader`, `shutPage`). `headerView` is
+  its values, pure
 - `ui/src/variants.jsx` — the switcher of the project's variants beside the
-  title on both pages (issue #129): `variantChoices` turns `variants.json`
+  title, in the header over both pages (issue #129): `variantChoices` turns `variants.json`
   (`loadVariants` in `ui/src/hub.js`, no token) into rows that link to each
   variant's `latest`, none for a project of one variant. Which variant a page
   is of is `pageVariant` in `hub.js`: the address on `latest` and `dev`
   (`/project/<pid>/v/<branch>/…`, `pageFrom`), the revision's `variant` in
   meta.json elsewhere; the picker, Share's `latest` and a comment on a
   variant's draft (`commentTarget` in `comments.jsx`) follow it
-- `ui/src/revisions.jsx` — the revision picker after the variants on both
-  pages: `revisionHead` gives the values of its button (the slot of the
+- `ui/src/revisions.jsx` — the revision picker after the variants, in the
+  header over both pages: `revisionHead` gives the values of its button (the slot of the
   address, when the build was built), of its row in the header's menu and of
   its card; `revisionPicker` and `revisionRow` draw them. The card lists the
   variant's `builds.json` (behind the token; without one the button is a
@@ -496,13 +512,14 @@
   page a row swaps the build in place and carries the compare tick and Share,
   on `DocShell.jsx` a row is a link to the revision's address keeping `d=` and
   `s=`, a page load, with neither
-- `ui/src/headmenu.jsx` — the header's menu on a narrow window, on both pages:
-  a button at the right end of the row and a card under it whose rows are the
-  header's controls (`headMenu`, `headRow`); `chromeview.js` and `DocShell.jsx`
-  say which rows. The tab strip is not drawn on a narrow window
+- `ui/src/headmenu.jsx` — the header's menu on a narrow window: a button at
+  the right end of the row and a card under it whose rows are the header's
+  controls (`headMenu`, `headRow`); `Header.jsx` says which rows, and a page
+  adds its own (`menuRows` of `headerParts`: Parts on the model's page). The
+  tab strip is not drawn on a narrow window
 - `ui/src/DocShell.jsx` — the page of a build with no model
-  (`"kind": "documents"`): `ui/src/main.jsx` mounts it instead of
-  `HammerolaViewer.jsx`. A header, the document, and the model page's bar
+  (`"kind": "documents"`): `BuildPage.jsx` mounts it under the header instead
+  of `HammerolaViewer.jsx`. The document, and the model page's bar
   (`toolBar` in `ui/src/viewlist.jsx`) floating at the bottom with the documents
   in its list; `?d=<id>` picks the document, and a row rewrites it, and the
   sheet a schematic reports (`onSheet`) is written into the address here, both
@@ -610,7 +627,7 @@
   `static/_v/PROVENANCE.md`) by URL on first use; `GerberView.jsx` draws the layers
   on a canvas through its `GerberProcessor`, with pan, zoom, a layer panel at
   the top left (Top/Bottom, an eye per layer); the zip is downloaded from the
-  strip at the bottom, as every document is. The model page's Downloads menu lists the same zip as GERBERS
+  strip at the bottom, as every document is. The header's Downloads menu lists the same zip as GERBERS
   (`downloadsview.js`)
 - `ui/src/loadbar.jsx` — what the document views (the 3D board, a KiCad
   design's 2D views, the Gerbers, markdown) show while their file comes in:
