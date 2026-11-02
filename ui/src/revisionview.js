@@ -1,9 +1,15 @@
 /**
- * The revision picker: the rows of the menu the header's build button opens.
+ * The revision picker: the rows of the menu the header's build button opens
+ * (revisions.jsx draws them).
  *
  * One section of the build page's `computed()`. It answers with `revRows` and
  * `revEmpty`, which `chromeView` puts back in the object, because the menu hangs
  * off a header button.
+ *
+ * The page of a build with no model (DocShell.jsx) asks for its rows too, with
+ * `deps.href(id)` — the address of revision `id` — and no `commitOf`: there a
+ * row is a link but the row of the build on screen, and no row carries a tick
+ * or a Share icon.
  *
  * `info` is an argument rather than read here because `tests/test_ui_source.py`
  * reads its fallback object out of HammerolaViewer.jsx as text to check it
@@ -14,7 +20,7 @@ import { BLANK_BOX, HIDDEN, IDLE, ON_ACCENT_EDGE } from './panelstyle.js';
 import { MONO, SANS } from './style.jsx';
 
 export function revisionView(s, info, deps) {
-  const { stop, commitOf, setState, switchBuild } = deps;
+  const { stop, commitOf, setState, switchBuild, href } = deps;
 
   const history = Array.isArray(info.builds) ? info.builds : [];
   const revs = [];
@@ -43,7 +49,7 @@ export function revisionView(s, info, deps) {
     // pointer as an end of a pair, so `latest` has to be the commit it
     // resolves to before anything is asked — and `dev` resolves to nothing,
     // which is what takes the tick off that row below.
-    const commit = commitOf(r.id);
+    const commit = commitOf ? commitOf(r.id) : null;
     const inCmp = !!commit && s.cmp.includes(commit);
     return {
       key: r.id,
@@ -65,8 +71,9 @@ export function revisionView(s, info, deps) {
       // No tick on a row that names no commit (the `dev` slot only): a
       // comparison is cached under the names it was asked with, so both ends
       // must be permanent addresses. The box keeps its space so rows line up.
+      // With no `commitOf` no row has one, and none keeps the space.
       cmpMark: inCmp ? '✓' : '',
-      cmpStyle: `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? ON_ACCENT_EDGE : BLANK_BOX) + (commit ? '' : ';visibility:hidden;cursor:default'),
+      cmpStyle: !commitOf ? HIDDEN : `width:16px;height:16px;border-radius:4px;flex:none;margin-right:6px;display:flex;align-items:center;justify-content:center;font:600 10px ${MONO};cursor:pointer;` + (inCmp ? ON_ACCENT_EDGE : BLANK_BOX) + (commit ? '' : ';visibility:hidden;cursor:default'),
       onCmp: !commit ? undefined : stop(() => {
         let picked = s.cmp.includes(commit) ? s.cmp.filter((x) => x !== commit) : s.cmp.concat(commit);
         if (picked.length > 2) picked = picked.slice(-2);
@@ -75,22 +82,26 @@ export function revisionView(s, info, deps) {
       // A build is an address: the URL must keep saying which geometry this is.
       // `switchBuild` changes it with `history.pushState` instead of a page
       // load, so the reader keeps the camera, hidden parts and section while
-      // comparing builds. A different project is still a real navigation.
-      onPick: stop(() => {
+      // comparing builds. A different project is still a real navigation, and
+      // so is a build with no model, which the other shell draws (DocShell.jsx).
+      // With `href` the row is a link instead, and the build on screen's row
+      // has none: its click reaches the page's own, which shuts the menu.
+      onPick: href ? undefined : stop(() => {
         switchBuild(PAGE.pid, r.id)
           .catch((error) => console.error('switch', error));
       }),
+      href: href && !current ? href(r.id) : undefined,
       // The Share window for this row's address: `latest` itself on that row,
       // the full commit on a revision. Not on `dev`, which has no permanent
       // address to give; the icon keeps its space there so rows line up. The
       // click closes the menus as `rootClick` does, and the window opens
-      // without the files.
-      onShare: r.id === 'dev' ? undefined : stop(() => setState({
+      // without the files. With no `commitOf` no row has one.
+      onShare: !commitOf || r.id === 'dev' ? undefined : stop(() => setState({
         menu: null, revOpen: false, dlOpen: false, viewsOpen: false,
         opsOpen: false, settingsOpen: false, tokenPop: false,
         share: { id: r.id, files: false },
       })),
-      shareIconStyle: 'width:22px;height:22px;flex:none;margin-left:4px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer'
+      shareIconStyle: !commitOf ? HIDDEN : 'width:22px;height:22px;flex:none;margin-left:4px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer'
         + (r.id === 'dev' ? ';visibility:hidden;cursor:default' : ''),
     };
   });

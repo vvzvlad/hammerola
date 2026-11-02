@@ -77,8 +77,9 @@ import {
 } from './events.js';
 // The page's address and its history, every read of them and every write.
 import {
-  fresh, navigate, parse, respell, subscribe, unsubscribe, viewParam,
+  format, fresh, navigate, parse, respell, subscribe, unsubscribe, viewParam,
 } from './address.js';
+import { DOCUMENTS_KIND } from './DocShell.jsx';
 import {
   PAGE, ASSEMBLED_VIEW_ID, COMPARE_GROUPS, HUB_UNREACHABLE,
   JOB_DONE, JOB_FAILED, anchorFor, askHub, buildPath, compareBase, decodeCamera,
@@ -165,13 +166,16 @@ import { comparePanel } from './compareview.js';
 // The header's menu a narrow window folds the header's controls into, which
 // the page of a build with no model draws too.
 import { headMenu } from './headmenu.jsx';
+// The revision picker's button, its row of that menu and its card, which the
+// page of a build with no model draws too.
+import { revisionPicker, revisionRow } from './revisions.jsx';
 // The rules this page and the front page both write: the popover recipe its
 // panels share, the three controls, the tree's icons, and the declarations that
 // were spelled out once per call site.
 import {
   ACCENT_BTN, BLANK_BOX, CARD, DIALOG_BTN, DIM_CLICK, FAINT_CLICK, FAINT_MONO, FILL, HALF_BTN,
   HEADER_RULE, HEAD_MONO, HEAD_SANS, INDEX_MONO, INK, KEY_MONO, LABEL_SANS, LINK,
-  META_MONO, ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, ROW,
+  ON_ACCENT, ON_ACCENT_EDGE, POP_SHADOW_HIGH, ROW,
   ROW_LABELLED, SLOT_22, SLOT_24, SPAN_MONO, SUNKEN, SWATCH, TITLE, TOOL_SQUARE,
   WARN_BODY, WARN_CAPS, WORDMARK, chip, eyeDot, eyeOuter, ghostIcon, popover, TOAST_MS, toastStyle,
 } from './panelstyle.js';
@@ -1957,6 +1961,16 @@ export default class HammerolaViewer extends React.Component {
     // an entry, moves `PAGE` and rebuilds the state, and the entry in particular
     // is not something a later correction can take back.
     if (this._gone || gen !== this._swapGen) return;
+    // A BUILD WITH NO MODEL IS THE OTHER SHELL'S: `main.jsx` mounts DocShell
+    // for it, and only a page load gets there. A pick loads its address on the
+    // document open here and that document's sheet, as the picker of that page
+    // keeps them; Back or Forward onto it loads the address the browser shows.
+    if (meta && meta.kind === DOCUMENTS_KIND) {
+      if (!push) { location.reload(); return; }
+      location.href = format(fresh(path, {
+        doc: this.state.doc, sheet: this.state.doc ? parse().sheet : null }));
+      return;
+    }
     const views = Array.isArray(meta && meta.views) ? meta.views : [];
     if (!views.length) {
       this.swapFailed(slot, new Error('this build lists no views'));
@@ -5714,49 +5728,7 @@ export default class HammerolaViewer extends React.Component {
           {/* The revision, the downloads and the token: each a button with its
               card on a wide window; on a narrow one the button is a row of the
               header's menu below and the card a sheet (`revWrapStyle`). */}
-          <div style={css(v.revWrapStyle)}>
-            {!v.headFolded && (
-              <div onClick={v.revToggle} title={v.slotTitle} style={css(v.revBtnStyle)}>
-                <span style={css(v.statusDotStyle)} />
-                <span style={css(HEAD_MONO)}>{v.slot}</span>
-                <span style={css(META_MONO)}>{v.slotDate}</span>
-                {v.revPicker && <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>}
-              </div>
-            )}
-
-            {/* pointers on top, the history below; the ticks pick two to compare */}
-            {v.revPicker && (
-              <div style={css(v.revMenuStyle)}>
-                <div style={css('max-height:308px;overflow:auto')}>
-                  {v.revRows.map((r) => (
-                    <React.Fragment key={r.key}>
-                      <div style={css(r.headStyle)}>{r.head}</div>
-                      <div style={css(r.style)}>
-                        <span onClick={r.onCmp} style={css(r.cmpStyle)}>{r.cmpMark}</span>
-                        <span onClick={r.onPick} style={css('display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0')}>
-                          <span style={css(r.idStyle)}>{r.id}</span>
-                          <span style={css(r.badgeStyle)}>{r.badge}</span>
-                          <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
-                          <span style={css(META_MONO)}>{r.date}</span>
-                        </span>
-                        <span onClick={r.onShare} title="Share" style={css(r.shareIconStyle)}>
-                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 10V1.8M5 4.8l3-3 3 3M3.5 7.5v6.5h9V7.5" /></svg>
-                        </span>
-                      </div>
-                    </React.Fragment>
-                  ))}
-                  {v.revEmpty && (
-                    <div style={css(`padding:12px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`)}>
-                      This project has no other builds yet.
-                    </div>
-                  )}
-                </div>
-                <div style={css('display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line-soft)')}>
-                  <div onClick={v.startCompare} style={css(v.compareBtnStyle)}>Compare {v.cmpLabel}</div>
-                </div>
-              </div>
-            )}
-          </div>
+          {revisionPicker(v)}
 
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
 
@@ -5861,12 +5833,7 @@ export default class HammerolaViewer extends React.Component {
               lies over the model, so it starts closed and this row opens it. */}
           {v.headFolded && headMenu(v.headMenuOpen, v.headMenuToggle, (
             <>
-              <div onClick={v.revToggle} style={css(v.revRowStyle)}>
-                <span style={css(v.statusDotStyle)} />
-                <span style={css(HEAD_MONO)}>{v.slot}</span>
-                <span style={css(META_MONO)}>{v.slotDate}</span>
-                {v.revPicker && <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>}
-              </div>
+              {revisionRow(v)}
               {v.dlShown && (
                 <div onClick={v.dlToggle} style={css(v.headRowStyle)}>
                   {DOWNLOAD_ICON}

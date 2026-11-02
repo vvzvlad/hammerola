@@ -162,6 +162,7 @@ function watchNavigation() {
     get pathname() { return at().pathname },
     get search() { return at().search },
     get origin() { return at().origin },
+    reload() { went.push('reload') },
   }
   Object.defineProperty(window, 'location', { configurable: true, get: () => view })
   onTestFinished(() => Object.defineProperty(window, 'location', real))
@@ -2657,6 +2658,37 @@ describe('a target that will not load', () => {
 
     expect(PAGE.slot).toBe(A)
     expect(c.state.viewError).toBeTruthy()
+  })
+
+  it('loads the page of a build with no model, on the document and sheet open here', async () => {
+    // DocShell draws such a build, and only a page load mounts it (main.jsx).
+    window.history.replaceState(null, '', `${path(A)}?d=notes.md&s=amp`)
+    const went = watchNavigation()
+    const c = component()
+    c.state.doc = 'notes.md'
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockResolvedValue({ ...build([]), kind: 'documents', documents: [] })
+
+    await c.switchBuild('proj1', B)
+
+    expect(went).toEqual([`${path(B)}?d=notes.md&s=amp`])
+    expect(push).not.toHaveBeenCalled()
+    expect(PAGE.slot).toBe(A)
+    expect(c.state.viewError).toBeFalsy()
+  })
+
+  it('reloads the entry Back put on the address bar when its build has no model', async () => {
+    const went = watchNavigation()
+    const c = component()
+    const push = vi.spyOn(history, 'pushState')
+    loadMeta.mockResolvedValue({ ...build([]), kind: 'documents', documents: [] })
+
+    await c.switchBuild('proj1', B, { push: false })
+
+    expect(went).toEqual(['reload'])
+    expect(push).not.toHaveBeenCalled()
+    expect(PAGE.slot).toBe(A)
+    expect(c.state.viewError).toBeFalsy()
   })
 })
 

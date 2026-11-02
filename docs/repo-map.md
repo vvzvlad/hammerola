@@ -487,6 +487,15 @@
   (`/project/<pid>/v/<branch>/…`, `pageFrom`), the revision's `variant` in
   meta.json elsewhere; the picker, Share's `latest` and a comment on a
   variant's draft (`commentTarget` in `comments.jsx`) follow it
+- `ui/src/revisions.jsx` — the revision picker after the variants on both
+  pages: `revisionHead` gives the values of its button (the slot of the
+  address, when the build was built), of its row in the header's menu and of
+  its card; `revisionPicker` and `revisionRow` draw them. The card lists the
+  variant's `builds.json` (behind the token; without one the button is a
+  label), its rows `revisionView` in `ui/src/revisionview.js`: on the model's
+  page a row swaps the build in place and carries the compare tick and Share,
+  on `DocShell.jsx` a row is a link to the revision's address keeping `d=` and
+  `s=`, a page load, with neither
 - `ui/src/headmenu.jsx` — the header's menu on a narrow window, on both pages:
   a button at the right end of the row and a card under it whose rows are the
   header's controls (`headMenu`, `headRow`); `chromeview.js` and `DocShell.jsx`

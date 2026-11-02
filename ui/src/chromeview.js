@@ -22,9 +22,10 @@ import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
 import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import {
-  PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId, stamp,
+  PAGE, buildKey, buildPath, isPointerPage, mb, projectUrl, shortId,
 } from './hub.js';
 import { headRow } from './headmenu.jsx';
+import { revisionHead } from './revisions.jsx';
 import { BOM_TYPE } from './kicadbom.js';
 import {
   BLANK_BOX, ELLIPSIS, HEADER_BAR, INK, ON_ACCENT, RELATIVE, btn, menuRow, popover, tab,
@@ -244,45 +245,26 @@ export function chromeView(s, props, deps) {
     headMenuToggle: stop(() => setState({
       headMenu: !s.headMenu, revOpen: false, dlOpen: false, tokenPop: false, variantsOpen: false,
       viewsOpen: false })),
-    // The wrappers the revision picker, the downloads and the token hang their
-    // cards off. Wide, each holds its button and its card, measured from the
-    // button. Narrow, the buttons are rows of the menu and the cards are
-    // sheets along the bottom edge (`popover`), which need no button to hang
-    // off; `display:contents` keeps a wrapper left with only its card from
-    // taking a gap in the row.
-    revWrapStyle: narrow ? 'display:contents' : 'position:relative;margin-left:8px;flex:none',
+    // The revision picker's button, its row of the menu and its card
+    // (revisions.jsx), the button's dot in the status's colour; the card's rows
+    // are `revRows`.
+    ...revisionHead({
+      narrow, viewer, open: s.revOpen, built: meta && meta.built, dot: status.dot,
+      onToggle: stop(() => setState({
+        revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false,
+        headMenu: false })),
+    }),
+    // The wrappers the downloads and the token hang their cards off, as the
+    // revision picker's does (`revWrapStyle`). Wide, each holds its button and
+    // its card, measured from the button. Narrow, the buttons are rows of the
+    // menu and the cards are sheets along the bottom edge (`popover`), which
+    // need no button to hang off; `display:contents` keeps a wrapper left with
+    // only its card from taking a gap in the row.
     headWrapStyle: narrow ? 'display:contents' : RELATIVE,
-    // The rows: the revision a label without a token, as its button is; the
-    // token lit while editing, as its button is.
-    revRowStyle: headRow(false) + (viewer ? ';cursor:default' : ''),
+    // The rows: the token lit while editing, as its button is.
     tokenRowStyle: headRow(!viewer),
     headRowStyle: headRow(false),
     subtitle: meta ? subtitle() : '',
-    // Shortened: `PAGE.slot` comes straight from the URL, so on a pinned
-    // revision it is the full 64-character source digest, too wide for the
-    // header row. The picker draws the same value via `shortId`, so the two
-    // agree. Pointer names pass through: `dev` is special-cased and `latest` is
-    // shorter than the cut.
-    slot: shortId(PAGE.slot),
-    // The whole of it, for the reader who needs to copy one. A revision is
-    // addressed by its full digest everywhere off this page — `hammerola
-    // source <rev>`, a permanent URL — and the seven characters above cannot
-    // be pasted anywhere. Empty when nothing was cut: a tooltip that repeats
-    // the word under the cursor is noise, and `dev` and `latest` are shown
-    // whole already.
-    slotTitle: shortId(PAGE.slot) === PAGE.slot ? '' : PAGE.slot,
-    slotDate: meta ? stamp(meta.built) : '',
-    // WITHOUT A TOKEN THE BUTTON IS A LABEL: builds.json is behind the token,
-    // so a reader holding a shared link has no list to open and no menu.
-    revPicker: !viewer,
-    revToggle: viewer ? undefined
-      : stop(() => setState({
-        revOpen: !s.revOpen, dlOpen: false, viewsOpen: false, tokenPop: false, variantsOpen: false,
-        headMenu: false })),
-    revBtnStyle: 'display:flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid var(--line);background:var(--card-bg);border-radius:6px'
-      + (viewer ? '' : ';cursor:pointer'),
-    revMenuStyle: popover({
-      narrow, anchor: 'left:0;top:40px', width: '430px', radius: '9px', z: 40, open: s.revOpen }),
     revRows,
     revEmpty: revRows.length === 0,
     // SHORTENED, like every other place this site prints a revision. A commit
@@ -332,7 +314,6 @@ export function chromeView(s, props, deps) {
 
     statusChipStyle: `display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:6px;font:500 11.5px ${SANS};` + status.style,
     statusText: status.text,
-    statusDotStyle: `width:8px;height:8px;border-radius:4px;background:${status.dot};flex:none`,
 
     downloadGroups,
     // NO KEY, NO BUTTON: the hub would refuse every file in the menu.
