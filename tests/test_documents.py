@@ -707,6 +707,18 @@ def test_the_page_and_the_hub_spell_the_text_type_the_same_way():
     assert spelled and spelled.group(1) == render.TEXT_TYPE
 
 
+def test_the_page_and_the_hub_know_the_same_text_extensions():
+    # The page knows a text file by its extension too, for a revision that
+    # published it as a plain file. An extension the hub adds alone is text in
+    # a new revision and a card in an older one; one the page adds alone shows
+    # as text a file the hub serves as an attachment.
+    source = (ROOT / "ui" / "src" / "DocumentView.jsx").read_text(encoding="utf-8")
+    listed = re.search(r"export const TEXT_EXTS = new Set\(\[([^\]]*)\]\)", source)
+    assert listed, "DocumentView.jsx no longer declares TEXT_EXTS"
+    assert set(re.findall(r"'([^']+)'", listed.group(1))) == {
+        suffix[1:] for suffix in render.TEXT_SUFFIXES}
+
+
 def test_the_page_and_the_hub_spell_the_gerbers_type_the_same_way():
     # The page picks the Gerbers' view and their row in the downloads menu by
     # this type; renamed on one side only, the zip goes to an iframe, which

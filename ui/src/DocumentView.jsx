@@ -25,7 +25,9 @@
 //   gerbers    a zip of a board's Gerber and drill files, unpacked and drawn
 //              layer by layer (GerberView.jsx)
 //   text       a JSON, a log, a config and the like, fetched and shown as it
-//              is, in monospace; a CSV as a table, its first row the header
+//              is, in monospace; a CSV as a table, its first row the header.
+//              A `file` of a text file's extension is shown the same way
+//              (`shownAsText`)
 //   file       anything else a build lists — a DXF for the glass shop, a
 //              firmware image: its name and what it is,
 //              since the page draws nothing of it; a DXF has the picture the
@@ -84,7 +86,8 @@ import KicadView, { designKey, DRAFT_MARK, viewOf } from './KicadView.jsx';
 import { fetchBody, loadBar, meter } from './loadbar.jsx';
 import { css, MONO, SANS } from './style.jsx';
 
-/** A document the page does not draw, whatever its extension (`FILE_TYPE` in
+/** A document the page does not draw, but one with a text file's extension,
+ *  which it shows as text all the same (`shownAsText`) (`FILE_TYPE` in
  *  src/render.py, held to this spelling by tests/test_documents.py). */
 export const FILE_TYPE = 'file';
 
@@ -96,6 +99,19 @@ export const TEXT_TYPE = 'text';
  *  does not draw, and a text file, whose type is one word for a CSV and a log
  *  alike. */
 export const namedByExt = (doc) => doc.type === FILE_TYPE || doc.type === TEXT_TYPE;
+
+/** A text file's extensions, without the dot (`render.TEXT_SUFFIXES`, held
+ *  equal by tests/test_documents.py). */
+export const TEXT_EXTS = new Set(['txt', 'csv', 'tsv', 'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'log']);
+
+/** Whether the page shows `doc` as its text: its type says so, or it is a
+ *  plain file whose extension is a text file's. The extension decides as well
+ *  because a revision published before the page showed text calls every text
+ *  file `file`, and a published meta.json is never rewritten. So is a text
+ *  file listed with `download`: meta.json keeps only the type `file` of it,
+ *  which tells it from an old revision's in no way. */
+export const shownAsText = (doc) => doc.type === TEXT_TYPE
+  || (doc.type === FILE_TYPE && TEXT_EXTS.has(docExt(doc)));
 
 /** The types of document both pages leave a comment on, each with what
  *  arming the Comment tool over it says to do: the tool is in service over
@@ -370,7 +386,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
       </article>
     );
   }
-  if (doc.type === TEXT_TYPE) {
+  if (shownAsText(doc)) {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(LOADING)}>{loadBar(received, doc.bytes, false)}</div>;
     if (docExt(doc) === 'csv') return csvTable(text);
@@ -532,8 +548,9 @@ export default class DocumentView extends React.Component {
   componentDidMount() {
     const { doc, base } = this.props;
     this.props.onTools(null);
-    if (doc.type === FILE_TYPE) this.props.onReady();
-    if (doc.type !== 'markdown' && doc.type !== TEXT_TYPE) return;
+    const plain = shownAsText(doc);
+    if (doc.type === FILE_TYPE && !plain) this.props.onReady();
+    if (doc.type !== 'markdown' && !plain) return;
     const count = meter((received) => {
       if (!this._gone) this.setState({ received });
     });

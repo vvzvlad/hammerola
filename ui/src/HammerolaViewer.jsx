@@ -558,7 +558,7 @@ const GERBERS_GROUP = 'GERBERS';
  *
  * Two kinds of document reach this menu, both out of `meta.documents`. Every
  * zip of Gerbers (`GERBERS_TYPE`) is a row of one GERBERS group, named by its
- * title. Every document the page cannot draw (`FILE_TYPE`) and every text file
+ * title. Every plain file (`FILE_TYPE`) and every text file
  * (`TEXT_TYPE`) is a row under its own extension in capitals — DXF, CSV — so a
  * cut list for the glass shop is taken the way an STL is, and lands beside a
  * part's exports when it shares their extension. Both are ordered like any

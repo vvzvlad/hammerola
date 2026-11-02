@@ -78,6 +78,9 @@ DOCUMENTS_KIND = "documents"
 # table (`ui/src/DocumentView.jsx`): a parts list, a log, a config. The hub
 # serves each as plain text but `.json`, which keeps `application/json`, the
 # type every view file of a build is served as (`app.BUILD_CONTENT_TYPES`).
+# The page knows the same extensions (`TEXT_EXTS` in ui/src/DocumentView.jsx,
+# tests/test_documents.py), so it shows a text file that a revision published
+# before this type existed as `FILE_TYPE` as text too.
 TEXT_TYPE = "text"
 TEXT_SUFFIXES = (".txt", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
                  ".toml", ".ini", ".log")
@@ -111,7 +114,8 @@ BOARD_TYPE = DOCUMENT_TYPES[".kicad_pcb"]
 
 # A document the page does not draw: a file published to be taken rather than
 # read — the DXF a glass shop cuts from, a firmware image, a supplier's STEP
-# the model does not build. The page gives it a row that downloads the
+# the model does not build. One with a text file's extension the page shows as
+# text all the same (`TEXT_EXTS` in ui/src/DocumentView.jsx), `download` or not. The page gives it a row that downloads the
 # file instead of showing it, and the hub serves it to a plain link like every
 # other document (`app.OPEN_SUFFIXES`). A DXF not listed with `download` also
 # carries `preview`, the path of the SVG the hub drew of it (`dxf_preview`,

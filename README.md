@@ -448,7 +448,8 @@ as it does in the tree. An entry is the path, or an object with the path as
 `file`, a `title` the page shows in its place, `"hidden": true` for a file that
 is published and opens by its address but has no row in the menu (twenty
 datasheets are twenty hidden entries, not twenty rows), and `"download": true`
-for a file to be taken rather than drawn. On a model's page the documents follow
+for a file to be taken rather than drawn (a text file is shown as text all the
+same: the page knows it by its extension). On a model's page the documents follow
 the views in the same menu: choosing one shows it over the model, choosing a
 view brings the model back, and `?d=<id>` in the address opens one on arrival.
 Whatever document is open, Download and Copy link for its file stand at the

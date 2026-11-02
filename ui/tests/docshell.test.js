@@ -326,6 +326,14 @@ describe('one document, as both pages draw it', () => {
     expect(docHint(bom)).toBe('csv · 3.2 kB')
   })
 
+  it('knows a text file by its extension in a revision that published it as a plain file', () => {
+    // meta.json is never rewritten, so a revision older than the page's text
+    // view calls its CSV `file`; the page draws it all the same.
+    const old = doc('fab/bom.csv', FILE_TYPE)
+    expect(ofType(documentBody(old, BASE, 'Ref,Qty\nR1,2\n', ''), 'th').map(text)).toEqual(['Ref', 'Qty'])
+    expect(ofType(documentBody(doc('logs/run.log', FILE_TYPE), BASE, 'ok\n', ''), 'pre').map(text)).toEqual(['ok\n'])
+  })
+
   it('shows the picture the hub drew of a DXF above its name', () => {
     const tree = documentBody({ ...cutPlan, preview: 'cut/glass.dxf.svg' }, BASE, null, '')
     const [img] = ofType(tree, 'img')
@@ -369,6 +377,11 @@ describe('one document, as both pages draw it', () => {
       expect(fetch).toHaveBeenCalledWith(`${BASE}logs/stand.log`)
       await vi.waitFor(() => expect(view.props.onReady).toHaveBeenCalledTimes(1))
       expect(ofType(view.render(), 'pre').map(text)).toEqual(['# Fetched'])
+      // and one an older revision published as a plain file
+      const old = mounted(doc('fab/bom.csv', FILE_TYPE))
+      expect(fetch).toHaveBeenCalledWith(`${BASE}fab/bom.csv`)
+      await vi.waitFor(() => expect(old.props.onReady).toHaveBeenCalledTimes(1))
+      expect(ofType(old.render(), 'th').map(text)).toEqual(['# Fetched'])
     })
 
     it('fetches nothing for a document the browser draws itself', () => {

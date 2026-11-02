@@ -525,8 +525,8 @@
   to another listed document or to the page's own address (`?v=open`) opening
   it on the page through `docLinks`, short
   table cells kept on one line), PDF, HTML and SVG in an `<iframe>`, a picture
-  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, a text file (`TEXT_TYPE`)
-  fetched like markdown and shown as it is in a `<pre>`, a CSV among them as a
+  as `<img>`, a KiCad design by `ui/src/KicadView.jsx`, a text file
+  (`shownAsText`: `TEXT_TYPE`, or a `FILE_TYPE` of a text extension) fetched like markdown and shown as it is in a `<pre>`, a CSV among them as a
   table (rows read by `ui/src/csv.js`, cells styled as markdown's), and anything the page
   draws nothing of (`FILE_TYPE`) as a panel with the file's name, its extension
   and size, under the picture of a DXF when the entry carries `preview`; every
