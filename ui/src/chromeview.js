@@ -25,11 +25,7 @@ import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
 import { writeRetina } from './store.js';
 import { MONO, SANS } from './style.jsx';
-import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn } from './viewlist.jsx';
-
-/** A checkbox of the Settings card, drawn like the section panel's hatch box. */
-const settingsBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;'
-  + (on ? ON_ACCENT : BLANK_BOX);
+import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, settingsView } from './viewlist.jsx';
 
 export function chromeView(s, props, deps) {
   const {
@@ -398,38 +394,30 @@ export function chromeView(s, props, deps) {
     // SETTINGS, BUILT EXACTLY AS `Add primitive` IS — a flag of the page's, a
     // `stop()`ed toggle that shuts the other menus, a card measured upwards,
     // `rootClick`/Escape to dismiss — and SHOWN WITHOUT A TOKEN: what it holds
-    // is about this browser's screen rather than about the model. Out of
-    // service under a document, as on the documents page (`docBar` in
-    // DocShell.jsx): the resolution it sets is the model's canvas', so the
-    // project tabs, which are about the whole site, are switched from a model.
+    // is about this browser rather than about the model. In service under a
+    // document too, its rows the documents page's (`settingsView` in
+    // viewlist.jsx).
     tSettings: stop(() => {
       setState({ settingsOpen: !s.settingsOpen, viewsOpen: false, opsOpen: false, menu: null });
       shutHeader();
     }),
-    settingsBtnStyle: btn(s.settingsOpen, false, !!docOpen),
-    // `right:0` AND NOT `left:0`: this is the last button in the bar, so a card
-    // measured from its left edge would hang out past the toolbar's end rather
-    // than open over it.
-    settingsMenuStyle: 'position:absolute;right:0;bottom:38px;width:190px;'
-      + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
-      + (s.settingsOpen ? 'block' : 'none'),
-    settingsRowStyle: `display:flex;align-items:center;gap:8px;padding:7px 14px;font:400 11.5px ${SANS};cursor:pointer;`
-      + INK,
-    // The renderer's pixel ratio (viewport/element.js), drawn like the section
-    // panel's hatch checkbox. Remembered per browser, like the screen it is
-    // about; the viewport hears it through `sync`, which `set` runs.
-    toggleRetina: () => {
-      set({ retina: !s.retina });
-      writeRetina(!s.retina);
-    },
-    retinaBox: settingsBox(s.retina),
-    retinaMark: s.retina ? '✓' : '',
-    // Whether the header draws its strip of projects. BuildPage's answer, not
-    // this page's: the header belongs to neither page, so the answer comes down
-    // as a prop, and the row hands the flip back up, as the theme does.
-    toggleTabStrip: () => props.onTabStrip(!props.tabStrip),
-    tabStripBox: settingsBox(props.tabStrip),
-    tabStripMark: props.tabStrip ? '✓' : '',
+    settingsBtnStyle: btn(s.settingsOpen, false, false),
+    ...settingsView({
+      open: s.settingsOpen,
+      // The renderer's pixel ratio (viewport/element.js). Remembered per
+      // browser, like the screen it is about; the viewport hears it through
+      // `sync`, which `set` runs. Out of service under a document, which
+      // covers the canvas it is about.
+      retina: s.retina,
+      onRetina: docOpen ? undefined : () => {
+        set({ retina: !s.retina });
+        writeRetina(!s.retina);
+      },
+      // Whether the header draws its strip of projects: BuildPage's answer and
+      // door, since the header belongs to neither page (the theme's way).
+      tabStrip: props.tabStrip,
+      onTabStrip: props.onTabStrip,
+    }),
     // FIT AND FRAME ACT ON WHAT IS ON SCREEN: the model, or the document over
     // it through what its view told the page it can do (`docTools`, `onTools`
     // in DocumentView.jsx). Over a document whose view cannot — a page of text,

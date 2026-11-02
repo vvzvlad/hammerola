@@ -130,7 +130,7 @@ import { COMMENTABLE, DocumentLayers } from './DocumentView.jsx';
 // The bar the document views draw while their file comes in, drawn over the
 // model while the viewport fetches a view file.
 import { loadBar } from './loadbar.jsx';
-import { savePng, toolBar } from './viewlist.jsx';
+import { savePng, settingsCard, toolBar } from './viewlist.jsx';
 // `View in AR`: whether the browser has AR Quick Look, and the type its file
 // is handed over under; the frame waited for before the file is made. Where
 // there is no Quick Look, whether WebXR has AR (`xrSupported`) and the
@@ -5828,21 +5828,8 @@ export default class HammerolaViewer extends React.Component {
                     ))}
                   </div>
                 ),
-                // The `Add primitive` card's pattern, stopped click included —
-                // see `settingsMenuStyle` for why this one hangs off the right
-                // edge instead.
-                settings: (
-                  <div onClick={(e) => e.stopPropagation()} style={css(v.settingsMenuStyle)}>
-                    <div onClick={v.toggleRetina} style={css(v.settingsRowStyle)}>
-                      <span style={css(v.retinaBox)}>{v.retinaMark}</span>
-                      <span>Retina resolution</span>
-                    </div>
-                    <div onClick={v.toggleTabStrip} style={css(v.settingsRowStyle)}>
-                      <span style={css(v.tabStripBox)}>{v.tabStripMark}</span>
-                      <span>Project tabs</span>
-                    </div>
-                  </div>
-                ),
+                // The card both pages draw (`settingsView` in viewlist.jsx).
+                settings: settingsCard(v),
               })}
             </div>
 

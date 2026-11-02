@@ -1,5 +1,6 @@
-// The Settings card at the right end of the floating toolbar, and the one answer
-// it holds: whether the model is drawn at the display's full density.
+// The Settings card at the right end of the floating toolbar, and the answers it
+// holds: whether the model is drawn at the display's full density, and whether
+// the header draws its strip of projects.
 //
 // NOTHING IS MOUNTED, this directory's arrangement (viewmenu.test.js): the real
 // prototype over a hand-spelled state, the real `computed()` and handlers. `sync`
@@ -46,6 +47,9 @@ function component(over = {}) {
     },
   })
 }
+
+/** A row of the card, by its key (`settingsView` in viewlist.jsx). */
+const row = (c, key) => c.computed().settingsRows.find((r) => r.key === key)
 
 /** The detail of every `hmr:state` event from here on. */
 function listening() {
@@ -111,15 +115,15 @@ describe('the Settings card', () => {
   it('flips Retina resolution on its row, remembers it and tells the viewport', () => {
     const seen = listening()
     const c = component({ settingsOpen: true })
-    expect(c.computed().retinaMark).toBe('✓')
+    expect(row(c, 'retina').mark).toBe('✓')
 
-    c.computed().toggleRetina(click)
+    row(c, 'retina').onClick(click)
     expect(c.state.retina).toBe(false)
     expect(seen.at(-1).retina).toBe(false)
     expect(readRetina()).toBe(false)
-    expect(c.computed().retinaMark).toBe('')
+    expect(row(c, 'retina').mark).toBe('')
 
-    c.computed().toggleRetina(click)
+    row(c, 'retina').onClick(click)
     expect(c.state.retina).toBe(true)
     expect(seen.at(-1).retina).toBe(true)
     expect(readRetina()).toBe(true)
@@ -131,14 +135,34 @@ describe('the Settings card', () => {
     const onTabStrip = vi.fn()
     const off = makeComponent(HammerolaViewer, { props: { tabStrip: false, onTabStrip } })
     expect(texts(off.render())).toContain('Project tabs')
-    expect(off.computed().tabStripMark).toBe('')
-    off.computed().toggleTabStrip(click)
+    expect(row(off, 'tabs').mark).toBe('')
+    row(off, 'tabs').onClick(click)
     expect(onTabStrip).toHaveBeenLastCalledWith(true)
 
     const on = makeComponent(HammerolaViewer, { props: { tabStrip: true, onTabStrip } })
-    expect(on.computed().tabStripMark).toBe('✓')
-    on.computed().toggleTabStrip(click)
+    expect(row(on, 'tabs').mark).toBe('✓')
+    row(on, 'tabs').onClick(click)
     expect(onTabStrip).toHaveBeenLastCalledWith(false)
+  })
+
+  it('stays in service over a document, its Retina row out of service there', () => {
+    // The owner asked why the project tabs could not be switched over a
+    // document: they are about the whole site. Retina is about the model's
+    // canvas, which the document covers, so its row is grey in its place.
+    const DOC = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 10 }
+    const meta = { project: 'fixture', title: 'Fixture', commit: 'abc1234', parts: {}, views: [], documents: [DOC] }
+    const onTabStrip = vi.fn()
+    const c = makeComponent(HammerolaViewer, {
+      setState: replaceState, props: { tabStrip: false, onTabStrip },
+      state: { meta, doc: DOC.id, retina: true, settingsOpen: false, viewsOpen: false, opsOpen: false },
+    })
+    expect(css(c.computed().settingsBtnStyle).pointerEvents).toBeUndefined()
+    c.computed().tSettings(click)
+    expect(css(c.computed().settingsMenuStyle).display).toBe('block')
+    expect(css(row(c, 'retina').style).pointerEvents).toBe('none')
+    expect(row(c, 'retina').onClick).toBeUndefined()
+    row(c, 'tabs').onClick(click)
+    expect(onTabStrip).toHaveBeenLastCalledWith(true)
   })
 
   it('comes up with the answer this browser remembered', () => {

@@ -485,7 +485,7 @@
   `"kind": "documents"`, `DocShell.jsx`. It holds what belongs to neither: the
   build on screen (the model's page reports its load and a swap in place,
   `onBuild`), the token, the theme, whether the header draws its tab strip
-  (`tabStrip`, flipped by the model page's Settings card through
+  (`tabStrip`, flipped by either page's Settings card through
   `onTabStrip`), the variant's `builds.json` read under the token, and the
   rename window; the token, the theme, the strip's switch and the list go down
   to both as props
@@ -537,7 +537,8 @@
   views in it: `toolBar` (the views, then Measure, Comment, Add primitive, Fit,
   on the model's page in a browser with AR Quick Look or WebXR AR (Chrome on
   Android) `AR` (`arBtn`, see `ui/src/ar.js`), Frame, Settings, a tool that
-  does not apply drawn out of service; with a
+  does not apply drawn out of service; the Settings card both pages open,
+  `settingsView` and `settingsCard`; with a
   document open, `DocFile` on the strip to the bar's left: Download and Copy
   link of its file, in words where they fit beside the centred bar and as icons
   where not), the button

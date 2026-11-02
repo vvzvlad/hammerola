@@ -57,8 +57,11 @@ import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
+import { readRetina } from './store.js';
 import { css, FONTS, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
-import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, toolBar } from './viewlist.jsx';
+import {
+  BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, settingsCard, settingsView, toolBar,
+} from './viewlist.jsx';
 
 /** What a build with no model says it is, in meta.json's `kind`. The hub
  *  spells it `render.DOCUMENTS_KIND` (tests/test_documents.py compares). */
@@ -88,8 +91,11 @@ const BAR = `${BAR_LAYER}18`;
  * open document's file (`docHref`, served under `base`) stand outside the bar
  * at the left of the strip (`DocFile` in viewlist.jsx), as they do over a
  * document there; a BOM, which has no file of its own (kicadbom.js), has
- * neither. Measure, Add primitive and Settings, about a model, are out of
- * service, as they are over a document there; Comment is in service over a
+ * neither. Measure and Add primitive, about a model, are out of service, as
+ * they are over a document there. Settings is in service: `settings` holds its
+ * flag and toggle (`open`, `onToggle`) and its rows' answers (`settingsView` in
+ * viewlist.jsx); with no model here its Retina row is out of service, as it is
+ * over a document there. Comment is in service over a
  * document that takes a comment (`COMMENTABLE`), lit while armed (`tool`) and
  * armed or put down by `onComment`; Comment and Add primitive are hidden from
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
@@ -99,7 +105,9 @@ const BAR = `${BAR_LAYER}18`;
  * here. `onRename(doc)`, with the token, puts a pencil
  * before each row's name (`documentRows`). Pure.
  */
-export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename }) {
+export function docBar({
+  meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename, settings = {},
+}) {
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
     viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta), onRename),
@@ -109,7 +117,11 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
     tComment: onComment,
     commentBtnStyle: btn(tool === 'comment', viewer, !COMMENTABLE.has(doc.type)),
     proposalBtnStyle: btn(false, viewer, true),
-    settingsBtnStyle: btn(false, false, true),
+    tSettings: settings.onToggle,
+    settingsBtnStyle: btn(!!settings.open, false, false),
+    ...settingsView({
+      open: settings.open, retina: settings.retina, tabStrip: settings.tabStrip, onTabStrip: settings.onTabStrip,
+    }),
     fitView: tools ? () => tools.fit() : undefined,
     fitBtnStyle: quietBtn(!tools),
     // No toast for it: a frame that is not there saves nothing.
@@ -135,14 +147,16 @@ export function docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, v
  * ref the composer's textarea is focused through (`box`); with none the page
  * draws no comments. `toast` is what the toast says, or null.
  * `onRename(subject)`, with the token, is what the pencil on a document's row
- * asks to rename (`{kind, id, name}`, rename.jsx).
+ * asks to rename (`{kind, id, name}`, rename.jsx). `settings` is `docBar`'s.
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
-  tool, onComment, comments, toast, onRename,
+  tool, onComment, comments, toast, onRename, settings,
 }) {
   const doc = pickDocument(meta.documents, active);
   const renameDoc = onRename && ((one) => onRename({ kind: 'document', id: one.id, name: one.name }));
+  const bar = docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment,
+    onRename: renameDoc, settings });
   return (
     <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
       <div style={css(BODY)}>
@@ -153,8 +167,7 @@ export function DocPage({
           {/* Over the document, under the bar, as on the model's page. */}
           {comments && composerCard(comments, comments.box)}
           <div style={css(BAR)}>
-            {toolBar(docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment,
-              onRename: renameDoc }))}
+            {toolBar(bar, { settings: settingsCard(bar) })}
           </div>
           <div style={css(toastStyle(!!toast))}>{toast}</div>
         </div>
@@ -176,7 +189,9 @@ export default class DocShell extends React.Component {
     // which a bare `d=` would miss for a default schematic.
     this.addressDoc = (at) => pickDocument(this.props.meta.documents, at.doc).id;
     this.state = {
-      active: this.addressDoc(parse()), viewsOpen: false, tools: null,
+      // The Retina answer is read once: its row is out of service here, so
+      // nothing on this page changes it.
+      active: this.addressDoc(parse()), viewsOpen: false, settingsOpen: false, retina: readRetina(), tools: null,
       // Read at once and kept current (`componentDidMount`), as the model's
       // page keeps its own.
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
@@ -196,7 +211,10 @@ export default class DocShell extends React.Component {
     this.mq = null;
     // Narrowing puts an armed tool down, as on the model's page: its button
     // leaves the bar, and a phone has no Escape to put it down with.
-    this.onNarrow = (event) => this.setState(event.matches ? { narrow: true, tool: null } : { narrow: false });
+    // The Settings card goes with its button, or the next widening brings it
+    // back open.
+    this.onNarrow = (event) => this.setState(event.matches
+      ? { narrow: true, tool: null, settingsOpen: false } : { narrow: false });
     // Back and Forward through the documents picked (`pick`): the entry's
     // document, read as the constructor reads it.
     this.onPop = (at) => this.set({ active: this.addressDoc(at) });
@@ -378,9 +396,9 @@ export default class DocShell extends React.Component {
   }
 
   /** The page's menus a toggle of the header shuts (Header.jsx): the list of
-   *  documents. */
+   *  documents and the Settings card. */
   closeMenus() {
-    if (this.state.viewsOpen) this.setState({ viewsOpen: false });
+    if (this.state.viewsOpen || this.state.settingsOpen) this.setState({ viewsOpen: false, settingsOpen: false });
   }
 
   /** What the header says of this page and does through it (Header.jsx): the
@@ -414,12 +432,25 @@ export default class DocShell extends React.Component {
                     onSheet={this.onSheet} viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();
-                      this.setState({ viewsOpen: !this.state.viewsOpen });
+                      this.setState({ viewsOpen: !this.state.viewsOpen, settingsOpen: false });
                       this.props.shutHeader();
                     }}
                     onClose={() => {
-                      if (this.state.viewsOpen) this.setState({ viewsOpen: false });
+                      this.closeMenus();
                       this.props.shutHeader();
+                    }}
+                    settings={{
+                      open: this.state.settingsOpen,
+                      // The list and Settings open upwards from buttons on
+                      // one bar: two at once would overlap.
+                      onToggle: (e) => {
+                        e.stopPropagation();
+                        this.setState({ settingsOpen: !this.state.settingsOpen, viewsOpen: false });
+                        this.props.shutHeader();
+                      },
+                      retina: this.state.retina,
+                      tabStrip: this.props.tabStrip,
+                      onTabStrip: this.props.onTabStrip,
                     }}
                     tool={this.state.tool} onComment={this.onComment}
                     comments={this.comments()} toast={this.state.toast}

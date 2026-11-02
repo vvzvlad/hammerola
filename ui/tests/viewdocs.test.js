@@ -167,15 +167,18 @@ describe('the documents in the list of views', () => {
     expect(viewports(c)).toHaveLength(1)
   })
 
-  it('keep the whole bar over one, its tools out of service, and take the parts tree away', () => {
+  it('keep the whole bar over one, its tools out of service but Settings, and take the parts tree away', () => {
     // The same controls in the same places over the model and over a document.
     const model = component({ token: 'secret' })
     const c = component({ token: 'secret', doc: 'ref__terr-raspil.svg' })
     for (const page of [model, c]) expect(drawn(page).filter((word) => TOOLS.includes(word))).toEqual(TOOLS)
-    // Over a picture every one of them is grey and takes no click; over the
-    // model none is.
+    // Over a picture every one of them but Settings is grey and takes no
+    // click; over the model none is. Settings holds the project tabs, which are
+    // about the whole site (settings.test.js).
     for (const key of TOOL_STYLES) {
-      expect(css(c.computed()[key]), key).toMatchObject({ color: 'var(--text-faint)', cursor: 'default', pointerEvents: 'none' })
+      const off = key === 'settingsBtnStyle' ? {} : { color: 'var(--text-faint)', cursor: 'default', pointerEvents: 'none' }
+      expect(css(c.computed()[key]), key).toMatchObject(off)
+      if (key === 'settingsBtnStyle') expect(css(c.computed()[key]).pointerEvents, key).toBeUndefined()
       expect(css(model.computed()[key]).pointerEvents, key).toBeUndefined()
     }
     // The list that brings the model back stays, captioned with the document.

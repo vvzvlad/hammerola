@@ -43,8 +43,8 @@ import { BOM_TYPE } from './kicadbom.js';
 import { schematicSheets } from './kicadpages.js';
 import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.jsx';
 import {
-  CARD_LOOK, DIALOG_BTN, ELLIPSIS, FAINT_MONO, GROUP_HEAD, menuRow, OFF, ON_ACCENT_EDGE, QUIET_BTN, RELATIVE, RULE,
-  TAB_OFF, TAB_ON,
+  BLANK_BOX, CARD_LOOK, DIALOG_BTN, ELLIPSIS, FAINT_MONO, GROUP_HEAD, INK, menuRow, OFF, ON_ACCENT, ON_ACCENT_EDGE,
+  QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
 } from './panelstyle.js';
 import { Pencil, RENAME_HOST } from './rename.jsx';
 import { css, SANS } from './style.jsx';
@@ -481,6 +481,57 @@ export function DocFile({ href }) {
   );
 }
 
+/** A checkbox of the Settings card, drawn like the section panel's hatch box. */
+const settingsBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;'
+  + (on ? ON_ACCENT : BLANK_BOX);
+
+/**
+ * The Settings card's values, the same rows on both pages. `open` is the
+ * page's flag. `retina` is the stored answer and `onRetina` its flip, absent
+ * where no model is on screen (under a document, on the documents page): the
+ * resolution is the model's canvas', so there the row is drawn `OFF`, in its
+ * place, as a bar button that does not apply is. `tabStrip` and `onTabStrip`
+ * are BuildPage's: the strip of projects under the header is about the whole
+ * site, so that row is live on every page.
+ *
+ * `right:0` AND NOT `left:0`: Settings is the last button in the bar, so a card
+ * measured from its left edge would hang out past the bar's end.
+ */
+export function settingsView({ open, retina, onRetina, tabStrip, onTabStrip }) {
+  const rows = [
+    { key: 'retina', label: 'Retina resolution', on: !!retina, onClick: onRetina },
+    { key: 'tabs', label: 'Project tabs', on: !!tabStrip, onClick: onTabStrip && (() => onTabStrip(!tabStrip)) },
+  ];
+  return {
+    settingsMenuStyle: 'position:absolute;right:0;bottom:38px;width:190px;'
+      + 'background:var(--card-bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 34px var(--shadow);padding:6px 0;display:'
+      + (open ? 'block' : 'none'),
+    settingsRows: rows.map((row) => ({
+      ...row,
+      style: `display:flex;align-items:center;gap:8px;padding:7px 14px;font:400 11.5px ${SANS};cursor:pointer;${INK}`
+        + (row.onClick ? '' : `;${OFF}`),
+      box: settingsBox(row.on),
+      mark: row.on ? '✓' : '',
+    })),
+  };
+}
+
+/** The Settings card (`menus.settings`), from `settingsView`'s values. The
+ *  click is stopped on the card so that pressing inside it does not reach the
+ *  page's and shut it under the press. */
+export function settingsCard(b) {
+  return (
+    <div onClick={(e) => e.stopPropagation()} style={css(b.settingsMenuStyle)}>
+      {b.settingsRows.map((row) => (
+        <div key={row.key} onClick={row.onClick} style={css(row.style)}>
+          <span style={css(row.box)}>{row.mark}</span>
+          <span>{row.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * The bar, as elements: the same controls in the same places on both pages
  * and over every view. `b` holds the values — the model's page computes them
@@ -504,8 +555,8 @@ export function DocFile({ href }) {
  *                `View in AR` beside Fit (`{ onClick }`, `onClick` null out of
  *                service), or null: only the model's page has it, and only in
  *                a browser with AR Quick Look or WebXR AR.
- * `menus` are the cards `Add primitive` and Settings open (`proposal`,
- * `settings`), which only the model's page has. Pure. What it returns goes
+ * `menus` are the cards `Add primitive` and Settings open (`proposal`, which
+ * only the model's page has, and `settings`, `settingsCard`). Pure. What it returns goes
  * straight into the layer (`BAR_LAYER`): the bar alone, or with a document
  * open `DocFile`, the bar and `FILE_SPACER`, in that order.
  */

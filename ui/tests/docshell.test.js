@@ -545,7 +545,7 @@ describe('the page of a build with no model', () => {
       .toHaveLength(1)
   })
 
-  it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can', async () => {
+  it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can, Settings live', async () => {
     const TOOLS = ['Measure', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
     const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word))
     expect(drawn({})).toEqual(TOOLS)
@@ -559,11 +559,11 @@ describe('the page of a build with no model', () => {
     const bar = (extra) => docBar({ meta: META, doc: META.documents[2], onPick: () => {}, ...extra })
     const off = (values, key) => css(values[key]).pointerEvents === 'none'
     const KEYS = ['measureBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle', 'frameBtnStyle', 'settingsBtnStyle']
-    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true])
+    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, false])
     const blob = new Blob(['png'], { type: 'image/png' })
     const tools = { fit: vi.fn(), frame: vi.fn(async () => blob) }
     const live = bar({ tools })
-    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, false, false, true])
+    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, false, false, false])
     live.fitView()
     expect(tools.fit).toHaveBeenCalledTimes(1)
     const saved = []
@@ -686,12 +686,45 @@ describe('the shell', () => {
     expect(shell.render().props.active).toBe('report.pdf')
   })
 
+  it('opens Settings, its Retina row out of service and Project tabs handed up to BuildPage', () => {
+    // The owner asked why the project tabs could not be switched here: they
+    // are about the whole site. Retina is about a model's canvas, and this
+    // page has none.
+    mount('')
+    const onTabStrip = vi.fn()
+    shell.props = { ...shell.props, tabStrip: false, onTabStrip }
+    const CLICK = { stopPropagation() {} }
+    const bar = () => docBar({ meta: META, doc: META.documents[0], base: BASE, onPick: () => {},
+      settings: shell.render().props.settings })
+    const row = (key) => bar().settingsRows.find((r) => r.key === key)
+
+    expect(css(bar().settingsMenuStyle).display).toBe('none')
+    bar().tSettings(CLICK)
+    expect(css(bar().settingsMenuStyle).display).toBe('block')
+    expect(texts(DocPage(shell.render().props))).toEqual(expect.arrayContaining(['Retina resolution', 'Project tabs']))
+    expect(css(row('retina').style).pointerEvents).toBe('none')
+    expect(row('retina').onClick).toBeUndefined()
+    row('tabs').onClick(CLICK)
+    expect(onTabStrip).toHaveBeenLastCalledWith(true)
+
+    // The list opens upwards from the same bar, so it shuts the card, and the
+    // header's toggles shut it through `closeMenus`.
+    shell.render().props.onToggle(CLICK)
+    expect([shell.state.viewsOpen, shell.state.settingsOpen]).toEqual([true, false])
+    bar().tSettings(CLICK)
+    expect([shell.state.viewsOpen, shell.state.settingsOpen]).toEqual([false, true])
+    shell.closeMenus()
+    expect(shell.state.settingsOpen).toBe(false)
+  })
+
   it('holds only the open document, which a row of the design\'s menu moves across a design', () => {
     window.history.replaceState(null, '', BASE)
     rereadPage(BASE)
     shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
-    expect(shell.state).toEqual({ active: SCHEMATIC.id, viewsOpen: false, tools: null, narrow: false, ...AT_REST })
+    expect(shell.state).toEqual({
+      active: SCHEMATIC.id, viewsOpen: false, settingsOpen: false, retina: true, tools: null, narrow: false, ...AT_REST,
+    })
     // the door a row of the menu on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)
     expect(shell.state.active).toBe(BOARD.id)
