@@ -154,8 +154,8 @@ Name the instrument instead of pretending:
 ## Test points for a flying probe (optional)
 
 For a board that will go onto the robotic bench: a gantry carrying a nine-pin
-pogo head — every pin on a logic analyser, any one of them switched onto the
-oscilloscope by a reed relay — and a low-resolution thermal sensor that scans
+pogo head — every pin on a logic analyser that the bench can switch off, any
+one of them switched onto the oscilloscope by a reed relay — and a low-resolution thermal sensor that scans
 the board in tiles. The board lies flat on a printed stand, parts down; a
 camera finds zero, rotation and scale from the fiducials, so there is no
 standard hole pattern, no fixture and no clamp strip. The fixed values the
@@ -170,7 +170,8 @@ pad of every group, and the nets at mains potential or on an isolated side.
 Each bus between chips goes whole onto one group — I2C, SPI with all its
 chip selects, UART, I2S, SWD, CAN before its transceiver — so the logic
 analyser sees the exchange; rails, clocks, resets and the remaining nets
-fill the free pads of the nearest group. The probe reads what GPIO cannot:
+fill the free pads of the nearest group of their voltage class (below). The
+probe reads what GPIO cannot:
 waveform, timing, analog, fast lines, the traffic on a bus. A net that also
 leaves the board through a connector or a terminal block gets a pad all the
 same: the head lands only on its groups and never reaches a connector's
@@ -181,7 +182,14 @@ pins.
 the edge, GND in the centre. One group takes a whole bus in one landing —
 SPI with its chip selects, I2S with MCLK, QSPI, SDIO, JTAG all fit in eight;
 rails, resets and switching nodes go onto the free pads of the nearest
-group, and a group with one net on it is fine. All nine pads always exist:
+group of the same voltage class, and a group with one net on it is fine.
+**Groups are split by voltage**: a logic group keeps every pad within −0.5 to
++5.5 V, the supply's protection trip included, and gets the logic analyser on
+all eight pins; any net outside that goes onto a power group, where the bench
+switches the analyser off and takes the pads one at a time on the
+oscilloscope. A bus never shares a group with such a net. The symbol's field
+`ProbeVolts` ("0..3.3", "0..46.8") states the group's range, and the bench
+reads the class from it. All nine pads always exist:
 an unused pad is an unconnected copper island, so a pin lands on copper,
 never on mask. Its symbol `TP_Probe` has pins 1–8 and GND, a no-connect flag
 on every unused pin, and fields `Probe1`–`Probe8` that say what the bench
