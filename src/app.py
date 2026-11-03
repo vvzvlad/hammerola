@@ -81,6 +81,14 @@ Routing (SPEC 3, 7.4):
     GET  /api/v1/jobs/<id>/snapshot.png       what a snapshot job drew EDIT_TOKEN
     GET  /api/v1/logs/<pid>/<revision>        what the build of that
                                               revision printed         EDIT_TOKEN
+    GET  /api/v1/source/<pid>/<build>         the files of the project
+                                              directory that build was
+                                              made from, `<build>` as a
+                                              snapshot's; ?path=<file>
+                                              hands one over           EDIT_TOKEN
+    GET  /api/v1/source/<pid>/v/<variant>/<pointer>
+                                              the same, of another
+                                              variant's pointer        EDIT_TOKEN
 
     POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
     POST   /api/v1/projects/<pid>/names       rename the project, a
@@ -145,7 +153,8 @@ sent, and an anonymous comment could become an agent's task to edit model.py.
 
 The code of a revision opens to no key: it is the commit it was built from, in
 the project's git repository, which `git http-backend` serves under `/git/`
-behind EDIT_TOKEN (`src/githttp.py`).
+behind EDIT_TOKEN (`src/githttp.py`), and `/api/v1/source/` file by file
+behind the same token.
 
 The two project routes are the only ones that unmake something (SPEC 3.1):
 `title` renames and nothing else, since no route ever changes an id; `DELETE`
@@ -326,6 +335,11 @@ DEFAULT_INSPECT_VIEW = "assembled"
 
 # What a snapshot or a measurement of a build this hub does not hold is told.
 NO_SUCH_BUILD_ERROR = "this project has no such build"
+
+# What a request for the code of a build is told when the project's repository
+# holds no tree of it, and when that tree holds no such file.
+NO_SOURCE_ERROR = "the repository of this project holds no code of this build"
+NO_SOURCE_FILE_ERROR = "the code of this build has no such file"
 
 # Types our OWN files are served as — templates and generated JSON only.
 CONTENT_TYPES = {
@@ -615,6 +629,9 @@ GET_ROUTES = (
     ((("api", "v1", "logs"), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_build_log(rest, with_body)),
+    ((("api", "v1", "source"), None),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._serve_source(rest, query, with_body)),
     # HEAD reaches this entry too, and is none of the three git requests.
     (((githttp.ROUTE,), None),
      lambda handler, rest, query, trailing_slash, with_body:
@@ -1674,8 +1691,9 @@ class HubHandler(BaseHTTPRequestHandler):
             CACHE_NONE, {"Location": status_url, "Connection": "close"})
 
     def _inspected_build(self, rest: list[str]):
-        """`(pid, revision, directory)` of the build a snapshot or a
-        measurement names, or None when this hub holds no such build.
+        """`(pid, revision, directory)` of the build a snapshot, a measurement
+        or a request for its code names, or None when this hub holds no such
+        build.
 
         `revision` is what the job is filed under: the commit `latest` points
         at, a revision's own name, or `dev`.
@@ -1765,6 +1783,41 @@ class HubHandler(BaseHTTPRequestHandler):
         # text/plain, never HTML: output the model produced.
         return self._send(200, raw, "text/plain; charset=utf-8", CACHE_NONE,
                           with_body=with_body)
+
+    # -- the code of a build ---------------------------------------
+    def _serve_source(self, rest: list[str], query: str, with_body: bool):
+        """GET /api/v1/source/<pid>/<build>[?path=<file>] — the files of the
+        project directory the build was made from (`Store.source_tree`).
+
+        The build is named as a snapshot names it (`_inspected_build`). Without
+        `path`, `{"files": [{"path", "size"}, ...]}`; with it, that file's
+        bytes as an attachment. `path` is looked up in that list and never
+        handed to git, so no revision syntax of git's reaches it. The token
+        first, as on every private route.
+        """
+        if not self._require_token(with_body):
+            return None
+        store = self.server.store
+        located = self._inspected_build(rest)
+        if located is None:
+            return self._error(404, NO_SUCH_BUILD_ERROR, with_body=with_body)
+        pid, _revision, directory = located
+        tree = store.source_tree(pid, directory)
+        if tree is None:
+            return self._error(404, NO_SOURCE_ERROR, with_body=with_body)
+        files = store.source_files(pid, tree)
+        asked = parse_qs(query, keep_blank_values=True).get("path")
+        if asked is None:
+            return self._json(200, {"files": [
+                {"path": path, "size": size} for path, size, _sha in files]},
+                CACHE_NONE, with_body=with_body)
+        blob = next((sha for path, _size, sha in files if path == asked[0]),
+                    None)
+        if blob is None:
+            return self._error(404, NO_SOURCE_FILE_ERROR, with_body=with_body)
+        return self._send(200, store.source_blob(pid, blob), OCTET_TYPE,
+                          CACHE_NONE, {"Content-Disposition": "attachment"},
+                          with_body)
 
     # -- the git server --------------------------------------------
     def _serve_git(self, method: str, rest: list[str], query: str,

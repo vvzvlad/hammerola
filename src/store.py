@@ -1058,6 +1058,52 @@ class Store:
                 found.add(name)
         return found
 
+    # -- the code a build was made from ------------------------------------
+    def source_tree(self, pid: str, build: Path) -> str | None:
+        """The git tree of the project directory the build in `build` was made
+        from, or None when the repository holds none.
+
+        A build pushed through git carries that tree's id as its
+        `.payload.sha256` (SPEC 7.7); a build published before git, a digest
+        git does not know, and its tree is the one of its import commit in
+        `main`.
+        """
+        repo = self.repo_dir(pid)
+        digest = _read_digest(build)
+        if digest:
+            try:
+                if run_git(repo, "cat-file", "-t", digest).strip() == "tree":
+                    return digest
+            except subprocess.CalledProcessError:
+                pass
+        trailer = f"{pid}/{build.name}"
+        for sha, values in _trailed_log(repo, MAIN_REF):
+            if trailer in values:
+                return run_git(repo, "rev-parse", f"{sha}^{{tree}}").strip()
+        return None
+
+    def source_files(self, pid: str, tree: str) -> list:
+        """`[(path, size, blob sha), ...]` of every file under `tree`."""
+        out = run_git(self.repo_dir(pid), "ls-tree", "-r", "-z", "-l", tree)
+        files = []
+        for entry in out.split("\0"):
+            if not entry:
+                continue
+            info, _, path = entry.partition("\t")
+            _mode, kind, sha, size = info.split()
+            if kind == "blob":
+                files.append((path, int(size), sha))
+        return files
+
+    def source_blob(self, pid: str, sha: str) -> bytes:
+        """One blob of the project's repository, as it is: bytes, which
+        `run_git`'s text would not keep."""
+        environment = git_environment()
+        environment["GIT_DIR"] = str(self.repo_dir(pid))
+        return subprocess.run(["git", "cat-file", "blob", sha],
+                              env=environment, capture_output=True,
+                              check=True).stdout
+
     def _variants_on_disk(self, pid: str) -> set:
         """The variants with a directory of their own: a branch's, or a draft's
         whose branch the hub does not have."""
