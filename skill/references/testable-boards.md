@@ -181,9 +181,14 @@ an unused pad is an unconnected copper island, so a pin lands on copper,
 never on mask. Its symbol `TP_Probe` has pins 1–8 and GND, a no-connect flag
 on every unused pin, and fields `Probe1`–`Probe8` that say what the bench
 measures on each connected pad ("rail 3.3 V", "BCLK 3.072 MHz"); the check
-refuses an empty one. The head does not turn: rotate a group in 90° steps
-only; the grid is 90°-symmetric and the bench maps the pins from the
-fiducials, tolerating about ±5° of board misalignment between the steps. All
+refuses an empty one. A silkscreen frame with its pad-1 corner cut runs
+round the pads: a person reads the group off the board, and the bench's
+camera, beside the pins on the head, centres on the group itself — nine
+pads and one cut corner give position and rotation — then the head shifts
+by its calibrated camera-to-pins offset. No extra mark per group, and no
+mark that encodes the head's geometry. The head does not turn: rotate a
+group in 90° steps only; the grid is 90°-symmetric and the bench maps the
+pins, tolerating about ±5° of board misalignment between the steps. All
 groups on ONE side — the bottom when the assembly is single-sided — and every
 pad ≥ 2.0 mm from any edge.
 
