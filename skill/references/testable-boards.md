@@ -165,15 +165,16 @@ owner's `kicad-house` skill (`references/probe-contract.md`, `lib/probe.*`,
 `scripts/probe.py`); this section is what a designer needs to know before
 opening it.
 
-**What gets a pad**: every bus between chips, whole on one group — I2C, SPI
-with all its chip selects, UART, I2S, SWD, CAN before its transceiver — so
-the logic analyser sees the exchange, whether or not the firmware checks the
-lines; every rail, clock, reset and switching node, the amplifier outputs;
-and every other net whose "how the firmware checks it" column is empty. The
-probe reads what GPIO cannot: waveform, timing, analog, fast lines, the
-traffic on a bus. A net that also leaves the board through a connector or a
-terminal block gets a pad all the same: the head lands only on its groups
-and never reaches a connector's pins.
+**What gets a pad**: every net on the board except GND, which is the centre
+pad of every group, and the nets at mains potential or on an isolated side.
+Each bus between chips goes whole onto one group — I2C, SPI with all its
+chip selects, UART, I2S, SWD, CAN before its transceiver — so the logic
+analyser sees the exchange; rails, clocks, resets and the remaining nets
+fill the free pads of the nearest group. The probe reads what GPIO cannot:
+waveform, timing, analog, fast lines, the traffic on a bus. A net that also
+leaves the board through a connector or a terminal block gets a pad all the
+same: the head lands only on its groups and never reaches a connector's
+pins.
 
 **Pads come in groups of nine**: `TP_Probe_Group_3x3_P2.0mm`, a 3 × 3 grid of
 Ø 1.0 mm pads at 2.0 mm pitch, 6 × 6 mm with its courtyard: eight nets around
