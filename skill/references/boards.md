@@ -5,6 +5,18 @@ as documents of the project and viewed in the browser; the `documents` list
 itself, and every other kind of file published beside the model, is in
 `references/documents.md`.
 
+## Designing in KiCad
+
+The schematic and the board are yours to draw, place and route, in KiCad 10
+through the Copperpour MCP server: its `mcp__copperpour__*` tools, loaded a
+toolset at a time with `load_toolset`. Load Copperpour's rules (the skill
+`konnect`) and the owner's `kicad-house` together with the skill for the step:
+`kicad-schematic`, `kicad-pcb`, `kicad-library`, `kicad-review` or
+`kicad-manufacture`. The owner's agents take the long parts:
+`kicad-schematic-build` draws a schematic, `kicad-pcb-layout` places and routes
+a board, `kicad-pcb-critic` reviews it before the fab. The KiCad project lives
+in the model's repository and is published with it, as the documents below.
+
 ## Gerbers
 
 Gerbers are ONE `.zip` listed like any document: the set that goes to the fab,
