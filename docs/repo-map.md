@@ -490,8 +490,8 @@
   rename window; the token, the theme, the strip's switch and the list go down
   to both as props
 - `ui/src/Header.jsx` — the header over both pages: the mark, the title, the
-  variants, the revision picker, the build's status, Downloads (and the chain
-  that downloads a whole group), the token's Save and Remove, Comments and the
+  variants, the revision picker, the build's status, Files (the revision's
+  files in git, `filesview.js`), the token's Save and Remove, Comments and the
   theme, folded into one menu on a narrow window, and under it the tab strip of
   the projects this browser has been in (`rememberTab` on the build's
   arrival), drawn only while Settings' "Project tabs" is on. What it says of
@@ -630,8 +630,7 @@
   `static/_v/PROVENANCE.md`) by URL on first use; `GerberView.jsx` draws the layers
   on a canvas through its `GerberProcessor`, with pan, zoom, a layer panel at
   the top left (Top/Bottom, an eye per layer); the zip is downloaded from the
-  strip at the bottom, as every document is. The header's Downloads menu lists the same zip as GERBERS
-  (`downloadsview.js`)
+  strip at the bottom, as every document is
 - `ui/src/loadbar.jsx` — what the document views (the 3D board, a KiCad
   design's 2D views, the Gerbers, markdown) show while their file comes in:
   `fetchBody` reads the answer chunk by chunk and counts each one on a `meter`,

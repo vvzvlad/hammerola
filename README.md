@@ -466,9 +466,7 @@ first row the header, and any other text file — `.txt`, `.tsv`, `.json`, `.xml
 `.yaml`, `.yml`, `.toml`, `.ini`, `.log` — as its text, in monospace;
 `.kicad_sch`, `.kicad_pcb`, `.glb` and `.zip` are the board, below. A file of
 any other extension — a supplier's STEP, a firmware image — is a plain file:
-choosing it shows its name, extension and size instead of drawing it. On a
-model's build page the Downloads menu offers a text file and a plain file under
-its extension, beside the STL. A
+choosing it shows its name, extension and size instead of drawing it. A
 `.dxf` is a plain file with a picture: the hub draws an SVG of it when the push
 is checked, publishes it at `<path>.svg`, and the page shows that picture above
 the file's name and size.
@@ -504,7 +502,7 @@ net of a clicked track or pad; the 3D view turns like the model does.
 page unzips it in the browser, tells each layer by its `%TF.FileFunction`
 attribute rather than by the file's name, and draws copper, mask, silkscreen,
 paste, outline and drills with a toggle per layer, from the top or from the
-bottom; a model's build page also lists the zip under GERBERS in Downloads. A
+bottom. A
 `.zip` is read as Gerbers unless its entry says `"download": true`, which is how
 a zip of stand logs stays a plain file.
 

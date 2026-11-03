@@ -25,8 +25,7 @@ Gerbers are ONE `.zip` listed like any document: the set that goes to the fab,
 it in the browser, tells each layer by the `%TF.FileFunction` inside the file and draws
 copper, mask, silkscreen, paste, outline and drills with a toggle per layer, the board seen
 from the top or from the bottom, with Download and Copy link for the zip at the bottom
-left of the page; a model's build page
-also lists it under GERBERS in Downloads, beside the STL. It sits beside the board's view
+left of the page. It sits beside the board's view
 and does not replace it. A listed `.zip` is read as a set of Gerbers unless its entry
 says `"download": true`, and the zip opens
 to the link without a key like the other documents, so whoever has the link has the
