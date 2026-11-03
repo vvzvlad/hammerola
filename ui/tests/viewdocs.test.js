@@ -189,9 +189,8 @@ describe('the documents in the list of views', () => {
   })
 
   it('put the open one\'s Download and Copy link beside the bar, and over the model neither', () => {
-    // The strip as the page draws it (`toolBar(v, …)`), without the header's
-    // Downloads menu and its own Copy links: the file's buttons in it, none in
-    // the bar itself.
+    // The strip as the page draws it (`toolBar(v, …)`), without the header:
+    // the file's buttons in it, none in the bar itself.
     const strip = (state) => {
       const tree = toolBar(component(state).computed())
       return [collect(tree, (el) => (el.type === DocFile ? el.props.href : undefined)),

@@ -55,7 +55,7 @@ export function rowMenu(s, deps) {
   // would name the wrong quantity.
   //
   // The section heads its menu with the word on its row, and a bed with the
-  // format its row is offered under in the Downloads menu.
+  // format of its file.
   const mName = secMenu ? SECTION_ROW : bedMenu !== null ? BAMBU_FORMAT
     : (mNode && !mNode.isNode
       ? countedName(mNode.name, mNode.leaves.length)
@@ -109,11 +109,11 @@ export function rowMenu(s, deps) {
     : 'Drag an arrow or a quad to slide it, a coloured disc to turn — it snaps back on the next rebuild');
 
   /**
-   * This part's files — the row-menu half of the header's Downloads menu.
+   * This part's files.
    *
-   * A row per file rather than a submenu, like the header's menu. Each is a
-   * plain `<a href download>` against the same base URL the header builds, so
-   * middle-click and "save link as" work.
+   * A row per file rather than a submenu. Each is a plain `<a href download>`
+   * against the build's own directory (`fileHref`), so middle-click and "save
+   * link as" work.
    *
    * Both empty cases say so: a part that is not printed has no files, and a
    * build may ship none. A row with no key lands on the same sentence through
@@ -198,8 +198,7 @@ export function rowMenu(s, deps) {
     ...(viewer || !mKey ? [] : [mi('Note', note ? (note.length > 22 ? `${note.slice(0, 22)}…` : note) : '',
       () => setState({ notePop: mKey, noteDraft: note || '' }))]),
     // Files hang on a part, so a group row has none: the union of its leaves'
-    // files would be invented. Bulk download (one format, all parts) is in the
-    // header's menu.
+    // files would be invented.
     ...(compared || mNode.isNode || !filesKey ? [] : fileRows(mKey)),
     // Inside a comparison the row's label is an internal piece label
     // (`plate #1`, from `cadbuild/comparescene`), so the catalogue key is
@@ -216,8 +215,7 @@ export function rowMenu(s, deps) {
       }
     }, 'top'),
   ];
-  // A bed's one row is its row of the Downloads menu: its name, its 3MF, Open
-  // in Bambu Studio and Copy link.
+  // A bed's one row: its name, its 3MF, Open in Bambu Studio and Copy link.
   const bedItems = bedMenu === null ? [] : [{
     ...mi(plateLabel(bedMenu, Object.keys(plates).length), plates[bedMenu],
           () => {}, '', fileHref(plates[bedMenu], filesKey)),

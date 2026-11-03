@@ -139,12 +139,11 @@ import { AR_FRAGMENT, arSupported, openQuickLook, requestXr, USDZ_TYPE, xrSuppor
 import { painted } from './loadbar.jsx';
 // And the panels that answer to little more than the state: whether the build
 // ships files, the comment rail and the comparison. `fileHref` comes with the
-// downloads because the row menu builds the same link for one part that the
-// header's menu builds for all of them, `filesKeyFor` because both menus put
-// the same key into it, and `fileList` because both read a part's files.
+// downloads because the row menu and a bed's row build a file's link with it,
+// `filesKeyFor` for the key both put into it, and `fileList` for a part's files.
 import { downloadsView, fileHref, fileList, filesKeyFor, plateFiles } from './downloadsview.js';
-// The Copy link at the end of each file row of both menus, and Open in Bambu
-// Studio before it on a 3MF's row; the 3MF group is where the beds are offered.
+// The Copy link at the end of each file row of the row menu and of a bed's
+// row, and Open in Bambu Studio before it on a 3MF's.
 import BambuLink from './bambu.jsx';
 import CopyLink from './copylink.jsx';
 import { dropStaleFocus, feedView, openComments } from './feedview.js';
@@ -1480,7 +1479,7 @@ export default class HammerolaViewer extends React.Component {
     const cmpReady = s.cmp.length === 2;
     return {
       subtitle: s.meta ? this.subtitle() : '',
-      tokenHint: 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, and writing a comment. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.',
+      tokenHint: 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens notes, moving a part, writing a comment, and Files, the revision\'s files in git. Without one you can still orbit, read the tree, cut a section and measure; the files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.',
       watching: true,
       pending: !!s.pending,
       revisions: {
@@ -1855,8 +1854,8 @@ export default class HammerolaViewer extends React.Component {
     // generation rather than by a timer, because what has to be dropped is an
     // answer that is already on the wire (`poll`). Outside `leaveBuild`
     // because it goes with the address, not the build: `takePending` opens
-    // another build without moving the address. The header's download chain
-    // goes with the address too (`componentDidUpdate` in Header.jsx).
+    // another build without moving the address. The header's list of files
+    // follows the build on screen instead (`filesId` in filesview.js).
     this._pollGen = (this._pollGen || 0) + 1;
 
     this.setState({
@@ -1946,10 +1945,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * The side effects belong here too: each is about the build being left.
    *
-   * Cutting off the download chain and bumping `_pollGen` are not here: they
-   * go with the address, which `switchBuild` moves and `takePending` does not.
-   * A chain running across the banner resolves against the pointer as asked,
-   * and cutting it would silently truncate a group download.
+   * Bumping `_pollGen` is not here: it goes with the address, which
+   * `switchBuild` moves and `takePending` does not.
    */
   leaveBuild(keepView, next, doc = this.state.doc) {
     const sec = this.sectionAcross(keepView);
@@ -4554,8 +4551,8 @@ export default class HammerolaViewer extends React.Component {
    *
    * Where no part is under the cursor and a bed of the `print` view is
    * (`plate`, viewport/beds.js), the menu is that bed's 3MF (`rowMenu`) — for a
-   * reader holding the key to the files, as the Downloads menu is. Without it
-   * the bed is empty space.
+   * reader holding the key to the files, as the bed's row in the tree is.
+   * Without it the bed is empty space.
    *
    * A method rather than a closure inside the handler map so it can be called
    * without mounting the component — the map is built in `componentDidMount`,
@@ -4872,7 +4869,7 @@ export default class HammerolaViewer extends React.Component {
     // rows, because a bed's row carries its 3MF.
     const filesKey = filesKeyFor(s.builds, PAGE.slot, this._linkKey);
     // The beds of the view on screen, `{"1": "print.3mf", ...}`: the 3MF a
-    // bed's row and its menu in the scene offer, as the Downloads menu does.
+    // bed's row and its menu in the scene offer.
     const plates = plateFiles(meta, s.view);
 
     // -- the tree: a flat list of rows, indented by depth
@@ -4912,7 +4909,7 @@ export default class HammerolaViewer extends React.Component {
       // A BED OF THE `print` VIEW (`indexTree`) is a group row to the eye and
       // the ghost square, which act on the parts on it, and no part: it is not
       // selected and opens no part menu. Its 3MF is on it for a reader holding
-      // the key, as in the Downloads menu.
+      // the key.
       const bed = node.plate !== null;
       const plateFile = bed && filesKey ? plates[node.plate] : '';
       rows.push({
@@ -4978,11 +4975,10 @@ export default class HammerolaViewer extends React.Component {
     const secRange = Array.isArray(s.secRange) ? s.secRange : [-30, 30];
 
     // -- whether the build ships files at all, which the row menu's file rows
-    //    need: the header's Downloads menu, read off the same catalogue
-    //    (`downloadsView`), with the key asked above the tree
+    //    need (`downloadsView`)
     const catalogue = (meta && meta.parts) || null;
     const { anyDownloads } = downloadsView(catalogue, {
-      key: filesKey, documents: meta && meta.documents, views: meta && meta.views,
+      documents: meta && meta.documents, views: meta && meta.views,
     });
 
     // -- the project's comment queue, as `loadFeed` fetched it
@@ -5485,8 +5481,8 @@ export default class HammerolaViewer extends React.Component {
                       <span style={css(row.dotStyle)} />
                       <span onClick={row.onSelect} style={css(row.nameStyle)}>{row.name}</span>
                       <span title={row.metaTitle} style={css(row.metaStyle)}>{row.meta}</span>
-                      {/* A bed's 3MF, with the controls its row in the
-                          Downloads menu has, for a reader holding the key. */}
+                      {/* A bed's 3MF, with Download, Open in Bambu Studio
+                          and Copy link, for a reader holding the key. */}
                       {row.plateHref && (
                         <>
                           <a href={row.plateHref} download title="Download" style={css(ROW_DOWNLOAD)}>{ROW_DOWNLOAD_ICON}</a>
@@ -5948,8 +5944,8 @@ export default class HammerolaViewer extends React.Component {
           <div onClick={(e) => e.stopPropagation()} style={css(v.menuStyle)}>
             <div style={css(`padding:7px 14px 6px;font:600 10.5px ${MONO};color:var(--text-muted);border-bottom:1px solid var(--line-soft)`)}>{v.menuName}</div>
             {/* A row that carries a file holds a real ANCHOR, not a div with a
-                handler: the download is the browser's to do, exactly as in the
-                header's menu, so the link can be middle-clicked or saved as. Open
+                handler: the download is the browser's to do, so the link can
+                be middle-clicked or saved as. Open
                 in Bambu Studio closes the menu as the link does. Its
                 file name shrinks to an ellipsis rather than run under Copy link,
                 and the row is keyed by its address, so a Copy link that says

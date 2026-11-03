@@ -262,18 +262,18 @@ describe('the menu itself', () => {
   })
 
   it('goes away when another popover opens, so only one is ever up', () => {
-    // The header's Downloads over the page, and the page's list under it.
+    // The header's token card over the page, and the page's list under it.
     const c = opened()
     const header = headerOn(c)
-    header.view().dlToggle(click)
+    header.view().tokenToggle(click)
     expect(c.state.viewsOpen).toBe(false)
-    expect(header.state.dlOpen).toBe(true)
+    expect(header.state.tokenPop).toBe(true)
 
     c.computed().viewsToggle(click)
     expect(c.state.viewsOpen).toBe(true)
-    expect(header.state.dlOpen).toBe(false)
-    expect(header.state.revOpen).toBe(false)
     expect(header.state.tokenPop).toBe(false)
+    expect(header.state.revOpen).toBe(false)
+    expect(header.state.filesOpen).toBe(false)
   })
 })
 

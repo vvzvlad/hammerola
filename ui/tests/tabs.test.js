@@ -75,9 +75,8 @@ afterEach(() => {
  * The header as `view()` and `render()` see it, holding `tabs`, over a model
  * page (`page`).
  *
- * `parts: {}` deliberately: a build that ships no files draws no download rows,
- * and those are `<a>` elements too. What is left under `/project/` is the strip
- * and nothing else, which is what makes the readings below exact.
+ * What the header links under `/project/` is the strip and nothing else, which
+ * is what makes the readings below exact.
  */
 function component({ tabs = [], narrow = false, tabStrip = true } = {}) {
   const page = makeComponent(HammerolaViewer, {

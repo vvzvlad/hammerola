@@ -22,9 +22,9 @@
 // by its address (`?d=`) or by a link from another document. A schematic of
 // more than one file has its sheets in a submenu beside its row (`SheetRows`).
 //
-// THE ROWS STAND IN GROUPS, each under a heading, as the Downloads menu's do:
-// the views first, then the documents a group per kind (`docGroup`), so the
-// five markdown notes of a project read as one block wherever the project
+// THE ROWS STAND IN GROUPS, each under a heading: the views first, then the
+// documents a group per kind (`docGroup`), so the five markdown notes of a
+// project read as one block wherever the project
 // lists them. Headings only, no rule between the groups: the owner had the
 // rule between the views and the documents taken out (SPEC 4).
 //
@@ -55,8 +55,8 @@ export const VIEWS_GROUP = '3D VIEWS';
 /** The heading a document's row stands under: a member of a KiCad design under
  *  KICAD — its schematic, the schematic's BOM, board and the board's 3D model
  *  are one design the page moves between (its menu's rows), not four kinds of
- *  file — a file the page does not draw and a text file under its extension,
- *  as the Downloads menu groups them, any other document under its type. */
+ *  file — a file the page does not draw and a text file under its extension
+ *  (`namedByExt`, `docExt` in DocumentView.jsx), any other document under its type. */
 export function docGroup(doc) {
   if (viewOf(doc)) return 'KICAD';
   return (namedByExt(doc) ? docExt(doc) : doc.type).toUpperCase();

@@ -713,9 +713,9 @@ describe('the header over the model\'s page', () => {
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     try {
       // a menu of the header's alone, nothing of the page's open
-      h.setState({ dlOpen: true })
+      h.setState({ filesOpen: true })
       escape()
-      expect(h.state.dlOpen).toBe(false)
+      expect(h.state.filesOpen).toBe(false)
       h.setState({ revOpen: true })
       c.setState({ viewsOpen: true })
       escape()

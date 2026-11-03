@@ -1,8 +1,7 @@
-// "Open in Bambu Studio" beside a 3MF's download link in both menus that offer
-// the build's files: the rows of the header's Downloads menu (downloadsview.js)
-// and a part's files in its right-click menu (rowmenu.js), before the row's
-// Copy link (copylink.jsx), and drawn like it: a 12 px icon with the words in
-// its title.
+// "Open in Bambu Studio" beside a 3MF's download link wherever the page offers
+// the build's files: a part's files in its right-click menu (rowmenu.js) and a
+// bed's row in the tree (HammerolaViewer.jsx), before the row's Copy link
+// (copylink.jsx), and drawn like it: a 12 px icon with the words in its title.
 //
 // Bambu Studio downloads and opens the file a link of its own scheme names:
 // `bambustudioopen://<address>` on macOS, `bambustudio://open?file=<address>`

@@ -68,7 +68,7 @@ export const HEADER_LINE = 'var(--line)';
  * WHERE THE WIDE LAYOUT STOPS FITTING, as the query the page asks the window.
  *
  * Not a device and not a phone: it is the width below which the build page's
- * header — a wordmark, a title, a revision picker, a status chip, downloads,
+ * header — a wordmark, a title, a revision picker, a status chip, files,
  * access and the comment button — has no room left to lay itself out on one
  * line, and below which a 300px comment rail is most of the screen rather than
  * a column beside the model.

@@ -1361,7 +1361,6 @@ describe('two jobs waited on at once', () => {
     vi.useFakeTimers()
     onTestFinished(() => vi.useRealTimers())
     const c = page()
-    c.cancelDownloads = vi.fn()
     let woke = 0
 
     c.pause(1500).then(() => { woke += 1 })

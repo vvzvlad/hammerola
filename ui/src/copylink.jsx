@@ -1,6 +1,6 @@
-// "Copy link" beside every link that downloads a file of the build: the rows
-// of the header's Downloads menu (downloadsview.js), a part's files in its
-// right-click menu (rowmenu.js), and the open document's Download at the left
+// "Copy link" beside every link that downloads a file of the build: a part's
+// files in its right-click menu (rowmenu.js), a bed's row in the tree
+// (HammerolaViewer.jsx), and the open document's Download at the left
 // end of the bottom strip of both pages (`DocFile` in viewlist.jsx). What it copies is
 // the whole address of that very link, the key to the files included when the
 // link carries one (`fileHref`), so whoever it is pasted to downloads what this

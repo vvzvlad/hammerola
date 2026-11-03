@@ -1966,7 +1966,7 @@ describe('what does not survive', () => {
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
     })
     // and the header's, over the page
-    const header = headerOn(c, { state: { revOpen: true, dlOpen: true, tokenPop: true } })
+    const header = headerOn(c, { state: { revOpen: true, filesOpen: true, tokenPop: true } })
     loadMeta.mockResolvedValue(build())
 
     await c.switchBuild('proj1', B)
@@ -1974,7 +1974,7 @@ describe('what does not survive', () => {
     expect(c.state.sel).toBeNull()
     expect(c.state.selName).toBe('')
     expect(c.state.menu).toBeNull()
-    expect([header.state.revOpen, header.state.dlOpen, header.state.tokenPop]).toEqual([false, false, false])
+    expect([header.state.revOpen, header.state.filesOpen, header.state.tokenPop]).toEqual([false, false, false])
     expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.notePop).toBeNull()
@@ -2188,7 +2188,7 @@ describe('taking the banner\'s build', () => {
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
     })
     // and the header's, over the page
-    const header = headerOn(c, { state: { revOpen: true, dlOpen: true, tokenPop: true } })
+    const header = headerOn(c, { state: { revOpen: true, filesOpen: true, tokenPop: true } })
     delete c.sync
     const seen = []
     const listen = (event) => seen.push(event.detail)
@@ -2200,7 +2200,7 @@ describe('taking the banner\'s build', () => {
     expect(c.state.sel).toBeNull()
     expect(c.state.selName).toBe('')
     expect(c.state.menu).toBeNull()
-    expect([header.state.revOpen, header.state.dlOpen, header.state.tokenPop]).toEqual([false, false, false])
+    expect([header.state.revOpen, header.state.filesOpen, header.state.tokenPop]).toEqual([false, false, false])
     expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.notePop).toBeNull()
@@ -2242,34 +2242,6 @@ describe('taking the banner\'s build', () => {
     expect(c.state.secOn).toBe(true)
     expect(c.state.secOff).toBe(5)
     expect(c.sync).toHaveBeenCalledWith(null)
-  })
-
-  it('leaves a download chain running, because no href moved', () => {
-    // The one thing the swap does that this does not: `leaveBuild` carries what
-    // goes with the build, while the header's download chain goes with the
-    // address (`fileHref` is `PAGE.base` plus a name, and `PAGE.base` does not
-    // move here).
-    // So downloads still in progress finish from the pointer the reader pressed
-    // the button on. Cancelling them would leave a partial set of STLs with
-    // nothing saying so, and mixing cannot be prevented here anyway: the pointer
-    // serves the new build as soon as the hub publishes it, before the banner.
-    const clicked = []
-    const timers = []
-    const c = offered()
-    const header = headerOn(c)
-
-    header.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
-                       { click: (href) => clicked.push(href),
-                         schedule: (fn, ms) => { timers.push({ fn, ms }) } })
-    expect(clicked).toHaveLength(1)
-
-    c.takePending()
-    // the header drawn again over the build taken
-    header.componentDidUpdate(header.props)
-    timers.shift().fn()
-
-    expect(clicked, 'the chain was cut off by a gesture that changed no href')
-      .toEqual([`${path(A)}plate.stl`, `${path(A)}post.stl`])
   })
 
   it('re-resolves the hidden and translucent parts by NAME, as the picker does',
@@ -2574,37 +2546,6 @@ describe('a poll waiting on its answer', () => {
 
     expect(c.state.pending.commit).toBe(C)
     expect(c.schedulePoll).toHaveBeenCalled()
-  })
-})
-
-describe('a download chain still handing over files', () => {
-  it('is called off, so the rest of the old build is not downloaded', async () => {
-    // The hrefs were built out of `PAGE.base` when the button was pressed, and
-    // the chain outlives that gesture by a fifth of a second per file — six
-    // seconds on a thirty-file build. Without this, a reader who switched
-    // revision goes on receiving files of the build they left, silently, because
-    // nothing on the screen says which build a download came from.
-    const clicked = []
-    const timers = []
-    const c = component()
-    const header = headerOn(c)
-    loadMeta.mockResolvedValue(build())
-
-    // The fake clock hands back NOTHING, deliberately: a handle that happened to
-    // be a small integer would be passed to `clearTimeout` on the cancel below,
-    // and jsdom's own timer ids are small integers too.
-    header.downloadAll([`${path(A)}plate.stl`, `${path(A)}post.stl`],
-                       { click: (href) => clicked.push(href),
-                         schedule: (fn, ms) => { timers.push({ fn, ms }) } })
-    expect(clicked).toHaveLength(1)
-
-    await c.switchBuild('proj1', B)
-    // the header drawn again over the build swapped in (`onBuild`)
-    header.componentDidUpdate(header.props)
-    timers.shift().fn()
-
-    expect(clicked, 'the rest of the chain downloaded the build that had left')
-      .toEqual([`${path(A)}plate.stl`])
   })
 })
 

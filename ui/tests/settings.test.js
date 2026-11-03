@@ -66,13 +66,13 @@ describe('the Settings card', () => {
     // holds is about this screen, not about the model.
     const c = component({ token: null, viewsOpen: true, opsOpen: true })
     // and the header's, over the page
-    const header = headerOn(c, { state: { revOpen: true, dlOpen: true, tokenPop: true } })
+    const header = headerOn(c, { state: { revOpen: true, filesOpen: true, tokenPop: true } })
     expect(css(c.computed().settingsMenuStyle).display).toBe('none')
 
     c.computed().tSettings(click)
     expect(c.state.settingsOpen).toBe(true)
     for (const other of ['viewsOpen', 'opsOpen']) expect(c.state[other], other).toBe(false)
-    for (const other of ['revOpen', 'dlOpen', 'tokenPop']) expect(header.state[other], other).toBe(false)
+    for (const other of ['revOpen', 'filesOpen', 'tokenPop']) expect(header.state[other], other).toBe(false)
     expect(css(c.computed().settingsMenuStyle).display).toBe('block')
     expect(texts(c.render())).toContain('Settings')
     expect(texts(c.render())).toContain('Retina resolution')

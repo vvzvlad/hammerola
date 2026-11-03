@@ -1,21 +1,20 @@
-// Which files belong to which part, how the header's menu groups the same set by
-// FORMAT, and what the tree row's menu offers for one part.
+// Which files belong to which part, whether the build ships any, and what the
+// tree row's menu offers for one part.
 //
 // `meta.parts` is a catalogue keyed by the part's own identity, and each record
 // names the files that were exported for it: `{key: {kind, files: {extension:
 // filename}}}`. Nothing is reconstructed from filenames.
 //
-// What the build publishes about itself reaches neither menu, but for the beds.
+// What the build publishes about itself reaches no menu, but for the beds.
 // The whole-view mesh and picture (`assembled.stl`, `assembled_preview.png`)
 // are fields on a VIEW, and a part's own render is `preview` inside its
 // catalogue record, one key away from `files`. They exist so a client can be
 // told the files are there — the hub lists no directory — and a picture is
 // looked at rather than downloaded. `print.stl` is the beds glued into one mesh
 // for the picture; what a slicer is offered is each bed's own 3MF, the
-// `plates` of the `print` view, at the head of the 3MF group.
+// `plates` of the `print` view.
 //
-// The menus themselves are assembled through the real `computed()` of the page
-// and `view()` of the header over it (Header.jsx, `headerOn` in component.js)
+// The menu itself is assembled through the real `computed()` of the page
 // rather than re-derived here. What is under test is a decision — which rows a row menu gets
 // for a part, for a part that is not printed, for a row naming no part at all,
 // for a group and for a build with no files — and each of those is a sentence
@@ -26,13 +25,10 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer, { menuAt, partRecord } from '../src/HammerolaViewer.jsx'
 import BambuLink from '../src/bambu.jsx'
 import CopyLink from '../src/copylink.jsx'
-import {
-  DOWNLOAD_GAP_MS, filesKeyFor, groupDownloads, sequentialDownload,
-} from '../src/downloadsview.js'
-import Header from '../src/Header.jsx'
+import { downloadsView, filesKeyFor } from '../src/downloadsview.js'
 import { PAGE, indexTree, rereadPage } from '../src/hub.js'
-import { FILES_KEY, headerOn, makeComponent } from './component.js'
-import { collect, texts } from './eltree.js'
+import { FILES_KEY, makeComponent } from './component.js'
+import { collect } from './eltree.js'
 
 /**
  * `meta.parts`: two printables and a bought screw, as the hub writes it.
@@ -61,7 +57,7 @@ const PARTS = {
  * record).
  *
  * Handed to the component so the tests below can assert that it changes
- * NOTHING on either menu; a fixture that left these out would agree with a
+ * NOTHING on the menu; a fixture that left these out would agree with a
  * browser that had started reading them.
  */
 const VIEW_FILES = {
@@ -183,14 +179,8 @@ function component({ node, parts = PARTS, token = null, expanded = {},
 }
 
 const menuOn = (options) => component(options).computed().menuItems
-/** The header over the page `c`, holding the key the page's address carried. */
-const headerFor = (c) => Object.assign(headerOn(c), c._linkKey ? { linkKey: c._linkKey } : {})
-/** What that header is drawn from. */
-const head = (c) => headerFor(c).view()
-/** Every file either menu offers over the page `c`, whichever group or row it
- *  sits in. */
-const offered = (c) => [...head(c).downloadGroups.flatMap((g) => g.files.map((f) => f.file)),
-                        ...c.computed().menuItems.filter((m) => m.hint).map((m) => m.hint)]
+/** Every file the row menu offers over the page `c`. */
+const offered = (c) => c.computed().menuItems.filter((m) => m.hint).map((m) => m.hint)
 const labels = (items) => items.map((m) => m.label)
 /** The rows that actually carry a file. */
 const fileRows = (items) => items.filter((m) => m.href)
@@ -244,478 +234,42 @@ describe('partRecord', () => {
   })
 })
 
-describe('groupDownloads', () => {
-  it('puts the printer\'s formats first and the rows under each in part order', () => {
-    // The whole complaint the grouping answers: flat, this is six rows in the
-    // order the hub wrote them, and "every STL" means picking every third one.
-    const groups = groupDownloads(PARTS)
-    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
-    expect(groups[0].files.map((f) => f.label)).toEqual(['plate', 'post'])
-    expect(groups[0].files.map((f) => f.file)).toEqual(['plate.stl', 'post.stl'])
+describe('whether the build ships files', () => {
+  // The row menu's file rows tell "this build ships nothing" from "this part
+  // is not a printable" by it (`anyDownloads`, rowmenu.js).
+  const ships = (parts, documents, views) => downloadsView(parts, { documents, views }).anyDownloads
+
+  it('counts a part\'s exports, a zip of Gerbers, a plain or a text file, and a bed', () => {
+    expect(ships(PARTS)).toBe(true)
+    expect(ships(null, GERBER_DOCUMENTS)).toBe(true)
+    expect(ships(null, [{ id: 'cut__glass.dxf', type: 'file', file: 'cut/glass.dxf' }])).toBe(true)
+    expect(ships(null, [{ id: 'bom.csv', type: 'text', file: 'bom.csv' }])).toBe(true)
+    expect(ships(null, undefined, [{ id: 'print', plates: { 1: 'print.3mf' } }])).toBe(true)
   })
 
-  it('names every row after the KEY, on a one-part build as on a six-part one', () => {
-    // A catalogue key is the part's identity whatever else the build holds,
-    // including on a build with a single printable.
-    const groups = groupDownloads({ post: PARTS.post })
-    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
-    expect(groups.flatMap((g) => g.files.map((f) => f.label)))
-      .toEqual(['post', 'post', 'post'])
+  it('counts no part that is never printed, no `preview`, no view\'s own mesh and no drawn document', () => {
+    // A bought screw and a mock carry no `files`; a part's picture and a
+    // view's `overview` are declared for a client to fetch, not as downloads.
+    expect(ships({ screw: { kind: 'hardware', note: 'M3x8 DIN912' }, board: { kind: 'mock' } })).toBe(false)
+    expect(ships({ plate: { kind: 'printable', preview: 'plate_preview.png' } })).toBe(false)
+    expect(ships(null, undefined, [{ id: 'assembled', overview: 'assembled.stl', preview: 'assembled_preview.png' }]))
+      .toBe(false)
+    expect(ships(null, [{ id: 'notes.md', type: 'markdown', file: 'notes.md' }])).toBe(false)
   })
 
-  it('takes the row\'s name from the key and never from the filename', () => {
-    // THE PARSE IS GONE, and this is the assertion that says so: a build is
-    // free to export a part under a filename that looks nothing like its key,
-    // and the old code — which cut `v1.2.plate.stl` at its last dot and called
-    // the stem the part — would draw `v1.2.plate` here.
-    const groups = groupDownloads({
-      plate: { kind: 'printable', files: { stl: 'v1.2.plate.stl' } },
-    })
-    expect(groups[0].files).toEqual([{ label: 'plate', file: 'v1.2.plate.stl' }])
+  it('answers an absent, empty or unusable catalogue with no', () => {
+    expect(ships({})).toBe(false)
+    expect(ships(undefined)).toBe(false)
+    // A record that is not an object, one whose `files` is not one, and a
+    // filename that is not a non-empty string: documents the hub refuses.
+    expect(ships({ plate: 3, post: { kind: 'printable', files: 'plate.stl' } })).toBe(false)
+    expect(ships({ plate: { kind: 'printable', files: { stl: '', step: null } } })).toBe(false)
   })
 
-  it('groups by the EXTENSION the record declares, not by the filename', () => {
-    // The other half of the same sentence. The extension is the map's key and
-    // the file is its value, and the two are free to disagree: `SAFE_LABEL` in
-    // src/render.py holds the extension to an alphabet and says nothing about
-    // what the file it points at is called.
-    const groups = groupDownloads({
-      plate: { kind: 'printable', files: { stl: 'plate.model' } },
-    })
-    expect(groups).toHaveLength(1)
-    expect(groups[0].ext).toBe('STL')
-    expect(groups[0].files).toEqual([{ label: 'plate', file: 'plate.model' }])
-  })
-
-  it('lands a format nobody planned for after the three, alphabetically', () => {
-    // The order is a rule and not a list the hub is trusted to match: a format
-    // added on the build side has to be ORDERED rather than turning up wherever
-    // the object happened to be iterated.
-    const groups = groupDownloads({
-      plate: {
-        kind: 'printable',
-        files: { stl: 'plate.stl', zip: 'plate.zip', step: 'plate.step', amf: 'plate.amf' },
-      },
-    })
-    expect(groups.map((g) => g.ext)).toEqual(['STL', 'STEP', 'AMF', 'ZIP'])
-  })
-
-  it('offers the board\'s Gerbers, every listed zip, as one more group named by their titles', () => {
-    // The zip that goes to the fab is a document of the build (`gerbers` in
-    // src/render.py), not a part's export; the menu offers it beside them.
-    const groups = groupDownloads(PARTS, GERBER_DOCUMENTS)
-    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP', 'GERBERS'])
-    expect(groups[3].files).toEqual([{ label: 'Gerbers', file: 'fab/board_gerber.zip' },
-                                     { label: 'panel.zip', file: 'panel.zip' }])
-    expect(groupDownloads(null, GERBER_DOCUMENTS).map((g) => g.ext)).toEqual(['GERBERS'])
-  })
-
-  it('offers a document the page cannot draw, and a text file, under the extension of its file', () => {
-    // A DXF for the glass shop is a file of the build the way an STL is, and
-    // the menu is where files are taken from. The group is the FILE's
-    // extension: every such document carries the one type `file`, and a CSV
-    // the one type `text`, so that word would be the only heading they got.
-    const plain = [
-      { id: 'cut__glass.dxf', name: 'Glass, cut list', type: 'file', file: 'cut/glass.dxf', bytes: 9 },
-      { id: 'bom.csv', name: 'bom.csv', type: 'text', file: 'bom.csv', bytes: 9 },
-      { id: 'ref__spare.stl', name: 'Bought bracket', type: 'file', file: 'ref/spare.stl', bytes: 9 },
-    ]
-    const groups = groupDownloads(PARTS, [...GERBER_DOCUMENTS, ...plain])
-    // Ordered by the one rule: the printer's formats, then alphabetically.
-    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP', 'CSV', 'DXF', 'GERBERS'])
-    expect(groups[4].files).toEqual([{ label: 'Glass, cut list', file: 'cut/glass.dxf' }])
-    // A listed file of a format the parts already export joins that group.
-    expect(groups[0].files.map((f) => f.label)).toEqual(['Bought bracket', 'plate', 'post'])
-  })
-
-  it('offers the one bed of the print view first among the 3MFs, as `print plate`', () => {
-    // Ahead of the parts, not sorted in among them: `plate` < `post` <
-    // `print plate`, so a row filed by its label would come third.
-    const groups = groupDownloads(PARTS, undefined, [
-      { id: 'assembled', overview: 'assembled.stl' },
-      { id: 'print', overview: 'print.stl', plates: { 1: 'print.3mf' } },
-    ])
-    expect(groups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
-    expect(groups[1].files).toEqual([{ label: 'print plate', file: 'print.3mf' },
-                                     { label: 'plate', file: 'plate.3mf' },
-                                     { label: 'post', file: 'post.3mf' }])
-    // The glued mesh stays a picture's, not a button.
-    expect(groups[0].files.map((f) => f.file)).toEqual(['plate.stl', 'post.stl'])
-  })
-
-  it('numbers the beds when there are several, in bed order and not in text order', () => {
-    const groups = groupDownloads(PARTS, undefined, [
-      { id: 'print', plates: { 10: 'print-10.3mf', 2: 'print-2.3mf', 1: 'print.3mf' } },
-    ])
-    expect(groups[1].files.map((f) => f.label)).toEqual(
-      ['print plate 1', 'print plate 2', 'print plate 10', 'plate', 'post'])
-    expect(groups[1].files[2].file).toBe('print-10.3mf')
-  })
-
-  it('answers an absent, empty or unusable catalogue with no groups at all', () => {
-    expect(groupDownloads({})).toEqual([])
-    expect(groupDownloads(undefined)).toEqual([])
-    expect(groupDownloads(null)).toEqual([])
-    // A record that is not an object, and one whose `files` is not one: both
-    // are documents the hub refuses, and neither may take the menu down.
-    expect(groupDownloads({ plate: 3, post: { kind: 'printable', files: 'plate.stl' } }))
-      .toEqual([])
-    // And a filename that is not a non-empty string, which would make a row
-    // that downloads nothing — worse than not being offered.
-    expect(groupDownloads({ plate: { kind: 'printable', files: { stl: '', step: null } } }))
-      .toEqual([])
-  })
-
-  it('offers nothing for a part that is never printed', () => {
-    // A bought screw and a mock of one are parts — they are in the catalogue,
-    // they carry notes, the tree draws them — and no file was ever exported for
-    // either. The record says so by carrying no `files` at all, which is the
-    // shape `_catalogue` enforces rather than a convention.
-    expect(groupDownloads({
-      screw: { kind: 'hardware', note: 'M3x8 DIN912' },
-      board: { kind: 'mock' },
-    })).toEqual([])
-  })
-
-  it('never offers the `preview` sitting in the same record', () => {
-    // The part's picture sits one key away from its files. A picture is looked
-    // at rather than saved, and it is declared so `hammerola artifacts` can
-    // fetch it — a different reader.
-    const groups = groupDownloads(PARTS_WITH_PICTURES)
-    expect(groups.flatMap((g) => g.files.map((f) => f.file)))
-      .toEqual(['plate.stl', 'post.stl', 'plate.3mf', 'post.3mf',
-                'plate.step', 'post.step'])
-  })
-
-  // -- and `__proto__` is a legal name on both axes -------------------------
-  //
-  // WRITTEN AS A COMPUTED KEY, which is not style: `{__proto__: v}` in an object
-  // literal is the SETTER, so it stores no own property at all and the fixture
-  // would be an empty object testing nothing. `{['__proto__']: v}` is an
-  // ordinary own property — the shape `JSON.parse` produces from a pushed
-  // document, which is the shape under test.
-
-  it('keeps a format called `__proto__` instead of silently storing nothing', () => {
-    // The group key comes out of that document, which is why the grouping is a
-    // Map: `groups.__proto__ = []` on an object literal stores nothing and
-    // reports no failure.
-    const groups = groupDownloads({
-      plate: { kind: 'printable', files: { ['__proto__']: 'plate.weird' } },
-    })
-    expect(groups.map((g) => g.ext)).toEqual(['__PROTO__'])
-    expect(groups[0].files).toEqual([{ label: 'plate', file: 'plate.weird' }])
-  })
-
-  it('keeps a part called `__proto__` on its row rather than losing the label', () => {
-    // The same alphabet on the other axis: `_check_part_name` allows it, so the
-    // key is read off `Object.entries` and travels to the row as a plain label.
-    const groups = groupDownloads({
-      ['__proto__']: { kind: 'printable', files: { stl: 'weird.stl' } },
-    })
-    expect(groups).toHaveLength(1)
-    expect(groups[0].files).toEqual([{ label: '__proto__', file: 'weird.stl' }])
-  })
-})
-
-/** A clicker and a clock, so the ORDER and the SPACING can both be read.
- *
- * `schedule` hands back NOTHING on purpose. A cancelled chain calls
- * `clearTimeout` on whatever the scheduler returned — a real id on the real path,
- * a no-op here — and a fake returning, say, an array length would be handing
- * `clearTimeout` a small integer, which is exactly what jsdom's own timer ids
- * are.
- */
-function driver() {
-  const clicked = []
-  const timers = []
-  return {
-    clicked,
-    timers,
-    click: (href) => clicked.push(href),
-    schedule: (fn, ms) => { timers.push({ fn, ms }) },
-    tick: () => timers.shift().fn(),
-  }
-}
-
-describe('sequentialDownload', () => {
-  it('fires the first click inside the gesture and the rest on the clock', () => {
-    // The first one is synchronous on purpose: a download is allowed because it
-    // is inside the gesture that asked for it, and a first click handed to a
-    // timer has left that gesture behind.
-    const d = driver()
-    const n = sequentialDownload(['/a.stl', '/b.stl', '/c.stl'],
-                                 { click: d.click, schedule: d.schedule, delay: 200 })
-
-    expect(n).toBe(3)
-    expect(d.clicked).toEqual(['/a.stl'])
-    expect(d.timers.map((t) => t.ms)).toEqual([200])
-
-    d.tick()
-    expect(d.clicked).toEqual(['/a.stl', '/b.stl'])
-    d.tick()
-    expect(d.clicked).toEqual(['/a.stl', '/b.stl', '/c.stl'])
-
-    // Nothing is queued past the last file: a trailing timer would fire into a
-    // page the reader has long since navigated away from.
-    expect(d.timers).toEqual([])
-  })
-
-  it('spaces them by its own gap when the caller names none', () => {
-    // The gap is not a workaround for a block — a browser asks once and then
-    // remembers — it is there because anchors fired in one synchronous burst can
-    // be coalesced into a single download, and which files survive is the
-    // engine's business rather than this page's.
-    const d = driver()
-    sequentialDownload(['/a', '/b', '/c'], { click: d.click, schedule: d.schedule })
-    expect(d.timers.map((t) => t.ms)).toEqual([DOWNLOAD_GAP_MS])
-    expect(DOWNLOAD_GAP_MS).toBeGreaterThanOrEqual(150)
-    expect(DOWNLOAD_GAP_MS).toBeLessThanOrEqual(300)
-  })
-
-  it('clicks a lone href once and schedules nothing', () => {
-    const d = driver()
-    expect(sequentialDownload(['/only.stl'], { click: d.click, schedule: d.schedule })).toBe(1)
-    expect(d.clicked).toEqual(['/only.stl'])
-    expect(d.timers).toEqual([])
-  })
-
-  it('does nothing at all for an empty or absent list', () => {
-    const d = driver()
-    expect(sequentialDownload([], { click: d.click, schedule: d.schedule })).toBe(0)
-    expect(sequentialDownload(undefined, { click: d.click, schedule: d.schedule })).toBe(0)
-    expect(d.clicked).toEqual([])
-    expect(d.timers).toEqual([])
-  })
-
-  it('hands over nothing more once its signal is aborted', () => {
-    // The chain outlives the gesture that started it — a fifth of a second per
-    // file, six seconds on a thirty-file build — and every href in it was
-    // captured off `PAGE.base` at the press. Whoever started it has to be able to
-    // stop it, or a reader who moved on goes on receiving a build they left.
-    const d = driver()
-    const chain = new AbortController()
-
-    sequentialDownload(['/a', '/b', '/c'],
-                       { click: d.click, schedule: d.schedule, signal: chain.signal })
-    expect(d.clicked).toEqual(['/a'])
-
-    chain.abort()
-    d.tick()
-
-    expect(d.clicked).toEqual(['/a'])
-    // And nothing is left queued behind it either.
-    expect(d.timers).toEqual([])
-  })
-
-  it('hands over nothing at all under a signal that is already aborted', () => {
-    // Checked at the top of every step, the first one included, so a chain
-    // started after the cancel cannot slip one file through.
-    const d = driver()
-    const chain = new AbortController()
-    chain.abort()
-
-    sequentialDownload(['/a', '/b'],
-                       { click: d.click, schedule: d.schedule, signal: chain.signal })
-
-    expect(d.clicked).toEqual([])
-    expect(d.timers).toEqual([])
-  })
-
-  // -- and it lets go of the signal when it is done ---------------------------
-  //
-  // THE SIGNAL OUTLIVES THE CHAIN, which is the whole of why this needs saying:
-  // one controller serves the entire header (`downloadAll`), and it is replaced
-  // only by a cancel. A listener left behind by a chain that FINISHED therefore
-  // sits on that controller holding the chain's `list` and `timer` until the
-  // page next moves off its address or goes — one more for every press of a group link, on
-  // a page a reader can leave open all day. `{once: true}` covers only the other
-  // end, an abort that actually fires.
-  //
-  // A hand-made signal rather than an `AbortController`, because a real one
-  // reports nothing about how many listeners are on it — which is the whole
-  // claim.
-
-  /** A signal that says who is listening to it. */
-  function watchedSignal() {
-    const on = []
-    return {
-      aborted: false,
-      on,
-      addEventListener: (type, fn) => { on.push(fn) },
-      removeEventListener: (type, fn) => {
-        const at = on.indexOf(fn)
-        if (at >= 0) on.splice(at, 1)
-      },
-    }
-  }
-
-  it('takes its listener off the signal when the chain runs out', () => {
-    const d = driver()
-    const signal = watchedSignal()
-
-    sequentialDownload(['/a', '/b', '/c'], { click: d.click, schedule: d.schedule, signal })
-    expect(signal.on, 'nothing was listening, so nothing is under test').toHaveLength(1)
-
-    d.tick()
-    expect(signal.on, 'let go before the last file').toHaveLength(1)
-    d.tick()
-
-    expect(signal.on, 'the finished chain is still holding the signal').toEqual([])
-  })
-
-  it('leaves nothing on the signal for a lone file or an empty list', () => {
-    // Both leave `step` by its first line, which is the way out a listener is
-    // easiest to forget on.
-    const d = driver()
-    const one = watchedSignal()
-    const none = watchedSignal()
-
-    sequentialDownload(['/only.stl'], { click: d.click, schedule: d.schedule, signal: one })
-    sequentialDownload([], { click: d.click, schedule: d.schedule, signal: none })
-
-    expect(one.on).toEqual([])
-    expect(none.on).toEqual([])
-  })
-
-  it('does not pile them up over a session of pressing the button', () => {
-    // The shape of the leak as a reader would produce it: one controller, one
-    // group link, pressed again and again with every chain allowed to finish.
-    const signal = watchedSignal()
-
-    for (let n = 0; n < 5; n += 1) {
-      const d = driver()
-      sequentialDownload(['/a', '/b'], { click: d.click, schedule: d.schedule, signal })
-      d.tick()
-    }
-
-    expect(signal.on).toEqual([])
-  })
-})
-
-describe('the chain the header keeps a handle on', () => {
-  it('stops where the page moves off the address its files are under', () => {
-    // A build swapped in place, a comparison entered: `PAGE.base` is what every
-    // address in the chain is built on (`fileHref`), and the header sees it move
-    // on its next update.
-    const c = headerFor(component({ node: '/model/plate' }))
-    const d = driver()
-
-    c.downloadAll(['/a.stl', '/b.stl', '/c.stl'], { click: d.click, schedule: d.schedule })
-    expect(d.clicked).toEqual(['/a.stl'])
-
-    const base = PAGE.base
-    PAGE.base = `${base}cmp/other/`
-    try {
-      c.componentDidUpdate(c.props)
-    } finally {
-      PAGE.base = base
-    }
-    d.tick()
-
-    expect(d.clicked).toEqual(['/a.stl'])
-  })
-
-  it('goes with the header when the component is unmounted', () => {
-    // The chain touches no state at all, so it survives an unmount perfectly
-    // happily — which is precisely why nothing else here would have stopped it.
-    const c = headerFor(component({ node: '/model/plate' }))
-    const d = driver()
-
-    c.downloadAll(['/a.stl', '/b.stl'], { click: d.click, schedule: d.schedule })
-    c.componentWillUnmount()
-    d.tick()
-
-    expect(d.clicked).toEqual(['/a.stl'])
-  })
-
-  it('cancels every chain still stepping, not only the last one started', () => {
-    // Two group links in a row is an ordinary sequence rather than a race: thirty
-    // files take six seconds to hand over. Both chains are about the build the
-    // reader was on, so both end together — which is what ONE signal for the page
-    // buys, and what a controller per press would need a list to do.
-    const c = headerFor(component({ node: '/model/plate' }))
-    const first = driver()
-    const second = driver()
-
-    c.downloadAll(['/a.stl', '/b.stl'],
-                  { click: first.click, schedule: first.schedule })
-    c.downloadAll(['/a.3mf', '/b.3mf'],
-                  { click: second.click, schedule: second.schedule })
-    c.cancelDownloads()
-    first.tick()
-    second.tick()
-
-    expect(first.clicked).toEqual(['/a.stl'])
-    expect(second.clicked).toEqual(['/a.3mf'])
-  })
-
-  it('starts a fresh signal for the next press after a cancel', () => {
-    // The controller is dropped rather than reused, so cancelling the downloads
-    // of the build being left does not quietly disable the ones asked for on the
-    // build being arrived at.
-    const c = headerFor(component({ node: '/model/plate' }))
-    c.cancelDownloads()
-    const d = driver()
-
-    c.downloadAll(['/a.stl', '/b.stl'], { click: d.click, schedule: d.schedule })
-    d.tick()
-
-    expect(d.clicked).toEqual(['/a.stl', '/b.stl'])
-  })
-})
-
-describe('the header\'s downloads menu', () => {
-  it('offers each group a link that takes the whole group, in the menu\'s own order', () => {
-    // One click, every STL. The downloading itself is `sequentialDownload`;
-    // what is checked here is that the button hands it exactly the group's own
-    // files and nothing else.
-    const c = headerFor(component({ node: '/model/plate' }))
-    c.downloadAll = vi.fn()
-    const [stl] = c.view().downloadGroups
-
-    stl.onAll()
-
-    expect(c.downloadAll).toHaveBeenCalledTimes(1)
-    expect(c.downloadAll.mock.calls[0][0]).toEqual(stl.files.map((f) => f.href))
-    expect(c.downloadAll.mock.calls[0][0]).toHaveLength(2)
-  })
-
-  it('says so on a document carrying no catalogue, instead of drawing an empty menu', () => {
-    // The branch is not dead and its reader is named: a hand-made document, or
-    // one this page did not get from a push, with no `meta.parts` on it at all.
-    // No push produces one — the hub refuses a catalogue that is empty — and
-    // no build from before issue #75 gets here either, since those named the
-    // list `variants` and this page reads
-    // `meta.views` unguarded. The row menu has a sentence for the same
-    // document, and the two must not drift apart: a menu with nothing in it
-    // reads as a menu that failed to load.
-    const c = component({ node: '/model/plate', parts: null })
-    expect('parts' in c.state.meta, 'the fixture still carries a catalogue').toBe(false)
-    expect(head(c).downloadGroups).toEqual([])
-  })
-
-  it('links the Gerbers with the key, under the directory they sit in', () => {
-    const c = component({ node: '/model/plate' })
-    c.state.meta.documents = GERBER_DOCUMENTS
-    const gerbers = head(c).downloadGroups.find((g) => g.ext === 'GERBERS')
-    expect(gerbers.files.map((f) => f.href)).toEqual([
-      `${PAGE.base}fab/board_gerber.zip?files=${FILES_KEY}`, `${PAGE.base}panel.zip?files=${FILES_KEY}`])
-  })
-
-  it('reads the catalogue\'s `files` and nothing else on the document', () => {
-    // The decision this file was reworked around, now that the two things it
-    // excludes have moved to two different levels. The view's `overview` and
-    // `preview` name the whole-build mesh and its picture; each part's own
-    // render is `preview` INSIDE the record whose `files` this menu reads. A
-    // mesh here would offer the plate for slicing — and the plate is whatever
-    // the `print` view holds, which may be a mock of a purchased bearing —
-    // while a picture here is a file saved instead of a picture looked at.
-    const v = head(component({ node: '/model/plate', parts: PARTS_WITH_PICTURES,
-                               viewFiles: VIEW_FILES }))
-    expect(v.downloadGroups.map((g) => g.ext)).toEqual(['STL', '3MF', 'STEP'])
-    expect(v.downloadGroups.flatMap((g) => g.files.map((f) => f.file)))
-      .toEqual(['plate.stl', 'post.stl', 'plate.3mf', 'post.3mf',
-                'plate.step', 'post.step'])
+  it('counts a part called `__proto__`', () => {
+    // A computed key: `{__proto__: v}` in a literal is the setter and stores no
+    // own property, while `JSON.parse` of a pushed document makes one.
+    expect(ships({ ['__proto__']: { kind: 'printable', files: { stl: 'weird.stl' } } })).toBe(true)
   })
 })
 
@@ -752,31 +306,14 @@ describe('the key to the files', () => {
     const rev = 'abc1234'.padEnd(64, '0')
     window.history.replaceState(null, '', `/project/proj1/${rev}/?v=print&files=K`)
     rereadPage(location.pathname)
-    // The page's, for the row menus, and the header's, for its menu.
+    // The page's, for the row menus.
     expect(new HammerolaViewer({})._linkKey).toEqual({ slot: rev, key: 'K' })
-    expect(new Header({}).linkKey).toEqual({ slot: rev, key: 'K' })
     window.history.replaceState(null, '', `/project/proj1/${rev}/`)
     expect(new HammerolaViewer({})._linkKey).toEqual({ slot: rev, key: '' })
-    expect(new Header({}).linkKey).toEqual({ slot: rev, key: '' })
   })
 
   it('answers nothing for a slot named after what every object has', () => {
     expect(filesKeyFor({ files_keys: {} }, 'constructor', null)).toBe('')
-  })
-
-  it('takes Downloads away without one, and brings it back when the picker lands', () => {
-    // The owner who types the token in gets the menu without a reload:
-    // BuildPage asks for builds.json under the token saved, and the key rides
-    // on it.
-    const c = component({ node: null, token: null, builds: null })
-    expect(head(c).dlShown).toBe(false)
-    expect(texts(headerFor(c).render())).not.toContain('Downloads')
-
-    c.state.token = 'sekrit'
-    c.state.builds = { has_dev: false, latest: null, builds: [],
-                       files_keys: { [PAGE.slot]: FILES_KEY } }
-    expect(head(c).dlShown).toBe(true)
-    expect(texts(headerFor(c).render())).toContain('Downloads')
   })
 })
 
@@ -789,51 +326,37 @@ describe('the row menu', () => {
       .toEqual(['plate.step', 'plate.stl', 'plate.3mf'])
   })
 
-  it('ends every file row of both menus with Copy link, for that row\'s own address', () => {
-    // The header's six files and the plate's three, each a sibling of its link.
-    // Read row by row: an element whose own children are a download link and a
-    // Copy link, so a Copy link moved inside its `<a>` leaves no such row.
+  it('ends every file row with Copy link, for that row\'s own address', () => {
+    // The plate's three, each a sibling of its link. Read row by row: an
+    // element whose own children are a download link and a Copy link, so a
+    // Copy link moved inside its `<a>` leaves no such row.
     const c = component({ node: '/model/plate' })
-    const tree = [headerFor(c).render(), c.render()]
     const kids = (el) => [].concat(el.props.children).filter((k) => k && typeof k === 'object')
-    const rows = collect(tree, (el) => {
+    const rows = collect(c.render(), (el) => {
       const link = kids(el).find((k) => k.type === 'a' && k.props.download)
       const copy = kids(el).find((k) => k.type === CopyLink)
       return link && copy ? [link.props.href, copy.props.href] : undefined
     })
-    expect(rows).toHaveLength(9)
+    expect(rows).toHaveLength(3)
     rows.forEach(([link, copy]) => expect(copy).toBe(link))
   })
 
-  it('puts Open in Bambu Studio on the 3MF rows of both menus alone, each with its own row\'s address', () => {
+  it('puts Open in Bambu Studio on the 3MF row alone, with its own row\'s address', () => {
     // Bambu Studio refuses any other format, so on a STEP or STL row the
     // control would open an error in it.
     const c = component({ node: '/model/plate' })
-    const want = [
-      ...head(c).downloadGroups.flatMap((g) => g.files).filter((f) => f.file.endsWith('.3mf')),
-      ...fileRows(c.computed().menuItems).filter((m) => m.hint.endsWith('.3mf')),
-    ].map((f) => f.href)
-    const got = collect([headerFor(c).render(), c.render()],
-      (el) => (el.type === BambuLink ? el.props.href : undefined))
-    expect(want.length).toBeGreaterThanOrEqual(2)
-    expect([...got].sort()).toEqual([...want].sort())
+    const want = fileRows(c.computed().menuItems).filter((m) => m.hint.endsWith('.3mf'))
+      .map((f) => f.href)
+    const got = collect(c.render(), (el) => (el.type === BambuLink ? el.props.href : undefined))
+    expect(want).toHaveLength(1)
+    expect(got).toEqual(want)
   })
 
-  it('points those rows at the same URLs the header\'s menu does', () => {
-    // One construction for both menus: a plain link against the build's own
-    // directory. Compared against the header's list rather than rebuilt here,
-    // so a change to either one has to move the other. Read out of the groups,
-    // because that is what the header draws.
-    const c = component({ node: '/model/plate' })
-    const v = c.computed()
-    const header = new Map(head(c).downloadGroups.flatMap((g) => g.files)
-      .map((f) => [f.file, f.href]))
-    fileRows(v.menuItems).forEach((m) => {
-      expect(m.href).toBe(header.get(m.hint))
-    })
-    // With the key in the query: an `<a download>` cannot carry the token, so
-    // without it the hub refuses the file.
-    expect(header.get('plate.step')).toBe(`${PAGE.base}plate.step?files=${FILES_KEY}`)
+  it('links each file against the build\'s own directory, with the key', () => {
+    // An `<a download>` cannot carry the token, so without the key in the
+    // query the hub refuses the file.
+    expect(fileRows(menuOn({ node: '/model/plate' })).map((m) => m.href))
+      .toEqual(['plate.step', 'plate.stl', 'plate.3mf'].map((f) => `${PAGE.base}${f}?files=${FILES_KEY}`))
   })
 
   it('offers none to a reader with no key, not even the sentence', () => {
@@ -888,9 +411,7 @@ describe('the row menu', () => {
   it('offers a group nothing, the same way a note is not offered on one', () => {
     // Files hang on a PART. A group is not a part and has no catalogue record
     // of its own, so the union of its leaves' files is a set this menu would
-    // be inventing. Bulk along the axis a reader actually asks for — one
-    // format, every part — is the header's per-group "download all" (a browser
-    // asks once for multiple downloads and remembers the per-site permission).
+    // be inventing.
     const items = menuOn({ node: '/model/inner' })
     expect(labels(items)).toEqual(['Isolate', 'Hide', 'Translucent', 'Copy name'])
   })
@@ -922,11 +443,10 @@ describe('the row menu', () => {
     expect(c.toast).toHaveBeenCalledWith('copied: reference spacer')
   })
 
-  it('says so on a document carrying no catalogue, too', () => {
-    // The same document as the header's sentence above, and the same reader: a
-    // hand-made file, or one this page did not get from a push, with no
-    // `meta.parts` on it at all. The header's menu says so; the row menu must
-    // not be worse.
+  it('says so on a document carrying no catalogue', () => {
+    // A hand-made file, or one this page did not get from a push, with no
+    // `meta.parts` on it at all: a menu with nothing in it reads as a menu
+    // that failed to load.
     const items = menuOn({ node: '/model/plate', parts: null })
     expect(labels(items)).toContain('No files in this build')
     expect(fileRows(items)).toHaveLength(0)
@@ -946,7 +466,7 @@ describe('the row menu', () => {
                           tree: TREE_WITH_A_RESERVED_NAME })
     expect(fileRows(c.computed().menuItems).map((m) => m.hint))
       .toEqual(['post.step', 'post.stl', 'post.3mf'])
-    // And the assembly's own mesh is on neither menu, under any name.
+    // And the assembly's own mesh is not on the menu, under any name.
     expect(offered(c)).not.toContain('assembled.stl')
   })
 

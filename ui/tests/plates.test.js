@@ -127,8 +127,7 @@ describe('a bed\'s row', () => {
     expect(rowOf(page(), '/Group').plateHref).toBe('')
     expect(rowOf(page({ key: false }), BED_2).plateHref).toBe('')
 
-    // Drawn on the row as the Downloads menu draws the bed: the link, Open in
-    // Bambu Studio and Copy link.
+    // Drawn on the row: the link, Open in Bambu Studio and Copy link.
     const drawn = (c) => collect(c.render(), (el) => (el.key === BED_2 ? el : undefined))[0]
     const controls = (row) => collect(row, (el) => (
       (el.type === 'a' && el.props.download) || el.type === BambuLink || el.type === CopyLink
@@ -148,7 +147,7 @@ describe('a bed\'s row', () => {
 })
 
 describe('a click on a drawn bed', () => {
-  it('opens a menu of that bed\'s 3MF, as its row of the Downloads menu', () => {
+  it('opens a menu of that bed\'s 3MF', () => {
     const c = page()
     c.sceneMenu({ id: null, name: null, plate: 2, x: 5, y: 6 })
     expect(c.state.menu).toEqual({ plate: 2, x: 5, y: 6 })

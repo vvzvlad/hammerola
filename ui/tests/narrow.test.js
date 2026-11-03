@@ -374,7 +374,7 @@ describe('the header row', () => {
   })
 
   it('folds its controls into one menu on a narrow window, and has none wide', () => {
-    // The owner, of the phone: the revision, Downloads, the token, Parts,
+    // The owner, of the phone: the revision, Files, the token, Parts,
     // Comments and the theme into one menu, the title beside the mark.
     const wide = head()
     expect(menus(wide)).toEqual([])
@@ -391,7 +391,7 @@ describe('the header row', () => {
     expect(card.props.style.display).toBe('block')
     // The rows, in the owner's order, and each said once in the whole header:
     // none of them is still a button beside the menu.
-    const ROWS = [REV.slice(0, 7), 'Downloads', 'Editing on', 'Parts', 'Comments', 'Light']
+    const ROWS = [REV.slice(0, 7), 'Files', 'Editing on', 'Parts', 'Comments', 'Light']
     expect(texts(card).filter((said) => ROWS.includes(said))).toEqual(ROWS)
     for (const said of ROWS) expect(texts(header(c)).filter((t) => t === said)).toHaveLength(1)
   })
@@ -402,7 +402,7 @@ describe('the header row', () => {
     // The first three are the header's own cards, the last two the page's.
     const c = component({ narrow: true })
     const h = headerOn(c)
-    const opens = [[REV.slice(0, 7), 'revOpen'], ['Downloads', 'dlOpen'], ['Editing on', 'tokenPop'],
+    const opens = [[REV.slice(0, 7), 'revOpen'], ['Files', 'filesOpen'], ['Editing on', 'tokenPop'],
                    ['Parts', 'treeOpen'], ['Comments', 'rail']]
     for (const [said, field] of opens) {
       h.view().headMenuToggle(click)
@@ -657,7 +657,7 @@ describe('the popovers that become a sheet on a narrow page', () => {
   // than from the window, which at phone width therefore lands off the screen.
   // Two different costs, and the second is the serious one.
   //
-  // The revisions, the downloads and the token box hang off buttons in the
+  // The revisions, the files and the token box hang off buttons in the
   // HEADER, and at phone width those buttons are rows of the header's menu,
   // which shuts as the panel opens, so no control is left on screen to hang
   // the panel off. They stay dismissible — a click on the page shuts all three
@@ -688,7 +688,7 @@ describe('the popovers that become a sheet on a narrow page', () => {
     const c = component(over)
     const v = c.computed()
     const h = headerOn(c).view()
-    return [h.revMenuStyle, h.dlMenuStyle, h.tokenPopStyle,
+    return [h.revMenuStyle, h.filesMenuStyle, h.tokenPopStyle,
             v.secPopStyle, v.notePopStyle].map(css)
   }
 
@@ -726,9 +726,9 @@ describe('the popovers that become a sheet on a narrow page', () => {
     c.view().revToggle(click)
     expect(css(c.view().revMenuStyle).display).toBe('block')
 
-    expect(css(c.view().dlMenuStyle).display).toBe('none')
-    c.view().dlToggle(click)
-    expect(css(c.view().dlMenuStyle).display).toBe('block')
+    expect(css(c.view().filesMenuStyle).display).toBe('none')
+    c.view().filesToggle(click)
+    expect(css(c.view().filesMenuStyle).display).toBe('block')
 
     expect(css(c.view().tokenPopStyle).display).toBe('none')
     c.view().tokenToggle(click)

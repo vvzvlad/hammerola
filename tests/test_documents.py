@@ -689,10 +689,9 @@ def test_the_page_and_the_hub_spell_the_kind_the_same_way():
 
 
 def test_the_page_and_the_hub_spell_the_plain_file_type_the_same_way():
-    # The page picks the download panel and the row's hint by this type, and
-    # offers the file in the downloads menu by it; renamed on one side only, a
-    # DXF goes to an iframe, which downloads it with no way to ask again, and
-    # leaves the menu.
+    # The page picks the download panel and the row's hint by this type;
+    # renamed on one side only, a DXF goes to an iframe, which downloads it with
+    # no way to ask again.
     source = (ROOT / "ui" / "src" / "DocumentView.jsx").read_text(encoding="utf-8")
     spelled = re.search(r"export const FILE_TYPE = '([^']+)'", source)
     assert spelled and spelled.group(1) == render.FILE_TYPE
@@ -700,8 +699,8 @@ def test_the_page_and_the_hub_spell_the_plain_file_type_the_same_way():
 
 def test_the_page_and_the_hub_spell_the_text_type_the_same_way():
     # Renamed on one side only, a CSV is drawn in a frame in the browser's own
-    # colours rather than as the page's table, stands under TEXT rather than
-    # CSV, and leaves the Downloads menu.
+    # colours rather than as the page's table, and stands under TEXT rather
+    # than CSV.
     source = (ROOT / "ui" / "src" / "DocumentView.jsx").read_text(encoding="utf-8")
     spelled = re.search(r"export const TEXT_TYPE = '([^']+)'", source)
     assert spelled and spelled.group(1) == render.TEXT_TYPE
@@ -720,9 +719,8 @@ def test_the_page_and_the_hub_know_the_same_text_extensions():
 
 
 def test_the_page_and_the_hub_spell_the_gerbers_type_the_same_way():
-    # The page picks the Gerbers' view and their row in the downloads menu by
-    # this type; renamed on one side only, the zip goes to an iframe, which
-    # downloads it instead of showing it, and leaves the menu.
+    # The page picks the Gerbers' view by this type; renamed on one side only,
+    # the zip goes to an iframe, which downloads it instead of showing it.
     source = (ROOT / "ui" / "src" / "gerber.js").read_text(encoding="utf-8")
     spelled = re.search(r"export const GERBERS_TYPE = '([^']+)'", source)
     assert spelled and spelled.group(1) == render.DOCUMENT_TYPES[".zip"]

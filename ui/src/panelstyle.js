@@ -49,12 +49,12 @@ export const POP_SHADOW_HIGH = '0 12px 40px var(--shadow)';
 
 /**
  * THE FIVE POPOVERS OF THE BUILD PAGE, BUILT TO ONE RECIPE: the revision picker,
- * the downloads menu, the token control, the section control and the note box —
+ * the Files card, the token control, the section control and the note box —
  * each a card hung off its own control, each becoming
  * `popSheet` when narrow, each shown by its own flag. Five spellings of one
  * shape, which is five places for the card to drift apart.
  * `tail` is what a call site appends after the shadow, before the layer and
- * the flag; one of the five has any: the downloads menu's padding.
+ * the flag; one of the five has any: the Files card's padding and its scroll.
  */
 export function popover({
   narrow, anchor, width, radius, z, open, pad = '', shadow = POP_SHADOW, tail = '',
@@ -225,13 +225,13 @@ export const CARD_LOOK = `background:var(--card-bg);border:${CARD_BORDER}px soli
 /** One row of the card: a view's or a document's in the list of views, the
  *  same shape for both so the two halves read as one list, and a schematic's
  *  sheet in its submenu (`SheetRows` in viewlist.jsx). Set in from its group's
- *  heading (`GROUP_HEAD`), as a file row of the Downloads menu is. Positioned,
+ *  heading (`GROUP_HEAD`). Positioned,
  *  for the rename pencil that stands in its left padding (`Pencil` with
  *  `lead`, rename.jsx). */
 export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:${ROW_PAD}px 14px ${ROW_PAD}px 22px;`
   + `position:relative;font:400 12px/${ROW_LINE}px ${SANS};cursor:pointer;`
   + (on ? 'color:var(--accent-text);background:var(--accent-bg)' : INK);
-/** A group's heading: the Downloads menu's (`headStyle` in downloadsview.js). */
+/** A group's heading in a menu of rows. */
 export const GROUP_HEAD = `padding:${GROUP_PAD[0]}px 14px ${GROUP_PAD[1]}px;font:600 10px/${GROUP_LINE}px ${MONO};`
   + 'color:var(--text-muted);letter-spacing:.08em';
 

@@ -418,7 +418,7 @@ export default class DocShell extends React.Component {
       comments: this.comments(),
       // The documents are open to every reader (`OPEN_SUFFIXES` and
       // `_listed_document` in src/app.py); the token opens the comments.
-      tokenHint: 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens writing a comment. Without one you can still read and download every document; the other files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.',
+      tokenHint: 'EDIT_TOKEN — the same string `hammerola login` asks for. It opens writing a comment and Files, the revision\'s files in git. Without one you can still read and download every document; the other files download with the token, or from a link they were included in. It is kept in this browser, for the whole site.',
       toast: (said) => this.toast(said),
     };
   }

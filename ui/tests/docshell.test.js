@@ -1063,20 +1063,14 @@ describe('comments on the page of a build with no model', () => {
     const kids = [].concat(el.props.children)
     return kids.some((kid) => kid && kid.props && kid.props.title === 'Menu') ? kids : undefined
   })
-  /** The build with the board's Gerbers, whose zip the header's Downloads
-   *  offers, and the list that holds the key to it. */
-  const GERBERS = { id: 'fab__g.zip', name: 'Gerbers', type: 'gerbers', file: 'fab/g.zip', bytes: 9 }
-  const KEYED = { has_dev: false, latest: null, builds: [], files_keys: { abc123: 'k1' } }
-
-  it('is under the header the model\'s page has: the status, Downloads, the token, Comments, the theme and the tabs', () => {
-    const shell = opened({ meta: { ...BUILD, documents: [...BUILD.documents, GERBERS] } })
+  it('is under the header the model\'s page has: the status, Files, the token, Comments, the theme and the tabs', () => {
+    const shell = opened()
     const tabs = [{ pid: 'docs0001', title: 'Shopping', seen: 2 }, { pid: 'other', title: 'Other', seen: 1 }]
-    const h = headerOn(shell, { props: { builds: KEYED, tabStrip: true }, state: { tabs } })
+    const h = headerOn(shell, { props: { tabStrip: true }, state: { tabs } })
     expect(texts(h.render())).toEqual(expect.arrayContaining(['hammerola', BUILD.title, 'abc123', 'pinned build',
-      'Downloads', 'Editing on', 'Shopping', 'Other']))
+      'Files', 'Editing on', 'Shopping', 'Other']))
     // the theme and the comments are icons, named by their tooltips
     expect(titles(h.render())).toEqual(expect.arrayContaining(['Comments', h.view().themeTitle]))
-    expect(h.view().downloadGroups.map((g) => g.ext)).toEqual(['GERBERS'])
     expect(menus(h.render())).toEqual([])
   })
 
