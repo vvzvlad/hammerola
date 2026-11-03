@@ -735,26 +735,43 @@ export const VIEW_BODIES = Object.freeze({
           key={p.pid}
           href={projectUrl(p.pid)}
           {...page.hover(p.pid)}
-          style={css(`${page.cardStyle(p.pid)}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
+          style={css(`${page.cardStyle(p.pid)}display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 12px 8px 8px`)}
         >
-          <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
-            <Preview radius={6} src={p.card || p.preview} />
+          {/* Two groups that wrap, so the row fits any width without a media
+              query: picture and title take the line and keep at least 300px
+              of it while they can; the columns follow on that line, or move
+              under it, to the right, when they do not fit, and on a phone
+              wrap among themselves. Every row wraps at the same width, since
+              only the 300px and the column widths decide it. */}
+          <div style={css('flex:1 1 300px;min-width:0;display:flex;align-items:center;gap:12px')}>
+            <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
+              <Preview radius={6} src={p.card || p.preview} />
+            </div>
+            <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
+              <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
+              <span style={css(META_MONO_ONE_LINE)}>
+                {p.slug} · {p.meta}
+              </span>
+            </div>
           </div>
-          <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
-            <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{p.title}</span>
-            <span style={css(META_MONO_ONE_LINE)}>
-              {p.slug} · {p.meta}
-            </span>
+          <div style={css('margin-left:auto;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px')}>
+            {/* Fixed width keeps the columns aligned across rows, so it has to
+                hold RevLine's longest line: revision, `dev`, `building` and
+                `12 variants` measure 243px. */}
+            <div style={css('width:250px;flex:none;display:flex;align-items:center;gap:8px')}>
+              <RevLine p={p} />
+            </div>
+            {/* One line for the dates and the delete control: on a phone the
+                time gives up its spare width rather than push the control
+                onto a line of its own. On a line of its own this group takes
+                the whole line, and the control stays at the right edge, where
+                every other width puts it. */}
+            <div style={css('flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:12px')}>
+              <div title={stamp(p.built)} style={css(`width:110px;flex:0 1 auto;min-width:max-content;font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</div>
+              <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</div>
+              <span style={css('margin-left:auto;display:flex')}>{page.remover(p.pid)}</span>
+            </div>
           </div>
-          {/* Fixed width keeps the columns aligned across rows, so it has to
-              hold RevLine's longest line: revision, `dev`, `building` and
-              `12 variants` measure 243px. */}
-          <div style={css('width:250px;flex:none;display:flex;align-items:center;gap:8px')}>
-            <RevLine p={p} />
-          </div>
-          <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</div>
-          <div style={css(`width:150px;flex:none;font:400 10.5px ${MONO};color:var(--text-faint)`)}>first built {monthYear(p.first)}</div>
-          {page.remover(p.pid)}
         </a>
       ))}
     </div>
