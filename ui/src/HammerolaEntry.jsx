@@ -710,10 +710,12 @@ export const VIEW_BODIES = Object.freeze({
                 {p.slug} · {p.meta}
               </span>
             </div>
-            <div style={css(ROW)}>
+            {/* On a narrow card RevLine's chips and the time do not fit one
+                line: the time moves whole to the next line, still on the right,
+                instead of breaking into "2 h" over "ago". */}
+            <div style={css(`${ROW};flex-wrap:wrap;row-gap:4px`)}>
               <RevLine p={p} />
-              <span style={css(FILL)} />
-              <span title={stamp(p.built)} style={css(META_MONO)}>{relTime(p.built)}</span>
+              <span title={stamp(p.built)} style={css(`${META_MONO};margin-left:auto;white-space:nowrap`)}>{relTime(p.built)}</span>
             </div>
             <div style={css(ROW)}>
               <span style={css(FAINT_MONO)}>first built {monthYear(p.first)}</span>
@@ -744,7 +746,10 @@ export const VIEW_BODIES = Object.freeze({
               {p.slug} · {p.meta}
             </span>
           </div>
-          <div style={css('width:150px;flex:none;display:flex;align-items:center;gap:8px')}>
+          {/* Fixed width keeps the columns aligned across rows, so it has to
+              hold RevLine's longest line: revision, `dev`, `building` and
+              `12 variants` measure 243px. */}
+          <div style={css('width:250px;flex:none;display:flex;align-items:center;gap:8px')}>
             <RevLine p={p} />
           </div>
           <div title={stamp(p.built)} style={css(`width:110px;flex:none;font:400 11px ${MONO};color:var(--text-muted)`)}>{relTime(p.built)}</div>
