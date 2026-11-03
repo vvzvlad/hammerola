@@ -153,33 +153,41 @@ Name the instrument instead of pretending:
 
 ## Test points for a flying probe (optional)
 
-For a board that will go onto the robotic bench: a gantry carrying a coaxial
-pogo probe to the oscilloscope and a low-resolution thermal sensor that scans
-the board in tiles. The board lies flat on a printed stand; a camera finds
-zero, rotation and scale from the fiducials, so there is no standard hole
-pattern, no fixture and no clamp strip. The fixed values the bench relies on
-are the **probe contract**, `probe-1`, kept with its footprints, symbol, DRC
-rules and the `probe.py check | export` script in the owner's `kicad-house`
-skill (`references/probe-contract.md`, `lib/probe.*`, `scripts/probe.py`);
-this section is what a designer needs to know before opening it.
+For a board that will go onto the robotic bench: a gantry carrying a nine-pin
+pogo head — every pin on a logic analyser, any one of them switched onto the
+oscilloscope by a reed relay — and a low-resolution thermal sensor that scans
+the board in tiles. The board lies flat on a printed stand, parts down; a
+camera finds zero, rotation and scale from the fiducials, so there is no
+standard hole pattern, no fixture and no clamp strip. The fixed values the
+bench relies on are the **probe contract**, `probe-1`, kept with its
+footprints, symbol, DRC rules and the `probe.py check | export` script in the
+owner's `kicad-house` skill (`references/probe-contract.md`, `lib/probe.*`,
+`scripts/probe.py`); this section is what a designer needs to know before
+opening it.
 
-**What gets a point**: every rail, clock, reset and inter-chip line, every
+**What gets a pad**: every rail, clock, reset and inter-chip line, every
 switching node, the amplifier outputs — and every net whose "how the
 firmware checks it" column is empty. The probe reads what GPIO cannot:
 waveform, timing, analog, fast lines. A net already on a header or terminal
 block needs none.
 
-**The point is coaxial**: `TP_Probe_Coax_D3.2mm`, the signal Ø 1.0 mm at the
-centre, GND a ring Ø 1.6–3.2 mm around it with a 0.6 mm gap for the trace.
-The head is a centre pin with a ring contact, so rotation is free and the
-ground path is the shortest there is — the probe-tip adaptor Tektronix asks
-for, printed on the board. Its symbol `TP_Probe` has two pins, the net and
-GND, and a field `Probe` that says what the bench measures there ("rail
-3.3 V", "BCLK 3.072 MHz"); the check refuses an empty one. All points on ONE
-side — the bottom when the assembly is single-sided — and ≥ 2.0 mm from any
-edge (the ring reaches 1.6 mm out, 0.4 mm of board remains).
+**Pads come in groups of nine**: `TP_Probe_Group_3x3_P2.0mm`, a 3 × 3 grid of
+Ø 1.0 mm pads at 2.0 mm pitch, 6 × 6 mm with its courtyard: eight nets around
+the edge, GND in the centre. One group takes a whole bus in one landing —
+SPI with its chip selects, I2S with MCLK, QSPI, SDIO, JTAG all fit in eight;
+rails, resets and switching nodes go onto the free pads of the nearest
+group, and a group with one net on it is fine. All nine pads always exist:
+an unused pad is an unconnected copper island, so a pin lands on copper,
+never on mask. Its symbol `TP_Probe` has pins 1–8 and GND, a no-connect flag
+on every unused pin, and fields `Probe1`–`Probe8` that say what the bench
+measures on each connected pad ("rail 3.3 V", "BCLK 3.072 MHz"); the check
+refuses an empty one. The head does not turn: rotate a group in 90° steps
+only; the grid is 90°-symmetric and the bench maps the pins from the
+fiducials, tolerating about ±5° of board misalignment between the steps. All
+groups on ONE side — the bottom when the assembly is single-sided — and every
+pad ≥ 2.0 mm from any edge.
 
-**Keep-out around a point**: 0.38 mm + 0.268 × the height of the neighbour
+**Keep-out around a group**: 0.38 mm + 0.268 × the height of the neighbour
 (the probe comes in at 16°) — 3 mm beside a 10 mm part. Nothing under
 modules, BGAs or connectors. Heights are the designer's duty; the check
 knows courtyards only (≥ 1.0 mm, DRC rules `probe_tp_*`).
@@ -194,8 +202,9 @@ tented via or a mouse bite is found as a fiducial). Silkscreen carries the
 identity: name, revision, a QR.
 
 **Coordinates come from KiCad**: the aux origin at the bottom-left corner of
-the outline; `probe.py export` writes `probe.json` (points, nets, what to
-measure, fiducials, mm from the origin), `kicad-cli pcb export ipcd356`
+the outline; `probe.py export` writes `probe.json` (groups, their pads with
+nets and what to measure, fiducials, mm from the origin), `kicad-cli pcb
+export ipcd356`
 lists every pad and via with its net; both go beside the Gerbers. A board
 that breaks the contract is not exported.
 
