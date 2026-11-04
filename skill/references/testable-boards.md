@@ -217,6 +217,12 @@ tells the bench how the board lies and catches a wrong rotation. On an
 unpowered board the GND pads still give height and offset through pull-ups
 on the bench's channels.
 
+**And one is for the bench's self-test**: pads 1–8 joined by a net of their
+own that goes nowhere else, the centre on GND. The bench drives anything onto
+one pin and reads it on the other seven — every pin touching and conducting,
+the relays switching, the instruments' channels alive. The space is there:
+twelve groups took 30 % of what was free on the ukuetis base board.
+
 **Keep-out around a group**: 0.38 mm + 0.268 × the height of the neighbour
 (the probe comes in at 16°) — 3 mm beside a 10 mm part. Nothing under
 modules, BGAs or connectors. Heights are the designer's duty; the check
