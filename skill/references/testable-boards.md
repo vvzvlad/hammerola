@@ -17,7 +17,7 @@ probe (optional).
 
 It has the controller's firmware, which it rewrites in minutes; the
 controller's serial and USB; the bench's power supply and hub; instruments
-over SCPI. It has no hands, no multimeter, no finger, and until the camera
+driven from code (SCPI, libm2k). It has no hands, no multimeter, no finger, and until the camera
 bench exists no eyes on the board. Every rule below removes one thing it
 would otherwise have to ask a person for. (One night of bring-up asked the
 person to buzz three wires with a meter, feel a transistor for heat, confirm
@@ -154,8 +154,9 @@ Name the instrument instead of pretending:
 ## Test points for a flying probe (optional)
 
 For a board that will go onto the robotic bench: a gantry carrying a nine-pin
-pogo head — every pin on a logic analyser that the bench can disconnect, any
-one of them switched onto the oscilloscope by a reed relay — and a low-resolution thermal sensor that scans
+pogo head wired to an ADALM2000 — its digital channels on all eight signal
+pins, its two oscilloscope channels on any of them through multiplexers,
+every pin behind a protector rated for ±60 V — and a low-resolution thermal sensor that scans
 the board in tiles. The board lies flat on a printed stand, parts down; a
 camera finds zero, rotation and scale from the fiducials, so there is no
 standard hole pattern, no fixture and no clamp strip. The fixed values the
@@ -166,7 +167,9 @@ owner's `kicad-house` skill (`references/probe-contract.md`, `lib/probe.*`,
 opening it.
 
 **What gets a pad**: every net on the board except GND, which is the centre
-pad of every group, and the nets at mains potential or on an isolated side.
+pad of every group, the nets at mains potential or on an isolated side, and
+the nets beyond ±60 V (the supply's protection trip included), which the
+head is not rated for.
 Each bus between chips goes whole onto one group — I2C, SPI with all its
 chip selects, UART, I2S, SWD, CAN before its transceiver — so the logic
 analyser sees the exchange; rails, clocks, resets and the remaining nets
@@ -185,10 +188,10 @@ rails, resets and switching nodes go onto the free pads of the nearest
 group of the same voltage class, and a group with one net on it is fine.
 **Groups are split by voltage**: a logic group keeps every pad within −0.5 to
 +5.5 V, the supply's protection trip included, and gets the logic analyser on
-all eight pins; any net outside that goes onto a power group, where the bench
-lands with the analyser disconnected from the pins and takes the pads one at
-a time on the
-oscilloscope. A bus never shares a group with such a net. The symbol's field
+all eight pins; any net outside that goes onto a power group, where the
+head's protectors cut the analyser off by themselves and the bench reads the
+pads on the oscilloscope's 1:20 path. A bus never shares a group with such a
+net. The symbol's field
 `ProbeVolts` ("0..3.3", "0..46.8") states the group's range, and the bench
 reads the class from it. All nine pads always exist:
 an unused pad is an unconnected copper island, so a pin lands on copper,
@@ -220,7 +223,7 @@ on the bench's channels.
 **And one is for the bench's self-test**: pads 1–8 joined by a net of their
 own that goes nowhere else, the centre on GND. The bench drives anything onto
 one pin and reads it on the other seven — every pin touching and conducting,
-the relays switching, the instruments' channels alive. The space is there:
+the multiplexers switching, the instruments' channels alive. The space is there:
 twelve groups took 30 % of what was free on the ukuetis base board.
 
 **Keep-out around a group**: 0.38 mm + 0.268 × the height of the neighbour
