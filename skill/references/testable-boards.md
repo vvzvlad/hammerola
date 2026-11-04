@@ -180,6 +180,11 @@ leaves the board through a connector or a terminal block gets a pad all the
 same: the head lands only on its groups and never reaches a connector's
 pins.
 
+**Before the pads, the bring-up document** (`docs/BRINGUP.md`, the
+contract's «Bring-up document»): the board's service manual for its first
+power-up. It cuts no pad; the passives its measurements need go into the
+schematic, and a part a person would have to fit is a question to the owner.
+
 **Pads come in groups of nine**: `TP_Probe_Group_3x3_P2.0mm`, a 3 × 3 grid of
 Ø 1.0 mm pads at 2.0 mm pitch, 6 × 6 mm with its courtyard: eight nets around
 the edge, GND in the centre. One group takes a whole bus in one landing —
