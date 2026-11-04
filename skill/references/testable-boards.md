@@ -206,6 +206,17 @@ pins, tolerating about ±5° of board misalignment between the steps. All
 groups on ONE side — the bottom when the assembly is single-sided — and every
 pad ≥ 2.0 mm from any edge.
 
+**One group is for calibration**, with signals known in advance: pads 1–4
+(top-left, top, top-right, right) on the controller's own supply rail, pads
+5–8 and the centre on GND. The bench lowers the head onto it until the pins
+see the rail or GND, which gives the board's height and shows the board is
+powered, and moves it sideways to find where each pin leaves its pad, which
+gives the camera-to-pins offset from eight pins at once. No 90° turn and no
+mirror maps the rail half-ring onto itself, so which four pins read the rail
+tells the bench how the board lies and catches a wrong rotation. On an
+unpowered board the GND pads still give height and offset through pull-ups
+on the bench's channels.
+
 **Keep-out around a group**: 0.38 mm + 0.268 × the height of the neighbour
 (the probe comes in at 16°) — 3 mm beside a 10 mm part. Nothing under
 modules, BGAs or connectors. Heights are the designer's duty; the check
