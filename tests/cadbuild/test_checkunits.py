@@ -289,7 +289,7 @@ def test_the_worker_caps_the_occt_pool_before_it_imports_the_model(
 
 
 def test_a_worker_answers_its_distances_from_the_build_processs_cache(
-        model_project, monkeypatch, capfd, tmp_path):
+        model_project, capfd, tmp_path):
     """The patch is per interpreter, so a spawned worker installs it again,
     from the path the build process hands over. Two runs on one file are two
     builds: the second takes the distance the first one measured.
@@ -298,19 +298,26 @@ def test_a_worker_answers_its_distances_from_the_build_processs_cache(
     pytest.importorskip("cadquery", exc_type=ImportError,
                         reason="the unit measures with the CAD kernel")
     cache = str(tmp_path / "cache" / "distance.sqlite")
-    monkeypatch.setattr(checkunits.distcache, "installed_path", lambda: cache)
-    model_project("""
-        @checklib.check("gap")
-        def check_gap():
-            import cadquery as cq
-            left = cq.Workplane().box(1, 1, 1).val()
-            right = cq.Workplane().box(1, 1, 1).translate((5, 0, 0)).val()
-            assert abs(left.distance(right) - 4.0) < 1e-9
-    """)
-    capfd.readouterr()
+    # Installed here, as the build process installs it before the workers
+    # start (src/buildproc/child.py): that is what creates the file, its WAL
+    # and its table. Two workers left to create a fresh file at once can find
+    # it locked, which no build does.
+    checkunits.distcache.install(cache)
+    try:
+        model_project("""
+            @checklib.check("gap")
+            def check_gap():
+                import cadquery as cq
+                left = cq.Workplane().box(1, 1, 1).val()
+                right = cq.Workplane().box(1, 1, 1).translate((5, 0, 0)).val()
+                assert abs(left.distance(right) - 4.0) < 1e-9
+        """)
+        capfd.readouterr()
 
-    for _build in range(2):
-        assert checkunits.run_units(CheckReport(0, 0)) == CheckReport(1, 0)
+        for _build in range(2):
+            assert checkunits.run_units(CheckReport(0, 0)) == CheckReport(1, 0)
+    finally:
+        checkunits.distcache.uninstall()
 
     said = [line.split(": ", 1)[1] for line in capfd.readouterr().out.splitlines()
             if "distance cache" in line]
