@@ -127,10 +127,10 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	$(PYTEST)
 	@$(RUN_JS_TESTS)
 
-# --- The nine tests that need the CAD kernel ----------------------------------
+# --- The eighteen tests that need the CAD kernel ------------------------------
 # CI runs them too (ci/Dockerfile.test carries the kernel's libraries); this target is
 # for the edit-run loop on the export half. It fails when a test skips, because on a
-# machine without the kernel all nine would skip and pytest would exit 0.
+# machine without the kernel all eighteen would skip and pytest would exit 0.
 CAD_TESTS := \
 	tests/cadbuild/test_views.py::test_a_real_export_is_a_document_the_hub_would_accept \
 	tests/test_view_fixture.py::test_the_exporter_still_produces_the_committed_structure \
@@ -140,16 +140,25 @@ CAD_TESTS := \
 	tests/cadbuild/test_comparescene.py::test_a_real_difference_is_drawn_in_the_part_coordinates_and_placed \
 	tests/cadbuild/test_measure.py::test_two_printable_boxes_a_known_distance_apart_measure_exactly_that \
 	tests/cadbuild/test_measure.py::test_a_deformed_reference_is_measured_on_what_the_view_draws \
-	tests/cadbuild/test_measure.py::test_a_shape_its_step_does_not_match_goes_to_the_mesh_unmarked_too
+	tests/cadbuild/test_measure.py::test_a_shape_its_step_does_not_match_goes_to_the_mesh_unmarked_too \
+	tests/test_skill_instructions.py::test_explode_moves_along_the_turned_axis_of_each_body \
+	tests/test_skill_instructions.py::test_count_takes_the_next_bodies_in_view_order \
+	tests/test_skill_instructions.py::test_bodies_takes_exactly_those_and_refuses_the_rest \
+	tests/test_skill_instructions.py::test_a_printable_no_step_adds_is_refused_by_key_and_body \
+	tests/test_skill_instructions.py::test_the_callout_counts_pieces_by_congruence \
+	tests/test_skill_instructions.py::test_the_travel_line_ends_on_the_exploded_leading_face \
+	tests/test_skill_instructions.py::test_upside_down_draws_the_assembly_turned_over \
+	tests/test_skill_instructions.py::test_a_faceted_prism_draws_its_rims_and_two_silhouette_edges \
+	tests/test_skill_instructions.py::test_a_run_prints_the_inventory_and_writes_one_page_per_step
 
 .PHONY: cad-test
-cad-test: install ## Run just the nine tests that need the CAD kernel (CI runs them too)
+cad-test: install ## Run just the eighteen tests that need the CAD kernel (CI runs them too)
 	@out=$$($(PYTEST) -q -rs $(CAD_TESTS) 2>&1); status=$$?; \
 	printf '%s\n' "$$out"; \
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \
 		echo ""; \
 		echo "make cad-test: FAILED — a test skipped, so nothing was checked."; \
-		echo "               These nine need the CAD kernel, and it does not import"; \
+		echo "               These eighteen need the CAD kernel, and it does not import"; \
 		echo "               on this machine. Install it here, or run this where it"; \
 		echo "               does — CI's test container has it (issue #27)."; \
 		exit 1; \

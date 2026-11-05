@@ -1,6 +1,6 @@
 ---
 name: hammerola
-description: Design a 3D-printable part in CadQuery, or in SolidCraft through its MCP server, and publish it to a hammerola hub, which builds it from code; a project can also carry a KiCad schematic and board, drawn and routed through the Copperpour MCP server. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), for a board published with a project, in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. It also holds the owner's KiCad rules, gates and scripts: load it for ANY KiCad, PCB, schematic, symbol, footprint, library, 3D model, gerber, BOM/CPL, DRC or ERC request and for any .kicad_* file. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "смоделируй в солидкрафте", "разведи плату", "опубликуй плату", "плата", "схема", "разводка", "шелк", "посадочное место", "гербер", "плата готова?", "проверь плату", "3D print this", "publish the model", "hammerola".
+description: Design a 3D-printable part in CadQuery, or in SolidCraft through its MCP server, and publish it to a hammerola hub, which builds it from code; a project can also carry a KiCad schematic and board, drawn and routed through the Copperpour MCP server. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), for a board published with a project, in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. It also holds the owner's KiCad rules, gates and scripts: load it for ANY KiCad, PCB, schematic, symbol, footprint, library, 3D model, gerber, BOM/CPL, DRC or ERC request and for any .kicad_* file. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "смоделируй в солидкрафте", "разведи плату", "опубликуй плату", "плата", "схема", "разводка", "шелк", "посадочное место", "гербер", "плата готова?", "проверь плату", "инструкция по сборке", "assembly guide", "3D print this", "publish the model", "hammerola".
 ---
 
 # hammerola
@@ -30,7 +30,10 @@ else sits beside it and is read at the moment it applies — the files are in
 | Writing `model.py`: the contract, the record types, CadQuery's traps | `references/model-py.md` |
 | Modelling the part in SolidCraft through its MCP server instead of CadQuery | `references/solidcraft.md` |
 | Putting a dimension on the drawing: shrinkage, minimum walls, orientation, fasteners | `references/printing.md` |
+| Rebuilding a part from a 3D scan of it, or from an STL whose CAD source is lost | `references/scan.md` |
+| Whether the part holds a load, where it bends, how it rings, heats up or lets a fluid through; how hot a board and its enclosure run, what a trace carries, whether a snap-fit snaps or a board fits its enclosure — computed on your machine | `references/analysis.md` |
 | A file published beside the model: document, drawing, PDF, picture, report, or any file to hand over (DXF, STEP, CSV) | `references/documents.md` |
+| Assembly instructions for the product: an IKEA/LEGO-style PDF of numbered steps, drawn from the model | `references/instructions.md` |
 | Any KiCad work: a schematic, symbols and footprints, placement, routing, silkscreen, DRC/ERC, «плата готова?», fab outputs — the owner's rules, gates and scripts | `references/kicad.md` |
 | Publishing a schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
 | Starting a project, fetching a revision back, removing one, setting up a machine | `references/cli.md` |
@@ -248,6 +251,9 @@ itself; the file beside each names the rest.
 * **A `printable` made of parts added to each other** — `plate.add(bosses)` is
   a compound: the STL has the plate and no bosses. One fused solid
   (`references/model-py.md`).
+* **Fasteners fused with `.union()`** — a nut welded to its lock nut, a washer
+  to its screw: one body where the hands fit two, drawn and counted as one in
+  the assembly guide. Collect them into a compound (`references/model-py.md`).
 * **A helper nobody called.** `checklib` measures nothing by itself: a model
   that never calls `unsupported_area` publishes with a face hanging in the air
   (`references/model-py.md`).

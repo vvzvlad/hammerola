@@ -99,6 +99,14 @@ section. In short: `model.py` defines `parts()` and `views()`, may define
     catalogue key; nesting past 64 levels is refused.
 
   One part may be referenced any number of times — five pins, five references.
+
+  **Fasteners are never fused.** Each piece a person fits on its own — a nut,
+  its lock nut, a washer, a screw — stays a solid of its own: one record
+  referenced at each seat, or the pieces collected into one record with
+  `cq.Compound.makeCompound(...)`, never joined with `.union()`. A union welds
+  a nut to its lock nut and a washer to the screw head on it, and the
+  assembly guide (`references/instructions.md`) then draws the pair as one
+  piece and counts `1×` where the text says two.
 * **Two view ids carry the gates.** **`assembled` is required**: the product is
   judged by it, parts are counted from it alone, and **every `printable` key
   must be in it** (alpha 0 does not count). A printed part that is not part of

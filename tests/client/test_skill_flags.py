@@ -79,6 +79,10 @@ OTHER_PROGRAMS = {
     "--gui", "--router", "--config",
     "--draft-time", "--finish", "--finish-time", "--diagnose",
     "--px", "--drc", "--marks", "--live",
+    # `references/analysis.md`: kicad-cli's STEP and XAO export of the board
+    # body or its copper alone, for a thermal or current model.
+    "--board-only", "--no-components", "--include-inner-copper",
+    "--fuse-shapes", "--net-filter",
 }
 
 
