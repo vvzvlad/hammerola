@@ -1,5 +1,5 @@
 """Board region to PNG for layout agents: KiCad's own SVG plot of the layers (zones refilled in memory), cropped, with an mm grid in board coordinates, reference designators, net names and numbered markers; prints what is in the region.
-usage: "$PY" view.py <board.kicad_pcb> X1 Y1 X2 Y2 | ref REF | full  [--margin 2] [--layers F.Cu,F.Silkscreen,F.Courtyard,Edge.Cuts] [--drc drc.json] [--marks marks.json] [--px 1000] [-o view.png]   (mm as KiCad shows them; --margin pads ref and full; marks = bq.py --json output or a list of {x,y,label}; reads the saved file only; listing on stdout, PNG path last)
+usage: "$PY" view.py <board.kicad_pcb> X1 Y1 X2 Y2 | ref REF | full  [--margin 2] [--layers F.Cu,F.Silkscreen,F.Courtyard,Edge.Cuts (ref REF: the layers of REF's side)] [--drc drc.json] [--marks marks.json] [--px 1000] [-o view.png]   (mm as KiCad shows them; --margin pads ref and full; marks = bq.py --json output or a list of {x,y,label}; reads the saved file only; listing on stdout, PNG path last)
 needs: KiCad's bundled Python with pcbnew ($PY), e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3; rsvg-convert on PATH"""
 import sys, os, re, json, math, argparse, tempfile, shutil, subprocess
 from xml.sax.saxutils import escape
@@ -60,8 +60,14 @@ class View:
         b = self.b = pcbnew.LoadBoard(self.path)
         pcbnew.ZONE_FILLER(b).Fill(b.Zones())
         self.cu = list(b.GetEnabledLayers().CuStack())
+        names = a.layers
+        if names is None:
+            # the side the footprint sits on for `ref REF`, the front otherwise
+            fp = b.FindFootprintByReference(a.region[1]) if len(a.region) == 2 and a.region[0] == "ref" else None
+            side = "B" if fp is not None and fp.IsFlipped() else "F"
+            names = "%s.Cu,%s.Silkscreen,%s.Courtyard,Edge.Cuts" % (side, side, side)
         self.layers = []
-        for n in a.layers.split(","):
+        for n in names.split(","):
             l = b.GetLayerID(n)
             if l < 0:
                 sys.exit("view: no layer %s" % n)
@@ -101,7 +107,7 @@ class View:
 
     # ---------------------------------------------------------------- plot
     def plot(self):
-        """Each layer plotted by KiCad to SVG in board mm, recoloured, back to front."""
+        """Each layer plotted by KiCad to SVG in board mm, recoloured, far side to near side."""
         tmp = tempfile.mkdtemp(prefix="view.")
         pc = pcbnew.PLOT_CONTROLLER(self.b)
         po = pc.GetPlotOptions()
@@ -112,12 +118,19 @@ class View:
         po.SetMirror(False)
         po.SetUseAuxOrigin(False)
 
+        # seen from the back when every shown F./B. layer is a B layer, from the front otherwise:
+        # far-side technical layers, copper from far to near, the rest (near side, User.*), the edge
+        sided = [n for n in (self.b.GetLayerName(l) for l in self.layers) if n[:2] in ("F.", "B.")]
+        back = bool(sided) and all(n.startswith("B.") for n in sided)
+        far = "F." if back else "B."
+
         def order(l):
             if l in self.cu:
-                return (1, -self.cu.index(l))
+                i = self.cu.index(l)
+                return (1, i if back else -i)
             if l == pcbnew.Edge_Cuts:
                 return (3, 0)
-            return (0 if self.b.GetLayerName(l).startswith("B.") else 2, l)
+            return (0 if self.b.GetLayerName(l).startswith(far) else 2, l)
 
         parts = []
         for l in sorted(self.layers, key=order):
@@ -384,7 +397,7 @@ def main():
     p.add_argument("board")
     p.add_argument("region", nargs="+")
     p.add_argument("--margin", type=float, default=2.0)
-    p.add_argument("--layers", default="F.Cu,F.Silkscreen,F.Courtyard,Edge.Cuts")
+    p.add_argument("--layers")
     p.add_argument("--drc")
     p.add_argument("--marks")
     p.add_argument("--px", type=int, default=1000)
