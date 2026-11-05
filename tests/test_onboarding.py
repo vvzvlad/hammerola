@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 from harness import TOKEN, good_build, one_text, served_skill_files
 
-from src import onboarding
+from src import app, onboarding
 from src.buildproc.limits import DEFAULT_LIMITS
 from src.cadbuild import checklib, checkunits
 from hammerola import hub as hub_client
@@ -299,14 +299,25 @@ def test_the_skill_names_no_deployment(hub):
     actually serves.
 
     An address of a service outside the hub that the skill calls by name — the
-    image model of `references/concept.md` — is no deployment of this one, and
-    is taken out of the text before either check.
+    image model of `references/concept.md` — and a cited source, an address
+    whose first path segment is none of the first segments this service routes
+    (its GET, POST and DELETE tables) — a datasheet in
+    `references/lens-checklist.md` — are no deployment of this one, and are
+    taken out of the text before either check. A bare host or `<host>/` is
+    never taken out.
     """
+    first = sorted({segments[0] for table in (app.GET_ROUTES, app.POST_ROUTES,
+                                              app.DELETE_ROUTES)
+                    for (segments, _), _ in table if segments})
+    routes = "|".join(map(re.escape, first))
     text = re.sub(r"(?:https://)?openrouter\.ai/\S*", "",
                   one_text(served_skill_files(hub)))
+    text = re.sub(
+        r"https?://[^\s/)|]+/(?!(?:%s)(?:[/?#)|\s]|$))[^\s)|/?#][^\s)|]*" % routes,
+        "", text)
     assert "://" not in text
     bare = re.findall(
-        r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?=/(?:start|api|project|index))",
+        r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?=/(?:%s)(?:[/?#)|\s]|$))" % routes,
         text)
     assert bare == [], (
         f"the skill carries what reads as a hub address: {bare}. It is written "
