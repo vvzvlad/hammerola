@@ -42,6 +42,12 @@ import type { ItemsGroupedByFpValueDNP } from "../kicad/ItemsGroupedByFpValueDNP
 
 import { area_items, type AreaDocument } from "./area-items";
 import { board_copper, type BoardCopper } from "./board-copper";
+import {
+    footprint_boxes,
+    picture_box,
+    picture_layers,
+    type FootprintBox,
+} from "./board-picture";
 import { schematicPageStep } from "./page-keys";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
@@ -452,6 +458,7 @@ import { cull_settings, cull_stats } from "../graphics/webgl/cull";
 import themes from "../kicanvas/themes";
 import {
     BoardInsetProvider,
+    inset_matrix,
     InsetLink,
     SchematicInsetProvider,
     type InsetKind,
@@ -3447,6 +3454,69 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         const viewer = this.#safe_board_viewer();
         if (!viewer?.board || !viewer.layers) return null;
         return board_copper(viewer.board, viewer.layers as LayerSet);
+    }
+
+    /**
+     * One side of the whole board, for the hub's BOM (ui/src/BomView.jsx),
+     * fitted into `canvas`, a 2D canvas sized by CSS, to its outline
+     * (`picture_box`, board-picture.ts): that side's pads, silkscreen, fab
+     * and the outline, every other layer hidden for the frame
+     * (`picture_layers`), and `bottom` mirrored left to right. Drawn as a
+     * board inset is: the board viewer's own scene through its own WebGL
+     * context (`render_view`, board-view.ts), which works while this element
+     * is hidden. Returns the map from the board's millimetres to the
+     * canvas's CSS pixels as `[a, b, c, d, e, f]` (x' = a·x + c·y + e,
+     * y' = b·x + d·y + f, the order of a 2D context's `setTransform`), or
+     * null when nothing was drawn.
+     */
+    public renderBoardPicture(
+        canvas: HTMLCanvasElement,
+        { bottom = false }: { bottom?: boolean } = {},
+    ): number[] | null {
+        const viewer = this.#safe_board_viewer();
+        if (!viewer?.board) return null;
+        const box = picture_box(viewer.board);
+        const layers = picture_layers(bottom);
+        const camera = (w: number, h: number) =>
+            inset_matrix(
+                {
+                    center: box.center,
+                    zoom: Math.min(w / box.w, h / box.h),
+                    rotation: 0,
+                    mirror: bottom,
+                },
+                w,
+                h,
+            );
+        const drawn = viewer.render_view(canvas, camera, {
+            only: (name) => layers.has(name),
+        });
+        if (!drawn) return null;
+        // The size `render_board_view` drew at.
+        const e = camera(canvas.clientWidth, canvas.clientHeight).elements;
+        return [e[0]!, e[1]!, e[3]!, e[4]!, e[6]!, e[7]!];
+    }
+
+    /**
+     * The width and height in millimetres of what `renderBoardPicture` fits
+     * into its canvas (`picture_box`), so the hub's BOM can give each
+     * picture the board's own proportions; null before the board is loaded.
+     */
+    public getBoardPictureSize(): { width: number; height: number } | null {
+        const board = this.#safe_board_viewer()?.board;
+        if (!board) return null;
+        const box = picture_box(board);
+        return { width: box.w, height: box.h };
+    }
+
+    /**
+     * Every footprint of the loaded board, for the hub's BOM
+     * (ui/src/BomView.jsx), as `{ reference, bottom, outline }`
+     * (`footprint_boxes`, board-picture.ts); none before the board is loaded.
+     */
+    public getFootprintBoxes(): FootprintBox[] {
+        const board = this.#safe_board_viewer()?.board;
+        return board ? footprint_boxes(board) : [];
     }
 
     public getPcbViewState(): EcadPcbViewState | null {

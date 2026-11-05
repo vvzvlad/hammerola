@@ -14,7 +14,11 @@
 
 import { BBox, Matrix3, Vec2 } from "../../base/math";
 import type { WebGL2Renderer } from "../../graphics/webgl";
-import type { ViewLayerSet } from "../base/view-layers";
+import type {
+    ViewLayer,
+    ViewLayerSet,
+    VisibilityType,
+} from "../base/view-layers";
 
 /** The slice of BoardViewer this module needs; keeps it testable. */
 export interface BoardViewHost {
@@ -45,6 +49,13 @@ export interface BoardViewOptions {
      * already isolated layers.
      */
     back_on_top?: boolean;
+    /**
+     * Draw only the layers this keeps, by name: for this one frame every
+     * other layer is hidden and none is highlighted, and each is put back as
+     * it was before the main view is drawn again. A picture of one side of
+     * the board (`picture_layers`, ecad-viewer/board-picture.ts).
+     */
+    only?: (layer_name: string) => boolean;
 }
 
 /** Cumulative timings, read by benchmarks. */
@@ -122,6 +133,14 @@ export function render_board_view(
     // state the main frame relies on, and an inset must match its background.
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+    const kept: [ViewLayer, VisibilityType, boolean][] = [];
+    if (options.only) {
+        for (const layer of [...host.layers.in_display_order()]) {
+            kept.push([layer, layer.visibility, layer.highlighted]);
+            layer.visible = options.only(layer.name);
+            layer.highlighted = false;
+        }
+    }
     const raised: { highlighted: boolean }[] = [];
     if (options.back_on_top && !host.layers.is_any_layer_highlighted()) {
         for (const layer of host.layers.in_display_order()) {
@@ -153,6 +172,10 @@ export function render_board_view(
         else host.render_layers(matrix);
     } finally {
         for (const layer of raised) layer.highlighted = false;
+        for (const [layer, visibility, highlighted] of kept) {
+            layer.visible = visibility;
+            layer.highlighted = highlighted;
+        }
     }
     if (gpu_sync) {
         const t_gpu = performance.now();

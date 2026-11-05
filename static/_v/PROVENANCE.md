@@ -191,7 +191,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `dbdb011288942c583dcd1d0b92eae5d3595411020779306be66b9f0d614261ce` |
+| `ecad-viewer.js` as committed | `66853c677e4a0800d48980fab3b0c4203a69ad058e4c6d1d1308bc4d9085ca59` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -217,20 +217,21 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Eighteen, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
+Nineteen, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
 of `packages/kicad-parser/src/`, each with its reason in a comment at the spot.
 Edit 6 is checked by `ui/tests/schematicpins.test.js`, which reads sheets
 through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
 it), edit 7 by `ui/tests/areaitems.test.js` the same way, edits 14 and 15 by
 `ui/tests/boardoutline.test.js`, edit 16 by `ui/tests/kicad5board.test.js`
-and edit 18 by `ui/tests/boardcopper.test.js` the same way, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
+and edit 18 by `ui/tests/boardcopper.test.js` the same way, what edit 19 fits,
+draws and boxes by `ui/tests/boardpicture.test.js`, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
 `ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
 `ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
 minifying, the bundles of this tree and the fork's at `acce697` differ in these
-eighteen places and the comments beside them.
+nineteen places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -444,6 +445,38 @@ painters into a `NullRenderer`; a via is a ring and a plated through pad its
 outline less its drill. The page draws this copper in place of the `.glb`'s
 (`ui/src/BoardView3D.jsx`, `ui/src/board3dcopper.js`).
 
+**19. The element draws one side of the board into a canvas and hands out its
+size and each part's box.** The BOM's assembly view (`ui/src/BomView.jsx`) shows
+the board's top and bottom over the table and lights a row's parts on them; what
+it is handed is in `ecad-viewer/board-picture.ts`, a file of ours.
+`renderBoardPicture(canvas, { bottom })` of `<ecad-viewer>`
+(`ecad-viewer/ecad_viewer.ts`) draws the loaded board fitted to its outline
+(`picture_box`: `KicadPCB.bbox`, the Edge.Cuts box Fit frames, grown by 2% of its
+longer side so the outline's stroke stays inside) into a 2D canvas sized by CSS,
+through the path the board insets take: the board viewer's own scene and WebGL
+context, one frame through another camera copied out in the same task
+(`render_board_view`, `viewers/board/board-view.ts`), so it draws while the
+element is hidden; the camera is the insets' (`inset_matrix`, `insets/camera.ts`),
+mirrored left to right for the bottom. The frame draws that side alone
+(`picture_layers`): its copper's pads (a through-hole pad is on both sides' copper,
+as KiCad draws it), its silkscreen and fab with their designators and values, the
+holes of pads and unplated holes, and Edge.Cuts; no tracks, zones or vias, no
+inner copper, nothing of the other side, no user, drawing-sheet or margin layer,
+no selection. `render_board_view` takes it as `only`, a test of a layer's name:
+for that frame every other layer is hidden and none is highlighted, and each
+layer's visibility and highlight is put back in the same call, before the main
+view is drawn again. It returns the map from the board's millimetres to the
+canvas's CSS pixels as the six numbers of a 2D context's `setTransform`, null when
+nothing was drawn. `getBoardPictureSize()` returns the width and height in
+millimetres of what it fits (`picture_box`), so the page gives each picture the
+board's proportions; null before a board is loaded. `getFootprintBoxes()`
+returns every footprint as `{ reference, bottom, outline }` (`footprint_boxes`):
+its designator, whether its layer is a back one, and the four corners, in the
+board's millimetres, of `Footprint.bbox` (the box the viewer outlines a selected
+footprint with, `outline_footprint` in `viewers/board/painter.ts`) combined with
+its pads' boxes, as a board inset frames a footprint, so a part with no
+silkscreen or fab graphics still has the box of its pads.
+
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
@@ -452,8 +485,8 @@ from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `acce697` is them, at the fork's paths, with
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
 `areaitems.test.js`, `pagekeys.test.js`, `intersheetrefs.test.js`,
-`boardoutline.test.js`, `kicad5board.test.js` and `boardcopper.test.js` fail if
-edit 6, 7, 9, 10, 14 and 15, 16 or 18 was lost (`wheelgesture.test.js` checks the
+`boardoutline.test.js`, `kicad5board.test.js`, `boardcopper.test.js` and
+`boardpicture.test.js` fail if edit 6, 7, 9, 10, 14 and 15, 16, 18 or 19 was lost (`wheelgesture.test.js` checks the
 arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
 update this section and the hashes, and commit the
 source and the built files together.
