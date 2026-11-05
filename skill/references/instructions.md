@@ -99,7 +99,10 @@ are not views: `views()` stays what the viewer shows.
   out, a temperature, a click. Short, imperative, in the person's language;
   no text when the drawing says it all.
 * **The box prints each record's `note`**, so a hardware part without one shows
-  only its key: write `"note": "M3x8 DIN912"` on the record first.
+  only its key: write `"note": "M3x8 DIN912"` on the record first. A record
+  whose bodies are of several kinds, some of them repeated (a product's
+  screws, washers and nuts in one), names the bag, not the piece, so its
+  pieces show only `N×` and the picture: the step's text names them.
 
 ## Making it
 

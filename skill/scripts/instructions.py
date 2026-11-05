@@ -27,9 +27,10 @@ horizontal axis (the camera stays at `angle`), for the steps done with it that w
 
 Page 1 is the title and every added body seated; then one page per step: earlier bodies as grey
 ghosts, this step's black and exploded, each piece with a dashed line for the travel of its
-leading end, and a callout of what the step uses, counted in pieces. Lines are OpenCASCADE
-hidden-line removal, one run per drawing, so parts hide each other and the travel lines:
-outlines and sharp edges only, an edge between faces at under 20 deg only on the silhouette.
+leading end (travels that overlap on one axis are drawn as one line), and a callout of what
+the step uses, counted in pieces. Lines are OpenCASCADE hidden-line removal, one run per
+drawing, so parts hide each other and the travel lines: outlines and sharp edges only, an edge
+between faces at under 20 deg only on the silhouette.
 """
 
 import json
@@ -378,6 +379,32 @@ def travel(shape, offset):
     return start, start + offset
 
 
+def merged_travels(lines, tol=0.1):
+    """`lines` as `[(start, end)]`, with those that run on one line within `tol` mm and overlap
+    joined into one: each dashed line starts its dashes at its own end, so three on one axis (a
+    stud, its washer and its lock nut) fall out of step and read as solid."""
+    groups = []   # (origin, unit, [(low, high)]): spans along the unit from the origin
+    for start, end in lines:
+        u = (end - start).normalized()
+        for origin, v, spans in groups:
+            if abs(u.dot(v)) > 1 - 1e-9 and (start - origin).cross(v).Length < tol:
+                spans.append(tuple(sorted(((start - origin).dot(v), (end - origin).dot(v)))))
+                break
+        else:
+            groups.append((start, u, [(0.0, (end - start).Length)]))
+    merged = []
+    for origin, v, spans in groups:
+        spans.sort()
+        low, high = spans[0]
+        for a, b in spans[1:]:
+            if a > high + tol:
+                merged.append((origin + v * low, origin + v * high))
+                low = a
+            high = max(high, b)
+        merged.append((origin + v * low, origin + v * high))
+    return merged
+
+
 def exploded_pieces(step, bodies):
     """The step's exploded pieces as `[(shape, offset)]`, seated: a composite piece (a motor and
     its terminal box) is one, whole, so it gets one travel line and not one per body."""
@@ -545,8 +572,8 @@ def step_page(number, step, earlier, bodies, catalogue):
         shape, offset = bodies[b]["shape"], step["offset"].get(b)
         new.append(shape if offset is None else shape.moved(cq.Location(offset)))
     # the travel lines go into the same HLR run as edges, so parts in front of them hide them
-    travels = [cq.Edge.makeLine(*travel(shape, offset))
-               for shape, offset in exploded_pieces(step, bodies)]
+    travels = [cq.Edge.makeLine(*line) for line in merged_travels(
+        [travel(shape, offset) for shape, offset in exploded_pieces(step, bodies)])]
     views = hidden_line_view(ghosts + new + travels, step["angle"], step["upside_down"])
     ax = drawing_axes(fig, STEP_BOX, views)
     _draw(ax, views[:len(ghosts)], GHOST)
@@ -581,9 +608,22 @@ def callout_items(step, bodies):
     return [(key, count, piece) for (key, _), (count, piece) in items.items()]
 
 
+def bag_keys(bodies):
+    """The keys whose pieces are of more than one kind, the fasteners of a product kept in one
+    record: such a key names the bag, not the piece, so the box prints neither it nor its note
+    beside a screw or a washer out of it."""
+    kinds = {}
+    for one in bodies:
+        if not one["composite"]:
+            kinds.setdefault(one["key"], set()).add(one["class"])
+    return {key for key, found in kinds.items() if len(found) > 1}
+
+
 def callout(fig, step, bodies, catalogue):
-    """Top right: per kind of piece the step uses, one piece alone, `N×`, the key and its note."""
+    """Top right: per kind of piece the step uses, one piece alone, `N×`, the key and its note
+    (`bag_keys` print only `N×`)."""
     items = callout_items(step, bodies)
+    bags = bag_keys(bodies)
     left, top, width, room = CALLOUT
     row = min(CALLOUT_ROW, room / len(items))
     fig.add_artist(Rectangle((left, top - row * len(items)), width, row * len(items),
@@ -604,6 +644,8 @@ def callout(fig, step, bodies, catalogue):
         fig.text(text_left, cursor, f"{count}×", fontsize=count_size, fontweight="bold",
                  va="top")
         cursor -= _text_line(count_size)
+        if key in bags:
+            continue
         name = wrapped(key, 9, text_width)
         fig.text(text_left, cursor, name, fontsize=9, fontweight="bold", va="top",
                  linespacing=1.0)

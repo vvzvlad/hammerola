@@ -1,7 +1,7 @@
 """`skill/scripts/instructions.py`: the IKEA-style assembly-instructions PDF of a project.
 
-Pinned here, on a tiny model whose bodies are numbered base 0, lid 1, screw 2-3, pins 4-7 and
-pair 8-9 in `bodies`:
+Pinned here, on a tiny model whose bodies are numbered base 0, lid 1, screw 2-3, pins 4-7,
+pair 8-9 and bag 10-12 in `bodies`:
 
   * an explode vector is in the part's own frame: a body placed with a turning `at` moves
     along the turned axis;
@@ -10,9 +10,11 @@ pair 8-9 in `bodies`:
     added and part of a composite piece;
   * a printable that no step adds is refused by key and body index;
   * the callout counts pieces by congruence: a record of four identical bodies is 4x of one
-    body, a record of different bodies is one composite piece, two references are 2x;
+    body, a record of different bodies is one composite piece, two references are 2x, and the
+    key of a record of pieces of several kinds is not printed beside them;
   * the travel line runs from the middle of the piece's leading end seated to the same point
-    exploded, on the piece itself, and a composite piece has one;
+    exploded, on the piece itself, a composite piece has one, and lines that overlap on one
+    axis are one;
   * a step marked upside_down is drawn with the assembly turned over;
   * an edge between faces at a small angle is drawn only on the silhouette;
   * a run prints the inventory and writes the cover plus one page per step.
@@ -40,7 +42,8 @@ _SPEC.loader.exec_module(instructions)
 sys.dont_write_bytecode = _bytecode
 
 # Two printables and two screws: the first turned 180 deg about X, the second 90 deg about Y.
-# Two mocks, which no step has to add: four identical pins in one record, and a box with a pin.
+# Three mocks, which no step has to add: four identical pins in one record, a box with a pin,
+# and a bag of two nuts and a washer.
 MODEL = """
 import cadquery as cq
 
@@ -55,7 +58,11 @@ def parts():
             "pair": {"shape": cq.Compound.makeCompound(
                          [cq.Solid.makeBox(2, 2, 2, cq.Vector(0, 50, 0)),
                           cq.Solid.makeCylinder(1, 5, cq.Vector(10, 50, 0))]),
-                     "kind": "mock"}}
+                     "kind": "mock"},
+            "bag": {"shape": cq.Compound.makeCompound(
+                        [cq.Solid.makeCylinder(2, 3, cq.Vector(x, 60, 0)) for x in (0, 10)]
+                        + [cq.Solid.makeBox(4, 4, 1, cq.Vector(20, 60, 0))]),
+                    "kind": "mock"}}
 
 def views():
     return [{"id": "assembled", "parts": [
@@ -63,7 +70,7 @@ def views():
         {"part": "lid", "at": cq.Location(cq.Vector(0, 0, 6.5))},
         {"part": "screw", "at": cq.Location(cq.Vector(-15, 0, 20), cq.Vector(1, 0, 0), 180)},
         {"part": "screw", "at": cq.Location(cq.Vector(30, 0, 0), cq.Vector(0, 1, 0), 90)},
-        "pins", "pair"]}]
+        "pins", "pair", "bag"]}]
 """
 
 
@@ -136,10 +143,13 @@ def test_a_printable_no_step_adds_is_refused_by_key_and_body(project):
 
 
 def test_the_callout_counts_pieces_by_congruence(project):
-    steps = resolved(project, [{"title": "all", "add": ["base", "lid", "screw", "pins", "pair"]}])
+    steps = resolved(project, [{"title": "all", "add": [
+        "base", "lid", "screw", "pins", "pair", "bag"]}])
     items = instructions.callout_items(steps[0], project[2])
     assert [(key, count, len(piece.Solids())) for key, count, piece in items] == [
-        ("base", 1, 1), ("lid", 1, 1), ("screw", 2, 1), ("pins", 4, 1), ("pair", 1, 2)]
+        ("base", 1, 1), ("lid", 1, 1), ("screw", 2, 1), ("pins", 4, 1), ("pair", 1, 2),
+        ("bag", 2, 1), ("bag", 1, 1)]
+    assert instructions.bag_keys(project[2]) == {"bag"}
 
 
 def test_the_travel_line_ends_on_the_exploded_leading_face(project):
@@ -163,6 +173,14 @@ def test_the_travel_line_ends_on_the_exploded_leading_face(project):
         {"part": "pair", "explode": [0, 0, 10]}]}])
     pieces = instructions.exploded_pieces(steps[0], project[2])
     assert sorted(len(shape.Solids()) for shape, _ in pieces) == [1, 1, 2]
+
+    # on one axis: one apart listed first, then two that overlap, the second pointing back;
+    # and one beside them
+    v = cq.Vector
+    lines = instructions.merged_travels([(v(0, 0, 100), v(0, 0, 90)), (v(0, 0, 0), v(0, 0, 50)),
+                                         (v(0, 0, 60), v(0, 0, 10)), (v(5, 0, 0), v(5, 0, 50))])
+    assert sorted((round(a.x, 9), *sorted((round(a.z, 9), round(b.z, 9)))) for a, b in lines) \
+        == [(0, 0, 60), (0, 90, 100), (5, 0, 50)]
 
 
 def test_upside_down_draws_the_assembly_turned_over(project):
