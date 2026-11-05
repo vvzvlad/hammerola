@@ -1812,7 +1812,10 @@ describe('the BOM of a design', () => {
 
     it('lists the schematic\'s parts, a designator opening the board with its part selected once the page hands it down', async () => {
       const { view, elements } = await opened(listed)
-      expect(ofType(table(view), BomView)[0].props).toMatchObject({ items: bomRows(ITEMS), hasBoard: true })
+      // the design names the Sourced and Placed marks by its path, which no
+      // revision changes
+      expect(ofType(table(view), BomView)[0].props).toMatchObject({ items: bomRows(ITEMS), hasBoard: true,
+        design: 'hw/board' })
       // the prices the schematic's `Price` fields give, read from its file
       expect(ofType(table(view), BomView)[0].props.prices).toEqual(new Map([['R2', '0,5 ₽']]))
       expect(links(view).map((el) => el.props['data-ref'])).toEqual(['C3', 'C4', 'R2', 'R10'])

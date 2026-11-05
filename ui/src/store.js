@@ -1,13 +1,13 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Eight things are kept, all under the `hammerola.` prefix the rest of the site
-// uses (`hammerola.pointing_device`, viewport/options.js). Seven live in
+// Nine things are kept, all under the `hammerola.` prefix the rest of the site
+// uses (`hammerola.pointing_device`, viewport/options.js). Eight live in
 // `localStorage`; the theme is a cookie because the server has to know it to
-// send the page already painted (see the theme section). Two of the seven are
-// keyed by project (notes, the pointer) so that editing one model and viewing
-// another do not collide; the token, the project-list arrangement, the tab
-// strip, whether it is drawn and the retina setting are one key for the whole
-// site.
+// send the page already painted (see the theme section). Three of the eight are
+// keyed by project (notes, the pointer, and the BOM's Sourced and Placed marks,
+// by design too) so that editing one model and viewing another do not collide;
+// the token, the project-list arrangement, the tab strip, whether it is drawn
+// and the retina setting are one key for the whole site.
 //
 // EVERY access goes through the two functions at the top and the cookie's two
 // at the bottom. `localStorage` and `document.cookie` THROW on the getter in a
@@ -93,6 +93,35 @@ export function readNotes(pid) {
 export function writeNotes(pid, notes) {
   if (!pid) return;
   write(notesKey(pid), JSON.stringify(notes || {}));
+}
+
+// -- the BOM's Sourced and Placed marks ---------------------------------------
+// The two checkboxes of each part in the assembly view of a KiCad design's BOM
+// (BomView.jsx), as the designators ticked in each, `{ sourced, placed }`. The
+// owner chose to keep them in the browser rather than on the hub. Keyed by
+// project and design (`designKey` in KicadView.jsx), not by revision, so the
+// ticks stay as revisions come in.
+//
+// What will not parse, or is not a list of designators, reads as nothing
+// ticked: throwing here happens during render.
+
+const assemblyKey = (pid, design) => `${NS}assembly.${pid}.${design}`;
+
+export function readAssembly(pid, design) {
+  const raw = pid ? read(assemblyKey(pid, design)) : null;
+  let parsed = null;
+  try {
+    parsed = raw && JSON.parse(raw);
+  } catch (error) {
+    console.warn('assembly', error);
+  }
+  const refs = (value) => (Array.isArray(value) ? value.filter((ref) => typeof ref === 'string') : []);
+  return { sourced: refs(parsed && parsed.sourced), placed: refs(parsed && parsed.placed) };
+}
+
+export function writeAssembly(pid, design, { sourced, placed }) {
+  if (!pid) return;
+  write(assemblyKey(pid, design), JSON.stringify({ sourced, placed }));
 }
 
 // -- which pointer this project was last opened on ---------------------------

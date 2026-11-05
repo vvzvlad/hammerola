@@ -679,7 +679,11 @@
   pure half: the rows split into a part per designator, its type and package,
   a value's magnitude, the number a `Price` field says (`priceOf`), each
   column's filter entries (`bomFilters`), the search and the filters, the
-  grouping and the sort (`bomTable`), and the total under the table (`bomTotal`)
+  grouping and the sort (`bomTable`), and the total under the table (`bomTotal`);
+  for the assembly view, how each part is lit (`partLooks`), the size of a
+  picture with the board's proportions in the room it has (`pictureSize`) and
+  which part a click on a picture of the board is on (`boardPoint`,
+  `insideOutline`)
 - `ui/src/BomView.jsx` — the BOM on screen, a member `KicadView` draws and keeps
   mounted: a search field and a grouping switch over a table whose every head
   sorts it by a click on its name and filters it from its funnel, a list of the
@@ -688,7 +692,15 @@
   designator selects the part and opens the board (`onPart`), a datasheet
   opens the build's document in `KicadView`'s window (`onDatasheet`, from
   `kicadsheets.js`) or a web address in a new tab; the Price and Sum columns and
-  the total under the table
+  the total under the table. Its `Assembly` button, over a design with a board,
+  adds the assembly view: the board's top and bottom, each that side alone
+  drawn by the board's element (`renderBoardPicture`, "Our edits" 19) at the
+  board's proportions (`getBoardPictureSize`), in a band held over the
+  scrolling table, a canvas over each lighting the parts of the row selected or
+  under the pointer and the placed ones in their boxes, pads included
+  (`getFootprintBoxes`), a click on a part selecting its row, and the Sourced
+  and Placed checkboxes, kept in this browser by project and design
+  (`readAssembly` in `store.js`)
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
@@ -723,7 +735,8 @@
   are edits to its CODE — how a selection and a highlighted net look on the
   board, the wheel, a symbol's pins without pin records, a hit test the page can
   ask (`selectAt`), a board's outline and arcs, a board KiCad 5 wrote, the
-  board's copper for the 3D view (`src/ecad-viewer/board-copper.ts`). The
+  board's copper for the 3D view (`src/ecad-viewer/board-copper.ts`), a side of
+  the board for the BOM's assembly view (`src/ecad-viewer/board-picture.ts`). The
   windows of the other document a pin or a pad opens (`src/ecad-viewer/insets/`
   of `packages/ecad-viewer-app/`) are the fork's. A fork kept as SOURCE is what makes those rebasable onto the
   next commit; string replacements in the minified bundle would not be. `make

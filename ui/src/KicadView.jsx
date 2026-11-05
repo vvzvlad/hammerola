@@ -202,7 +202,11 @@
 // designator selects its part in every view, as a click on the part in one
 // does, and then does what the part's board row of the menu does
 // (`showPart`): the page opens the board with the part selected there. A
-// design that lists no board has its designators as plain text.
+// design that lists no board has its designators as plain text. One that
+// lists a board has the BOM's assembly view too (BomView.jsx), drawn by the
+// board's element, hidden as it is, which the BOM is handed (`board`): a side
+// of the board into a canvas, its size and every part's box (our edit 19),
+// its ticks kept by the project (`PAGE.pid`) and the design (`designKey`).
 //
 // A PART'S DATASHEET is a row of its menu after the part's members,
 // `Datasheet · <name>`, when the part's KiCad `Datasheet` field names a
@@ -247,6 +251,7 @@ import { parse, subscribe, unsubscribe } from './address.js';
 import BoardView3D from './BoardView3D.jsx';
 import BomView from './BomView.jsx';
 import DocumentView from './DocumentView.jsx';
+import { PAGE } from './hub.js';
 import { BOM_TYPE, bomRows } from './kicadbom.js';
 import { netIndex } from './kicadnets.js';
 import { sheetName } from './kicadpages.js';
@@ -641,8 +646,9 @@ const SHEET_BODY = 'position:relative;flex:1;min-height:0;overflow:auto';
 // The BOM (BomView.jsx) over the whole view area, scrolling down inside it and
 // never sideways: a table wider than the area scrolls in its own box. The view
 // area already stops above the page's bar (`DOC_LAYER` in viewlist.jsx), so
-// the bar covers no row of it.
-const BOM_PAGE = 'position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;padding:24px 28px;box-sizing:border-box';
+// the bar covers no row of it. Its top padding is the block's own (`BLOCK` in
+// BomView.jsx), so the assembly view's band holds at the box's very top edge.
+const BOM_PAGE = 'position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;padding:0 28px 24px;box-sizing:border-box';
 
 /** One design: a view per member, the one on screen, and the links between
  *  them. */
@@ -1555,7 +1561,8 @@ export default class KicadView extends React.Component {
             <BomView items={bom} datasheets={datasheets} webDatasheets={webDatasheets} prices={prices}
                      base={datasheetBase(Object.values(members))} documents={this.props.documents}
                      hasBoard={Boolean(members[PCB])} onPart={(ref) => this.showPart(ref)}
-                     onDatasheet={(doc) => this.setState({ sheet: { doc, from: side } })} />
+                     onDatasheet={(doc) => this.setState({ sheet: { doc, from: side } })}
+                     board={this.elements[PCB]} pid={PAGE.pid} design={designKey(this.props.doc)} />
           </div>
         )}
         {note}

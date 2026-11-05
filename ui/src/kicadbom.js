@@ -31,6 +31,12 @@
 // currency. A row's Sum is the sum of its parts' prices, so a group whose parts
 // differ in price still sums right; Price and Sum sort by the number, and the
 // total under the table is the Sum of the fitted rows shown (`bomTotal`).
+//
+// THE ASSEMBLY VIEW over the table draws the board's pictures in its
+// proportions (`pictureSize`) and lights parts on them: how each looks
+// (`partLooks`), and which part a click on a picture is on, the click taken
+// back to the board (`boardPoint`) and found in a part's box
+// (`insideOutline`).
 
 /** The type of a BOM's document. */
 export const BOM_TYPE = 'bom';
@@ -298,4 +304,51 @@ export function bomTotal(parts, rows) {
     total: fitted.reduce((total, row) => total + (row.sum || 0), 0),
     unpriced: fitted.reduce((count, row) => count + row.unpriced, 0),
   };
+}
+
+/** How the assembly view's pictures light each part (BomView.jsx), by
+ *  designator: `selected` for the parts of the row whose first designator is
+ *  `selected`, `hovered` for those of the row `hovered`, `placed` for the
+ *  designators `placed`; a part in more than one takes the first. */
+export function partLooks(rows, selected, hovered, placed) {
+  const looks = new Map();
+  const light = (refs, look) => refs.forEach((ref) => {
+    if (!looks.has(ref)) looks.set(ref, look);
+  });
+  const rowOf = (key) => (rows.find((row) => row.references[0] === key) || { references: [] }).references;
+  light(rowOf(selected), 'selected');
+  light(rowOf(hovered), 'hovered');
+  light(placed, 'placed');
+  return looks;
+}
+
+/** The size in CSS pixels of a picture of a board `width` by `height`
+ *  millimetres across (the board element's `getBoardPictureSize`), in its
+ *  proportions: `room` wide and as high as that makes it, or `most` high and
+ *  narrower where that would pass it, both whole pixels. */
+export function pictureSize({ width, height }, room, most) {
+  const fits = room * height <= most * width;
+  return {
+    width: Math.floor(fits ? room : (most * width) / height),
+    height: Math.floor(fits ? (room * height) / width : most),
+  };
+}
+
+/** The point of the board, in its millimetres, under the CSS pixel `x`, `y`
+ *  of a picture drawn through `affine` (`[a, b, c, d, e, f]`, the element's
+ *  `renderBoardPicture`). */
+export function boardPoint([a, b, c, d, e, f], x, y) {
+  const det = a * d - b * c;
+  return [(d * (x - e) - c * (y - f)) / det, (a * (y - f) - b * (x - e)) / det];
+}
+
+/** Is `[x, y]` inside the polygon `outline`, `[[x, y], …]`: does a ray from
+ *  it cross the outline's edges an odd number of times. */
+export function insideOutline(outline, [x, y]) {
+  let inside = false;
+  outline.forEach(([x1, y1], i) => {
+    const [x2, y2] = outline[(i + 1) % outline.length];
+    if ((y1 > y) !== (y2 > y) && x < x1 + ((y - y1) * (x2 - x1)) / (y2 - y1)) inside = !inside;
+  });
+  return inside;
 }
