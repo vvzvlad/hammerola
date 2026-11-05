@@ -251,6 +251,9 @@ itself; the file beside each names the rest.
 * **A `printable` made of parts added to each other** — `plate.add(bosses)` is
   a compound: the STL has the plate and no bosses. One fused solid
   (`references/model-py.md`).
+* **Fasteners fused with `.union()`** — a nut welded to its lock nut, a washer
+  to its screw: one body where the hands fit two, drawn and counted as one in
+  the assembly guide. Collect them into a compound (`references/model-py.md`).
 * **A helper nobody called.** `checklib` measures nothing by itself: a model
   that never calls `unsupported_area` publishes with a face hanging in the air
   (`references/model-py.md`).

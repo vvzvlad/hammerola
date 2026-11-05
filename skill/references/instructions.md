@@ -39,8 +39,10 @@ are not views: `views()` stays what the viewer shows.
   the inventory again and check every `bodies` that names it.
 * **A body is a connected piece of the model.** Pieces the model fused into one
   solid — a nut and its lock nut, a screw with its washer — are one body,
-  drawn and counted as one. A step's text promises no more than its drawing
-  shows; to show two pieces apart, the model keeps them apart.
+  drawn and counted as one. Fasteners are never fused
+  (`references/model-py.md`): a model that fuses them is fixed before the
+  guide is made, never written around. A step's text promises no more than its
+  drawing shows.
 * `explode` on an entry moves its bodies out by `[dx, dy, dz]` mm **in the
   part's own frame**: a screw modelled along Z goes out along its own axis
   however `at` turns it. An entry without one is drawn seated, and every later
