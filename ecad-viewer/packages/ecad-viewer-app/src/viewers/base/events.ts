@@ -91,6 +91,10 @@ export type KiCanvasProbeDetail =
           number: string;
           index: string;
           crossIndex: string;
+          /** Owning symbol or footprint designator, for cross-document insets. */
+          reference?: string;
+          /** World-space centre of the pin or pad. */
+          anchor?: { x: number; y: number };
       }
     | {
           phase: "clear";
@@ -307,14 +311,6 @@ export class PCBViewerLoaded extends CustomEvent<void> {
     }
 }
 
-export class BoardContentReady extends CustomEvent<string> {
-    static readonly type = "pcb:board_content:ready";
-
-    constructor(content: string) {
-        super(BoardContentReady.type, { detail: content });
-    }
-}
-
 export class AdBoardContentReady extends CustomEvent<string> {
     static readonly type = "ad:board_content:ready";
 
@@ -328,6 +324,20 @@ export class LabelClickEvent extends CustomEvent<LabelIndex> {
 
     constructor(label: LabelIndex) {
         super(LabelClickEvent.type, { detail: label });
+    }
+}
+
+/**
+ * Dispatched when the user clicks a schematic item that carries an embedded
+ * hyperlink (KiCad authors these as `(href "...")` on a text item's effects).
+ * The detail is the raw URL as written in the file: an absolute URL for web
+ * links, or a project-relative path for links to files within the repo.
+ */
+export class LinkClickEvent extends CustomEvent<string> {
+    static readonly type = "sch:link:click";
+
+    constructor(url: string) {
+        super(LinkClickEvent.type, { detail: url });
     }
 }
 
@@ -493,6 +503,7 @@ export interface KiCanvasEventMap {
     [Online3dViewerUrlReady.type]: Online3dViewerUrlReady;
     [Online3dViewerLoaded.type]: Online3dViewerLoaded;
     [LabelClickEvent.type]: LabelClickEvent;
+    [LinkClickEvent.type]: LinkClickEvent;
     [HierarchicalSheetPinClickEvent.type]: HierarchicalSheetPinClickEvent;
     [NetItemSelectEvent.type]: NetItemSelectEvent;
     [OpenBarrierEvent.type]: OpenBarrierEvent;
@@ -514,11 +525,11 @@ declare global {
         [Online3dViewerUrlReady.type]: Online3dViewerUrlReady;
         [Online3dViewerLoaded.type]: Online3dViewerLoaded;
         [LabelClickEvent.type]: LabelClickEvent;
+        [LinkClickEvent.type]: LinkClickEvent;
         [HierarchicalSheetPinClickEvent.type]: HierarchicalSheetPinClickEvent;
         [KiCanvasFitterMenuEvent.type]: KiCanvasFitterMenuEvent;
         [OpenBarrierEvent.type]: OpenBarrierEvent;
         [SelectDesignatorEvent.type]: SelectDesignatorEvent;
-        [BoardContentReady.type]: BoardContentReady;
         [ComponentERCResultEvent.type]: ComponentERCResultEvent;
         [ProjectERCResultEvent.type]: ProjectERCResultEvent;
     }
@@ -532,11 +543,11 @@ declare global {
         [Online3dViewerUrlReady.type]: Online3dViewerUrlReady;
         [Online3dViewerLoaded.type]: Online3dViewerLoaded;
         [LabelClickEvent.type]: LabelClickEvent;
+        [LinkClickEvent.type]: LinkClickEvent;
         [HierarchicalSheetPinClickEvent.type]: HierarchicalSheetPinClickEvent;
         [KiCanvasFitterMenuEvent.type]: KiCanvasFitterMenuEvent;
         [OpenBarrierEvent.type]: OpenBarrierEvent;
         [SelectDesignatorEvent.type]: SelectDesignatorEvent;
-        [BoardContentReady.type]: BoardContentReady;
         [ComponentERCResultEvent.type]: ComponentERCResultEvent;
         [ProjectERCResultEvent.type]: ProjectERCResultEvent;
         [EcadOverlayClickEvent.type]: EcadOverlayClickEvent;

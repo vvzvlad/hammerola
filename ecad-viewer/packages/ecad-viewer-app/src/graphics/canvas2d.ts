@@ -287,15 +287,26 @@ export class Canvas2DRenderer extends Renderer {
         const path = new Path2D();
         let started = false;
 
-        for (const point of polygon.points) {
-            if (!started) {
-                path.moveTo(point.x, point.y);
-                started = true;
-            } else {
-                path.lineTo(point.x, point.y);
+        if (!polygon.points.length && polygon.vertices) {
+            // Triangles only (Polygon.from_triangles): fill each triangle.
+            const v = polygon.vertices;
+            for (let i = 0; i + 5 < v.length; i += 6) {
+                path.moveTo(v[i]!, v[i + 1]!);
+                path.lineTo(v[i + 2]!, v[i + 3]!);
+                path.lineTo(v[i + 4]!, v[i + 5]!);
+                path.closePath();
             }
+        } else {
+            for (const point of polygon.points) {
+                if (!started) {
+                    path.moveTo(point.x, point.y);
+                    started = true;
+                } else {
+                    path.lineTo(point.x, point.y);
+                }
+            }
+            path.closePath();
         }
-        path.closePath();
 
         this.#active_layer!.commands.push(
             new DrawCommand(path, css_color, null, 0),

@@ -31,7 +31,10 @@ import {
 } from "./painters/label";
 import { PinPainter } from "./painters/pin";
 import { LibSymbolPainter, SchematicSymbolPainter } from "./painters/symbol";
-import type { SymbolTransform } from "../../kicad/symbol-transform";
+import {
+    get_symbol_transform,
+    type SymbolTransform,
+} from "../../kicad/symbol-transform";
 
 class RectanglePainter extends SchematicItemPainter {
     classes = [schematic_items.Rectangle];
@@ -354,7 +357,11 @@ class TextPainter extends SchematicItemPainter {
     classes = [schematic_items.Text];
 
     layers_for(item: schematic_items.Text) {
-        return [LayerNames.notes];
+        // A hyperlinked text is a click target, so it needs a bbox on the
+        // interactive layer for picking, just like wires and symbol fields.
+        return item.hyperlink
+            ? [LayerNames.notes, LayerNames.interactive]
+            : [LayerNames.notes];
     }
 
     paint(layer: ViewLayer, t: schematic_items.Text) {
@@ -416,9 +423,15 @@ class PropertyPainter extends SchematicItemPainter {
     classes = [schematic_items.Property];
 
     layers_for(item: schematic_items.Property) {
-        return [LayerNames.symbol_field, LayerNames.interactive];
+        // A field carrying an embedded hyperlink is painted separately (see
+        // SchematicPainter.items_for) so it gets its own pick bbox; nested
+        // field painting merges into the parent symbol's bbox and the link
+        // would be unreachable. It only needs the invisible interactive
+        // layer for that.
+        return item.hyperlink
+            ? [LayerNames.interactive]
+            : [LayerNames.symbol_field, LayerNames.interactive];
     }
-
     paint(layer: ViewLayer, p: schematic_items.Property) {
         // KiCad stores property visibility on the property itself.  The text
         // effects object has its own hide flag for other text primitives, but
@@ -457,7 +470,14 @@ class PropertyPainter extends SchematicItemPainter {
         }
 
         const parent = p.parent as schematic_items.SchematicSymbol;
-        const transform = this.view_painter.current_symbol_transform;
+        // Painting a field through its symbol sets the current transform;
+        // painting it standalone (a pick-target pass for linked fields)
+        // resolves the placement from the field's owning symbol instead.
+        const transform =
+            this.view_painter.current_symbol_transform ??
+            (p.parent instanceof schematic_items.SchematicSymbol
+                ? get_symbol_transform(p.parent)
+                : undefined);
         const matrix = transform?.matrix ?? Matrix3.identity();
 
         let text =
@@ -537,7 +557,10 @@ class LibTextPainter extends SchematicItemPainter {
     classes = [schematic_items.LibText];
 
     layers_for(item: schematic_items.LibText) {
-        return [LayerNames.symbol_foreground];
+        // Same rule as TextPainter: a hyperlinked text is clickable.
+        return item.hyperlink
+            ? [LayerNames.symbol_foreground, LayerNames.interactive]
+            : [LayerNames.symbol_foreground];
     }
 
     paint(layer: ViewLayer, lt: schematic_items.LibText) {
@@ -701,7 +724,7 @@ class SchematicSheetPainter extends SchematicItemPainter {
 }
 
 /** The sheet rectangle alone — KiCad's SCH_SHEET::GetBodyBoundingBox. */
-function sheet_body_bbox(ss: schematic_items.SchematicSheet): BBox {
+export function sheet_body_bbox(ss: schematic_items.SchematicSheet): BBox {
     return new BBox(ss.at.position.x, ss.at.position.y, ss.size.x, ss.size.y);
 }
 
@@ -862,15 +885,30 @@ export class SchematicPainter extends BaseSchematicPainter {
     pin_transform: Map<schematic_items.PinInstance, SymbolTransform> =
         new Map();
 
-    protected override items_for(document: {
+    protected override *items_for(document: {
         items(): Generator<unknown, void, void>;
     }): Generator<unknown, void, void> {
-        return document instanceof schematic_items.KicadSch
-            ? document.items(
-                  this.diff_presentation?.schematicContexts?.get(document) ??
-                      this.instance_context,
-              )
-            : document.items();
+        if (document instanceof schematic_items.KicadSch) {
+            yield* document.items(
+                this.diff_presentation?.schematicContexts?.get(document) ??
+                    this.instance_context,
+            );
+        } else {
+            yield* document.items();
+            return;
+        }
+
+        // Symbol fields carrying embedded hyperlinks need a paint pass of
+        // their own: nested field painting merges into the parent symbol's
+        // bbox, so a link's hit box would never be recorded. Only visible
+        // ones — a hidden field has nothing to click.
+        for (const symbol of document.symbols.values()) {
+            for (const property of symbol.properties.values()) {
+                if (property.hyperlink && !property.hide) {
+                    yield property;
+                }
+            }
+        }
     }
 
     constructor(

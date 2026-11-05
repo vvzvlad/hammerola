@@ -23,19 +23,49 @@ function revokeCurrentBlobUrl() {
     }
 }
 
+/** The embedding window and the origins it may have. */
+export interface BridgeOptions {
+    parent?: Window;
+    allowedOrigins?: Iterable<string>;
+}
+
+/**
+ * Origins allowed to drive the bridge: the page's own, plus any listed in
+ * `<meta name="ecad-viewer-bridge-origins" content="https://a https://b">`.
+ */
+export function bridge_origins(doc: Document = document): Set<string> {
+    const origins = new Set([window.location.origin]);
+    const listed = doc
+        .querySelector('meta[name="ecad-viewer-bridge-origins"]')
+        ?.getAttribute("content");
+    for (const value of listed?.split(/\s+/) ?? []) {
+        try {
+            if (value) origins.add(new URL(value).origin);
+        } catch {
+            console.warn(`Ignoring invalid bridge origin: ${value}`);
+        }
+    }
+    return origins;
+}
+
+let parentWindow: Window | null = null;
+let allowedOrigins = new Set<string>();
+// The origin the parent last spoke from; replies go only there.
+let parentOrigin: string | null = null;
+
+function postToParent(message: unknown) {
+    if (!parentWindow || !parentOrigin) return;
+    parentWindow.postMessage(message, parentOrigin);
+}
+
 /**
  * Send error message to parent
  */
 function sendError(message: string) {
-    if (window.parent !== window) {
-        window.parent.postMessage(
-            {
-                type: ERROR_MESSAGE_TYPE,
-                message,
-            },
-            "*",
-        );
-    }
+    postToParent({
+        type: ERROR_MESSAGE_TYPE,
+        message,
+    });
 }
 
 /**
@@ -73,21 +103,28 @@ function handleLoadZipMessage(blob: Blob, filename?: string) {
  * Send ready notification to parent
  */
 function sendReady() {
-    if (window.parent !== window) {
-        window.parent.postMessage(
-            {
-                type: READY_MESSAGE_TYPE,
-            },
-            "*",
-        );
+    // The parent's origin is not known yet: offer readiness to each allowed
+    // one; the browser delivers only to the one that matches.
+    for (const origin of allowedOrigins) {
+        parentWindow?.postMessage({ type: READY_MESSAGE_TYPE }, origin);
     }
 }
 
-export const setup_iframe_bridge = () => {
+export const setup_iframe_bridge = (options: BridgeOptions = {}) => {
+    const parent = options.parent ?? window.parent;
+    // Not framed: nobody may drive the bridge.
+    if (parent === window) return;
+    parentWindow = parent;
+    allowedOrigins = new Set(options.allowedOrigins ?? bridge_origins());
+    parentOrigin = null;
+
     // Send ready notification on setup
     sendReady();
 
     window.addEventListener("message", (msg) => {
+        if (msg.source !== parentWindow) return;
+        if (!allowedOrigins.has(msg.origin)) return;
+        parentOrigin = msg.origin;
         if (typeof msg.data !== "object" || msg.data === null) return;
         if (typeof msg.data.type !== "string") return;
 
@@ -131,13 +168,10 @@ export const setup_iframe_bridge = () => {
 
     window.addEventListener(ImageExportResultEvent.type, (evt) => {
         const event = evt as ImageExportResultEvent;
-        window.parent.postMessage(
-            {
-                type: ImageExportResultEvent.type,
-                detail: event.detail,
-            },
-            "*",
-        );
+        postToParent({
+            type: ImageExportResultEvent.type,
+            detail: event.detail,
+        });
     });
 
     // Listen for ZIP load error to send error message to parent and revoke Blob URL

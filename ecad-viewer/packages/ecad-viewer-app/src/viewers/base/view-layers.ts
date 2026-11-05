@@ -378,6 +378,11 @@ export class ViewLayerSet implements IDisposable {
         }
     }
 
+    /** Whether `layer` is one of the document's own layers (not an overlay or selection layer). */
+    is_content_layer(layer: ViewLayer): boolean {
+        return this.#layer_map.get(layer.name) === layer;
+    }
+
     is_any_layer_highlighted() {
         for (const l of this.#layer_list) {
             if (l.highlighted) {

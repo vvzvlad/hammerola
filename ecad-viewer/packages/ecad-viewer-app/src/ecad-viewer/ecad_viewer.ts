@@ -1,4 +1,6 @@
 import { later } from "../base/async";
+import { NetTracker, type NetInstancePage } from "./net-tracking";
+import type { SchematicNetMembers } from "../viewers/schematic/net-highlight";
 import { listen } from "../base/events";
 import { BBox, Vec2 } from "../base/math";
 import {
@@ -18,7 +20,7 @@ import {
     normalize_variant_name,
     resolve_variant_request,
 } from "../kicanvas/project";
-import type { NetRef } from "../kicad/net_ref";
+import type { LabelKind, NetRef } from "../kicad/net_ref";
 import {
     EcadHighlightChangeEvent,
     resolve_board_net,
@@ -42,7 +44,6 @@ import { area_items, type AreaDocument } from "./area-items";
 import { schematicPageStep } from "./page-keys";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
-    BoardContentReady,
     EcadCommentAreaEvent,
     EcadOverlayClickEvent,
     ImageExportRequestEvent,
@@ -123,6 +124,7 @@ export type {
     EcadSourceUpdate,
 } from "./host-adapter";
 export type { EcadNetRef, EcadHighlightChangeDetail } from "./highlight";
+export type { SchematicNetMembers } from "../viewers/schematic/net-highlight";
 export { EcadHighlightChangeEvent } from "./highlight";
 export type { NetStatistics, NetStatisticsRef } from "../kicad/net_statistics";
 export {
@@ -431,12 +433,31 @@ import type { InputContainer } from "./input_container";
 import type { Online3dViewer } from "../3d-viewer/online_3d_viewer";
 import "../kc-ui/spinner";
 import { show_ecad_viewer } from "../eda_host/show_ecad_viewer";
-import "./ecad_viewer_global";
+import { safe_link_url } from "./ecad_viewer_global";
 import { ZipUtils } from "../utils/zip_utils";
 import { length } from "../base/iterator";
 import { PRISM_LOGO } from "../kc-ui/prism_logo";
 import type { BoardViewer } from "../viewers/board/viewer";
+import { MeasureTool, type MeasureState } from "../viewers/board/measure-tool";
+import type { MeasureUnits } from "../viewers/board/measure";
 import { SchematicViewer } from "../viewers/schematic/viewer";
+import {
+    board_view_stats,
+    set_board_view_gpu_sync,
+} from "../viewers/board/board-view";
+import { schematic_view_stats } from "../viewers/schematic/schematic-view";
+import { cull_settings, cull_stats } from "../graphics/webgl/cull";
+import themes from "../kicanvas/themes";
+import {
+    BoardInsetProvider,
+    InsetLink,
+    SchematicInsetProvider,
+    type InsetKind,
+    type InsetPeer,
+    type InsetProvider,
+    type InsetScene3D,
+    type SchematicInsetHost,
+} from "./insets";
 
 export class ECadViewer extends KCUIElement implements InputContainer {
     static override styles = [
@@ -528,6 +549,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
 
     constructor() {
         super();
+        // What a rail opening over the canvas must not cover: the item the
+        // last selection event named, in its own view's world space.
+        this.addEventListener(EcadSemanticSelectionEvent.type, (event) => {
+            const detail = (event as EcadSemanticSelectionEvent).detail;
+            this.#last_selection = detail?.bounds
+                ? { context: detail.sourceContext, bounds: detail.bounds }
+                : null;
+        });
         this.addDisposable(this.#project);
         this.addDisposable(this.#reference_project);
         this.provideContext("project", this.#project);
@@ -555,6 +584,18 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.addDisposable(
             listen(window, "keydown", (event) => {
                 this.#handle_host_keydown(event as KeyboardEvent);
+            }),
+        );
+        this.addDisposable(
+            listen(window, "keyup", (event) => {
+                this.#inset_link?.key_up(event as KeyboardEvent);
+                this.#tracker.key_up(event as KeyboardEvent);
+            }),
+        );
+        this.addDisposable(
+            listen(window, "blur", () => {
+                this.#inset_link?.key_up(null);
+                this.#tracker.key_up(null);
             }),
         );
     }
@@ -679,6 +720,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.#requested_variant = resolution.requested;
         this.#reflect_variant(resolution.requested);
         this.#apply_variant_request();
+        this.#schematic_inset_provider?.set_variant(this.getVariant());
         return resolution.known;
     }
 
@@ -727,10 +769,24 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.#safe_board_viewer()?.set_variant(resolution.effective);
     }
 
+    #last_selection: {
+        context: "SCH" | "PCB";
+        bounds: [number, number, number, number];
+    } | null = null;
+
     #apply_viewport_insets(): void {
-        this.#safe_board_viewer()?.set_viewport_insets(this.#viewport_insets);
+        this.#inset_link?.sync();
+        // A reload may have replaced the board viewer under measure mode.
+        if (this.#measure?.active) this.#measure.attach(this.#measure_viewer());
+        const reveal = this.#last_selection;
+        const box = reveal ? new BBox(...reveal.bounds) : null;
+        this.#safe_board_viewer()?.set_viewport_insets(
+            this.#viewport_insets,
+            reveal?.context === "PCB" ? box : null,
+        );
         this.#safe_schematic_viewer()?.set_viewport_insets(
             this.#viewport_insets,
+            reveal?.context === "SCH" ? box : null,
         );
     }
 
@@ -2467,6 +2523,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     #activate_tab_content(tabKind: TabKind): void {
         const previous = this.#active_tab;
         this.#active_tab = tabKind;
+        if (tabKind !== TabKind.pcb && this.has_sch) this.setMeasureMode(false);
         if (previous === TabKind.pcb && this.#board_app) {
             this.#board_app.tabMenuHidden = true;
         } else if (previous === TabKind.sch && this.#schematic_app) {
@@ -2487,6 +2544,10 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.#apply_viewer_activity();
         if (active) this.#restart_diff_animation();
         else this.#cancel_diff_animation();
+        // A hidden tab drops its unpinned previews; a shown one lays its
+        // insets and leaders out again (the camera may have moved meanwhile).
+        if (active) this.#inset_link?.shown();
+        else this.#inset_link?.hidden();
     }
 
     /**
@@ -2512,6 +2573,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      */
     public clearSelection(options: { keepHighlights?: boolean } = {}): void {
         this.#probe_generation += 1;
+        this.#last_selection = null;
         const board_viewer = this.#safe_board_viewer();
         const had_nets = (board_viewer?.highlighted_nets.size ?? 0) > 0;
         board_viewer?.clear_selection(options.keepHighlights === true);
@@ -2577,6 +2639,34 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     /** Fit the board camera to the highlighted copper. False when empty. */
+    /**
+     * Highlight nets on the schematic: every sheet dims and each net's
+     * members are drawn over it, on whichever sheet is open. The host supplies
+     * the members (the viewer has no netlist); an empty list clears it.
+     */
+    /**
+     * World view: every sheet the net of a label, sheet entry or power symbol
+     * reaches, on one canvas that pans and zooms like a sheet, with the
+     * connections between them. `~` on the schematic opens it too.
+     */
+    public async showWorldView(page: string, uuid: string): Promise<boolean> {
+        await this.ready;
+        return this.#tracker.show_world_view(page, uuid);
+    }
+
+    public hideWorldView() {
+        this.#tracker.hide_world_view();
+    }
+
+    public async setSchematicHighlightedNets(
+        nets: readonly SchematicNetMembers[],
+    ): Promise<void> {
+        await this.ready;
+        this.#safe_schematic_viewer()?.set_highlighted_nets(nets);
+        this.#schematic_inset_provider?.set_highlighted_nets(nets);
+        this.#tracker.set_highlighted_nets(nets);
+    }
+
     public focusHighlightedNets(): boolean {
         return this.#safe_board_viewer()?.focus_highlighted_nets() ?? false;
     }
@@ -2809,7 +2899,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         uuid: string;
         sheet: string;
         name: string;
-        kind?: "global" | "net" | "hierarchical";
+        kind?: LabelKind;
     }> {
         const candidates = [name];
         if (name.includes("/")) {
@@ -2836,6 +2926,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      */
     public async focusLabelInstance(uuid: string): Promise<boolean> {
         await this.ready;
+        // Navigating the main view brings it back in front.
+        this.hideWorldView();
         const ref = this.#project.find_net_item(uuid);
         if (!ref) return false;
         const sch = this.#project.file_by_name(ref.sheet_name);
@@ -2958,6 +3050,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         const orig = viewer.on_viewport_change.bind(viewer);
         viewer.on_viewport_change = () => {
             orig();
+            this.#inset_link?.sources_moved();
             if (viewer.active) this.#emit_camera_change();
         };
         viewer.__camerachange_hooked = true;
@@ -3143,6 +3236,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      * Awaits project readiness first. Uses the instance-tree page model.
      */
     public async showPage(pageId: string): Promise<void> {
+        this.hideWorldView();
         this.#trace_transition("page.show.request", {
             status: "start",
             requestedPage: pageId,
@@ -3242,8 +3336,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     #handle_host_keydown(event: KeyboardEvent) {
-        if (!this.#host_active || !this.has_sch || event.defaultPrevented)
-            return;
+        if (!this.#host_active || event.defaultPrevented) return;
         if (document.querySelector('[role="dialog"][data-state="open"]'))
             return;
         const target = event.composedPath()[0];
@@ -3253,6 +3346,27 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             (target instanceof HTMLElement && target.isContentEditable)
         )
             return;
+
+        if (
+            (event.key === "m" || event.key === "M") &&
+            (event.metaKey || event.ctrlKey) &&
+            event.shiftKey &&
+            !event.altKey
+        ) {
+            if (!event.repeat && this.#measure_viewer())
+                this.setMeasureMode(!this.measureMode);
+            if (this.#measure_viewer()) event.preventDefault();
+            return;
+        }
+        if (this.#inset_link?.key_down(event)) {
+            event.preventDefault();
+            return;
+        }
+        if (!this.has_sch) return;
+        if (this.#tracker.key_down(event)) {
+            event.preventDefault();
+            return;
+        }
 
         const direction = schematicPageStep(event);
         if (direction) {
@@ -3840,6 +3954,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         // Listen for ZIP blob received via postMessage
         this.addDisposable(
             listen(window, LoadZipEvent.type, async (event) => {
+                // A host that supplies sources owns what is shown.
+                if (this.getAttribute("source-mode") === "host") return;
                 await this.load_zip((event as LoadZipEvent).detail);
             }),
         );
@@ -4254,6 +4370,301 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         }
     }
 
+    #inset_link: InsetLink | null = null;
+    /** `~` on the schematic and the world view it opens. */
+    #tracker = new NetTracker({
+        pages: () => this.#net_instance_pages(),
+        viewer: () => this.#safe_schematic_viewer(),
+        scene_host: () => this.#schematic_provider_host(),
+        showing: () => this.#active_tab === TabKind.sch,
+        select: (detail) =>
+            this.dispatchEvent(
+                new EcadSemanticSelectionEvent(
+                    detail ?? { sourceContext: "SCH", itemType: "" },
+                ),
+            ),
+        open_page: (page, uuid) => void this.#open_page_at(page, uuid),
+    });
+
+    async #open_page_at(page: string, uuid?: string) {
+        await this.showPage(page);
+        if (uuid) this.#safe_schematic_viewer()?.zoom_fit_item(uuid);
+    }
+
+    /**
+     * Link this element to the one holding the other document (schematic ↔
+     * PCB). Hovering a pin or pad here then opens an inset of the peer's
+     * document. Pass null to unlink and close this element's insets.
+     */
+    public setInsetPeer(peer: InsetPeer | null) {
+        if (!peer) {
+            this.#inset_link?.dispose();
+            this.#inset_link = null;
+            return;
+        }
+        this.#ensure_inset_link().peer = peer;
+    }
+
+    /**
+     * Turn insets on for this element before a peer exists, so `I` and
+     * setInsetMode work while the other document is not loaded yet. Linking
+     * a peer later keeps the mode.
+     *
+     * Our edit (hammerola): `hostEscape` — the host takes Escape and calls
+     * `escapeInsets` itself, so the inset session listens for none, now or
+     * in a link made again after `setInsetPeer(null)`.
+     */
+    public enableInsets(options?: { hostEscape?: boolean }) {
+        if (options?.hostEscape) this.#inset_host_escape = true;
+        const link = this.#ensure_inset_link();
+        if (this.#inset_host_escape) link.session.own_escape();
+    }
+
+    #inset_host_escape = false;
+
+    /** Every schematic page instance with its place in the hierarchy. */
+    #net_instance_pages(): NetInstancePage[] {
+        return this.#project.pages.flatMap((page) => {
+            const document = page.document;
+            return document instanceof KicadSch
+                ? [
+                      {
+                          key: page.project_path,
+                          name: page.name ?? document.filename,
+                          document,
+                          parent_key: page.parent_project_path,
+                          sheet_uuid: page.sheet_uuid,
+                          sheet_path: page.sheet_path,
+                          context: page.schematic_context,
+                      },
+                  ]
+                : [];
+        });
+    }
+
+    #ensure_inset_link(): InsetLink {
+        this.#inset_link ??= new InsetLink({
+            insetProvider: (kind) => this.insetProvider(kind),
+            overlay_parent: () => this.shadowRoot,
+            source_viewers: () => ({
+                sch: this.has_sch ? this.#safe_schematic_viewer() : null,
+                pcb: this.has_pcb ? this.#safe_board_viewer() : null,
+            }),
+            mode_changed: (on) => {
+                // One click mode at a time: insets on ends measuring.
+                if (on) this.setMeasureMode(false);
+                this.#inset_link?.peer?.syncInsetMode?.(on);
+                this.#emit_inset_mode(on);
+            },
+        });
+        // Our edit (hammerola): a link made again keeps the host's Escape.
+        if (this.#inset_host_escape) this.#inset_link.session.own_escape();
+        this.#inset_link.sync();
+        return this.#inset_link;
+    }
+
+    /**
+     * Inset mode: hovering a pin or pad opens a preview of the other
+     * document and clicking pins it. `I` toggles it; holding Alt peeks while
+     * it is off. A linked peer follows.
+     */
+    public get insetMode(): boolean {
+        return this.#inset_link?.mode ?? false;
+    }
+
+    public setInsetMode(on: boolean) {
+        this.#ensure_inset_link().set_mode(on);
+    }
+
+    /**
+     * Escape for insets: close the preview, else every inset. Returns
+     * whether anything closed, so a host can stop its own Escape there.
+     */
+    public escapeInsets(): boolean {
+        return this.#inset_link?.session.escape() ?? false;
+    }
+
+    /** InsetPeer: the other element changed the mode. */
+    public syncInsetMode(on: boolean) {
+        if (!this.#inset_link || this.#inset_link.mode === on) return;
+        if (on) this.setMeasureMode(false);
+        this.#inset_link.set_mode(on, true);
+        this.#emit_inset_mode(on);
+    }
+
+    #emit_inset_mode(on: boolean) {
+        this.dispatchEvent(
+            new CustomEvent("ecad-viewer:inset-mode", {
+                detail: { on },
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    }
+
+    #measure: MeasureTool | null = null;
+    #measure_units: MeasureUnits = "mm";
+
+    /** The board viewer measure mode can run on: loaded and showing. */
+    #measure_viewer(): BoardViewer | null {
+        if (!this.has_pcb) return null;
+        if (this.has_sch && this.#active_tab !== TabKind.pcb) return null;
+        const viewer = this.#safe_board_viewer();
+        return viewer?.board ? viewer : null;
+    }
+
+    /**
+     * PCB measure mode: click two points to measure between them. Pads,
+     * vias and track ends snap; Shift places a free point.
+     * `Cmd/Ctrl+Shift+M` toggles it. Turning it on ends inset mode.
+     */
+    public get measureMode(): boolean {
+        return this.#measure?.active ?? false;
+    }
+
+    public setMeasureMode(on: boolean) {
+        if (on === this.measureMode) return;
+        if (on) {
+            const viewer = this.#measure_viewer();
+            if (!viewer) return;
+            if (this.insetMode) this.setInsetMode(false);
+            this.#measure ??= new MeasureTool((state) =>
+                this.#emit_measure(state),
+            );
+            this.#measure.units = this.#measure_units;
+            this.#measure.attach(viewer);
+        } else {
+            this.#measure?.attach(null);
+        }
+        this.dispatchEvent(
+            new CustomEvent("ecad-viewer:measure-mode", {
+                detail: { on: this.measureMode },
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    }
+
+    /**
+     * Escape for measure mode: clear the points, else leave the mode.
+     * Returns whether anything happened, so a host can stop its own Escape.
+     */
+    public escapeMeasure(): boolean {
+        if (!this.measureMode) return false;
+        if (this.#measure?.clear()) return true;
+        this.setMeasureMode(false);
+        return true;
+    }
+
+    /** Units of the on-canvas label; the host keeps the preference. */
+    public setMeasureUnits(units: MeasureUnits) {
+        this.#measure_units = units === "mil" ? "mil" : "mm";
+        if (this.#measure) this.#measure.units = this.#measure_units;
+    }
+
+    /** The current measure state, for hosts that mount late. */
+    public get measureState(): MeasureState | null {
+        return this.#measure?.active ? this.#measure.state : null;
+    }
+
+    #emit_measure(state: MeasureState) {
+        this.dispatchEvent(
+            new CustomEvent("ecad-viewer:measure", {
+                detail: state,
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    }
+
+    /** Close this element's insets. Returns whether any were open. */
+    public closeInsets(): boolean {
+        return this.#inset_link?.session.close_all() ?? false;
+    }
+
+    /** Open insets on this element; for hosts and tests. */
+    public get insetCount(): number {
+        return this.#inset_link?.session.count ?? 0;
+    }
+
+    #board_inset_provider: BoardInsetProvider | null = null;
+    #inset_scene_3d: InsetScene3D | null = null;
+
+    /**
+     * Give this element's PCB insets a 3D view (IN-61): T on a PCB inset
+     * then draws `scene`, the host's 3D board. Null removes it.
+     */
+    public setInset3D(scene: InsetScene3D | null) {
+        this.#inset_scene_3d = scene;
+        if (this.#board_inset_provider)
+            this.#board_inset_provider.scene3d = scene;
+    }
+    #schematic_inset_provider: SchematicInsetProvider | null = null;
+
+    /**
+     * Serves insets of this element's documents to the other element's
+     * insets: "pcb" is the board around a footprint, "sch" the schematic
+     * around a symbol. Null when this element holds no such document.
+     */
+    public insetProvider(kind: InsetKind): InsetProvider | null {
+        if (kind === "pcb") {
+            if (!this.has_pcb) return null;
+            if (!this.#board_inset_provider) {
+                this.#board_inset_provider = new BoardInsetProvider(() =>
+                    this.#safe_board_viewer(),
+                );
+                this.#board_inset_provider.scene3d = this.#inset_scene_3d;
+            }
+            return this.#board_inset_provider;
+        }
+        if (!this.has_sch) return null;
+        if (this.#schematic_inset_provider)
+            return this.#schematic_inset_provider;
+        this.#schematic_inset_provider = new SchematicInsetProvider(
+            this.#schematic_provider_host(),
+        );
+        this.#schematic_inset_provider.set_highlighted_nets(
+            this.#safe_schematic_viewer()?.highlighted_nets ?? [],
+        );
+        return this.#schematic_inset_provider;
+    }
+
+    /** What the schematic scene providers read: pages, theme, variant. */
+    #schematic_provider_host(): SchematicInsetHost {
+        return {
+            pages: () =>
+                this.#project.pages.flatMap((page) => {
+                    const document = page.document;
+                    return document instanceof KicadSch
+                        ? [
+                              {
+                                  key: page.project_path,
+                                  name: page.name ?? document.filename,
+                                  document,
+                                  context: page.schematic_context,
+                              },
+                          ]
+                        : [];
+                }),
+            theme: () =>
+                this.#safe_schematic_viewer()?.theme ??
+                themes.default.schematic,
+            container: () => this.shadowRoot ?? document.body,
+            variant: () => this.getVariant(),
+        };
+    }
+
+    /** Inset render timings and the GPU-sync switch, for benchmarks. */
+    static get insetDiagnostics() {
+        return {
+            board: board_view_stats,
+            schematic: schematic_view_stats,
+            setGpuSync: set_board_view_gpu_sync,
+            cull: cull_settings,
+            cullStats: cull_stats,
+        };
+    }
+
     #safe_board_viewer(): BoardViewer | null {
         try {
             return (this.#board_app?.viewer as BoardViewer | undefined) ?? null;
@@ -4352,6 +4763,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         // A click on empty canvas: tell the host so it can deselect, rather than
         // swallowing it and leaving the previous selection stuck.
         if (!item) {
+            this.#tracker.selected_in_main(null, null);
             this.dispatchEvent(
                 new EcadSemanticSelectionEvent({
                     sourceContext: "SCH",
@@ -4369,6 +4781,10 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             viewer?.instance_context,
         );
         if (!detail) return;
+        this.#tracker.selected_in_main(
+            item,
+            viewer?.instance_context?.project_path ?? null,
+        );
         this.#attach_item_bounds_sch(detail, item, viewer!);
         detail.operation = select.detail.operation ?? "replace";
         if (select.detail.modifiers) detail.modifiers = select.detail.modifiers;
@@ -4815,21 +5231,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             }
             this.#board_app.showPropertyPanel = this.showSelectionPanel;
             embed_to_tab(this.#board_app, TabKind.pcb);
-            if (!this.#project.has_3d) {
-                try {
-                    this.#project
-                        .get_file_text(
-                            this.#project.get_first_page(AssertType.PCB)!
-                                .filename,
-                        )
-                        .then((v) => {
-                            if (v)
-                                window.dispatchEvent(new BoardContentReady(v));
-                        });
-                } catch (e) {
-                    alert(e);
-                }
-            }
         }
 
         if (this.has_sch) {
@@ -4886,9 +5287,10 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         // Only a link when the host actually configured a destination.
         // `href=${undefined}` rendered a literal href="undefined", giving a
         // focusable control that navigated to a bogus relative path.
-        const corner_mark = window.ai_url
+        const ai_url = safe_link_url(window.ai_url);
+        const corner_mark = ai_url
             ? (html`<a
-                  href=${window.ai_url}
+                  href=${ai_url}
                   class="bottom-left-icon"
                   target="_blank"
                   rel="noopener noreferrer"

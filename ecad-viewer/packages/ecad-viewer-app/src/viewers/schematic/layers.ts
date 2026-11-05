@@ -88,6 +88,10 @@ export class LayerSet extends BaseLayerSet {
         yield this.by_name(LayerNames.symbol_pin)!;
         yield this.by_name(LayerNames.label)!;
         yield this.by_name(LayerNames.erc)!;
+        // Field text (Reference, Value, Datasheet, ...) sits on top of its
+        // symbol, so fields win over the symbol body underneath. Hyperlinked
+        // fields are click targets; this also makes plain field text pickable.
+        yield this.by_name(LayerNames.symbol_field)!;
         yield this.by_name(LayerNames.interactive)!;
     }
 }

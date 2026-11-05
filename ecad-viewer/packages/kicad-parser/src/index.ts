@@ -10,3 +10,4 @@ export * as boardProto from "./proto/board";
 export * as schematicProto from "./proto/schematic";
 export * as drawingSheetProto from "./proto/drawing-sheet";
 export * as commonProto from "./proto/common";
+export { split_board_bytes, merge_board_pods } from "./board_split";

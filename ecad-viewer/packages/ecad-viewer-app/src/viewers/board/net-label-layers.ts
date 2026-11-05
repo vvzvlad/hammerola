@@ -10,8 +10,8 @@
     the region and zooming inside the band cost nothing.
 */
 
-import { BBox, Camera2 } from "../../base/math";
-import { Color, Renderer } from "../../graphics";
+import { BBox } from "../../base/math";
+import { Color, Renderer, type RenderLayer } from "../../graphics";
 import { KicadPCB } from "../../kicad";
 import * as board_items from "../../kicad/board";
 import { CopperLayerNames, LayerNames, LayerSet, ViewLayer } from "./layers";
@@ -66,6 +66,12 @@ function bbox_intersects(a: BBox, b: BBox): boolean {
     return a.x <= b.x2 && a.x2 >= b.x && a.y <= b.y2 && a.y2 >= b.y;
 }
 
+/** What labels need from a camera: its zoom and the world box it shows. */
+export interface LabelCamera {
+    readonly zoom: number;
+    readonly bbox: BBox;
+}
+
 export class NetLabelLayers {
     /**
      * The cache's zoom quantum. `min_zoom` is a continuous per-item value,
@@ -96,15 +102,61 @@ export class NetLabelLayers {
      */
     #emphasized_nets: ReadonlySet<number> | null = null;
 
+    /**
+     * A fork (an inset's labels) shares its parent's candidates, options and
+     * emphasis, but keeps its own graphics instead of writing them into the
+     * shared label layers.
+     */
+    #parent: NetLabelLayers | null = null;
+    #detached = new Map<ViewLayer, RenderLayer>();
+
     constructor(
         public gfx: Renderer,
-        public camera: Camera2,
+        public camera: LabelCamera,
         public board: KicadPCB,
         public layer_set: LayerSet,
     ) {}
 
+    /** Labels for another view of the same scene (an inset). */
+    fork(camera: LabelCamera): NetLabelLayers {
+        if (!this.#built) this.#build_candidates();
+        const fork = new NetLabelLayers(
+            this.gfx,
+            camera,
+            this.board,
+            this.layer_set,
+        );
+        fork.#parent = this;
+        fork.#built = true;
+        fork.#candidates = this.#candidates;
+        fork.#layers = this.#layers;
+        fork.#copper_count = this.#copper_count;
+        return fork;
+    }
+
+    /**
+     * Run `fn` with this fork's label graphics in the shared label layers,
+     * then put the main view's back.
+     */
+    with_graphics<T>(fn: () => T): T {
+        const layers = [...this.#layers, this.#emphasis_layer()];
+        const saved = layers.map((layer) => layer.graphics);
+        layers.forEach((layer) => (layer.graphics = this.#detached.get(layer)));
+        try {
+            return fn();
+        } finally {
+            layers.forEach((layer, i) => (layer.graphics = saved[i]));
+        }
+    }
+
+    /** Free a fork's graphics. */
+    dispose(): void {
+        for (const graphics of this.#detached.values()) graphics.dispose();
+        this.#detached.clear();
+    }
+
     get options(): Readonly<NetLabelOptions> {
-        return this.#options;
+        return this.#parent?.options ?? this.#options;
     }
 
     set options(value: NetLabelOptions) {
@@ -112,7 +164,9 @@ export class NetLabelLayers {
     }
 
     get emphasized_nets(): ReadonlySet<number> | null {
-        return this.#emphasized_nets;
+        return this.#parent
+            ? this.#parent.emphasized_nets
+            : this.#emphasized_nets;
     }
 
     set emphasized_nets(nets: ReadonlySet<number> | null) {
@@ -125,8 +179,9 @@ export class NetLabelLayers {
      * a layer the user hides or shows mid-highlight.
      */
     #emphasis_key(): string {
-        if (!this.#emphasized_nets) return "";
-        const nets = Array.from(this.#emphasized_nets).sort().join(",");
+        const emphasized = this.emphasized_nets;
+        if (!emphasized) return "";
+        const nets = Array.from(emphasized).sort().join(",");
         const visible = this.#layers
             .map((layer) => (layer.visible ? "1" : "0"))
             .join("");
@@ -142,10 +197,8 @@ export class NetLabelLayers {
 
     /** Drop every label layer's graphics and force the next update to rebuild. */
     reset(): void {
-        for (const layer of [...this.#layers, this.#emphasis_layer()]) {
-            layer.graphics?.dispose();
-            layer.graphics = undefined;
-        }
+        for (const layer of [...this.#layers, this.#emphasis_layer()])
+            this.#set_graphics(layer, undefined);
         this.#last_region = null;
         this.#last_zoom = null;
         this.#last_options = null;
@@ -169,7 +222,7 @@ export class NetLabelLayers {
 
         const zoom = this.camera.zoom;
         const viewport = this.camera.bbox;
-        const options = this.#options;
+        const options = this.options;
         const band = NetLabelLayers.ZOOM_REBUILD_BAND;
         const emphasis = this.#emphasis_key();
         const options_changed =
@@ -222,7 +275,7 @@ export class NetLabelLayers {
                 candidate,
                 zoom,
                 region,
-                this.#options,
+                this.options,
             );
             if (layouts.length === 0) continue;
             const list = out.get(candidate.layer) ?? [];
@@ -413,7 +466,7 @@ export class NetLabelLayers {
     ): void {
         const by_layer = new Map<string, LabelLayout[]>();
         const emphasized: { layout: LabelLayout; color: Color }[] = [];
-        const nets = this.#emphasized_nets;
+        const nets = this.emphasized_nets;
         for (let i = 0; i < visible_count; i++) {
             const candidate = this.#candidates[i]!;
             if (!bbox_intersects(candidate.bbox, region)) continue;
@@ -436,8 +489,7 @@ export class NetLabelLayers {
         }
 
         for (const layer of this.#layers) {
-            layer.graphics?.dispose();
-            layer.graphics = undefined;
+            this.#set_graphics(layer, undefined);
 
             const layouts = by_layer.get(layer.name);
             if (!layouts || layouts.length === 0) continue;
@@ -446,18 +498,29 @@ export class NetLabelLayers {
             for (const layout of layouts) {
                 draw_label(this.gfx, layout, layer.color);
             }
-            layer.graphics = this.gfx.end_layer();
+            this.#set_graphics(layer, this.gfx.end_layer());
         }
 
         const emphasis = this.#emphasis_layer();
-        emphasis.graphics?.dispose();
-        emphasis.graphics = undefined;
+        this.#set_graphics(emphasis, undefined);
         if (emphasized.length) {
             this.gfx.start_layer(emphasis.name);
             for (const { layout, color } of emphasized) {
                 draw_label(this.gfx, layout, color);
             }
-            emphasis.graphics = this.gfx.end_layer();
+            this.#set_graphics(emphasis, this.gfx.end_layer());
         }
+    }
+
+    /** Replace (and free) a layer's label graphics: shared, or this fork's. */
+    #set_graphics(layer: ViewLayer, graphics: RenderLayer | undefined) {
+        if (this.#parent) {
+            this.#detached.get(layer)?.dispose();
+            if (graphics) this.#detached.set(layer, graphics);
+            else this.#detached.delete(layer);
+            return;
+        }
+        layer.graphics?.dispose();
+        layer.graphics = graphics;
     }
 }

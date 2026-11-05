@@ -1036,6 +1036,11 @@ export class Text {
     get shown_text() {
         return expand_text_vars(this.text, this.parent);
     }
+
+    /** Embedded hyperlink target authored on this text item, if any. */
+    get hyperlink(): string | undefined {
+        return this.effects.hyperlink;
+    }
 }
 
 export class LibText extends Text {
@@ -1078,6 +1083,11 @@ export class TextBox extends GraphicItem {
             this.size.y,
         );
     }
+
+    /** Embedded hyperlink target authored on this text box, if any. */
+    get hyperlink(): string | undefined {
+        return this.effects.hyperlink;
+    }
 }
 
 export class Label {
@@ -1098,6 +1108,11 @@ export class Label {
 
     get shown_text() {
         return unescape_string(this.text);
+    }
+
+    /** Embedded hyperlink target authored on this label, if any. */
+    get hyperlink(): string | undefined {
+        return this.effects.hyperlink;
     }
 }
 
@@ -1498,9 +1513,38 @@ export class Property {
         return expand_text_vars(this.text, this.parent);
     }
 
+    /** Embedded hyperlink target authored on this field's text, if any. */
+    get hyperlink(): string | undefined {
+        return this.effects?.hyperlink;
+    }
+
     get bbox() {
         return new BBox(this.at.position.x, this.at.position.y, 1, 1);
     }
+}
+
+/**
+ * The embedded hyperlink target carried by a schematic item, if any.
+ *
+ * KiCad authors hyperlinks as `(href "...")` on a text item's effects, so the
+ * target lives with the text — a plain text note, a label, or a symbol field.
+ * Use this when a click or hover needs to know whether the item under the
+ * pointer is a link without caring which exact class it is.
+ */
+export function item_hyperlink(item: unknown): string | undefined {
+    if (
+        item instanceof Text ||
+        item instanceof TextBox ||
+        item instanceof Label ||
+        item instanceof Property
+    ) {
+        return item.hyperlink;
+    }
+    if (item && typeof item === "object") {
+        const hyperlink = (item as { hyperlink?: unknown }).hyperlink;
+        if (typeof hyperlink === "string" && hyperlink) return hyperlink;
+    }
+    return undefined;
 }
 
 export type PinElectricalType =

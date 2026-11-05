@@ -53,10 +53,13 @@ export class Matrix3 {
      */
     to_DOMMatrix(): DOMMatrix {
         const e = this.elements;
+        // DOMMatrix([a, b, c, d, e, f]) maps x' = a·x + c·y + e and
+        // y' = b·x + d·y + f, the same as transform(): the inverse of
+        // from_DOMMatrix. Rotations depend on b and c not being swapped.
         // prettier-ignore
         return new DOMMatrix([
-            e[0]!, e[3]!,
-            e[1]!, e[4]!,
+            e[0]!, e[1]!,
+            e[3]!, e[4]!,
             e[6]!, e[7]!,
         ]);
     }

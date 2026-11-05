@@ -6,7 +6,7 @@
 
 import type { CrossHightAble } from "../../base/cross_highlight_able";
 import { Logger } from "../../base/log";
-import { BBox, Vec2 } from "../../base/math";
+import { BBox, Matrix3, Vec2 } from "../../base/math";
 import { Color, Renderer } from "../../graphics";
 import { WebGL2Renderer } from "../../graphics/webgl";
 import type { BoardTheme } from "../../kicad";
@@ -33,13 +33,15 @@ import type {
     ResolvedOverlayAnchor,
 } from "../base/overlay-scene";
 import { LayerNames, LayerSet, ViewLayer } from "./layers";
-import { NetLabelLayers } from "./net-label-layers";
+import type { SnapItem } from "./measure";
+import { NetLabelLayers, type LabelCamera } from "./net-label-layers";
 import {
     DEFAULT_NET_LABEL_OPTIONS,
     type LabelLayout,
     type NetLabelOptions,
 } from "./net-label-painter";
 import { BoardPainter } from "./painter";
+import { render_board_view, type BoardViewOptions } from "./board-view";
 import {
     diff_selection_copper_layers,
     type BoardDiffSelectionEntry,
@@ -165,6 +167,18 @@ export class BoardViewer extends DocumentViewer<
             labels.update();
         }
         super.draw();
+    }
+
+    /**
+     * Labels for another view of this board (an inset): same candidates,
+     * options and emphasis as the main view, its own zoom-gated graphics.
+     * Null while the scene has no labels (no board, comparison view).
+     */
+    public fork_net_labels(camera: LabelCamera): NetLabelLayers | null {
+        const labels = this.#net_labels_for_current_scene();
+        if (!labels) return null;
+        labels.options = this.#net_label_options;
+        return labels.fork(camera);
     }
 
     public get net_label_options(): Readonly<NetLabelOptions> {
@@ -363,6 +377,18 @@ export class BoardViewer extends DocumentViewer<
         }
     }
 
+    /**
+     * Render this board through another camera into `target`, a 2D canvas.
+     * Used by insets; see board-view.ts for how the shared context is used.
+     */
+    public render_view(
+        target: HTMLCanvasElement,
+        camera: (css_w: number, css_h: number) => Matrix3,
+        options?: BoardViewOptions,
+    ): boolean {
+        return render_board_view(this, target, camera, options);
+    }
+
     public highlight_fp(fp: board_items.Footprint) {
         // A footprint cross-probe replaces the net emphasis.
         this.#highlighted_nets = new Set();
@@ -525,6 +551,7 @@ export class BoardViewer extends DocumentViewer<
                     number: pad.number,
                     index: pad.index,
                     crossIndex: pad.cross_index,
+                    ...pad_identity(pad),
                 }),
             );
         } else {
@@ -591,9 +618,11 @@ export class BoardViewer extends DocumentViewer<
         return this.#layer_visibility_ctrl?.visibilities ?? null;
     }
 
-    find_items_under_pos(pos: Vec2) {
-        const items: BoardInteractiveItem[] = [];
-
+    /**
+     * Whether an item can be picked under the current layer state. Build it
+     * once per query: it captures the isolated and visible layer sets.
+     */
+    #pick_filter(): (item: BoardInteractiveItem) => boolean {
         // When one or more layers are isolated (highlighted from the layer
         // menu), only items on those layers are selectable. Otherwise a click
         // could still land on a dimmed trace on another layer, e.g. picking an
@@ -605,7 +634,7 @@ export class BoardViewer extends DocumentViewer<
 
         const visible_layers = this.#visible_layer_names();
 
-        const is_item_visible = (item: BoardInteractiveItem) => {
+        return (item: BoardInteractiveItem) => {
             // Isolation restricts selection to items that actually live on an
             // isolated layer. This uses the true layer set (on_layers), not the
             // loose is_on_layer, so a footprint or pad on the opposite side is
@@ -620,6 +649,33 @@ export class BoardViewer extends DocumentViewer<
                 if (item.is_on_layer(layer)) return true;
             return false;
         };
+    }
+
+    /**
+     * Measure snapping (PCB measure): the same visibility rule as picking,
+     * keyed by board item. Items the visitor never made pickable (arcs) are
+     * judged by their own layer.
+     */
+    public snap_filter(): (item: SnapItem) => boolean {
+        const pickable = this.#pick_filter();
+        const visible_layers = new Set(this.#visible_layer_names());
+        const highlighted_layers = new Set(
+            this.layers.highlighted_layer_names(),
+        );
+        return (item) => {
+            const interactive = this.#interactive_by_item.get(item);
+            if (interactive) return pickable(interactive);
+            const layer = "layer" in item ? item.layer : null;
+            if (!layer) return false;
+            return highlighted_layers.size
+                ? highlighted_layers.has(layer)
+                : visible_layers.has(layer);
+        };
+    }
+
+    find_items_under_pos(pos: Vec2) {
+        const items: BoardInteractiveItem[] = [];
+        const is_item_visible = this.#pick_filter();
 
         const check_depth = (depth: Depth) => {
             const layer_items = this.#interactive.get(depth) ?? [];
@@ -697,6 +753,7 @@ export class BoardViewer extends DocumentViewer<
     override type: ViewerType = ViewerType.PCB;
 
     #interactive: OrderedMap<Depth, BoardInteractiveItem[]> = OrderedMap();
+    #interactive_by_item = new WeakMap<object, BoardInteractiveItem>();
 
     #net_info: Map<number, NetProperty>;
 
@@ -923,8 +980,10 @@ export class BoardViewer extends DocumentViewer<
             for (let k = Depth.START; k < Depth.END; k++)
                 this.#interactive = this.#interactive.set(k, []);
 
+            this.#interactive_by_item = new WeakMap();
             for (const e of visitor.interactive_items) {
                 this.#interactive.get(e.depth)?.push(e);
+                if (e.item) this.#interactive_by_item.set(e.item, e);
                 const uuid =
                     e.item && "uuid" in e.item
                         ? e.item.uuid
@@ -1139,6 +1198,7 @@ export class BoardViewer extends DocumentViewer<
                     number: next.number,
                     index: next.index,
                     crossIndex: next.cross_index,
+                    ...pad_identity(next),
                 }),
             );
         }
@@ -1156,4 +1216,13 @@ export class BoardViewer extends DocumentViewer<
         }
         return matches;
     }
+}
+
+/** Designator and centre of a pad, for cross-document insets. */
+function pad_identity(pad: board_items.Pad) {
+    const box = pad.bbox;
+    return {
+        reference: pad.parent?.reference,
+        anchor: { x: box.x + box.w / 2, y: box.y + box.h / 2 },
+    };
 }
