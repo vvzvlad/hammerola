@@ -7,7 +7,12 @@
 import { Barrier } from "../../base/async";
 import { Disposables, type IDisposable } from "../../base/disposable";
 import { listen } from "../../base/events";
-import { BBox, Vec2, type CameraViewportInsets } from "../../base/math";
+import {
+    BBox,
+    Matrix3,
+    Vec2,
+    type CameraViewportInsets,
+} from "../../base/math";
 import type {
     MoveAndZoomOptions,
     WheelNavigationMode,
@@ -98,6 +103,9 @@ const LIBRARY_CROSS_PROBE_CHANNEL = "library-crossprobe";
 const COMMENT_AREA_PREVIEW_CHANNEL = "__comment-area-preview__";
 const MIN_COMMENT_AREA_SIZE = 0.5;
 
+/** Fired by Viewer.draw() each time it schedules a frame. */
+export const VIEWER_DRAW_REQUESTED = "ecad-viewer:draw-requested";
+
 export abstract class Viewer extends EventTarget {
     public renderer: Renderer;
     public viewport: Viewport;
@@ -127,6 +135,32 @@ export abstract class Viewer extends EventTarget {
 
     public loaded = new Barrier();
 
+    /**
+     * Consulted before a click selects. Returning true consumes the click:
+     * no selection, probe activation or overlay click follows.
+     */
+    public click_interceptor: ((event: MouseEvent) => boolean) | null = null;
+
+    /**
+     * Interceptors for a tool mode (PCB measure), consulted before
+     * click_interceptor so a mode wins over insets. The latest added runs
+     * first.
+     */
+    #mode_click_interceptors: ((event: MouseEvent) => boolean)[] = [];
+
+    public add_click_interceptor(
+        interceptor: (event: MouseEvent) => boolean,
+    ): IDisposable {
+        this.#mode_click_interceptors.unshift(interceptor);
+        return {
+            dispose: () => {
+                const index =
+                    this.#mode_click_interceptors.indexOf(interceptor);
+                if (index >= 0) this.#mode_click_interceptors.splice(index, 1);
+            },
+        };
+    }
+
     abstract type: ViewerType;
 
     public static MinZoom = 0.5;
@@ -141,6 +175,11 @@ export abstract class Viewer extends EventTarget {
     ) {
         super();
         this.interaction = resolve_viewer_interaction(interaction);
+    }
+
+    /** How this viewer pans and zooms, for views that should match it. */
+    get navigation_options(): ViewerNavigationOptions {
+        return this.interaction.navigation;
     }
 
     protected readonly interaction: {
@@ -233,6 +272,14 @@ export abstract class Viewer extends EventTarget {
                 }),
             );
 
+            // The canvas can move without resizing (a layout shift): read its
+            // position afresh whenever the pointer comes in.
+            this.disposables.add(
+                listen(this.canvas, "mouseenter", () => {
+                    this.#cached_rect = null;
+                }),
+            );
+
             this.disposables.add(
                 listen(this.canvas, "mouseleave", () => {
                     if (this.#hover_frame !== null) {
@@ -253,6 +300,12 @@ export abstract class Viewer extends EventTarget {
                 listen(this.canvas, "click", (e) => {
                     if (!this.#active) return;
                     if (this.#comment_mode) return;
+                    // A tool mode (measure), then a host feature (inset
+                    // mode), may claim the click.
+                    for (const intercept of this.#mode_click_interceptors)
+                        if (intercept(e)) return;
+                    if (this.click_interceptor?.(e)) return;
+                    this.#refresh_pointer(e);
                     const overlay = this.#overlay_scenes?.hit_test(
                         this.#mouse_position,
                     );
@@ -268,6 +321,9 @@ export abstract class Viewer extends EventTarget {
                 listen(this.canvas, "dblclick", (e) => {
                     if (!this.#active) return;
                     if (this.#comment_mode) return;
+                    // Two quick clicks in a tool mode are two points.
+                    if (this.#mode_click_interceptors.length) return;
+                    this.#refresh_pointer(e);
                     this.on_dblclick(this.#mouse_position);
                 }),
             );
@@ -381,11 +437,14 @@ export abstract class Viewer extends EventTarget {
 
     /**
      * Reserve screen-space edges for host-owned overlay rails without
-     * changing the canvas layout box. The current visible focal point is kept
-     * centered in the remaining safe area and the retained scene is redrawn.
+     * changing the canvas layout box. Fits and zooms use the remaining safe
+     * area from then on, but the camera stays where it is: a rail sliding in
+     * does not move the drawing. Only `reveal`, when given and covered by the
+     * new insets, is nudged back into the safe area by the smallest pan.
      */
     public set_viewport_insets(
         insets: Partial<CameraViewportInsets> | null,
+        reveal?: BBox | null,
     ): void {
         const camera = this.viewport?.camera;
         if (!camera) return;
@@ -404,30 +463,73 @@ export abstract class Viewer extends EventTarget {
         ) {
             return;
         }
-        const viewport = camera.viewport_size;
-        const can_preserve =
-            viewport.x > 0 &&
-            viewport.y > 0 &&
-            Number.isFinite(camera.zoom) &&
-            camera.zoom > 0;
-        const focal = can_preserve
-            ? camera.screen_to_world(camera.fit_viewport_center)
-            : null;
-
         camera.fit_insets = normalized;
-        if (focal) {
-            const safe_center = camera.fit_viewport_center;
-            camera.center.set(
-                focal.x + (viewport.x / 2 - safe_center.x) / camera.zoom,
-                focal.y + (viewport.y / 2 - safe_center.y) / camera.zoom,
-            );
+        if (reveal && this.#reveal_in_safe_area(reveal)) this.draw();
+    }
+
+    /**
+     * Pan the least needed to bring `box` (world) inside the safe area; a box
+     * larger than the area on an axis is centred on that axis instead. True
+     * when the camera moved.
+     */
+    #reveal_in_safe_area(box: BBox): boolean {
+        const camera = this.viewport?.camera;
+        const viewport = camera?.viewport_size;
+        if (!camera || !viewport || viewport.x <= 0 || viewport.y <= 0) {
+            return false;
         }
-        this.#cached_rect = null;
-        this.draw();
+        const corners = [
+            new Vec2(box.x, box.y),
+            new Vec2(box.x2, box.y),
+            new Vec2(box.x, box.y2),
+            new Vec2(box.x2, box.y2),
+        ].map((corner) => camera.world_to_screen(corner));
+        const xs = corners.map((corner) => corner.x);
+        const ys = corners.map((corner) => corner.y);
+        const insets = camera.fit_insets;
+        const shift = (lo: number, hi: number, min: number, max: number) => {
+            if (hi - lo > max - min) return (min + max) / 2 - (lo + hi) / 2;
+            if (lo < min) return min - lo;
+            if (hi > max) return max - hi;
+            return 0;
+        };
+        const dx = shift(
+            Math.min(...xs),
+            Math.max(...xs),
+            insets.left,
+            viewport.x - insets.right,
+        );
+        const dy = shift(
+            Math.min(...ys),
+            Math.max(...ys),
+            insets.top,
+            viewport.y - insets.bottom,
+        );
+        if (!dx && !dy) return false;
+        // Screen deltas to world through the camera, so rotation and a
+        // flipped board view pan the right way.
+        const origin = camera.screen_to_world(new Vec2(0, 0));
+        const moved = camera.screen_to_world(new Vec2(dx, dy));
+        camera.center.set(
+            camera.center.x - (moved.x - origin.x),
+            camera.center.y - (moved.y - origin.y),
+        );
+        return true;
     }
 
     #cached_rect: DOMRect | null = null;
     #rect_invalidator_installed = false;
+
+    /**
+     * Map a click to the world from the event itself. The position the last
+     * mousemove left is stale once the camera has moved under a still
+     * pointer (a fit on load, a page switch, a pan), and the canvas may have
+     * moved too.
+     */
+    #refresh_pointer(e: MouseEvent) {
+        this.#cached_rect = null;
+        this.on_mouse_change(e);
+    }
 
     #get_canvas_rect(): DOMRect {
         if (!this.#rect_invalidator_installed) {
@@ -518,6 +620,13 @@ export abstract class Viewer extends EventTarget {
     public get fit_zoom(): number {
         return this.viewport?.camera.zoom ?? 1;
     }
+
+    /**
+     * Opacity for every document layer while something is drawn over them
+     * (a schematic net highlight), or null to draw them as they are. Overlay,
+     * selection and extension layers are never dimmed.
+     */
+    public content_dim: number | null = null;
 
     public set_overlay_scene(
         scene: EcadOverlayScene,
@@ -652,7 +761,20 @@ export abstract class Viewer extends EventTarget {
         // whatever set it: a fit after a document loads (`zoom_fit_top_item`)
         // moves the camera without a viewport change, and the overlays the
         // load compiled into its new layers were sized for the zoom before.
+        // Here and not in `render_layers`, which every inset calls with its
+        // own camera on every frame it draws.
         this.#overlay_scenes?.refresh_screen_sized();
+
+        this.render_layers(this.viewport.camera.matrix);
+    }
+
+    /**
+     * Draw every visible layer through `camera` into whatever target the
+     * renderer is bound to. The main frame passes its own camera; insets pass
+     * theirs.
+     */
+    public render_layers(camera: Matrix3) {
+        if (!this.layers) return;
 
         // Render all layers in display order (back to front). Allocate the
         // available clip-space depth across the layers that will actually be
@@ -666,7 +788,6 @@ export abstract class Viewer extends EventTarget {
         );
         const depth_step = 0.98 / Math.max(1, drawable_layer_count);
         let depth = depth_step;
-        const camera = this.viewport.camera.matrix;
         const should_dim = this.layers.is_any_layer_highlighted();
 
         // Skip blending for fully-opaque layers (same visual, less GPU work).
@@ -680,6 +801,13 @@ export abstract class Viewer extends EventTarget {
 
                 if (should_dim && !layer.highlighted) {
                     alpha = 0.25;
+                }
+                if (
+                    this.content_dim !== null &&
+                    this.layers.is_content_layer(layer)
+                ) {
+                    // Schematic layers leave opacity unset.
+                    alpha = Math.min(alpha ?? 1, this.content_dim);
                 }
 
                 if (gl) {
@@ -720,6 +848,9 @@ export abstract class Viewer extends EventTarget {
             if (this.disposables.isDisposed) return;
             this.on_draw();
         });
+        // Something on screen changed (state, highlight, camera): views that
+        // borrow this scene, like insets, redraw on their next frame too.
+        this.dispatchEvent(new Event(VIEWER_DRAW_REQUESTED));
     }
 
     /** Immediate draw — used after unhide + zoom-fit so the first frame is not zoom=0. */

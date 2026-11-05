@@ -11,7 +11,7 @@ import { Logger } from "../base/log";
 import { dirname } from "../base/paths";
 
 import { DrawingSheet, KicadPCB, KicadSch, ProjectSettings } from "../kicad";
-import { parse_drawing_sheet } from "kicad-parser";
+import { merge_board_pods, parse_drawing_sheet } from "kicad-parser";
 import * as Comlink from "comlink";
 import {
     BoardBomItemVisitor,
@@ -26,6 +26,7 @@ import {
     NetLabel,
     SchematicInstanceContext,
 } from "../kicad/schematic";
+import type { FilledPolygon } from "../kicad/board";
 import { SchematicBomVisitor } from "../kicad/schematic_bom_visitor";
 import { NewStrokeGlyph } from "../kicad/text/newstroke-glyphs";
 
@@ -41,6 +42,7 @@ import {
     KICAD_SCH_EXT,
     KICAD_WKS_EXT,
 } from "./file_ext";
+import { ParseCache } from "./parse_cache";
 import { WorkerPool } from "./worker_pool";
 import { ecadPerfLog, formatBytes, isEcadPerfLogEnabled } from "./perf_log";
 
@@ -135,14 +137,36 @@ function get_shared_pool(): WorkerPool {
     return _shared_pool;
 }
 
-// Parse de-duplication + result cache. Callers should supply a blob identity
-// (Git blob SHA in Prism); standalone callers fall back to a full-content hash.
-// Sampling a few characters is not safe for two revisions of the same file.
-const _parse_cache = new Map<string, Promise<unknown>>();
-const _PARSE_CACHE_MAX = 24;
+// A board at least this large is split into self-contained chunks parsed in
+// parallel on the pool (kicad-parser's board_split.ts), about one chunk per
+// PARALLEL_PARSE_CHUNK_BYTES and never more than PARALLEL_PARSE_MAX_CHUNKS.
+// Cold loads in Chrome: EDA-04903 (56.8 MB, 4 chunks) 3835 -> 2997 ms and
+// jumperless_v5r7 (26.7 MB, 3 chunks) 1908 -> 1655 ms. At 16.4 MB
+// (speedy_processing_module, 2 chunks) the worker saved only 50 ms, within
+// run-to-run noise, so smaller boards keep the single parse.
+const PARALLEL_PARSE_MIN_BYTES = 20 * 1024 * 1024;
+// Zone fills with at least this many points are triangulated in the pool.
+const ZONE_WORKER_MIN_POINTS = 5_000;
+const PARALLEL_PARSE_CHUNK_BYTES = 12 * 1024 * 1024;
+const PARALLEL_PARSE_MAX_CHUNKS = 4;
+
+function parallel_parse_chunks(bytes: number, pool_size: number): number {
+    if (bytes < PARALLEL_PARSE_MIN_BYTES) return 1;
+    return Math.max(
+        1,
+        Math.min(
+            PARALLEL_PARSE_MAX_CHUNKS,
+            pool_size,
+            Math.ceil(bytes / PARALLEL_PARSE_CHUNK_BYTES),
+        ),
+    );
+}
+
+// Parse de-duplication + result cache, keyed on a hash of the full content
+// (sampling a few characters is not safe for two revisions of the same file)
+// and budgeted by source bytes -- see parse_cache.ts.
+const _parse_cache = new ParseCache(24, 32 * 1024 * 1024);
 const _PARSER_CACHE_VERSION = "kicad-parser-v2";
-let _parse_cache_hits = 0;
-let _parser_invocations = 0;
 
 export type EcadParserPerfSnapshot = {
     cacheHits: number;
@@ -151,14 +175,35 @@ export type EcadParserPerfSnapshot = {
 
 export function getParserPerfSnapshot(): EcadParserPerfSnapshot {
     return {
-        cacheHits: _parse_cache_hits,
-        parserInvocations: _parser_invocations,
+        cacheHits: _parse_cache.hits,
+        parserInvocations: _parse_cache.misses,
     };
 }
 
-function _parse_key(filename: string, content: string): string {
-    // Two independent 32-bit FNV-1a streams make accidental collisions
-    // vanishingly unlikely without making cache lookup asynchronous.
+/**
+ * The parse cache key. A SHA-256 of the file's UTF-8 bytes where the browser
+ * offers crypto.subtle (secure contexts: https or localhost) -- it runs off
+ * the main thread, where a JS hash of a 56.8 MB board cost ~86 ms -- and two
+ * 32-bit FNV-1a streams over the text otherwise.
+ */
+async function _parse_key(
+    filename: string,
+    bytes: Uint8Array,
+    content: string,
+): Promise<string> {
+    const subtle = globalThis.crypto?.subtle;
+    if (subtle) {
+        try {
+            const digest = new Uint8Array(
+                await subtle.digest("SHA-256", bytes as BufferSource),
+            );
+            let hex = "";
+            for (const b of digest) hex += b.toString(16).padStart(2, "0");
+            return `${_PARSER_CACHE_VERSION}:${filename}:sha256:${hex}`;
+        } catch {
+            // Fall through to the JS hash.
+        }
+    }
     let first = 0x811c9dc5;
     let second = 0x9e3779b9;
     for (let index = 0; index < content.length; index++) {
@@ -170,27 +215,22 @@ function _parse_key(filename: string, content: string): string {
         first >>> 0
     ).toString(16)}:${(second >>> 0).toString(16)}`;
 }
-function dedup_parse<T>(
+
+/**
+ * Parse once per distinct file. The key is computed before the cache is
+ * consulted, and the entry is set synchronously after that, so concurrent
+ * loads of the same file still share one parse. `bytes` must not be
+ * transferred until this has computed the key -- `run` is only called after.
+ */
+async function dedup_parse<T>(
     filename: string,
+    bytes: Uint8Array,
     content: string,
     run: () => Promise<T>,
 ): Promise<T> {
-    const key = _parse_key(filename, content);
-    const cached = _parse_cache.get(key);
-    if (cached) {
-        _parse_cache_hits += 1;
-        ecadPerfLog(`cache=hit  ${filename}`);
-        return cached as Promise<T>;
-    }
-    _parser_invocations += 1;
-    const p = run();
-    p.catch(() => _parse_cache.delete(key));
-    _parse_cache.set(key, p);
-    if (_parse_cache.size > _PARSE_CACHE_MAX) {
-        const oldest = _parse_cache.keys().next().value;
-        if (oldest !== undefined) _parse_cache.delete(oldest);
-    }
-    return p;
+    const key = await _parse_key(filename, bytes, content);
+    if (_parse_cache.has(key)) ecadPerfLog(`cache=hit  ${filename}`);
+    return _parse_cache.get_or_run(key, bytes.byteLength, run);
 }
 
 export class Project extends EventTarget implements IDisposable {
@@ -716,17 +756,81 @@ export class Project extends EventTarget implements IDisposable {
         });
     }
 
+    /**
+     * Triangulate a board's large zone fills on the worker pool, in parallel,
+     * and leave the triangles on each FilledPolygon for the zone painter.
+     * Done serially on the main thread during paint, EDA-04903's six planes
+     * cost 78-132 ms each even after strip triangulation. Fills below
+     * ZONE_WORKER_MIN_POINTS stay on the main thread: shipping them costs
+     * more than triangulating them. A failure here only means the painter
+     * triangulates as before.
+     */
+    async #triangulate_zone_fills(doc: KicadPCB) {
+        const fills: FilledPolygon[] = [];
+        for (const zone of doc.zones) {
+            for (const fill of zone.filled_polygons ?? []) {
+                if (fill.point_count >= ZONE_WORKER_MIN_POINTS) {
+                    fills.push(fill);
+                }
+            }
+        }
+        if (!fills.length) return;
+
+        const t0 = isEcadPerfLogEnabled() ? performance.now() : 0;
+        // A copy: the rings are transferred to the workers, which would
+        // detach the fill's own packed coordinates.
+        const rings = fills.map((fill) => fill.coords.slice());
+
+        // Largest first, each to the lightest group, one group per worker.
+        const groups: number[][] = Array.from(
+            { length: Math.min(this._pool.size, fills.length) },
+            () => [],
+        );
+        const load = groups.map(() => 0);
+        const order = rings
+            .map((_, i) => i)
+            .sort((a, b) => rings[b]!.length - rings[a]!.length);
+        for (const i of order) {
+            const g = load.indexOf(Math.min(...load));
+            groups[g]!.push(i);
+            load[g]! += rings[i]!.length;
+        }
+
+        try {
+            await Promise.all(
+                groups.map(async (group) => {
+                    const batch = group.map((i) => rings[i]!);
+                    const triangles = await this._pool.run((worker) =>
+                        worker.triangulate_rings(
+                            Comlink.transfer(
+                                batch,
+                                batch.map((r) => r.buffer as ArrayBuffer),
+                            ),
+                        ),
+                    );
+                    group.forEach((i, j) => {
+                        fills[i]!.triangles = triangles[j];
+                        fills[i]!.triangles_bbox = fills[i]!.bbox;
+                    });
+                }),
+            );
+        } catch (e) {
+            log.warn(`zone triangulation in workers failed: ${e}`);
+            for (const fill of fills) {
+                fill.triangles = undefined;
+                fill.triangles_bbox = undefined;
+            }
+        }
+
+        if (t0) {
+            ecadPerfLog(
+                `zone fills  ${doc.filename}  ${fills.length} triangulated in workers  ${(performance.now() - t0).toFixed(0)}ms`,
+            );
+        }
+    }
+
     async _load_blob(blob: EcadBlob) {
         const file_content = blob.content;
-        // Check if file content contains CJK characters
-        if (
-            !this._found_cjk &&
-            file_content.match(
-                /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\uac00-\ud7af]/,
-            ) !== null
-        ) {
-            this._found_cjk = true;
-        }
 
         if (this._files_by_name.has(blob.filename)) {
             return this._files_by_name.get(blob.filename);
@@ -738,17 +842,59 @@ export class Project extends EventTarget implements IDisposable {
         const perf = this.#perf_accum;
         const t_worker0 = perf ? performance.now() : 0;
 
-        const pod = await dedup_parse(blob.filename, blob.content, () => {
-            const buffer = new TextEncoder().encode(blob.content).buffer;
-            return this._pool.run(async (worker) => {
-                if (perf) await worker.set_perf_log(true);
-                return is_pcb
-                    ? worker.parse_board(Comlink.transfer(buffer, [buffer]))
-                    : worker.parse_schematic(
-                          Comlink.transfer(buffer, [buffer]),
-                      );
-            });
-        });
+        const bytes = new TextEncoder().encode(blob.content);
+        // The worker reports whether the text has CJK characters (it needs
+        // the full glyph set), so that scan stays off the main thread and is
+        // cached with the parse.
+        const parsed = await dedup_parse(
+            blob.filename,
+            bytes,
+            file_content,
+            async () => {
+                const buffer = bytes.buffer as ArrayBuffer;
+                const k = is_pcb
+                    ? parallel_parse_chunks(buffer.byteLength, this._pool.size)
+                    : 1;
+                if (k > 1) {
+                    const chunks = await this._pool.run((worker) =>
+                        worker.split_board(
+                            Comlink.transfer(buffer, [buffer]),
+                            k,
+                        ),
+                    );
+                    const pods = await Promise.all(
+                        chunks.map((chunk) =>
+                            this._pool.run(async (worker) => {
+                                if (perf) await worker.set_perf_log(true);
+                                return worker.parse_board(
+                                    Comlink.transfer(chunk, [chunk]),
+                                );
+                            }),
+                        ),
+                    );
+                    if (perf) {
+                        ecadPerfLog(
+                            `parallel parse  ${filename}  chunks=${chunks.length}`,
+                        );
+                    }
+                    return {
+                        pod: merge_board_pods(pods.map((p) => p.pod)),
+                        has_cjk: pods.some((p) => p.has_cjk),
+                    };
+                }
+                return this._pool.run(async (worker) => {
+                    if (perf) await worker.set_perf_log(true);
+                    return is_pcb
+                        ? worker.parse_board(Comlink.transfer(buffer, [buffer]))
+                        : worker.parse_schematic(
+                              Comlink.transfer(buffer, [buffer]),
+                          );
+                });
+            },
+        );
+
+        const pod = parsed.pod;
+        if (parsed.has_cjk) this._found_cjk = true;
 
         const t_worker1 = perf ? performance.now() : 0;
         const t_model0 = t_worker1;
@@ -761,6 +907,10 @@ export class Project extends EventTarget implements IDisposable {
         doc.project = this;
 
         const t_model1 = perf ? performance.now() : 0;
+
+        if (doc instanceof KicadPCB) {
+            await this.#triangulate_zone_fills(doc);
+        }
 
         if (perf) {
             const workerMs = t_worker1 - t_worker0;
@@ -801,9 +951,29 @@ export class Project extends EventTarget implements IDisposable {
                     this._label_name_refs.get(it.text)!.push(ref);
                 }
             }
+
+            // A sheet entry carries the net into its child sheet, so it is an
+            // instance of that net like a label is.
+            for (const sheet of doc.sheets) {
+                for (const pin of sheet.pins) {
+                    if (!pin.uuid) continue;
+                    const ref = new NetRef(
+                        doc.filename,
+                        pin.name,
+                        pin.uuid,
+                        "sheet-pin",
+                    );
+                    this._net_item_refs.set(pin.uuid, ref);
+                    if (!this._label_name_refs.has(pin.name))
+                        this._label_name_refs.set(pin.name, []);
+                    this._label_name_refs.get(pin.name)!.push(ref);
+                }
+            }
         }
         this._files_by_name.set(filename, doc);
-        this._file_content.set(filename, file_content);
+        // A board or schematic is fully parsed by now and is never re-read
+        // from its text, so it is not kept: that held a second copy of every
+        // file -- 57 MB of heap for EDA-04903.
         return doc;
     }
 
@@ -1120,6 +1290,30 @@ export class Project extends EventTarget implements IDisposable {
         return true;
     }
 
+    /**
+     * The UUID KiCad 10 roots this schematic's instance paths at.
+     *
+     * KiCad 10 lists the top-level sheets in the project file
+     * (`schematic.top_level_sheets`), and symbol and sheet instance paths
+     * start at that sheet's UUID rather than the schematic file's own. The
+     * two usually match, but not in an imported project, where every
+     * instance lookup then missed and variants never changed the drawing.
+     * A host may load the root under another name, so a lone top-level sheet
+     * is taken as the root's.
+     */
+    #top_level_sheet_uuid(root: KicadSch): string | undefined {
+        const listed = (
+            this.settings.schematic as { top_level_sheets?: unknown }
+        ).top_level_sheets;
+        if (!Array.isArray(listed)) return undefined;
+        const sheets = listed.filter(
+            (sheet): sheet is { uuid: string; filename?: unknown } =>
+                typeof sheet?.uuid === "string" && sheet.uuid !== "",
+        );
+        const named = sheets.find((sheet) => sheet.filename === root.filename);
+        return (named ?? (sheets.length === 1 ? sheets[0] : undefined))?.uuid;
+    }
+
     _determine_schematic_hierarchy() {
         // KiCad schematic navigation is an instance tree. A schematic file can
         // be instantiated more than once, so filenames alone cannot identify a
@@ -1144,7 +1338,7 @@ export class Project extends EventTarget implements IDisposable {
         const root_page = new ProjectPage(
             this,
             root.filename,
-            `/${root.uuid}`,
+            `/${this.#top_level_sheet_uuid(root) ?? root.uuid}`,
             "Root",
             root.sheet_instances?.get("/")?.page ?? "1",
         );

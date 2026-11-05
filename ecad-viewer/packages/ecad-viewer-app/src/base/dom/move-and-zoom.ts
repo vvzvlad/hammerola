@@ -5,8 +5,8 @@
 */
 
 import { BBox, Camera2, Vec2 } from "../math";
+import { WHEEL_ZOOM_RATE, wheel_gesture } from "./wheel-gesture";
 
-const page_delta_multiplier = 24;
 const zoom_speed = 0.005;
 const pan_speed = 1;
 const drag_threshold = 3;
@@ -279,25 +279,18 @@ export class MoveAndZoom {
         e.preventDefault();
 
         // The wheel is a touchpad's: a two-finger swipe pans, and a pinch,
-        // which arrives with Control held, zooms about the pointer. The
-        // numbers are the hub's Gerber view's (`wheelMove` in
-        // ui/src/gerber.js): 16 px to a line, the zoom delta clamped to
-        // 40 px, 0.01 a pixel.
-        const step =
-            e.deltaMode === WheelEvent.DOM_DELTA_LINE
-                ? 16
-                : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
-                  ? page_delta_multiplier
-                  : 1;
+        // which arrives with Control held, zooms about the pointer
+        // (`wheel_gesture`). `#handle_zoom` scales by `zoom_speed`, hence
+        // the rate divided by it.
+        const gesture = wheel_gesture(e);
         this.#rect = this.target.getBoundingClientRect();
-        if (e.ctrlKey) {
+        if (gesture.kind === "zoom") {
             this.#handle_zoom(
-                Math.max(-40, Math.min(40, e.deltaY * step)) *
-                    (0.01 / zoom_speed),
+                gesture.by * (WHEEL_ZOOM_RATE / zoom_speed),
                 this.#relative_mouse_pos(e),
             );
         } else {
-            this.#handle_pan(e.deltaX * step, e.deltaY * step);
+            this.#handle_pan(gesture.dx, gesture.dy);
         }
 
         this.#dispatch_panzoom(e);

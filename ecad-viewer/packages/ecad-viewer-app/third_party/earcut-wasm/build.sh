@@ -8,16 +8,24 @@
 #
 #   ./build.sh && git diff --stat earcut_wasm.mjs
 #
-# SINGLE_FILE inlines the wasm as base64 inside the ES module. That costs ~30%
+# SINGLE_FILE inlines the wasm inside the ES module. That costs ~30%
 # over a side-by-side .wasm, and buys the only thing that matters here: the
 # viewer stays a single esbuild bundle with no second artifact to serve, no
 # path to resolve at runtime, and nothing for a host like Prism to vendor
 # beyond the JS it already vendors.
+#
+# SINGLE_FILE_BINARY_ENCODE=0 keeps that inlining base64. Emscripten's default
+# since 4.x writes the raw bytes as a string literal, and esbuild re-emits it as
+# a template literal holding raw tab, space and newline bytes: any text
+# normalisation of a built bundle (trailing-whitespace stripping, line-ending
+# conversion) then corrupts the module, and the viewer silently falls back to
+# JS earcut. KiCad Prism's vendoring stripped trailing whitespace and lost 40
+# bytes of it. Base64 is ~33% larger and survives any of that.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 em++ -std=c++17 -O3 -flto \
-    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker -sSINGLE_FILE=1 \
+    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker -sSINGLE_FILE=1 -sSINGLE_FILE_BINARY_ENCODE=0 \
     -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=16777216 \
     -sFILESYSTEM=0 -sASSERTIONS=0 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 \
     -sEXPORTED_FUNCTIONS='["_ec_coords","_ec_run_one_f32","_ec_verts"]' \

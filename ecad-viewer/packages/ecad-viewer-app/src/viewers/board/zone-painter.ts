@@ -45,6 +45,19 @@ export class ZonePainter extends BoardItemPainter {
             // the emphasis layer's own opacity keeps it translucent.
             const color = emphasised ? this.color_for(p.layer) : layer.color;
 
+            // Triangulated in a worker at load: hand over the triangles
+            // alone, without rebuilding the (large) point list.
+            if (p.triangles && p.triangles_bbox) {
+                this.gfx.polygon(
+                    Polygon.from_triangles(
+                        p.triangles,
+                        p.triangles_bbox,
+                        color,
+                    ),
+                );
+                continue;
+            }
+
             // FIXME paint the arc in the polygon
             this.gfx.polygon(new Polygon(p.points, color));
         }

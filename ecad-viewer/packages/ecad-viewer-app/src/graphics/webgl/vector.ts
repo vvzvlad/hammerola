@@ -26,6 +26,16 @@ import type { IDisposable } from "../../base/disposable";
 import { Matrix3, Vec2 } from "../../base/math";
 import { Circle, Polygon, Polyline } from "../shapes";
 import { triangulate } from "./triangulate";
+import {
+    build_ranges,
+    cull_stats,
+    cull_triangles,
+    plan_cells,
+    view_box,
+    visible_draws,
+    type Box,
+    type CullRange,
+} from "./cull";
 import { Buffer, ShaderProgram, VertexArray } from "./helpers";
 import polygon_frag_shader_src from "./polygon.frag.glsl";
 import polygon_vert_shader_src from "./polygon.vert.glsl";
@@ -401,7 +411,7 @@ export class CircleSet implements IDisposable {
     /**
      * Tesselate an array of circles and upload them to the GPU.
      */
-    set(circles: Circle[]) {
+    set(circles: Circle[]): number[] {
         const vertex_count = circles.length * Tesselator.vertices_per_quad;
         const position_data = new Float32Array(vertex_count * 2);
         const cap_data = new Float32Array(vertex_count);
@@ -432,14 +442,20 @@ export class CircleSet implements IDisposable {
         this.cap_region_buf.set(cap_data);
         this.color_buf.set(color_data);
         this.vertex_count = position_data.length / 2;
+        return circles
+            .map((_, i) => i * Tesselator.vertices_per_quad)
+            .concat(this.vertex_count);
     }
 
-    render() {
+    /** Per-cell vertex ranges, when the set was large enough to cull. */
+    ranges?: CullRange[];
+
+    render(view?: Box) {
         if (!this.vertex_count) {
             return;
         }
         this.vao.bind();
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.vertex_count);
+        draw_ranges(this.gl, this.vertex_count, this.ranges, view);
     }
 }
 
@@ -496,10 +512,11 @@ export class PolylineSet implements IDisposable {
     /**
      * Tesselate an array of polylines and upload them to the GPU.
      */
-    set(lines: Polyline[]) {
+    set(lines: Polyline[]): number[] {
         if (!lines.length) {
-            return;
+            return [0];
         }
+        const starts: number[] = [];
 
         const vertex_count = lines.reduce((v, e) => {
             return v + (e.points.length - 1) * Tesselator.vertices_per_quad;
@@ -514,6 +531,7 @@ export class PolylineSet implements IDisposable {
         let color_idx = 0;
 
         for (const line of lines) {
+            starts.push(position_idx / 2);
             const written = Tesselator.write_polyline(
                 position_data,
                 position_idx,
@@ -533,14 +551,19 @@ export class PolylineSet implements IDisposable {
         this.color_buf.set(color_data.subarray(0, color_idx));
 
         this.vertex_count = position_idx / 2;
+        starts.push(this.vertex_count);
+        return starts;
     }
 
-    render() {
+    /** Per-cell vertex ranges, when the set was large enough to cull. */
+    ranges?: CullRange[];
+
+    render(view?: Box) {
         if (!this.vertex_count) {
             return;
         }
         this.vao.bind();
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.vertex_count);
+        draw_ranges(this.gl, this.vertex_count, this.ranges, view);
     }
 }
 
@@ -616,8 +639,9 @@ export class PolygonSet implements IDisposable {
     /**
      * Tesselate (triangulate) and upload a list of polygons to the GPU.
      */
-    set(polygons: Polygon[]) {
+    set(polygons: Polygon[]): number[] {
         let total_vertex_data_length = 0;
+        const starts: number[] = [];
 
         for (const polygon of polygons) {
             Tesselator.triangulate_polygon(polygon);
@@ -632,6 +656,7 @@ export class PolygonSet implements IDisposable {
         let vertex_data_idx = 0;
         let color_data_idx = 0;
         for (const polygon of polygons) {
+            starts.push(vertex_data_idx / 2);
             if (polygon.vertices == null) {
                 continue;
             }
@@ -650,17 +675,26 @@ export class PolygonSet implements IDisposable {
             color_data_idx += polygon_vertex_count * 4;
         }
 
+        // Large polygon sets (plane fills) are culled per triangle: one plane
+        // is one polygon, so polygon-level cells could never skip it.
+        const triangle_ranges = cull_triangles(vertex_data, color_data, 4);
+        if (triangle_ranges) this.ranges = triangle_ranges;
         this.position_buf.set(vertex_data);
         this.color_buf.set(color_data);
         this.vertex_count = vertex_data_idx / 2;
+        starts.push(this.vertex_count);
+        return starts;
     }
 
-    render() {
+    /** Per-cell vertex ranges, when the set was large enough to cull. */
+    ranges?: CullRange[];
+
+    render(view?: Box) {
         if (!this.vertex_count) {
             return;
         }
         this.vao.bind();
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.vertex_count);
+        draw_ranges(this.gl, this.vertex_count, this.ranges, view);
     }
 }
 
@@ -678,6 +712,47 @@ export class PolygonSet implements IDisposable {
  * and create a new one.
  *
  */
+
+/** Draw all vertices, or only the culled ranges that meet `view`. */
+function draw_ranges(
+    gl: WebGL2RenderingContext,
+    vertex_count: number,
+    ranges: CullRange[] | undefined,
+    view: Box | undefined,
+) {
+    if (!ranges || !view) {
+        gl.drawArrays(gl.TRIANGLES, 0, vertex_count);
+        return;
+    }
+    cull_stats.held += vertex_count;
+    for (const [first, count] of visible_draws(ranges, view)) {
+        gl.drawArrays(gl.TRIANGLES, first, count);
+        cull_stats.drawn += count;
+        cull_stats.calls += 1;
+    }
+}
+
+const polyline_box = (l: Polyline): Box => points_box(l.points, l.width / 2);
+const circle_box = (c: Circle): Box => ({
+    x0: c.center.x - c.radius,
+    y0: c.center.y - c.radius,
+    x1: c.center.x + c.radius,
+    y1: c.center.y + c.radius,
+});
+
+function points_box(points: Vec2[], pad: number): Box {
+    let x0 = Infinity,
+        y0 = Infinity,
+        x1 = -Infinity,
+        y1 = -Infinity;
+    for (const p of points) {
+        if (p.x < x0) x0 = p.x;
+        if (p.y < y0) y0 = p.y;
+        if (p.x > x1) x1 = p.x;
+        if (p.y > y1) y1 = p.y;
+    }
+    return { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+}
 
 export enum ShaderTypes {
     PolygonSet = "polygon",
@@ -760,6 +835,7 @@ export class PrimitiveSet implements IDisposable {
                 this.gl,
                 this.shader_programs.get(ShaderTypes.PolygonSet)!,
             );
+            // Polygons are culled per triangle inside set().
             this.#polygon_set.set(this.#polygons);
             this.#polygons = undefined!;
         }
@@ -768,7 +844,13 @@ export class PrimitiveSet implements IDisposable {
                 this.gl,
                 this.shader_programs.get(ShaderTypes.PolylineSet)!,
             );
-            this.#polyline_set.set(this.#lines);
+            const plan = plan_cells(
+                this.#lines,
+                polyline_box,
+                (l) => l.points.length,
+            );
+            const starts = this.#polyline_set.set(plan?.order ?? this.#lines);
+            if (plan) this.#polyline_set.ranges = build_ranges(plan, starts);
             this.#lines = undefined!;
         }
         if (this.#circles.length) {
@@ -776,9 +858,29 @@ export class PrimitiveSet implements IDisposable {
                 this.gl,
                 this.shader_programs.get(ShaderTypes.CircleSet)!,
             );
-            this.#circle_set.set(this.#circles);
+            const plan = plan_cells(this.#circles, circle_box);
+            const starts = this.#circle_set.set(plan?.order ?? this.#circles);
+            if (plan) this.#circle_set.ranges = build_ranges(plan, starts);
             this.#circles = undefined!;
         }
+    }
+
+    /** Vertices held by this layer's sets; for diagnostics. */
+    get vertex_count() {
+        return (
+            (this.#polygon_set?.vertex_count ?? 0) +
+            (this.#polyline_set?.vertex_count ?? 0) +
+            (this.#circle_set?.vertex_count ?? 0)
+        );
+    }
+
+    /** Whether any set of this layer was split into culled ranges. */
+    get culled() {
+        return !!(
+            this.#polygon_set?.ranges ||
+            this.#polyline_set?.ranges ||
+            this.#circle_set?.ranges
+        );
     }
 
     /**
@@ -788,12 +890,14 @@ export class PrimitiveSet implements IDisposable {
      * @parama alpha - overrides the alpha for colors
      */
     render(matrix: Matrix3, depth = 0, alpha = 1) {
+        // The world box this matrix shows, for culled sets only.
+        const view = this.culled ? view_box(matrix.inverse()) : undefined;
         if (this.#polygon_set) {
             this.#polygon_set.shader.bind();
             this.#polygon_set.shader["u_matrix"].mat3f(false, matrix.elements);
             this.#polygon_set.shader["u_depth"].f1(depth);
             this.#polygon_set.shader["u_alpha"].f1(alpha);
-            this.#polygon_set.render();
+            this.#polygon_set.render(view);
         }
 
         if (this.#circle_set) {
@@ -801,7 +905,7 @@ export class PrimitiveSet implements IDisposable {
             this.#circle_set.shader["u_matrix"].mat3f(false, matrix.elements);
             this.#circle_set.shader["u_depth"].f1(depth);
             this.#circle_set.shader["u_alpha"].f1(alpha);
-            this.#circle_set.render();
+            this.#circle_set.render(view);
         }
 
         if (this.#polyline_set) {
@@ -809,7 +913,7 @@ export class PrimitiveSet implements IDisposable {
             this.#polyline_set.shader["u_matrix"].mat3f(false, matrix.elements);
             this.#polyline_set.shader["u_depth"].f1(depth);
             this.#polyline_set.shader["u_alpha"].f1(alpha);
-            this.#polyline_set.render();
+            this.#polyline_set.render(view);
         }
     }
 }

@@ -1,7 +1,7 @@
 // The BOM's table (ui/src/BomView.jsx) and its pure half (ui/src/kicadbom.js):
 // a part per designator, its type and package, a value's magnitude, a price,
 // each column's filter in its head, the search, the grouping, the sort and the
-// total.
+// total; the assembly view's button, columns and lit parts, and its hit test.
 // KicadView's side — the rows read from the schematic's element, a designator
 // opening the board, a datasheet's cell and window — is in kicad.test.js. The
 // footprints and designators are those of a real board.
@@ -10,8 +10,8 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import BomView from '../src/BomView.jsx'
 import {
-  amountText, BOM_SORT, bomFilters, bomParts, bomTable, bomTotal, compareValues, entryOrder, NO_FILTER, partPackage,
-  partType, priceOf, valueMagnitude,
+  amountText, boardPoint, BOM_SORT, bomFilters, bomParts, bomTable, bomTotal, compareValues, entryOrder, insideOutline,
+  NO_FILTER, partPackage, partType, pictureSize, priceOf, valueMagnitude,
 } from '../src/kicadbom.js'
 import { collect, texts } from './eltree.js'
 
@@ -296,5 +296,172 @@ describe('the BOM on screen', () => {
     const plain = shown({ hasBoard: false })
     expect(pick(plain, (el) => el.props['data-ref'])).toEqual([])
     expect(texts(plain.render())).toContain('J_CAN1')
+  })
+
+  describe('in the assembly view', () => {
+    // The boxes the board's element hands out, in its millimetres: C2 and U1
+    // on the top, R2 on the bottom, and a fiducial no row holds. The top is
+    // drawn at 2 px a millimetre, the bottom mirrored about x = 100 mm.
+    const BOXES = [
+      { reference: 'C2', bottom: false, outline: [[0, 0], [4, 0], [4, 2], [0, 2]] },
+      { reference: 'U1', bottom: false, outline: [[20, 20], [30, 20], [30, 30], [20, 30]] },
+      { reference: 'R2', bottom: true, outline: [[10, 0], [12, 0], [12, 2], [10, 2]] },
+      { reference: 'FID1', bottom: false, outline: [[40, 0], [42, 0], [42, 2], [40, 2]] },
+    ]
+    const AFFINES = { Top: [2, 0, 0, 2, 0, 0], Bottom: [-2, 0, 0, 2, 200, 0] }
+    /** The BOM with its Assembly turned on and its pictures drawn. */
+    function assembled(props = {}) {
+      const view = shown({ board: { renderBoardPicture: (canvas, { bottom }) => AFFINES[bottom ? 'Bottom' : 'Top'],
+        getFootprintBoxes: () => BOXES }, ...props })
+      the(view, 'data-button', 'assembly').props.onClick()
+      view.pictures = { Top: {}, Bottom: {} }
+      view.drawPictures()
+      return view
+    }
+    const names = (view) => heads(view).map((el) => texts(el)[0])
+    const sides = (view) => collect(view.render(), (el) => el.props['data-side'])
+    const row = (view, key) => the(view, 'data-row', key)
+    /** The checkbox of row `key` in the column `mark`. */
+    const box = (view, key, mark) => collect(row(view, key), (el) => (el.props['data-mark'] === mark ? el : undefined))[0]
+    /** That box as drawn: checked, and half-checked through its ref. */
+    const ticked = (view, key, mark) => {
+      const node = {}
+      box(view, key, mark).ref(node)
+      return [box(view, key, mark).props.checked, node.indeterminate]
+    }
+    /** A click on the picture of `side` at the board's point `x`, `y`. */
+    const clickBoard = (view, side, x, y) => {
+      const [a, , , d, e, f] = AFFINES[side]
+      the(view, 'data-side', side).props.onClick({ clientX: 10 + a * x + e, clientY: 20 + d * y + f,
+        currentTarget: { getBoundingClientRect: () => ({ left: 10, top: 20 }) } })
+    }
+    const outside = { target: { closest: () => null } }
+
+    it('is a button over the table of a design with a board, which adds the band and the two columns and takes them away', () => {
+      expect(pick(shown({ hasBoard: false }), (el) => el.props['data-button'])).toEqual([])
+      const view = shown()
+      expect([names(view)[0], pick(view, (el) => el.props['data-assembly'])]).toEqual(['Refs', []])
+      the(view, 'data-button', 'assembly').props.onClick()
+      expect(names(view)).toEqual(['Sourced', 'Placed', 'Refs', 'Value', 'Footprint', 'Qty', 'DNP', 'Datasheet', 'Price', 'Sum'])
+      expect(sides(view)).toEqual(['Top', 'Bottom'])
+      the(view, 'data-button', 'assembly').props.onClick()
+      expect([names(view)[0], sides(view), row(view, 'C1').props.onClick])
+        .toEqual(['Refs', [], undefined])
+    })
+
+    it('lights the parts of the row under the pointer, and of the row a click selects until a second click', () => {
+      const view = assembled()
+      row(view, 'R1').props.onMouseEnter()
+      expect([...view.looks()]).toEqual([['R1', 'hovered'], ['R3', 'hovered']])
+      row(view, 'C1').props.onClick(outside)
+      expect([...view.looks()]).toEqual([['C1', 'selected'], ['C2', 'selected'], ['C10', 'selected'],
+        ['R1', 'hovered'], ['R3', 'hovered']])
+      // a click on a designator, a datasheet or a checkbox selects nothing, one
+      // elsewhere in the row selects it
+      const inCell = (name, attribute) => {
+        const node = document.createElement('td').appendChild(document.createElement(name))
+        if (attribute) node.setAttribute(attribute, '')
+        return node
+      }
+      for (const [name, attribute] of [['input'], ['a'], ['span', 'data-ref'], ['span', 'data-doc']]) {
+        row(view, 'U1').props.onClick({ target: inCell(name, attribute) })
+        expect(view.state.selected).toBe('C1')
+      }
+      row(view, 'U1').props.onClick({ target: inCell('span') })
+      expect(view.state.selected).toBe('U1')
+      row(view, 'C1').props.onClick(outside)
+      row(view, 'R1').props.onMouseLeave()
+      row(view, 'C1').props.onClick(outside)
+      expect([...view.looks()]).toEqual([])
+    })
+
+    it('selects the row that holds the part clicked on a picture, as the table is grouped and filtered, and none off a row', () => {
+      const view = assembled()
+      clickBoard(view, 'Top', 2, 1)
+      expect(view.state.selected).toBe('C1')
+      clickBoard(view, 'Bottom', 11, 1)
+      expect(view.state.selected).toBe('R2')
+      view.setState({ grouped: false })
+      clickBoard(view, 'Top', 2, 1)
+      expect(view.state.selected).toBe('C2')
+      // the bottom picture holds only the bottom's parts
+      clickBoard(view, 'Bottom', 2, 1)
+      expect(view.state.selected).toBe(null)
+      clickBoard(view, 'Top', 25, 25)
+      expect(view.state.selected).toBe('U1')
+      for (const [x, y] of [[41, 1], [60, 60]]) {
+        view.setState({ selected: 'U1' })
+        clickBoard(view, 'Top', x, y)
+        expect(view.state.selected).toBe(null)
+      }
+      view.setState({ excluded: { ...NO_FILTER, Refs: ['U'] } })
+      clickBoard(view, 'Top', 25, 25)
+      expect(view.state.selected).toBe(null)
+    })
+
+    it('picks the smallest of the boxes under a click, not the one whose row sorts first', () => {
+      // C10's box, in the C1 row that sorts first, covers U1's
+      const big = { reference: 'C10', bottom: false, outline: [[15, 15], [35, 15], [35, 35], [15, 35]] }
+      const view = shown({ board: { renderBoardPicture: (canvas, { bottom }) => AFFINES[bottom ? 'Bottom' : 'Top'],
+        getFootprintBoxes: () => [big, ...BOXES] } })
+      the(view, 'data-button', 'assembly').props.onClick()
+      view.pictures = { Top: {}, Bottom: {} }
+      view.drawPictures()
+      clickBoard(view, 'Top', 25, 25)
+      expect(view.state.selected).toBe('U1')
+      clickBoard(view, 'Top', 16, 16)
+      expect(view.state.selected).toBe('C1')
+    })
+
+    it('ticks Sourced and Placed by designator, a group\'s box all of its parts, and keeps them for the project and design', () => {
+      const cells = new Map()
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+        getItem: (key) => (cells.has(key) ? cells.get(key) : null), setItem: (key, value) => cells.set(key, value),
+      } })
+      onTestFinished(() => delete globalThis.localStorage)
+      const at = { pid: 'proj1', design: 'hw/board' }
+      const view = assembled(at)
+      box(view, 'C1', 'placed').props.onChange()
+      box(view, 'U1', 'sourced').props.onChange()
+      expect(JSON.parse(cells.get('hammerola.assembly.proj1.hw/board'))).toEqual({ sourced: ['U1'], placed: ['C1', 'C2', 'C10'] })
+      expect([ticked(view, 'C1', 'placed'), ticked(view, 'C1', 'sourced')]).toEqual([[true, false], [false, false]])
+      expect([...view.looks()]).toEqual([['C1', 'placed'], ['C2', 'placed'], ['C10', 'placed']])
+      // ungrouped, a part of the group unticked: the group is half-checked, and a click ticks all of it
+      view.setState({ grouped: false })
+      box(view, 'C2', 'placed').props.onChange()
+      view.setState({ grouped: true })
+      expect(ticked(view, 'C1', 'placed')).toEqual([false, true])
+      box(view, 'C1', 'placed').props.onChange()
+      expect(ticked(view, 'C1', 'placed')).toEqual([true, false])
+      box(view, 'C1', 'placed').props.onChange()
+      expect(ticked(view, 'C1', 'placed')).toEqual([false, false])
+      // the ticks are back for the same design, and another has its own
+      box(view, 'R1', 'placed').props.onChange()
+      expect([assembled(at).state.marks, assembled({ ...at, design: 'hw/psu' }).state.marks])
+        .toEqual([{ sourced: ['U1'], placed: ['R1', 'R3'] }, { sourced: [], placed: [] }])
+    })
+  })
+})
+
+describe('a picture of the board', () => {
+  it('has the board\'s proportions, as wide as there is room or as high as it may be, in whole pixels', () => {
+    // a board 100 by 50 mm in a half 300 px wide: 150 px high, or 100 px where that is the most
+    expect(pictureSize({ width: 100, height: 50 }, 300, 200)).toEqual({ width: 300, height: 150 })
+    expect(pictureSize({ width: 100, height: 50 }, 300, 100)).toEqual({ width: 200, height: 100 })
+    expect(pictureSize({ width: 30, height: 70 }, 161, 240.5)).toEqual({ width: 103, height: 240 })
+  })
+
+  it('takes a pixel back to the board through the map it was drawn with, mirrored or turned', () => {
+    expect(boardPoint([-2, 0, 0, 2, 200, 0], 178, 2)).toEqual([11, 1])
+    // turned a quarter: x' = -y + 50, y' = x + 10
+    expect(boardPoint([0, 1, -1, 0, 50, 10], 45, 13)).toEqual([3, 5])
+  })
+
+  it('finds a point inside a part\'s outline, whatever way it is turned', () => {
+    const square = [[0, 0], [4, 0], [4, 2], [0, 2]]
+    const diamond = [[5, 0], [10, 5], [5, 10], [0, 5]]
+    expect([[2, 1], [5, 1], [2, 3], [-1, 1]].map((point) => insideOutline(square, point))).toEqual([true, false, false, false])
+    // inside its square box, outside the diamond
+    expect([[5, 5], [1, 1], [9, 9], [5, 9]].map((point) => insideOutline(diamond, point))).toEqual([true, false, false, true])
   })
 })

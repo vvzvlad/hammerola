@@ -293,6 +293,30 @@ export class PinPainter extends SchematicItemPainter {
     }
 }
 
+/**
+ * A pin's line on the sheet, from where it leaves the symbol body to its
+ * connection point, with the symbol's placement applied. Used to light up a
+ * pin as part of a highlighted net.
+ */
+export function pin_stem(pin: schematic_items.PinInstance): [Vec2, Vec2] {
+    const info: PinInfo = {
+        pin,
+        def: pin.definition,
+        position: pin.definition.at.position.copy(),
+        orientation: angle_to_orientation(pin.definition.at.rotation),
+    };
+    PinPainter.apply_symbol_transformations(
+        info,
+        get_symbol_transform(pin.parent),
+    );
+    const { p0 } = PinShapeInternals.stem(
+        info.position,
+        info.orientation,
+        info.def.length,
+    );
+    return [p0, info.position];
+}
+
 export type PinInfo = {
     pin: schematic_items.PinInstance;
     def: schematic_items.PinDefinition;

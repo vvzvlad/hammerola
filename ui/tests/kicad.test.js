@@ -34,7 +34,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK,
-  drawingOf, drawnViews, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
+  drawingOf, drawnViews, INSET_EVENT, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
   SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
 import { loadMeta } from '../src/hub.js'
@@ -80,7 +80,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
   const onSheet = (sheet, push) => navigate(respell(parse(), { sheet }), { push })
   const view = new KicadView({ doc, documents, base: BASE, onOpen, onSheet, onTools: vi.fn(), onReady: vi.fn() })
   view.setState = (patch, done) => {
-    Object.assign(view.state, patch)
+    Object.assign(view.state, typeof patch === 'function' ? patch(view.state, view.props) : patch)
     if (done) done()
   }
   const elements = {}
@@ -91,6 +91,10 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.setActive = vi.fn()
       element.clearSelection = vi.fn()
       element.replaceSources = vi.fn(async () => {})
+      element.enableInsets = vi.fn()
+      element.setInsetPeer = vi.fn()
+      element.setInsetMode = vi.fn()
+      element.escapeInsets = vi.fn(() => false)
     }
     // The canvas the viewer draws on, and the element's hit test: `selectAt`
     // reports what is under the point, as the viewer's own click does.
@@ -221,7 +225,7 @@ describe('a KiCad design', () => {
     const panel = () => ofType(view.render(), PcbPanel)[0]
     expect(panel()).toBeUndefined()
     view.setState({ ready: true })
-    expect(panel().props).toEqual({ element: elements[PCB], active: true })
+    expect(panel().props).toEqual({ element: elements[PCB], active: true, onNet: view.onNetBoard })
     view.props = { ...view.props, doc: DOCS[0] }
     expect(panel().props.active).toBe(false)
     view.setState({ error: 'hw/board.kicad_pcb did not load: HTTP 404' })
@@ -414,7 +418,20 @@ describe('a design the page keeps while another document is on screen', () => {
     // shown again: the bar told afresh what the board can do
     keep(view, true)
     expect(view.props.onTools).toHaveBeenCalledTimes(told + 1)
-    expect(Object.keys(view.props.onTools.mock.lastCall[0])).toEqual(['fit', 'frame'])
+    expect(Object.keys(view.props.onTools.mock.lastCall[0])).toEqual(['fit', 'frame', 'insets'])
+  })
+
+  it('links its two elements as each other\'s inset peer once the viewer is loaded, and unlinks them when it goes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
+    const { view, elements } = mounted(DOCS[0])
+    view.componentDidMount()
+    await vi.waitFor(() => expect(view.state.ready).toBe(true))
+    // the page takes Escape for both, so the viewer listens for none
+    expect([elements[SCH].setInsetPeer.mock.calls, elements[PCB].setInsetPeer.mock.calls,
+      elements[SCH].enableInsets.mock.calls, elements[PCB].enableInsets.mock.calls])
+      .toEqual([[[elements[PCB]]], [[elements[SCH]]], [[{ hostEscape: true }]], [[{ hostEscape: true }]]])
+    view.componentWillUnmount()
+    expect([elements[SCH].setInsetPeer.mock.lastCall, elements[PCB].setInsetPeer.mock.lastCall]).toEqual([[null], [null]])
   })
 
   it('owes the page the files that came in while it was hidden, and tells it when shown', async () => {
@@ -869,6 +886,22 @@ describe('a click selects the same part in every view', () => {
     expect([cleared(), view.state.selected]).toEqual([[1, 1], 'U501'])
     view.key(ESCAPE())
     expect([cleared(), view.state.selected]).toEqual([[2, 2], null])
+  })
+})
+
+describe('a net lit on the 3D model', () => {
+  it('is lit on the board too, and goes out when a part is selected or nothing is clicked', () => {
+    const { view, elements } = mounted()
+    elements[PCB].setHighlightedNets = vi.fn()
+    const three = () => view3d(view).three.props
+    three().onNet('X')
+    expect([view.state.net, three().net]).toEqual(['X', 'X'])
+    expect(elements[PCB].setHighlightedNets).toHaveBeenLastCalledWith([{ name: 'X' }])
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'R1' })
+    expect(view.state.net).toBeNull()
+    three().onNet('X')
+    click(elements[PCB], { sourceContext: PCB, itemType: '' })
+    expect(view.state.net).toBeNull()
   })
 })
 
@@ -1425,6 +1458,29 @@ describe('a part\'s datasheet', () => {
       view.componentWillUnmount()
     })
 
+    it('closes on Escape, then the menu, before the insets pinned under them, which go last and take theirs', () => {
+      const { view, elements } = opened()
+      view.listen(true)
+      elements[PCB].escapeInsets.mockReturnValueOnce(true)
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      window.dispatchEvent(escape)
+      // the window first; the insets are not asked
+      expect([escape.defaultPrevented, windowOf(view), Boolean(menuOf(view)), elements[PCB].escapeInsets.mock.calls.length])
+        .toEqual([true, undefined, true, 0])
+      // then the menu; the insets are still not asked
+      window.dispatchEvent(ESCAPE())
+      expect([Boolean(menuOf(view)), elements[PCB].escapeInsets.mock.calls.length]).toEqual([false, 0])
+      // then the insets of the view on screen, which take the Escape and
+      // leave what is lit as it was
+      const lit = view.state.selected
+      const last = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      window.dispatchEvent(last)
+      expect([last.defaultPrevented, elements[PCB].escapeInsets.mock.calls.length, elements[SCH].escapeInsets.mock.calls,
+        view.state.selected, elements[PCB].clearSelection.mock.calls.length])
+        .toEqual([true, 1, [], lit, 0])
+      view.componentWillUnmount()
+    })
+
     it('is passed over by the arrows, which close it, and opened by its row', () => {
       const { view } = opened()
       expect(view.state.menu.active).toBe(1)
@@ -1476,7 +1532,7 @@ describe('what the page\'s bar can do with the view on screen', () => {
     view.setState({ ready: true })
     view.componentDidUpdate()
     const [, tools] = told(view)
-    expect(Object.keys(tools)).toEqual(['fit', 'frame'])
+    expect(Object.keys(tools)).toEqual(['fit', 'frame', 'insets'])
     // the board on screen: the same tools, acting on it
     show(view, DOCS[1])
     expect(told(view)).toHaveLength(2)
@@ -1506,7 +1562,28 @@ describe('what the page\'s bar can do with the view on screen', () => {
     view.componentDidUpdate()
     expect(told(view).at(-1)).toBe(three)
     show(view, DOCS[1])
-    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame'])
+    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame', 'insets'])
+  })
+
+  it('has Insets where the design draws both: the mode flipped on the view on screen, lit as the elements report it', () => {
+    const { view, elements } = mounted(DOCS[0])
+    view.setState({ ready: true })
+    view.componentDidUpdate()
+    expect(told(view).at(-1).insets.on).toBe(false)
+    told(view).at(-1).insets.toggle()
+    expect([elements[SCH].setInsetMode.mock.calls, elements[PCB].setInsetMode.mock.calls]).toEqual([[[true]], []])
+    // either element reports the mode, its own `I` included: the bar is told
+    elements[PCB].dispatchEvent(new CustomEvent(INSET_EVENT, { detail: { on: true } }))
+    view.componentDidUpdate()
+    expect(told(view).at(-1).insets.on).toBe(true)
+    show(view, DOCS[1])
+    told(view).at(-1).insets.toggle()
+    expect(elements[PCB].setInsetMode.mock.calls).toEqual([[false]])
+    // a design of one drawn member has none
+    const lone = mounted(DOCS[4]).view
+    lone.setState({ ready: true })
+    lone.componentDidUpdate()
+    expect(Object.keys(told(lone).at(-1))).toEqual(['fit', 'frame'])
   })
 
   it('finds the drawing only inside the element', () => {
@@ -1735,7 +1812,10 @@ describe('the BOM of a design', () => {
 
     it('lists the schematic\'s parts, a designator opening the board with its part selected once the page hands it down', async () => {
       const { view, elements } = await opened(listed)
-      expect(ofType(table(view), BomView)[0].props).toMatchObject({ items: bomRows(ITEMS), hasBoard: true })
+      // the design names the Sourced and Placed marks by its path, which no
+      // revision changes
+      expect(ofType(table(view), BomView)[0].props).toMatchObject({ items: bomRows(ITEMS), hasBoard: true,
+        design: 'hw/board' })
       // the prices the schematic's `Price` fields give, read from its file
       expect(ofType(table(view), BomView)[0].props.prices).toEqual(new Map([['R2', '0,5 ₽']]))
       expect(links(view).map((el) => el.props['data-ref'])).toEqual(['C3', 'C4', 'R2', 'R10'])

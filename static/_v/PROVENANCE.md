@@ -126,13 +126,19 @@ are.
 
 `ecad-viewer/` is
 [`krishna-swaroop/ecad-viewer`](https://github.com/krishna-swaroop/ecad-viewer) at
-commit `461a091952ef44b56610e3ccbac4ba3c94139c4a`, MIT, taken 2026-10-26. It is the
-commit the KiCAD-Prism repository builds its copy of the viewer from:
+commit `acce6970beab16053df66f29906437fd5b85e2a5`, the head of its `dev` branch,
+MIT, taken 2026-11-05: the merge whose tree is that of
+`564ff94cf3f5f0b08be9c7d9ea160dbcc2eab673` (both
+`69254e0fa99d7690f5f1e06df82ecd0d2bf19a0d`), the commit the KiCAD-Prism repository
+builds its copy of the viewer from:
 [`krishna-swaroop/KiCAD-Prism`](https://github.com/krishna-swaroop/KiCAD-Prism) at
-commit `3215ab1ddb3905c279aa7a0ee806a62a3d9f2a63` has it as `adapterCommit` in the
+commit `a62fadf526eee6a69d15b2cc1e3ee29ec1102c1e` has it as `adapterCommit` in the
 `ecad-viewer.manifest.json` of `frontend/public/` (`dirty: false`), built there by
 `scripts/build-ecad-viewer.sh`, and the commit sits on the fork's pinned upstream
-`c3537042ff7156ce077d204df00a9d4add0e29b1` (`upstreamCommit`). The fork is a fork
+`c3537042ff7156ce077d204df00a9d4add0e29b1` (`upstreamCommit`). It carries the
+fork's insets (`src/ecad-viewer/insets/`): windows onto the other document that
+a pin or a pad opens, which the page turns on by linking its two elements
+(`ui/src/KicadView.jsx`). The fork is a fork
 of `Huaqiu-Electronics/ecad-viewer`. Licence: **MIT**, the fork's `LICENSE.md`,
 its copyright line included, which is `ecad-viewer/LICENSE.md` and, beside the
 served files, `ecad-viewer-LICENSE.md`. Prism's own code is Apache-2.0 and none of
@@ -173,9 +179,8 @@ Three files of the build are ours:
   `esbuild`, each pinned to the version the fork's lockfile resolves, and `build`
   as its one script. Easy to miss on a rebase because it carries no comment:
   restore the fork's three and `npm ci` pulls their lint and test toolchain again;
-* `ecad-viewer/package-lock.json` — the fork's lockfile at `461a091` does not
-  install (`npm ci`: `Missing: ecad-renderer@0.1.0 from lock file`), so this one
-  is resolved from the `package.json` above;
+* `ecad-viewer/package-lock.json` — resolved from the `package.json` above; the
+  fork's lockfile is its workspace's;
 * `packages/ecad-viewer-app/scripts/build.js` — the fork's third entry point,
   `ecad-renderer`, is dropped, which its comment says.
 
@@ -185,19 +190,22 @@ the edits the only difference between Prism's viewer and ours:
 
 | File | sha256 |
 | --- | --- |
-| `ecad-viewer.js` built without our edits, and Prism's | `55ef0a844038a87f30e968b9509cafd4c6e25414ec0ca3700a296529f3f8939a` |
-| `ecad-viewer.js` as committed | `85ee0ac8561ed63fc2d81617baf80e84174b9e279464cf79999c11541e9a517c` |
-| `parser.worker.js` (none of our edits reach it) | `7a3b8f5f46977e2fb0c3f6de6b38cac4d5738d2beae970f0b5e86f84db890994` |
+| `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
+| `ecad-viewer.js` as committed | `66853c677e4a0800d48980fab3b0c4203a69ad058e4c6d1d1308bc4d9085ca59` |
+| `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
+| `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
 
 Prism's manifest names a third artefact, `ecad-renderer.js`, which is not built
 here: Prism's library panel draws symbols and footprints with it, and
 `ecad-viewer.js` never imports it. Neither are `3d-viewer.js` (the viewer's own
 3D tab) and `glyph-full.js` (CJK
-glyphs): `ecad-viewer.js` imports both by the bare names `3d-viewer` and
-`glyph-full`, which only an import map resolves, and the hub serves no inline
-script. So a design whose text holds Chinese, Japanese or Korean characters
-fails to load here (not checked against a real one).
+glyphs): `ecad-viewer.js` imports them by the names `window.ecad3dModuleName`
+and `window.ecadGlyphModuleName` hold (`src/ecad-viewer/ecad_viewer.ts`,
+`src/kicanvas/project.ts`), else by the bare names `3d-viewer` and `glyph-full`,
+which only an import map resolves; the hub sets neither name and serves no
+inline script. So a design whose text holds Chinese, Japanese or Korean
+characters fails to load here (not checked against a real one).
 
 `ecad-viewer.js` is an ES module, fetched by URL when a KiCad design is opened
 (`ECAD_VIEWER_URL` in `ui/src/KicadView.jsx`), and it starts its parser workers
@@ -209,17 +217,21 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Thirteen, in the TypeScript of `packages/ecad-viewer-app/src/`, each with its reason
-in a comment at the spot. Edit 6 is checked by `ui/tests/schematicpins.test.js`,
-which reads sheets through the fork's own parser (`kicad-parser`, aliased in
+Nineteen, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
+of `packages/kicad-parser/src/`, each with its reason in a comment at the spot.
+Edit 6 is checked by `ui/tests/schematicpins.test.js`, which reads sheets
+through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
-it), edit 7 by `ui/tests/areaitems.test.js` the same way, edit 9 by
-`ui/tests/pagekeys.test.js` and the text of edit 10 by
-`ui/tests/intersheetrefs.test.js`. The others are the viewer's drawing and input
+it), edit 7 by `ui/tests/areaitems.test.js` the same way, edits 14 and 15 by
+`ui/tests/boardoutline.test.js`, edit 16 by `ui/tests/kicad5board.test.js`
+and edit 18 by `ui/tests/boardcopper.test.js` the same way, what edit 19 fits,
+draws and boxes by `ui/tests/boardpicture.test.js`, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
+`ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
+`ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
-minifying, the bundle of this tree and the fork's at `461a091` differ in these
-thirteen places and the comments beside them.
+minifying, the bundles of this tree and the fork's at `acce697` differ in these
+nineteen places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -242,7 +254,10 @@ and the wheel now pan like the wheel alone. `#handle_pan(dx, dy)` moves the
 camera's centre by `(dx, dy) / zoom`, so passing the deltas through unchanged
 makes the drawing follow the fingers; `#handle_zoom(delta, point)` multiplies
 the zoom by `exp(-delta · zoom_speed)` and keeps the world point under `point`
-where it is.
+where it is. The arithmetic is `wheel_gesture` (`base/dom/wheel-gesture.ts`),
+and the wheel over an inset (`ecad-viewer/insets/session.ts`) takes it too, the
+inset's own camera panned and zoomed about the pointer by the same numbers; Shift
+and the wheel still turn an inset, as the fork has it.
 
 **3. Selecting a footprint leaves the copper pours as they were.** The board
 viewer's `highlight_fp` (`viewers/board/viewer.ts`), which a double click on a
@@ -273,6 +288,14 @@ yet). The viewer selects on the left button only, and the page's right-click
 menu (`ui/src/KicadView.jsx`) needs to know what is under the right one. Its
 `kicanvas:context-selection` and `kicanvas:sch-context-selection` events would
 not do: they are declared in `viewers/base/events.ts` and dispatched nowhere.
+A text carrying a hyperlink is selected by `select_at` as any item is: the
+schematic viewer's `on_click` (`viewers/schematic/viewer.ts`) follows a link
+only on a click, which `select_at` does not hand it. Followed, a link with a
+scheme opens as the fork has it (`http`, `https` and `mailto` only); a link
+without one is a file of the project, and when it is no loaded schematic
+(`#open_hyperlink` in `kicanvas/elements/kc-schematic/app.ts`) nothing opens:
+the fork opened a window on it, which resolves the path against the address of
+the page and finds no such file.
 
 **6. A placed symbol without pin records still has its pins.** The viewer drew a
 placed symbol's pins only from its own `(pin "N" (uuid …))` records; KiCad writes
@@ -298,9 +321,11 @@ markers among them — into a document's new layers before its painter ran; the
 painter paints every layer the set yields, the overlays' own among them, and
 left an overlay compiled before it with an empty layer that the same scene,
 handed again, never filled. They are bound after the painter now. And the
-viewer's draw (`viewers/base/viewer.ts`) refreshes its screen-sized overlays
-every time: a fit after a load moves the camera without a change of viewport,
-and left them sized for the zoom before.
+viewer's draw of its own frame (`on_draw` in `viewers/base/viewer.ts`) refreshes
+its screen-sized overlays every time: a fit after a load moves the camera
+without a change of viewport, and left them sized for the zoom before. Not in
+`render_layers`, under it, which every inset calls with its own camera on
+every frame it draws.
 
 **9. Command or Control with a bracket is the browser's.** `#handle_host_keydown`
 of `<ecad-viewer>` steps through the schematic's pages on `[` and `]`, and took
@@ -352,23 +377,117 @@ of its own (`ui/src/KicadView.jsx`), each designator a link to the part on the
 board.
 
 **13. A host that turns the selection panel off gets no list of a net from the
-viewer.** A click on a label or on a sheet pin opens the viewer's list of the
-places of its name (`kc-sch-selection-menu`) unless the host sets
-`show-selection-panel="false"`; the page sets it and opens a menu of its own
-(`ui/src/KicadView.jsx`). The fork checked that attribute on a label only, and
-through `closest("ecad-viewer")`, which does not leave the shadow tree the app is
-drawn in, so it never found the host: `#host_opens_lists` in
-`kc-schematic/app.ts` takes the host as the root of that tree, for both clicks.
+viewer.** A click on a label opens the viewer's list of the places of its name
+(`kc-sch-selection-menu`) unless the host sets `show-selection-panel="false"`;
+the page sets it and opens a menu of its own (`ui/src/KicadView.jsx`). The fork
+checks that attribute through `closest("ecad-viewer")`, which does not leave the
+shadow tree the app is drawn in, so it never found the host:
+`#host_opens_lists` in `kc-schematic/app.ts` takes the host as the root of that
+tree. A click on a sheet pin opens no list in the fork itself.
+
+**14. A board is framed by the Edge.Cuts inside its footprints too.** The view
+is fitted on load and by Fit to `KicadPCB.bbox`, which is `edge_cuts_bbox`
+(`kicad/board.ts`), and that read the board's own drawings only. KiCad cuts
+along the footprints' Edge.Cuts as well, and a board converted from Eagle can
+carry its whole outline in its "board shape" footprints: WB-MGU v1.2 opened
+zoomed into a 7 mm cut beside one part. `edge_cuts_bbox` now adds every
+footprint's Edge.Cuts item, placed with the transform the painter and
+`Footprint.bbox` use; the board size of the info panel reads it as well.
+
+**15. An arc's points and box are where the arc is drawn.** An arc's angles are
+atan2 in document space and `to_polyline` draws them with cos and sin, but its
+start, mid and end radials (`base/math/arc.ts`) turned the radius with
+`Angle.rotate_point`, KiCad's RotatePoint, which turns the other way: the
+points, and the box built from them, came out mirrored about the centre's
+horizontal while the drawing was right, and a rounded corner of an outline
+framed the board 0.76 mm too tall. The radials now use cos and sin. The box is
+the two ends and the radial at every multiple of 90° between the two angles;
+the fork's axis checks added the wrong point past 270° and 360° and did not
+handle a sweep below zero or running backwards.
+
+**16. A board KiCad 5 wrote opens, with its arcs and pours.** KiCad 5 calls a
+footprint `module`, and `parseFootprint` (`kicad-parser/src/board_parser.ts`)
+insisted on `footprint` and threw on the whole board; it takes the start word
+from its caller now, and the `module` collection passes `module`. This edit
+reaches `parser.worker.js`. KiCad 5 gives an arc by its centre, its start and
+the angle it sweeps, with no `mid`: the board's drawings, a footprint's and a
+custom pad's primitives (`kicad/board.ts`) take an `angle` for an arc as well
+as a `mid`, and `Arc.from_center_start_end` (`base/math/arc.ts`) raises the end
+angle by whole turns until it is past the start, as KiCad's `CalcArcAngles`
+does, where the fork's normalisation swept past a whole turn; its two
+`console.log` calls are gone. A zone's fill without a layer, which KiCad 5
+writes, takes its zone's, so the pour is drawn.
+
+**17. A host can take the insets' Escape.** An inset session listens for
+Escape on `window` from its first inset to its last (`insets/session.ts`), and
+an element off screen (`setActive(false)`) drops only its previews, so the
+pinned insets of a board the reader left closed on an Escape pressed over the
+schematic, and a design kept mounted behind another took the Escape meant for
+the one on screen. `enableInsets({ hostEscape: true })` (`ecad_viewer.ts`) has
+the session listen for none (`own_escape`), in the link made then and in one
+made again after `setInsetPeer(null)`; the host calls `escapeInsets()` for the
+element on screen itself (`key` in `ui/src/KicadView.jsx`).
+
+**18. The element hands out the board's copper for a 3D view.** KiCad's `.glb`
+merges a board's copper into three meshes that carry no net and no layer, so a
+3D view drawn from it can neither light a net nor pull the layers apart.
+`getBoardCopper()` of `<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`) returns
+`board_copper` (`ecad-viewer/board-copper.ts`) of the loaded board, null before
+it: every copper layer in stack order with the heights of its faces where KiCad's
+3D export puts them (`STEP_PCB_MODEL::getCopperLayerZPlacement` of KiCad 10,
+over the board's `(stackup)` or, for a board without one, the stack
+`BuildDefaultStackupList` makes), its triangles in the board's millimetres with
+each vertex's net code, the plated barrels of the vias and through pads with the
+layers they join, and the net names by code. The triangles are the 2D board's
+shapes from the same data: zone fills as the loader triangulated them, tracks as
+the renderer's pills, SMD pads and copper graphics through the viewer's own
+painters into a `NullRenderer`; a via is a ring and a plated through pad its
+outline less its drill. The page draws this copper in place of the `.glb`'s
+(`ui/src/BoardView3D.jsx`, `ui/src/board3dcopper.js`).
+
+**19. The element draws one side of the board into a canvas and hands out its
+size and each part's box.** The BOM's assembly view (`ui/src/BomView.jsx`) shows
+the board's top and bottom over the table and lights a row's parts on them; what
+it is handed is in `ecad-viewer/board-picture.ts`, a file of ours.
+`renderBoardPicture(canvas, { bottom })` of `<ecad-viewer>`
+(`ecad-viewer/ecad_viewer.ts`) draws the loaded board fitted to its outline
+(`picture_box`: `KicadPCB.bbox`, the Edge.Cuts box Fit frames, grown by 2% of its
+longer side so the outline's stroke stays inside) into a 2D canvas sized by CSS,
+through the path the board insets take: the board viewer's own scene and WebGL
+context, one frame through another camera copied out in the same task
+(`render_board_view`, `viewers/board/board-view.ts`), so it draws while the
+element is hidden; the camera is the insets' (`inset_matrix`, `insets/camera.ts`),
+mirrored left to right for the bottom. The frame draws that side alone
+(`picture_layers`): its copper's pads (a through-hole pad is on both sides' copper,
+as KiCad draws it), its silkscreen and fab with their designators and values, the
+holes of pads and unplated holes, and Edge.Cuts; no tracks, zones or vias, no
+inner copper, nothing of the other side, no user, drawing-sheet or margin layer,
+no selection. `render_board_view` takes it as `only`, a test of a layer's name:
+for that frame every other layer is hidden and none is highlighted, and each
+layer's visibility and highlight is put back in the same call, before the main
+view is drawn again. It returns the map from the board's millimetres to the
+canvas's CSS pixels as the six numbers of a 2D context's `setTransform`, null when
+nothing was drawn. `getBoardPictureSize()` returns the width and height in
+millimetres of what it fits (`picture_box`), so the page gives each picture the
+board's proportions; null before a board is loaded. `getFootprintBoxes()`
+returns every footprint as `{ reference, bottom, outline }` (`footprint_boxes`):
+its designator, whether its layer is a back one, and the four corners, in the
+board's millimetres, of `Footprint.bbox` (the box the viewer outlines a selected
+footprint with, `outline_footprint` in `viewers/board/painter.ts`) combined with
+its pads' boxes, as a board inset frames a footprint, so a part with no
+silkscreen or fab graphics still has the box of its pads.
 
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
 first with none of our edits and compare the two files with what Prism publishes
 from that commit, if it does; then re-apply the edits (a `git diff` of
-`ecad-viewer/` against the fork at `461a091` is them, at the fork's paths, with
+`ecad-viewer/` against the fork at `acce697` is them, at the fork's paths, with
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
-`areaitems.test.js`, `pagekeys.test.js` and `intersheetrefs.test.js` fail if
-edit 6, 7, 9 or 10 was lost —
+`areaitems.test.js`, `pagekeys.test.js`, `intersheetrefs.test.js`,
+`boardoutline.test.js`, `kicad5board.test.js`, `boardcopper.test.js` and
+`boardpicture.test.js` fail if edit 6, 7, 9, 10, 14 and 15, 16, 18 or 19 was lost (`wheelgesture.test.js` checks the
+arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
 update this section and the hashes, and commit the
 source and the built files together.
 

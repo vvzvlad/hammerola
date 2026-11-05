@@ -1,4 +1,3 @@
-import { BoardContentReady } from "../viewers/base/events";
 import type { DesignURLs } from "./design_urls";
 
 type PAGES = "sch" | "pcb" | "3d" | "bom" | "full" | "design_block";
@@ -18,13 +17,59 @@ declare global {
     }
 }
 
-const urlParams = new URLSearchParams(window.location.search);
+/**
+ * The page that loads the bundle opts in to standalone behaviour -- query
+ * string configuration and the postMessage bridge -- with
+ * `<meta name="ecad-viewer-mode" content="standalone">`. An app that embeds
+ * the element (Prism) leaves it out, so a crafted link to that app cannot
+ * configure the viewer through the URL.
+ */
+export const is_standalone_host = (doc: Document = document) =>
+    doc
+        .querySelector('meta[name="ecad-viewer-mode"]')
+        ?.getAttribute("content")
+        ?.trim() === "standalone";
 
-export const load_ecad_viewer_conf = () => {
+/** A link target the viewer may render: https, or relative to the page. */
+export const safe_link_url = (
+    value: string | null | undefined,
+    base: string = window.location.href,
+): string | undefined => {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    // Absolute and protocol-relative URLs must be https. Anything else is a
+    // path on the page's own origin.
+    const absolute = /^[a-z][a-z0-9+.-]*:/i.test(trimmed);
+    try {
+        const url = new URL(trimmed, base);
+        if (absolute || trimmed.startsWith("//")) {
+            return url.protocol === "https:" ? url.href : undefined;
+        }
+        return url.origin === new URL(base).origin ? url.href : undefined;
+    } catch {
+        return undefined;
+    }
+};
+
+/** A server the viewer may upload files to: the page's own origin only. */
+export const same_origin_url = (
+    value: string | null | undefined,
+    base: string = window.location.href,
+): string | undefined => {
+    if (!value) return undefined;
+    try {
+        const url = new URL(value.trim(), base);
+        return url.origin === new URL(base).origin ? url.href : undefined;
+    } catch {
+        return undefined;
+    }
+};
+
+export const load_ecad_viewer_conf = (
+    urlParams: URLSearchParams = new URLSearchParams(window.location.search),
+) => {
     for (const key of [
         "zip-url",
-        "cli-server-addr",
-        "ai-url",
         "is-module-lib",
         "app",
         "default-page",
@@ -38,6 +83,12 @@ export const load_ecad_viewer_conf = () => {
             window[var_name] = value;
         }
     }
+
+    const cli_server_addr = same_origin_url(urlParams.get("cli-server-addr"));
+    if (cli_server_addr) window.cli_server_addr = cli_server_addr;
+
+    const ai_url = safe_link_url(urlParams.get("ai-url"));
+    if (ai_url) window.ai_url = ai_url;
 
     const whiteBg = urlParams.get("whitebg");
     if (whiteBg !== null) {
@@ -54,47 +105,6 @@ export const load_ecad_viewer_conf = () => {
             console.error(e);
         }
     }
-
-    window.addEventListener(
-        BoardContentReady.type,
-        (event: BoardContentReady) => {
-            if (!window.cli_server_addr) return;
-
-            const postData = {
-                pcb_content: event.detail,
-            };
-
-            const fetchOptions = {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(postData),
-            };
-
-            // Make the POST request using fetch
-            fetch(window.cli_server_addr, fetchOptions)
-                .then((response) => {
-                    if (!response.ok) {
-                        throw new Error("Network response was not ok");
-                    }
-                    return response.json();
-                })
-                .then((data) => {
-                    const url = data["url"];
-                    console.log("Response from API:", url);
-                    window.dispatchEvent(
-                        new CustomEvent("3d:url:ready", { detail: url }),
-                    );
-                })
-                .catch((error) => {
-                    console.error(
-                        "There was a problem with the fetch operation:",
-                        error,
-                    );
-                });
-        },
-    );
 };
 
 export const is_showing_design_block = () => window.app === "design_block";

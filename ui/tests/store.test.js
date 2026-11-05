@@ -1,5 +1,6 @@
 // ui/src/store.js — everything these pages remember in the browser: the token,
-// the notes, which pointer the reader was last on, how the front page's list of
+// the notes, the BOM's Sourced and Placed marks, which pointer the reader was
+// last on, how the front page's list of
 // projects is arranged, the strip of projects this browser has been in, whether
 // that strip is drawn, and whether the model is drawn at retina resolution.
 //
@@ -23,14 +24,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  clearToken, forgetTab, readNotes, readProjectSort, readProjectView, readRetina,
-  readTabs, readTabStrip, readToken, rememberPointer, rememberTab, TAB_CAP, writeNotes,
+  clearToken, forgetTab, readAssembly, readNotes, readProjectSort, readProjectView, readRetina,
+  readTabs, readTabStrip, readToken, rememberPointer, rememberTab, TAB_CAP, writeAssembly, writeNotes,
   writeProjectSort, writeProjectView, writeRetina, writeTabStrip, writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
 const TOKEN_KEY = 'hammerola.token'
 const NOTES_KEY = 'hammerola.notes.proj1'
+const ASSEMBLY_KEY = 'hammerola.assembly.proj1.hw/board'
 const VIEW_KEY = 'hammerola.projects_view'
 const SORT_KEY = 'hammerola.projects_sort'
 const TABS_KEY = 'hammerola.tabs'
@@ -209,6 +211,41 @@ describe('the notes', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(() => writeNotes('proj1', notes)).not.toThrow()
     expect(readNotes('proj1')).toEqual({})
+  })
+})
+
+// -- the BOM's Sourced and Placed marks ---------------------------------------
+
+describe('the assembly marks', () => {
+  const NONE = { sourced: [], placed: [] }
+
+  it('round-trip under the project\'s and design\'s key', () => {
+    writeAssembly('proj1', 'hw/board', { sourced: ['C1'], placed: ['C1', 'R2'] })
+    expect(JSON.parse(storage.getItem(ASSEMBLY_KEY))).toEqual({ sourced: ['C1'], placed: ['C1', 'R2'] })
+    expect(readAssembly('proj1', 'hw/board')).toEqual({ sourced: ['C1'], placed: ['C1', 'R2'] })
+  })
+
+  it('read as nothing ticked from text that is not JSON, and keep only designators from JSON of another shape', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    storage.setItem(ASSEMBLY_KEY, 'not json at all')
+    expect(readAssembly('proj1', 'hw/board')).toEqual(NONE)
+    storage.setItem(ASSEMBLY_KEY, JSON.stringify({ sourced: 'C1', placed: [1, 'R1', null] }))
+    expect(readAssembly('proj1', 'hw/board')).toEqual({ sourced: [], placed: ['R1'] })
+    storage.setItem(ASSEMBLY_KEY, JSON.stringify(null))
+    expect(readAssembly('proj1', 'hw/board')).toEqual(NONE)
+  })
+
+  it('read nothing and write nothing without a project to key them by', () => {
+    writeAssembly('', 'hw/board', { sourced: ['C1'], placed: [] })
+    expect(storage.cells.size).toBe(0)
+    expect(readAssembly('', 'hw/board')).toEqual(NONE)
+  })
+
+  it('survive a browser that refuses storage', () => {
+    install(fakeStorage({ failing: true }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(() => writeAssembly('proj1', 'hw/board', { sourced: ['C1'], placed: [] })).not.toThrow()
+    expect(readAssembly('proj1', 'hw/board')).toEqual(NONE)
   })
 })
 

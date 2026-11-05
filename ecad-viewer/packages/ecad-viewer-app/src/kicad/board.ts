@@ -1574,8 +1574,101 @@ export class Poly extends GraphicItem {
     }
 }
 
+/**
+ * A zone's fill. Fills are by far the largest point lists on a board
+ * (EDA-04903: 929k points over 143 fills), and held as one Vec2 per point
+ * they cost ~45 MB of heap. A fill without arcs -- which is how KiCad writes
+ * them -- therefore keeps its points packed as interleaved xy in one
+ * Float64Array, `pts` stays empty, and `points` builds Vec2s only when asked.
+ * A fill with arcs keeps the general Poly representation.
+ */
 export class FilledPolygon extends Poly {
     static override expr_start = "filled_polygon";
+
+    #coords?: Float64Array;
+    #bbox?: BBox;
+
+    constructor(
+        data: B.I_Poly,
+        parent?: Footprint | Pad | Dimension | KicadPCB,
+    ) {
+        const packed = !!data.pts && !data.pts.some((pt) => "mid" in pt);
+        super(packed ? { ...data, pts: [] } : data, parent);
+        if (packed) {
+            const coords = new Float64Array(data.pts.length * 2);
+            for (let i = 0; i < data.pts.length; i++) {
+                const pt = data.pts[i] as { x: number; y: number };
+                coords[i * 2] = pt.x;
+                coords[i * 2 + 1] = pt.y;
+            }
+            this.#coords = coords;
+        }
+    }
+
+    /** Number of points, without building them. */
+    get point_count(): number {
+        return this.#coords ? this.#coords.length / 2 : this.points.length;
+    }
+
+    /**
+     * `points` as interleaved xy. The packed array itself when there is one:
+     * callers must not modify it, and must copy it before transferring it.
+     */
+    get coords(): Float64Array {
+        if (this.#coords) return this.#coords;
+        const points = this.points;
+        const coords = new Float64Array(points.length * 2);
+        for (let i = 0; i < points.length; i++) {
+            coords[i * 2] = points[i]!.x;
+            coords[i * 2 + 1] = points[i]!.y;
+        }
+        return coords;
+    }
+
+    override get points(): Vec2[] {
+        const coords = this.#coords;
+        if (!coords) return super.points;
+        const points: Vec2[] = new Array(coords.length / 2);
+        for (let i = 0; i < points.length; i++) {
+            points[i] = new Vec2(coords[i * 2]!, coords[i * 2 + 1]!);
+        }
+        return points;
+    }
+
+    override get bbox(): BBox {
+        if (!this.#coords) return super.bbox;
+        if (!this.#bbox) {
+            const c = this.#coords;
+            let min_x = Infinity;
+            let min_y = Infinity;
+            let max_x = -Infinity;
+            let max_y = -Infinity;
+            for (let i = 0; i < c.length; i += 2) {
+                const x = c[i]!;
+                const y = c[i + 1]!;
+                if (x < min_x) min_x = x;
+                if (x > max_x) max_x = x;
+                if (y < min_y) min_y = y;
+                if (y > max_y) max_y = y;
+            }
+            this.#bbox =
+                c.length >= 2
+                    ? BBox.from_corners(min_x, min_y, max_x, max_y)
+                    : BBox.from_points([]);
+        }
+        return this.#bbox;
+    }
+
+    /**
+     * `points` already triangulated, as interleaved xy board coordinates,
+     * when the project loader did it in a worker (large fills only). The
+     * zone painter hands these to the renderer instead of having it
+     * triangulate on the main thread.
+     */
+    triangles?: Float32Array;
+
+    /** Bounds of `points`, set with `triangles`. */
+    triangles_bbox?: BBox;
 }
 
 export class GrPoly extends Poly {

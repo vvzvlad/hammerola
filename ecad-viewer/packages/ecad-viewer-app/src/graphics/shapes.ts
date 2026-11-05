@@ -105,7 +105,29 @@ export class Polyline {
 
 /** Filled polygon */
 export class Polygon {
-    vertices: Float32Array;
+    vertices?: Float32Array;
+
+    /**
+     * Bounds of the polygon when it arrives as triangles only (`points`
+     * empty, `vertices` set) -- see `from_triangles`. Unused otherwise.
+     */
+    bbox?: BBox;
+
+    /**
+     * A polygon already triangulated: interleaved xy triangle vertices and
+     * their bounds, with no point list. Saves building and transforming a
+     * point array that nothing would read (large zone fills: 150k points).
+     */
+    static from_triangles(
+        vertices: Float32Array,
+        bbox: BBox,
+        color: OptionalDefaultColor,
+    ): Polygon {
+        const polygon = new Polygon([], color);
+        polygon.vertices = vertices;
+        polygon.bbox = bbox;
+        return polygon;
+    }
 
     /**
      * Create a filled polygon

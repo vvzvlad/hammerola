@@ -588,20 +588,44 @@
   value of `s=` (`onSheet`), which writes it into the address; the component
   reads the address and follows Back and Forward through `address.js` and
   writes no history itself. What is under a right click is the element's own answer
-  (`selectAt`), and the menu is built from the selection it reports. The viewer
-  is `static/_v/ecad-viewer.js`, built from `ecad-viewer/` and imported by URL
-  on first use (`loadEcadViewer`); the wheel over it, the look of a selected
-  footprint, the pins of a symbol the file gives no pin records and that hit
-  test are its own code, edited by us (`static/_v/PROVENANCE.md`, "Our edits")
-- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three
+  (`selectAt`), and the menu is built from the selection it reports. The two
+  elements are each other's inset peer (`linkInsets`): in inset mode — the
+  bar's Insets on the schematic and on the board, or `I` — a pin of the
+  schematic opens a window of the board around its pad and a pad of the board
+  one of the schematic around its pin, and a click pins it instead of selecting
+  or opening the menu; the elements say the mode in `ecad-viewer:inset-mode`,
+  which lights the tool, and Escape goes to the datasheet's window first, then
+  to the menu, then to the insets of the view on screen (`escapeInsets`); the
+  page takes Escape for both elements (`enableInsets({ hostEscape: true })`). A
+  PCB inset turns to the 3D board on `T`: the 3D view is the board element's 3D
+  scene (`setInset3D`). One net is lit at a time, on the board and in 3D alike:
+  the board's panel reports what the board lit, a click on copper in 3D lights
+  it on the board (`setHighlightedNets`), and a part selected anywhere or a click
+  on nothing puts it out. The
+  viewer is `static/_v/ecad-viewer.js`, built from `ecad-viewer/` and imported
+  by URL on first use (`loadEcadViewer`); the insets are its own code, and so
+  are the wheel over it and over an inset, the look of a selected footprint, the
+  pins of a symbol the file gives no pin records and that hit test, edited by
+  us (`static/_v/PROVENANCE.md`, "Our edits")
+- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js`, `ui/src/board3dcopper.js` — the
+  3D view of a board: three
   and `GLTFLoader.js` imported by URL from `static/_v/` (three's own add-ons,
   `static/_v/PROVENANCE.md`) and the camera turned by the model's own trackball,
   `CADTrackballControls` out of `static/_v/three-cad-viewer.esm.js` at the
   model's speeds, all on first use; the `.glb` of
-  `kicad-cli pcb export glb` drawn on demand and only while on screen. `board3d.js`
-  is the part that needs no WebGL: which nodes are parts (a child of the scene
-  root named by its designator), merging a part's meshes, lighting one part on
-  copies of its materials, framing it
+  `kicad-cli pcb export glb` drawn on demand and only while on screen, or drawn
+  into a PCB inset of the board element (`scene3d`, the fork's `InsetScene3D`),
+  which loads it off screen too. The copper is not the `.glb`'s: once the board
+  element has its files, the view draws the copper the element hands
+  (`getBoardCopper`, "Our edits" 18) as a mesh per layer and hides the `.glb`'s,
+  which carries no net. A click on copper lights its net; the panel at the top
+  left, in `PcbPanel`'s look, names the lit net and holds Isolate and the
+  stackup separation. `board3d.js` and `board3dcopper.js` are the parts that need
+  no WebGL: which nodes are parts (a child of the scene root named by its
+  designator), merging a part's meshes, lighting one part on copies of its
+  materials, framing it; which of the `.glb`'s board layers are copper, mask and
+  silkscreen, our copper's meshes and shader, the drills cut out of it, the
+  separation's offsets and fades, the camera of a 3D inset
 - `ui/src/ar.js` — View in AR: the model view on screen as a USDZ file that
   iOS opens in AR Quick Look at 1:1. `arSupported` asks the browser
   (`relList.supports('ar')`); `arScene` copies the faces the viewer draws of
@@ -644,7 +668,8 @@
   `hide-chrome`): layer presets, a row per layer with an eye and an
   active-layer click, the zone fill opacity (dimmed to
   `ZONE_OPACITY` on open), and the net of the last click, lit whole through the
-  viewer's own highlight. The viewer owns the state; the panel re-reads it
+  viewer's own highlight and told to the page (`onNet`), which lights it in 3D.
+  The viewer owns the state; the panel re-reads it
 - `ui/src/kicadbom.js` — a KiCad design's BOM, a document the hub does not
   publish: `withBoms` lists one after every schematic as meta.json comes in
   (`loadMeta` in `hub.js`), under the schematic's file, so `KicadView` draws it
@@ -654,7 +679,11 @@
   pure half: the rows split into a part per designator, its type and package,
   a value's magnitude, the number a `Price` field says (`priceOf`), each
   column's filter entries (`bomFilters`), the search and the filters, the
-  grouping and the sort (`bomTable`), and the total under the table (`bomTotal`)
+  grouping and the sort (`bomTable`), and the total under the table (`bomTotal`);
+  for the assembly view, how each part is lit (`partLooks`), the size of a
+  picture with the board's proportions in the room it has (`pictureSize`) and
+  which part a click on a picture of the board is on (`boardPoint`,
+  `insideOutline`)
 - `ui/src/BomView.jsx` — the BOM on screen, a member `KicadView` draws and keeps
   mounted: a search field and a grouping switch over a table whose every head
   sorts it by a click on its name and filters it from its funnel, a list of the
@@ -663,7 +692,15 @@
   designator selects the part and opens the board (`onPart`), a datasheet
   opens the build's document in `KicadView`'s window (`onDatasheet`, from
   `kicadsheets.js`) or a web address in a new tab; the Price and Sum columns and
-  the total under the table
+  the total under the table. Its `Assembly` button, over a design with a board,
+  adds the assembly view: the board's top and bottom, each that side alone
+  drawn by the board's element (`renderBoardPicture`, "Our edits" 19) at the
+  board's proportions (`getBoardPictureSize`), in a band held over the
+  scrolling table, a canvas over each lighting the parts of the row selected or
+  under the pointer and the placed ones in their boxes, pads included
+  (`getFootprintBoxes`), a click on a part selecting its row, and the Sourced
+  and Placed checkboxes, kept in this browser by project and design
+  (`readAssembly` in `store.js`)
 - `ui/src/kicadsheets.js` — which file a part's `Datasheet` field names:
   reference → value from the placed symbols of the schematics and the
   footprints of the board, the value read as KiCad reads `${KIPRJMOD}` and
@@ -697,14 +734,18 @@
   down to what builds the two files the hub serves, because what we need from it
   are edits to its CODE — how a selection and a highlighted net look on the
   board, the wheel, a symbol's pins without pin records, a hit test the page can
-  ask (`selectAt`). A fork kept as SOURCE is what makes those rebasable onto the
+  ask (`selectAt`), a board's outline and arcs, a board KiCad 5 wrote, the
+  board's copper for the 3D view (`src/ecad-viewer/board-copper.ts`), a side of
+  the board for the BOM's assembly view (`src/ecad-viewer/board-picture.ts`). The
+  windows of the other document a pin or a pad opens (`src/ecad-viewer/insets/`
+  of `packages/ecad-viewer-app/`) are the fork's. A fork kept as SOURCE is what makes those rebasable onto the
   next commit; string replacements in the minified bundle would not be. `make
   ecad` builds it with the fork's own script into `static/_v/`. The outputs are
   committed and the inputs are not: `ecad-viewer/node_modules/` and
   `ecad-viewer/packages/ecad-viewer-app/build/` are gitignored, and the directory
   as a whole is in `.dockerignore`. `static/_v/PROVENANCE.md` has the commit it
   was taken at, what was left out, the edits, the hashes that prove it builds
-  Prism's file byte for byte without them, and how to upgrade
+  Prism's two files byte for byte without them, and how to upgrade
 - `ci/Dockerfile.test` — the container the Python suite runs in, in both workflows.
   Not the artefact: the shipped image is the Dockerfile at the root, which installs
   requirements.lock with `--require-hashes` and no test dependency at all. This one

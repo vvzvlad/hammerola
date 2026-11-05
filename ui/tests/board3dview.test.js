@@ -1,7 +1,7 @@
 // The 3D view of a board (ui/src/BoardView3D.jsx): when it fetches the model,
 // what it does with a model that arrives too late, when it draws, what counts
-// as a click and a right click, what the page's bar does with it, and the
-// page's comments on it.
+// as a click and a right click, what the page's bar does with it, the page's
+// comments on it, the board's copper in it, and its drawing of the insets.
 //
 // No GPU here. `loadThree` hands over three itself with the two parts that need
 // one replaced — a renderer whose canvas is a plain one and which, as three's
@@ -10,7 +10,8 @@
 // only holds a target and what it was set to, and, as the model's own does in
 // its non-tumbling mode, leaves the camera's turn alone on `update` — and a
 // loader whose model is a small scene built in the test: a board layer and one
-// part, `C1`. What the view does to a model
+// part, `C1`, or for the copper a board's body, copper and solder mask, named
+// in the loader's record as KiCad names them. What the view does to a model
 // (board3d.js) runs for real and is tested in board3d.test.js. `fetch` and the
 // animation frames are driven by hand.
 
@@ -82,9 +83,13 @@ function boardScene() {
   return scene
 }
 
+/** The loader's record of the model's meshes, by which the board's layers are
+ *  told apart (`glbLayers`): none unless a test names them. */
+let parser = null
+
 class Loader {
   parseAsync() {
-    return Promise.resolve({ scene: model, parser: { json: {}, associations: new Map() } })
+    return Promise.resolve({ scene: model, parser })
   }
 }
 
@@ -140,11 +145,21 @@ const FOV_3D = 35
 
 const pointer = (canvas, type, clientX, clientY, button = 0) => canvas.dispatchEvent(
   new MouseEvent(type, { clientX, clientY, button, bubbles: true }))
+/** Where a world point is drawn on the 200 px canvas `loaded` gives. */
+const onCanvas = (view, point) => {
+  const at = point.clone().project(view.stage.camera)
+  return [(at.x + 1) * 100, (1 - at.y) * 100]
+}
+const clickAt = (canvas, [x, y]) => {
+  pointer(canvas, 'pointerdown', x, y)
+  pointer(canvas, 'pointerup', x, y)
+}
 
 beforeEach(() => {
   renderers = []
   trackballs = []
   model = boardScene()
+  parser = { json: {}, associations: new Map() }
   stubFrames()
   loadThree.mockResolvedValue({ THREE: { ...THREE, WebGLRenderer: Renderer }, TrackballControls: Trackball, GLTFLoader: Loader,
     mergeGeometries })
@@ -390,15 +405,6 @@ describe('comments on the 3D view of a board', () => {
     onLost: vi.fn(), onFocused: vi.fn(), ...extra })
   /** A comment on `part`, on the top face of `C1`'s box in that part's frame. */
   const markOn = (id, part) => ({ id, part, point: [0, 400, 0], normal: [0, 1, 0], active: false })
-  /** Where a world point is drawn on the 200 px canvas `loaded` gives. */
-  const onCanvas = (view, point) => {
-    const at = point.clone().project(view.stage.camera)
-    return [(at.x + 1) * 100, (1 - at.y) * 100]
-  }
-  const clickAt = (canvas, [x, y]) => {
-    pointer(canvas, 'pointerdown', x, y)
-    pointer(canvas, 'pointerup', x, y)
-  }
 
   it('takes a click on a part with the tool armed for a comment\'s place, in the part\'s own millimetres, selecting nothing', async () => {
     const comment = commenting({ on: true })
@@ -467,5 +473,114 @@ describe('comments on the 3D view of a board', () => {
     update({ comment: { ...comment, focus: { part: 'C1' } } })
     expect(controls.target.distanceTo(LIFTED)).toBeCloseTo(0, 6)
     expect(comment.onFocused).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('the board\'s copper in the 3D view', () => {
+  /** The board's layers as KiCad exports them, in metres: the body, its
+   *  copper and the solder mask over it, told apart by their meshes' names. */
+  let layers = null
+  beforeEach(() => {
+    const slab = (bottom, top) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.05, (top - bottom) / 1000, 0.04), new THREE.MeshStandardMaterial())
+      mesh.position.set(0.025, (bottom + top) / 2000, 0.02)
+      return mesh
+    }
+    layers = { body: slab(0, 1.51), copper: slab(1.51, 1.545), mask: slab(1.545, 1.56) }
+    model = new THREE.Group().add(new THREE.Group().add(layers.body, layers.copper, layers.mask))
+    parser = { json: { meshes: [{ name: 'b_PCB' }, { name: 'b_copper' }, { name: 'b_soldermask' }] },
+      associations: new Map([layers.body, layers.copper, layers.mask].map((node, meshes) => [node, { meshes }])) }
+  })
+
+  /** Our copper as the board's element hands it (`readCopper`): on F.Cu, a
+   *  square of the net A from 10 to 30 mm each way. */
+  const COPPER = {
+    nets: ['', 'A'],
+    layers: [{ name: 'F.Cu', bottom: 1.51, top: 1.545, triangles: new Float32Array([10, 10, 30, 10, 30, 30, 10, 10, 30, 30, 10, 30]),
+      nets: new Uint32Array(6).fill(1) }],
+    barrels: [],
+    colours: { 'F.Cu': 'rgb(200, 60, 40)' },
+  }
+
+  it('takes a click on copper, through the solder mask over it, for its net, selecting no part', async () => {
+    const { view, canvas } = await loaded({ copper: () => COPPER, onNet: vi.fn() })
+    clickAt(canvas, onCanvas(view, new THREE.Vector3(0.02, 0.001545, 0.02)))
+    // what the pointer meets first is the mask
+    expect(view.stage.raycaster.intersectObjects([view.stage.root], true)[0].object).toBe(layers.mask)
+    expect(view.props.onNet.mock.calls).toEqual([['A']])
+    expect(view.props.onSelect.mock.calls).toEqual([[null]])
+    // off our copper, on the bare board: no net
+    clickAt(canvas, onCanvas(view, new THREE.Vector3(0.04, 0.00156, 0.035)))
+    expect(view.props.onNet).toHaveBeenCalledTimes(1)
+    expect(view.props.onSelect.mock.calls).toEqual([[null], [null]])
+  })
+
+  it('hides the .glb\'s copper once the board hands over ours, which it builds once', async () => {
+    let handed = null
+    const copper = vi.fn(() => handed)
+    const { view, update } = await loaded({ copper })
+    expect([layers.copper.visible, view.stage.copper]).toEqual([true, null])
+    handed = COPPER
+    update({})
+    expect(layers.copper.visible).toBe(false)
+    expect(view.stage.copper.group.parent).toBe(view.stage.root)
+    update({ selected: null })
+    expect(copper).toHaveBeenCalledTimes(2)
+  })
+
+  it('puts Isolate out with the net it isolates, so the next net lit is drawn with the rest', async () => {
+    const { view, update } = await loaded({ copper: () => COPPER, net: 'A' })
+    view.onIsolate()
+    update({})
+    expect(view.stage.copper.shared.isolate.value).toBe(true)
+    update({ net: null })
+    expect(view.state.isolate).toBe(false)
+    update({ net: 'A' })
+    expect(view.stage.copper.shared.isolate.value).toBe(false)
+  })
+})
+
+describe('the 3D view of the board\'s insets', () => {
+  it('loads the model off screen when an inset asks, once, and tells the inset it is ready', async () => {
+    const net = fetching()
+    const { view } = mounted()
+    const heard = []
+    view.scene3d.subscribe(() => heard.push(view.scene3d.state()))
+    view.scene3d.load()
+    view.scene3d.load()
+    expect([net.fetch.mock.calls.length, view.scene3d.state()]).toEqual([1, 'loading'])
+    net.answer()
+    await arrived()
+    view.scene3d.load()
+    expect([net.fetch.mock.calls.length, heard]).toEqual([1, ['ready']])
+  })
+
+  it('draws its own frame again after an inset\'s, whose resizing cleared the canvas on screen', async () => {
+    const { view } = await loaded()
+    runFrames()
+    document.createElement('div').append(view.host)
+    Object.defineProperties(view.host, { clientWidth: { value: 200 }, clientHeight: { value: 150 } })
+    const inset = document.createElement('canvas')
+    Object.defineProperties(inset, { clientWidth: { value: 120 }, clientHeight: { value: 80 } })
+    inset.getContext = () => ({ fillRect: vi.fn(), drawImage: vi.fn() })
+    const camera = { center: { x: 0, y: 0 }, zoom: 4, rotation: 0, mirror: false, view3d: true, tilt: 0 }
+    // What the renderer did, in order: `size` where three resizes, and so
+    // clears, the canvas (its `setPixelRatio` resizes too), and each frame by
+    // the camera it was drawn through.
+    const renderer = renderers[0]
+    const journal = []
+    renderer.setSize.mockImplementation(() => journal.push('size'))
+    renderer.setPixelRatio.mockImplementation(() => journal.push('size'))
+    renderer.render.mockImplementation((scene, used) => {
+      scene.updateMatrixWorld()
+      journal.push(used === view.stage.camera ? 'view' : used.isOrthographicCamera ? 'inset' : used)
+    })
+    expect(view.scene3d.render(camera, inset, false)).toBe(true)
+    expect(journal.filter((entry) => entry !== 'size')).toEqual(['inset', 'view'])
+    expect(journal.slice(-2)).toEqual(['size', 'view'])
+    // and nothing left to draw the same picture once more
+    runFrames()
+    expect(journal.at(-1)).toBe('view')
+    expect(journal.filter((entry) => entry === 'view')).toHaveLength(1)
   })
 })

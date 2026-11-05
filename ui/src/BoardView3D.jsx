@@ -20,6 +20,15 @@
 //             bar does with this view (DocumentView.jsx)
 //   onFetched told each time the `.glb` has come in or failed to: KicadView.jsx
 //             holds the design's other files back for it
+//   copper    null until the board's own element has its files, then a call
+//             that reads the board's copper from it (`getBoardCopper`, with
+//             each layer's colour on the board's panel, KicadView.jsx), made
+//             once the model is drawn: from then on the copper is ours
+//             (board3dcopper.js) and the `.glb`'s own is hidden
+//   net       the name of the net lit on the board and here, or null; drawn in
+//             the selection colour, the rest of the copper dimmed
+//   onNet     a click on copper: the name of its net; the panel's × and an
+//             Escape put it out through the page (null)
 //   comment   the page's comments on this model (KicadView.jsx), or none:
 //             `on`, the page's Comment tool armed here, so that a left click
 //             on a part is the place of a comment (`onPoint` with `partPlace`
@@ -45,6 +54,26 @@
 // `deltaY` alone, so the event is taken on its way down, on the holder, before
 // the canvas it listens on (`Stage.wheel`).
 //
+// A CLICK ON COPPER lights its net (`onNet`) and selects no part, as a click on
+// a track on the board does; the solder mask and the silkscreen over it do not
+// stop the click, the board's body does. Copper is pickable only while it is
+// drawn: with Isolate on, the lit net's alone.
+//
+// THE PANEL over the top left of the canvas, drawn as the board's own
+// (PcbPanel.jsx) and folding as it does, comes with our copper: the lit net's
+// name and a × that puts it out, Isolate (only that net's copper drawn, the
+// board and the parts hidden; usable while a net is lit, and off again when it
+// goes out) and Stackup separation (board3dcopper.js: the copper layers pulled
+// apart, the parts and the board faded, the layers in their colours on the
+// board's panel).
+//
+// THE BOARD'S INSETS SHOW IT IN 3D. `scene3d` is the `InsetScene3D` of the
+// board element's insets (ecad-viewer/…/insets/types.ts), which KicadView.jsx
+// registers there: T in a PCB inset draws this model through an orthographic
+// camera built from the inset's (`insetView`, board3dcopper.js) and copies the
+// frame into the inset's canvas. Asked to, it fetches the `.glb` with the view
+// off screen. Its subscribers hear of every change of what it draws.
+//
 // Drawing is on demand — a frame when the camera, the size or the selection
 // changes, none while the view is hidden. Everything three holds is freed on
 // unmount, the WebGL context included: a page has few of them to give.
@@ -52,11 +81,18 @@
 import React from 'react';
 
 import {
-  disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, mergeByMaterial, partPlace, partsOf,
-  pickedPart, plainColours, sharedGeometries,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, mergeByMaterial,
+  partPlace, partsOf, pickedPart, plainColours, sharedGeometries,
 } from './board3d.js';
+import {
+  COPPER, copperModel, fade, glbLayers, insetView, place, separationLook, stackOffsets,
+} from './board3dcopper.js';
 import { wheelMove } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
+import {
+  FILL, LAYER_PANEL, LAYER_PANEL_BODY, LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, TAB_ON,
+} from './panelstyle.js';
+import { CHEVRON, NET_LABEL, NET_NAME } from './PcbPanel.jsx';
 import { css, MONO } from './style.jsx';
 import { PIN_LENGTH_FRACTION, PIN_PX } from './viewport/options.js';
 import { arrowKit, pinDirection } from './viewport/pins.js';
@@ -68,6 +104,13 @@ const SHELL = 'position:relative;width:100%;height:100%;overflow:hidden;backgrou
 const HOLDER = 'position:absolute;top:0;left:0;width:100%;height:100%;color:var(--accent)';
 const CANVAS = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;outline:none';
 const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px ${MONO};color:var(--text-muted)`;
+// The panel's own rows, after the board panel's (PcbPanel.jsx).
+const NET_CLEAR = 'flex:none;padding:0 2px;font:400 14px/1 system-ui;color:var(--text-muted);cursor:pointer';
+const PILL_OFF = ';opacity:.4;cursor:default';
+const SEPARATION = 'flex:none;display:flex;flex-direction:column;gap:4px;padding:8px 10px 8px';
+const SEPARATION_HEAD = 'display:flex;align-items:center;color:var(--text-soft)';
+const SEPARATION_VALUE = `margin-left:auto;font:400 10.5px ${MONO};color:var(--text-muted)`;
+const SEPARATION_INPUT = 'width:100%;margin:0;accent-color:var(--accent)';
 
 /** The vertical field of view, degrees. */
 const FOV = 35;
@@ -111,6 +154,17 @@ class Stage {
     this.parts = partsOf(this.model);
     this.box = new THREE.Box3().setFromObject(this.model);
     this.radius = this.box.getBoundingSphere(new THREE.Sphere()).radius || 1;
+    // The board's own layers, by what they are to our copper (`glbLayers`),
+    // and the faces of the board an inset pivots on: its own layers' box.
+    this.glb = glbLayers(this.root.children.filter((node) => !designatorOf(node)), gltf.parser);
+    this.skin = new Set(this.glb.skin);
+    const board = new THREE.Box3();
+    for (const node of [...this.glb.board, ...this.glb.copper]) board.expandByObject(node);
+    this.surface = { top: board.max.y, bottom: board.min.y };
+    // Our copper (`setCopper`), and what it is drawn as (`setLook`).
+    this.copper = null;
+    this.copperLook = { net: null, isolate: false, separation: 0 };
+    this.looked = '';
 
     this.scene = new THREE.Scene();
     this.scene.add(this.model);
@@ -133,6 +187,7 @@ class Stage {
     head.position.set(-1, 1, 0);
     head.target.position.set(0, 0, -1);
     this.camera.add(head, head.target);
+    this.head = head;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -169,9 +224,9 @@ class Stage {
       this.down = null;
       if (!down || event.button !== down[0]
         || Math.hypot(event.clientX - down[1], event.clientY - down[2]) > CLICK_SLOP) return;
+      this.aim(event);
       if (down[0] === 0) {
-        this.aim(event);
-        const [hit] = this.raycaster.intersectObjects([this.root, this.pins], true);
+        const [hit] = this.hits([this.root, this.pins]);
         const mark = hit ? this.markOf(hit.object) : null;
         if (mark !== null) {
           this.handlers.onMarker(mark);
@@ -183,9 +238,14 @@ class Stage {
           return;
         }
       }
-      const part = this.pick(event);
+      // Copper lights its net and selects no part, as a track on the board does.
+      const hits = this.hits([this.root]);
+      const net = hits.length && hits[0].object.userData.board3dCopper ? this.copper.nets[this.netAt(hits[0])] || null
+        : null;
+      const part = net ? null : pickedPart(hits, this.root);
       this.select(part, false);
       this.handlers.onSelect(part);
+      if (net) this.handlers.onNet(net);
       if (part && down[0] === 2) this.handlers.onMenu(part, event.clientX, event.clientY);
     });
 
@@ -326,10 +386,109 @@ class Stage {
     this.raycaster.setFromCamera(at, this.camera);
   }
 
-  /** The designator of the part under a pointer event, or null. */
-  pick(event) {
-    this.aim(event);
-    return pickedPart(this.raycaster.intersectObject(this.root, true), this.root);
+  /** What the raycaster meets among `objects`, nearest first, of what is
+   *  drawn and stops a click: nothing hidden, not the solder mask nor the
+   *  silkscreen, and with Isolate on no copper but the lit net's. */
+  hits(objects) {
+    return this.raycaster.intersectObjects(objects, true).filter((hit) => {
+      for (let node = hit.object; node; node = node.parent) {
+        if (!node.visible || this.skin.has(node)) return false;
+      }
+      const { shared } = this.copper || {};
+      return !(hit.object.userData.board3dCopper && shared.isolate.value && this.netAt(hit) !== shared.litNet.value);
+    });
+  }
+
+  /** The net code of the copper a hit is on. */
+  netAt(hit) {
+    return hit.object.geometry.attributes.netIndex.getX(hit.face.a);
+  }
+
+  /** Our copper (board3dcopper.js) from what the board's element read
+   *  (`getBoardCopper`), in place of the `.glb`'s own. */
+  setCopper(copper) {
+    this.copper = copperModel(this.THREE, copper, copper.colours);
+    this.root.add(this.copper.group);
+    for (const node of this.glb.copper) node.visible = false;
+    this.looked = '';
+    this.setLook(this.copperLook);
+  }
+
+  /** What the copper is drawn as, `{ net, isolate, separation }` (see the
+   *  header); true when that changed anything. Isolate takes a lit net. */
+  setLook(look) {
+    this.copperLook = look;
+    const key = JSON.stringify(look);
+    if (!this.copper || key === this.looked) return false;
+    this.looked = key;
+    const { copper } = this;
+    const code = look.net ? copper.nets.indexOf(look.net) : -1;
+    const isolate = look.isolate && code > 0;
+    copper.shared.litNet.value = code > 0 ? code : -1;
+    copper.shared.isolate.value = isolate;
+    copper.shared.accent.value.setStyle(window.getComputedStyle(this.host).color);
+    const parted = separationLook(look.separation);
+    place(stackOffsets(look.separation, copper.diagonal, copper.layers.length), copper.layers, copper.barrels);
+    for (const layer of copper.layers) {
+      layer.material.color.copy(copper.base).lerp(layer.colour, parted.layers);
+      layer.material.metalness = COPPER.metalness * (1 - parted.layers);
+    }
+    copper.barrels.material.metalness = COPPER.metalness * (1 - parted.layers);
+    fade([...this.parts.values()].flat(), isolate ? 0 : parted.parts);
+    fade(this.glb.board, isolate ? 0 : parted.board);
+    this.request();
+    return true;
+  }
+
+  /**
+   * The model through an inset's camera (`InsetCamera`, the board's mm) into
+   * the inset's 2D `canvas`, sized by CSS: drawn by this renderer at the
+   * canvas's size and copied over in the same task, before the context, which
+   * keeps no drawing buffer, hands the frame on; the light that rides with the
+   * camera rides with the inset's meanwhile, and the view's own size is put
+   * back. `bottom` pivots on the board's bottom face. False when the canvas
+   * has no size.
+   */
+  renderInset(view, canvas, bottom) {
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (!width || !height) return false;
+    const frame = insetView(view, width, height, this.radius, bottom ? this.surface.bottom : this.surface.top);
+    const camera = this.insetCamera || (this.insetCamera = new this.THREE.OrthographicCamera());
+    Object.assign(camera, { left: -frame.halfWidth, right: frame.halfWidth, top: frame.halfHeight,
+      bottom: -frame.halfHeight, near: frame.near, far: frame.far });
+    camera.position.set(...frame.eye);
+    camera.up.set(...frame.up);
+    camera.lookAt(...frame.target);
+    camera.updateProjectionMatrix();
+    this.scene.add(camera);
+    camera.add(this.head, this.head.target);
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    this.renderer.setPixelRatio(ratio);
+    this.renderer.setSize(width, height, false);
+    this.renderer.render(this.scene, camera);
+    const [w, h] = [Math.round(width * ratio), Math.round(height * ratio)];
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    const context = canvas.getContext('2d');
+    context.fillStyle = window.getComputedStyle(this.host.parentNode).backgroundColor;
+    context.fillRect(0, 0, w, h);
+    context.drawImage(this.renderer.domElement, 0, 0, w, h);
+    this.camera.add(this.head, this.head.target);
+    this.scene.remove(camera);
+    this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+    this.resize();
+    // Resizing cleared the view's own canvas; on screen it is drawn again in
+    // this task, before the browser presents the cleared one, and the frame
+    // `resize` asked for would only draw the same picture again.
+    if (this.active) {
+      this.draw();
+      if (this.frame) {
+        cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      }
+    }
+    return true;
   }
 
   /** The id of the comment whose arrow `object` is part of, or null. */
@@ -411,8 +570,10 @@ export default class BoardView3D extends React.Component {
   constructor(props) {
     super(props);
     // `received`: the bytes of the `.glb` in so far; `got`: all of them, the
-    // model being built.
-    this.state = { loading: false, error: '', received: 0, got: false };
+    // model being built. `copper`: our copper drawn; `open`, `isolate` and
+    // `separation`: the panel's fold and its two controls.
+    this.state = { loading: false, error: '', received: 0, got: false, copper: false, open: true, isolate: false,
+      separation: 0 };
     this.host = null;
     this.stage = null;
     this.setHost = (element) => {
@@ -420,6 +581,31 @@ export default class BoardView3D extends React.Component {
     };
     // What the page's bar does with this view (`onTools`).
     this.tools = { fit: () => this.stage.fit(), frame: () => this.stage.snapshot() };
+    // The board's insets' 3D view (see the header), and what its subscribers
+    // last heard drawn.
+    this.listeners = new Set();
+    this.told = '';
+    this.failed = false;
+    this.scene3d = {
+      state: () => (this.stage ? 'ready' : this.failed ? 'unavailable' : 'loading'),
+      load: () => {
+        if (!this.stage && !this.loading) this.fetchModel();
+      },
+      render: (camera, canvas, bottom) => Boolean(this.stage) && this.stage.renderInset(camera, canvas, bottom),
+      subscribe: (listener) => {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+      },
+    };
+    this.toggle = () => this.setState({ open: !this.state.open });
+    this.onIsolate = () => {
+      if (this.props.net) this.setState({ isolate: !this.state.isolate });
+    };
+    this.onSeparation = (event) => this.setState({ separation: Number(event.target.value) });
+    this.onClear = (event) => {
+      event.stopPropagation();
+      this.props.onNet(null);
+    };
   }
 
   componentDidMount() {
@@ -427,6 +613,8 @@ export default class BoardView3D extends React.Component {
   }
 
   componentDidUpdate(prev) {
+    // Isolate goes with the net it isolates.
+    if (!this.props.net && this.state.isolate) this.setState({ isolate: false });
     this.follow(prev);
   }
 
@@ -437,16 +625,37 @@ export default class BoardView3D extends React.Component {
   }
 
   /** Bring the stage in line with the props: load on first showing (and again
-   *  on showing after a failure), then the selection, whether it draws, and
-   *  the comments. */
+   *  on showing after a failure), then our copper once the board's element
+   *  can read it, the selection, the copper's look, whether it draws, and the
+   *  comments; the insets told when what they draw changed. */
   follow(prev) {
     const { active, selected } = this.props;
     const shown = active && !prev.active;
-    if (!this.stage && !this.loading && active && (!this.state.error || shown)) this.load();
+    if (!this.stage && !this.loading && active && (!this.state.error || shown)) this.fetchModel();
     if (!this.stage) return;
+    if (!this.state.copper && this.props.copper) {
+      const copper = this.props.copper();
+      if (copper) {
+        this.stage.setCopper(copper);
+        this.setState({ copper: true });
+      }
+    }
     this.stage.select(selected || null, true);
+    const { isolate, separation } = this.state;
+    this.stage.setLook({ net: this.props.net || null, isolate, separation });
     if (active !== prev.active) this.stage.setActive(active);
     this.comments();
+    this.tellInsets();
+  }
+
+  /** The insets' subscribers told, when the model, its selection or its
+   *  copper's look is not what they last heard. */
+  tellInsets() {
+    const drawn = JSON.stringify([this.scene3d.state(), this.stage && this.stage.selected,
+      this.stage && this.stage.looked]);
+    if (drawn === this.told) return;
+    this.told = drawn;
+    for (const listener of [...this.listeners]) listener();
   }
 
   /** The stage in line with `comment` (see the header): its arrows, rebuilt
@@ -473,9 +682,10 @@ export default class BoardView3D extends React.Component {
     this.stage.renderer.domElement.style.cursor = comment && comment.on ? 'crosshair' : '';
   }
 
-  load() {
+  fetchModel() {
     const { url } = this.props;
     this.loading = true;
+    this.failed = false;
     this.setState({ loading: true, error: '', received: 0, got: false });
     const count = meter((received) => {
       if (!this._gone) this.setState({ received });
@@ -503,29 +713,62 @@ export default class BoardView3D extends React.Component {
         this.stage = new Stage(lib, this.host, gltf, {
           onSelect: (designator) => this.props.onSelect && this.props.onSelect(designator),
           onMenu: (designator, x, y) => this.props.onMenu && this.props.onMenu(designator, x, y),
+          onNet: (net) => this.props.onNet && this.props.onNet(net),
           commenting: () => Boolean(this.props.comment && this.props.comment.on),
           onPoint: (place) => this.props.comment && this.props.comment.onPoint(place),
           onMarker: (id) => this.props.comment && this.props.comment.onMarker(id),
         });
-        this.stage.select(this.props.selected || null, true);
         this.stage.setActive(Boolean(this.props.active));
-        this.comments();
+        this.follow(this.props);
         this.setState({ loading: false });
         this.props.onTools(this.tools);
       })
       .catch((error) => {
         this.loading = false;
-        if (!this._gone) this.setState({ loading: false, error: `The 3D model did not load: ${error.message || error}` });
+        if (this._gone) return;
+        this.failed = true;
+        this.setState({ loading: false, error: `The 3D model did not load: ${error.message || error}` });
+        this.tellInsets();
       });
   }
 
   render() {
-    const { loading, error, received, got } = this.state;
+    const { loading, error, received, got, copper, open, isolate, separation } = this.state;
+    const { net } = this.props;
     const note = error ? <div style={css(NOTE)}>{error}</div> : loading && loadBar(received, this.props.bytes, got);
     return (
       <div style={css(SHELL)}>
         <div ref={this.setHost} style={css(HOLDER)} />
         {note}
+        {copper && (
+          <div data-panel="board3d" style={css(LAYER_PANEL)}>
+            <div onClick={this.toggle} title={open ? 'Hide the copper panel' : 'Show the copper panel'}
+                 style={css(LAYER_PANEL_HEAD)}>
+              {CHEVRON(open)}
+              <span style={css(FILL)}>Copper</span>
+              {net && <span style={css(NET_LABEL)}>net</span>}
+              {net && <span title={net} style={css(NET_NAME)}>{net}</span>}
+              {net && <span data-clear title="Put the net out" style={css(NET_CLEAR)} onClick={this.onClear}>×</span>}
+            </div>
+            {open && (
+              <div style={css(LAYER_PANEL_BODY)}>
+                <div style={css(LAYER_PILLS)}>
+                  <div data-isolate title={net ? 'Draw only the lit net\'s copper' : 'Click copper to light a net first'}
+                       style={css(LAYER_PILL + (isolate ? `;${TAB_ON}` : '') + (net ? '' : PILL_OFF))}
+                       onClick={this.onIsolate}>Isolate</div>
+                </div>
+                <label title="How far apart the copper layers stand" style={css(SEPARATION)}>
+                  <span style={css(SEPARATION_HEAD)}>
+                    Stackup separation
+                    <span style={css(SEPARATION_VALUE)}>{`${Math.round(separation * 100)}%`}</span>
+                  </span>
+                  <input type="range" min="0" max="1" step="0.01" value={separation} onChange={this.onSeparation}
+                         style={css(SEPARATION_INPUT)} />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }

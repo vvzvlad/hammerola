@@ -100,7 +100,9 @@ const BAR = `${BAR_LAYER}18`;
  * armed or put down by `onComment`; Comment and Add primitive are hidden from
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
  * the document when its view can do them (`tools`, `onTools` in
- * DocumentView.jsx) and are out of service when it cannot. A narrow window
+ * DocumentView.jsx) and are out of service when it cannot; so is Insets, in
+ * service over a KiCad schematic or board whose view hands `tools.insets`
+ * (KicadView.jsx) and lit while its mode is on. A narrow window
  * keeps the list and Fit. AR, which only the model's page has, is not drawn
  * here. `onRename(doc)`, with the token, puts a pencil
  * before each row's name (`documentRows`). Pure.
@@ -114,6 +116,8 @@ export function docBar({
     docHref: doc.type === BOM_TYPE ? null : docUrl(base, doc),
     showTools: !narrow,
     measureBtnStyle: btn(false, false, true),
+    tInsets: tools && tools.insets ? tools.insets.toggle : undefined,
+    insetsBtnStyle: btn(Boolean(tools && tools.insets && tools.insets.on), false, !(tools && tools.insets)),
     tComment: onComment,
     commentBtnStyle: btn(tool === 'comment', viewer, !COMMENTABLE.has(doc.type)),
     proposalBtnStyle: btn(false, viewer, true),

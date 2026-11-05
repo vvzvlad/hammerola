@@ -190,12 +190,15 @@ export class Effects {
     font = new Font();
     justify = new Justify();
     hide = false;
+    /** Embedded hyperlink URL; KiCad stores this on text `effects`. */
+    href?: string;
 
     constructor(expr?: commonProto.I_Effects) {
         if (expr) {
             if (expr.font) this.font = new Font(expr.font);
             if (expr.justify) this.justify = new Justify(expr.justify);
             this.hide = expr.hide ?? false;
+            this.href = expr.href || undefined;
         }
     }
 
@@ -204,7 +207,13 @@ export class Effects {
         e.font = this.font.copy();
         e.justify = this.justify.copy();
         e.hide = this.hide;
+        e.href = this.href;
         return e;
+    }
+
+    /** Whether these effects carry an embedded hyperlink. */
+    get hyperlink(): string | undefined {
+        return this.href || undefined;
     }
 }
 

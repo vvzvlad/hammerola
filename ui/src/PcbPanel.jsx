@@ -1,8 +1,10 @@
 // The board view's own panel, over the top left of the board's canvas: which
 // layers are drawn and which one is the active layer, how strongly the copper
 // zone fills are drawn, and the net of what was last clicked. KicadView.jsx
-// draws it over the PCB element and hands it that element (`element`) and
-// whether the board is the view on screen (`active`).
+// draws it over the PCB element and hands it that element (`element`),
+// whether the board is the view on screen (`active`), and `onNet`, told the
+// lit net's name (or null) each time the panel reads the element back, which is
+// how the 3D view lights the same net.
 //
 // It exists because `hide-chrome` drops the viewer's own panels
 // (KicadView.jsx), and a board drawn with every layer at once and its zones as
@@ -90,8 +92,10 @@ export function readBoard(element) {
 }
 
 const PANEL = `${LAYER_PANEL};visibility:`;
-const NET_LABEL = 'flex:none;font-weight:400;color:var(--text-muted)';
-const NET_NAME = `min-width:0;${ELLIPSIS};font:600 11px ${MONO};color:var(--accent-text)`;
+/** The header's net, its word and its name, shared with the 3D view's panel
+ *  (BoardView3D.jsx). */
+export const NET_LABEL = 'flex:none;font-weight:400;color:var(--text-muted)';
+export const NET_NAME = `min-width:0;${ELLIPSIS};font:600 11px ${MONO};color:var(--accent-text)`;
 const ZONES = 'flex:none;display:flex;align-items:center;gap:8px;padding:8px 10px 6px';
 const ZONES_LABEL = 'flex:none;color:var(--text-soft)';
 const ZONES_VALUE = `flex:none;width:30px;text-align:right;font:400 10.5px ${MONO};color:var(--text-muted)`;
@@ -106,7 +110,8 @@ export const CHEVRON = (open) => (
 );
 
 /** The panel. Props: `element`, the PCB `<ecad-viewer>`; `active`, whether
- *  the board is on screen (the panel is shown with it). */
+ *  the board is on screen (the panel is shown with it); `onNet`, told the lit
+ *  net on every read. */
 export default class PcbPanel extends React.Component {
   constructor(props) {
     super(props);
@@ -146,7 +151,9 @@ export default class PcbPanel extends React.Component {
 
   readBack() {
     const board = this.element && readBoard(this.element);
-    if (board) this.setState(board);
+    if (!board) return;
+    this.setState(board);
+    if (this.props.onNet) this.props.onNet(board.net);
   }
 
   /**

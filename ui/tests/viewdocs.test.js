@@ -77,9 +77,9 @@ const VIEWS = [
 
 // The bar's tools, in the order it draws them, and the styles they are drawn
 // with.
-const TOOLS = ['Measure', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
-const TOOL_STYLES = ['measureBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle', 'frameBtnStyle',
-  'settingsBtnStyle']
+const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
+const TOOL_STYLES = ['measureBtnStyle', 'insetsBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle',
+  'frameBtnStyle', 'settingsBtnStyle']
 
 const meta = (documents = DOCS) => ({
   project: 'terrarium', title: 'Terrarium (terrarium)', commit: 'abc1234',
@@ -173,13 +173,16 @@ describe('the documents in the list of views', () => {
     const c = component({ token: 'secret', doc: 'ref__terr-raspil.svg' })
     for (const page of [model, c]) expect(drawn(page).filter((word) => TOOLS.includes(word))).toEqual(TOOLS)
     // Over a picture every one of them but Settings is grey and takes no
-    // click; over the model none is. Settings holds the project tabs, which are
-    // about the whole site (settings.test.js).
+    // click; over the model none is but Insets, which only a KiCad schematic
+    // or board has. Settings holds the project tabs, which are about the
+    // whole site (settings.test.js).
+    const grey = { color: 'var(--text-faint)', cursor: 'default', pointerEvents: 'none' }
     for (const key of TOOL_STYLES) {
-      const off = key === 'settingsBtnStyle' ? {} : { color: 'var(--text-faint)', cursor: 'default', pointerEvents: 'none' }
+      const off = key === 'settingsBtnStyle' ? {} : grey
       expect(css(c.computed()[key]), key).toMatchObject(off)
       if (key === 'settingsBtnStyle') expect(css(c.computed()[key]).pointerEvents, key).toBeUndefined()
-      expect(css(model.computed()[key]).pointerEvents, key).toBeUndefined()
+      if (key === 'insetsBtnStyle') expect(css(model.computed()[key]), key).toMatchObject(grey)
+      else expect(css(model.computed()[key]).pointerEvents, key).toBeUndefined()
     }
     // The list that brings the model back stays, captioned with the document.
     expect(drawn(c)).toContain('ref/terr-raspil.svg')

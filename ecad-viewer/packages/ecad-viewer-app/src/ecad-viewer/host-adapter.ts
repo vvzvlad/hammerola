@@ -9,6 +9,7 @@ import {
 import {
     GlobalLabel,
     HierarchicalLabel,
+    HierarchicalSheetPin,
     Junction,
     Label,
     NoConnect,
@@ -51,6 +52,8 @@ export type EcadSemanticSelectionDetail = {
     netCode?: number;
     sheet?: string;
     page?: string;
+    /** The item's own name where it is not a reference, net or pin: a sheet's. */
+    name?: string;
     layer?: string;
     /** World-space center point of the selected item, when resolvable. */
     x?: number;
@@ -173,6 +176,11 @@ export function normalize_schematic_selection(
     if (item instanceof GlobalLabel) {
         return { ...base, itemType: "global-label", net: item.text };
     }
+    // Before HierarchicalLabel: a sheet entry is drawn as one but is the
+    // sheet's pin, and hosts treat it as such.
+    if (item instanceof HierarchicalSheetPin) {
+        return { ...base, itemType: "sheet-pin", net: item.text };
+    }
     if (item instanceof HierarchicalLabel) {
         return { ...base, itemType: "hierarchical-label", net: item.text };
     }
@@ -185,7 +193,12 @@ export function normalize_schematic_selection(
         return { ...base, itemType: "sheet-pin", net: item.name };
     }
     if (item instanceof SchematicSheet) {
-        return { ...base, itemType: "sheet", page: item.sheetfile };
+        return {
+            ...base,
+            itemType: "sheet",
+            page: item.sheetfile,
+            name: item.sheetname,
+        };
     }
     return { ...base, itemType: item.constructor.name || "schematic-item" };
 }

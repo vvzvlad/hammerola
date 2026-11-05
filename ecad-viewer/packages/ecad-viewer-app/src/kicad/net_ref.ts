@@ -1,4 +1,4 @@
-export type LabelKind = "global" | "net" | "hierarchical";
+export type LabelKind = "global" | "net" | "hierarchical" | "sheet-pin";
 
 export class NetRef {
     constructor(

@@ -387,9 +387,46 @@ export abstract class Renderer implements IDisposable {
             polygon.color = this.color_transform(polygon.color);
         }
 
-        polygon.points = Array.from(
-            this.state.matrix.transform_all(polygon.points),
-        );
+        const matrix = this.state.matrix;
+
+        // Triangles only (Polygon.from_triangles): there is no point list to
+        // transform. An affine transform of the triangles is the
+        // triangulation of the transformed polygon, so transform them.
+        if (polygon.vertices && polygon.bbox && polygon.points.length === 0) {
+            if (!matrix.is_identity) {
+                const v = polygon.vertices;
+                const out = new Float32Array(v.length);
+                const e = matrix.elements;
+                let min_x = Infinity;
+                let min_y = Infinity;
+                let max_x = -Infinity;
+                let max_y = -Infinity;
+                for (let i = 0; i < v.length; i += 2) {
+                    const x = v[i]! * e[0]! + v[i + 1]! * e[3]! + e[6]!;
+                    const y = v[i]! * e[1]! + v[i + 1]! * e[4]! + e[7]!;
+                    out[i] = x;
+                    out[i + 1] = y;
+                    if (x < min_x) min_x = x;
+                    if (x > max_x) max_x = x;
+                    if (y < min_y) min_y = y;
+                    if (y > max_y) max_y = y;
+                }
+                polygon.vertices = out;
+                polygon.bbox = BBox.from_corners(min_x, min_y, max_x, max_y);
+            }
+            if (this.#current_bbox) {
+                this.add_bbox(polygon.bbox);
+            }
+            return polygon;
+        }
+
+        polygon.points = Array.from(matrix.transform_all(polygon.points));
+        // Precomputed triangles are in the polygon's own coordinates; under
+        // any other transform they would land in the wrong place, so drop
+        // them and let the tesselator triangulate the transformed points.
+        if (polygon.vertices && !matrix.is_identity) {
+            polygon.vertices = undefined;
+        }
 
         if (this.#current_bbox) {
             this.add_bbox(BBox.from_points(polygon.points));

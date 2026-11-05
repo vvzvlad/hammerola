@@ -26,6 +26,7 @@ import {
     HierarchicalSheetPinClickEvent,
     KiCanvasFitterMenuEvent,
     LabelClickEvent,
+    LinkClickEvent,
     NetItemSelectEvent,
     ProjectERCResultEvent,
     SelectDesignatorEvent,
@@ -79,10 +80,11 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
         this.viewer.addEventListener(
             HierarchicalSheetPinClickEvent.type,
             (e) => {
-                if (this.#host_opens_lists()) return;
-
+                // A click on a sheet entry selects it; it does not open the
+                // instance menu (sheet entries are indexed as net instances
+                // for hosts, which navigate between them themselves).
                 const it = this.project.find_net_item(e.detail.uuid);
-                if (!it) return;
+                if (!it || it.kind === "sheet-pin") return;
                 this.pop_up_label_ref_menu([it], e.detail.uuid);
             },
         );
@@ -173,6 +175,10 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
                     `ERC: Cannot find first pin's symbol instance for designator ${designator}`,
                 );
             }
+        });
+
+        this.viewer.addEventListener(LinkClickEvent.type, (e) => {
+            this.#open_hyperlink(e.detail);
         });
 
         this.viewer.addEventListener(LabelClickEvent.type, (e) => {
@@ -280,6 +286,63 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
         });
     }
 
+    /**
+     * Follow a schematic hyperlink.
+     *
+     * KiCad authors embedded links as `(href "...")` on a text item's
+     * effects. Two kinds exist: absolute URLs (web pages, mailto:) which
+     * open in a new browser tab, and project-relative file paths which
+     * navigate inside the loaded project the same way KiCad resolves
+     * sibling sheet references.
+     */
+    #open_hyperlink(url: string) {
+        if (!url) return;
+
+        const scheme = url.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+
+        if (scheme) {
+            // Only safe, user-facing schemes are followed; anything else
+            // (javascript:, data:, unknown protocols) is ignored.
+            if (!["http", "https", "mailto"].includes(scheme)) {
+                console.warn(
+                    `Refusing to open hyperlink with scheme ${scheme}`,
+                );
+                return;
+            }
+            window.open(url, "_blank", "noopener,noreferrer");
+            return;
+        }
+
+        // No scheme: a link to a file in the repo. Resolve it relative to
+        // the sheet the link was authored on, then switch to that page.
+        const resolved = this.project.resolve_schematic_filename(
+            this.sch_viewer.sch_name,
+            url,
+        );
+        if (resolved) {
+            const file = this.project.file_by_name(resolved);
+            if (file instanceof KicadSch) {
+                const page =
+                    this.project.pages.find(
+                        (candidate) => candidate.document === file,
+                    ) ??
+                    this.project.pages.find(
+                        (candidate) => candidate.filename === resolved,
+                    );
+                if (page) {
+                    this.project.activate_sch(page.project_path);
+                    return;
+                }
+                this.viewer.load(file);
+                return;
+            }
+        }
+
+        // Not a loaded schematic: nothing opens. The path is the project's,
+        // and a window opened on it would resolve it against the address of
+        // the page the viewer is embedded in, which serves no such file.
+    }
+
     #select_item(idx: NetItemIndex & { project_path?: string }) {
         if (
             idx.project_path &&
@@ -316,9 +379,9 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
 
     /** Whether the `<ecad-viewer>` this app is drawn in turned its embedded
      *  selection panel off: such a host opens a menu of its own on a click on
-     *  a label or a sheet pin, so the click opens no list here. The app lives
-     *  in the element's shadow tree, which `closest` does not leave, so the
-     *  host is that tree's. */
+     *  a label, so the click opens no list here. The app lives in the
+     *  element's shadow tree, which `closest` does not leave, so the host is
+     *  that tree's. */
     #host_opens_lists(): boolean {
         const root = this.getRootNode();
         const host = root instanceof ShadowRoot ? root.host : null;
