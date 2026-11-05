@@ -21,9 +21,12 @@ scope stands on.
 
 Both halves are read off the parser and off the shipped documents rather than
 written out here, so a flag added tomorrow is covered without anybody
-remembering this file. The skill is a DIRECTORY, and the whole set is read: a
-verb documented in `references/cli.md` is documented, and a pairing that looked
-only at the entry document would report every one of those flags as untaught.
+remembering this file. The skill is a DIRECTORY, and every document in it is
+read: a verb documented in `references/cli.md` is documented, and a pairing that
+looked only at the entry document would report every one of those flags as
+untaught. Its `scripts/` are not documents but programs with parsers of their
+own (argparse in `bq.py`, a `case` in `autoroute.sh`) and the command lines of
+the tools they drive, so what they spell is not a flag of the `hammerola` CLI.
 """
 
 import argparse
@@ -51,20 +54,38 @@ NOT_FOR_THE_AGENT = {
 
 # Flags of OTHER programs the document shows a command of: the `kicad-cli` lines
 # that make the 3D model and the Gerbers of a board, which are the author's to
-# type on his own machine, the netlist export a board's pin table is generated
-# from, and the `git` a version is published with (`git pull
+# type on his own machine, and the `git` a version is published with (`git pull
 # --no-rebase` after a refused push, `git status --ignored`, the `git push
 # --delete` that removes a variant), and the
-# `solidcraft-cli mcp` line that registers SolidCraft's MCP server. No parser of
-# ours has them (asserted below, so a name that comes to mean one of ours is no
-# longer excused).
+# `solidcraft-cli mcp` line that registers SolidCraft's MCP server. The
+# `hammerola` parser has none of them (asserted below, so a name that comes to
+# mean one of its flags is no longer excused).
 OTHER_PROGRAMS = {
     "--board-plot-params", "--excellon-separate-th",
     "--include-pads", "--include-silkscreen", "--include-soldermask",
     "--include-tracks", "--include-zones", "--subst-models", "--format",
     "--delete", "--ignored", "--no-rebase", "--rebase",
     "--allow-any-path",
+    # The KiCad references: kicad-cli's DRC and assembly exports (`pcb drc
+    # --format json --schematic-parity --severity-all --refill-zones
+    # --save-board`, `export
+    # bom/pos --exclude-dnp`, `pos --smd-only`, the 3D export's `--no-dnp`),
+    # Freerouting's `--gui.enabled` and `--router.fanout.enabled`, Copperpour's
+    # `--config`, and the skill's own KiCad scripts (`autoroute.sh --draft-time
+    # --finish --finish-time --diagnose`, `view.py --px --drc --marks`,
+    # `silk.py apply --live`).
+    "--schematic-parity", "--severity-all", "--refill-zones", "--save-board",
+    "--exclude-dnp", "--smd-only", "--no-dnp",
+    "--gui", "--router", "--config",
+    "--draft-time", "--finish", "--finish-time", "--diagnose",
+    "--px", "--drc", "--marks", "--live",
 }
+
+
+def _documents() -> dict:
+    """The skill's documents: every member but the programs under `scripts/`."""
+    return {name: text for name, text in skill_files().items()
+            if not name.startswith("scripts/")}
 
 
 def _long_options(parser) -> set:
@@ -101,7 +122,7 @@ def _shorthand_only(parser) -> set:
 
 def test_every_flag_the_parser_accepts_is_one_the_skill_teaches_and_back():
     declared = _long_options(build_parser())
-    mentioned = set(MENTIONED.findall(one_text(skill_files()))) - OTHER_PROGRAMS
+    mentioned = set(MENTIONED.findall(one_text(_documents()))) - OTHER_PROGRAMS
 
     # BOTH SIDES ARE NON-EMPTY AND OVERLAP, asserted before they are compared:
     # a parser read through a renamed argparse internal, or a document moved out
