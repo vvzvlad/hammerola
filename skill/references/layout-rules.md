@@ -123,8 +123,8 @@ before placing parts and check them in 3D like DRC.
   board's rules. A pin with no exit means re-place now, not after routing.
 - Turn each passive tied to an IC pin so its IC-net pad faces that pin, centred on the
   pin's exit axis (same grid as the IC pad), so the link can be one straight segment.
-- Count signal-net airwire crossings in each functional cell (plane nets excluded) and
-  remove every one that a rotation, a mirror or a free pin re-assignment can remove.
+- Count signal-net airwire crossings in each functional cell (plane nets excluded; `bq.py
+  score X1 Y1 X2 Y2` lists them for the cell's box, and `score` compares candidate placements) and remove every one that a rotation, a mirror or a free pin re-assignment can remove.
 - A header or pad row whose signals all go to one IC sits next to it: its airwires must
   not cross another cell. Re-order free-to-assign connector pins (headers, board-to-board)
   to the IC's escape order and write the new pinout back to the schematic and docs.
@@ -231,25 +231,43 @@ Fix by moving vias and parts first; add bends only where nothing can move.
 
 ## Autorouting
 
-- Never write a general-purpose router (grid/maze/A*). Bulk routing is Freerouting's job;
-  nets whose look matters are scripted as explicit waypoints. Freerouting or Java missing
-  (2.4.x needs Java 25+; macOS `/usr/bin/java` may be a Java 8 stub): install it or ask.
-- Copperpour `export_specctra_dsn` refuses boards outside its profile (v0.15: 2 copper
-  layers, front-side parts, circle/rect/unchamfered roundrect pads, a straight-line outline,
-  no tracks/vias/zones, no .kicad_dru rules).
-  Otherwise use KiCad's bundled Python on a copy of the saved board with its .kicad_pro
-  beside it (without it the DSN has only the default netclass): lock every existing
-  track/via → `pcbnew.ExportSpecctraDSN` → `java -jar freerouting.jar
-  --gui.enabled=false -da --router.fanout.enabled=false -de in.dsn -do out.ses -mp N` →
-  `pcbnew.ImportSpecctraSES` (it deletes and recreates every unlocked track/via) → push
-  the unlocked items to the live board over IPC.
-- The DSN carries netclass widths/clearances, zones and rule areas, not .kicad_dru rules.
-  On the copy, add a rule-area keep-out for every .kicad_dru constraint (hole keep-outs,
-  slot/edge clearances, isolation bands) before export.
-- A layer that must stay a plane: set its type to Power plane (Board Setup, or
-  `BOARD.SetLayerType(layer, pcbnew.LT_POWER)` on the copy); Freerouting routes nothing on
-  it. Per-layer costs (a "mostly plane" layer) had no effect in 2.4.1 headless (DSN
-  autoroute_settings, `-dr .rules`): route such a board by script.
+- Never write a general-purpose router (grid/maze/A*). Bulk routing is `scripts/autoroute.sh
+  <saved board>`; nets whose look matters are scripted as explicit waypoints.
+- autoroute.sh routes a copy in docker and never touches the project: it locks every existing
+  track/via, exports the DSN with fastroute's own KiCad exporter (netclass widths, the board's
+  minimum width and the `.kicad_dru` rules it can translate; each rule it cannot is a `WARN …
+  NOT applied` line), draws a fastroute draft (`--draft-time`, 300 s), optionally finishes with
+  Freerouting 2.5.0 (`--finish freerouting`), refills zones, runs DRC and `geocheck.py`, and
+  lists the unrouted connections. `--diagnose` adds fastroute's congestion/blocked class per
+  unrouted connection and costs minutes on a dense board. Push only the unlocked tracks/vias of
+  the routed copy to the live board, then route the rest by hand with `bq.py`.
+- A run lasts longer than a shell call's default timeout (Dionis: 5.5 min with no finish; a
+  finish adds up to `--finish-time`): run it in the background, or with a timeout of at least
+  `--draft-time` + `--finish-time` + 2 minutes.
+- The defaults come from the owner's boards with all routing removed: the plugin export left 0
+  connections unrouted on Ukuetis base against 36 with KiCad's plain DSN export (it hands zones
+  over as solid planes); the minimum-width flags cut added DRC errors from 225 to 33; no finish,
+  because neither Freerouting nor a fastroute pass improved both boards (Dionis: Freerouting
+  2.5.0 took 183 to 140 unrouted and added 49 errors, mostly copper to board edge).
+- Check every rule named as NOT applied in the DRC result: the router did not see it.
+- Freerouting by hand, when autoroute.sh cannot run (2.4.x needs Java 25+; macOS
+  `/usr/bin/java` may be a Java 8 stub):
+  - Copperpour `export_specctra_dsn` refuses boards outside its profile (v0.15: 2 copper
+    layers, front-side parts, circle/rect/unchamfered roundrect pads, a straight-line outline,
+    no tracks/vias/zones, no .kicad_dru rules).
+    Otherwise use KiCad's bundled Python on a copy of the saved board with its .kicad_pro
+    beside it (without it the DSN has only the default netclass): lock every existing
+    track/via → `pcbnew.ExportSpecctraDSN` → `java -jar freerouting.jar
+    --gui.enabled=false -da --router.fanout.enabled=false -de in.dsn -do out.ses -mp N` →
+    `pcbnew.ImportSpecctraSES` (it deletes and recreates every unlocked track/via) → push
+    the unlocked items to the live board over IPC.
+  - The DSN carries netclass widths/clearances, zones and rule areas, not .kicad_dru rules.
+    On the copy, add a rule-area keep-out for every .kicad_dru constraint (hole keep-outs,
+    slot/edge clearances, isolation bands) before export.
+  - A layer that must stay a plane: set its type to Power plane (Board Setup, or
+    `BOARD.SetLayerType(layer, pcbnew.LT_POWER)` on the copy); Freerouting routes nothing on
+    it. Per-layer costs (a "mostly plane" layer) had no effect in 2.4.1 headless (DSN
+    autoroute_settings, `-dr .rules`): route such a board by script.
 - If the per-pass unrouted count in the log sets no new low for 2 passes while above 0,
   stop and fix placement; more passes or reruns on the same placement do not converge.
 - Imported routing is a draft: it must pass the track-geometry gate and DRC like any other.
@@ -298,7 +316,8 @@ A board with pours is not routed until these checks are measured on the saved bo
     whose drawing passes. If none passes, report the shortfall with its numbers as an
     open item.
 - Count the findings after every batch of edits (DRC errors, dangling, unconnected, and the
-  geometry-gate findings). If the count sets no new low for 3 batches, stop editing and hand
+  geometry-gate findings): `drc.sh`, `geocheck.py` with its JSON, then `scripts/delta.py`, which
+  prints what changed since the last batch and the count. If the count sets no new low for 3 batches, stop editing and hand
   back the open list with what blocks each item, usually placement: on the same placement
   more edit–check cycles do not converge (OmniRouting, arXiv 2608.04434: GPT-5-mini went
   from 18.4 to 23.7 steps and from 9.9 % to 6.8 % of nets routed).
