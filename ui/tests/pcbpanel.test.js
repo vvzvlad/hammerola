@@ -71,9 +71,9 @@ function boardElement() {
 }
 
 /** The panel over a board on screen, mounted. */
-function mounted() {
+function mounted(props) {
   const element = boardElement()
-  const panel = new PcbPanel({ element, active: true })
+  const panel = new PcbPanel({ element, active: true, ...props })
   panel.setState = (patch) => Object.assign(panel.state, patch)
   panel.componentDidMount()
   return { panel, element }
@@ -168,6 +168,15 @@ describe('the board\'s panel', () => {
       expect(element.setHighlightedNets).toHaveBeenLastCalledWith([{ name: `/amp/${itemType}`, netCode: 9 }])
     }
     expect(header(panel)).toEqual(['Layers', 'net', '/amp/zone'])
+  })
+
+  it('tells the page the lit net\'s name, and null once it is out', () => {
+    const onNet = vi.fn()
+    const { element } = mounted({ onNet })
+    select(element, { sourceContext: 'PCB', itemType: 'track', net: '+5V', netCode: 14 })
+    expect(onNet).toHaveBeenLastCalledWith('+5V')
+    select(element, { sourceContext: 'PCB', itemType: '' })
+    expect(onNet).toHaveBeenLastCalledWith(null)
   })
 
   it('puts the net out on a click on what has none, the bare board included', () => {

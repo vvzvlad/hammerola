@@ -50,10 +50,11 @@ inter-sheet references, `[2,5]`) are drawn, in KiCad and on the hub page, only w
 that `.kicad_pro` turns them on: `"schematic": {"drawing": {"intersheets_ref_show":
 true}}`. KiCad leaves them off, so a `.kicad_pro` written by a script has them off
 unless it writes that key. The `.glb` is made on your machine, not on the hub:
-`kicad-cli pcb export glb --subst-models --include-tracks --include-pads --include-zones
---include-silkscreen --include-soldermask -o hw/main.glb hw/main.kicad_pcb` (about 41 MB
-for a 235-part board; without the tracks, pads and zones it is 10 MB, and the 3D view has
-no routing).
+`kicad-cli pcb export glb --subst-models --include-silkscreen --include-soldermask -o
+hw/main.glb hw/main.kicad_pcb` (about 10 MB for a 235-part board). Leave the tracks, pads
+and zones out: the hub draws the copper in 3D itself, from the `.kicad_pcb` with the same
+path minus the extension, with its nets and layers, and hides any copper the `.glb`
+carries.
 Entries with the same path minus the extension are ONE design: `hw/main.kicad_sch`,
 `hw/main.kicad_pcb` and `hw/main.glb` above. Picking a part in one of them (a click)
 picks the same part, by its reference, in the others (a click on nothing or Escape

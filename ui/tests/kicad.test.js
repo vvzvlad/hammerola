@@ -80,7 +80,7 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
   const onSheet = (sheet, push) => navigate(respell(parse(), { sheet }), { push })
   const view = new KicadView({ doc, documents, base: BASE, onOpen, onSheet, onTools: vi.fn(), onReady: vi.fn() })
   view.setState = (patch, done) => {
-    Object.assign(view.state, patch)
+    Object.assign(view.state, typeof patch === 'function' ? patch(view.state, view.props) : patch)
     if (done) done()
   }
   const elements = {}
@@ -225,7 +225,7 @@ describe('a KiCad design', () => {
     const panel = () => ofType(view.render(), PcbPanel)[0]
     expect(panel()).toBeUndefined()
     view.setState({ ready: true })
-    expect(panel().props).toEqual({ element: elements[PCB], active: true })
+    expect(panel().props).toEqual({ element: elements[PCB], active: true, onNet: view.onNetBoard })
     view.props = { ...view.props, doc: DOCS[0] }
     expect(panel().props.active).toBe(false)
     view.setState({ error: 'hw/board.kicad_pcb did not load: HTTP 404' })
@@ -886,6 +886,22 @@ describe('a click selects the same part in every view', () => {
     expect([cleared(), view.state.selected]).toEqual([[1, 1], 'U501'])
     view.key(ESCAPE())
     expect([cleared(), view.state.selected]).toEqual([[2, 2], null])
+  })
+})
+
+describe('a net lit on the 3D model', () => {
+  it('is lit on the board too, and goes out when a part is selected or nothing is clicked', () => {
+    const { view, elements } = mounted()
+    elements[PCB].setHighlightedNets = vi.fn()
+    const three = () => view3d(view).three.props
+    three().onNet('X')
+    expect([view.state.net, three().net]).toEqual(['X', 'X'])
+    expect(elements[PCB].setHighlightedNets).toHaveBeenLastCalledWith([{ name: 'X' }])
+    click(elements[SCH], { sourceContext: SCH, itemType: 'symbol', reference: 'R1' })
+    expect(view.state.net).toBeNull()
+    three().onNet('X')
+    click(elements[PCB], { sourceContext: PCB, itemType: '' })
+    expect(view.state.net).toBeNull()
   })
 })
 

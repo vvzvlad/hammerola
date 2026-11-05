@@ -83,7 +83,12 @@
 //     anything that is not a part (a wire, a track) puts the part out in the
 //     others. A click on nothing at all, and Escape, put out what is lit in
 //     EVERY view, the clicked one included: the viewer itself leaves a part lit
-//     through a click on the bare board. Nets are not carried across this way;
+//     through a click on the bare board. ONE NET is lit for the board and its 3D
+//     model (`net`): a click on copper in either lights it in both — the
+//     board's panel reports what the board lit (PcbPanel.jsx, `onNet`), the 3D
+//     view what it lit, which the board is handed (`setHighlightedNets`) — and
+//     a part selected anywhere puts it out, as the board's own cross-probe of a
+//     part does (`highlight_fp`). Nets are not carried to the schematic;
 //   * THE MENU (`menuFor`), one for every view, opened at the pointer by the
 //     RIGHT BUTTON on a part or on what has a net — on the board a track, a
 //     via, a zone, on the schematic a label, a power symbol, a sheet pin, a
@@ -210,6 +215,12 @@
 // active row, and a step to a place, or closing the window, is the way back.
 // One window at a time; it goes on its `×`, a click beside it and Escape —
 // which then closes the window only — and when its view leaves the screen.
+//
+// THE 3D MODEL DRAWS THE BOARD'S COPPER ITSELF once the board's element has
+// its files (`readCopper`: `getBoardCopper`, our edit 18, with each layer's
+// colour on the board's panel), and it is the 3D view of the board's insets:
+// it is registered on the board's element as its `InsetScene3D` (`link3D`), so
+// T in an inset of the board draws the model.
 //
 // COMMENTS (`comment`, handed by both pages: comments.jsx). With the page's
 // Comment tool armed (`on`) the drawn view on screen is in the viewer's
@@ -650,9 +661,10 @@ export default class KicadView extends React.Component {
     // them, the viewers being handed them. `bom`: the schematic's BOM in its
     // order (`bomRows`), once it has its files. `insets`: the design's inset
     // mode, on or off, as its elements report it.
+    // `net`: the name of the net lit on the board and in the 3D view, or null.
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
-      tools3d: null, received: 0, got: false, bom: [], insets: false,
+      tools3d: null, received: 0, got: false, bom: [], insets: false, net: null,
       // Each part's `Datasheet` value that is a web address, and its `Price`
       // value, for the BOM.
       webDatasheets: new Map(), prices: new Map(),
@@ -735,6 +747,29 @@ export default class KicadView extends React.Component {
     };
     this.onSelect3D = (designator) => this.select(BOARD3D, designator);
     this.onMenu3D = (designator, x, y) => this.openMenu(BOARD3D, { reference: designator }, x, y);
+    // The lit net, as the board's panel read it off the board, and as the 3D
+    // view lit it, which the board is handed. Set through an updater: the
+    // panel reports inside the same click that may have put it out.
+    this.onNetBoard = (net) => this.setNet(net);
+    this.onNet3D = (net) => {
+      this.setNet(net);
+      const board = this.elements[PCB];
+      if (board && typeof board.setHighlightedNets === 'function') board.setHighlightedNets(net ? [{ name: net }] : []);
+    };
+    // The board's copper for the 3D view, with each layer's colour on the
+    // board's panel, read once the board's element has its files.
+    this.readCopper = () => {
+      const board = this.elements[PCB];
+      if (!board || typeof board.getBoardCopper !== 'function') return null;
+      const copper = board.getBoardCopper();
+      const view = board.getPcbViewState();
+      return copper && { ...copper, colours: Object.fromEntries((view ? view.layers : []).map((one) => [one.name, one.color])) };
+    };
+    this.view3D = null;
+    this.setView3D = (view) => {
+      this.view3D = view;
+      this.link3D();
+    };
     this.closeMenu = () => {
       if (this.state.menu) this.setState({ menu: null, hover: -1 });
     };
@@ -827,6 +862,18 @@ export default class KicadView extends React.Component {
     pcb.enableInsets({ hostEscape: true });
     sch.setInsetPeer(pcb);
     pcb.setInsetPeer(sch);
+  }
+
+  /** The 3D model registered as the 3D view of the board's insets, or none
+   *  once it is gone. The board's element must be the viewer's by then. */
+  link3D() {
+    const board = this.elements[PCB];
+    if (board && typeof board.setInset3D === 'function') board.setInset3D(this.view3D ? this.view3D.scene3d : null);
+  }
+
+  /** The lit net (`net`), told only of a change. */
+  setNet(net) {
+    this.setState((state) => (state.net === net ? null : { net }));
   }
 
   /** The page told what the bar can do (`onTools`), when that has changed;
@@ -1039,6 +1086,7 @@ export default class KicadView extends React.Component {
       if (!found && typeof element.clearSelection === 'function') element.clearSelection();
     }
     if (designator !== this.state.selected) this.setState({ selected: designator });
+    if (designator) this.setNet(null);
   }
 
   /** Nothing selected anywhere: every view puts out what it has lit, the one
@@ -1050,6 +1098,7 @@ export default class KicadView extends React.Component {
       if (element && typeof element.clearSelection === 'function') element.clearSelection();
     }
     if (this.state.selected !== null) this.setState({ selected: null });
+    this.setNet(null);
   }
 
   /** Escape closes the passing things the page opened over the view before
@@ -1331,6 +1380,7 @@ export default class KicadView extends React.Component {
         const sources = designSources(members, byPath);
         const revisionKey = `${base}${designKey(this.props.doc)}`;
         this.linkInsets();
+        this.link3D();
         const loaded = Promise.all(views.map((context) => this.elements[context]
           && this.elements[context].replaceSources({ revisionKey, sources: sources[context] })));
         // Read once the viewers have their files, so that they need not wait for
@@ -1461,7 +1511,7 @@ export default class KicadView extends React.Component {
     const side = this.side();
     const members = this.members();
     const {
-      ready, error, selected, menu, hover, sheet, received, got, bom, datasheets, webDatasheets, prices,
+      ready, error, selected, menu, hover, sheet, received, got, bom, datasheets, webDatasheets, prices, net,
     } = this.state;
     // The 2D views' loading and failure, over them and over the BOM, which is
     // read out of the schematic's: the 3D view says its own.
@@ -1483,12 +1533,16 @@ export default class KicadView extends React.Component {
                        show-header="false" hide-chrome="true" show-selection-panel="false" data-view={context}
                        style={css(shown(context))} />
         ))}
-        {ready && !error && members[PCB] && <PcbPanel element={this.elements[PCB]} active={showing === PCB} />}
+        {ready && !error && members[PCB] && (
+          <PcbPanel element={this.elements[PCB]} active={showing === PCB} onNet={this.onNetBoard} />
+        )}
         {model && (
           <div key={BOARD3D} data-view={BOARD3D} style={css(shown(BOARD3D))}>
-            <BoardView3D key={model} url={model} bytes={members[BOARD3D].bytes} active={showing === BOARD3D}
-                         selected={selected} onSelect={this.onSelect3D} onMenu={this.onMenu3D}
-                         onTools={this.onTools3D} onFetched={this.onFetched3D} comment={this.comment3D()} />
+            <BoardView3D key={model} ref={this.setView3D} url={model} bytes={members[BOARD3D].bytes}
+                         active={showing === BOARD3D} selected={selected} onSelect={this.onSelect3D}
+                         onMenu={this.onMenu3D} onTools={this.onTools3D} onFetched={this.onFetched3D}
+                         comment={this.comment3D()} copper={ready && !error && members[PCB] ? this.readCopper : null}
+                         net={net} onNet={this.onNet3D} />
           </div>
         )}
         {/* The BOM, once the schematic's element has its files. A designator is

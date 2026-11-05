@@ -596,21 +596,36 @@
   or opening the menu; the elements say the mode in `ecad-viewer:inset-mode`,
   which lights the tool, and Escape goes to the datasheet's window first, then
   to the menu, then to the insets of the view on screen (`escapeInsets`); the
-  page takes Escape for both elements (`enableInsets({ hostEscape: true })`). The
+  page takes Escape for both elements (`enableInsets({ hostEscape: true })`). A
+  PCB inset turns to the 3D board on `T`: the 3D view is the board element's 3D
+  scene (`setInset3D`). One net is lit at a time, on the board and in 3D alike:
+  the board's panel reports what the board lit, a click on copper in 3D lights
+  it on the board (`setHighlightedNets`), and a part selected anywhere or a click
+  on nothing puts it out. The
   viewer is `static/_v/ecad-viewer.js`, built from `ecad-viewer/` and imported
   by URL on first use (`loadEcadViewer`); the insets are its own code, and so
   are the wheel over it and over an inset, the look of a selected footprint, the
   pins of a symbol the file gives no pin records and that hit test, edited by
   us (`static/_v/PROVENANCE.md`, "Our edits")
-- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three
+- `ui/src/BoardView3D.jsx`, `ui/src/board3d.js`, `ui/src/board3dcopper.js` — the
+  3D view of a board: three
   and `GLTFLoader.js` imported by URL from `static/_v/` (three's own add-ons,
   `static/_v/PROVENANCE.md`) and the camera turned by the model's own trackball,
   `CADTrackballControls` out of `static/_v/three-cad-viewer.esm.js` at the
   model's speeds, all on first use; the `.glb` of
-  `kicad-cli pcb export glb` drawn on demand and only while on screen. `board3d.js`
-  is the part that needs no WebGL: which nodes are parts (a child of the scene
-  root named by its designator), merging a part's meshes, lighting one part on
-  copies of its materials, framing it
+  `kicad-cli pcb export glb` drawn on demand and only while on screen, or drawn
+  into a PCB inset of the board element (`scene3d`, the fork's `InsetScene3D`),
+  which loads it off screen too. The copper is not the `.glb`'s: once the board
+  element has its files, the view draws the copper the element hands
+  (`getBoardCopper`, "Our edits" 18) as a mesh per layer and hides the `.glb`'s,
+  which carries no net. A click on copper lights its net; the panel at the top
+  left, in `PcbPanel`'s look, names the lit net and holds Isolate and the
+  stackup separation. `board3d.js` and `board3dcopper.js` are the parts that need
+  no WebGL: which nodes are parts (a child of the scene root named by its
+  designator), merging a part's meshes, lighting one part on copies of its
+  materials, framing it; which of the `.glb`'s board layers are copper, mask and
+  silkscreen, our copper's meshes and shader, the drills cut out of it, the
+  separation's offsets and fades, the camera of a 3D inset
 - `ui/src/ar.js` — View in AR: the model view on screen as a USDZ file that
   iOS opens in AR Quick Look at 1:1. `arSupported` asks the browser
   (`relList.supports('ar')`); `arScene` copies the faces the viewer draws of
@@ -653,7 +668,8 @@
   `hide-chrome`): layer presets, a row per layer with an eye and an
   active-layer click, the zone fill opacity (dimmed to
   `ZONE_OPACITY` on open), and the net of the last click, lit whole through the
-  viewer's own highlight. The viewer owns the state; the panel re-reads it
+  viewer's own highlight and told to the page (`onNet`), which lights it in 3D.
+  The viewer owns the state; the panel re-reads it
 - `ui/src/kicadbom.js` — a KiCad design's BOM, a document the hub does not
   publish: `withBoms` lists one after every schematic as meta.json comes in
   (`loadMeta` in `hub.js`), under the schematic's file, so `KicadView` draws it
@@ -706,7 +722,8 @@
   down to what builds the two files the hub serves, because what we need from it
   are edits to its CODE — how a selection and a highlighted net look on the
   board, the wheel, a symbol's pins without pin records, a hit test the page can
-  ask (`selectAt`), a board's outline and arcs, a board KiCad 5 wrote. The
+  ask (`selectAt`), a board's outline and arcs, a board KiCad 5 wrote, the
+  board's copper for the 3D view (`src/ecad-viewer/board-copper.ts`). The
   windows of the other document a pin or a pad opens (`src/ecad-viewer/insets/`
   of `packages/ecad-viewer-app/`) are the fork's. A fork kept as SOURCE is what makes those rebasable onto the
   next commit; string replacements in the minified bundle would not be. `make
