@@ -78,6 +78,10 @@ export function chromeView(s, props, deps) {
   // A document over the model that takes a comment (`COMMENTABLE`): a place
   // taken on it is the comment's place, which arming the tool says how to take.
   const docCommentable = !!docOpen && COMMENTABLE.has(docOpen.type);
+  // The insets of a KiCad schematic or board over the model, as its view told
+  // the page (`insets` of `docTools`, KicadView.jsx), or null: over the model
+  // and over any other document the tool is out of service.
+  const docInsets = (docOpen && s.docTools && s.docTools.insets) || null;
   // Opening a document: what its row does, what a row of a KiCad design's
   // menu (KicadView.jsx) does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
@@ -343,6 +347,10 @@ export function chromeView(s, props, deps) {
     // exclusion that row sits inside.
     tMeasure: setTool('measure'),
     measureBtnStyle: btn(s.tool === 'measure', false, toolsOff() || !!docOpen),
+    // Not one of `s.tool` either: the design's own inset mode, which its `I`
+    // flips as well, lit while it is on (`docInsets`).
+    tInsets: docInsets ? docInsets.toggle : undefined,
+    insetsBtnStyle: btn(!!docInsets && docInsets.on, false, !docInsets),
     tComment: setTool('comment'),
     commentBtnStyle: btn(s.tool === 'comment', viewer, toolsOff() || (!!docOpen && !docCommentable)),
     // Not one of `s.tool`: the two buttons above arm a canvas gesture, this

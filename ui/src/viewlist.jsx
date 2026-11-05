@@ -5,8 +5,8 @@
 // from chromeview.js) and the page of a build with no model (DocShell.jsx),
 // which has documents only.
 //
-// THE BAR IS THE SAME EVERYWHERE (`toolBar`): the views, Measure, Comment, Add
-// primitive, Fit, Frame and Settings, in that order, over the model, over a
+// THE BAR IS THE SAME EVERYWHERE (`toolBar`): the views, Measure, Insets,
+// Comment, Add primitive, Fit, Frame and Settings, in that order, over the model, over a
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
 // While a document is on screen, of whatever type, Download and Copy link for
@@ -547,7 +547,8 @@ export function settingsCard(b) {
  *                null not at all;
  *   the tools    `showTools` (false on a narrow window, which keeps the views
  *                and Fit), and each tool's style and handler: `measureBtnStyle`
- *                and `tMeasure`, `commentBtnStyle` and `tComment`,
+ *                and `tMeasure`, `insetsBtnStyle` and `tInsets` (a KiCad
+ *                design's inset mode), `commentBtnStyle` and `tComment`,
  *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
  *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
  *                and `tSettings`. A tool out of service is drawn `OFF` and
@@ -603,6 +604,10 @@ function floatBar(b, menus) {
           <div onClick={b.tMeasure} style={css(b.measureBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
             Measure
+          </div>
+          <div onClick={b.tInsets} style={css(b.insetsBtnStyle)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><rect x="8" y="8" width="4.5" height="3.5" rx="0.6" /></svg>
+            Insets
           </div>
           <div onClick={b.tComment} style={css(b.commentBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>

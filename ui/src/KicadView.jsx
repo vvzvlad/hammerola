@@ -141,7 +141,7 @@
 // THE MENU is one at a time, inside the view area and over the datasheet's
 // window, drawn as the page's own menu card is, the list of views in the
 // bottom bar (`CARD_LOOK`, `menuRow` and `GROUP_HEAD` in panelstyle.js). It
-// goes on Escape (after that window), a press anywhere else, a resize, and
+// goes on Escape (after that window, before the insets), a press anywhere else, a resize, and
 // when the design is hidden; the wheel moves the drawing under it and leaves
 // it open.
 //
@@ -154,6 +154,25 @@
 // gerber.js); a selected footprint is outlined, not filled over, and the
 // board's copper pours stay on screen while it is selected; a highlighted
 // net dims the board and not the page around it.
+//
+// INSETS are the viewer's own (its `insets/`, static/_v/PROVENANCE.md): in
+// inset mode a pin hovered on the schematic opens a window of the board around
+// its pad, joined to the pin by a dashed leader, a pad on the board one of the
+// schematic around its pin, and a pin or pad inside an inset one of the other
+// document again, a chain of one colour. A click on the pin or pad pins its
+// inset, and that click selects nothing and opens no menu: the viewer takes it
+// before its own selection, so no `SELECTION_EVENT` comes of it. The two
+// elements are made each other's peer once the module is loaded
+// (`linkInsets`), for a design that draws both; the mode is one for the two,
+// flipped by the viewer's `I` and by the bar's Insets (`toggleInsets`, handed
+// to the page as `insets` of what the bar can do), and reported by both
+// elements (`INSET_EVENT`), which lights the button. The wheel over an inset is
+// the touchpad's, as over the view, and Shift with it turns the inset; its
+// keys (R, M, L, Home, P, X) act on the inset under the pointer. Escape closes
+// the datasheet's window first, then the menu, then the insets (`key`); the
+// page takes the insets' Escape for both elements, and the viewer listens for
+// none of it (`hostEscape`). The world view the viewer's `~` opens on the
+// schematic it still closes on Escape itself.
 //
 // FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
 // view on screen. The element has no fit of its own, and its `exportImage`
@@ -253,6 +272,10 @@ export const PAGE_EVENT = 'ecad-viewer:view-state-change';
 export const AREA_EVENT = 'ecad-viewer:comment-area';
 export const MARKER_EVENT = 'ecad-viewer:comment-overlay-click';
 export const SHEET_LOADED_EVENT = 'kicanvas:sheet:loaded';
+
+/** The event an element reports a change of its inset mode with
+ *  (`{ on }`): its own, from `I` or `setInsetMode`, and its peer's. */
+export const INSET_EVENT = 'ecad-viewer:inset-mode';
 
 /** The id the draft's marker stands under among `marks`. */
 export const DRAFT_MARK = 'draft';
@@ -625,17 +648,23 @@ export default class KicadView extends React.Component {
     // over. `tools3d`: what the 3D view told the bar it can do, or null.
     // `received`: the bytes of the 2D views' files in so far; `got`: all of
     // them, the viewers being handed them. `bom`: the schematic's BOM in its
-    // order (`bomRows`), once it has its files.
+    // order (`bomRows`), once it has its files. `insets`: the design's inset
+    // mode, on or off, as its elements report it.
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
-      tools3d: null, received: 0, got: false, bom: [],
+      tools3d: null, received: 0, got: false, bom: [], insets: false,
       // Each part's `Datasheet` value that is a web address, and its `Price`
       // value, for the BOM.
       webDatasheets: new Map(), prices: new Map(),
     };
     // What the bar can do with a drawn view on screen, one object for both, and
-    // the last thing the page was told (`report`).
+    // the last thing the page was told (`report`). A design that draws both
+    // members has Insets too, an object for each state of the mode, so that
+    // the page is told when it changes.
     this.drawnTools = { fit: () => this.fitDrawn(), frame: () => this.frameDrawn() };
+    const withInsets = (on) => ({ ...this.drawnTools, insets: { on, toggle: () => this.toggleInsets() } });
+    this.insetsOff = withInsets(false);
+    this.insetsOn = withInsets(true);
     this.reported = undefined;
     this.onTools3D = (tools) => this.setState({ tools3d: tools });
     // A selection waiting for the page to hand down the member it is on:
@@ -736,6 +765,9 @@ export default class KicadView extends React.Component {
       pointerup: (event) => this.release(context, event),
       [AREA_EVENT]: (event) => this.area(context, event.detail),
       [MARKER_EVENT]: (event) => this.marker(event.detail),
+      [INSET_EVENT]: (event) => {
+        if (event.detail.on !== this.state.insets) this.setState({ insets: event.detail.on });
+      },
       ...(context === SCH ? { [PAGE_EVENT]: () => this.paged(), [SHEET_LOADED_EVENT]: () => this.sheetLoaded() } : {}),
     };
     return (element) => {
@@ -763,11 +795,38 @@ export default class KicadView extends React.Component {
   }
 
   /** What the bar can do with the view on screen: a drawn one once its files
-   *  are in, the 3D model once it is loaded, the BOM nothing. */
+   *  are in, with Insets where the design draws both members (`insets`: the
+   *  mode on or off, and `toggle`), the 3D model once it is loaded, the BOM
+   *  nothing. */
   toolsOnScreen() {
     const side = this.side();
     if (side === BOARD3D) return this.state.tools3d;
-    return DRAWN.includes(side) && this.state.ready && !this.state.error ? this.drawnTools : null;
+    if (!DRAWN.includes(side) || !this.state.ready || this.state.error) return null;
+    if (drawnViews(this.members()).length < DRAWN.length) return this.drawnTools;
+    return this.state.insets ? this.insetsOn : this.insetsOff;
+  }
+
+  /** The bar's Insets: the inset mode of the drawn view on screen flipped,
+   *  which its element passes on to the other member's and both report
+   *  (`INSET_EVENT`). */
+  toggleInsets() {
+    this.elements[this.side()].setInsetMode(!this.state.insets);
+  }
+
+  /** The schematic and the board made each other's inset peer, as Prism's
+   *  `EcadViewerPair` links them: a pin hovered on one, in inset mode, opens
+   *  an inset of the other around its pad or pin. A design of one drawn
+   *  member has no insets. Called once the viewer's module is loaded. The
+   *  page takes Escape for both (`hostEscape`, `key`): the viewer's own
+   *  listener would close the pinned insets of a member off screen. */
+  linkInsets() {
+    const sch = this.elements[SCH];
+    const pcb = this.elements[PCB];
+    if (!sch || !pcb) return;
+    sch.enableInsets({ hostEscape: true });
+    pcb.enableInsets({ hostEscape: true });
+    sch.setInsetPeer(pcb);
+    pcb.setInsetPeer(sch);
   }
 
   /** The page told what the bar can do (`onTools`), when that has changed;
@@ -993,18 +1052,27 @@ export default class KicadView extends React.Component {
     if (this.state.selected !== null) this.setState({ selected: null });
   }
 
-  /** Escape closes the datasheet's window, or the menu, or else puts out what
-   *  is lit everywhere: one thing per Escape, and one that closed the window is
-   *  taken, as the page takes one that closed something of its own. Not while
-   *  typing: the page may have a field open over the design, nor while the
-   *  design is hidden. */
+  /** Escape closes the passing things the page opened over the view before
+   *  the insets the reader pinned: the datasheet's window, then the menu,
+   *  then the insets of the view on screen (its element's `escapeInsets`: the
+   *  preview, else every inset), or else puts out what is lit everywhere —
+   *  one thing of the page's per Escape, and one that closed the window or
+   *  insets is taken, as the page takes one that closed something of its
+   *  own. The viewer takes none of the insets' Escape (`hostEscape`,
+   *  `linkInsets`); the world view its `~` opens it still closes on its own,
+   *  so an Escape over that view may close it and one thing of the page's.
+   *  Not while typing: the page may have a field open over the design, nor
+   *  while the design is hidden. */
   key(event) {
     if (!this.onScreen() || event.key !== 'Escape' || event.defaultPrevented || typingTarget()) return;
+    const element = this.elements[this.side()];
     if (this.state.sheet) {
       event.preventDefault();
       this.closeSheet();
     } else if (this.state.menu) {
       this.closeMenu();
+    } else if (element && typeof element.escapeInsets === 'function' && element.escapeInsets()) {
+      event.preventDefault();
     } else {
       this.clear();
     }
@@ -1262,6 +1330,7 @@ export default class KicadView extends React.Component {
         const byPath = Object.fromEntries(files.map((file, i) => [file, texts[i]]));
         const sources = designSources(members, byPath);
         const revisionKey = `${base}${designKey(this.props.doc)}`;
+        this.linkInsets();
         const loaded = Promise.all(views.map((context) => this.elements[context]
           && this.elements[context].replaceSources({ revisionKey, sources: sources[context] })));
         // Read once the viewers have their files, so that they need not wait for
@@ -1370,6 +1439,12 @@ export default class KicadView extends React.Component {
   componentWillUnmount() {
     this._gone = true;
     this.listen(false);
+    // Unlinked as they were linked (`linkInsets`): each element closes its
+    // insets and lets go of its viewers' hovers and clicks.
+    for (const context of DRAWN) {
+      const element = this.elements[context];
+      if (element && typeof element.setInsetPeer === 'function') element.setInsetPeer(null);
+    }
   }
 
   /** Tell each element whether it is the one on screen: none of a hidden

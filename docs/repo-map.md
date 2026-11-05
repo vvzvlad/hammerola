@@ -588,11 +588,20 @@
   value of `s=` (`onSheet`), which writes it into the address; the component
   reads the address and follows Back and Forward through `address.js` and
   writes no history itself. What is under a right click is the element's own answer
-  (`selectAt`), and the menu is built from the selection it reports. The viewer
-  is `static/_v/ecad-viewer.js`, built from `ecad-viewer/` and imported by URL
-  on first use (`loadEcadViewer`); the wheel over it, the look of a selected
-  footprint, the pins of a symbol the file gives no pin records and that hit
-  test are its own code, edited by us (`static/_v/PROVENANCE.md`, "Our edits")
+  (`selectAt`), and the menu is built from the selection it reports. The two
+  elements are each other's inset peer (`linkInsets`): in inset mode — the
+  bar's Insets on the schematic and on the board, or `I` — a pin of the
+  schematic opens a window of the board around its pad and a pad of the board
+  one of the schematic around its pin, and a click pins it instead of selecting
+  or opening the menu; the elements say the mode in `ecad-viewer:inset-mode`,
+  which lights the tool, and Escape goes to the datasheet's window first, then
+  to the menu, then to the insets of the view on screen (`escapeInsets`); the
+  page takes Escape for both elements (`enableInsets({ hostEscape: true })`). The
+  viewer is `static/_v/ecad-viewer.js`, built from `ecad-viewer/` and imported
+  by URL on first use (`loadEcadViewer`); the insets are its own code, and so
+  are the wheel over it and over an inset, the look of a selected footprint, the
+  pins of a symbol the file gives no pin records and that hit test, edited by
+  us (`static/_v/PROVENANCE.md`, "Our edits")
 - `ui/src/BoardView3D.jsx`, `ui/src/board3d.js` — the 3D view of a board: three
   and `GLTFLoader.js` imported by URL from `static/_v/` (three's own add-ons,
   `static/_v/PROVENANCE.md`) and the camera turned by the model's own trackball,
@@ -697,14 +706,16 @@
   down to what builds the two files the hub serves, because what we need from it
   are edits to its CODE — how a selection and a highlighted net look on the
   board, the wheel, a symbol's pins without pin records, a hit test the page can
-  ask (`selectAt`). A fork kept as SOURCE is what makes those rebasable onto the
+  ask (`selectAt`), a board's outline and arcs, a board KiCad 5 wrote. The
+  windows of the other document a pin or a pad opens (`src/ecad-viewer/insets/`
+  of `packages/ecad-viewer-app/`) are the fork's. A fork kept as SOURCE is what makes those rebasable onto the
   next commit; string replacements in the minified bundle would not be. `make
   ecad` builds it with the fork's own script into `static/_v/`. The outputs are
   committed and the inputs are not: `ecad-viewer/node_modules/` and
   `ecad-viewer/packages/ecad-viewer-app/build/` are gitignored, and the directory
   as a whole is in `.dockerignore`. `static/_v/PROVENANCE.md` has the commit it
   was taken at, what was left out, the edits, the hashes that prove it builds
-  Prism's file byte for byte without them, and how to upgrade
+  Prism's two files byte for byte without them, and how to upgrade
 - `ci/Dockerfile.test` — the container the Python suite runs in, in both workflows.
   Not the artefact: the shipped image is the Dockerfile at the root, which installs
   requirements.lock with `--require-hashes` and no test dependency at all. This one
