@@ -41,6 +41,7 @@ import { type SchematicInstanceContext } from "../kicad/schematic";
 import type { ItemsGroupedByFpValueDNP } from "../kicad/ItemsGroupedByFpValueDNP";
 
 import { area_items, type AreaDocument } from "./area-items";
+import { board_copper, type BoardCopper } from "./board-copper";
 import { schematicPageStep } from "./page-keys";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
@@ -438,6 +439,7 @@ import { ZipUtils } from "../utils/zip_utils";
 import { length } from "../base/iterator";
 import { PRISM_LOGO } from "../kc-ui/prism_logo";
 import type { BoardViewer } from "../viewers/board/viewer";
+import type { LayerSet } from "../viewers/board/layers";
 import { MeasureTool, type MeasureState } from "../viewers/board/measure-tool";
 import type { MeasureUnits } from "../viewers/board/measure";
 import { SchematicViewer } from "../viewers/schematic/viewer";
@@ -3433,6 +3435,18 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 dnp: item.DNP,
             }),
         );
+    }
+
+    /**
+     * The board's copper for a host that draws the board in 3D itself
+     * (`board_copper`, board-copper.ts): each copper layer in stack order at
+     * the height KiCad's 3D export gives it, its triangles with each vertex's
+     * net, and the plated barrels. Null until the board is loaded.
+     */
+    public getBoardCopper(): BoardCopper | null {
+        const viewer = this.#safe_board_viewer();
+        if (!viewer?.board || !viewer.layers) return null;
+        return board_copper(viewer.board, viewer.layers as LayerSet);
     }
 
     public getPcbViewState(): EcadPcbViewState | null {

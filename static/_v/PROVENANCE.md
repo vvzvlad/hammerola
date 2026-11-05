@@ -191,7 +191,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `140bafc00347fc9cd80ba5aa0b551bc7bc07e1217ba43856cade1b3490f62cce` |
+| `ecad-viewer.js` as committed | `dbdb011288942c583dcd1d0b92eae5d3595411020779306be66b9f0d614261ce` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -217,20 +217,20 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Seventeen, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
+Eighteen, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
 of `packages/kicad-parser/src/`, each with its reason in a comment at the spot.
 Edit 6 is checked by `ui/tests/schematicpins.test.js`, which reads sheets
 through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
 it), edit 7 by `ui/tests/areaitems.test.js` the same way, edits 14 and 15 by
-`ui/tests/boardoutline.test.js` and edit 16 by `ui/tests/kicad5board.test.js`
-the same way, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
+`ui/tests/boardoutline.test.js`, edit 16 by `ui/tests/kicad5board.test.js`
+and edit 18 by `ui/tests/boardcopper.test.js` the same way, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
 `ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
 `ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
 minifying, the bundles of this tree and the fork's at `acce697` differ in these
-seventeen places and the comments beside them.
+eighteen places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -427,6 +427,23 @@ the session listen for none (`own_escape`), in the link made then and in one
 made again after `setInsetPeer(null)`; the host calls `escapeInsets()` for the
 element on screen itself (`key` in `ui/src/KicadView.jsx`).
 
+**18. The element hands out the board's copper for a 3D view.** KiCad's `.glb`
+merges a board's copper into three meshes that carry no net and no layer, so a
+3D view drawn from it can neither light a net nor pull the layers apart.
+`getBoardCopper()` of `<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`) returns
+`board_copper` (`ecad-viewer/board-copper.ts`) of the loaded board, null before
+it: every copper layer in stack order with the heights of its faces where KiCad's
+3D export puts them (`STEP_PCB_MODEL::getCopperLayerZPlacement` of KiCad 10,
+over the board's `(stackup)` or, for a board without one, the stack
+`BuildDefaultStackupList` makes), its triangles in the board's millimetres with
+each vertex's net code, the plated barrels of the vias and through pads with the
+layers they join, and the net names by code. The triangles are the 2D board's
+shapes from the same data: zone fills as the loader triangulated them, tracks as
+the renderer's pills, SMD pads and copper graphics through the viewer's own
+painters into a `NullRenderer`; a via is a ring and a plated through pad its
+outline less its drill. The page draws this copper in place of the `.glb`'s
+(`ui/src/BoardView3D.jsx`, `ui/src/board3dcopper.js`).
+
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
@@ -435,8 +452,8 @@ from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `acce697` is them, at the fork's paths, with
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
 `areaitems.test.js`, `pagekeys.test.js`, `intersheetrefs.test.js`,
-`boardoutline.test.js` and `kicad5board.test.js` fail if
-edit 6, 7, 9, 10, 14 and 15, or 16 was lost (`wheelgesture.test.js` checks the
+`boardoutline.test.js`, `kicad5board.test.js` and `boardcopper.test.js` fail if
+edit 6, 7, 9, 10, 14 and 15, 16 or 18 was lost (`wheelgesture.test.js` checks the
 arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
 update this section and the hashes, and commit the
 source and the built files together.
