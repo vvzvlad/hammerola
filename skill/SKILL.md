@@ -1,6 +1,6 @@
 ---
 name: hammerola
-description: Design a 3D-printable part in CadQuery, or in SolidCraft through its MCP server, and publish it to a hammerola hub, which builds it from code; a project can also carry a KiCad schematic and board, drawn and routed through the Copperpour MCP server. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), for a board published with a project, in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "смоделируй в солидкрафте", "разведи плату", "опубликуй плату", "3D print this", "publish the model", "hammerola".
+description: Design a 3D-printable part in CadQuery, or in SolidCraft through its MCP server, and publish it to a hammerola hub, which builds it from code; a project can also carry a KiCad schematic and board, drawn and routed through the Copperpour MCP server. Use for any part heading for a printer (bracket, mount, holder, cover, enclosure, jig), for a board published with a project, in a directory with a model.py or a hammerola project.json, and for failed builds and comments on a build. It also holds the owner's KiCad rules, gates and scripts: load it for ANY KiCad, PCB, schematic, symbol, footprint, library, 3D model, gerber, BOM/CPL, DRC or ERC request and for any .kicad_* file. Triggers include "спроектируй кронштейн", "сделай крышку", "деталь не лезет", "смоделируй в солидкрафте", "разведи плату", "опубликуй плату", "плата", "схема", "разводка", "шелк", "посадочное место", "гербер", "плата готова?", "проверь плату", "3D print this", "publish the model", "hammerola".
 ---
 
 # hammerola
@@ -10,7 +10,8 @@ in its own image, gates the geometry and serves a viewer with STL/STEP/3MF
 downloads on a permanent URL. You drive it with `hammerola` and need no CAD
 kernel. A project can also carry a KiCad design — schematic, board, its 3D
 model, Gerbers — which you draw and route yourself in KiCad through the
-Copperpour MCP server and publish beside the model (`references/boards.md`).
+Copperpour MCP server and publish beside the model (`references/boards.md`),
+under the owner's KiCad rules, gates and scripts (`references/kicad.md`).
 
 A note in brackets is a case from another project. It shows why a rule
 exists; nothing in it is a fact or a decision about the part in front of you.
@@ -30,7 +31,8 @@ else sits beside it and is read at the moment it applies — the files are in
 | Modelling the part in SolidCraft through its MCP server instead of CadQuery | `references/solidcraft.md` |
 | Putting a dimension on the drawing: shrinkage, minimum walls, orientation, fasteners | `references/printing.md` |
 | A file published beside the model: document, drawing, PDF, picture, report, or any file to hand over (DXF, STEP, CSV) | `references/documents.md` |
-| Drawing a schematic or routing a board in KiCad; publishing a schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
+| Any KiCad work: a schematic, symbols and footprints, placement, routing, silkscreen, DRC/ERC, «плата готова?», fab outputs — the owner's rules, gates and scripts | `references/kicad.md` |
+| Publishing a schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
 | Starting a project, fetching a revision back, removing one, setting up a machine | `references/cli.md` |
 
 ## Talking to the person

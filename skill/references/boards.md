@@ -8,9 +8,10 @@ itself, and every other kind of file published beside the model, is in
 ## Designing in KiCad
 
 The schematic and the board are yours to draw, place and route, in KiCad 10
-through the Copperpour MCP server: its `mcp__copperpour__*` tools, loaded a
-toolset at a time with `load_toolset`. Load Copperpour's rules (the skill
-`konnect`) and the owner's `kicad-house` together with the skill for the step:
+through the Copperpour MCP server: its `mcp__copperpour__*` tools, every
+toolset loaded at start (`references/copperpour-gaps.md`). Load Copperpour's rules (the
+skill `konnect`) and read the owner's rules, `references/kicad.md`, together with the
+skill for the step:
 `kicad-schematic`, `kicad-pcb`, `kicad-library`, `kicad-review` or
 `kicad-manufacture`. The owner's agents take the long parts:
 `kicad-schematic-build` draws a schematic, `kicad-pcb-layout` places and routes

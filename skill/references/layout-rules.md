@@ -1,0 +1,365 @@
+# Layout rules
+
+The owner's rules for placement, routing, pours, silkscreen and layout acceptance. They extend
+the vendor `kicad-pcb` skill and win where the two disagree.
+
+## Layout definition of done
+
+KiCad DRC with 0 errors / 0 dangling / 0 unconnected is necessary, not sufficient. It does not see
+mating boards or the enclosure, stitching, distances the spec gives in words, silk
+content, or copper on other layers (clearance is checked per layer). Call a board
+"placed" or "routed" only when the hand-off reports, for each line below, a count or
+measurement taken on the saved board. An item not done is listed as not done.
+
+Placed:
+- Mechanics (see Mechanical interfaces): mating-board contact band, enclosure features
+  and plug envelopes are keep-outs with no part inside; every mating pad faces a pad of
+  the same net; every pin-1/polarity mark sits at pad 1.
+- Decoupling and every "next to / close / tight" in the spec: distance in mm against a
+  numeric limit.
+- Safety distances measured >= the spec value (plus any margin the brief states); a pair
+  below it by any amount fails. Where the spec requires a distance across layers, check
+  it in plan view by script.
+- Silkscreen: every designator visible next to its part or in a group label (mounting
+  holes, fiducials, test pads, logos excepted); connector titles and pin labels; every
+  marking the spec requires; board name and revision.
+
+Routed, in addition:
+- Track geometry — acceptance gate: passed.
+- Stitching and plane integrity: reported per pour; every outer-layer pour piece is tied
+  by >= 2 vias/PTH pads of its net.
+- DRC errors fixed, none waived as "expected" (copper-to-edge included); no designator
+  or label text in any silk_overlap / silk_over_copper / silk_edge_clearance finding.
+- A resolvable 3D model on every assembled part (schematic-library.md → Models on placed
+  boards); if the board mates with another board or an enclosure, a 3D check of the
+  assembly reports no intersections.
+
+Every placement/routing brief points to this section. "Do not add anything this brief
+does not name" narrows scope; it never removes an item from this list.
+
+## Looking at the board
+
+- Numbers first: positions, distances, free spots and fits come from `scripts/bq.py`,
+  findings from `drc.sh` and `geocheck.py`.
+- For what only the eye judges (crowding, alignment, silk legibility, the surroundings of a
+  finding) render one region with `scripts/view.py` (`ref REF` or `X1 Y1 X2 Y2`; `--drc
+  drc.json` or `--marks` with a `bq.py --json` result numbers the findings on the picture)
+  and read the listing it prints beside the PNG.
+- Render the whole board (`view.py <board> full`) once, at the end of the job.
+- view.py, bq.py and `silk.py plan` read the saved file: save before you run them.
+
+## Mechanical interfaces (before placement)
+
+A mechanical conflict found after routing costs a re-layout. Model the mechanics
+before placing parts and check them in 3D like DRC.
+
+- Before placement, draw each mechanical neighbour as a rule area that keeps out
+  footprints (KiCad DRC then flags any courtyard inside it):
+  - a mating or perpendicular board: the whole worst-case strip its edge can rest
+    on, not just its slot. Length = edge length + end play + outline tolerance;
+    width = slot width + outline tolerance (JLCPCB regular routing ±0.2 mm, board
+    thickness ±10%, as of 2026-10-11). Beside it, record the height limit under
+    that board's own parts that overhang this one;
+  - enclosure ribs, dividers, bosses, latches and cover ribs, with heights; tag
+    each dimension measured / scaled from a drawing / estimated;
+  - the module antenna keep-out from its datasheet; keep metal-shell parts and
+    connectors out of the antenna clearance as well.
+- For every user-facing connector, model the largest mating plug as a box on the
+  insertion axis (USB-C overmold max 12.85 x 7.0 mm, USB Type-C spec R2.4
+  Fig. 3-3). Require at least 0.5 mm, and more than the enclosure dimension
+  uncertainty, to every enclosure feature in the state in which the user plugs in
+  (e.g. cover removed). Check button actuators and LED light paths the same way.
+- Where the user can see or reach the board through enclosure openings: no test
+  pads or their labels, and no exposed hazardous-voltage copper other than the
+  terminals themselves.
+- After placement (before routing), and again for kicad-manufacture's
+  3D/enclosure record: export STEP of every board (`kicad-cli pcb export step
+  --include-tracks --include-pads --include-zones`; every part needs a 3D model or a
+  datasheet-sized box), assemble with the enclosure, and report body intersections,
+  plug-envelope clearances, height-limit violations and copper-to-copper distance
+  between boards against the required mains spacing. Run it unasked, as a gate
+  like DRC.
+- If a part forces a notch, cut-out or board offset, first look for a smaller part
+  in stock (e.g. an HC-49S crystal replaced by a 3225 active oscillator, a schematic
+  change). Remove a notch or offset once its reason is gone.
+- For a third-party board or module that this board mates with, take dimensions
+  from its published STEP/STL/drawings or photos; ask the user only for what
+  cannot be derived.
+- Tab-in-slot joint (one board standing in a routed slot of another): size it for the
+  fab's worst case, not nominal. T = routed-edge / NPTH-slot tolerance (JLCPCB regular:
+  ±0.2 mm); t_max, t_min = board thickness limits (JLCPCB: ±10 % for t >= 1.0 mm,
+  ±0.1 mm below). Tight case: slot (L-T) x (w-T), tab (W+T) x t_max. Require
+  w-T > t_max, and check the tab's cross-section corners against the round slot ends,
+  not only the straight walls: with r = (w-T)/2 and end-arc centres c = (L-w)/2 from the
+  slot centre, if (W+T)/2 > c then sqrt(((W+T)/2 - c)^2 + (t_max/2)^2) < r. If it fails,
+  lengthen the slot or narrow the tab; chamfering the tab corners in Edge.Cuts does not
+  help (the binding corners are where the tab's routed sides meet its faces).
+- Soldered joint: end play along the slot is c + sqrt(r^2 - (t/2)^2) - W/2. In the loose
+  case (r = (w+T)/2, tab W-T, t_min) it must stay below the gap between adjacent joint
+  pads. Recompute fit and play after any change to slot, tab or pads, and update every
+  place that states them.
+- Mating footprints on two boards: check by script in the assembled frame that every pad
+  faces a pad of the same net on the other board (pad numbers may differ). After any
+  mirror, renumber or flip of either footprint, re-run it and check that every
+  pin-1/polarity mark (silk, fab) is nearer pad 1 than any other pad.
+
+## Placement
+
+- Decoupling caps (ceramic, one per supply pin): <= 2 mm from cap pad edge to pin pad
+  edge, same layer, smallest value nearest the pin. The supply track reaches the cap pad
+  before the pin, with no via between them; the cap's GND pad has its own via to the plane
+  at the pad. Bulk caps are not held to 2 mm.
+- Where the datasheet says "without vias" (e.g. an isolator's VCC2/GND2 bypass) or gives a
+  layout figure (a switcher's input cap across VIN/GND), keep both sides on the component
+  layer with no via and follow the figure.
+- Re-measure cap-to-pin distances by script after every re-placement of the group.
+- Turn every "next to / close / flush" in the spec into a mm limit in the brief (e.g. a
+  cold-junction sensor: its distance to the terminal bodies, on the same pour) and measure
+  it after placement.
+- Placement is not done until every dense IC (pitch <= 0.65 mm or >= 12 signal pins) has a
+  proven escape. "Courtyards clear + DRC clean" is not routability. Per side: copper gap to
+  the next part >= n x (track + clearance) + clearance for the n pins leaving on that layer,
+  plus a legal via site for every other signal pin; or route its fan-out on a copy at the
+  board's rules. A pin with no exit means re-place now, not after routing.
+- Turn each passive tied to an IC pin so its IC-net pad faces that pin, centred on the
+  pin's exit axis (same grid as the IC pad), so the link can be one straight segment.
+- Count signal-net airwire crossings in each functional cell (plane nets excluded) and
+  remove every one that a rotation, a mirror or a free pin re-assignment can remove.
+- A header or pad row whose signals all go to one IC sits next to it: its airwires must
+  not cross another cell. Re-order free-to-assign connector pins (headers, board-to-board)
+  to the IC's escape order and write the new pinout back to the schematic and docs.
+- Repeated channels: place and route one complete cell first (every part the spec puts in
+  it, its labels, room for one track to the neighbouring cell), then copy it at the channel
+  pitch with identical relative positions. Before copying, check that every copy fits
+  unchanged, mounting-hole and edge keep-outs included; if one does not, move the obstacle
+  or report the conflict with numbers.
+- Take every distance, free spot, via site and fit from `scripts/bq.py`, not from
+  reasoning, and push each group to the live board as soon as it passes its checks.
+- When placement blocks routing, move the blocking parts (anything outside the held set)
+  instead of delivering unconnected nets. A routing brief must not cap part moves
+  (e.g. "<= 1 mm").
+
+## Silkscreen (part of placement, not a post-pass)
+
+- Place designators with `scripts/silk.py plan`, then `apply`; it follows the rules below.
+  Make group labels or callouts only for the references it reports unplaced.
+- Plan labels together with the parts: after each placement batch, before routing, give
+  every part a visible label spot. A re-layout brief carries the label plan, and the
+  re-layout keeps existing group and function labels. Copperpour (v0.15) has no tool that
+  moves footprint fields: set reference position, angle, size, stroke and visibility with
+  kipy over IPC (or pcbnew on a closed board).
+- Label spot: outside every courtyard and 3D body, the part's own included (silk under a
+  fitted part is invisible); >= 0.15 mm from pads and mask openings (JLCPCB pad-to-silk);
+  off vias; inside the board edge. Size it on ink: at 1.0 mm text / 0.15 mm stroke about
+  0.9 mm per character x 1.15 mm. kipy `get_text_as_shapes` returns the ink;
+  `get_text_extents` and pcbnew `GetBoundingBox` are padded (~1.6-1.7 mm tall). Keep vias
+  out of reserved spots while routing.
+- Text: 1.0 mm high, stroke set explicitly to 0.15 mm (stroke 0 renders size/8 = 0.125 mm,
+  below JLCPCB's 0.15 mm minimum line width). Angle 0 or 90 degrees absolute (KiCad stores
+  and reports footprint text angles as absolute, not relative to the footprint). Front
+  text unmirrored, back text mirrored.
+- Two texts on one line: >= 0.8 mm apart along the reading direction, or they read as one
+  string (glyph gap inside a word is ~0.2 mm, a space ~1.0 mm).
+- No room beside a part: one group label next to the row (R411-R414). Never hide a
+  designator just to clear DRC; list every designator left hidden (count + references)
+  in the report.
+- A designator goes on the silk layer of its own part's side. A label on the opposite
+  side, behind the part, counts as hidden: nobody assembling or probing the board sees
+  it there. Where no spot exists, make one: a group label, or move vias and parts.
+- A dense cluster with no room for a group label: a callout box. A silk frame around the
+  cluster, a second frame in the nearest free area listing its designators one per line
+  in the order the parts sit, and one straight silk leader joining the two frames. One box
+  per cluster; leaders do not cross each other or run over pads.
+- No designator on mechanical items: mounting holes, fiducials, logos.
+- Every external connector: a title visible with the part fitted, a short function name per
+  contact (what gets wired there, not a description), channel numbers on repeated
+  channels, a distinct mark on a channel that differs, pin-1/polarity. Every board: name
+  and revision, plus every marking the spec requires.
+- A required label that does not fit: shorten or merge ("+ OUT3 -"); if still impossible,
+  report it. Never drop it silently.
+- Gate: kicad-cli pcb drc has no silk_overlap / silk_over_copper / silk_edge_clearance item
+  that involves a text (graphic-only ones, e.g. outlines of abutting terminal blocks, are
+  listed with their cause), and `kicad-cli pcb render` with 3D models (top view plus
+  close-ups of dense areas) shows every label.
+
+## Route order and pairs
+
+- Route order: fan-out first (every dense-IC pin and every plane pad gets its stub and
+  via), then constrained nets (isolation, differential and sensor pairs, sensitive analog),
+  then power, then the rest.
+- Route each pair (USB D+/D-, CAN H/L, a sensor's +/- leads) together: constant spacing
+  through every bend, and its series/filter parts mirrored about the pair axis.
+
+## Track geometry — acceptance gate
+
+Run after routing and after every later edit that moves copper, on the saved board.
+Report the count per check in the hand-off. Pass = 0 findings, or each remaining
+finding listed with its location and the constraint that blocks the fix (e.g. the
+straight path would break a clearance). "Same count as before" is not a pass, and
+checking only that track ends sit on pad centres is not this gate.
+
+KiCad DRC part. Copy the .kicad_pcb and .kicad_pro to scratch, add to the copy's
+.kicad_dru (the project's rules, or `(version 1)` if there are none):
+
+    (rule "geo_bend"   (constraint track_angle (min 134)))
+    (rule "geo_seglen" (constraint track_segment_length (min 0.1mm)))
+
+and run `kicad-cli pcb drc --format json --severity-all` on the copy.
+- `track_angle` is the angle between two connected segments: 135 for a 45° bend,
+  90 for a right-angle corner, 0 for same-net segments lying on each other. Joints
+  on a pad are skipped; joints at vias and T-junctions are checked. Each joint is
+  reported twice. Use 134, not 135: some exact 45° bends compute as 134.99.
+- Give the angle as a bare number. With `(min 134deg)` kicad-cli 10.0.6 silently
+  ignores the whole rules file; prove the file loaded once with a rule that must
+  fire, e.g. `(rule "probe" (constraint track_width (min 50mm)))`.
+- Replace each right-angle corner with a 45° chamfer wherever one fits clearance.
+  `route_pad_to_pad` emits raw L-bends, so its output always needs this pass.
+
+Script part (read the saved file with pcbnew; DRC has no check for these):
+1. Segment direction not a multiple of 45° (tolerance 0.5°).
+2. Track end not on a pad centre, a via centre or a same-net track (0.005 mm).
+3. Pad exit: from a rectangular, rounded-rectangle or oval pad the first segment
+   runs along a pad axis (0°/90° to the pad), never diagonally out through the
+   pad corner; round pads and vias may exit at any multiple of 45°. The first
+   bend lies at least half the track width outside the pad copper.
+4. Jog: two equal opposite bends joined by a segment shorter than 1.5 mm.
+5. Same-net tracks crossing or overlapping; a loop in a net's track graph; a pad
+   wired to a via although another same-net via is at least 1 mm closer in a
+   straight line than the wired path.
+
+Fix by moving vias and parts first; add bends only where nothing can move.
+
+## Autorouting
+
+- Never write a general-purpose router (grid/maze/A*). Bulk routing is Freerouting's job;
+  nets whose look matters are scripted as explicit waypoints. Freerouting or Java missing
+  (2.4.x needs Java 25+; macOS `/usr/bin/java` may be a Java 8 stub): install it or ask.
+- Copperpour `export_specctra_dsn` refuses boards outside its profile (v0.15: 2 copper
+  layers, front-side parts, circle/rect/unchamfered roundrect pads, a straight-line outline,
+  no tracks/vias/zones, no .kicad_dru rules).
+  Otherwise use KiCad's bundled Python on a copy of the saved board with its .kicad_pro
+  beside it (without it the DSN has only the default netclass): lock every existing
+  track/via → `pcbnew.ExportSpecctraDSN` → `java -jar freerouting.jar
+  --gui.enabled=false -da --router.fanout.enabled=false -de in.dsn -do out.ses -mp N` →
+  `pcbnew.ImportSpecctraSES` (it deletes and recreates every unlocked track/via) → push
+  the unlocked items to the live board over IPC.
+- The DSN carries netclass widths/clearances, zones and rule areas, not .kicad_dru rules.
+  On the copy, add a rule-area keep-out for every .kicad_dru constraint (hole keep-outs,
+  slot/edge clearances, isolation bands) before export.
+- A layer that must stay a plane: set its type to Power plane (Board Setup, or
+  `BOARD.SetLayerType(layer, pcbnew.LT_POWER)` on the copy); Freerouting routes nothing on
+  it. Per-layer costs (a "mostly plane" layer) had no effect in 2.4.1 headless (DSN
+  autoroute_settings, `-dr .rules`): route such a board by script.
+- If the per-pass unrouted count in the log sets no new low for 2 passes while above 0,
+  stop and fix placement; more passes or reruns on the same placement do not converge.
+- Imported routing is a draft: it must pass the track-geometry gate and DRC like any other.
+
+## Stitching and plane integrity
+
+A board with pours is not routed until these checks are measured on the saved board.
+
+- Tie every pour on an outer or signal layer to its reference plane with vias of its own
+  net: <= 4 mm apart along the board edge, <= 10 mm along the rest of the drawn zone
+  outline, and inside so that no fill point is farther than 7 mm from such a via (a 10 mm
+  grid), plus one at every extremity or neck of an irregular pour (ADI AN-0971: fill ties
+  every 10 mm, vias at the extreme edges, a 4 mm via fence along the board edge). No vias
+  in isolation or creepage gaps, antenna keep-outs or a deliberate star-ground area.
+- Module GND pads beside a PCB antenna get vias along the pad row (Espressif asks for
+  "dense ground vias" there without a number; e.g. one behind every second pad). EPAD vias
+  follow the module's land pattern.
+- Draw plane layers and spec-required pours (isothermal area, heatsink copper, plane
+  capacitor) before routing, and route the nets that would cut them on another layer. On a
+  2-layer board one layer is the GND plane: buses run on the other layer, and the plane
+  layer carries only short crossings. A rail along the plane layer, or a bus stacked on
+  both layers, leaves no continuous fill.
+- After every refill, count fill pieces per zone and layer (bundled pcbnew on the saved
+  file: `zone.GetFilledPolysList(layer).OutlineCount()`). It is a defect when a plane or
+  spec-required pour is in more than one piece, a piece is tied by fewer than 2 vias/PTH
+  pads of its net (TI SZZA009: a fill tied at one point is only a shield), or a required
+  copper area is below its target. Fix it by moving the cutting track, adding vias or
+  removing the sliver.
+- Report per pour: vias added, largest gap along the outline, largest via-free circle
+  inside, piece count and ties per piece.
+- Fast nets (USB D+/D-, clocks) stay on one layer over unbroken GND. If a pair must change
+  layer, both lines change together, with a pair of GND return vias at the transition
+  (Espressif HDG; TI SPRAAR7: within 200 mil / 5 mm, closer is better).
+
+## DRC errors: fix or prove, never "expected"
+
+- Never call a DRC error "expected" or "by design", in a report or in a brief to another
+  agent. Fix it, or close it with evidence:
+  - Error inside a footprint: cite the manufacturer's land-pattern drawing (URL, page,
+    date) that produces the geometry, and the fab minimum it still meets. JLCPCB
+    capabilities page, 2026-10: NPTH to track 0.2 mm; PTH annular ring 0.18 mm on
+    2-layer 1 oz, 0.15 mm on multilayer 1 oz; mask web 0.10 mm at 1 oz (0.13 mm on
+    black/white mask). Only then add a `.kicad_dru` exception scoped with
+    `memberOfFootprint(...)`, never below the fab minimum.
+  - If the drawing itself breaks the fab minimum, replace the part with a stocked one
+    whose drawing passes. If none passes, report the shortfall with its numbers as an
+    open item.
+- Count the findings after every batch of edits (DRC errors, dangling, unconnected, and the
+  geometry-gate findings). If the count sets no new low for 3 batches, stop editing and hand
+  back the open list with what blocks each item, usually placement: on the same placement
+  more edit–check cycles do not converge (OmniRouting, arXiv 2608.04434: GPT-5-mini went
+  from 18.4 to 23.7 steps and from 9.9 % to 6.8 % of nets routed).
+- A `.kicad_dru` rule overrides the Board Setup minimum, whatever the manual says
+  (KiCad 10.0.6: clearance, edge_clearance and hole_clearance rules set below 0.5 mm
+  board minimums raised no error). DRC does not catch an exception written below the
+  fab minimum.
+- Keep copper >= 0.3 mm from routed board edges, internal slots and board-to-board tab
+  tips (JLCPCB minimum 0.2 mm; 0.4 mm on V-cut edges), unless castellated holes, edge
+  plating or gold fingers are ordered.
+
+## Safety distances across layers
+
+- DRC `clearance` compares copper on the same layer only (KiCad 10.0.6: L on F.Cu
+  directly over N on B.Cu under an 8 mm rule raised no error). When the spec applies a
+  distance across layers, measure plan-view distances between isolation groups over
+  all copper layers (pads, tracks, vias, plated barrels, zone fills) after each routing
+  pass and before reporting done. Whether two groups may overlap through the board core
+  is the spec's decision; ask the owner if the spec is silent.
+- Place parts with >= 0.5 mm spare over each required distance so routing has room.
+  Build keep-out and zone outlines at required + 0.05 mm: polygon approximation and
+  clean-up operations under-shoot by a few hundredths of a millimetre.
+- A measured pair below the requirement by any amount blocks completion; it is not a
+  deviation to report.
+
+## Rules
+
+These replace kicad-pcb rules 1, 5 and 10 and add rules 11 and 12.
+
+1. **Never edit .kicad_pcb directly** — all changes go through MCP tools (Channel 4 in
+   `references/kicad.md` is not a direct edit)
+5. **Check DRC before finishing** — run `run_drc()` and resolve all errors; DRC is
+   necessary, not sufficient: finish against "Layout definition of done"
+10. **Signal-layer pours last** — plane layers and spec-required pours are declared before
+    routing; signal-layer fills and their stitching come after routing
+11. **Compute geometry in scripts.** Coordinates, rotations, pad maps and clearances
+    come from `scripts/bq.py` or a script that prints numbers, not from long reasoning.
+12. **Gate edits on the check's exit status.** A check script exits non-zero on any
+    finding and is chained as `check && apply` with no pipe in between (or runs under
+    `set -o pipefail`).
+
+## Other changes to kicad-pcb text
+
+Prerequisites, "If connection fails" — the first bullet reads:
+
+- Open KiCad yourself: `check_kicad_ui`, then `launch_kicad_ui` with the project, then
+  open the board in that instance's PCB editor (macOS keystroke in copperpour-gaps.md).
+  Confirm with an IPC dry run. Ask the user only if this fails.
+
+Layout Order, steps 4, 6 and 7 and the note under the list:
+
+4. **Place components** — after drawing the mechanical interfaces (see Mechanical interfaces)
+5. **Route traces** — connect all nets
+6. **Copper pour** — signal-layer fills and their stitching after routing; plane layers
+   and spec-required pours before routing (see Stitching and plane integrity)
+7. **DRC**, then the Layout definition of done
+
+Do NOT add signal-layer fills before routing is complete.
+
+Routing Tools: `route_pad_to_pad` — direct connection, auto L-bend routing (raw 90° corner — chamfer
+it, see Track geometry — acceptance gate).
+
+konnect, Design Rules Quick Reference: IC decoupling cap — 100nF ceramic within 2 mm of the supply
+pin, same layer (Placement above).
