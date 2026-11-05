@@ -31,7 +31,7 @@ else sits beside it and is read at the moment it applies — the files are in
 | Modelling the part in SolidCraft through its MCP server instead of CadQuery | `references/solidcraft.md` |
 | Putting a dimension on the drawing: shrinkage, minimum walls, orientation, fasteners | `references/printing.md` |
 | Rebuilding a part from a 3D scan of it, or from an STL whose CAD source is lost | `references/scan.md` |
-| Whether the part holds a load, where it bends, how it rings, heats up or lets a fluid through — computed on your machine | `references/analysis.md` |
+| Whether the part holds a load, where it bends, how it rings, heats up or lets a fluid through; how hot a board and its enclosure run, what a trace carries, whether a snap-fit snaps or a board fits its enclosure — computed on your machine | `references/analysis.md` |
 | A file published beside the model: document, drawing, PDF, picture, report, or any file to hand over (DXF, STEP, CSV) | `references/documents.md` |
 | Any KiCad work: a schematic, symbols and footprints, placement, routing, silkscreen, DRC/ERC, «плата готова?», fab outputs — the owner's rules, gates and scripts | `references/kicad.md` |
 | Publishing a schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
