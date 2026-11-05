@@ -345,6 +345,10 @@ class View:
                 d["ref"], s["angle"], s["gap"], s["cost"])) for s in d["spots"]]
         elif d.get("cmd") == "near":
             pts = [(d["x"], d["y"], "near r %.2f: %d items" % (d["r"], len(d["items"])))]
+        elif d.get("cmd") == "score":
+            pts = [(c["at"][0], c["at"][1], "airwire crossing %s %s-%s x %s %s-%s" % (
+                c["a"]["net"], c["a"]["wire"][0], c["a"]["wire"][1], c["b"]["net"], c["b"]["wire"][0], c["b"]["wire"][1]))
+                for c in d["crossing_list"]]
         return [("M%d" % (i + 1), [(x, y)], t) for i, (x, y, t) in enumerate(pts)]
 
     def markers(self, ms, col):

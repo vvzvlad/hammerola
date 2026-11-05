@@ -1,7 +1,7 @@
-"""Board queries for layout agents: what is near a point, copper clearance between two items, legal via sites, a track corridor, legal designator spots; compact text, or JSON with --json.
-usage: "$PY" bq.py <board.kicad_pcb> near X Y [--r 2] [--layer L] | clearance A B | via X Y --net NET [--r 3] [--n 5] [--size D --drill d] | corridor X1 Y1 X2 Y2 --layer L --width W --net NET | labels REF   (mm; A/B = REF, REF.PAD or net:NAME; cmd "-" reads one query per line from stdin, board loaded once; reads the saved file, zones refilled in memory; clearance, hole_clearance and edge_clearance rules of the .kicad_dru beside the board are applied, see boardgeo.py)
+"""Board queries for layout agents: what is near a point, copper clearance between two items, legal via sites, a track corridor, legal designator spots, placement score (HPWL and airwire crossings of signal nets); compact text, or JSON with --json.
+usage: "$PY" bq.py <board.kicad_pcb> near X Y [--r 2] [--layer L] | clearance A B | via X Y --net NET [--r 3] [--n 5] [--size D --drill d] | corridor X1 Y1 X2 Y2 --layer L --width W --net NET | labels REF | score [X1 Y1 X2 Y2] [--n 5]   (mm; A/B = REF, REF.PAD or net:NAME; cmd "-" reads one query per line from stdin, board loaded once; reads the saved file, zones refilled in memory; clearance, hole_clearance and edge_clearance rules of the .kicad_dru beside the board are applied, see boardgeo.py)
 needs: KiCad's bundled Python with pcbnew ($PY), e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3; boardgeo.py beside this file"""
-import sys, json, math, shlex, argparse
+import sys, json, math, shlex, argparse, collections
 import pcbnew
 sys.dont_write_bytecode = True  # no __pycache__ beside the installed scripts
 import boardgeo
@@ -348,6 +348,100 @@ def labels(g, a):
     return res, txt
 
 
+# ---------------------------------------------------------------- score
+def meets(p1, p2, q1, q2):
+    """Two segments meet, touching included (OmniLayout placement_metrics._segments_intersect)."""
+    def o(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def on(a, b, c):
+        return min(a[0], c[0]) <= b[0] <= max(a[0], c[0]) and min(a[1], c[1]) <= b[1] <= max(a[1], c[1])
+    o1, o2, o3, o4 = o(p1, p2, q1), o(p1, p2, q2), o(q1, q2, p1), o(q1, q2, p2)
+    if (o1 == 0 and on(p1, q1, p2)) or (o2 == 0 and on(p1, q2, p2)) or (o3 == 0 and on(q1, p1, q2)) or (o4 == 0 and on(q1, p2, q2)):
+        return True
+    return (o1 > 0) != (o2 > 0) and (o3 > 0) != (o4 > 0)
+
+
+def meet_point(p1, p2, q1, q2):
+    """Where two meeting segments cross (an end of one for collinear contact), nm."""
+    den = (p2[0] - p1[0]) * (q2[1] - q1[1]) - (p2[1] - p1[1]) * (q2[0] - q1[0])
+    if den == 0:
+        return next(e for e in (q1, q2, p1, p2) if meets(e, e, p1, p2) and meets(e, e, q1, q2))
+    t = ((q1[0] - p1[0]) * (q2[1] - q1[1]) - (q1[1] - p1[1]) * (q2[0] - q1[0])) / den
+    return (p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1]))
+
+
+def score(g, a):
+    """Placement numbers over signal nets (a net with a copper zone is a plane net and is left out): HPWL, the sum of
+    each net's pad bounding-box half-perimeter, and airwire crossings, each pair of different nets' minimum-spanning-tree
+    edges over pad centres that meet (OmniLayout placement_metrics compute_hpwl, compute_net_crossing). With a box
+    X1 Y1 X2 Y2 the crossing count and lists keep only crossings whose point lies in it; HPWL stays whole-board."""
+    if a.box and len(a.box) != 4:
+        raise SystemExit("bq: score box takes four numbers X1 Y1 X2 Y2")
+    box = (min(a.box[0], a.box[2]), min(a.box[1], a.box[3]), max(a.box[0], a.box[2]), max(a.box[1], a.box[3])) if a.box else None
+    planes = sorted({z.GetNetname() for z in g.board.Zones()
+                     if not z.GetIsRuleArea() and z.IsOnCopperLayer() and z.GetNetCode() > 0})
+    pads = collections.defaultdict(dict)
+    for f in g.board.GetFootprints():
+        for p in f.Pads():
+            if p.GetNetCode() > 0 and p.GetNetname() not in planes:
+                pos = p.GetPosition()
+                pads[p.GetNetname()].setdefault((pos.x, pos.y), "%s.%s" % (f.GetReference(), p.GetNumber()))
+    nets = {n: pts for n, pts in pads.items() if len(pts) > 1}
+    hpwl, wires = {}, []
+    for n, pts in nets.items():
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        hpwl[n] = max(xs) - min(xs) + max(ys) - min(ys)
+        ps = list(pts)
+        best = {k: (math.hypot(ps[k][0] - ps[0][0], ps[k][1] - ps[0][1]), 0) for k in range(1, len(ps))}
+        while best:   # Prim's minimum spanning tree
+            k = min(best, key=lambda k: best[k][0])
+            wires.append((n, ps[best.pop(k)[1]], ps[k]))
+            for m in best:
+                d = math.hypot(ps[m][0] - ps[k][0], ps[m][1] - ps[k][1])
+                if d < best[m][0]:
+                    best[m] = (d, k)
+    wires.sort(key=lambda w: min(w[1][0], w[2][0]))
+    crossings, per, on_board = [], collections.Counter(), 0
+    for i, (n1, p1, p2) in enumerate(wires):
+        x1 = max(p1[0], p2[0])
+        for n2, q1, q2 in wires[i + 1:]:
+            if min(q1[0], q2[0]) > x1:
+                break
+            if n1 == n2 or {p1, p2} & {q1, q2} or min(q1[1], q2[1]) > max(p1[1], p2[1]) or max(q1[1], q2[1]) < min(p1[1], p2[1]):
+                continue
+            if meets(p1, p2, q1, q2):
+                c = meet_point(p1, p2, q1, q2)
+                on_board += 1
+                if box and not (box[0] <= mm(c[0]) <= box[2] and box[1] <= mm(c[1]) <= box[3]):
+                    continue
+                crossings.append(dict(at=[f3(c[0]), f3(c[1])], a=dict(net=n1, wire=[nets[n1][p1], nets[n1][p2]]),
+                                      b=dict(net=n2, wire=[nets[n2][q1], nets[n2][q2]])))
+                per[n1] += 1
+                per[n2] += 1
+    worst_h = sorted(hpwl, key=lambda n: -hpwl[n])[:a.n]
+    worst_c = [n for n, _ in per.most_common(a.n)]
+    res = dict(cmd="score", signal_nets=len(nets), plane_nets=planes, hpwl=f3(sum(hpwl.values())), airwires=len(wires),
+               box=list(box) if box else None, crossings=len(crossings), board_crossings=on_board,
+               worst_hpwl=[dict(net=n, hpwl=f3(hpwl[n]), pads=len(nets[n])) for n in worst_h],
+               worst_crossings=[dict(net=n, crossings=per[n]) for n in worst_c], crossing_list=crossings)
+    if box:
+        txt = ["score: %d signal nets (%d plane nets left out: %s), HPWL %.3f mm (whole board), %d airwire crossings in box "
+               "%.3f %.3f %.3f %.3f (%d on the whole board; %d airwires)" % (
+                   len(nets), len(planes), ", ".join(planes) or "none", res["hpwl"], len(crossings), *box, on_board, len(wires))]
+    else:
+        txt = ["score: %d signal nets (%d plane nets left out: %s), HPWL %.3f mm, %d airwire crossings (%d airwires)" % (
+            len(nets), len(planes), ", ".join(planes) or "none", res["hpwl"], len(crossings), len(wires))]
+    for e in res["worst_hpwl"]:
+        txt.append("  hpwl      %9.3f  %s (%d pads)" % (e["hpwl"], e["net"], e["pads"]))
+    for e in res["worst_crossings"]:
+        c = next(c for c in crossings if e["net"] in (c["a"]["net"], c["b"]["net"]))
+        txt.append("  crossings %9d  %s, e.g. at (%.3f, %.3f): %s %s-%s x %s %s-%s" % (
+            e["crossings"], e["net"], c["at"][0], c["at"][1], c["a"]["net"], c["a"]["wire"][0], c["a"]["wire"][1],
+            c["b"]["net"], c["b"]["wire"][0], c["b"]["wire"][1]))
+    return res, txt
+
+
 def parser():
     p = argparse.ArgumentParser(prog="bq.py", add_help=True)
     p.add_argument("--json", action="store_true")
@@ -363,12 +457,13 @@ def parser():
         s.add_argument(k, type=float)
     s.add_argument("--layer", required=True); s.add_argument("--width", type=float, required=True); s.add_argument("--net", required=True)
     s = sp.add_parser("labels"); s.add_argument("ref")
+    s = sp.add_parser("score"); s.add_argument("box", type=float, nargs="*"); s.add_argument("--n", type=int, default=5)
     for s in sp.choices.values():
         s.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     return p
 
 
-CMDS = dict(near=near, clearance=clearance, via=via, corridor=corridor, labels=labels)
+CMDS = dict(near=near, clearance=clearance, via=via, corridor=corridor, labels=labels, score=score)
 
 
 def run(g, argv, js):
