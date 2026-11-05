@@ -35,7 +35,7 @@ user — never fall back to text editing. kicad-pcb rule 1 ("Never edit .kicad_p
 does not cover Channel 4. The gaps that need it, and the pcbnew/kipy pitfalls, are in
 `references/copperpour-gaps.md`.
 
-Interpreters on this Mac:
+Interpreters on macOS:
 
 - KiCad's Python with pcbnew:
   `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3`

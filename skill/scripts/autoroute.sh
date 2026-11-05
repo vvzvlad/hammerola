@@ -1,6 +1,6 @@
 #!/bin/bash
 # usage: bash autoroute.sh <board.kicad_pcb> [--export plain|plugin] [--min-width on|off] [--draft-time S] [--finish none|freerouting] [--finish-time S] [--diagnose]   (routes a copy of the saved board in docker: existing tracks/vias locked, fastroute draft, finish, DRC with refill, geocheck.py, unrouted list; --diagnose adds fastroute's congestion/blocked class to each unrouted connection; the project is not modified)
-# needs: bash, docker whose current context is a Linux x86-64 build host (keep heavy work off the laptop), autoroute.Dockerfile, autoroute_run.sh, autoroute_board.py and geocheck.py next to this script
+# needs: bash, docker that runs linux/amd64 images (fastroute ships linux-x64 only), autoroute.Dockerfile, autoroute_run.sh, autoroute_board.py and geocheck.py next to this script
 # defaults: --export plugin --min-width on --draft-time 300 --finish none --finish-time 600, no --diagnose; the routed copy and the run logs land in a new ${TMPDIR:-/tmp}/autoroute.XXXXXX; new routing = the unlocked tracks/vias of the copy
 # exit: 0 = the run finished (unrouted connections and DRC errors are in the summary, not in the exit code); otherwise the code of the failing stage or docker command, with "autoroute failed (exit N) at stage S" and the tail of run/S.log; 2 = unknown option; 130/143 = interrupted (INT/TERM), the container is removed and the result is lost
 set -eu
@@ -21,10 +21,10 @@ mkdir "$OUT/in"
 cp "$P/$N.kicad_pcb" "$OUT/in/"
 [ -f "$P/$N.kicad_pro" ] && cp "$P/$N.kicad_pro" "$OUT/in/"
 [ -f "$P/$N.kicad_dru" ] && cp "$P/$N.kicad_dru" "$OUT/in/"
-# the docker host is remote: the build context goes as a tar stream, files move with docker cp
+# no bind mounts: the build context goes as a tar stream and files move with docker cp, so the daemon may run on another machine
 IMG="$(COPYFILE_DISABLE=1 tar -C "$H" -cf - autoroute.Dockerfile autoroute_run.sh autoroute_board.py | docker build --force-rm -q -t kicad-autoroute -f autoroute.Dockerfile -)"
 C="$(docker create "$IMG" bash /opt/autoroute/autoroute_run.sh "$N" "$EXP" "$MINW" "$DT" "$FIN" "$FT" "$DIAG")"
-# the container lives on a shared host: it goes on any exit, a kill or Ctrl+C included
+# the container goes on any exit, a kill or Ctrl+C included
 trap 'docker rm -f "$C" > /dev/null' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
