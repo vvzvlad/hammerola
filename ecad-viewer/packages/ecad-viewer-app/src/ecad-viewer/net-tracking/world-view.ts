@@ -5,20 +5,24 @@
     included, placed in one world and drawn through a single camera, so the
     view pans, zooms and drags like a sheet. The sheets stay interactive:
     hovering outlines items, a click selects (Shift+click highlights the
-    net), and the host chains in more nets with `chain()`. Everything a click
-    picks is reported through the host as a selection on that sheet's page.
+    net), and a double-click on a label, sheet entry or power symbol is the
+    host's to trace (`toggle()`). Everything a click picks is reported
+    through the host as a selection on that sheet's page.
 
-    A chain is one label's reach. The first opens the view; each later one is
+    A chain is one label's reach, linking it to every namesake it reaches,
+    on another sheet or its own. The first opens the view; each later one is
     added in its own colour, linking sheets already shown and bringing in the
     ones that are not (they join the end of the layout, so nothing on screen
-    moves).
+    moves). A chain goes again on `toggle()` of any label it reaches, and the
+    view closes with the last; its sheets stay.
 
     Motion: the view fades in and the camera eases out from what the main
     view was showing to every sheet. Sheets fade in a hop at a time from where
-    their chain started; each connection grows from the label it is reached
-    from once its sheet is there, the label it reaches ripples once, and then
-    the line flows outward until the view closes. A double-click eases into
-    that sheet before handing it to the main view; closing fades out.
+    their chain started; a connection is drawn whole and still, with the
+    marks on its ends, once the sheets at both ends are there. Frames are
+    drawn while the camera eases or sheets fade in, and on a change. A
+    double-click elsewhere eases into that sheet before handing it to the
+    main view; closing fades out.
 */
 
 import { BBox, Camera2, Matrix3, Vec2 } from "../../base/math";
@@ -69,6 +73,8 @@ export interface WorldViewHost {
         item: unknown | null,
         modifiers: { shift: boolean },
     ): void;
+    /** A double-click on `item` of a sheet: true when the host traced it. */
+    trace(view: SchematicPageView, item: unknown): boolean;
     background(): string;
     /** The main view's navigation settings and fit insets, to match it. */
     navigation(): MoveAndZoomOptions | undefined;
@@ -90,8 +96,22 @@ interface Chain {
     links: Array<[NetInstance, NetInstance]>;
     reached: NetInstance[];
     color: string;
-    opened_at: number;
-    depth: Map<string, number>;
+}
+
+/** Whether `chain` starts at or reaches the instance `key`. */
+const holds = (chain: Chain, key: string) =>
+    instance_key(chain.from) === key ||
+    chain.reached.some((it) => instance_key(it) === key);
+
+/**
+ * The links of a chain that are drawn: both ends on sheets shown, the two
+ * sheets different or the same (a global label's namesake on its own sheet).
+ */
+export function shown_links(
+    links: ReadonlyArray<[NetInstance, NetInstance]>,
+    shown: (page: string) => boolean,
+): Array<[NetInstance, NetInstance]> {
+    return links.filter(([a, b]) => shown(a.page) && shown(b.page));
 }
 
 interface CameraMove {
@@ -106,9 +126,8 @@ const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 100;
 /** One hop's sheets start this long after the previous hop's. */
 const HOP_DELAY = 200;
-/** A sheet fades in over this long; its connection then grows over this long. */
+/** A sheet fades in over this long; its connections are drawn after. */
 const SHEET_MS = 360;
-const LINE_MS = 440;
 const FADE_MS = 160;
 const OPEN_MS = 520;
 const REFRAME_MS = 420;
@@ -129,6 +148,8 @@ export class WorldView {
     #order: string[] = [];
     #cols = 1;
     #chains: Chain[] = [];
+    /** Chains added since the view opened: the next one's colour. */
+    #colors = 0;
     #tokens: Tokens | null = null;
     #frame: number | null = null;
     #sheets_dirty = true;
@@ -148,11 +169,7 @@ export class WorldView {
     /** Whether `at` already starts or is reached by a chain. */
     traced(at: NetInstance) {
         const key = instance_key(at);
-        return this.#chains.some(
-            (chain) =>
-                instance_key(chain.from) === key ||
-                chain.reached.some((it) => instance_key(it) === key),
-        );
+        return this.#chains.some((chain) => holds(chain, key));
     }
 
     /** The scene of `page`, while the view shows it. */
@@ -235,6 +252,21 @@ export class WorldView {
         return true;
     }
 
+    /**
+     * A double-click on `from`: open on its net; while open, take away every
+     * chain it is in, closing the view with the last of them, or chain its
+     * net in when it is in none.
+     */
+    async toggle(from: NetInstance) {
+        if (!this.open) return this.show(from);
+        if (!this.traced(from)) return this.chain(from);
+        const key = instance_key(from);
+        this.#chains = this.#chains.filter((chain) => !holds(chain, key));
+        if (this.#chains.length) this.invalidate();
+        else this.close();
+        return true;
+    }
+
     /** Fade out, then let go of every scene. */
     close() {
         if (!this.#root || this.#closing) return;
@@ -262,6 +294,7 @@ export class WorldView {
         this.#sheets.clear();
         this.#order = [];
         this.#chains = [];
+        this.#colors = 0;
         this.#hover = null;
         this.#selected = null;
         this.#root?.remove();
@@ -307,9 +340,9 @@ export class WorldView {
         const keys = pages
             .map((page) => page.key)
             .filter((key) => instances.some((it) => it.page === key));
-        // The first chain needs somewhere to go; a later one may stay on
-        // sheets already shown.
-        if (first && keys.length < 2) return false;
+        // The first chain needs a namesake to link to, on another sheet or
+        // its own: a net that stays on one sheet opens the view on that sheet.
+        if (first && !links.length) return false;
         const fresh = keys.filter((key) => !this.#sheets.has(key));
         const views = await Promise.all(
             fresh.map((key) => this.host.page_view(key)),
@@ -349,28 +382,11 @@ export class WorldView {
         });
         this.#chains.push({
             from,
-            links: links.filter(
-                ([a, b]) =>
-                    a.page !== b.page &&
-                    this.#sheets.has(a.page) &&
-                    this.#sheets.has(b.page),
-            ),
+            links: shown_links(links, (page) => this.#sheets.has(page)),
             reached: instances,
-            color: CHAIN_COLORS[this.#chains.length % CHAIN_COLORS.length]!,
-            opened_at: now,
-            depth,
+            color: CHAIN_COLORS[this.#colors++ % CHAIN_COLORS.length]!,
         });
         return true;
-    }
-
-    /** When a connection to `to` in `chain` starts to grow. */
-    #landing(chain: Chain, to: NetInstance) {
-        const target = this.#sheets.get(to.page);
-        const hop = chain.depth.get(instance_key(to)) ?? 1;
-        return Math.max(
-            chain.opened_at + Math.max(0, hop - 1) * HOP_DELAY,
-            target?.appear_at ? target.appear_at + SHEET_MS : 0,
-        );
     }
 
     // --- Camera --------------------------------------------------------
@@ -498,19 +514,26 @@ export class WorldView {
         return false;
     }
 
-    /** The connections flow for as long as the view is open. */
+    /** Whether the sheet of `page` is shown and has faded in. */
+    #there(page: string, now: number) {
+        const sheet = this.#sheets.get(page);
+        return !!sheet && this.#arrival(sheet, now) >= 1;
+    }
+
+    /** Draw a frame, and the next ones while the camera eases or sheets fade in. */
     #schedule() {
         if (this.#frame !== null || !this.#root) return;
         this.#frame = requestAnimationFrame((now) => {
             this.#frame = null;
             if (!this.#root) return;
             const moving = this.#step_camera(now);
-            if (this.#sheets_dirty || moving || this.#sheets_settling(now)) {
+            const settling = this.#sheets_settling(now);
+            if (this.#sheets_dirty || moving || settling) {
                 this.#sheets_dirty = false;
                 this.#draw_sheets(now);
             }
             this.#draw_marks(now);
-            this.#schedule();
+            if (moving || settling) this.#schedule();
         });
     }
 
@@ -576,11 +599,10 @@ export class WorldView {
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
         for (const chain of this.#chains) {
-            const reached = new Map<string, number>();
+            const reached: Vec2[] = [];
             for (const [from, to] of chain.links) {
-                const landed = this.#landing(chain, to);
-                const grow = ease_out((now - landed) / LINE_MS);
-                if (grow <= 0) continue;
+                if (!this.#there(from.page, now) || !this.#there(to.page, now))
+                    continue;
                 const a = this.#instance_point(from);
                 const b = this.#instance_point(to);
                 if (!a || !b) continue;
@@ -588,32 +610,16 @@ export class WorldView {
                 paint_connection(ctx, curve, {
                     color: chain.color,
                     name: to.name,
-                    grow,
-                    now,
                     zoom,
                 });
-                if (grow < 1) continue;
-                reached.set(instance_key(to), landed + LINE_MS);
+                reached.push(b);
                 const end = curve.at(curve.length);
                 paint_arrowhead(ctx, end.point, end.angle, chain.color, zoom);
             }
             const start = this.#instance_point(chain.from);
-            if (start)
-                paint_endpoint(ctx, start, chain.color, {
-                    start: true,
-                    since: chain.opened_at,
-                    now,
-                });
-            for (const [, to] of chain.links) {
-                const since = reached.get(instance_key(to));
-                const p = since === undefined ? null : this.#instance_point(to);
-                if (p)
-                    paint_endpoint(ctx, p, chain.color, {
-                        start: false,
-                        since: since!,
-                        now,
-                    });
-            }
+            if (start) paint_endpoint(ctx, start, chain.color, true);
+            for (const p of reached)
+                paint_endpoint(ctx, p, chain.color, false);
         }
 
         if (this.#selected)
@@ -639,9 +645,11 @@ export class WorldView {
             const box = hit?.found.bbox ?? null;
             if (box === (this.#hover?.box ?? null)) return;
             this.#hover = hit && box ? { sheet: hit.sheet, box } : null;
+            this.#schedule();
         });
         canvas.addEventListener("pointerleave", () => {
             this.#hover = null;
+            this.#schedule();
         });
         canvas.addEventListener("click", (event) => {
             const press = this.#press;
@@ -660,6 +668,7 @@ export class WorldView {
             const bbox = hit?.found.bbox ?? null;
             this.#selected =
                 hit && item && bbox ? { sheet: hit.sheet, box: bbox } : null;
+            this.#schedule();
             if (hit)
                 this.host.select(hit.sheet.view, item, {
                     shift: event.shiftKey,
@@ -668,6 +677,8 @@ export class WorldView {
         canvas.addEventListener("dblclick", (event) => {
             const hit = this.#hit(event);
             if (!hit || this.#closing) return;
+            const item = hit.found.item;
+            if (item && this.host.trace(hit.sheet.view, item)) return;
             const key = hit.sheet.view.key;
             const here = this.#chains
                 .flatMap((chain) => [chain.from, ...chain.links.flat()])

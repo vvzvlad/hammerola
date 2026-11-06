@@ -223,7 +223,7 @@ export abstract class KCViewerAppElement<
     protected abstract on_viewer_select(
         item?: unknown,
         previous?: unknown,
-        intent?: "select" | "crossprobe",
+        intent?: "select" | "crossprobe" | "trace",
     ): void;
 
     protected abstract can_load(src: KicadAssert): boolean;

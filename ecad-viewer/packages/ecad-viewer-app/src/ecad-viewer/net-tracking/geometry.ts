@@ -1,6 +1,6 @@
 /*
-    The world view's geometry: where sheets go, the curves between them, how
-    the dashes flow along a curve, and how the camera eases between views.
+    The world view's geometry: where sheets go, the curves between them, where
+    the dashes fall along a curve, and how the camera eases between views.
     Screen-independent maths only; drawing is in paint.ts.
 */
 

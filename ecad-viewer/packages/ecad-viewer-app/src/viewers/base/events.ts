@@ -23,7 +23,8 @@ export class KiCanvasLoadEvent extends KiCanvasEvent<null> {
     }
 }
 
-export type KiCanvasSelectIntent = "select" | "crossprobe";
+/** `trace`: a double-click on a label of the schematic, to trace its net. */
+export type KiCanvasSelectIntent = "select" | "crossprobe" | "trace";
 
 /** Modifier keys observed on the click that produced a selection. */
 export interface SelectModifiers {

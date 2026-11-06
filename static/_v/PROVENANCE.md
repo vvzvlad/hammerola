@@ -191,7 +191,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `66853c677e4a0800d48980fab3b0c4203a69ad058e4c6d1d1308bc4d9085ca59` |
+| `ecad-viewer.js` as committed | `b5c5e048758df47bbec49c70ffa51fd123f2d757229fff38a8fe03f98ea64f31` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -217,7 +217,7 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Nineteen, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
+Twenty, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
 of `packages/kicad-parser/src/`, each with its reason in a comment at the spot.
 Edit 6 is checked by `ui/tests/schematicpins.test.js`, which reads sheets
 through the fork's own parser (`kicad-parser`, aliased in
@@ -225,13 +225,14 @@ through the fork's own parser (`kicad-parser`, aliased in
 it), edit 7 by `ui/tests/areaitems.test.js` the same way, edits 14 and 15 by
 `ui/tests/boardoutline.test.js`, edit 16 by `ui/tests/kicad5board.test.js`
 and edit 18 by `ui/tests/boardcopper.test.js` the same way, what edit 19 fits,
-draws and boxes by `ui/tests/boardpicture.test.js`, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
+draws and boxes by `ui/tests/boardpicture.test.js`, the link, the double-click's
+toggle and the keys of edit 20 by `ui/tests/worldview.test.js`, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
 `ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
 `ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
 minifying, the bundles of this tree and the fork's at `acce697` differ in these
-nineteen places and the comments beside them.
+twenty places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -477,6 +478,37 @@ footprint with, `outline_footprint` in `viewers/board/painter.ts`) combined with
 its pads' boxes, as a board inset frames a footprint, so a part with no
 silkscreen or fab graphics still has the box of its pads.
 
+**20. The world view opens on a double-click on a label, its lines stand still,
+and a namesake on the label's own sheet is linked.** The fork's world view
+(`ecad-viewer/net-tracking/`) lays every sheet a label's net reaches on one
+canvas, with a line from the label to each place it reaches. It opened on `~`,
+held while clicking or pressed after a click, and chained more nets in the same
+way; each line grew from its label, then ran in dashes, the label it reached
+rippled once, and the view redrew every frame while open; and `#add_chain`
+dropped a link whose two ends are on one sheet, so a global label's namesake on
+its own sheet got neither line nor mark. A double-click on a label, a sheet entry
+or a power symbol in the main view now traces it (`on_dblclick` in
+`viewers/schematic/viewer.ts` reports it as a select of intent `trace`, which
+`ecad_viewer.ts` hands to the tracker): a local label lights its namesakes on the
+sheet and puts them out again, anything else opens the view. A sheet entry is
+taken before the sheet symbol it sits on, a double-click elsewhere on a sheet
+symbol still enters it, any other item is framed as before, and a wire is not
+traced; what is traced is `traceable_uuid`, now in `net-graph.ts`, so the viewer
+asks it without importing the view's scenes, which import the viewer. In the
+view, a double-click on such a label takes away every chain it is in, the view
+closing with the last of them and its sheets staying, or adds its net in the
+next colour (`WorldView.toggle`; the next colour is counted from the view's
+opening, not from the chains left); elsewhere on a sheet it eases into the
+sheet and opens it in the main view, as before. `~` is gone, its key-up wiring
+with it; Escape still closes the view. A line is drawn whole and still, its
+dashes at rest and its end marks without the ripple, once the sheets at both its
+ends have faded in; frames are drawn while the camera eases or sheets fade in,
+and on a change (a hover, a click, a pan or a zoom). `shown_links` keeps a link
+with both ends on one sheet, and a net that stays on one sheet opens the view on
+that sheet alone (the fork wanted two sheets). The page (`ui/src/KicadView.jsx`) opens its menu
+for a net a left click picked on the schematic only once the time for a second
+click has passed, so the double-click opens none.
+
 ### Upgrading it
 
 Take the new commit of the fork into `ecad-viewer/` by the list above, build it
@@ -485,8 +517,8 @@ from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `acce697` is them, at the fork's paths, with
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
 `areaitems.test.js`, `pagekeys.test.js`, `intersheetrefs.test.js`,
-`boardoutline.test.js`, `kicad5board.test.js`, `boardcopper.test.js` and
-`boardpicture.test.js` fail if edit 6, 7, 9, 10, 14 and 15, 16, 18 or 19 was lost (`wheelgesture.test.js` checks the
+`boardoutline.test.js`, `kicad5board.test.js`, `boardcopper.test.js`,
+`boardpicture.test.js` and `worldview.test.js` fail if edit 6, 7, 9, 10, 14 and 15, 16, 18, 19 or 20 was lost (`wheelgesture.test.js` checks the
 arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
 update this section and the hashes, and commit the
 source and the built files together.

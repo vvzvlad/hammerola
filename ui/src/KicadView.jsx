@@ -93,7 +93,10 @@
 //     RIGHT BUTTON on a part or on what has a net — on the board a track, a
 //     via, a zone, on the schematic a label, a power symbol, a sheet pin, a
 //     wire joined to one of them — and on the schematic by the LEFT BUTTON on
-//     what has a net too, at the press. A pad of the board is a part and a
+//     what has a net too, at the press, once the time for a second click has
+//     passed (`DOUBLE_CLICK_MS`): a double-click opens no menu, and on a
+//     label, a sheet pin or a power symbol it traces the net in the viewer's
+//     world view (a local label's on its sheet). A pad of the board is a part and a
 //     net. The rows stand in groups, each under its heading: a part's under
 //     `PART <ref>`, a row for every listed member, the one clicked in
 //     included, named by the member; a net's under `NET <net>`, a row for
@@ -176,8 +179,8 @@
 // keys (R, M, L, Home, P, X) act on the inset under the pointer. Escape closes
 // the datasheet's window first, then the menu, then the insets (`key`); the
 // page takes the insets' Escape for both elements, and the viewer listens for
-// none of it (`hostEscape`). The world view the viewer's `~` opens on the
-// schematic it still closes on Escape itself.
+// none of it (`hostEscape`). The world view a double-click on a label of the
+// schematic opens, the viewer still closes on Escape itself.
 //
 // FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
 // view on screen. The element has no fit of its own, and its `exportImage`
@@ -271,6 +274,13 @@ export const ECAD_VIEWER_URL = '/_v/ecad-viewer.js';
  *  in ecad-viewer/packages/ecad-viewer-app/src/base/dom/move-and-zoom.ts): a
  *  right press released nearer than this is a click. */
 export const PAN_SLOP = 3;
+
+/** How long a left click on a net of the schematic waits for a second click
+ *  before it opens the menu (ms); a second press within it, or the
+ *  double-click it makes, opens none. The system's double-click interval
+ *  (0.5 s by default on macOS): a shorter wait opens the menu under the
+ *  second press of a slow double-click, which then lands in the menu. */
+export const DOUBLE_CLICK_MS = 500;
 
 /** The event an element reports a click's selection with
  *  (`EcadSemanticSelectionEvent`): a symbol, a pin, a footprint or a pad carries
@@ -692,10 +702,11 @@ export default class KicadView extends React.Component {
     // while the viewer is asked what is under it, the point its menu opens
     // at, `{ from, x, y }`; and the last press of any button on a drawn view,
     // `{ x, y }`, where the menu for a net the left button clicked on the
-    // schematic opens (`picked`).
+    // schematic opens (`picked`), and the timer that opens it.
     this.pressed = null;
     this.pointing = null;
     this.down = null;
+    this.netMenu = null;
     // The schematic's page on screen (its `projectPath`), and the one the
     // address asked for while the element switches to it (`followPage`).
     this.page = null;
@@ -800,10 +811,12 @@ export default class KicadView extends React.Component {
     const listeners = {
       [SELECTION_EVENT]: (event) => this.picked(context, event.detail),
       pointerdown: (event) => {
+        this.waitNoMore();
         this.pressed = event.button === 2 ? { context, x: event.clientX, y: event.clientY } : null;
         this.down = { x: event.clientX, y: event.clientY };
       },
       pointerup: (event) => this.release(context, event),
+      dblclick: () => this.waitNoMore(),
       [AREA_EVENT]: (event) => this.area(context, event.detail),
       [MARKER_EVENT]: (event) => this.marker(event.detail),
       [INSET_EVENT]: (event) => {
@@ -1062,8 +1075,10 @@ export default class KicadView extends React.Component {
    *  it. A click on nothing at all (an empty `itemType`) puts out what is lit
    *  in every view (`clear`), else the other views follow (`select`). A right
    *  click being answered (`release`) opens the menu on what it selected, at
-   *  the pointer; a net of the schematic opens it by the left button too, at
-   *  the press. */
+   *  the pointer, at once; a net of the schematic opens it by the left button
+   *  too, at the press, after `DOUBLE_CLICK_MS` — unless a press or a
+   *  double-click on the element comes first (`waitNoMore`): the second click
+   *  of a double-click opens none. */
   picked(from, detail) {
     if (detail && detail.itemType === '') this.clear();
     else this.select(from, (detail && detail.reference) || null);
@@ -1072,8 +1087,19 @@ export default class KicadView extends React.Component {
       this.pointing = null;
       this.openMenu(from, detail, at.x, at.y);
     } else if (from === SCH && crossProbeRequest(detail, SCH, this.state.nets).net) {
-      this.openMenu(from, detail, this.down.x, this.down.y);
+      const { x, y } = this.down;
+      this.waitNoMore();
+      this.netMenu = setTimeout(() => {
+        this.netMenu = null;
+        this.openMenu(from, detail, x, y);
+      }, DOUBLE_CLICK_MS);
     }
+  }
+
+  /** The menu a left click on a net is waiting to open opens none. */
+  waitNoMore() {
+    clearTimeout(this.netMenu);
+    this.netMenu = null;
   }
 
   /** A click in `from` selected the part `designator`, or something that is
@@ -1114,8 +1140,9 @@ export default class KicadView extends React.Component {
    *  one thing of the page's per Escape, and one that closed the window or
    *  insets is taken, as the page takes one that closed something of its
    *  own. The viewer takes none of the insets' Escape (`hostEscape`,
-   *  `linkInsets`); the world view its `~` opens it still closes on its own,
-   *  so an Escape over that view may close it and one thing of the page's.
+   *  `linkInsets`); the world view a double-click on a label opens it still
+   *  closes on its own, so an Escape over that view may close it and one
+   *  thing of the page's.
    *  Not while typing: the page may have a field open over the design, nor
    *  while the design is hidden. */
   key(event) {
@@ -1495,6 +1522,7 @@ export default class KicadView extends React.Component {
   componentWillUnmount() {
     this._gone = true;
     this.listen(false);
+    this.waitNoMore();
     // Unlinked as they were linked (`linkInsets`): each element closes its
     // insets and lets go of its viewers' hovers and clicks.
     for (const context of DRAWN) {

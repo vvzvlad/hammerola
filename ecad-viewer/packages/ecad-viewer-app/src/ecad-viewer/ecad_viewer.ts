@@ -598,13 +598,11 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.addDisposable(
             listen(window, "keyup", (event) => {
                 this.#inset_link?.key_up(event as KeyboardEvent);
-                this.#tracker.key_up(event as KeyboardEvent);
             }),
         );
         this.addDisposable(
             listen(window, "blur", () => {
                 this.#inset_link?.key_up(null);
-                this.#tracker.key_up(null);
             }),
         );
     }
@@ -2656,7 +2654,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     /**
      * World view: every sheet the net of a label, sheet entry or power symbol
      * reaches, on one canvas that pans and zooms like a sheet, with the
-     * connections between them. `~` on the schematic opens it too.
+     * connections between them. A double-click on a label, sheet entry or
+     * power symbol of the schematic opens it too.
      */
     public async showWorldView(page: string, uuid: string): Promise<boolean> {
         await this.ready;
@@ -4455,12 +4454,11 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     #inset_link: InsetLink | null = null;
-    /** `~` on the schematic and the world view it opens. */
+    /** A double-click on a label of the schematic and the world view it opens. */
     #tracker = new NetTracker({
         pages: () => this.#net_instance_pages(),
         viewer: () => this.#safe_schematic_viewer(),
         scene_host: () => this.#schematic_provider_host(),
-        showing: () => this.#active_tab === TabKind.sch,
         select: (detail) =>
             this.dispatchEvent(
                 new EcadSemanticSelectionEvent(
@@ -4847,7 +4845,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         // A click on empty canvas: tell the host so it can deselect, rather than
         // swallowing it and leaving the previous selection stuck.
         if (!item) {
-            this.#tracker.selected_in_main(null, null);
             this.dispatchEvent(
                 new EcadSemanticSelectionEvent({
                     sourceContext: "SCH",
@@ -4857,6 +4854,13 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             return;
         }
         const viewer = this.#safe_schematic_viewer();
+        if (select.detail.intent === "trace") {
+            this.#tracker.trace_in_main(
+                item,
+                viewer?.instance_context?.project_path ?? null,
+            );
+            return;
+        }
         const schematic = viewer?.schematic;
         if (!schematic) return;
         const detail = normalize_schematic_selection(
@@ -4865,10 +4869,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             viewer?.instance_context,
         );
         if (!detail) return;
-        this.#tracker.selected_in_main(
-            item,
-            viewer?.instance_context?.project_path ?? null,
-        );
         this.#attach_item_bounds_sch(detail, item, viewer!);
         detail.operation = select.detail.operation ?? "replace";
         if (select.detail.modifiers) detail.modifiers = select.detail.modifiers;

@@ -33,7 +33,7 @@ import DocumentView, { docHint, DocumentLayers, documentBody, docViewKey } from 
 import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
-  AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DRAFT_MARK,
+  AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DOUBLE_CLICK_MS, DRAFT_MARK,
   drawingOf, drawnViews, INSET_EVENT, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
   SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
@@ -1290,22 +1290,45 @@ describe('a net across the schematic\'s sheets', () => {
     expect(one.elements[SCH].requestCrossProbe).toHaveBeenLastCalledWith(net('AMP_FAULT', 'hw/sub/power.kicad_sch', 'fault-power'))
   })
 
-  it('opens for a net of the schematic by either button, the left at the press, and for a part by the right alone', () => {
+  it('opens for a net of the schematic by either button, the right at once, the left at the press when no second click follows, and for a part by the right alone', () => {
+    vi.useFakeTimers()
+    onTestFinished(() => vi.useRealTimers())
     const { view, elements } = withNets()
     const sch = elements[SCH]
-    // a left click on a power symbol: the press, then the viewer's own click
-    sch.under = { sourceContext: SCH, itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' }
-    rightClick(sch, 120, 80, 0, 0)
-    click(sch, sch.under)
+    const power = { sourceContext: SCH, itemType: 'symbol', reference: '#PWR0201', uuid: 'pwr-power' }
+    const part = { sourceContext: SCH, itemType: 'symbol', reference: 'C523', uuid: 'c523' }
+    /** A left click: the press, then the viewer's own click on what is under it. */
+    const leftClick = (x, y) => {
+      rightClick(sch, x, y, 0, 0)
+      click(sch, sch.under)
+    }
+    // a double-click on a power symbol, which the viewer traces, opens none
+    sch.under = power
+    leftClick(120, 80)
+    leftClick(120, 80)
+    sch.canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }))
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS)
+    expect(menuOf(view)).toBeUndefined()
+    // a single click opens it at the press, once the time for a second click has passed
+    leftClick(120, 80)
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS - 1)
+    expect(menuOf(view)).toBeUndefined()
+    vi.advanceTimersByTime(1)
     expect([menuOf(view).props.style.left, menuOf(view).props.style.top, headOf(view), view.state.menu.active,
       linesOf(view)]).toEqual(['120px', '30px', ['‹', '+12V', '›'], 1, ['board', 'power', 'power', 'hw/board.kicad_pcb']])
-    // a left click on a part opens nothing, a right one its menu
-    sch.under = { sourceContext: SCH, itemType: 'symbol', reference: 'C523', uuid: 'c523' }
-    rightClick(sch, 300, 250, 0, 0)
-    click(sch, sch.under)
+    // a left click on a part opens nothing
+    sch.under = part
+    leftClick(300, 250)
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS)
     expect(headOf(view)[1]).toBe('+12V')
+    // a right click opens at once, and its press takes the place of a left click's menu still waiting
+    sch.under = power
+    leftClick(120, 80)
+    sch.under = part
     rightClick(sch, 300, 250)
     expect(linesOf(view)).toEqual(['hw/board.kicad_sch', 'hw/board.kicad_pcb', 'hw/board.glb'])
+    vi.advanceTimersByTime(DOUBLE_CLICK_MS)
+    expect(headOf(view)[1]).toBe('C523')
     // a right click on a label: at the pointer, on the place clicked
     sch.under = { sourceContext: SCH, itemType: 'hierarchical-label', net: 'AMP_FAULT', uuid: 'fault-dsp' }
     rightClick(sch, 300, 250)

@@ -1,27 +1,21 @@
 /*
-    NetTracker: `~` on the schematic, and the world view it opens.
+    NetTracker: a double-click on a label of the schematic, and the world
+    view it opens.
 
-    The element hands it every schematic selection and every key. `~` (held
-    while clicking, or pressed after a click) acts on the selected label,
-    sheet entry, wire or power symbol:
+    The element hands it the main view's double-clicks on a label, sheet
+    entry or power symbol, and the world view its own:
 
     - a local label joins its namesakes on its sheet (the main view's, or
-      that sheet's inside the world view);
+      that sheet's inside the world view), or lets them go again;
     - anything that leaves the sheet (global or hierarchical label, sheet
-      entry, power rail, or a wire carrying one) opens the world view, or,
-      while it is open, chains that net in. Escape closes it.
+      entry, power rail) opens the world view, or, while it is open, takes
+      away the chain it is in, else chains its net in (`WorldView.toggle`).
+      Escape closes the view.
 
     Selections made inside the world view are reported like the main view's,
-    on that sheet's own page. While the view is open the main view underneath
-    does not reset what `~` acts on (the host echoes selections back to it).
+    on that sheet's own page.
 */
 
-import {
-    Label,
-    PinInstance,
-    SchematicSymbol,
-    Wire,
-} from "../../kicad/schematic";
 import type { SchematicViewer } from "../../viewers/schematic/viewer";
 import type { SchematicNetMembers } from "../../viewers/schematic/net-highlight";
 import { normalize_schematic_selection } from "../host-adapter";
@@ -32,9 +26,8 @@ import {
     type SchematicPageView,
 } from "../insets/schematic-provider";
 import {
-    is_power,
     net_instance_at,
-    wire_instance,
+    traceable_uuid,
     type NetInstancePage,
 } from "./net-graph";
 import { WorldView } from "./world-view";
@@ -46,15 +39,13 @@ export interface NetTrackerHost {
     viewer(): SchematicViewer | null;
     /** What scene providers read: pages, theme, variant. */
     scene_host(): SchematicInsetHost;
-    /** Whether the schematic is the tab in front. */
-    showing(): boolean;
     /** Report a selection made in the world view (`null`: nothing picked). */
     select(detail: EcadSemanticSelectionDetail | null): void;
     /** Show `page` in the main view, framing `uuid` when given. */
     open_page(page: string, uuid?: string): void;
 }
 
-/** Something on a page that `~` can act on. */
+/** Something on a page that a double-click traces from. */
 interface Traceable {
     page: string;
     uuid: string;
@@ -67,8 +58,6 @@ export class NetTracker {
     #world: WorldView | null = null;
     #scenes: SchematicInsetProvider | null = null;
     #nets: readonly SchematicNetMembers[] = [];
-    #selected: Traceable | null = null;
-    #held = false;
 
     constructor(private readonly host: NetTrackerHost) {}
 
@@ -82,38 +71,19 @@ export class NetTracker {
         this.#scenes?.set_highlighted_nets(nets);
     }
 
-    /** A selection in the main view (`page` is its sheet instance). */
-    selected_in_main(item: unknown, page: string | null) {
-        if (this.world_open) return;
+    /** A double-click in the main view on `item` of `page`, its sheet instance. */
+    trace_in_main(item: unknown, page: string | null) {
         const uuid = traceable_uuid(item);
-        this.#selected = uuid && page ? { page, uuid } : null;
-        if (this.#held && this.#selected) this.#trace(this.#selected);
+        if (uuid && page) this.#trace({ page, uuid });
     }
 
-    /** Keys: `~` traces, Escape closes the world view. True when used. */
+    /** Keys: Escape closes the world view. True when used. */
     key_down(event: KeyboardEvent): boolean {
         if (event.key === "Escape" && this.world_open) {
             this.hide_world_view();
             return true;
         }
-        if (
-            !is_tilde(event) ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.altKey ||
-            !this.host.showing()
-        )
-            return false;
-        if (!event.repeat) {
-            this.#held = true;
-            if (this.#selected) this.#trace(this.#selected);
-        }
-        return true;
-    }
-
-    /** A key went up, or the window lost focus (`null`). */
-    key_up(event: KeyboardEvent | null) {
-        if (!event || is_tilde(event)) this.#held = false;
+        return false;
     }
 
     async show_world_view(page: string, uuid: string): Promise<boolean> {
@@ -157,6 +127,10 @@ export class NetTracker {
             open_page: (key, uuid) => this.host.open_page(key, uuid),
             select: (view, item, modifiers) =>
                 this.#selected_in_world(view, item, modifiers.shift),
+            trace: (view, item) => {
+                const uuid = traceable_uuid(item);
+                return !!uuid && this.#trace({ page: view.key, uuid });
+            },
             background: () =>
                 this.host.viewer()?.renderer.background_color.to_css() ??
                 "#000",
@@ -187,19 +161,13 @@ export class NetTracker {
             : null;
         if (item && !detail) return;
         if (detail) detail.operation = shift ? "toggle" : "replace";
-        const uuid = traceable_uuid(item);
-        this.#selected = uuid ? { page: view.key, uuid } : null;
         this.host.select(detail);
-        if (this.#held && this.#selected) this.#trace(this.#selected);
     }
 
-    #trace(at: Traceable) {
-        const pages = this.host.pages();
-        // A wire traces from the label or sheet entry it carries.
-        const from =
-            net_instance_at(pages, at.page, at.uuid) ??
-            wire_instance(pages, at.page, at.uuid);
-        if (!from) return;
+    /** Trace from `at`; false when it is on no net. */
+    #trace(at: Traceable): boolean {
+        const from = net_instance_at(this.host.pages(), at.page, at.uuid);
+        if (!from) return false;
         const world = this.#world;
         if (from.kind === "local") {
             // Inside the world view the trace goes on that sheet there.
@@ -209,36 +177,15 @@ export class NetTracker {
                     scene.local_trace() === from.name ? null : from.name,
                 );
                 world!.invalidate();
-                return;
+                return true;
             }
             const viewer = this.host.viewer();
             viewer?.show_local_trace(
                 viewer.local_trace === from.name ? null : from.name,
             );
-            return;
+            return true;
         }
-        if (world?.open) void world.chain(from);
-        else void this.#world_view().show(from);
+        void this.#world_view().toggle(from);
+        return true;
     }
-}
-
-/** The `~` key, by position (left of 1) or by the character it typed. */
-export function is_tilde(event: KeyboardEvent) {
-    return event.code === "Backquote" || event.key === "`" || event.key === "~";
-}
-
-/**
- * What `~` traces from a selected item: a label, sheet entry or wire, or a
- * power symbol (clicked on the symbol or on its pin). Null otherwise.
- */
-export function traceable_uuid(item: unknown): string | null {
-    if ((item instanceof Label || item instanceof Wire) && item.uuid)
-        return item.uuid;
-    const symbol =
-        item instanceof PinInstance
-            ? item.parent
-            : item instanceof SchematicSymbol
-              ? item
-              : null;
-    return symbol && is_power(symbol) ? symbol.uuid : null;
 }

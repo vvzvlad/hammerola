@@ -23,10 +23,12 @@ import { Vec2 } from "../../base/math";
 import {
     GlobalLabel,
     HierarchicalLabel,
+    Label,
     NetLabel,
+    PinInstance,
+    SchematicSymbol,
     type KicadSch,
     type SchematicInstanceContext,
-    type SchematicSymbol,
 } from "../../kicad/schematic";
 
 export interface NetInstancePage {
@@ -54,6 +56,23 @@ export interface NetInstance {
     uuid: string;
     name: string;
     kind: NetInstanceKind;
+}
+
+/**
+ * What a double-click traces from: a label or sheet entry, or a power symbol
+ * (clicked on the symbol or on its pin). Null otherwise; a wire is not traced.
+ * Here rather than in tracker.ts so the schematic viewer can ask it without
+ * importing the world view's scenes, which import the viewer.
+ */
+export function traceable_uuid(item: unknown): string | null {
+    if (item instanceof Label && item.uuid) return item.uuid;
+    const symbol =
+        item instanceof PinInstance
+            ? item.parent
+            : item instanceof SchematicSymbol
+              ? item
+              : null;
+    return symbol && is_power(symbol) ? symbol.uuid : null;
 }
 
 /** What the label `uuid` on page `page_key` is, if it is one. */
@@ -307,12 +326,11 @@ function connection_points(
 function wired_from(
     pages: readonly NetInstancePage[],
     page: NetInstancePage,
-    seed: (segment: readonly [Vec2, Vec2], wire: string) => boolean,
+    seed: (segment: readonly [Vec2, Vec2]) => boolean,
 ): NetInstance[] {
     const segments = page.document.wires.flatMap((wire) =>
         wire.pts.slice(1).map((end, i) => ({
             ends: [wire.pts[i]!, end] as const,
-            wire: wire.uuid,
         })),
     );
     const touches = (p: Vec2, [a, b]: readonly [Vec2, Vec2]) =>
@@ -320,7 +338,7 @@ function wired_from(
     const reached = new Set<number>();
     const queue: number[] = [];
     segments.forEach((segment, i) => {
-        if (seed(segment.ends, segment.wire)) {
+        if (seed(segment.ends)) {
             reached.add(i);
             queue.push(i);
         }
@@ -362,22 +380,6 @@ export function wired_instances(
     return wired_from(pages, page, (ends) =>
         on_segment(start.at, ends[0], ends[1]),
     ).filter((it) => it.uuid !== at.uuid);
-}
-
-/**
- * The label or sheet entry to trace a wire's net from: one that leaves the
- * sheet (global, hierarchical, entry) if the wire reaches any, else a local
- * label. Null when the wire carries no label at all.
- */
-export function wire_instance(
-    pages: readonly NetInstancePage[],
-    page_key: string,
-    wire_uuid: string,
-): NetInstance | null {
-    const page = pages.find((candidate) => candidate.key === page_key);
-    if (!page) return null;
-    const found = wired_from(pages, page, (_ends, wire) => wire === wire_uuid);
-    return found.find((it) => it.kind !== "local") ?? found[0] ?? null;
 }
 
 /**

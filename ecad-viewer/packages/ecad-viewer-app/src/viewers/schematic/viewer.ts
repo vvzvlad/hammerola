@@ -15,6 +15,7 @@ import {
     type SheetGeometry,
 } from "./net-highlight";
 import { pin_stem } from "./painters/pin";
+import { traceable_uuid } from "../../ecad-viewer/net-tracking/net-graph";
 import { BBox, Matrix3, Vec2 } from "../../base/math";
 import { Color, Polygon, Polyline, Renderer } from "../../graphics";
 import { Canvas2DRenderer } from "../../graphics/canvas2d";
@@ -322,6 +323,21 @@ export class SchematicViewer extends DocumentViewer<
         this.paint_selected(ct.bbox);
     }
     override on_dblclick(pos: Vec2): void {
+        const ct = this.find_item(pos);
+        // A label, sheet entry or power symbol is the element's to trace
+        // (ecad-viewer/net-tracking/tracker.ts); a sheet entry before the
+        // sheet symbol it sits on.
+        if (traceable_uuid(ct.item)) {
+            this.dispatchEvent(
+                new KiCanvasSelectEvent({
+                    item: ct.item,
+                    previous: null,
+                    intent: "trace",
+                }),
+            );
+            return;
+        }
+
         // Hierarchical sheet symbols still navigate into the sheet.
         if (this.document.sheets)
             for (const item of this.document.sheets) {
@@ -336,7 +352,6 @@ export class SchematicViewer extends DocumentViewer<
                 }
             }
 
-        const ct = this.find_item(pos);
         if (!ct.item) return;
         this.paint_selected(ct.bbox);
         const uuid = (ct.item as { uuid?: string }).uuid;
