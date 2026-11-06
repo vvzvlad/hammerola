@@ -3,19 +3,21 @@
     view it opens.
 
     The element hands it the main view's double-clicks on a label, sheet
-    entry or power symbol, and the world view its own:
-
-    - a local label joins its namesakes on its sheet (the main view's, or
-      that sheet's inside the world view), or lets them go again;
-    - anything that leaves the sheet (global or hierarchical label, sheet
-      entry, power rail) opens the world view, or, while it is open, takes
-      away the chain it is in, else chains its net in (`WorldView.toggle`).
-      Escape closes the view.
+    entry or power symbol, and the world view its own. Each one, a local
+    label's as much as a global one's, opens the world view on its net, or,
+    while the view is open, takes away the chain it is in, else chains its
+    net in (`WorldView.toggle`). A local label's net reaches its namesakes on
+    its sheet, so its chain links them there as a global label's links its
+    namesakes. Escape closes the view, and so does a double-click on an
+    empty place in it, the main view taking over the picture it shows
+    (`world-view.ts`); `hide_world_view`, for the element when it moves the
+    main view itself, leaves the main view to it.
 
     Selections made inside the world view are reported like the main view's,
     on that sheet's own page.
 */
 
+import type { BBox } from "../../base/math";
 import type { SchematicViewer } from "../../viewers/schematic/viewer";
 import type { SchematicNetMembers } from "../../viewers/schematic/net-highlight";
 import { normalize_schematic_selection } from "../host-adapter";
@@ -41,8 +43,8 @@ export interface NetTrackerHost {
     scene_host(): SchematicInsetHost;
     /** Report a selection made in the world view (`null`: nothing picked). */
     select(detail: EcadSemanticSelectionDetail | null): void;
-    /** Show `page` in the main view, framing `uuid` when given. */
-    open_page(page: string, uuid?: string): void;
+    /** Show `page` in the main view, its camera on `box` (that sheet's coordinates). */
+    open_page(page: string, box: BBox): void;
 }
 
 /** Something on a page that a double-click traces from. */
@@ -77,10 +79,20 @@ export class NetTracker {
         if (uuid && page) this.#trace({ page, uuid });
     }
 
-    /** Keys: Escape closes the world view. True when used. */
+    /** Select what the open world view shows at a page point; false when closed. */
+    select_at(x: number, y: number): boolean {
+        if (!this.world_open) return false;
+        this.#world!.select_at(x, y);
+        return true;
+    }
+
+    /**
+     * Keys: Escape closes the world view, handing the main view what it
+     * shows. True when used.
+     */
     key_down(event: KeyboardEvent): boolean {
         if (event.key === "Escape" && this.world_open) {
-            this.hide_world_view();
+            this.#world!.hand_over();
             return true;
         }
         return false;
@@ -124,7 +136,7 @@ export class NetTracker {
             pages: () => this.host.pages(),
             page_view: (key) => scenes.page_view(key),
             subscribe: (listener) => scenes.subscribe(listener),
-            open_page: (key, uuid) => this.host.open_page(key, uuid),
+            open_page: (key, box) => this.host.open_page(key, box),
             select: (view, item, modifiers) =>
                 this.#selected_in_world(view, item, modifiers.shift),
             trace: (view, item) => {
@@ -168,23 +180,6 @@ export class NetTracker {
     #trace(at: Traceable): boolean {
         const from = net_instance_at(this.host.pages(), at.page, at.uuid);
         if (!from) return false;
-        const world = this.#world;
-        if (from.kind === "local") {
-            // Inside the world view the trace goes on that sheet there.
-            const scene = world?.open ? world.view(from.page) : null;
-            if (scene) {
-                scene.show_local_trace(
-                    scene.local_trace() === from.name ? null : from.name,
-                );
-                world!.invalidate();
-                return true;
-            }
-            const viewer = this.host.viewer();
-            viewer?.show_local_trace(
-                viewer.local_trace === from.name ? null : from.name,
-            );
-            return true;
-        }
         void this.#world_view().toggle(from);
         return true;
     }

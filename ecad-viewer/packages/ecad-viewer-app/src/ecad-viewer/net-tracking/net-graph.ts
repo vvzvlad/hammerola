@@ -222,9 +222,11 @@ export const instance_key = (it: NetInstance) => `${it.page}#${it.uuid}`;
 
 /**
  * Follow `from` across sheets until nothing new turns up: global labels by
- * name, sheet entries down and hierarchical labels up. Every link points
- * away from `from`. Global labels of one name fan out from the first of
- * them reached, so a click on one shows a line to each of the others.
+ * name, sheet entries down and hierarchical labels up, local labels to their
+ * namesakes on their sheet. Every link points away from `from`. Global
+ * labels of one name fan out from the first of them reached, and local
+ * labels of one name on one sheet from the first of them reached there; the
+ * world view joins the places they reach by a tree of its own (`spanning_pairs`).
  */
 export function net_closure(
     pages: readonly NetInstancePage[],
@@ -247,7 +249,6 @@ export function net_closure(
             depth.set(key(other), depth.get(key(at))!);
             queue.unshift(other);
         }
-        if (at.kind === "local") continue;
         // A rail fans out once, from the first of its symbols reached: the
         // symbols it reaches on other sheets are already that rail.
         if (at.kind === "power") {

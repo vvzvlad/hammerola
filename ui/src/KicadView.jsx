@@ -96,7 +96,7 @@
 //     what has a net too, at the press, once the time for a second click has
 //     passed (`DOUBLE_CLICK_MS`): a double-click opens no menu, and on a
 //     label, a sheet pin or a power symbol it traces the net in the viewer's
-//     world view (a local label's on its sheet). A pad of the board is a part and a
+//     world view (a local label's on its sheet alone). A pad of the board is a part and a
 //     net. The rows stand in groups, each under its heading: a part's under
 //     `PART <ref>`, a row for every listed member, the one clicked in
 //     included, named by the member; a net's under `NET <net>`, a row for
@@ -143,8 +143,9 @@
 // `selectAt`: it selects there what a left click there selects, and the
 // selection it reports is what the menu is for. The thing is selected too, as
 // a right click in KiCad selects it. A right press the viewer panned with (it
-// pans from `PAN_SLOP` on) is no click. The 3D view picks with its own
-// raycast.
+// pans from `PAN_SLOP` on) is no click. While the viewer's world view of the
+// sheets is open, the point is on that view, not the schematic under it. The
+// 3D view picks with its own raycast.
 //
 // THE MENU is one at a time, inside the view area and over the datasheet's
 // window, drawn as the page's own menu card is, the list of views in the
@@ -1239,6 +1240,9 @@ export default class KicadView extends React.Component {
       const element = this.elements[item.view];
       if (!element) return;
       if (item.view === this.side() && this.state.ready) {
+        // A place stepped to is shown in the schematic itself, which the
+        // viewer's world view of the sheets would cover.
+        if (typeof element.hideWorldView === 'function') element.hideWorldView();
         this.choosing = true;
         try {
           element.requestCrossProbe(item.request);

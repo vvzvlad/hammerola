@@ -759,10 +759,13 @@ describe('the schematic\'s page', () => {
     const { view, sch } = await opened()
     const push = vi.spyOn(window.history, 'pushState')
     sch.clearSelection.mockClear()
+    // The world view of the sheets would cover the place: it closes first.
+    sch.hideWorldView = vi.fn()
     view.setState({ menu: FAULT_MENU })
     view.go(1)
     expect([sch.requestCrossProbe.mock.lastCall, view.props.onOpen.mock.calls, sch.clearSelection.mock.calls])
       .toEqual([[FAULT], [], []])
+    expect(sch.hideWorldView.mock.invocationCallOrder[0]).toBeLessThan(sch.requestCrossProbe.mock.invocationCallOrder.at(-1))
     expect([push.mock.calls.length, sch.page, window.location.search, view.state.menu.active])
       .toEqual([1, AMP, `?d=${SHEET}&s=amp`, 1])
   })

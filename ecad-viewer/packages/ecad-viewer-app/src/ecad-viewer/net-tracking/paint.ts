@@ -1,11 +1,10 @@
 /*
-    How the world view's marks look: connections, their names, arrowheads,
-    the labels they join, sheet titles, and the hover and selection boxes.
-    Everything here draws in screen space (CSS pixels) into a 2D context.
+    How the world view's marks look: connections, the labels they join,
+    sheet titles, and the hover and selection boxes. Everything here draws
+    in screen space (CSS pixels) into a 2D context.
 */
 
 import type { BBox, Vec2 } from "../../base/math";
-import { flow_starts, overbar_text, type Curve } from "./geometry";
 
 /** The first chain's colour, then each added chain's in turn. */
 export const CHAIN_COLORS = [
@@ -20,15 +19,6 @@ export const CHAIN_COLORS = [
 /** The line is as wide as a trace this many mm across, never under 2.5 px. */
 const LINE_MM = 0.8;
 const MIN_LINE_PX = 2.5;
-/** Zoomed out, the line is plain dashes this long with these gaps (px). */
-const DASH = 10;
-const SPACE = 6;
-/** The name is this fraction of the line's width, like a net name on a trace. */
-const NAME_SCALE = 0.72;
-/** Below this many pixels the name is not drawn: the dashes are plain. */
-const MIN_NAME_PX = 5;
-const NAME_FAMILY = "ui-monospace, SFMono-Regular, Menlo, monospace";
-const NAME_INK = "rgba(255, 255, 255, 0.88)";
 
 /** The line's width at a camera zoom (px per mm). */
 export const line_width = (zoom: number) =>
@@ -55,105 +45,30 @@ export function read_tokens(el: HTMLElement): Tokens {
 }
 
 /**
- * One connection, whole and still: a soft glow under a trace-wide line in
- * dashes from its start. Zoomed in far enough, each dash is as long as the
- * net's name and the name is written on it, the way a net name sits on a
- * board trace.
+ * One connection, whole and still: a straight, solid, trace-wide line from
+ * `a` to `b` over a soft glow.
  */
 export function paint_connection(
     ctx: CanvasRenderingContext2D,
-    curve: Curve,
-    options: {
-        color: string;
-        name: string;
-        zoom: number;
-    },
-) {
-    const { color, name, zoom } = options;
-    const width = line_width(zoom);
-    const font_px = width * NAME_SCALE;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.globalAlpha = 0.2;
-    ctx.lineWidth = width + 6;
-    ctx.beginPath();
-    curve.trace(ctx, 0, curve.length);
-    ctx.stroke();
-    ctx.globalAlpha = 0.95;
-    ctx.lineWidth = width;
-    const label = overbar_text(name);
-    const named = font_px >= MIN_NAME_PX;
-    ctx.font = `600 ${font_px}px ${NAME_FAMILY}`;
-    const text = named ? ctx.measureText(label.text).width : 0;
-    const dash = named ? text : DASH;
-    const space = named ? Math.max(SPACE, width * 1.6) : SPACE;
-    const starts = flow_starts(curve.length, dash + space, 0);
-    const dashes = new Path2D();
-    for (const s of starts) curve.trace(dashes, s, s + dash);
-    ctx.stroke(dashes);
-    if (named) paint_names(ctx, curve, starts, dash, label, font_px);
-    ctx.restore();
-}
-
-/** The name on every whole dash, upright whichever way the line runs. */
-function paint_names(
-    ctx: CanvasRenderingContext2D,
-    curve: Curve,
-    starts: readonly number[],
-    dash: number,
-    label: ReturnType<typeof overbar_text>,
-    font_px: number,
-) {
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = NAME_INK;
-    ctx.strokeStyle = NAME_INK;
-    ctx.lineWidth = Math.max(0.6, font_px / 12);
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    const left = -dash / 2;
-    for (const s of starts) {
-        if (s < 0 || s + dash > curve.length) continue;
-        const { point, angle } = curve.at(s + dash / 2);
-        ctx.save();
-        ctx.translate(point.x, point.y);
-        ctx.rotate(Math.cos(angle) < 0 ? angle + Math.PI : angle);
-        ctx.fillText(label.text, left, font_px * 0.06);
-        // KiCad's ~{…}: a line over the inverted part.
-        for (const [from, to] of label.over) {
-            const x0 = left + ctx.measureText(label.text.slice(0, from)).width;
-            const x1 = left + ctx.measureText(label.text.slice(0, to)).width;
-            ctx.beginPath();
-            ctx.moveTo(x0, -font_px * 0.5);
-            ctx.lineTo(x1, -font_px * 0.5);
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
-}
-
-export function paint_arrowhead(
-    ctx: CanvasRenderingContext2D,
-    tip: Vec2,
-    angle: number,
+    a: Vec2,
+    b: Vec2,
     color: string,
     zoom: number,
 ) {
-    const size = Math.max(10, line_width(zoom) * 2.4);
+    const width = line_width(zoom);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(
-        tip.x - size * Math.cos(angle - 0.45),
-        tip.y - size * Math.sin(angle - 0.45),
-    );
-    ctx.lineTo(
-        tip.x - size * Math.cos(angle + 0.45),
-        tip.y - size * Math.sin(angle + 0.45),
-    );
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.globalAlpha = 0.2;
+    ctx.lineWidth = width + 6;
+    ctx.stroke();
+    ctx.globalAlpha = 0.95;
+    ctx.lineWidth = width;
+    ctx.stroke();
+    ctx.restore();
 }
 
 /** A label a chain starts from (`start`) or reaches: a dot in a ring. */

@@ -191,7 +191,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `b5c5e048758df47bbec49c70ffa51fd123f2d757229fff38a8fe03f98ea64f31` |
+| `ecad-viewer.js` as committed | `93cc6f58e5ad9937288d33229f55045054273f535e2d74f54d34242278b909b3` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -478,36 +478,71 @@ footprint with, `outline_footprint` in `viewers/board/painter.ts`) combined with
 its pads' boxes, as a board inset frames a footprint, so a part with no
 silkscreen or fab graphics still has the box of its pads.
 
-**20. The world view opens on a double-click on a label, its lines stand still,
-and a namesake on the label's own sheet is linked.** The fork's world view
+**20. The world view opens on a double-click on a label, a local label's
+included, its lines are straight and still, its camera moves only by hand,
+closing it hands its picture to the main view, and a namesake on the label's
+own sheet is linked.** The fork's world view
 (`ecad-viewer/net-tracking/`) lays every sheet a label's net reaches on one
 canvas, with a line from the label to each place it reaches. It opened on `~`,
 held while clicking or pressed after a click, and chained more nets in the same
-way; each line grew from its label, then ran in dashes, the label it reached
-rippled once, and the view redrew every frame while open; and `#add_chain`
-dropped a link whose two ends are on one sheet, so a global label's namesake on
-its own sheet got neither line nor mark. A double-click on a label, a sheet entry
-or a power symbol in the main view now traces it (`on_dblclick` in
+way; each line was a curve leaving its label sideways, grew from the label, then
+ran in dashes with the net's name written on them and an arrowhead at its far
+end, the label it reached rippled once, and the view redrew every frame while
+open; the camera eased out from what the main view showed to every sheet,
+eased again to frame them all when a chain was added, and framed them again on
+a resize until moved by hand; `#add_chain` dropped a link whose two ends are on
+one sheet, so a global label's namesake on its own sheet got neither line nor
+mark; and `net_closure` stopped a local label at the wires of its sheet, so a
+local label's namesakes were lit by the schematic viewer's own overlay instead
+(lit boxes joined by straight dashes, `show_local_trace`), one name per sheet;
+the tracker no longer calls it. A double-click on a label, a sheet entry or a power
+symbol in the main view now traces it (`on_dblclick` in
 `viewers/schematic/viewer.ts` reports it as a select of intent `trace`, which
-`ecad_viewer.ts` hands to the tracker): a local label lights its namesakes on the
-sheet and puts them out again, anything else opens the view. A sheet entry is
-taken before the sheet symbol it sits on, a double-click elsewhere on a sheet
+`ecad_viewer.ts` hands to the tracker), a local label as anything else: it opens
+the view, `net_closure` taking a local label on to its namesakes on its sheet,
+which fan out from the first of them reached as global labels do. A sheet entry
+is taken before the sheet symbol it sits on, a double-click elsewhere on a sheet
 symbol still enters it, any other item is framed as before, and a wire is not
 traced; what is traced is `traceable_uuid`, now in `net-graph.ts`, so the viewer
 asks it without importing the view's scenes, which import the viewer. In the
 view, a double-click on such a label takes away every chain it is in, the view
 closing with the last of them and its sheets staying, or adds its net in the
 next colour (`WorldView.toggle`; the next colour is counted from the view's
-opening, not from the chains left); elsewhere on a sheet it eases into the
-sheet and opens it in the main view, as before. `~` is gone, its key-up wiring
-with it; Escape still closes the view. A line is drawn whole and still, its
-dashes at rest and its end marks without the ripple, once the sheets at both its
-ends have faded in; frames are drawn while the camera eases or sheets fade in,
-and on a change (a hover, a click, a pan or a zoom). `shown_links` keeps a link
-with both ends on one sheet, and a net that stays on one sheet opens the view on
-that sheet alone (the fork wanted two sheets). The page (`ui/src/KicadView.jsx`) opens its menu
-for a net a left click picked on the schematic only once the time for a second
-click has passed, so the double-click opens none.
+opening, not from the chains left). Closing the view moves nothing on screen:
+the main view takes over the picture it shows (`WorldView.hand_over`). Escape, a
+double-click on an empty place, between the sheets or on a sheet's blank paper,
+and taking away the last chain hand it the sheet under the middle of the canvas,
+or the one nearest it; a double-click on any other item hands it that item's
+sheet (the fork eased into the sheet first, then framed the first label of a
+chain on it with `zoom_fit_item`, far zoomed in). The main view shows that
+sheet, switching to it when another is on screen, with its camera on the box the
+view shows, taken from the world into that sheet's own coordinates (the host's
+`open_page`, `#open_page_at` in `ecad_viewer.ts`); the view covers the main
+view's canvas exactly, so the same box is the same picture. `~` is gone, its
+key-up wiring with it. The view opens with its
+camera where the main view's is, on the starting sheet framed as the main view
+frames it (on every sheet when the main view shows none of them), and only a
+pan or a zoom moves it after that; a line to a sheet off screen runs off the
+edge, and its zoom spans the main view's (`Viewer.MinZoom` to `Viewer.MaxZoom`;
+the fork's went further out and less far in), so the camera it hands back on
+closing is one the main view can hold. A chain's lines join the places it links, on every sheet shown,
+by the shortest tree of segments (`spanning_pairs` in `geometry.ts`), each
+place to a near one, where the fork drew a line from the traced label to every
+place it reached. A line is straight and solid in its chain's colour over a
+soft glow, with a ring on each label it joins and no name or arrowhead, drawn
+whole and still once the sheets at both its ends have faded in; frames are
+drawn while sheets
+fade in, and on a change (a hover, a click, a pan or a zoom). `shown_links`
+keeps a link with both ends on one sheet, and a net that stays on one sheet
+opens the view on that sheet alone (the fork wanted two sheets). The page
+(`ui/src/KicadView.jsx`) opens its menu for a net a left click picked on the
+schematic only once the time for a second click has passed, so the double-click
+opens none. While the view is open, `selectAt`, which the page's right click
+asks what is under the pointer, selects what the view shows there
+(`WorldView.select_at`, the view's own click), not the schematic under it; and
+a place the page's menu steps to on the schematic closes the view first
+(`hideWorldView`), since the schematic shows the place. That close, like the one
+in `showPage`, hands nothing over: the step frames its place itself.
 
 ### Upgrading it
 

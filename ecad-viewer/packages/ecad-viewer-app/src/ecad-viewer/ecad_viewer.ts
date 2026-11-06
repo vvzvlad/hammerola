@@ -2597,6 +2597,12 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      * right click.
      */
     public selectAt(clientX: number, clientY: number): void {
+        // The world view lies over the schematic: the point is on it.
+        if (
+            this.#active_tab === TabKind.sch &&
+            this.#tracker.select_at(clientX, clientY)
+        )
+            return;
         this.#active_inner_viewer()?.select_at(clientX, clientY);
     }
 
@@ -4465,12 +4471,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                     detail ?? { sourceContext: "SCH", itemType: "" },
                 ),
             ),
-        open_page: (page, uuid) => void this.#open_page_at(page, uuid),
+        open_page: (page, box) => void this.#open_page_at(page, box),
     });
 
-    async #open_page_at(page: string, uuid?: string) {
+    /** Show `page`, then put the schematic camera on `box` of it. */
+    async #open_page_at(page: string, box: BBox) {
         await this.showPage(page);
-        if (uuid) this.#safe_schematic_viewer()?.zoom_fit_item(uuid);
+        const viewer = this.#safe_schematic_viewer();
+        if (!viewer) return;
+        viewer.viewport.camera.bbox = box;
+        viewer.draw();
     }
 
     /**

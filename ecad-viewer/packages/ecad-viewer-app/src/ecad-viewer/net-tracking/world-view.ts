@@ -6,23 +6,35 @@
     view pans, zooms and drags like a sheet. The sheets stay interactive:
     hovering outlines items, a click selects (Shift+click highlights the
     net), and a double-click on a label, sheet entry or power symbol is the
-    host's to trace (`toggle()`). Everything a click picks is reported
-    through the host as a selection on that sheet's page.
+    host's to trace (`toggle()`). Everything a click picks, or the host's
+    right click (`select_at()`), is reported through the host as a selection
+    on that sheet's page.
 
     A chain is one label's reach, linking it to every namesake it reaches,
-    on another sheet or its own. The first opens the view; each later one is
-    added in its own colour, linking sheets already shown and bringing in the
-    ones that are not (they join the end of the layout, so nothing on screen
-    moves). A chain goes again on `toggle()` of any label it reaches, and the
-    view closes with the last; its sheets stay.
+    on another sheet or its own (a local label's namesakes are all on its
+    own): its places joined by the shortest tree of straight, solid lines in
+    the chain's colour, each to a near one, a ring on every label it joins
+    and a larger one on the label it starts from. The first opens the view;
+    each later one is added in its own colour, linking sheets already shown
+    and bringing in the ones that are not (they join the end of the layout,
+    so nothing on screen moves). A chain goes again on `toggle()` of any
+    label it reaches, and the view closes with the last; its sheets stay.
 
-    Motion: the view fades in and the camera eases out from what the main
-    view was showing to every sheet. Sheets fade in a hop at a time from where
-    their chain started; a connection is drawn whole and still, with the
-    marks on its ends, once the sheets at both ends are there. Frames are
-    drawn while the camera eases or sheets fade in, and on a change. A
-    double-click elsewhere eases into that sheet before handing it to the
-    main view; closing fades out.
+    Motion: the view fades in with its camera where the main view's is, on
+    the starting sheet framed as the main view framed it, and only a pan or a
+    zoom moves it after that: a chain added, a resize or a double-click
+    leaves it, and a line to a sheet off screen runs off the edge. Sheets
+    fade in a hop at a time from where their chain started; a line is drawn
+    whole and still once the sheets at both its ends are there, and a ring
+    once its own sheet is. Frames are drawn while sheets fade in, and on a
+    change. Closing hands the picture to the main view, so nothing on screen
+    moves (`hand_over`): Escape, a double-click on an empty place, between
+    the sheets or on a sheet's blank paper, and taking away the last chain
+    give it the sheet under the middle of the canvas, or the one nearest
+    it, and a double-click on any other item that item's sheet; the main
+    view shows that sheet where and as large as the view shows it. The
+    host's own `close()`, when it moves the main view itself (a page shown,
+    a place stepped to), leaves the main view to it. Closing fades out.
 */
 
 import { BBox, Camera2, Matrix3, Vec2 } from "../../base/math";
@@ -32,13 +44,12 @@ import {
     type MoveAndZoomOptions,
 } from "../../base/dom/move-and-zoom";
 import type { SchematicPageView } from "../insets/schematic-provider";
+import { Viewer } from "../../viewers/base/viewer";
 import {
     SHEET_GAP,
-    blend_pose,
-    connection_curve,
     ease_out,
+    spanning_pairs,
     world_layout,
-    type CameraPose,
 } from "./geometry";
 import {
     instance_key,
@@ -48,7 +59,6 @@ import {
 } from "./net-graph";
 import {
     CHAIN_COLORS,
-    paint_arrowhead,
     paint_connection,
     paint_endpoint,
     paint_hover,
@@ -65,8 +75,8 @@ export interface WorldViewHost {
     page_view(key: string): Promise<SchematicPageView | null>;
     /** The scenes changed (highlights, variant): call `listener`. */
     subscribe(listener: () => void): () => void;
-    /** Show `page` in the main view, framing `uuid` when given. */
-    open_page(page: string, uuid?: string): void;
+    /** Show `page` in the main view, its camera on `box` (that sheet's coordinates). */
+    open_page(page: string, box: BBox): void;
     /** A click on a sheet: report it as a selection on that page. */
     select(
         view: SchematicPageView,
@@ -79,7 +89,7 @@ export interface WorldViewHost {
     /** The main view's navigation settings and fit insets, to match it. */
     navigation(): MoveAndZoomOptions | undefined;
     insets(): Partial<CameraViewportInsets> | null;
-    /** What the main view shows (page and world box), to ease out from. */
+    /** What the main view shows (page and world box), to open where it is. */
     main_view(): { page: string; box: BBox } | null;
 }
 
@@ -104,8 +114,9 @@ const holds = (chain: Chain, key: string) =>
     chain.reached.some((it) => instance_key(it) === key);
 
 /**
- * The links of a chain that are drawn: both ends on sheets shown, the two
- * sheets different or the same (a global label's namesake on its own sheet).
+ * The links of a chain whose ends are its places: both ends on sheets shown,
+ * the two sheets different or the same (a global label's namesake on its own
+ * sheet).
  */
 export function shown_links(
     links: ReadonlyArray<[NetInstance, NetInstance]>,
@@ -114,24 +125,11 @@ export function shown_links(
     return links.filter(([a, b]) => shown(a.page) && shown(b.page));
 }
 
-interface CameraMove {
-    from: CameraPose;
-    to: CameraPose;
-    start: number;
-    duration: number;
-    then?: () => void;
-}
-
-const MIN_ZOOM = 0.02;
-const MAX_ZOOM = 100;
 /** One hop's sheets start this long after the previous hop's. */
 const HOP_DELAY = 200;
 /** A sheet fades in over this long; its connections are drawn after. */
 const SHEET_MS = 360;
 const FADE_MS = 160;
-const OPEN_MS = 520;
-const REFRAME_MS = 420;
-const ENTER_MS = 320;
 /** A press that moves further than this is a drag, not a click. */
 const CLICK_SLOP = 4;
 
@@ -140,7 +138,6 @@ export class WorldView {
     #sheets_canvas: HTMLCanvasElement | null = null;
     #marks_canvas: HTMLCanvasElement | null = null;
     #camera = new Camera2();
-    #move: CameraMove | null = null;
     #pan: MoveAndZoom | null = null;
     #observer: ResizeObserver | null = null;
     #unsubscribe: (() => void) | null = null;
@@ -154,7 +151,6 @@ export class WorldView {
     #frame: number | null = null;
     #sheets_dirty = true;
     #ticket = 0;
-    #touched = false;
     #closing = false;
     #hover: { sheet: Sheet; box: BBox } | null = null;
     #selected: { sheet: Sheet; box: BBox } | null = null;
@@ -186,7 +182,6 @@ export class WorldView {
     /** Open on the net of the label or sheet entry `from`. */
     async show(from: NetInstance) {
         this.#dispose();
-        this.#touched = false;
         const container = this.host.container();
         if (!container) return false;
         const ticket = ++this.#ticket;
@@ -205,14 +200,11 @@ export class WorldView {
         this.#pan = new MoveAndZoom(
             sheets_canvas,
             this.#camera,
-            () => {
-                // A hand on the camera ends any eased move and any refit.
-                this.#touched = true;
-                this.#move = null;
-                this.invalidate();
-            },
-            MIN_ZOOM,
-            MAX_ZOOM,
+            () => this.invalidate(),
+            // The main view's range: the view opens at its zoom and hands
+            // its own back on closing, so neither ends up out of range.
+            Viewer.MinZoom,
+            Viewer.MaxZoom,
             undefined,
             () => !this.#closing,
             this.host.navigation(),
@@ -221,12 +213,6 @@ export class WorldView {
         this.#unsubscribe = this.host.subscribe(() => this.invalidate());
         this.#observer = new ResizeObserver(() => {
             this.#resize();
-            // Until the view is moved by hand, it keeps every sheet framed
-            // as the panels around it open and close.
-            if (!this.#touched && !this.#move) {
-                this.#camera.fit_insets = this.host.insets();
-                this.#set_pose(this.#fit_pose());
-            }
             this.invalidate();
         });
         this.#observer.observe(this.#root!);
@@ -247,7 +233,6 @@ export class WorldView {
         if (!this.open || this.traced(from)) return false;
         const added = await this.#add_chain(from, this.#ticket, false);
         if (!added) return false;
-        if (!this.#touched) this.#ease_to(this.#fit_pose(), REFRAME_MS);
         this.invalidate();
         return true;
     }
@@ -263,11 +248,14 @@ export class WorldView {
         const key = instance_key(from);
         this.#chains = this.#chains.filter((chain) => !holds(chain, key));
         if (this.#chains.length) this.invalidate();
-        else this.close();
+        else this.hand_over();
         return true;
     }
 
-    /** Fade out, then let go of every scene. */
+    /**
+     * Fade out, then let go of every scene; the main view stays where it is,
+     * for a host that moves it itself.
+     */
     close() {
         if (!this.#root || this.#closing) return;
         this.#closing = true;
@@ -278,12 +266,38 @@ export class WorldView {
         }, FADE_MS);
     }
 
+    /**
+     * Close, the main view taking over the picture: the sheet of `page`, by
+     * default the one under the middle of the canvas or else the one nearest
+     * it, where and as large as the view shows it. The view covers the main
+     * view's canvas exactly, so the same box is the same picture.
+     */
+    hand_over(page?: string) {
+        if (!this.open) return;
+        const box = this.#camera.bbox;
+        const sheet =
+            (page !== undefined ? this.#sheets.get(page) : undefined) ??
+            this.#sheet_nearest(box.center);
+        // Closing first: the host's page switch closes the view as well.
+        this.close();
+        if (!sheet) return;
+        const b = sheet.view.bounds;
+        this.host.open_page(
+            sheet.view.key,
+            new BBox(
+                box.x - sheet.offset.x + b.x,
+                box.y - sheet.offset.y + b.y,
+                box.w,
+                box.h,
+            ),
+        );
+    }
+
     #dispose() {
         this.#ticket++;
         this.#closing = false;
         if (this.#frame !== null) cancelAnimationFrame(this.#frame);
         this.#frame = null;
-        this.#move = null;
         this.#pan?.dispose();
         this.#pan = null;
         this.#observer?.disconnect();
@@ -391,78 +405,29 @@ export class WorldView {
 
     // --- Camera --------------------------------------------------------
 
-    #pose(): CameraPose {
-        return { center: this.#camera.center.copy(), zoom: this.#camera.zoom };
-    }
-
-    #set_pose(pose: CameraPose) {
-        this.#camera.center = pose.center.copy();
-        this.#camera.zoom = pose.zoom;
-    }
-
-    /** The pose that frames `box` (world units), without moving there. */
-    #pose_for(box: BBox): CameraPose {
-        const here = this.#pose();
-        this.#camera.bbox = box;
-        const there = this.#pose();
-        this.#set_pose(here);
-        return there;
-    }
-
-    #fit_pose(): CameraPose {
-        return this.#pose_for(
-            BBox.combine(
-                [...this.#sheets.values()].map((sheet) =>
-                    this.#world_rect(sheet),
-                ),
-            ).grow(SHEET_GAP / 2),
-        );
-    }
-
     /**
-     * Open where the main view was looking: on the starting sheet, framed as
-     * the main view framed it, then ease out to every sheet.
+     * Open where the main view is looking: on the starting sheet, framed as
+     * the main view frames it. When the main view shows none of the sheets,
+     * open on all of them.
      */
     #open_camera(from: NetInstance) {
-        const fit = this.#fit_pose();
         const main = this.host.main_view();
         const sheet = this.#sheets.get(main?.page ?? from.page);
         if (!main || !sheet || main.page !== sheet.view.key) {
-            this.#set_pose(fit);
+            this.#camera.bbox = BBox.combine(
+                [...this.#sheets.values()].map((sheet) =>
+                    this.#world_rect(sheet),
+                ),
+            ).grow(SHEET_GAP / 2);
             return;
         }
         const b = sheet.view.bounds;
-        const box = new BBox(
+        this.#camera.bbox = new BBox(
             main.box.x - b.x + sheet.offset.x,
             main.box.y - b.y + sheet.offset.y,
             main.box.w,
             main.box.h,
         );
-        this.#set_pose(this.#pose_for(box));
-        this.#ease_to(fit, OPEN_MS);
-    }
-
-    #ease_to(to: CameraPose, duration: number, then?: () => void) {
-        this.#move = {
-            from: this.#pose(),
-            to,
-            start: performance.now(),
-            duration,
-            then,
-        };
-        this.#schedule();
-    }
-
-    /** Advance an eased camera move; true while one is running. */
-    #step_camera(now: number) {
-        const move = this.#move;
-        if (!move) return false;
-        const t = (now - move.start) / move.duration;
-        this.#set_pose(blend_pose(move.from, move.to, t));
-        if (t < 1) return true;
-        this.#move = null;
-        move.then?.();
-        return false;
     }
 
     // --- Drawing -------------------------------------------------------
@@ -470,6 +435,18 @@ export class WorldView {
     #world_rect(sheet: Sheet) {
         const b = sheet.view.bounds;
         return new BBox(sheet.offset.x, sheet.offset.y, b.w, b.h);
+    }
+
+    /** The sheet under the world point `at`, else the one nearest it. */
+    #sheet_nearest(at: Vec2): Sheet | undefined {
+        let nearest: Sheet | undefined;
+        let distance = Infinity;
+        for (const sheet of this.#sheets.values()) {
+            const d = at.sub(this.#world_rect(sheet).constrain_point(at))
+                .magnitude;
+            if (d < distance) [nearest, distance] = [sheet, d];
+        }
+        return nearest;
     }
 
     /** How far this sheet has faded in (0 to 1) at `now`. */
@@ -501,6 +478,18 @@ export class WorldView {
         ]);
     }
 
+    /** Where `at` is in the world, as if its sheet had arrived. */
+    #world_point(at: NetInstance): Vec2 | null {
+        const sheet = this.#sheets.get(at.page);
+        const box = sheet?.view.item_bbox(at.uuid);
+        if (!sheet || !box) return null;
+        const b = sheet.view.bounds;
+        return new Vec2(
+            sheet.offset.x + box.center.x - b.x,
+            sheet.offset.y + box.center.y - b.y,
+        );
+    }
+
     #instance_point(at: NetInstance): Vec2 | null {
         const sheet = this.#sheets.get(at.page);
         const box = sheet?.view.item_bbox(at.uuid);
@@ -520,20 +509,19 @@ export class WorldView {
         return !!sheet && this.#arrival(sheet, now) >= 1;
     }
 
-    /** Draw a frame, and the next ones while the camera eases or sheets fade in. */
+    /** Draw a frame, and the next ones while sheets fade in. */
     #schedule() {
         if (this.#frame !== null || !this.#root) return;
         this.#frame = requestAnimationFrame((now) => {
             this.#frame = null;
             if (!this.#root) return;
-            const moving = this.#step_camera(now);
             const settling = this.#sheets_settling(now);
-            if (this.#sheets_dirty || moving || settling) {
+            if (this.#sheets_dirty || settling) {
                 this.#sheets_dirty = false;
                 this.#draw_sheets(now);
             }
             this.#draw_marks(now);
-            if (moving || settling) this.#schedule();
+            if (settling) this.#schedule();
         });
     }
 
@@ -599,27 +587,31 @@ export class WorldView {
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
         for (const chain of this.#chains) {
-            const reached: Vec2[] = [];
-            for (const [from, to] of chain.links) {
-                if (!this.#there(from.page, now) || !this.#there(to.page, now))
-                    continue;
-                const a = this.#instance_point(from);
-                const b = this.#instance_point(to);
-                if (!a || !b) continue;
-                const curve = connection_curve(a, b);
-                paint_connection(ctx, curve, {
-                    color: chain.color,
-                    name: to.name,
-                    zoom,
-                });
-                reached.push(b);
-                const end = curve.at(curve.length);
-                paint_arrowhead(ctx, end.point, end.angle, chain.color, zoom);
+            // Every place the chain links, on any sheet shown, joined by the
+            // shortest tree of segments. It is found in world coordinates,
+            // which neither the camera nor a sheet fading in moves, so the
+            // tree keeps its shape while the view pans and zooms; a segment
+            // is drawn once both its sheets are there.
+            const places = new Map(
+                [chain.from, ...chain.links.flat()].map((it) => [
+                    instance_key(it),
+                    it,
+                ]),
+            );
+            const marks = [...places.values()].flatMap((it) => {
+                const world = this.#world_point(it);
+                const at = this.#instance_point(it);
+                return world && at ? [{ it, world, at }] : [];
+            });
+            for (const [i, j] of spanning_pairs(marks.map((m) => m.world))) {
+                const a = marks[i]!;
+                const b = marks[j]!;
+                if (this.#there(a.it.page, now) && this.#there(b.it.page, now))
+                    paint_connection(ctx, a.at, b.at, chain.color, zoom);
             }
-            const start = this.#instance_point(chain.from);
-            if (start) paint_endpoint(ctx, start, chain.color, true);
-            for (const p of reached)
-                paint_endpoint(ctx, p, chain.color, false);
+            for (const { it, at } of marks)
+                if (this.#there(it.page, now))
+                    paint_endpoint(ctx, at, chain.color, it === chain.from);
         }
 
         if (this.#selected)
@@ -663,41 +655,41 @@ export class WorldView {
                     ) > CLICK_SLOP)
             )
                 return;
-            const hit = this.#hit(event);
-            const item = hit?.found.item ?? null;
-            const bbox = hit?.found.bbox ?? null;
-            this.#selected =
-                hit && item && bbox ? { sheet: hit.sheet, box: bbox } : null;
-            this.#schedule();
-            if (hit)
-                this.host.select(hit.sheet.view, item, {
-                    shift: event.shiftKey,
-                });
+            this.select_at(event.clientX, event.clientY, event.shiftKey);
         });
         canvas.addEventListener("dblclick", (event) => {
+            if (this.#closing) return;
             const hit = this.#hit(event);
-            if (!hit || this.#closing) return;
-            const item = hit.found.item;
-            if (item && this.host.trace(hit.sheet.view, item)) return;
-            const key = hit.sheet.view.key;
-            const here = this.#chains
-                .flatMap((chain) => [chain.from, ...chain.links.flat()])
-                .find((it) => it.page === key);
-            // Ease into the sheet, then hand it to the main view.
-            this.#touched = true;
-            this.#ease_to(
-                this.#pose_for(this.#world_rect(hit.sheet)),
-                ENTER_MS,
-                () => {
-                    this.host.open_page(key, here?.uuid);
-                    this.close();
-                },
-            );
+            const item = hit?.found.item ?? null;
+            // An empty place, between the sheets or on a sheet's blank
+            // paper, closes the view on the sheet in the middle.
+            if (!hit || !item) {
+                this.hand_over();
+                return;
+            }
+            if (this.host.trace(hit.sheet.view, item)) return;
+            // Any other item: on that item's sheet.
+            this.hand_over(hit.sheet.view.key);
         });
     }
 
-    /** The sheet and item under a pointer event. */
-    #hit(event: MouseEvent) {
+    /**
+     * Select what is at the page point `x`,`y` and report it, as a click
+     * there does; the host's right click asks this too, so its menu is for
+     * what the view shows there, not the main view underneath.
+     */
+    select_at(x: number, y: number, shift = false) {
+        const hit = this.#hit({ clientX: x, clientY: y });
+        const item = hit?.found.item ?? null;
+        const bbox = hit?.found.bbox ?? null;
+        this.#selected =
+            hit && item && bbox ? { sheet: hit.sheet, box: bbox } : null;
+        this.#schedule();
+        if (hit) this.host.select(hit.sheet.view, item, { shift });
+    }
+
+    /** The sheet and item under a page point. */
+    #hit(event: { clientX: number; clientY: number }) {
         const canvas = this.#sheets_canvas;
         if (!canvas) return null;
         const rect = canvas.getBoundingClientRect();
