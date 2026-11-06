@@ -11,6 +11,16 @@ between the pins on the parent sheet; ERC then checks that every pin is wired. G
 never carry a signal between sheets, whatever kicad-schematic's label table says; only power
 symbols are global. A root sheet of empty boxes is a defect.
 
+### Connections on one sheet
+
+On one sheet a connection is a wire, between groups and over any distance, wherever the wire
+crosses nothing and does not get in the way of reading. This overrides kicad-schematic's
+decision table, which sends every connection over 30 mm or with a signal name to
+`connect_to_net`. A pair of local labels standing in for such a wire is a defect. The owner,
+on the four filtered inputs of an ADE7913 split into label pairs: «ему лень было протянуть 4
+линии, которые ничего не портят и не мешают читать?» A net whose name something reads (a
+netclass pattern in the `.kicad_pro`, a document) keeps one label on its wire as the name.
+
 ### Power symbols
 
 - A rail with no stock power symbol (GNDISO, +12V_BUS): `add_schematic_component` with
