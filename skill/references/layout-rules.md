@@ -40,7 +40,9 @@ does not name" narrows scope; it never removes an item from this list.
 ## Looking at the board
 
 - Numbers first: positions, distances, free spots and fits come from `scripts/bq.py`,
-  findings from `drc.sh` and `geocheck.py`.
+  findings from `drc.sh` and `geocheck.py`. A question about the board or a report (the pads
+  of a part and what reaches each, a net's copper, the fill piece at a point, the findings of
+  one part or type) is a `bq.py` or `scripts/findings.py` query, not a one-off script.
 - For what only the eye judges (crowding, alignment, silk legibility, the surroundings of a
   finding) render one region with `scripts/view.py` (`ref REF` or `X1 Y1 X2 Y2`; `--drc
   drc.json` or `--marks` with a `bq.py --json` result numbers the findings on the picture)
