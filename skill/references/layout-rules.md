@@ -246,6 +246,16 @@ Fix by moving vias and parts first; add bends only where nothing can move.
 - A run lasts longer than a shell call's default timeout (Dionis: 5.5 min with no finish; a
   finish adds up to `--finish-time`): run it in the background, or with a timeout of at least
   `--draft-time` + `--finish-time` + 2 minutes.
+- A copper layer typed Power plane with a zone on it stays a plane for the router, a split
+  power layer included: no new track of another net goes on it, and the summary names these
+  layers. Type every plane layer so before the run; with the default export a Power-plane
+  layer without a zone is routed as signal. fastroute may join a via just outside a plane to
+  it with a short stub of the plane's net.
+- To compare placements, route each at the default `--draft-time` without `--diagnose`, and run
+  `--diagnose` once, on the placement you keep. On the probe-bench head board (five placements,
+  plane layers kept) 300 s and 450 s ranked them as 600 s did except two placements 5 parts
+  apart, and 120 s put the best one third. One placement gave 122 and 121 unrouted on two runs:
+  a difference of a few connections is a tie.
 - The defaults come from the owner's boards with all routing removed: the plugin export left 0
   connections unrouted on Ukuetis base against 36 with KiCad's plain DSN export (it hands zones
   over as solid planes); the minimum-width flags cut added DRC errors from 225 to 33; no finish,

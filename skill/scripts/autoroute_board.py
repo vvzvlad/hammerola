@@ -4,7 +4,12 @@ needs: python3 with KiCad 10 pcbnew (the autoroute image: fastroute on PATH, plu
 import collections, json, math, os, re, shutil, subprocess, sys
 import pcbnew
 
-PLUGIN = "/opt/fastroute-kicad/plugins/route_cli.py"
+PLUGIN = "/opt/fastroute-kicad/plugins"
+# the plugin's route_cli.py with PLANE_LAYER_MIN_COVERAGE 0 instead of 0.5: the plugin keeps a power-type layer, with
+# its planes, only when one plane covers that share of the board and retypes the other power layers to signal; at 0
+# every power layer with a plane stays one (a split plane too). Neither fastroute nor Freerouting puts a track of
+# another net on it; fastroute joins a via just outside a plane's outline to that plane with a short stub of its net
+EXPORT = f"import sys; sys.path.insert(0, {PLUGIN!r}); import core, route_cli; core.PLANE_LAYER_MIN_COVERAGE = 0; sys.exit(route_cli.main())"
 
 
 def lock(board):
@@ -30,7 +35,7 @@ def dsn(board, out, export, minw):
     else:
         # the plugin's own exporter: .kicad_dru clearances and widths, zones, keepouts; its options in args.txt
         wd = os.path.splitext(out)[0] + "_plugin"
-        subprocess.run([sys.executable, PLUGIN, board, "--work-dir", wd, "--export-only", "--fastroute", shutil.which("fastroute")]
+        subprocess.run([sys.executable, "-c", EXPORT, board, "--work-dir", wd, "--export-only", "--fastroute", shutil.which("fastroute")]
                        + (["--ignore-min-width"] if minw == "off" else []), check=True, stdout=sys.stderr)
         shutil.move(os.path.join(wd, "board.dsn"), out)
         a = open(os.path.join(wd, "args.txt")).read().split("\n")
@@ -83,6 +88,9 @@ def summary(run, board):
         cls = collections.Counter(u["diagnosis"]["class"] for u in draft["unrouted"] if "diagnosis" in u)
         print(f"fastroute draft: {draft['stats']['unrouted']} of {draft['stats']['connections']} connections unrouted"
               + (f" ({', '.join(f'{k} {v}' for k, v in sorted(cls.items()))})" if cls else ""))
+    # the layers the router was handed as power type: no track of another net than their planes' goes on them
+    free = re.findall(r'\(layer\s+"?([^\s"()]+)"?\s*\(type\s+power\)', open(os.path.join(run, "draft.dsn")).read())
+    print(f"power-type layers handed to the router (no new tracks of other nets): {', '.join(free) or 'none'}")
     print(open(os.path.join(run, "import.log")).read().strip().splitlines()[-1])
     v, un = drc["violations"], drc["unconnected_items"]
     err = collections.Counter(x["type"] for x in v if x["severity"] == "error")
