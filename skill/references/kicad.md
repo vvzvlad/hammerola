@@ -104,6 +104,10 @@ Use these instead of the vendor agents; their `skills:` field preloads this skil
 `kicad-pcb-layout` and `kicad-pcb-critic` have Bash and run the scripts themselves;
 `kicad-schematic-build` has Copperpour tools and Read only.
 
+A layout agent also needs the Monitor tool: an `autoroute.sh` run outlasts a shell call, so it
+runs in the background, and without Monitor the agent can only poll for its end. Whoever
+defines the agent on an installation lists Monitor beside Bash.
+
 ## References
 
 - `references/layout-rules.md` — definition of done, mechanics, placement, silkscreen, routing,
