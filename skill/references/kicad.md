@@ -23,6 +23,13 @@ block before placing, routing, editing silkscreen or reviewing a board; it is no
 | Publishing a schematic, a board, its 3D model or Gerbers on the hub | — | `references/boards.md` |
 | A brief for a subagent | — | `references/review-critics.md` (Briefs and fixers), Agents below |
 
+## Block review with the owner (before layout)
+
+Layout does not start until the owner has reviewed the board at the block level. Before the
+first placement brief, show him the block diagram: every functional block, the links between
+blocks and how many parts each block takes; then wait for his answer. A block he drops or
+changes goes out of the schematic first, and placement starts from the schematic he approved.
+
 ## Channel 4
 
 **Channel 4** — only for an operation no Copperpour tool covers: kipy over the live IPC
