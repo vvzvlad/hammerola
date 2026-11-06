@@ -278,6 +278,22 @@ ecad: ecad-viewer/node_modules/.package-lock.json ## Build the vendored KiCad vi
 			&& mv -f "$$tmp" $(UI_OUT)/$$f || exit 1; \
 	done
 
+# The hub's projects with this checkout's browser files, before a deploy: /_v/* from
+# static/_v/ (its committed assets and what the three targets above build), everything
+# else from the hub at HUB_URL — the environment's, else a plain `HUB_URL=` line in
+# ~/.config/hammerola/env, as `hammerola login` writes it. Listens on
+# 127.0.0.1:$(PROXY_PORT) until stopped.
+PROXY_PORT ?= 8794
+.PHONY: proxy
+proxy: ## Serve the hub at HUB_URL locally with this checkout's static/_v/
+	@$(REQUIRE_NPM)
+	@hub="$${HUB_URL:-$$(sed -n 's/^HUB_URL=//p' "$$HOME/.config/hammerola/env" 2>/dev/null)}"; \
+	if [ -z "$$hub" ]; then \
+		echo "make proxy: no hub address — set HUB_URL or run 'hammerola login'."; \
+		exit 1; \
+	fi; \
+	exec node ui/hubproxy.mjs "$$hub" $(PROXY_PORT) $(UI_OUT)
+
 # The JS suite: vitest over ui/tests, in jsdom, covering the GPU-free parts of the
 # `<hmr-viewport>` adapter and the remembered pointer in ui/src/store.js.
 # Refuses rather than skips without npm, since it was asked for by name.

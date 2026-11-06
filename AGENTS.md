@@ -60,6 +60,7 @@ make test              # pytest, plus the JS suite when npm is present
 make cad-test          # the eighteen tests that need the CAD kernel
 make run               # runs .venv/bin/python main.py
 make ui                # build the browser bundle into static/_v/ (needs npm)
+make proxy             # the hub's projects with this checkout's static/_v/, on 127.0.0.1:8794
 make lock              # regenerate requirements.lock (slow, deliberate)
 ```
 

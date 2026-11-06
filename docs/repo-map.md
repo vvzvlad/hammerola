@@ -463,6 +463,9 @@
   `make test` work on a machine with no node at all. The output path is written
   in five files that never import each other, and `tests/test_ui_bundle.py` is
   what keeps them in step; `ui/README.md` has the layout and the pins
+- `ui/hubproxy.mjs` — `make proxy`: a hub's projects on 127.0.0.1 with this
+  checkout's `static/_v/`, every other request passed to the hub at `HUB_URL`,
+  to see a change to the page on real projects before it is deployed
 - `ui/src/address.js` — the page's address and the browser's history, the one
   place history is written or followed: `parse` reads the address on screen whole
   (the build or comparison of its path, `v=`, `d=`, `s=`, `c=`, `files=`, the
