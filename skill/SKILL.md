@@ -35,7 +35,7 @@ else sits beside it and is read at the moment it applies — the files are in
 | A file published beside the model: document, drawing, PDF, picture, report, or any file to hand over (DXF, STEP, CSV) | `references/documents.md` |
 | Assembly instructions for the product: an IKEA/LEGO-style PDF of numbered steps, drawn from the model | `references/instructions.md` |
 | Any KiCad work: a schematic, symbols and footprints, placement, routing, silkscreen, DRC/ERC, «плата готова?», fab outputs — the owner's rules, gates and scripts | `references/kicad.md` |
-| Publishing a schematic, a board, its 3D model, Gerbers, a part's datasheet | `references/boards.md` |
+| Publishing a schematic, a board, its 3D model, Gerbers, a part's datasheet; a board of the project placed in the model (an enclosure, a stack of boards) | `references/boards.md` |
 | Starting a project, fetching a revision back, removing one, setting up a machine | `references/cli.md` |
 
 ## Talking to the person

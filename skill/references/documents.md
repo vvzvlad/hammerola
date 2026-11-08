@@ -18,7 +18,8 @@ An entry is a path, or an object with the path as `file` and a `title`: the
 caption the page shows for it in place of the path (one line of text, as a
 project's title), and optionally `"hidden": true` or `"download": true`. Each
 path is a file of the project and is published under the same path; nothing
-unlisted is. Its EXTENSION decides only how the page shows it: a `.md`, `.pdf`,
+unlisted is. The one file the hub makes itself is a `.glb` listed beside a board
+of the same name (`references/boards.md`). Its EXTENSION decides only how the page shows it: a `.md`, `.pdf`,
 `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.html`, `.htm`, `.svg`, `.kicad_sch`,
 `.kicad_pcb`, `.glb` or `.zip` is drawn; a `.csv` is drawn as a table, its
 first row the header; any other text file — `.txt`, `.tsv`, `.json`, `.xml`,
