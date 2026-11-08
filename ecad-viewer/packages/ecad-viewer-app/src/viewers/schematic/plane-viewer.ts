@@ -13,9 +13,10 @@
     A frame draws, over the background, every sheet whose cell is on
     screen, each through the camera moved by its sheet's offset; then the
     sheets' names, the chains (`chains.ts`), the selection and hover boxes,
-    and last the base viewer's overlays (comment marks, the comment area
-    being drawn). Gestures, clicks, the comment area and insets come from the
-    base viewer, so they work here as on one sheet.
+    the base viewer's overlays (comment marks, the comment area being
+    drawn), and last, with the `ecadPerfLog` flag, a frame counter
+    (`frame-meter.ts`). Gestures, clicks, the comment area and insets come
+    from the base viewer, so they work here as on one sheet.
 
     What is under a point is on the sheet whose paper holds it, in that
     sheet's coordinates (the point less the offset); what is reported to the
@@ -65,8 +66,10 @@ import {
     LinkClickEvent,
     select_modifiers,
 } from "../base/events";
+import { isEcadPerfLogEnabled } from "../../kicanvas/perf_log";
 import { ViewLayerSet } from "../base/view-layers";
 import { Viewer, ViewerType, type ViewerInteraction } from "../base/viewer";
+import { count_frame, type FrameMeter } from "./frame-meter";
 import type { SchematicNetMembers } from "./net-highlight";
 import { sheet_body_bbox } from "./painter";
 import {
@@ -129,6 +132,9 @@ export class PlaneViewer extends Viewer {
     #pending: { key: string; run: () => void } | null = null;
     #seen_size: Vec2 | null = null;
     #seen_camera: { x: number; y: number; zoom: number } | null = null;
+    /** The frame counter's readout is drawn only with the `ecadPerfLog` flag. */
+    readonly #metered = isEcadPerfLogEnabled();
+    #meter: FrameMeter | null = null;
 
     constructor(
         canvas: HTMLCanvasElement,
@@ -696,12 +702,46 @@ export class PlaneViewer extends Viewer {
     }
 
     protected override on_draw() {
+        const started = performance.now();
         const renderer = this.renderer as Canvas2DRenderer;
         renderer.clear_canvas();
         const ctx = renderer.ctx2d;
         const tokens = this.#tokens;
         if (ctx && tokens) this.#draw_plane(ctx, tokens);
         this.draw_overlays();
+        if (!this.#metered || !ctx) return;
+        this.#meter = count_frame(
+            this.#meter,
+            started,
+            performance.now() - started,
+        );
+        this.#paint_meter(ctx, this.#meter);
+    }
+
+    /**
+     * The frame counter in the top left corner: frames in the last second
+     * and the fewest in a whole second of the latest pan; the latest frame's
+     * time and the longest of that pan.
+     */
+    #paint_meter(ctx: CanvasRenderingContext2D, meter: FrameMeter) {
+        const ms = (t: number) => `${t.toFixed(1)} ms`;
+        const lines = [
+            `${meter.recent.length} fps · pan min ${meter.pan?.min ?? "-"}`,
+            `${ms(meter.took)} · pan max ${meter.pan ? ms(meter.pan.longest) : "-"}`,
+        ];
+        const dpr = window.devicePixelRatio || 1;
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.font = "12px ui-monospace, monospace";
+        ctx.textAlign = "start";
+        ctx.textBaseline = "top";
+        const width = Math.max(...lines.map((l) => ctx.measureText(l).width));
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(8, 8, width + 12, lines.length * 16 + 8);
+        ctx.fillStyle = "#ffffff";
+        lines.forEach((line, i) => ctx.fillText(line, 14, 12 + i * 16));
+        ctx.restore();
     }
 
     #draw_plane(ctx: CanvasRenderingContext2D, tokens: Tokens) {

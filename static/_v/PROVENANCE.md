@@ -205,7 +205,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `f301ca0feac408715bb577089b29ba098e8a35fd2be6061e7cd5e0546a7d6d54` |
+| `ecad-viewer.js` as committed | `c03af50f70de65d68b8e83d492adaa7c9f0625af848060b513c67dfa1a961bbb` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -244,7 +244,8 @@ draws and boxes by `ui/tests/boardpicture.test.js`, the links and the chains of
 edit 20 by `ui/tests/worldview.test.js`, the layout, the zoom floor and the
 comments' places and the title block's path of edit 21 by
 `ui/tests/plane.test.js`, where its camera goes on a cross-probe and on a
-double-click by `ui/tests/planeviewer.test.js`, the text of edit 10 by
+double-click by `ui/tests/planeviewer.test.js`, its frame counter's arithmetic
+by `ui/tests/framemeter.test.js`, the text of edit 10 by
 `ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
 `ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
@@ -528,15 +529,25 @@ apart (`plane_slots`). Each instance is a scene of the schematic inset provider
 that instance, its page number and path in the title block
 (`Project.drawing_sheet_for` with the instance), the path spelled with the
 sheets' names as KiCad prints it, `/amp/`, not with their UUIDs
-(`readable_sheet_path` in `kicanvas/sheet-path.ts`); the scenes are built one after
+(`readable_sheet_path` in `kicanvas/sheet-path.ts`). The scenes are built one after
 another, a task between two, and a sheet still being built is an empty cell. A
 sheet that fails to build shows its name and `failed to draw: <error>` and logs
 a warning naming its key. Each sheet's name stands above its paper in screen
 pixels. A frame draws the background, the sheets on screen, their names, the
 chains, the selection and the hover, and then the viewer's overlays: `on_draw`
 in `viewers/base/viewer.ts` draws them through `draw_overlays`, which the plane
-calls after its own drawing. There is one camera. It opens, and Fit puts it, on
-every sheet whole, with 24 px of the screen above the top row for the names; the
+calls after its own drawing. With the flag `ecadPerfLog` (`?ecadPerfLog=1` in the
+address, or `localStorage.ecadPerfLog = '1'`, `kicanvas/perf_log.ts`) a frame
+counter in the top left corner ends each frame: the frames of the last second
+and the fewest in a whole second of the latest run of frames none more than
+200 ms apart, the run's first and last seconds, covered in part, left out; the
+latest frame's `on_draw` time and the longest of that run
+(`viewers/schematic/frame-meter.ts`). Frames are drawn on demand, so the run is
+a pan, and the threshold of 30 frames a second is read off it after the pan; a
+shorter run, a redraw on hover, leaves the reading. Below 5 frames a second each
+frame is a run of its own and the pan reading stays the previous one's; the
+frames of the last second still show it. There is one camera. It opens, and Fit
+puts it, on every sheet whole, with 24 px of the screen above the top row for the names; the
 gestures zoom out no further than the least of `Viewer.MinZoom`, that Fit and the
 camera's own zoom, set again whenever the canvas changes size
 (`Viewport.set_zoom_range`, which writes the bounds of `MoveAndZoom`). Only a
@@ -583,7 +594,8 @@ from that commit, if it does; then re-apply the edits (a `git diff` of
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
 `areaitems.test.js`, `intersheetrefs.test.js`, `boardoutline.test.js`,
 `kicad5board.test.js`, `boardcopper.test.js`, `boardpicture.test.js`,
-`worldview.test.js`, `plane.test.js` and `planeviewer.test.js` fail if edit 6,
+`worldview.test.js`, `plane.test.js`, `planeviewer.test.js` and
+`framemeter.test.js` fail if edit 6,
 7, 10, 14 and 15, 16, 18, 19, 20 or 21 was lost (`wheelgesture.test.js` checks the
 arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
 update this section and the hashes, and commit the
