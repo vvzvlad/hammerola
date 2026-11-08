@@ -33,8 +33,8 @@ def test_loads_from_env(monkeypatch):
 
 def test_defaults_match_the_spec(monkeypatch):
     # SPEC 7.5 fixes every default, and the deployment relies on them: only
-    # EDIT_TOKEN is set in docker-compose.yml, so a drift here silently changes
-    # how the deployment behaves.
+    # EDIT_TOKEN and KICAD_URL are set in docker-compose.yml, so a drift here
+    # silently changes how the deployment behaves.
     monkeypatch.setenv("EDIT_TOKEN", "s3cret")
     for name in ("HOST", "PORT", "DATA_DIR", "LOG_LEVEL"):
         monkeypatch.delenv(name, raising=False)

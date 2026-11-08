@@ -27,6 +27,7 @@ from xml.etree import ElementTree
 import pytest
 from harness import (DEFAULT_EXPORTS, PNG_BYTES, good_build, meta_bytes,
                      tar_gz, view_bytes)
+from kicadstub import FIXTURES, KicadStub
 
 from ci.smoke import REQUIRED_PATHS
 from src import docsbuild, render
@@ -243,6 +244,17 @@ def test_a_model_carries_its_documents_beside_its_views(model_hub):
     log = model_hub.job_log(record["id"]).text
     assert log.startswith("model builder: ")
     assert "documents\n  list.md  markdown" in log
+
+
+def test_a_model_gets_the_glb_the_hub_makes_from_its_board(hub_factory):
+    """The board's `.glb` is made for a model's build as for documents alone.
+    `BOARD` is the design below."""
+    with KicadStub({("glb", docsbuild.GLB_FLAGS): "document.glb"}) as stub:
+        hub = hub_factory(build_runner=model_builder, kicad_url=stub.url)
+        revision = published(hub, model_tree(["hw/board.glb"], **BOARD))
+    served = hub.get(f"/project/docs0001/{revision}/hw/board.glb")
+    assert served.content == (FIXTURES / "document.glb").read_bytes()
+    assert len(stub.requests) == 1
 
 
 def test_a_model_that_lists_no_documents_publishes_what_it_always_did(

@@ -39,6 +39,12 @@ them. Under `download` they bring nothing: a file to be taken is not a design
 to be drawn from. A project listed on its own is refused: it is not a view of
 anything.
 
+A `.glb` whose path minus the extension is a board in the tree
+(`<stem>.kicad_pcb`) is made by the hub from that board on every build
+(`_make_glb`, through the KiCad sidecar, `src/kicadcli.py`), so the tree may not
+hold it: one that does refuses the push. A `.glb` with no board beside it is
+published as it was pushed.
+
 What the tree holds decides the build (`jobs._build_and_publish`):
 
   * a model (`has_model`) — the model is built as always, and after it
@@ -74,6 +80,7 @@ from pathlib import Path
 
 from hammerola.buildnames import unservable_path_reason
 from hammerola.projectslug import slug_from_title
+from src import kicadcli
 from src.buildproc import STATUS_OK, BuildOutcome
 from src.errors import PublishError
 from src.render import (BOARD_TYPE, DOCUMENTS_KIND, FILE_TYPE,
@@ -114,6 +121,14 @@ MAX_KICAD_DEPTH = 8
 SHEETFILE = re.compile(r'\(property\s+"Sheet ?file"\s+"((?:[^"\\]|\\.)*)"')
 ESCAPED = re.compile(r"\\(.)")
 
+# The board's 3D model as the page's 3D view shows it: no copper, which the
+# page draws itself from the board (SPEC, «Медь в 3D»).
+BOARD_GLB = ".glb"
+GLB_FLAGS = ("--subst-models", "--include-silkscreen", "--include-soldermask",
+             "--no-dnp")
+# How long the hub waits for one; the export runs in the hub's own worker.
+KICAD_TIMEOUT = 300
+
 
 @dataclasses.dataclass(frozen=True)
 class Document:
@@ -124,6 +139,8 @@ class Document:
     A DXF not listed with `download` has `preview`, the path its picture is
     published at, and `svg`, the picture, drawn when the list is checked; it is written rather than copied
     from the tree, so it is not one of `files`.
+    A `.glb` the hub makes has `board`, the board it is made from; its `path`
+    is still the first of `files`, written by `_copy` rather than copied.
     `download` is the entry's own key and not a field of meta.json: what
     reaches the browser is the type `_copy` resolves from it.
     """
@@ -136,6 +153,7 @@ class Document:
     download: bool = False
     preview: str | None = None
     svg: str | None = None
+    board: str | None = None
 
 
 def _project(sources: Path) -> dict:
@@ -242,8 +260,10 @@ def declared_documents(sources) -> tuple:
     seen: dict[str, str] = {}
     for item in listed:
         path, title, hidden, download, reason = _entry(item)
+        board = None if reason is not None else _board_of(sources, path)
         if reason is None:
-            reason = _unpublishable(sources, path)
+            reason = (_made_by_the_hub(sources, path, board) if board
+                      else _unpublishable(sources, path))
         if reason is None and path in seen.values():
             reason = "is listed twice"
         if reason is None and document_id(path) in seen:
@@ -274,7 +294,7 @@ def declared_documents(sources) -> tuple:
             continue
         seen[document_id(path)] = path
         found.append(Document(path, (path, *_besides(design)), design, title,
-                              hidden, download, preview, picture))
+                              hidden, download, preview, picture, board))
     # A picture is published at a path of its own, which may not be another
     # document's file.
     owners = {name: doc.path for doc in found for name in doc.files}
@@ -343,6 +363,17 @@ def _unpublishable(sources: Path, path: str) -> str | None:
 
 def _not_in_tree(sources: Path, path: str) -> str | None:
     """Why `path` cannot be published as a file of the tree, or None."""
+    reason = _unservable(path)
+    if reason is not None:
+        return reason
+    target = sources / path
+    if target.is_symlink() or not target.is_file():
+        return "is not a file in the pushed tree"
+    return None
+
+
+def _unservable(path: str) -> str | None:
+    """Why the build cannot serve a file at `path`, whoever writes it, or None."""
     reason = unservable_path_reason(path)
     if reason is not None:
         return reason
@@ -352,10 +383,24 @@ def _not_in_tree(sources: Path, path: str) -> str | None:
     if path.split("/", 1)[0] == COMPARE_SEGMENT and "/" in path:
         return (f"starts with `{COMPARE_SEGMENT}/`, which is the address of a "
                 f"comparison of two revisions")
-    target = sources / path
-    if target.is_symlink() or not target.is_file():
-        return "is not a file in the pushed tree"
     return None
+
+
+def _board_of(sources: Path, path: str) -> str | None:
+    """The board a listed `.glb` is made from: the `.kicad_pcb` with its path
+    minus the extension, when the tree holds one; else None."""
+    if Path(path).suffix.lower() != BOARD_GLB:
+        return None
+    board = path[:-len(BOARD_GLB)] + KICAD_BOARD
+    return board if _not_in_tree(sources, board) is None else None
+
+
+def _made_by_the_hub(sources: Path, path: str, board: str) -> str | None:
+    """Why the hub cannot make the `.glb` at `path` from `board`, or None."""
+    target = sources / path
+    if target.exists() or target.is_symlink():
+        return f"is made by the hub from {board!r}; remove it from the tree"
+    return _unservable(path)
 
 
 def _kicad_schematic(sources: Path, root: str) -> tuple:
@@ -477,9 +522,9 @@ def _files(documents) -> tuple:
         for name in (*doc.files, *([] if doc.preview is None else [doc.preview]))))
 
 
-def _copy(sources: Path, out_dir: Path, documents) -> tuple:
-    """Copy each document's files to their paths under `out_dir`, and write
-    the picture of each DXF beside it.
+def _copy(sources: Path, out_dir: Path, documents, kicad_url: str) -> tuple:
+    """Copy each document's files to their paths under `out_dir`, write the
+    picture of each DXF beside it, and make each `.glb` the hub makes.
 
     -> (meta.json entries, log lines).
     """
@@ -489,7 +534,10 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
         for name in doc.files:
             target = out_dir / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(sources / name, target)
+            if doc.board is not None and name == doc.path:
+                target.write_bytes(_make_glb(sources, doc, kicad_url))
+            else:
+                shutil.copyfile(sources / name, target)
             size += target.stat().st_size
         # Beside the DXF, whose directory the copy above made.
         if doc.preview is not None:
@@ -512,6 +560,8 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
                 sheets = len(doc.kicad["schematics"])
                 what += f", {sheets} sheet{'' if sheets == 1 else 's'}"
             what += ", project" if doc.kicad["project"] else ", no project"
+        if doc.board is not None:
+            what += f", made from {doc.board}"
         if doc.hidden:
             what += ", hidden"
         entries.append(entry)
@@ -519,18 +569,33 @@ def _copy(sources: Path, out_dir: Path, documents) -> tuple:
     return entries, lines
 
 
-def run_documents_build(sources, out_dir, documents, *, pid) -> BuildOutcome:
+def _make_glb(sources: Path, doc, kicad_url: str) -> bytes:
+    """The board's 3D model, exported now from `doc.board`. A board kicad-cli
+    refuses refuses the build, with what kicad-cli said."""
+    try:
+        data, _ = kicadcli.export(sources / doc.board, "glb", GLB_FLAGS,
+                                  url=kicad_url, timeout=KICAD_TIMEOUT)
+    except kicadcli.KicadError as error:
+        raise PublishError(
+            422, f"{doc.path} is made by the hub from {doc.board}, and {error}"
+        ) from error
+    return data
+
+
+def run_documents_build(sources, out_dir, documents, *, pid,
+                        kicad_url) -> BuildOutcome:
     """The build of a tree with no model: its documents and a meta.json.
 
     `out_dir` is the staging directory `Store.build_staging` named; it is
     created here, as a model's build creates its own. `documents` come from
-    `declared_documents`, already checked.
+    `declared_documents`, already checked. `kicad_url` is the KiCad sidecar,
+    for a `.glb` the hub makes.
     """
     started = time.monotonic()
     sources, out_dir = Path(sources), Path(out_dir)
     project, title = project_names(_project(sources), pid)
     out_dir.mkdir()
-    entries, lines = _copy(sources, out_dir, documents)
+    entries, lines = _copy(sources, out_dir, documents, kicad_url)
     meta = {"project": project, "title": title, "kind": DOCUMENTS_KIND,
             "documents": entries}
     (out_dir / BUILD_META_FILE).write_text(
@@ -542,13 +607,15 @@ def run_documents_build(sources, out_dir, documents, *, pid) -> BuildOutcome:
         duration_seconds=time.monotonic() - started)
 
 
-def add_documents(sources, staging, documents, outcome: BuildOutcome) -> BuildOutcome:
+def add_documents(sources, staging, documents, outcome: BuildOutcome, *,
+                  kicad_url) -> BuildOutcome:
     """Put a model's documents beside its successful build. -> the outcome with them.
 
     The model's meta.json gains `documents`, which `render.build_meta` checks
     like any pointer and rebuilds; the files join the outcome's list, which is
     what is hashed and published. A document may not land on anything the
     model's build wrote: that is a 422 naming both, never an overwrite.
+    `kicad_url` is the KiCad sidecar, for a `.glb` the hub makes.
     """
     sources, staging = Path(sources), Path(staging)
     clashes = [path for path in _files(documents) if _occupied(staging, path)]
@@ -566,7 +633,7 @@ def add_documents(sources, staging, documents, outcome: BuildOutcome) -> BuildOu
         return outcome
     if not isinstance(meta, dict):
         return outcome
-    entries, lines = _copy(sources, staging, documents)
+    entries, lines = _copy(sources, staging, documents, kicad_url)
     meta[DOCUMENTS_FIELD] = entries
     meta_path.write_text(json.dumps(meta, indent=1), encoding="utf-8")
     return dataclasses.replace(

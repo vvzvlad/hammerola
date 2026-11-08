@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # so it is a token, not a password; `hammerola login` just stores it.
     edit_token: str = Field(min_length=1)
 
+    # The KiCad sidecar (kicadsvc/, src/kicadcli.py), e.g. http://kicad:8080 on
+    # the stack's internal network: it exports the boards builds place and the
+    # `.glb` documents the hub makes. No default, as the address of a service of
+    # our own (docs/conventions.md).
+    kicad_url: str = Field(min_length=1)
+
     # Listening socket. No default host/port would be hostile: neither depends on
     # the deployment — Traefik reaches the container on the compose network.
     host: str = "0.0.0.0"

@@ -105,6 +105,9 @@ COPY main.py .
 # src/cadbuild/checklib.py and has to sit at /app, because a model is imported with its own
 # directory first on sys.path. See checklib.py's docstring.
 COPY checklib.py .
+# `import kicadboard`, a KiCad board for model.py to place: the same kind of shim, for
+# src/cadbuild/kicadboard.py, at /app for the same reason. See kicadboard.py's docstring.
+COPY kicadboard.py .
 # Provenance only, nothing reads it: it records which of the locked distributions were
 # chosen and why. Copied here rather than in the dependency layer so prose edits are cheap.
 COPY requirements.txt .

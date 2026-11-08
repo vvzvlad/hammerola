@@ -2274,7 +2274,8 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
         extra["workers"] = build_workers
     if build_queue_size is not None:
         extra["queue_size"] = build_queue_size
-    builds = BuildQueue(store, job_store, build_runner=build_runner,
+    builds = BuildQueue(store, job_store, kicad_url=settings.kicad_url,
+                        build_runner=build_runner,
                         compare_runner=compare_runner,
                         inspect_runner=inspect_runner, **extra)
 

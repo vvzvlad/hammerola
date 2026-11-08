@@ -306,7 +306,8 @@ class InspectTask:
 
 
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
-                    baseline: Path | None, distance_cache: Path):
+                    baseline: Path | None, distance_cache: Path,
+                    kicad_url: str | None):
     """The call the worker makes into `run_build`, written down ONCE.
 
     Every test substitutes the builder, so a test binds this expression
@@ -321,10 +322,14 @@ def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
     `distance_cache` is the project's distance cache
     (`store.distance_cache_path`), also a path in the store, which the build
     process opens itself: it is shared by every build of the project.
+
+    `kicad_url` is the KiCad sidecar the build's `kicadboard` asks for a
+    board's exports (the `KICAD_URL` setting).
     """
     return (sources, staging), {"pid": pid, "force": force,
                                 "baseline": baseline,
-                                "distance_cache": distance_cache}
+                                "distance_cache": distance_cache,
+                                "kicad_url": kicad_url}
 
 
 def compare_arguments(old_dir: Path, new_dir: Path, pid: str, *,
@@ -662,11 +667,14 @@ class BuildQueue:
     # `workers` and `queue_size` are for tests only (a one-worker pool with a
     # queue of one makes a full queue observable). Made configurable, they
     # belong in `Settings`.
-    def __init__(self, store, jobs: JobStore, *, build_runner=None,
-                 compare_runner=None, inspect_runner=None,
+    def __init__(self, store, jobs: JobStore, *, kicad_url=None,
+                 build_runner=None, compare_runner=None, inspect_runner=None,
                  workers=MAX_CONCURRENT_BUILDS, queue_size=MAX_QUEUED_JOBS):
         self._store = store
         self._jobs = jobs
+        # The KiCad sidecar (`KICAD_URL`): handed to every build and asked for
+        # each `.glb` the hub makes (`src/docsbuild.py`).
+        self._kicad_url = kicad_url
         # Injected rather than imported at the call site so a test can drive
         # the whole pipeline without CadQuery, a subprocess or a real model —
         # none of which this class is about.
@@ -911,7 +919,8 @@ class BuildQueue:
                 # Files to read, not a model to run: nothing from the tree is
                 # executed, so no build process (`src/docsbuild.py`).
                 outcome = docsbuild.run_documents_build(
-                    task.sources, staging, documents, pid=task.pid)
+                    task.sources, staging, documents, pid=task.pid,
+                    kicad_url=self._kicad_url)
             else:
                 # The names project.json gives the model's views, checked
                 # before the build like the label and the documents.
@@ -924,13 +933,15 @@ class BuildQueue:
                     task.sources, staging, task.pid, force=task.force,
                     baseline=self._store.dev_metrics_path(task.pid,
                                                           task.variant),
-                    distance_cache=self._store.distance_cache_path(task.pid))
+                    distance_cache=self._store.distance_cache_path(task.pid),
+                    kicad_url=self._kicad_url)
                 outcome = self._run_build(*args, **keywords)
                 if outcome.ok:
                     docsbuild.name_views(staging, view_names)
                 if outcome.ok and documents:
                     outcome = docsbuild.add_documents(
-                        task.sources, staging, documents, outcome)
+                        task.sources, staging, documents, outcome,
+                        kicad_url=self._kicad_url)
             if outcome.ok:
                 # The job id goes into meta.json so `hammerola log dev` can read
                 # the build's log back. Both routes fill the slot (a commit
