@@ -485,9 +485,9 @@
   to see a change to the page on real projects before it is deployed
 - `ui/src/address.js` — the page's address and the browser's history, the one
   place history is written or followed: `parse` reads the address on screen whole
-  (the build or comparison of its path, `v=`, `d=`, `s=`, `c=`, `files=`, the
+  (the build or comparison of its path, `v=`, `d=`, `c=`, `files=`, the
   hash and the entry's state), `respell` and `fresh` make the address a write
-  names (the order v, d, s, c, files, `c=` unescaped, a parameter the write
+  names (the order v, d, c, files, `c=` unescaped, a parameter the write
   does not name left where it stands) and `format` joins it into text,
   `navigate` is the only caller of `pushState` and `replaceState`, and its own
   listener the only one on `popstate`, handing the address to the components
@@ -532,8 +532,8 @@
   variant's `builds.json` (behind the token; without one the button is a
   label), its rows `revisionView` in `ui/src/revisionview.js`: on the model's
   page a row swaps the build in place and carries the compare tick and Share,
-  on `DocShell.jsx` a row is a link to the revision's address keeping `d=` and
-  `s=`, a page load, with neither
+  on `DocShell.jsx` a row is a link to the revision's address keeping `d=`, a
+  page load, with neither
 - `ui/src/headmenu.jsx` — the header's menu on a narrow window: a button at
   the right end of the row and a card under it whose rows are the header's
   controls (`headMenu`, `headRow`); `Header.jsx` says which rows, and a page
@@ -604,10 +604,8 @@
   page to open it (`onOpen`) and, once it is on screen, calls
   `requestCrossProbe` on its element with the designator, the net, or the
   place's sheet and occurrence; a step on the view on screen asks its element
-  straight away, and the menu stays open. A change of the schematic's sheet is told to the page as the
-  value of `s=` (`onSheet`), which writes it into the address; the component
-  reads the address and follows Back and Forward through `address.js` and
-  writes no history itself. What is under a right click is the element's own answer
+  straight away, and the menu stays open. The schematic is one plane of all
+  its sheets, and the address names none of them. What is under a right click is the element's own answer
   (`selectAt`), and the menu is built from the selection it reports. The two
   elements are each other's inset peer (`linkInsets`): in inset mode — the
   bar's Insets on the schematic and on the board, or `I` — a pin of the
