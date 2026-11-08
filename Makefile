@@ -292,7 +292,10 @@ ecad: ecad-viewer/node_modules/.package-lock.json ## Build the vendored KiCad vi
 # static/_v/ (its committed assets and what the three targets above build), everything
 # else from the hub at HUB_URL — the environment's, else a plain `HUB_URL=` line in
 # ~/.config/hammerola/env, as `hammerola login` writes it. Listens on
-# 127.0.0.1:$(PROXY_PORT) until stopped.
+# $(PROXY_HOST):$(PROXY_PORT) until stopped; `PROXY_HOST=<the laptop's LAN address>`
+# lets a phone on the same network open it. Not HOST: zsh sets that one itself, and
+# where it is exported the proxy would quietly listen on the home network.
+PROXY_HOST ?= 127.0.0.1
 PROXY_PORT ?= 8794
 .PHONY: proxy
 proxy: ## Serve the hub at HUB_URL locally with this checkout's static/_v/
@@ -302,7 +305,7 @@ proxy: ## Serve the hub at HUB_URL locally with this checkout's static/_v/
 		echo "make proxy: no hub address — set HUB_URL or run 'hammerola login'."; \
 		exit 1; \
 	fi; \
-	exec node ui/hubproxy.mjs "$$hub" $(PROXY_PORT) $(UI_OUT)
+	exec node ui/hubproxy.mjs "$$hub" $(PROXY_PORT) $(UI_OUT) $(PROXY_HOST)
 
 # The JS suite: vitest over ui/tests, in jsdom, covering the GPU-free parts of the
 # `<hmr-viewport>` adapter and the remembered pointer in ui/src/store.js.

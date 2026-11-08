@@ -70,6 +70,20 @@ describe('the local hub proxy', () => {
     expect(await request(port, '/_v/ecad-viewer.js')).toEqual({ status: 200, body: 'the checkout\'s build' })
   })
 
+  it('listens on the address given after the directory, as `make proxy PROXY_HOST=` passes it', async () => {
+    const wide = spawn(process.execPath, [SCRIPT, 'http://127.0.0.1:9', '0', dir, '0.0.0.0'])
+    try {
+      const line = await new Promise((resolve, reject) => {
+        wide.stdout.once('data', (data) => resolve(String(data)))
+        wide.once('exit', (code) => reject(new Error(`the proxy exited with ${code}`)))
+      })
+      expect(line).toMatch(/^http:\/\/0\.0\.0\.0:\d+\//)
+      expect((await request(Number(/:(\d+)\//.exec(line)[1]), '/_v/ecad-viewer.js')).status).toBe(200)
+    } finally {
+      wide.kill()
+    }
+  })
+
   it('takes from the hub a /_v/ file the directory has not, and every other request, its body included', async () => {
     expect((await request(port, '/_v/hammerola.js')).body).toBe('hub GET /_v/hammerola.js')
     expect((await request(port, '/project/p1/latest/?d=x')).body).toBe('hub GET /project/p1/latest/?d=x')

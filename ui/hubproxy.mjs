@@ -4,14 +4,14 @@
 // `make ui`, `make viewer` and `make ecad` build), every other request goes to
 // the hub as it is. The first line it prints is the address it listens on.
 //
-// usage: node ui/hubproxy.mjs <hub url> <port, 0 for any> <static dir>    (`make proxy`)
+// usage: node ui/hubproxy.mjs <hub url> <port, 0 for any> <static dir> [<address, 127.0.0.1>]    (`make proxy`)
 
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 
-const [hubUrl, port, dir] = process.argv.slice(2);
+const [hubUrl, port, dir, host = '127.0.0.1'] = process.argv.slice(2);
 const hub = new URL(hubUrl);
 const root = path.resolve(dir);
 const client = hub.protocol === 'https:' ? https : http;
@@ -49,6 +49,6 @@ const server = http.createServer((req, res) => {
   });
   req.pipe(upstream);
 });
-server.listen(Number(port), '127.0.0.1', () => {
-  console.log(`http://127.0.0.1:${server.address().port}/ -> ${hub.origin}, /_v/ from ${root}`);
+server.listen(Number(port), host, () => {
+  console.log(`http://${host}:${server.address().port}/ -> ${hub.origin}, /_v/ from ${root}`);
 });
