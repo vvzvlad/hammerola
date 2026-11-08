@@ -2,8 +2,8 @@
  * The revision picker: the rows of the card the header's revision button opens
  * (revisions.jsx draws them, Header.jsx asks for them).
  *
- * `s.cmp` is the commits the page's ticks hold, and `s.versionsOnly` keeps the
- * history to its tags while it has any (`toggleVersions()` flips it, Header.jsx
+ * `s.cmp` is the commits the page's ticks hold, and `s.tagsOnly` keeps the
+ * history to its tags while it has any (`toggleTags()` flips it, Header.jsx
  * holds it). The doors are the page's
  * (`headerParts().revisions`): on the model's page `pick(id)` swaps the build
  * in place, `commitOf(name)` resolves a row to the commit its tick holds,
@@ -21,13 +21,13 @@ import { BLANK_BOX, HIDDEN, IDLE, ON_ACCENT_EDGE } from './panelstyle.js';
 import { MONO, SANS } from './style.jsx';
 
 export function revisionView(s, info, deps) {
-  const { stop, commitOf, toggleCmp, pick, share, href, toggleVersions } = deps;
+  const { stop, commitOf, toggleCmp, pick, share, href, toggleTags } = deps;
 
   const builds = Array.isArray(info.builds) ? info.builds : [];
   // A tag is a revision where the project's version changed (`tag` in
-  // builds.json, `Store._tagged`); "Versions only" keeps the history to them.
+  // builds.json, `Store._tagged`); "Tags only" keeps the history to them.
   const tagged = builds.some((b) => b.tag === true);
-  const history = tagged && s.versionsOnly ? builds.filter((b) => b.tag === true) : builds;
+  const history = tagged && s.tagsOnly ? builds.filter((b) => b.tag === true) : builds;
   const revs = [];
   if (info.has_dev) {
     revs.push({ id: 'dev', head: 'POINTERS', badge: '→ dev slot',
@@ -62,11 +62,11 @@ export function revisionView(s, info, deps) {
       key: r.id,
       head: r.head || '',
       headStyle: r.head ? `display:flex;align-items:center;padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : HIDDEN,
-      // "Versions only", at the end of the BUILDS heading, while a row is a
-      // tag: drawn where there is `onVersions`.
-      onVersions: tagged && r.head === 'BUILDS' ? stop(() => toggleVersions()) : undefined,
-      versionsStyle: `margin-left:auto;padding:2px 7px;border-radius:4px;font:500 10.5px ${SANS};letter-spacing:0;cursor:pointer;user-select:none;border:1px solid `
-        + (s.versionsOnly ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);color:var(--text-soft)'),
+      // "Tags only", at the end of the BUILDS heading, while a row is a
+      // tag: drawn where there is `onTags`.
+      onTags: tagged && r.head === 'BUILDS' ? stop(() => toggleTags()) : undefined,
+      tagsStyle: `margin-left:auto;padding:2px 7px;border-radius:4px;font:500 10.5px ${SANS};letter-spacing:0;cursor:pointer;user-select:none;border:1px solid `
+        + (s.tagsOnly ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);color:var(--text-soft)'),
       id: r.pointer ? r.id : shortId(r.id),
       version: r.version || '',
       // Drawn on a tag only, where `version` is not empty.

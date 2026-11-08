@@ -205,7 +205,7 @@ before `git push` run `git pull --no-rebase hammerola-<pid> <branch>`.
 `version.py` beside `project.json` with `version()` returning a string; every
 build runs it in the build process, with the project directory as the working
 directory, and the result becomes the revision's version. The revision where
-the version changes is a tag, and "Versions only" in the revision picker lists
+the version changes is a tag, and "Tags only" in the revision picker lists
 the tags alone. Read the version where the project already keeps it, so nobody
 has to remember to set it — a Wiren Board `ChangeLog`, for instance:
 

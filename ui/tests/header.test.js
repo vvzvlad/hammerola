@@ -324,7 +324,7 @@ describe('the build picker', () => {
 
   const THIRD = 'c'.repeat(64)
 
-  it('keeps the pointers and the tags alone with Versions only', () => {
+  it('keeps the pointers and the tags alone with Tags only', () => {
     // The newest revision has the version of the tag below it, so it is no
     // tag: hidden, the BUILDS heading goes to the first row left.
     const h = headerOn(component({
@@ -340,18 +340,18 @@ describe('the build picker', () => {
     expect(shown()).toEqual([['dev', 'POINTERS', ''], ['latest', '', ''],
       [OTHER, 'BUILDS', ''], [REV, '', '1.1'], [THIRD, '', '1.0']])
 
-    h.view().revRows.find((r) => r.onVersions).onVersions({ stopPropagation() {} })
+    h.view().revRows.find((r) => r.onTags).onTags({ stopPropagation() {} })
 
     expect(shown()).toEqual([['dev', 'POINTERS', ''], ['latest', '', ''],
       [REV, 'BUILDS', '1.1'], [THIRD, '', '1.0']])
   })
 
-  it('offers no Versions only where no revision is a tag', () => {
+  it('offers no Tags only where no revision is a tag', () => {
     const v = head(component({
       builds: { has_dev: false, latest: null,
                 builds: [{ commit: REV, built: '2026-08-27T18:20:00Z', version: '1.0' }] },
     }))
-    expect(v.revRows.some((r) => r.onVersions)).toBe(false)
+    expect(v.revRows.some((r) => r.onTags)).toBe(false)
     expect(v.revRows[0].version).toBe('')
   })
 })
