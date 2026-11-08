@@ -66,8 +66,9 @@ services:
       # comment queue). The public pages have no read-side auth. The same value goes to
       # whatever publishes here: a model repository's CI secret and `hammerola login`.
       EDIT_TOKEN: XXX
-      # The KiCad sidecar below, by its service name on the `kicad` network. Required: it
-      # exports the boards builds place and the `.glb` documents the hub makes.
+      # The KiCad sidecar below, by its service name on the `kicad` network. Optional: it
+      # exports the boards builds place and the `.glb` documents the hub makes; without it
+      # only a model that loads a board, or a listed `.glb` the tree does not hold, fails.
       KICAD_URL: http://kicad:8080
       # Everything below has a default in src/settings.py and is spelled out here
       # only where a different value is wanted. DATA_DIR must match the mount

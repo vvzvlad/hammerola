@@ -43,7 +43,9 @@ A `.glb` whose path minus the extension is a board in the tree
 (`<stem>.kicad_pcb`) is made by the hub from that board on every build
 (`_make_glb`, through the KiCad sidecar, `src/kicadcli.py`), so the tree may not
 hold it: one that does refuses the push. A `.glb` with no board beside it is
-published as it was pushed.
+published as it was pushed, and so is one beside a board on a hub without its
+KiCad sidecar (`KICAD_URL` unset), where a `.glb` the tree lacks refuses the
+push.
 
 What the tree holds decides the build (`jobs._build_and_publish`):
 
@@ -235,13 +237,14 @@ def has_model(sources) -> bool:
             or (sources / MODEL_PACKAGE).is_dir())
 
 
-def declared_documents(sources) -> tuple:
+def declared_documents(sources, kicad_url=None) -> tuple:
     """The documents project.json lists under `documents`, checked against the tree.
 
     A tuple of `Document`, () when it lists none. Raises PublishError(422)
     naming every entry that cannot be published, before a model's build is
     spent on the push. A DXF's picture is drawn here (`_draw_dxf`), so a DXF
-    that cannot be drawn is among them.
+    that cannot be drawn is among them. `kicad_url` is the KiCad sidecar, None
+    on a hub without one, which makes no `.glb`.
     """
     sources = Path(sources)
     listed = _project(sources).get(DOCUMENTS_FIELD)
@@ -262,7 +265,9 @@ def declared_documents(sources) -> tuple:
     for item in listed:
         path, title, hidden, download, reason = _entry(item)
         board = None if reason is not None else _board_of(sources, path)
-        if reason is None:
+        if reason is None and board and kicad_url is None:
+            reason, board = _not_made_here(sources, path, board), None
+        elif reason is None:
             reason = (_made_by_the_hub(sources, path, board) if board
                       else _unpublishable(sources, path))
         if reason is None and path in seen.values():
@@ -402,6 +407,17 @@ def _made_by_the_hub(sources: Path, path: str, board: str) -> str | None:
     if target.exists() or target.is_symlink():
         return f"is made by the hub from {board!r}; remove it from the tree"
     return _unservable(path)
+
+
+def _not_made_here(sources: Path, path: str, board: str) -> str | None:
+    """Why the `.glb` at `path` beside `board` cannot be published on a hub
+    without its KiCad sidecar, or None: the tree's own copy is published."""
+    target = sources / path
+    if not target.exists() and not target.is_symlink():
+        return (f"is made from {board!r} by the hub's KiCad service, and this "
+                f"hub runs without one ({kicadcli.URL_ENV} is not set), so the "
+                f".glb has to be exported from the board and committed")
+    return _unpublishable(sources, path)
 
 
 def _kicad_schematic(sources: Path, root: str) -> tuple:

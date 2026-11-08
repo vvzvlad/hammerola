@@ -117,9 +117,10 @@ APP_UID = 1000
 GUARD_FRAGMENT = "Missing required variable(s)"
 # EVERY field src/settings.py declares with no default, spelled the way config_errors.py prints
 # it: the environment variable name in SCREAMING_CASE. Keep in step with src/settings.py.
-# Two entries, so check (b) proves the guard names every missing key and not just the first;
-# the declared count follows from the list.
-REQUIRED_VARIABLES = ["EDIT_TOKEN", "KICAD_URL"]
+# With a single entry, check (b) cannot prove the guard names every missing key, not just the
+# first; tests/test_config_errors.py covers that. A second entry here restores it, and the
+# declared count follows automatically.
+REQUIRED_VARIABLES = ["EDIT_TOKEN"]
 
 # Paths that must NOT be inside the image. .dockerignore excludes them; the Dockerfile also
 # copies files one by one, so this is defence in depth against a widened COPY.
@@ -710,14 +711,12 @@ EXPECTED_TARGETS = (
     ("(j) git server", len(GIT_TARGETS)),
 )
 
-# The environment the probe and real-command containers run with. The values are invented and
-# reach nothing, so the gate runs on pull requests too; EDIT_TOKEN is only compared for
-# equality, so any non-empty string starts the image. Check (j) presents it. KICAD_URL is
-# only dialled by a build or a document that asks for a board, which no check here makes.
+# The environment the probe and real-command containers run with. The value is invented and
+# reaches nothing, so the gate runs on pull requests too; EDIT_TOKEN is only compared for
+# equality, so any non-empty string starts the image. Check (j) presents it.
 SMOKE_TOKEN = "fake-smoke-token-not-real-0123456789abc"
 SMOKE_ENV = [
     "EDIT_TOKEN=" + SMOKE_TOKEN,
-    "KICAD_URL=http://kicad.invalid:8080",
 ]
 
 # The command the probe container runs instead of the image's own. It still goes through

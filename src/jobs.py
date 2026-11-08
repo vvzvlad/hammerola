@@ -919,7 +919,8 @@ class BuildQueue:
             # checked before anything runs: a wrong one is a 422 now rather
             # than after a model's build.
             label = docsbuild.variant_label(task.sources)
-            documents = docsbuild.declared_documents(task.sources)
+            documents = docsbuild.declared_documents(
+                task.sources, kicad_url=self._kicad_url)
             # The tree's version.py is project code, so it runs in a process
             # of its own (`run_version`), and before the build: a version.py
             # that fails costs no build and publishes nothing.

@@ -51,7 +51,8 @@ that `.kicad_pro` turns them on: `"schematic": {"drawing": {"intersheets_ref_sho
 true}}`. KiCad leaves them off, so a `.kicad_pro` written by a script has them off
 unless it writes that key. The `.glb` is made by the hub, from the board of the same
 name, on every push: list it, do not commit it — a listed `.glb` that the tree also
-holds beside a board of its name refuses the push. The export is `kicad-cli pcb export glb --subst-models
+holds beside a board of its name refuses the push. A hub run without its KiCad
+service publishes a committed `.glb` as it is and refuses a listed one the tree lacks. The export is `kicad-cli pcb export glb --subst-models
 --include-silkscreen --include-soldermask --no-dnp` (about 10 MB for a 235-part board);
 a `.glb` with no board of its name beside it is published as committed. It carries no
 tracks, pads or zones: the hub draws the copper in 3D itself, from the `.kicad_pcb` with
@@ -92,7 +93,9 @@ download the whole editable design.
 A board of the project goes into the model — an enclosure round it, a stack of boards —
 through `import kicadboard`. The hub exports the board from the `.kicad_pcb` on every
 build, so a commit that changes the board rebuilds the model with the new board in it;
-nothing is exported by hand and nothing exported is committed.
+nothing is exported by hand and nothing exported is committed. A hub run without its
+KiCad service fails such a build and says so; a model that does not load a board
+builds there as anywhere.
 
 ```python
 import cadquery as cq

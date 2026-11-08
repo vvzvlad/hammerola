@@ -8,7 +8,6 @@ KiCad put each part, and the KiCad file's own track ends for the pads.
 
 import contextlib
 import io
-import os
 import re
 import shutil
 
@@ -36,17 +35,15 @@ def loaded(tmp_path_factory):
     root = tmp_path_factory.mktemp("project")
     (root / "kicad").mkdir()
     shutil.copyfile(BOARD, root / PATH)
-    saved = os.environ[URL_ENV]
     log = io.StringIO()
-    with KicadStub(ANSWERS) as stub:
-        os.environ[URL_ENV] = stub.url
+    with KicadStub(ANSWERS) as stub, pytest.MonkeyPatch.context() as patch:
+        patch.setenv(URL_ENV, stub.url)
         paths.set_project_root(root)
         try:
             with contextlib.redirect_stdout(log):
                 board = kicadboard.load(PATH)
         finally:
             paths.set_project_root(None)
-            os.environ[URL_ENV] = saved
     return board, stub.requests, log.getvalue()
 
 
@@ -84,6 +81,7 @@ def test_the_two_exports_run_side_by_side(tmp_path, monkeypatch):
         raise kicadcli.KicadError(f"{fmt} stops here")
 
     monkeypatch.setattr(kicadcli, "export_cached", export)
+    monkeypatch.setenv(URL_ENV, "http://kicad.invalid:8080")
     paths.set_project_root(tmp_path)
     try:
         with pytest.raises(BuildError, match="stops here"):
@@ -94,13 +92,12 @@ def test_the_two_exports_run_side_by_side(tmp_path, monkeypatch):
 
 
 def test_without_kicad_url_the_build_is_told_who_exports_boards(monkeypatch):
-    monkeypatch.delenv(URL_ENV)
+    monkeypatch.delenv(URL_ENV, raising=False)
     with pytest.raises(BuildError) as caught:
         kicadboard.load(PATH)
-    message = str(caught.value)
-    assert message.startswith(f"kicadboard: {PATH}: a board is exported by the hub's "
-                              f"KiCad service, whose address is KICAD_URL"), message
-    assert "KICAD_URL is not set here" in message
+    assert str(caught.value) == (
+        f"kicadboard: {PATH}: a board is exported by the hub's KiCad service, "
+        f"and none is configured here (KICAD_URL is not set)")
 
 
 def test_the_frame_is_kicads_step_frame(loaded):

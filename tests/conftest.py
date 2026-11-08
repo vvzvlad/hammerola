@@ -23,9 +23,6 @@ import threading
 #
 # One line, because there is one secret for the whole system.
 os.environ.setdefault("EDIT_TOKEN", "test-token")
-# The KiCad sidecar's address, required the same way and no secret. Nothing answers
-# here: a test that exports a board starts its own (tests/kicadstub.py).
-os.environ.setdefault("KICAD_URL", "http://kicad.invalid:8080")
 
 import pytest  # noqa: E402  (must come after the env assignment above)
 
