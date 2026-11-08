@@ -30,7 +30,7 @@ IPC, pcbnew Python on a closed file, `.kicad_dru` as text), defined in `referenc
   `preflight_conflict`. On macOS, with no KiCad running, open the board in a standalone PCB
   editor instead: `open -a /Applications/KiCad/KiCad.app/Contents/Applications/pcbnew.app
   <board>.kicad_pcb`. Being the first KiCad process, it listens on `/tmp/kicad/api.sock`;
-  confirm with `open_project` (it lists the board) and an IPC dry run.
+  confirm that `open_project` lists the board.
 
 ### Project settings and rules
 
