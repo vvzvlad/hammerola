@@ -387,9 +387,9 @@ These replace kicad-pcb rules 1, 5 and 10 and add rules 11 and 12.
 
 Prerequisites, "If connection fails" — the first bullet reads:
 
-- Open KiCad yourself: `check_kicad_ui`, then `launch_kicad_ui` with the project, then
-  open the board in that instance's PCB editor (macOS keystroke in copperpour-gaps.md).
-  Confirm with an IPC dry run. Ask the user only if this fails.
+- Open KiCad yourself: `check_kicad_ui`, then open the board in a standalone PCB editor
+  (macOS command in copperpour-gaps.md). Confirm with an IPC dry run. Ask the user only if
+  this fails.
 
 Layout Order, steps 4, 6 and 7 and the note under the list:
 

@@ -27,9 +27,10 @@ IPC, pcbnew Python on a closed file, `.kicad_dru` as text), defined in `referenc
   instance run `copperpour --config <private.toml>` with its `ipc_address`; check
   `ipc.endpoint` in `get_installation_info` and the open board's path before the first write.
 - `launch_kicad_ui` opens only the project manager; a board dry run then fails with
-  `preflight_conflict`. On macOS open its PCB editor with
-  `osascript -e 'tell application "KiCad" to activate' -e 'delay 1' -e 'tell application "System Events" to keystroke "p" using command down'`
-  and confirm with an IPC dry run.
+  `preflight_conflict`. On macOS, with no KiCad running, open the board in a standalone PCB
+  editor instead: `open -a /Applications/KiCad/KiCad.app/Contents/Applications/pcbnew.app
+  <board>.kicad_pcb`. Being the first KiCad process, it listens on `/tmp/kicad/api.sock`;
+  confirm with `open_project` (it lists the board) and an IPC dry run.
 
 ### Project settings and rules
 
