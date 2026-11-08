@@ -63,9 +63,11 @@
 // (PcbPanel.jsx) and folding as it does, comes with our copper: the lit net's
 // name and a × that puts it out, Isolate (only that net's copper drawn, the
 // board and the parts hidden; usable while a net is lit, and off again when it
-// goes out) and Stackup separation (board3dcopper.js: the copper layers pulled
-// apart, the parts and the board faded, the layers in their colours on the
-// board's panel).
+// goes out) and Stackup separation, a checkbox (board3dcopper.js: the copper
+// layers pulled apart, the parts and the board faded, the layers in their
+// colours on the board's panel). Its slider shows only while it is ticked,
+// from the middle the first time and from where it was left after that, and
+// unticked the board is drawn whole.
 //
 // THE BOARD'S INSETS SHOW IT IN 3D. `scene3d` is the `InsetScene3D` of the
 // board element's insets (ecad-viewer/…/insets/types.ts), which KicadView.jsx
@@ -90,7 +92,7 @@ import {
 import { wheelMove } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
 import {
-  FILL, LAYER_PANEL, LAYER_PANEL_BODY, LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, TAB_ON,
+  CHECK, FILL, LAYER_PANEL, LAYER_PANEL_BODY, LAYER_PANEL_HEAD, LAYER_PILL, LAYER_PILLS, TAB_ON,
 } from './panelstyle.js';
 import { CHEVRON, NET_LABEL, NET_NAME } from './PcbPanel.jsx';
 import { css, MONO } from './style.jsx';
@@ -108,7 +110,7 @@ const NOTE = `position:absolute;top:0;left:0;padding:24px 28px;font:400 12.5px $
 const NET_CLEAR = 'flex:none;padding:0 2px;font:400 14px/1 system-ui;color:var(--text-muted);cursor:pointer';
 const PILL_OFF = ';opacity:.4;cursor:default';
 const SEPARATION = 'flex:none;display:flex;flex-direction:column;gap:4px;padding:8px 10px 8px';
-const SEPARATION_HEAD = 'display:flex;align-items:center;color:var(--text-soft)';
+const SEPARATION_HEAD = 'display:flex;align-items:center;gap:6px;color:var(--text-soft);cursor:pointer;user-select:none';
 const SEPARATION_VALUE = `margin-left:auto;font:400 10.5px ${MONO};color:var(--text-muted)`;
 const SEPARATION_INPUT = 'width:100%;margin:0;accent-color:var(--accent)';
 
@@ -165,6 +167,7 @@ class Stage {
     this.copper = null;
     this.copperLook = { net: null, isolate: false, separation: 0 };
     this.looked = '';
+    this.themed = null;
 
     this.scene = new THREE.Scene();
     this.scene.add(this.model);
@@ -410,6 +413,10 @@ class Stage {
     this.copper = copperModel(this.THREE, copper, copper.colours);
     this.root.add(this.copper.group);
     for (const node of this.glb.copper) node.visible = false;
+    // The copper a lit net leaves out fades into the canvas's colour, which
+    // the theme sets, so a change of theme reads it again (`tint`).
+    this.themed = new MutationObserver(() => this.tint());
+    this.themed.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     this.looked = '';
     this.setLook(this.copperLook);
   }
@@ -427,6 +434,7 @@ class Stage {
     copper.shared.litNet.value = code > 0 ? code : -1;
     copper.shared.isolate.value = isolate;
     copper.shared.accent.value.setStyle(window.getComputedStyle(this.host).color);
+    this.tint();
     const parted = separationLook(look.separation);
     place(stackOffsets(look.separation, copper.diagonal, copper.layers.length), copper.layers, copper.barrels);
     for (const layer of copper.layers) {
@@ -438,6 +446,15 @@ class Stage {
     fade(this.glb.board, isolate ? 0 : parted.board);
     this.request();
     return true;
+  }
+
+  /** The canvas's colour (`--canvas-bg` on the shell) for the copper a lit
+   *  net leaves out to fade into, in sRGB as the shader mixes it. */
+  tint() {
+    if (!this.copper) return;
+    this.copper.shared.dimTo.value.setStyle(window.getComputedStyle(this.host.parentNode).backgroundColor)
+      .convertLinearToSRGB();
+    this.request();
   }
 
   /**
@@ -555,6 +572,7 @@ class Stage {
   dispose() {
     if (this.frame) cancelAnimationFrame(this.frame);
     if (this.observer) this.observer.disconnect();
+    if (this.themed) this.themed.disconnect();
     this.host.removeEventListener('wheel', this.onWheel, true);
     this.controls.dispose();
     this.kit.dispose();
@@ -570,10 +588,12 @@ export default class BoardView3D extends React.Component {
   constructor(props) {
     super(props);
     // `received`: the bytes of the `.glb` in so far; `got`: all of them, the
-    // model being built. `copper`: our copper drawn; `open`, `isolate` and
-    // `separation`: the panel's fold and its two controls.
+    // model being built. `copper`: our copper drawn; `open`, `isolate`,
+    // `stacked` and `separation`: the panel's fold, Isolate, the Stackup
+    // separation checkbox and its slider, at its middle until moved, so the
+    // first tick parts the stack.
     this.state = { loading: false, error: '', received: 0, got: false, copper: false, open: true, isolate: false,
-      separation: 0 };
+      stacked: false, separation: 0.5 };
     this.host = null;
     this.stage = null;
     this.setHost = (element) => {
@@ -601,6 +621,7 @@ export default class BoardView3D extends React.Component {
     this.onIsolate = () => {
       if (this.props.net) this.setState({ isolate: !this.state.isolate });
     };
+    this.onStacked = () => this.setState({ stacked: !this.state.stacked });
     this.onSeparation = (event) => this.setState({ separation: Number(event.target.value) });
     this.onClear = (event) => {
       event.stopPropagation();
@@ -641,8 +662,8 @@ export default class BoardView3D extends React.Component {
       }
     }
     this.stage.select(selected || null, true);
-    const { isolate, separation } = this.state;
-    this.stage.setLook({ net: this.props.net || null, isolate, separation });
+    const { isolate, stacked, separation } = this.state;
+    this.stage.setLook({ net: this.props.net || null, isolate, separation: stacked ? separation : 0 });
     if (active !== prev.active) this.stage.setActive(active);
     this.comments();
     this.tellInsets();
@@ -733,7 +754,7 @@ export default class BoardView3D extends React.Component {
   }
 
   render() {
-    const { loading, error, received, got, copper, open, isolate, separation } = this.state;
+    const { loading, error, received, got, copper, open, isolate, stacked, separation } = this.state;
     const { net } = this.props;
     const note = error ? <div style={css(NOTE)}>{error}</div> : loading && loadBar(received, this.props.bytes, got);
     return (
@@ -757,14 +778,18 @@ export default class BoardView3D extends React.Component {
                        style={css(LAYER_PILL + (isolate ? `;${TAB_ON}` : '') + (net ? '' : PILL_OFF))}
                        onClick={this.onIsolate}>Isolate</div>
                 </div>
-                <label title="How far apart the copper layers stand" style={css(SEPARATION)}>
-                  <span style={css(SEPARATION_HEAD)}>
+                <div style={css(SEPARATION)}>
+                  <label title="Pull the copper layers apart" style={css(SEPARATION_HEAD)}>
+                    <input type="checkbox" data-stacked checked={stacked} onChange={this.onStacked}
+                           style={css(CHECK)} />
                     Stackup separation
-                    <span style={css(SEPARATION_VALUE)}>{`${Math.round(separation * 100)}%`}</span>
-                  </span>
-                  <input type="range" min="0" max="1" step="0.01" value={separation} onChange={this.onSeparation}
-                         style={css(SEPARATION_INPUT)} />
-                </label>
+                    {stacked && <span style={css(SEPARATION_VALUE)}>{`${Math.round(separation * 100)}%`}</span>}
+                  </label>
+                  {stacked && (
+                    <input type="range" min="0" max="1" step="0.01" value={separation} onChange={this.onSeparation}
+                           title="How far apart the copper layers stand" style={css(SEPARATION_INPUT)} />
+                  )}
+                </div>
               </div>
             )}
           </div>

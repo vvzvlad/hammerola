@@ -77,7 +77,7 @@ import {
   NO_FILTER, nextSort, partLooks, pictureSize, sumText,
 } from './kicadbom.js';
 import { datasheetDocument } from './kicadsheets.js';
-import { btn, OFF, ON_ACCENT_EDGE, SEGMENTED, SUNKEN } from './panelstyle.js';
+import { btn, CHECK, OFF, ON_ACCENT_EDGE, SEGMENTED, SUNKEN } from './panelstyle.js';
 import { readAssembly, writeAssembly } from './store.js';
 import { css, MONO, SANS } from './style.jsx';
 
@@ -107,7 +107,6 @@ const FIELD = `box-sizing:border-box;height:30px;padding:0 10px;border-radius:6p
   + `font:400 12.5px ${SANS};color:var(--text);${SUNKEN}`;
 const SEARCH = `width:220px;max-width:100%;${FIELD}`;
 const GROUP = `display:flex;align-items:center;gap:6px;font:500 12px ${SANS};color:var(--text-soft);cursor:pointer;user-select:none`;
-const CHECK = 'margin:0;flex:none;accent-color:var(--accent)';
 const COUNT = `margin-left:auto;padding-left:10px;font:400 11px ${MONO};color:var(--text-faint)`;
 // The table as a markdown document's is drawn (docmd.js), in a box that
 // scrolls it sideways, centred in the block where the controls are wider.

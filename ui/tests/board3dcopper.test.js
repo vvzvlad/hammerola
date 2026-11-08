@@ -70,12 +70,12 @@ describe('the stackup separation', () => {
     expect(stackOffsets(0.5, 1000, 2)).toEqual([3.125, -3.125])
   })
 
-  it('hides the parts by a tenth, thins the board to 28% and colours the layers by a quarter', () => {
+  it('hides the parts by a tenth, and thins the board to 15% and colours the layers by a quarter', () => {
     expect(separationLook(0)).toEqual({ parts: 1, board: 1, layers: 0 })
     expect(separationLook(0.05)).toMatchObject({ parts: 0.5, layers: 0.2 })
     expect(separationLook(0.1).parts).toBe(0)
-    expect(separationLook(0.25).layers).toBe(1)
-    expect(separationLook(1).board).toBeCloseTo(0.28, 9)
+    expect(separationLook(0.25)).toMatchObject({ layers: 1, board: expect.closeTo(0.15, 9) })
+    expect(separationLook(1).board).toBeCloseTo(0.15, 9)
   })
 })
 

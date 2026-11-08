@@ -26,12 +26,13 @@
 // (`holeMask`) the sheets' shader discards over.
 //
 // HOW IT LOOKS is a uniform or two of one shader (`copperMaterial`): the lit net
-// in the selection colour, the other copper dimmed toward grey (Prism's
-// `litNormal`), and with Isolate only the lit net's copper drawn. Stackup
-// separation (`stackOffsets`, `separationLook`) is Prism's 3D tab's: the layers
-// pulled apart in height, the parts gone by a tenth of the slider, the board
-// thinned to 28% at its end, the copper turned to the colours of its layers by a
-// quarter, the barrels stretched between their layers.
+// in the selection colour, the other copper all but faded into the canvas's
+// colour (`DIM`), and with Isolate only the lit net's copper drawn. Stackup
+// separation (`stackOffsets`, `separationLook`) follows Prism's 3D tab: the
+// layers pulled apart in height, the parts gone by a tenth of the slider, the
+// copper turned to the colours of its layers by a quarter, the barrels
+// stretched between their layers; the board, unlike Prism's 28% at the end,
+// thinned to 15% by a quarter.
 
 /** What KiCad's 3D export makes copper of (`STEP_PCB_MODEL`'s copper colour,
  *  the `_copper` material of every `.glb` it writes): linear RGB and the
@@ -39,9 +40,11 @@
  *  board, the `.glb` having copper or not. */
 export const COPPER = { colour: [0.7, 0.61, 0], metalness: 1, roughness: 0.4 };
 
-/** What a lit net dims the rest of the copper toward, and by how much
- *  (Prism's `litNormal`). */
-export const DIM = { colour: [0.12, 0.14, 0.17], amount: 0.58 };
+/** How much of the canvas's colour the copper a lit net leaves out is drawn
+ *  in: the canvas is light or dark by the theme, so a fixed colour to dim
+ *  toward would stand out on one of them. Mixed in the screen's sRGB, so the
+ *  copper keeps the same tenth of its contrast on either canvas. */
+export const DIM = 0.9;
 
 /** The kinds of a layer of the board KiCad's `.glb` names at the end of its
  *  mesh's name (`<board>_copper`, kicad-cli 10). */
@@ -89,11 +92,13 @@ export function stackOffsets(s, diagonal, count) {
   return Array.from({ length: count }, (_, i) => (middle - i) * gap);
 }
 
-/** What separation `s` does to the rest of the board (Prism's frame inputs):
- *  `parts`, the parts' opacity, gone by 0.1; `board`, the board's, 1 − 0.72·s;
- *  `layers`, how far the copper has turned to its layers' colours, fully by
- *  0.25. */
-export const separationLook = (s) => ({ parts: clamp01(1 - s / 0.1), board: 1 - 0.72 * s, layers: clamp01(s / 0.25) });
+/** What separation `s` does to the rest of the board: `parts`, the parts'
+ *  opacity, gone by 0.1, and `layers`, how far the copper has turned to its
+ *  layers' colours, fully by 0.25 (Prism's frame inputs); `board`, the
+ *  board's, down to 0.15 by 0.25 rather than Prism's 0.28 at 1, so every
+ *  layer's copper shows through it. */
+export const separationLook = (s) => ({ parts: clamp01(1 - s / 0.1), board: 1 - 0.85 * clamp01(s / 0.25),
+  layers: clamp01(s / 0.25) });
 
 /**
  * Draw `nodes` at `amount` of their own opacity, hidden at 0 (and so not
@@ -189,7 +194,9 @@ export function holeMask(copper, box) {
  * The shader of our copper: three's standard material with a net index on
  * every vertex (`netIndex`) and the uniforms `shared` holds, one object for
  * every layer's material: `litNet`, the lit net's code or −1; `isolate`, only
- * that net drawn; `accent`, the selection colour it is lit in; `holeMap` and
+ * that net drawn; `accent`, the selection colour it is lit in; `dimTo`, the
+ * canvas's colour in sRGB, which the rest of the copper fades into (`DIM`);
+ * `holeMap` and
  * `holeBox`, the drills' mask (`holeMask`) as a texture and where it lies,
  * which a sheet (`holed`) is discarded over. The lit net takes no metal, so
  * the colour reads as it is, and glows a little, as a lit part does (board3d.js,
@@ -215,17 +222,24 @@ export function copperMaterial(THREE, shared, colour, holed) {
         + '  gl_Position = projectionMatrix * mvPosition;\n}');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', 'uniform float litNet;\nuniform bool isolate;\nuniform vec3 accent;\n'
-        + 'uniform sampler2D holeMap;\nuniform vec4 holeBox;\nvarying float vNet;\nvarying vec2 vBoard;\n#include <common>')
+        + 'uniform vec3 dimTo;\nuniform sampler2D holeMap;\nuniform vec4 holeBox;\nvarying float vNet;\nvarying vec2 vBoard;\n'
+        + '#include <common>')
       .replace('#include <color_fragment>', '#include <color_fragment>\n'
         + '#ifdef BOARD3D_HOLES\n'
         + 'if ( texture2D( holeMap, ( vBoard - holeBox.xy ) * holeBox.zw ).r > 0.5 ) discard;\n'
         + '#endif\n'
         + 'bool lit = litNet >= 0.0 && abs( vNet - litNet ) < 0.5;\n'
         + 'if ( isolate && ! lit ) discard;\n'
-        + `if ( litNet >= 0.0 ) diffuseColor.rgb = lit ? accent : mix( diffuseColor.rgb, vec3( ${DIM.colour.join(', ')} ), ${DIM.amount} );`)
+        + 'if ( lit ) diffuseColor.rgb = accent;')
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nif ( lit ) metalnessFactor = 0.0;')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n'
-        + 'if ( lit ) totalEmissiveRadiance += accent * 0.3;');
+        + 'if ( lit ) totalEmissiveRadiance += accent * 0.3;')
+      // After the light and the conversion to the screen's sRGB, which
+      // `dimTo` is in: mixed in linear light, the copper would keep about
+      // three times as much of its contrast on the dark canvas as on the
+      // light one.
+      .replace('#include <colorspace_fragment>', '#include <colorspace_fragment>\n'
+        + `if ( litNet >= 0.0 && ! lit ) gl_FragColor.rgb = mix( gl_FragColor.rgb, dimTo, ${DIM.toFixed(2)} );`);
   };
   material.customProgramCacheKey = () => (holed ? 'board3d-copper-holed' : 'board3d-copper');
   return material;
@@ -267,7 +281,7 @@ export function copperModel(THREE, copper, colours) {
   Object.assign(holeMap, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false,
     unpackAlignment: 1, needsUpdate: true });
   const shared = { litNet: { value: -1 }, isolate: { value: false }, accent: { value: new THREE.Color() },
-    holeMap: { value: holeMap },
+    dimTo: { value: new THREE.Color() }, holeMap: { value: holeMap },
     holeBox: { value: new THREE.Vector4(mask.x0, mask.y0, 1 / (mask.width * mask.texel), 1 / (mask.height * mask.texel)) } };
   const group = new THREE.Group();
   const count = copper.layers.length;
