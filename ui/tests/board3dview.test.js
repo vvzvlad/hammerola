@@ -30,7 +30,7 @@ import { loadThree, TRACKBALL_URL } from '../src/board3d.js'
 import { VIEWER_MODULE_URL } from '../src/viewport/library.js'
 import { PIN_PX } from '../src/viewport/options.js'
 import { drained, runFrames, stubFrames } from './component.js'
-import { texts } from './eltree.js'
+import { collect, texts } from './eltree.js'
 
 /** Every renderer the view made. */
 let renderers = []
@@ -119,6 +119,11 @@ function mounted(props) {
   view.setState = (patch) => Object.assign(view.state, patch)
   const host = document.createElement('div')
   host.style.color = 'rgb(0, 102, 204)'
+  // the shell the view renders the holder into, whose colour the copper a lit
+  // net leaves out fades into
+  const shell = document.createElement('div')
+  shell.style.background = 'rgb(255, 255, 255)'
+  shell.append(host)
   view.setHost(host)
   view.componentDidMount()
   const update = (patch) => {
@@ -537,6 +542,36 @@ describe('the board\'s copper in the 3D view', () => {
     expect(view.state.isolate).toBe(false)
     update({ net: 'A' })
     expect(view.stage.copper.shared.isolate.value).toBe(false)
+  })
+
+  it('separates the layers only while Stackup separation is ticked, its slider shown only then', async () => {
+    // two layers, F.Cu over B.Cu, so the separation has something to part
+    const two = { ...COPPER, layers: [...COPPER.layers, { ...COPPER.layers[0], name: 'B.Cu', bottom: -0.035, top: 0 }],
+      colours: { ...COPPER.colours, 'B.Cu': 'rgb(40, 60, 200)' } }
+    const { view, update } = await loaded({ copper: () => two })
+    const drawn = (take) => collect(view.render(), (el) => (take(el.props) ? el : undefined))
+    const tick = () => {
+      drawn((props) => props['data-stacked'])[0].props.onChange()
+      update({})
+    }
+    const slider = () => drawn((props) => props.type === 'range').map((el) => el.props.value)
+    const raised = () => view.stage.copper.layers[0].mesh.position.y
+    // unticked: no slider, the board drawn whole
+    expect([drawn((props) => props['data-stacked'])[0].props.checked, slider(), raised()]).toEqual([false, [], 0])
+    // the first tick parts the stack from the slider's middle
+    tick()
+    expect(drawn((props) => props['data-stacked'])[0].props.checked).toBe(true)
+    expect(slider()).toEqual([0.5])
+    const half = raised()
+    expect(half).toBeGreaterThan(0)
+    // moved, unticked: the board whole again, and the slider's place kept for the next tick
+    drawn((props) => props.type === 'range')[0].props.onChange({ target: { value: '1' } })
+    update({})
+    expect(raised()).toBeGreaterThan(half)
+    tick()
+    expect([slider(), raised()]).toEqual([[], 0])
+    tick()
+    expect(slider()).toEqual([1])
   })
 })
 

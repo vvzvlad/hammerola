@@ -183,6 +183,8 @@ export const SEGMENTED = 'display:flex;background:var(--chip-bg);border-radius:6
 export const QUIET_BTN = `display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;font:500 12px ${SANS};color:var(--text-soft);cursor:pointer;border:1px solid transparent`;
 export const HALF_BTN = `flex:1;padding:6px;text-align:center;border:1px solid var(--line);border-radius:5px;font:500 11px ${MONO};color:var(--text-soft);cursor:pointer;background:var(--card-bg)`;
 export const ACCENT_BTN = `padding:6px 14px;background:var(--accent);color:var(--text-on-accent);border-radius:6px;font:600 11.5px ${SANS};cursor:pointer`;
+/** A native checkbox in the accent colour, beside its label in a row. */
+export const CHECK = 'margin:0;flex:none;accent-color:var(--accent)';
 
 /* -- type */
 export const WORDMARK = `font:700 14px ${SANS};letter-spacing:-.2px`;
