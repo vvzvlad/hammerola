@@ -174,9 +174,10 @@ export function rowMenu(s, deps) {
       // same selection reason; the toast differs (see `armedSaid`).
       //
       // Withheld from:
-      // - a group: `selectedPaths` keeps a group as its own path, which the
-      //   library registers as a bare `Group` with no mesh, so `partCentre` is
-      //   null and no manipulator appears;
+      // - a group: while Move is in hand `selectedPaths` keeps a group, `whole`
+      //   or not, as its own path, which the library registers as a bare
+      //   `Group` with no mesh, so `partCentre` is null and no manipulator
+      //   appears;
       // - a viewer: both kinds of drag end in the proposal document, which is
       //   behind the token;
       // - narrow: the toolbar drops every tool at that width and the crossing

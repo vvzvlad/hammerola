@@ -40,7 +40,10 @@ holds the leaf names apart (see `_mesh_leaf`).
 A group -- `{"group": "housing", "parts": [...]}`, nested to `MAX_VIEW_DEPTH`
 and REFUSED past it -- is presentation and nothing else: it is the author's own
 structure, not a classification by kind, and no gate can see it. Every gate
-reads the flat list of leaves.
+reads the flat list of leaves. `"whole": True` on a group makes the scene treat
+it as one object -- a click on any part inside selects the group, and Hide,
+Isolate and Translucent take all of it -- while the tree still opens it onto
+its parts. That is presentation too: no gate sees it either.
 """
 
 import json
@@ -64,8 +67,8 @@ VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok",
 # ...and every key one REFERENCE is read for. Only `part` is required.
 REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed",
                             "plate"})
-# ...and a GROUP is exactly these two, both required.
-GROUP_KEYS = frozenset({"group", "parts"})
+# ...and a GROUP is these three, `group` and `parts` required.
+GROUP_KEYS = frozenset({"group", "parts", "whole"})
 
 # The three axes a bounding box is measured on. The viewer reads the six numbers
 # as `xmin`/`xmax` and so on, which is the spelling `_widen_bb` writes.
@@ -228,7 +231,8 @@ def read_parts(view, vid, catalogue, colors):
 
     `nodes` is every LEAF in the order the author wrote them, each one already
     placed (`at` applied) and coloured. `tree` mirrors the author's structure:
-    a group is `{"group": name, "parts": [...]}` and a leaf is the INDEX of its
+    a group is `{"group": name, "parts": [...]}`, with `"whole": True` added
+    where the author marked it so, and a leaf is the INDEX of its
     entry in `nodes`, so the leaf data has exactly one owner and the grouping
     cannot drift away from it.
     """
@@ -304,12 +308,24 @@ def _read_entries(entries, vid, catalogue, colors, nodes, depth, where):
                     f"{', '.join(repr(k) for k in unknown)}, which the build "
                     f"does not read. Known keys: {', '.join(sorted(GROUP_KEYS))}."
                 )
-            built.append({
+            whole = entry.get("whole")
+            if whole is not None and not isinstance(whole, bool):
+                raise BuildError(
+                    f'{spot}: "whole" on group {name!r} is {whole!r}, which is '
+                    f"a {type(whole).__name__} and not True or False. True "
+                    "makes a click in the scene pick the whole group as one "
+                    "object; leave the key out for a group whose parts are "
+                    "picked one by one."
+                )
+            group = {
                 "group": name,
                 "parts": _read_entries(entry.get("parts"), vid, catalogue,
                                        colors, nodes, depth + 1,
                                        f"{where} group {name!r}"),
-            })
+            }
+            if whole:
+                group["whole"] = True
+            built.append(group)
             continue
         built.append(_read_reference(entry, vid, catalogue, colors, nodes, spot))
     return built
@@ -837,7 +853,8 @@ def export_views(prepared, out_dir):
         own, so a measurement does not place the catalogue's `<key>.step`
         there (`cadbuild.measure`);
       * the groups, as `{"name", "id", "loc", "parts"}` nodes, which the viewer
-        (`isShapeTree`) and the hub (`render.check_view_file`) both accept.
+        (`isShapeTree`) and the hub (`render.check_view_file`) both accept,
+        plus `"whole": true` on a group the author marked so.
 
     Every node's `id` is rebuilt as the parent's id plus `/` plus its name,
     which is how the viewer's own paths are formed -- the leaf ids the
@@ -981,6 +998,10 @@ def shaped_document(doc, view):
                     "loc": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
                     "parts": []}
             node["parts"] = rebuild(entry["parts"], node["id"])
+            # Written only where it is True, so the node of every other group
+            # stays exactly what it was.
+            if entry.get("whole"):
+                node["whole"] = True
             built.append(node)
         return built
 
