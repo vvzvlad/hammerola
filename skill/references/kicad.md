@@ -27,8 +27,10 @@ block before placing, routing, editing silkscreen or reviewing a board; it is no
 
 **Channel 4** — only for an operation no Copperpour tool covers: kipy over the live IPC
 socket, or KiCad's own pcbnew Python (LoadBoard/SaveBoard, FootprintLoad/FootprintSave)
-on a file no KiCad window has open. Neither is a text edit. `.kicad_dru` is a plain-text
-rules file and may be edited as text. Name every Channel-4 use in the hand-off.
+on a file no KiCad window has open. Neither is a text edit. The one write to the file of an
+open board is `scripts/put.py`: a checked copy goes in place of that file, and KiCad reads
+it again over IPC. `.kicad_dru` is a plain-text rules file and may be edited as text. Name
+every Channel-4 use in the hand-off.
 
 konnect's Channel 1 therefore reads: if MCP tools are not available, **STOP** and tell the
 user — never fall back to text editing. kicad-pcb rule 1 ("Never edit .kicad_pcb directly")
@@ -84,8 +86,10 @@ the interpreter they name: the hub's installer does not keep the executable bit.
 | `step.sh` | bash | One via-stitching iteration (add vias, DRC, dump, measure); needs helper scripts named in its header |
 | `kc.py` | python3 | MCP stdio client for copperpour: a fresh server per run |
 | `bq.py` | KiCad Python | Board queries on the saved file: what is near a point, clearance between two items, legal via sites, a track corridor, legal designator spots, a footprint's pads and what is attached to each (`pads REF`), a net's pads, tracks, vias and fill pieces (`net NAME`), zones with their fill pieces, areas and tying vias, or only the piece at a point (`zones --at X Y`), a placement `score` (HPWL and airwire crossings over signal nets, crossings optionally within a box; on a routed board also the bare pads, netted pads with nothing attached, per footprint); applies the `.kicad_dru` beside the board as KiCad's DRC does; `-` reads one query per line from stdin |
-| `autoroute.sh` | bash, docker | Routes a copy of the saved board in docker: existing tracks/vias locked, fastroute draft, optional Freerouting finish, DRC with refill, `geocheck.py`, unrouted list; prints the routed copy's path. Uses `autoroute.Dockerfile`, `autoroute_run.sh` and `autoroute_board.py` beside it |
+| `autoroute.sh` | bash, docker | Routes a copy of the saved board in docker: existing tracks/vias locked for the run, fastroute draft, optional Freerouting finish, DRC with refill, `geocheck.py`, unrouted list; prints the routed copy's path. Uses `autoroute.Dockerfile`, `autoroute_run.sh` and `autoroute_board.py` beside it |
 | `findings.py` | python3 | A `drc.json` and `geocheck.py` findings filtered by type, net, ref, box or point, or counted by type, ref or net (`--by ref` on an autoroute run's `run/drc.json`: unrouted connections per footprint) |
+| `edit.py` | KiCad Python | `apply`: edits on a copy of the saved board for the checks (delete tracks/vias by uuid, add a track polyline or a through via, flip, rotate or move a footprint, set a pad's net, copy a footprint under a new reference for a trial placement); refills zones and puts the project files beside the copy |
+| `put.py` | python3 with kicad-python 0.8.0 | Puts a checked copy (an `edit.py` or `autoroute.sh` output) in place of the board KiCad has open, and KiCad reads it again from disk; refuses a copy with a footprint the open board lacks |
 | `delta.py` | python3 | After a batch of edits: this run's `drc.json` and `geocheck.py` findings against the previous run in a state file — what appeared, what went away (type, items, nets and refs, coordinates), the stop-rule count and the stop line |
 | `boardgeo.py` | KiCad Python | Geometry core of `bq.py` and `silk.py` (imported, not run) |
 | `view.py` | KiCad Python, rsvg-convert | A region of the saved board (`X1 Y1 X2 Y2`, `ref REF` or `full`) as KiCad's own plot, PNG at most `--px` (1000) on the long side, with an mm grid in board coordinates, reference designators (hidden ones too), net names and numbered markers from a `drc.json` or `bq.py --json`; prints what is in the region |

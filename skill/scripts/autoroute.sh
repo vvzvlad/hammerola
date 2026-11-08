@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: bash autoroute.sh <board.kicad_pcb> [--export plain|plugin] [--min-width on|off] [--draft-time S] [--finish none|freerouting] [--finish-time S] [--diagnose]   (routes a copy of the saved board in docker: existing tracks/vias locked, copper layers typed Power plane that carry a zone (with --export plain: every Power-plane layer) get no new tracks of other nets than their planes', fastroute draft, finish, DRC with refill, geocheck.py, unrouted list; --diagnose adds fastroute's congestion/blocked class to each unrouted connection; the project is not modified)
 # needs: bash, docker that runs linux/amd64 images (fastroute ships linux-x64 only), autoroute.Dockerfile, autoroute_run.sh, autoroute_board.py and geocheck.py next to this script
-# defaults: --export plugin --min-width on --draft-time 300 --finish none --finish-time 600, no --diagnose; the routed copy and the run logs land in a new ${TMPDIR:-/tmp}/autoroute.XXXXXX; new routing = the unlocked tracks/vias of the copy
+# defaults: --export plugin --min-width on --draft-time 300 --finish none --finish-time 600, no --diagnose; the routed copy and the run logs land in a new ${TMPDIR:-/tmp}/autoroute.XXXXXX, the board as it was before routing in its in/; the routed copy keeps the board's own track locks; put.py puts it in place of the open board
 # exit: 0 = the run finished (unrouted connections and DRC errors are in the summary, not in the exit code); otherwise the code of the failing stage or docker command, with "autoroute failed (exit N) at stage S" and the tail of run/S.log; 2 = unknown option; 130/143 = interrupted (INT/TERM), the container is removed and the result is lost
 set -eu
 H="$(cd "$(dirname "$0")" && pwd)"

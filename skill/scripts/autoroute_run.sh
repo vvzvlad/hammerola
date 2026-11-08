@@ -11,7 +11,7 @@ mkdir -p "$O" "$R"
 prep() {
   {
     cp "$I"/* "$O/"
-    python3 "$H/autoroute_board.py" lock "$B"
+    python3 "$H/autoroute_board.py" lock "$B" "$R/locked.txt"
     python3 "$H/autoroute_board.py" dsn "$B" "$R/draft.dsn" "$EXP" "$MINW" > "$R/fastroute.args"
   } 2>&1 | tee "$R/prep.log"
 }
@@ -42,7 +42,7 @@ finish() {
   } > "$R/finish.log" 2>&1
 }
 import() {
-  python3 "$H/autoroute_board.py" ses "$B" "$R/final.ses" "$B" 2>&1 | tee "$R/import.log"
+  python3 "$H/autoroute_board.py" ses "$B" "$R/final.ses" "$B" "$R/locked.txt" 2>&1 | tee "$R/import.log"
 }
 check() {
   kicad-cli pcb drc --format json --severity-all --refill-zones --save-board -o "$R/drc.json" "$B" > "$R/check.log" 2>&1

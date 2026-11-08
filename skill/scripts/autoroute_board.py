@@ -1,5 +1,5 @@
 """Board steps of autoroute_run.sh: lock tracks/vias, export the DSN with fastroute options, import a SES, print the summary.
-usage: autoroute_board.py lock <board> | dsn <board> <out.dsn> <plain|plugin> <on|off> | ses <board> <in.ses> <out.kicad_pcb> | summary <run_dir> <board>
+usage: autoroute_board.py lock <board> <locked.txt> | dsn <board> <out.dsn> <plain|plugin> <on|off> | ses <board> <in.ses> <out.kicad_pcb> [locked.txt] | summary <run_dir> <board>
 needs: python3 with KiCad 10 pcbnew (the autoroute image: fastroute on PATH, plugin in /opt/fastroute-kicad)"""
 import collections, json, math, os, re, shutil, subprocess, sys
 import pcbnew
@@ -12,16 +12,16 @@ PLUGIN = "/opt/fastroute-kicad/plugins"
 EXPORT = f"import sys; sys.path.insert(0, {PLUGIN!r}); import core, route_cli; core.PLANE_LAYER_MIN_COVERAGE = 0; sys.exit(route_cli.main())"
 
 
-def lock(board):
+def lock(board, record):
+    """Locks every track/via for the router and writes the uuids it locked to record, for ses to unlock."""
     b = pcbnew.LoadBoard(board)
     items = list(b.GetTracks())
-    n = 0
-    for t in items:
-        if not t.IsLocked():
-            t.SetLocked(True)
-            n += 1
+    mine = [t for t in items if not t.IsLocked()]
+    for t in mine:
+        t.SetLocked(True)
     pcbnew.SaveBoard(board, b, True)
-    print(f"locked {n} of {len(items)} existing tracks/vias")
+    open(record, "w").write("".join(t.m_Uuid.AsString() + "\n" for t in mine))
+    print(f"locked {len(mine)} of {len(items)} existing tracks/vias")
 
 
 def dsn(board, out, export, minw):
@@ -55,7 +55,9 @@ def key(t):
     return (t.GetClass(), t.GetNetCode(), t.GetLayer(), min(s, e), max(s, e), mid, t.GetWidth())
 
 
-def ses(board, session, out):
+def ses(board, session, out, record=None):
+    """Imports the session; with record (lock's uuids), the tracks/vias lock locked are unlocked again, so the routed
+    copy has the locks of the board it came from."""
     b = pcbnew.LoadBoard(board)
     if not pcbnew.ImportSpecctraSES(b, session):
         sys.exit(f"ImportSpecctraSES failed: {session}")
@@ -64,8 +66,12 @@ def ses(board, session, out):
     dup = [t for t in b.GetTracks() if not t.IsLocked() and key(t) in locked]
     for t in dup:
         b.Delete(t)
+    mine = set(open(record).read().split()) if record else set()
+    back = [t for t in b.GetTracks() if t.m_Uuid.AsString() in mine]
+    for t in back:
+        t.SetLocked(False)
     pcbnew.SaveBoard(out, b, True)
-    print(f"removed {len(dup)} unlocked tracks/vias that duplicate locked ones")
+    print(f"removed {len(dup)} unlocked tracks/vias that duplicate locked ones; unlocked {len(back)} locked for the run")
 
 
 def jload(path):
