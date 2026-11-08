@@ -68,14 +68,16 @@ export function revisionHead({ narrow, viewer, open, built, onToggle, dot }) {
 
 const CARET = <span style={css('font-size:9px;color:var(--text-faint)')}>&#9662;</span>;
 
-// What a row picks by: its id, its badge, the author's message and the date.
+// What a row picks by: its id, its version on a tag, its badge, the author's
+// message and the date.
 const PICK = 'display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0';
 
 /**
  * The button and its card: wide, the button with the card hung under it;
  * narrow, the card alone, a sheet the menu's row opens (`revisionRow`).
  * Without the token the button is a label and there is no card. In the card
- * the pointers stand on top and the history below; a row with an `href` is a
+ * the pointers stand on top and the history below, whose heading carries
+ * "Versions only" when the history has tags; a row with an `href` is a
  * link to that revision, one without picks it through `onPick`. With
  * `startCompare` the ticks pick two to compare and the card ends in Compare.
  */
@@ -98,6 +100,7 @@ export function revisionPicker(v) {
               const named = (
                 <>
                   <span style={css(r.idStyle)}>{r.id}</span>
+                  {r.version ? <span title={r.version} style={css(r.versionStyle)}>{r.version}</span> : null}
                   <span style={css(r.badgeStyle)}>{r.badge}</span>
                   <span title={r.message} style={css(r.messageStyle)}>{r.message}</span>
                   <span style={css(META_MONO)}>{r.date}</span>
@@ -105,7 +108,10 @@ export function revisionPicker(v) {
               );
               return (
                 <React.Fragment key={r.key}>
-                  <div style={css(r.headStyle)}>{r.head}</div>
+                  <div style={css(r.headStyle)}>
+                    {r.head}
+                    {r.onVersions && <span onClick={r.onVersions} style={css(r.versionsStyle)}>Versions only</span>}
+                  </div>
                   <div style={css(r.style)}>
                     <span onClick={r.onCmp} style={css(r.cmpStyle)}>{r.cmpMark}</span>
                     {r.href

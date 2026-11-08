@@ -201,6 +201,25 @@ the name `model.py` gives it. The hub's branch is then ahead of yours:
 `build` fast-forwards it first and stops when the two have diverged, and
 before `git push` run `git pull --no-rebase hammerola-<pid> <branch>`.
 
+**A revision's version is what `version.py` returns.** A project may keep
+`version.py` beside `project.json` with `version()` returning a string; every
+build runs it in the build process, with the project directory as the working
+directory, and the result becomes the revision's version. The revision where
+the version changes is a tag, and "Versions only" in the revision picker lists
+the tags alone. Read the version where the project already keeps it, so nobody
+has to remember to set it — a Wiren Board `ChangeLog`, for instance:
+
+```python
+import re
+
+def version():
+    text = open("ChangeLog", encoding="utf-8").read()
+    return re.search(r"^\s*\*\s*version:\s*(\S+)", text, re.M).group(1)
+```
+
+The file it reads must be inside the project directory: the build sees nothing
+else. An exception in `version()`, or anything but a string, fails the build.
+
 **The push waits for the whole build** and exits non-zero unless the commit was
 published: the hook refusing it is the build failing, with its log in the
 output — "did not ship", not a warning. `build` likewise prints the log and

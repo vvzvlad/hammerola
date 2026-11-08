@@ -243,6 +243,20 @@ def name_text(value, field: str) -> str:
     return _plain_text(value.strip(), field)
 
 
+def revision_message(subject: str) -> str | None:
+    """A commit's subject as a revision's message, or None for none; a
+    project's version (`jobs._build_and_publish`) is cleaned by it too.
+
+    Cleaned rather than refused: the message is in git already, and the hub
+    only shows it. What the rule for a part name refuses goes — non-printable
+    characters and angle brackets (`_check_part_name`) — and the rest is cut
+    to `MAX_TEXT`.
+    """
+    kept = "".join(char for char in subject
+                   if first_nonprintable(char) is None and char not in "<>")
+    return kept.strip()[:MAX_TEXT].strip() or None
+
+
 # -- the theme, which the server decides --------------------------------------
 #
 # The whole interface is painted from `data-theme` on `<html>`: the bundle draws
@@ -971,7 +985,8 @@ def _match_selection(declared: list, shown: set, view_id: str) -> None:
 def build_meta(pid: str, commit: str, raw: dict, staging: Path,
                files: dict, published: str, dev: bool = False,
                job: str = None, message: str = None, variant: str = None,
-               variant_label: str = None, forced: bool = False) -> dict:
+               variant_label: str = None, forced: bool = False,
+               version: str = None) -> dict:
     """Validate the uploaded meta.json and normalize it for the page.
 
     What the build is OF decides the body: a model's `views` and `parts`
@@ -1034,9 +1049,14 @@ def build_meta(pid: str, commit: str, raw: dict, staging: Path,
     # The one field that comes from the push rather than the build: the
     # subject of the commit. Written only when present, like `job`; the picker
     # reads it back (`Store.builds_of`). Cleaned on the way in
-    # (`prereceive.revision_message`).
+    # (`revision_message`).
     if message:
         meta["message"] = message
+    # What the tree's version.py says, asked before the build and cleaned as
+    # the message is (`jobs._build_and_publish`); the picker marks the
+    # revisions where it changes (`Store._tagged`).
+    if version:
+        meta["version"] = version
     # From the push too: the branch it came from, and the label its
     # project.json gave that branch (`docsbuild.variant_label`). A build older
     # than variants carries neither, which means the default variant.
@@ -1342,7 +1362,8 @@ def _model_body(raw: dict, staging: Path, files: dict) -> dict:
 
 
 def builds_json(pid: str, metas: list[dict], dev: bool = False,
-                latest: str | None = None, fallback: dict | None = None) -> dict:
+                latest: str | None = None, fallback: dict | None = None,
+                tagged=frozenset()) -> dict:
     """The build picker for one project.
 
     `builds` is the project's HISTORY and therefore a list of commits, newest
@@ -1359,6 +1380,8 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
 
     `fallback` is the local slot's own meta, used for the project name only when
     there is no commit build to take it from.
+
+    `tagged` names the revisions that are tags of the variant (`Store._tagged`).
     """
     header = metas[0] if metas else (fallback or {})
     return {
@@ -1367,11 +1390,11 @@ def builds_json(pid: str, metas: list[dict], dev: bool = False,
         "title": header.get("title", pid),
         "has_dev": bool(dev),
         "latest": latest,
-        "builds": [_picker_entry(m) for m in metas],
+        "builds": [_picker_entry(m, m["commit"] in tagged) for m in metas],
     }
 
 
-def _picker_entry(meta: dict) -> dict:
+def _picker_entry(meta: dict, tag: bool = False) -> dict:
     """One row of the picker: which revision, when, and what it says it is.
 
     A PROJECTION AND NOT A COPY, which is why it is spelled out rather than
@@ -1379,12 +1402,18 @@ def _picker_entry(meta: dict) -> dict:
     view records, and this file is re-read on every load and every revision
     switch of the owner's page. Only what a row draws is carried.
 
-    `message` is present only when the revision has one.
+    `message` and `version` are present only when the revision has one, and
+    `tag` only on a tag.
     """
     entry = {"commit": meta["commit"], "built": meta["built"]}
     message = meta.get("message")
     if message:
         entry["message"] = message
+    version = meta.get("version")
+    if version:
+        entry["version"] = version
+    if tag:
+        entry["tag"] = True
     return entry
 
 

@@ -12,6 +12,7 @@ group, and with its output captured and capped.
     child.py      `python -m` entry that arms faulthandler, caps OCCT, and builds
     comparechild.py  `python -m` entry that compares two revisions and prints it
     inspectchild.py  `python -m` entry that pictures or measures one revision
+    versionchild.py  `python -m` entry that asks a project's version.py its version
     runner.py     the parent: spawn, deadline, kill, capture, CHECK the result
     hardening.py  the one call that runs in the HUB: hide its /proc entry
 
@@ -77,6 +78,7 @@ from src.buildproc.runner import (
     run_compare,
     run_inspect,
     run_isolated,
+    run_version,
 )
 
 __all__ = [
@@ -105,4 +107,5 @@ __all__ = [
     "run_compare",
     "run_inspect",
     "run_isolated",
+    "run_version",
 ]

@@ -45,7 +45,7 @@ is the worker THREADS, which is what `tests/conftest.py` guards before and after
 every test.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 import os
@@ -74,8 +74,10 @@ from src.buildproc import (
     run_build,
     run_compare,
     run_inspect,
+    run_version,
 )
 from src import docsbuild
+from src.render import revision_message
 from src.store import (BUILD_LOG_FILE, DEV_LINK, MAIN_BRANCH, PublishError,
                        atomic_write_bytes, utcnow_iso)
 
@@ -218,6 +220,9 @@ BUILD_FAILURE_REASONS = {
     STATUS_BAD_RESULT: "the build claimed a result the hub could not confirm",
     STATUS_LIMITS_ERROR: "the hub could not put its ceilings on the build process",
 }
+# ...and the one for a version.py that gave no version, whatever its status:
+# nothing was built.
+VERSION_FAILURE_REASON = "version.py did not give the project's version"
 
 
 @dataclass(frozen=True)
@@ -907,9 +912,17 @@ class BuildQueue:
             # than after a model's build.
             label = docsbuild.variant_label(task.sources)
             documents = docsbuild.declared_documents(task.sources)
-            if documents and not docsbuild.has_model(task.sources):
-                # Files to read, not a model to run: nothing from the tree is
-                # executed, so no build process (`src/docsbuild.py`).
+            # The tree's version.py is project code, so it runs in a process
+            # of its own (`run_version`), and before the build: a version.py
+            # that fails costs no build and publishes nothing.
+            versioned, said = run_version(task.sources, pid=task.pid)
+            version = None if said is None else revision_message(said)
+            if versioned is not None and not versioned.ok:
+                outcome = versioned
+            elif documents and not docsbuild.has_model(task.sources):
+                # Files to read, not a model to run: nothing from the tree but
+                # its version.py (asked above) is executed, so no build process
+                # (`src/docsbuild.py`).
                 outcome = docsbuild.run_documents_build(
                     task.sources, staging, documents, pid=task.pid)
             else:
@@ -931,6 +944,14 @@ class BuildQueue:
                 if outcome.ok and documents:
                     outcome = docsbuild.add_documents(
                         task.sources, staging, documents, outcome)
+            if versioned is not None and outcome is not versioned:
+                # One job, one log: version.py's run comes first in it.
+                outcome = replace(
+                    outcome, log=versioned.log + outcome.log,
+                    log_truncated=(versioned.log_truncated
+                                   or outcome.log_truncated),
+                    duration_seconds=(versioned.duration_seconds
+                                      + outcome.duration_seconds))
             if outcome.ok:
                 # The job id goes into meta.json so `hammerola log dev` can read
                 # the build's log back. Both routes fill the slot (a commit
@@ -940,7 +961,8 @@ class BuildQueue:
                     status, payload = self._store.publish_dev_built(
                         task.pid, staging, outcome.files, task.digest,
                         job=task.job_id, variant=task.variant,
-                        variant_label=label, forced=task.force)
+                        variant_label=label, forced=task.force,
+                        version=version)
                 else:
                     (staging / BUILD_LOG_FILE).write_bytes(
                         _capped_log(outcome.log))
@@ -948,15 +970,16 @@ class BuildQueue:
                         task.pid, task.commit, staging, outcome.files,
                         task.digest, job=task.job_id, message=task.message,
                         variant=task.variant, variant_label=label,
-                        forced=task.force)
+                        forced=task.force, version=version)
                 logger.info(
                     f"job {task.job_id}: published {task.pid}/{task.commit} "
                     f"-> {payload['url']}")
                 verdict = {"state": STATE_DONE, "code": status,
                            "build_url": payload["url"]}
             else:
-                reason = BUILD_FAILURE_REASONS.get(
-                    outcome.status, "the build did not finish")
+                reason = (VERSION_FAILURE_REASON if outcome is versioned
+                          else BUILD_FAILURE_REASONS.get(
+                              outcome.status, "the build did not finish"))
                 # 500 for the one status that is the HUB's fault: the ceilings
                 # would not go on, which says nothing about the model. Everything
                 # else is the pushed source's problem and is a 4xx, so CI can
