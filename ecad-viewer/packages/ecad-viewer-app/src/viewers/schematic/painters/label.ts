@@ -94,7 +94,7 @@ export abstract class LabelPainter extends SchematicItemPainter {
         // subclass that uses it.
         return Math.round(
             schematic_items.DefaultValues.text_offset_ratio *
-                schtext.text_size.x,
+                schtext.text_size.y,
         );
     }
 
@@ -405,7 +405,8 @@ export class HierarchicalLabelPainter extends LabelPainter {
     ): Vec2[] {
         const pos = schtext.text_pos;
         const angle = Angle.from_degrees(label.at.rotation);
-        const s = schtext.text_width;
+        // SCH_HIERLABEL::CreateGraphicShape sizes the flag by the text height
+        const s = schtext.text_height;
 
         let pts: Vec2[];
 
