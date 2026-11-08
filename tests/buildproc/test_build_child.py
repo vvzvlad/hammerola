@@ -6,7 +6,7 @@ machinery at -- `src.buildproc.child` -- and about the four answers it has to
 be able to give: it built, the model does not build, the model never came back,
 and something happened that is ours to look at rather than the pusher's.
 
-Only two tests here need a CAD kernel. Everything else is arranged to fail
+Only three tests here need a CAD kernel. Everything else is arranged to fail
 before `import cadquery` is ever reached, which is not a trick: a model that
 does not import, hangs on import or ends the interpreter is a model the build
 half never gets to, and those are the cases worth pinning cheaply.
@@ -15,11 +15,14 @@ half never gets to, and those are the cases worth pinning cheaply.
 import io
 import json
 import re
+import shutil
 import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+from kicadstub import FIXTURES as KICAD_FIXTURES
+from kicadstub import KicadStub
 
 from src.buildproc import (
     STATUS_CRASHED,
@@ -27,8 +30,10 @@ from src.buildproc import (
     STATUS_HANG,
     STATUS_OK,
     STATUS_TIMEOUT,
+    run_build,
 )
 from src.buildproc import child
+from src.cadbuild.kicadboard import GLB_FLAGS, STEP_FLAGS
 
 from probes import (
     BUILD_LIMITS,
@@ -407,6 +412,78 @@ def test_the_model_cannot_read_the_hubs_token(project, hub_secrets):
     assert "token=None decoy=None" in outcome.log
     for value in hub_secrets.values():
         assert value not in outcome.log
+
+
+def test_the_model_gets_the_kicad_sidecars_address(project):
+    """`run_build(kicad_url=...)` is what `kicadboard` in a model.py dials."""
+    (project.root / "model.py").write_text(
+        'import os\nraise RuntimeError("kicad=%s" % os.environ.get("KICAD_URL"))\n',
+        encoding="utf-8")
+    outcome = run_build(project.root, project.out, pid=project.PID,
+                        limits=BUILD_LIMITS, kicad_url="http://kicad.example:8080")
+
+    assert outcome.status == STATUS_FAILED
+    assert "kicad=http://kicad.example:8080" in outcome.log
+
+
+def test_a_kicad_service_that_does_not_answer_fails_the_build_naming_it(project):
+    """The pusher's failure, said by the hub: no traceback, KICAD_URL named."""
+    (project.root / "amp.kicad_pcb").write_text("(kicad_pcb)\n", encoding="utf-8")
+    (project.root / "model.py").write_text(
+        'import kicadboard\nkicadboard.load("amp.kicad_pcb")\n', encoding="utf-8")
+    outcome = run_build(project.root, project.out, pid=project.PID,
+                        limits=BUILD_LIMITS, kicad_url="http://127.0.0.1:1")
+
+    assert outcome.status == STATUS_FAILED
+    assert ("build failed: importing model.py failed (model.py:2): kicadboard: "
+            "amp.kicad_pcb: the KiCad service at KICAD_URL=http://127.0.0.1:1 did "
+            "not answer") in outcome.log, outcome.log
+    assert "Traceback" not in outcome.log
+
+
+@needs_cadquery
+def test_the_check_units_take_the_boards_exports_from_the_build(project):
+    """Each check unit's worker imports model.py again, and the board it loads
+    is the build process's exports, kept in the build's scratch: the service is
+    asked once per export, and what was kept is gone with the build."""
+    shutil.copyfile(KICAD_FIXTURES / "board.kicad_pcb", project.root / "board.kicad_pcb")
+    (project.root / "model.py").write_text(textwrap.dedent("""
+        import os
+        import cadquery as cq
+        import checklib
+        import kicadboard
+
+        BOARD = kicadboard.load("board.kicad_pcb")
+        print("cache=" + os.environ["KICAD_EXPORT_CACHE"])
+
+        def parts():
+            return {**BOARD.records("amp"),
+                    "body": {"shape": cq.Workplane("XY").box(20, 10, 5),
+                             "kind": "printable"}}
+
+        def views():
+            return [{"id": "print", "name": "print", "parts": ["body"]},
+                    {"id": "assembled", "name": "assembled", "parts": list(parts())}]
+
+        @checklib.check("thickness")
+        def check_thickness():
+            assert BOARD.thickness > 1
+
+        @checklib.check("footprints")
+        def check_footprints():
+            assert "R1" in BOARD.footprints
+    """), encoding="utf-8")
+    answers = {("glb", GLB_FLAGS): "board.glb", ("step", STEP_FLAGS): "board.step"}
+    with KicadStub(answers) as stub:
+        outcome = run_build(project.root, project.out, pid=project.PID,
+                            limits=BUILD_LIMITS, kicad_url=stub.url)
+
+    assert outcome.status == STATUS_OK, outcome.log
+    assert sorted(fmt for fmt, *_ in stub.requests) == ["glb", "step"], stub.requests
+    # The two workers loaded it too, from the cache.
+    assert outcome.log.count("GLB and STEP from this build's cache") == 2, outcome.log
+    (cache,) = set(re.findall(r"^cache=(.+)$", outcome.log, re.M))
+    assert not Path(cache).exists()
 
 
 def test_the_build_starts_in_the_models_own_directory(project):

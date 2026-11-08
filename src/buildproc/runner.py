@@ -51,6 +51,8 @@ from src.buildproc.child import (
     EXIT_UNCAPPED,
 )
 from src.buildproc.limits import DEFAULT_LIMITS, WRAPPER_EXIT_CODES
+from src.kicadcli import CACHE_ENV as KICAD_CACHE_ENV
+from src.kicadcli import URL_ENV as KICAD_URL_ENV
 
 
 # The repository root, and the working directory of every isolated process, so
@@ -159,7 +161,7 @@ class BuildOutcome:
 
 def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
               preview_mode="iso", force=False, baseline=None,
-              distance_cache=None):
+              distance_cache=None, kicad_url=None):
     """Build the model in `project_dir` into `out_dir`, in a process of its own.
 
     `project_dir` is an untrusted tree (SPEC 8A.2 step 2). It contributes only
@@ -179,6 +181,9 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
     `distance_cache` is the project's distance cache
     (`src/cadbuild/distcache.py`), passed as the path in the store and never
     copied: it is meant to outlive the build and answer the next one.
+
+    `kicad_url` is the KiCad sidecar, put into the child's environment for
+    `kicadboard` (`child_environment`).
     """
     project_dir = Path(project_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -230,7 +235,8 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
         process = run_isolated(
             target, limits=limits,
             env=child_environment(home=home, tmp=tmp,
-                                  threads=limits.occt_threads),
+                                  threads=limits.occt_threads,
+                                  kicad_url=kicad_url),
             guard=_OutputGuard(out_dir, limits))
         return _read_outcome(process, result_path, out_dir=out_dir, pid=pid,
                              limits=limits)
@@ -474,14 +480,21 @@ def run_isolated(target_argv, *, limits, env, cwd=None, guard=None):
     )
 
 
-def child_environment(*, home, tmp, threads):
+def child_environment(*, home, tmp, threads, kicad_url=None):
     """The child's whole environment, built key by key.
 
     An allowlist, not a filter: a filter must be extended whenever a variable is
     added to the compose file, and nothing fails when it is not. The hub holds
     EDIT_TOKEN (src/settings.py); nothing in it means anything to a build.
+    `kicad_url`, the KiCad sidecar's address, is no credential: a build gets it
+    as `KICAD_URL`, the children that never export a board do not. With it
+    goes `KICAD_EXPORT_CACHE`, a directory in `tmp`: the check units' workers
+    are spawned with this environment and import model.py again, and they take
+    the board's exports the build process already has (`kicadcli.export_cached`);
+    `tmp` is the build's scratch, removed with the build, so nothing is kept
+    for the next one.
     """
-    return {
+    environment = {
         # Fixed, not inherited. Nothing in a build should be resolving a
         # command by name, and if something does it will find the system's.
         "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -520,6 +533,10 @@ def child_environment(*, home, tmp, threads):
         "NUMEXPR_NUM_THREADS": str(threads),
         "VECLIB_MAXIMUM_THREADS": str(threads),
     }
+    if kicad_url is not None:
+        environment[KICAD_URL_ENV] = kicad_url
+        environment[KICAD_CACHE_ENV] = str(Path(tmp) / "kicad-exports")
+    return environment
 
 
 def _read_outcome(process, result_path, *, out_dir, pid, limits):

@@ -71,6 +71,8 @@ def settings_for(data_dir, **overrides):
     """
     values = dict(
         edit_token=TOKEN,
+        # Nothing answers here; a test of a board's exports passes its stub's.
+        kicad_url="http://kicad.invalid:8080",
         host="127.0.0.1",
         port=0,  # ask the OS for a free port, then read back which one
         data_dir=str(data_dir),

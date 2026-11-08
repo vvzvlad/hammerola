@@ -62,7 +62,9 @@ in the boss rather than through the wall under it:
 
 The template `create` unpacks is the live example — read it rather than this
 section. In short: `model.py` defines `parts()` and `views()`, may define
-`checks()`, and may `import checklib`.
+`checks()`, may `import checklib`, and may `import kicadboard` to place a KiCad
+board of the project, which the hub exports on every build
+(`references/boards.md`, «The board in the model»).
 
 * **`parts()` — the catalogue, the one place geometry lives.** A non-empty dict
   of records, `{"lid": {"shape": <CadQuery object>, "kind": "printable"}}`, with

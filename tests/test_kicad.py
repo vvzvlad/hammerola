@@ -6,7 +6,9 @@ The hub finds the rest itself (`docsbuild._kicad_schematic`,
 project with the listed path minus its extension. The trees here are tiny
 synthetic s-expressions carrying only what that search reads,
 `(property "Sheetfile" "<path>")` (`"Sheet file"` in KiCad 6); what the viewer
-makes of a real design is checked in a browser, not here.
+makes of a real design is checked in a browser, not here. The board's `.glb`
+is the hub's to make, from the board beside it, by the KiCad sidecar, which
+here is `kicadstub`.
 """
 
 import json
@@ -15,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from harness import tar_gz
+from kicadstub import FIXTURES, KicadStub
 
 from ci.smoke import REQUIRED_PATHS
 from src import docsbuild, render
@@ -39,6 +42,7 @@ def sheet(*named: str, prop: str = "Sheetfile") -> bytes:
 
 # A design in a subdirectory whose sheets sit in a directory below it and in
 # one beside it, and a sheet of a sheet: every way a `Sheetfile` is resolved.
+# No `hw/board.glb`: the hub makes it from the board.
 DESIGN = {
     "hw/board.kicad_pro": b'{"meta": {"filename": "board.kicad_pro"}}\n',
     "hw/board.kicad_sch": sheet("sub/power.kicad_sch", "../common/logo.kicad_sch"),
@@ -46,8 +50,10 @@ DESIGN = {
     "hw/sub/leaf.kicad_sch": sheet(),
     "common/logo.kicad_sch": sheet(),
     "hw/board.kicad_pcb": b"(kicad_pcb (version 20250610))\n",
-    "hw/board.glb": GLB,
 }
+# What the sidecar answers for the board's 3D model.
+MADE = {("glb", docsbuild.GLB_FLAGS): "document.glb"}
+MADE_GLB = (FIXTURES / "document.glb").read_bytes()
 SCHEMATICS = ["hw/board.kicad_sch", "hw/sub/power.kicad_sch",
               "hw/sub/leaf.kicad_sch", "common/logo.kicad_sch"]
 LISTED = ("hw/board.kicad_sch", "hw/board.kicad_pcb", "hw/board.glb")
@@ -90,6 +96,19 @@ def test_each_is_its_own_document_with_what_it_brings(tmp_path):
     assert board.kicad == {"project": "hw/board.kicad_pro"}
     assert board.files == ("hw/board.kicad_pcb", "hw/board.kicad_pro")
     assert (model.kicad, model.files) == (None, ("hw/board.glb",))
+    assert model.board == "hw/board.kicad_pcb"
+
+
+def test_a_glb_the_tree_holds_beside_its_board_refuses_the_push(tmp_path):
+    message = refusal(tree(tmp_path, {**DESIGN, "hw/board.glb": GLB}))
+    assert ("'hw/board.glb', which is made by the hub from 'hw/board.kicad_pcb'; "
+            "remove it from the tree") in message
+
+
+def test_a_glb_with_no_board_of_its_name_is_the_file_pushed(tmp_path):
+    model, = docsbuild.declared_documents(
+        tree(tmp_path, {"cad/case.glb": GLB}, ["cad/case.glb"]))
+    assert (model.files, model.board) == (("cad/case.glb",), None)
 
 
 def test_a_schematic_or_a_board_without_a_project_works_alone(tmp_path):
@@ -181,11 +200,16 @@ def test_a_project_listed_on_its_own_is_refused_naming_what_to_list(tmp_path):
 
 # -- publishing and serving them -----------------------------------------------
 
-def test_each_publishes_with_its_own_title_open_and_as_its_type(hub):
+def test_each_publishes_with_its_own_title_open_and_as_its_type(hub_factory):
     titled = [{"file": "hw/board.kicad_sch", "title": "Схема"},
               {"file": "hw/board.kicad_pcb", "title": "Плата"},
               {"file": "hw/board.glb", "title": "Плата в 3D"}]
-    build = published(hub, {**DESIGN, "hw/board.kicad_prl": b"{}"}, titled)
+    with KicadStub(MADE) as stub:
+        hub = hub_factory(kicad_url=stub.url)
+        build = published(hub, {**DESIGN, "hw/board.kicad_prl": b"{}"}, titled)
+    # The 3D model is the sidecar's export of the board, sent with its project.
+    assert stub.requests == [("glb", docsbuild.GLB_FLAGS, "board.kicad_pcb",
+                              ["board.kicad_pcb", "board.kicad_pro"])]
 
     schematic, board, model = hub.get(f"{build}meta.json").json()["documents"]
     size = {name: len(data) for name, data in DESIGN.items()}
@@ -200,8 +224,8 @@ def test_each_publishes_with_its_own_title_open_and_as_its_type(hub):
         "bytes": size["hw/board.kicad_pcb"] + size["hw/board.kicad_pro"],
         "kicad": {"project": "hw/board.kicad_pro"}}
     assert model == {"id": "hw__board.glb", "name": "Плата в 3D", "type": "board3d",
-                     "file": "hw/board.glb", "bytes": len(GLB)}
-    for name, data in DESIGN.items():
+                     "file": "hw/board.glb", "bytes": len(MADE_GLB)}
+    for name, data in {**DESIGN, "hw/board.glb": MADE_GLB}.items():
         served = hub.get(f"{build}{name}")
         assert (served.status_code, served.content) == (200, data), name
         assert served.headers["Content-Type"] == (
@@ -212,6 +236,28 @@ def test_each_publishes_with_its_own_title_open_and_as_its_type(hub):
     revision = build.rstrip("/").rsplit("/", 1)[1]
     assert not (hub.project_dir("kicad0001") / revision / "hw").joinpath(
         "board.kicad_prl").exists()
+
+
+def test_a_board_kicad_cli_refuses_fails_the_build_with_what_it_said(hub_factory):
+    refused = {("glb", docsbuild.GLB_FLAGS): (422, "Failed to load board\n")}
+    with KicadStub(refused) as stub:
+        hub = hub_factory(kicad_url=stub.url)
+        reply = hub.publish_async("kicad0001", None, tar_gz(
+            {"project.json": project(list(LISTED)), **DESIGN}))
+        record = hub.await_job(reply.json()["job"]).record
+    assert (record["state"], record["code"]) == ("failed", 422), record
+    assert "hw/board.glb is made by the hub from hw/board.kicad_pcb" in record["error"]
+    assert "Failed to load board" in record["error"]
+
+
+def test_a_kicad_service_that_does_not_answer_fails_the_build_naming_it(hub_factory):
+    hub = hub_factory(kicad_url="http://127.0.0.1:1")
+    reply = hub.publish_async("kicad0001", None, tar_gz(
+        {"project.json": project(list(LISTED)), **DESIGN}))
+    record = hub.await_job(reply.json()["job"]).record
+    assert (record["state"], record["code"]) == ("failed", 422), record
+    assert "hw/board.glb is made by the hub from hw/board.kicad_pcb" in record["error"]
+    assert "KICAD_URL=http://127.0.0.1:1 did not answer" in record["error"]
 
 
 def test_two_designs_in_one_project_are_four_documents(hub):

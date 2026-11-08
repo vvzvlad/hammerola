@@ -385,3 +385,143 @@ jobs:
       if: always()
       run: |
         docker logout gitea.vvzvlad.xyz || true
+
+  # The KiCad sidecar (kicadsvc/), the hub's kicad-cli: its own image, built, checked and
+  # pushed beside the hub's with the same tags, under `<repo>-kicad`. A job of its own, so the
+  # 7.5 GB base does not lengthen the hub's; it waits for the same green tests. The rules of
+  # the job above hold here: every container and the network are named after the run, every
+  # removal carries `-v`, and the login comes after the check.
+  kicad:
+    runs-on: ubuntu-latest
+    needs: test
+    # The step bounds below sum to 45 minutes (20 build + 10 check + 15 push).
+    timeout-minutes: 50
+    env:
+      KICAD_NAME: hammerola-kicad-${{ github.run_id }}
+      KICAD_PROBE_NAME: hammerola-kicad-probe-${{ github.run_id }}
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Compute the KiCad sidecar's image tags
+      id: tags
+      # The hub's rule (`Compute image tags` above, whose comments say why each line is
+      # there), for the image `<repo>-kicad`.
+      env:
+        REF_NAME: ${{ github.ref_name }}
+        REPO: ${{ github.repository }}
+        SHA: ${{ github.sha }}
+      run: |
+        IMAGE="gitea.vvzvlad.xyz/$(printf '%s' "$REPO" | tr 'A-Z' 'a-z')-kicad"
+        if [ "$REF_NAME" = "main" ]; then
+          echo "tags=$IMAGE:$SHA $IMAGE:latest" >> "$GITHUB_OUTPUT"
+          echo "smoke=$IMAGE:$SHA" >> "$GITHUB_OUTPUT"
+        else
+          branch_tag=$(printf '%s' "$REF_NAME" | tr -c 'A-Za-z0-9_.-' '-' | sed 's/^[^A-Za-z0-9_]/_/' | cut -c1-100)
+          if [ "$branch_tag" = "latest" ]; then
+            branch_tag="branch-latest"
+          fi
+          echo "tags=$IMAGE:${branch_tag}" >> "$GITHUB_OUTPUT"
+          echo "smoke=$IMAGE:${branch_tag}" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build the KiCad sidecar image
+      timeout-minutes: 20
+      env:
+        TAGS: ${{ steps.tags.outputs.tags }}
+      run: |
+        set -e
+        set -- $TAGS
+        [ "$#" -gt 0 ] || { echo "No tags to build: the tag-computation step produced no usable output. Refusing to build an image that no name can reach." >&2; exit 1; }
+        tag_args=""
+        for tag in "$@"; do tag_args="$tag_args --tag $tag"; done
+        # `--pull` for the reason the hub's build gives. No memory ceiling: kicadsvc/Dockerfile
+        # has no RUN, so nothing executes under one. The context is kicadsvc/ alone.
+        docker build --pull kicadsvc --file kicadsvc/Dockerfile $tag_args
+
+    - name: Check the KiCad sidecar exports a board
+      # The sidecar under its own command, asked by a second container of the same image on a
+      # network of this run's for the GLB of KiCad's own pic_programmer demo, sent as the hub
+      # sends a board (a tar of its directory): an answer that is a GLB with every 3D model
+      # found, or the step fails before anything is pushed.
+      # Memory ceilings measured pass/fail on this runner with this export: the sidecar is
+      # OOM-killed at 256m and passes at 384m, so 1536m is 4x; the probe dies at 16m and
+      # passes at 24m, so 96m is 4x. The two flags of each must stay equal.
+      timeout-minutes: 10
+      env:
+        KICAD_IMAGE: ${{ steps.tags.outputs.smoke }}
+      run: |
+        set -e
+        # A re-run reuses github.run_id, so clear what a killed attempt may still hold.
+        docker rm -f -v "$KICAD_NAME" "$KICAD_PROBE_NAME" || true
+        docker network rm "$KICAD_NAME" || true
+        docker network create "$KICAD_NAME"
+        docker run -d --name "$KICAD_NAME" --network "$KICAD_NAME" \
+          --memory=1536m --memory-swap=1536m "$KICAD_IMAGE"
+        docker run --rm -i --name "$KICAD_PROBE_NAME" --network "$KICAD_NAME" \
+          --memory=96m --memory-swap=96m "$KICAD_IMAGE" \
+          python3 - "http://$KICAD_NAME:8080" <<'EOF'
+        import io, sys, tarfile, time, urllib.error, urllib.request
+        body = io.BytesIO()
+        with tarfile.open(fileobj=body, mode="w") as tar:
+            tar.add("/usr/share/kicad/demos/pic_programmer", arcname=".")
+        request = urllib.request.Request(
+            sys.argv[1] + "/export?board=pic_programmer.kicad_pcb&format=glb&flag=--subst-models",
+            data=body.getvalue(), method="POST")
+        for attempt in range(30):
+            try:
+                answer = urllib.request.urlopen(request, timeout=300).read()
+                break
+            except urllib.error.HTTPError as error:
+                sys.exit(f"the sidecar answered {error.code}: {error.read().decode()[-2000:]}")
+            except urllib.error.URLError:
+                time.sleep(1)
+        else:
+            sys.exit("the sidecar did not answer within 30 s of starting")
+        with tarfile.open(fileobj=io.BytesIO(answer)) as tar:
+            glb = tar.extractfile("export.glb").read()
+            output = tar.extractfile("output.txt").read().decode()
+        missing = [line for line in output.splitlines() if "Could not add 3D model" in line]
+        if not glb.startswith(b"glTF") or missing:
+            sys.exit(f"no GLB, or 3D models not found: {missing[:5]}\n{output[-2000:]}")
+        print(f"sidecar ok: {len(glb)} bytes of GLB, every 3D model found")
+        EOF
+        docker rm -f -v "$KICAD_NAME"
+        docker network rm "$KICAD_NAME"
+
+    - name: Log in to the Gitea container registry for the sidecar
+      # After the check, for the reason the hub's job gives.
+      uses: docker/login-action@v4
+      with:
+        registry: gitea.vvzvlad.xyz
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+
+    - name: Push the KiCad sidecar image
+      # :latest last, so a failed :<sha> leaves it where it was (see `Push Docker images`).
+      timeout-minutes: 15
+      env:
+        TAGS: ${{ steps.tags.outputs.tags }}
+      run: |
+        set -e
+        set -- $TAGS
+        [ "$#" -gt 0 ] || { echo "No tags to push: the tag-computation step produced no usable output. Refusing to report a successful push that pushed nothing." >&2; exit 1; }
+        for tag in "$@"; do docker push "$tag"; done
+
+    - name: Remove the KiCad sidecar's containers from the runner
+      # For the run whose check step was killed by its timeout. `-v` as everywhere.
+      if: always()
+      run: |
+        docker rm -f -v "$KICAD_NAME" "$KICAD_PROBE_NAME" || true
+        docker network rm "$KICAD_NAME" || true
+
+    - name: Remove the KiCad sidecar's images from the runner
+      if: always()
+      env:
+        TAGS: ${{ steps.tags.outputs.tags }}
+      run: |
+        for tag in $TAGS; do docker rmi "$tag" || true; done
+
+    - name: Log out of the Gitea container registry after the sidecar
+      if: always()
+      run: |
+        docker logout gitea.vvzvlad.xyz || true

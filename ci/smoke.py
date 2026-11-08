@@ -117,10 +117,9 @@ APP_UID = 1000
 GUARD_FRAGMENT = "Missing required variable(s)"
 # EVERY field src/settings.py declares with no default, spelled the way config_errors.py prints
 # it: the environment variable name in SCREAMING_CASE. Keep in step with src/settings.py.
-# With a single entry, check (b) cannot prove the guard names every missing key, not just the
-# first; tests/test_config_errors.py covers that. A second entry here restores it, and the
-# declared count follows automatically.
-REQUIRED_VARIABLES = ["EDIT_TOKEN"]
+# Two entries, so check (b) proves the guard names every missing key and not just the first;
+# the declared count follows from the list.
+REQUIRED_VARIABLES = ["EDIT_TOKEN", "KICAD_URL"]
 
 # Paths that must NOT be inside the image. .dockerignore excludes them; the Dockerfile also
 # copies files one by one, so this is defence in depth against a widened COPY.
@@ -169,6 +168,9 @@ REQUIRED_PATHS = [
     # The top-level name every model.py imports, copied on a line of its own; missing, only
     # the first model build fails.
     "/app/checklib.py",
+    # ...and the other one, `import kicadboard`, copied the same way; missing, only the first
+    # build of a model that places a board fails.
+    "/app/kicadboard.py",
     # The browser bundle, compiled by the `ui` stage and copied out of it by name. One path
     # because vite emits one file (see ui/vite.config.mjs); a new output adds a row here and a
     # COPY line in the Dockerfile.
@@ -708,12 +710,14 @@ EXPECTED_TARGETS = (
     ("(j) git server", len(GIT_TARGETS)),
 )
 
-# The environment the probe and real-command containers run with. The value is invented and
-# reaches nothing, so the gate runs on pull requests too; EDIT_TOKEN is only compared for
-# equality, so any non-empty string starts the image. Check (j) presents it.
+# The environment the probe and real-command containers run with. The values are invented and
+# reach nothing, so the gate runs on pull requests too; EDIT_TOKEN is only compared for
+# equality, so any non-empty string starts the image. Check (j) presents it. KICAD_URL is
+# only dialled by a build or a document that asks for a board, which no check here makes.
 SMOKE_TOKEN = "fake-smoke-token-not-real-0123456789abc"
 SMOKE_ENV = [
     "EDIT_TOKEN=" + SMOKE_TOKEN,
+    "KICAD_URL=http://kicad.invalid:8080",
 ]
 
 # The command the probe container runs instead of the image's own. It still goes through

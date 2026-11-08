@@ -73,12 +73,12 @@ OTHER_PROGRAMS = {
     # Freerouting's `--gui.enabled` and `--router.fanout.enabled`, Copperpour's
     # `--config`, and the skill's own KiCad scripts (`autoroute.sh --draft-time
     # --finish --finish-time --diagnose`, `view.py --px --drc --marks`,
-    # `silk.py apply --live`, `bq.py zones --at`, `findings.py --by`).
+    # `silk.py apply --live`, `bq.py zones --at`, `findings.py --type --by`).
     "--schematic-parity", "--severity-all", "--refill-zones", "--save-board",
     "--exclude-dnp", "--smd-only", "--no-dnp",
     "--gui", "--router", "--config",
     "--draft-time", "--finish", "--finish-time", "--diagnose",
-    "--px", "--drc", "--marks", "--live", "--at", "--by",
+    "--px", "--drc", "--marks", "--live", "--at", "--type", "--by",
     # `references/analysis.md`: kicad-cli's STEP and XAO export of the board
     # body or its copper alone, for a thermal or current model.
     "--board-only", "--no-components", "--include-inner-copper",

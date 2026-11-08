@@ -19,12 +19,8 @@ class _Ranged(BaseSettings):
 
 
 class _TwoRequired(BaseSettings):
-    """Two credentials, so the guard can be asked to name BOTH of them.
-
-    src/settings.py declares exactly one no-default field (EDIT_TOKEN), so the
-    real Settings cannot show whether every missing key is named or only the first;
-    check (b) in ci/smoke.py cannot either (see REQUIRED_VARIABLES there).
-    """
+    """Two credentials, so the guard can be asked to name BOTH of them, without
+    the real Settings, which reads the process environment and a `.env`."""
 
     first_secret: str
     second_secret: str
