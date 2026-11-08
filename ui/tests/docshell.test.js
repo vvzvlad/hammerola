@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 // The KiCad viewer's module, imported by its address on the hub: a module of
-// nothing here, the schematic's element below carrying what it would define.
+// nothing here.
 vi.mock('/_v/ecad-viewer.js', () => ({}))
 
 import BuildPage from '../src/BuildPage.jsx'
@@ -21,7 +21,7 @@ import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, {
   docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE, TEXT_TYPE,
 } from '../src/DocumentView.jsx'
-import KicadView, { DRAFT_MARK, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
+import { DRAFT_MARK } from '../src/KicadView.jsx'
 import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
 } from '../src/docmd.js'
@@ -237,21 +237,21 @@ describe('one document, as both pages draw it', () => {
     afterEach(() => window.history.replaceState(null, '', '/'))
 
     it('is that address with the screen the link names, the key and what it does not name kept', () => {
-      window.history.replaceState({ hmr: 'abc123' }, '', `${BASE}?v=glass&files=k1&x=2&s=psu#top`)
+      window.history.replaceState({ hmr: 'abc123' }, '', `${BASE}?v=glass&files=k1&x=2#top`)
       const copied = `${window.location.origin}${BASE}?v=print&c=1,2#x`
-      const note = `[o](?v=open) [s](?d=hw__board.kicad_sch&s=amp) [c](${copied}) `
+      const note = `[o](?v=open) [s](?d=hw__board.kicad_sch) [c](${copied}) `
         + '[p](/project/docs0001/abc123/) [h](#top) [l](/project/docs0001/latest/?v=open)'
       // drawn with no door to the page — the datasheet's window — each is that
       // address, key kept, with no click handler and in the same tab
       const loose = ofType(documentBody(cutList, BASE, note, ''), 'a').slice(0, 3)
       expect(loose.map((a) => [a.props.href, a.props.onClick, a.props.target])).toEqual([
         [`${BASE}?files=k1&x=2&v=open`, undefined, undefined],
-        [`${BASE}?files=k1&x=2&d=hw__board.kicad_sch&s=amp`, undefined, undefined],
+        [`${BASE}?files=k1&x=2&d=hw__board.kicad_sch`, undefined, undefined],
         [`${BASE}?files=k1&x=2&v=print`, undefined, undefined]])
       const tree = documentBody(cutList, BASE, note, '', [], vi.fn())
-      const [open, sheet, full, plain, here, other] = ofType(tree, 'a')
-      expect([open, sheet, full, plain].map((a) => a.props.href)).toEqual([`${BASE}?files=k1&x=2&v=open`,
-        `${BASE}?files=k1&x=2&d=hw__board.kicad_sch&s=amp`, `${BASE}?files=k1&x=2&v=print`, `${BASE}?files=k1&x=2`])
+      const [open, schematic, full, plain, here, other] = ofType(tree, 'a')
+      expect([open, schematic, full, plain].map((a) => a.props.href)).toEqual([`${BASE}?files=k1&x=2&v=open`,
+        `${BASE}?files=k1&x=2&d=hw__board.kicad_sch`, `${BASE}?files=k1&x=2&v=print`, `${BASE}?files=k1&x=2`])
       // a place in the document, and the page of another build, are plain links
       expect([here, other].map((a) => [a.props.href, a.props.onClick]))
         .toEqual([['#top', undefined], ['/project/docs0001/latest/?v=open', undefined]])
@@ -263,12 +263,12 @@ describe('one document, as both pages draw it', () => {
         return event.preventDefault.mock.calls.length
       }
       // a modified or middle click is the browser's
-      expect([{ ctrlKey: true }, { metaKey: true }, { button: 1 }].map((extra) => click(sheet, extra))).toEqual([0, 0, 0])
+      expect([{ ctrlKey: true }, { metaKey: true }, { button: 1 }].map((extra) => click(schematic, extra))).toEqual([0, 0, 0])
       // a plain one is a step of history, none for the screen the address names
-      expect(click(sheet)).toBe(1)
+      expect(click(schematic)).toBe(1)
       expect([push.mock.calls.length, window.location.search, window.history.state])
-        .toEqual([1, '?files=k1&x=2&d=hw__board.kicad_sch&s=amp', { hmr: 'abc123' }])
-      click(sheet)
+        .toEqual([1, '?files=k1&x=2&d=hw__board.kicad_sch', { hmr: 'abc123' }])
+      click(schematic)
       expect(push).toHaveBeenCalledTimes(1)
     })
   })
@@ -803,9 +803,8 @@ describe('the shell', () => {
   it('makes each pick a step of history, and Back brings the one before, the default included', async () => {
     mount('')
     shell.componentDidMount()
-    // a schematic's sheet (`s=`) goes with the document it is of: a pick
-    // opens a design on its root sheet; the rest of the address stays
-    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?x=1&s=amp`)
+    // the rest of the address stays
+    window.history.replaceState({ hmr: 'latest' }, '', `${BASE}?x=1`)
     const push = vi.spyOn(window.history, 'pushState')
     try {
       shell.pick('report.pdf')
@@ -813,7 +812,7 @@ describe('the shell', () => {
       expect(push).toHaveBeenCalledTimes(1)
       expect([window.location.search, window.history.state]).toEqual(['?x=1&d=report.pdf', { hmr: 'latest' }])
       await go(-1)
-      expect([window.location.search, shell.state.active]).toEqual(['?x=1&s=amp', 'list.md'])
+      expect([window.location.search, shell.state.active]).toEqual(['?x=1', 'list.md'])
       await go(1)
       expect(shell.state.active).toBe('report.pdf')
     } finally {
@@ -831,8 +830,8 @@ describe('the shell', () => {
     onTestFinished(() => shell.componentWillUnmount())
     const [shown] = views(DocPage(shell.render().props))
     const note = new DocumentView(shown.props)
-    note.state.text = `[open](?v=open) [amp](?d=${SCHEMATIC.id}&s=amp)`
-    const [view, sheet] = ofType(note.render(), 'a')
+    note.state.text = `[open](?v=open) [schematic](?d=${SCHEMATIC.id})`
+    const [view, schematic] = ofType(note.render(), 'a')
     const push = vi.spyOn(window.history, 'pushState')
     onTestFinished(() => push.mockRestore())
     const click = (a) => {
@@ -843,78 +842,11 @@ describe('the shell', () => {
     // this page has no views: no step, and no load of the page either
     expect(click(view)).toBe(1)
     expect([push.mock.calls.length, window.location.search, shell.state.active]).toEqual([0, '?d=list.md&files=k1', 'list.md'])
-    click(sheet)
+    click(schematic)
     expect([push.mock.calls.length, window.location.search, shell.state.active])
-      .toEqual([1, `?files=k1&d=${SCHEMATIC.id}&s=amp`, SCHEMATIC.id])
+      .toEqual([1, `?files=k1&d=${SCHEMATIC.id}`, SCHEMATIC.id])
     await go(-1)
     expect([window.location.search, shell.state.active]).toEqual(['?d=list.md&files=k1', 'list.md'])
-  })
-
-  it('makes a sheet picked under the schematic a step whose address names it, on the schematic on screen too', () => {
-    window.history.replaceState(null, '', `${BASE}?x=1`)
-    rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
-    shell.setState = (patch) => Object.assign(shell.state, patch)
-    const push = vi.spyOn(window.history, 'pushState')
-    onTestFinished(() => push.mockRestore())
-    const pick = (id, sheet) => shell.render().props.onPick(id, sheet)
-    // the default schematic, on screen with no `?d=`, then its root
-    pick(SCHEMATIC.id, 'amp')
-    pick(SCHEMATIC.id, 'amp')
-    expect([push.mock.calls.length, window.location.search]).toEqual([1, '?x=1&s=amp'])
-    pick(SCHEMATIC.id, '')
-    expect(window.location.search).toBe('?x=1')
-    // from the board
-    pick(BOARD.id)
-    pick(SCHEMATIC.id, 'hw/psu.kicad_sch:/r/b')
-    expect([push.mock.calls.length, window.location.search, shell.state.active])
-      .toEqual([4, `?x=1&s=${encodeURIComponent('hw/psu.kicad_sch:/r/b')}`, SCHEMATIC.id])
-  })
-
-  it('names the default schematic\'s sheet as `?s=` with no `?d=`: a link opens on it, each change is a step Back undoes', async () => {
-    const ROOT = 'hw/board.kicad_sch:/root'
-    const AMP = 'hw/board.kicad_sch:/root/amp'
-    const PSU = 'hw/board.kicad_sch:/root/psu'
-    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(`<${url}>`)))
-    window.history.replaceState(null, '', `${BASE}?s=amp`)
-    rereadPage(BASE)
-    shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
-    shell.setState = (patch) => Object.assign(shell.state, patch)
-    // The design as the page draws it, its schematic's element switching sheets
-    // as the viewer does, reporting the change inside `switchPage`.
-    const [shown] = views(DocPage(shell.render().props))
-    const view = new KicadView(new DocumentView(shown.props).render().props)
-    view.setState = (patch, done) => {
-      Object.assign(view.state, patch)
-      if (done) done()
-    }
-    const sch = Object.assign(document.createElement('ecad-viewer'), {
-      page: ROOT,
-      replaceSources: async () => {},
-      getSchematicPages: () => [ROOT, AMP, PSU].map((projectPath, i) => ({
-        projectPath, name: projectPath.split('/').at(-1), parentProjectPath: i ? ROOT : null })),
-      getActiveSchematicPage: () => ({ projectPath: sch.page }),
-      switchPage: (to) => {
-        sch.page = to
-        sch.dispatchEvent(new CustomEvent(PAGE_EVENT))
-        return true
-      },
-    })
-    view.refCallbacks[SCH](sch)
-    shell.componentDidMount()
-    view.componentDidMount()
-    try {
-      await vi.waitFor(() => expect(view.state.ready).toBe(true))
-      expect([sch.page, window.location.search]).toEqual([AMP, '?s=amp'])
-      sch.switchPage(PSU)
-      expect(window.location.search).toBe('?s=psu')
-      await go(-1)
-      expect([sch.page, window.location.search, shell.state.active]).toEqual([AMP, '?s=amp', SCHEMATIC.id])
-    } finally {
-      view.componentWillUnmount()
-      shell.componentWillUnmount()
-      vi.unstubAllGlobals()
-    }
   })
 })
 
@@ -1052,7 +984,7 @@ describe('comments on the page of a build with no model', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('opens a row\'s document at its place as a step of history, the sheet the reader\'s step where it was on screen, and a row on a model nowhere', () => {
+  it('opens a row\'s document at its place as a step of history, and a row on a model nowhere', () => {
     const shell = opened({ search: '?d=list.md' })
     Object.assign(shell.state, { feed: [stored(), ON_MODEL] })
     const push = vi.spyOn(window.history, 'pushState')
@@ -1061,9 +993,9 @@ describe('comments on the page of a build with no model', () => {
     row(0)
     expect([push.mock.calls.length, window.location.search, shell.state.active, shell.state.activePin])
       .toEqual([1, '', SCHEMATIC.id, 'c1'])
-    expect(shell.state.docFocus).toEqual({ doc: SCHEMATIC.file, sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], step: false })
+    expect(shell.state.docFocus).toEqual({ doc: SCHEMATIC.file, sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6] })
     row(0)
-    expect([push.mock.calls.length, shell.state.docFocus.step]).toEqual([1, true])
+    expect(push).toHaveBeenCalledTimes(1)
     row(1)
     expect([push.mock.calls.length, shell.state.active, shell.state.activePin]).toEqual([1, SCHEMATIC.id, 'c2'])
     // another document picked drops the place asked for, so it is not shown later
@@ -1188,10 +1120,10 @@ describe('comments on the page of a build with no model', () => {
       ? kids : undefined
   })[0]
 
-  it('lists the variant\'s revisions under the header\'s button with the token, a row a link to its address on the document and sheet on screen', async () => {
+  it('lists the variant\'s revisions under the header\'s button with the token, a row a link to its address on the document on screen', async () => {
     const OTHER = 'beef4567890'
     const builds = { has_dev: true, latest: OTHER, builds: [{ commit: OTHER, built: STAMP }, { commit: 'abc123', built: STAMP }] }
-    const shell = opened({ search: `?d=${SCHEMATIC.id}&s=amp` })
+    const shell = opened({ search: `?d=${SCHEMATIC.id}` })
     const h = headerOn(shell, { props: { builds } })
     const [button, shut] = picker(h.render())
     expect(shut.props.style.display).toBe('none')
@@ -1199,8 +1131,8 @@ describe('comments on the page of a build with no model', () => {
     const [, card] = picker(h.render())
     expect(card.props.style.display).toBe('block')
     // the pointers on top and the builds below, each a page load of its
-    // revision's address, the document and the sheet on screen kept
-    const here = `?d=${SCHEMATIC.id}&s=amp`
+    // revision's address, the document on screen kept
+    const here = `?d=${SCHEMATIC.id}`
     expect(collect(card, (el) => (el.type === 'a' ? [texts(el)[0], el.props.href] : undefined))).toEqual([
       ['dev', `/project/docs0001/dev/${here}`], ['latest', `/project/docs0001/latest/${here}`],
       ['beef456', `/project/docs0001/${OTHER}/${here}`]])

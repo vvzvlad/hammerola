@@ -6,16 +6,16 @@
 // An address is the path of a build — or of a comparison of one (`pageFrom` in
 // hub.js) — and a query naming what is on screen: the model's view `v=`, the
 // document over the model or on the page of a build with no model `d=`, the
-// sheet of the schematic open `s=`, the camera's frame `c=` (only a Share
-// link carries it: the page reads it on load and never puts it in the address
-// bar), and the key to a build's files `files=`. `parse` reads all of it at
-// once, with the state of the history entry; `format` writes it back. What an
+// camera's frame `c=` (only a Share link carries it: the page reads it on load
+// and never puts it in the address bar), and the key to a build's files
+// `files=`. `parse` reads all of it at once, with the state of the history
+// entry; `format` writes it back. What an
 // address names is each page's choice; how it is spelled is this module's:
 //
-//   * the parameters go in the order v, d, s, c, files, each value escaped as a
+//   * the parameters go in the order v, d, c, files, each value escaped as a
 //     component of a URL but `c=`, whose commas stay as they are;
 //   * nothing is written for a field with no value: the first view has no `v=`
-//     (`viewParam`), the root sheet no `s=`;
+//     (`viewParam`);
 //   * a parameter a change does not name stays where it stands, spelled as it
 //     came — `files=`, and anything this module does not know. A field the
 //     change names is taken out and written again at the end (`respell`); the
@@ -34,7 +34,6 @@ import { pageFrom } from './hub.js';
 /** The query keys of the fields an address names. */
 export const VIEW_QUERY = 'v';
 export const DOC_QUERY = 'd';
-export const SHEET_QUERY = 's';
 export const CAMERA_QUERY = 'c';
 export const FILES_QUERY = 'files';
 
@@ -44,7 +43,6 @@ export const FILES_QUERY = 'files';
 const FIELDS = [
   ['view', VIEW_QUERY, encodeURIComponent],
   ['doc', DOC_QUERY, encodeURIComponent],
-  ['sheet', SHEET_QUERY, encodeURIComponent],
   ['camera', CAMERA_QUERY, String],
   ['files', FILES_QUERY, encodeURIComponent],
 ];
@@ -55,7 +53,7 @@ const keyOf = (pair) => pair.split('=')[0];
  * The address of `where` (`pathname`, `search`, `hash`, the browser's own by
  * default) and the history entry's `state`, read whole: the build's `pid`,
  * `slot`, `base` and `cmp` (`pageFrom`), the `path`, the query's `params` as
- * written, the `hash`, and the value of each field (`view`, `doc`, `sheet`,
+ * written, the `hash`, and the value of each field (`view`, `doc`,
  * `camera` — the text of `c=` — and `files`), or null where it is not there.
  */
 export function parse(where = window.location, state = window.history.state) {

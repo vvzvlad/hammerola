@@ -38,17 +38,12 @@ import {
     select_modifiers,
     LabelClickEvent,
     LinkClickEvent,
-    SheetChangeEvent,
-    SheetLoadEvent,
 } from "../base/events";
 import { ViewerType } from "../base/viewer";
 import { LayerNames, LayerSet } from "./layers";
 import { SchematicPainter, sheet_body_bbox } from "./painter";
 import { render_schematic_view } from "./schematic-view";
-import { get_symbol_transform } from "../../kicad/symbol-transform";
 import { apply_schematic_render_defaults } from "./render-state";
-import { StrokeFont, TextAttributes } from "../../kicad/text";
-import type { PinCheckResult } from "../../proto/component_erc_result";
 import type {
     EcadOverlayAnchor,
     ResolvedOverlayAnchor,
@@ -100,7 +95,6 @@ export class SchematicViewer extends DocumentViewer<
 > {
     static InterActiveBBoxLineWidth = 0.265;
 
-    #focus_net_item?: string;
     #selected_bbox: BBox | null = null;
     #last_probe: PinInstance | null = null;
     // The bbox the overlay highlight was last built for. `find_item` hands back
@@ -182,10 +176,6 @@ export class SchematicViewer extends DocumentViewer<
         return this.document.filename;
     }
 
-    set focus_net_item(ref: string | undefined) {
-        this.#focus_net_item = ref;
-    }
-
     override async load(src: KicadSch) {
         if (this.#instance_context?.document !== src) {
             const first_symbol = src.symbols.values().next().value;
@@ -210,7 +200,6 @@ export class SchematicViewer extends DocumentViewer<
         } else {
             await super.load(src);
         }
-        this.dispatchEvent(new SheetLoadEvent(src.filename));
     }
 
     /**
@@ -324,8 +313,8 @@ export class SchematicViewer extends DocumentViewer<
     }
     override on_dblclick(pos: Vec2): void {
         const ct = this.find_item(pos);
-        // A label, sheet entry or power symbol is the element's to trace
-        // (ecad-viewer/net-tracking/tracker.ts); a sheet entry before the
+        // A label, sheet entry or power symbol is the host's to trace (the
+        // schematic plane draws its chain); a sheet entry before the
         // sheet symbol it sits on.
         if (traceable_uuid(ct.item)) {
             this.dispatchEvent(
@@ -337,20 +326,6 @@ export class SchematicViewer extends DocumentViewer<
             );
             return;
         }
-
-        // Hierarchical sheet symbols still navigate into the sheet.
-        if (this.document.sheets)
-            for (const item of this.document.sheets) {
-                if (item.bbox.contains_point(pos) && item.sheetfile) {
-                    this.dispatchEvent(
-                        new SheetChangeEvent({
-                            filename: item.sheetfile,
-                            uuid: item.uuid,
-                        }),
-                    );
-                    return;
-                }
-            }
 
         if (!ct.item) return;
         this.paint_selected(ct.bbox);
@@ -376,12 +351,6 @@ export class SchematicViewer extends DocumentViewer<
             this.#traced_name = null;
             this.#paint_overlays(performance.now());
         }
-
-        if (value && this.#focus_net_item) {
-            this.zoom_fit_item(this.#focus_net_item);
-        }
-
-        this.#focus_net_item = undefined;
     }
 
     /** The nets drawn over the schematic, on every sheet; see net-highlight.ts. */
@@ -391,7 +360,7 @@ export class SchematicViewer extends DocumentViewer<
 
     /**
      * Whether highlights and traces ease in and out. Off for headless scenes
-     * (insets, the world view), which are redrawn only when told.
+     * (insets, the schematic plane), which are redrawn only when told.
      */
     set highlight_motion(on: boolean) {
         this.#highlight_motion.animate = on;
@@ -787,144 +756,11 @@ export class SchematicViewer extends DocumentViewer<
             layer.graphics.composite_operation = "source-over";
         }
 
-        this.paint_erc();
-
         this.draw();
     }
 
     public clear_selection() {
         this.paint_selected(null);
-    }
-
-    #erc_data?: Array<{ uuid: string; pins: PinCheckResult[] }>;
-
-    public show_erc(uuid: string, pins: PinCheckResult[]) {
-        this.#erc_data = [{ uuid, pins }];
-        this.zoom_fit_item(uuid);
-        // zoom_fit_item calls paint_selected, which now calls paint_erc
-    }
-
-    public show_erc_multi(
-        erc_items: Array<{ uuid: string; pins: PinCheckResult[] }>,
-    ) {
-        if (erc_items.length === 0) {
-            return;
-        }
-        this.#erc_data = erc_items;
-
-        const bboxes: BBox[] = [];
-        for (const erc_item of erc_items) {
-            const bbox = this.schematic_renderer.get_item_bbox(erc_item.uuid);
-            if (bbox) {
-                bboxes.push(bbox);
-            }
-        }
-
-        if (bboxes.length > 0) {
-            const combined_bbox = BBox.combine(bboxes);
-            this.viewport.camera.bbox = combined_bbox.grow(20);
-            this.draw();
-            this.paint_selected(combined_bbox);
-        }
-    }
-
-    protected paint_erc() {
-        const layer = this.layers.by_name(LayerNames.erc)!;
-        layer.clear();
-
-        if (!this.#erc_data || this.#erc_data.length === 0) {
-            return;
-        }
-
-        this.renderer.start_layer(layer.name);
-
-        const font = StrokeFont.default();
-
-        for (const erc_item of this.#erc_data) {
-            const { uuid, pins } = erc_item;
-            // Verify the item is still in the document
-            const symbol = this.#instance_context?.find_symbol(uuid);
-            if (!symbol) {
-                continue;
-            }
-
-            const transform = get_symbol_transform(symbol);
-            const matrix = transform.matrix;
-            const symbol_pos = symbol.at.position;
-
-            for (const pin_err of pins) {
-                // Find pin in symbol
-                // symbol.pins contains PinInstance
-                const pin_inst = symbol.pins.find(
-                    (p) => p.number == pin_err.pin_num,
-                );
-                if (!pin_inst) continue;
-
-                // pin_inst.definition returns PinDefinition directly (from LibSymbol.pin_by_number)
-                const pin_def = pin_inst.definition;
-                const pin_pos = symbol_pos.add(
-                    matrix.transform(pin_def.at.position),
-                );
-
-                const severity_color =
-                    pin_err.severity == "error"
-                        ? (this.theme.erc_error ?? new Color(1, 0, 0))
-                        : (this.theme.erc_warning ?? new Color(1, 0.6, 0));
-
-                // Draw marker polygon (KiCad's distinctive arrow-like shape)
-                // Shape coordinates from KiCad's marker_base.cpp MarkerShapeCorners
-                // Scaled to fit schematic units
-                const markerScale = 0.2;
-                const markerShapeCorners = [
-                    new Vec2(0, 0),
-                    new Vec2(8, 1),
-                    new Vec2(4, 3),
-                    new Vec2(13, 8),
-                    new Vec2(9, 9),
-                    new Vec2(8, 13),
-                    new Vec2(3, 4),
-                    new Vec2(1, 8),
-                    new Vec2(0, 0),
-                ];
-
-                // Scale and translate the marker shape to pin position
-                const markerPoints = markerShapeCorners.map((corner) =>
-                    pin_pos.add(corner.mul(markerScale)),
-                );
-
-                this.renderer.polygon(
-                    new Polygon(markerPoints, severity_color),
-                );
-
-                if (pin_err.message) {
-                    // Draw text
-                    this.renderer.state.push();
-                    // Position text slightly offset from pin
-                    const text_pos = pin_pos.add(new Vec2(1, -1));
-
-                    const attrs = new TextAttributes();
-                    // KiCad StrokeFont expects units in 10000 scale (1mm = 10000IU approx for these internal calcs)
-                    // StrokeFont.draw applies a 0.0001 scale transform.
-                    // So 1.27mm should be passed as 12700.
-                    attrs.size = new Vec2(1.27 * 10000, 1.27 * 10000);
-                    attrs.stroke_width = 0.15 * 10000;
-                    attrs.color = severity_color;
-                    attrs.h_align = "left";
-                    attrs.v_align = "bottom";
-
-                    font.draw(
-                        this.renderer,
-                        pin_err.message,
-                        new Vec2(text_pos.x * 10000, text_pos.y * 10000),
-                        attrs,
-                    );
-                    this.renderer.state.pop();
-                }
-            }
-        }
-
-        layer.graphics = this.renderer.end_layer();
-        layer.graphics.composite_operation = "source-over";
     }
 }
 

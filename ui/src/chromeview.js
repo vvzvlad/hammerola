@@ -17,10 +17,10 @@
  * `openCount`, the feed's answers the rail draws; and `narrow`, the layout
  * every panel shares. `tab` comes from ui/src/panelstyle.js.
  */
-import { format, fresh, parse, viewParam } from './address.js';
+import { format, fresh, viewParam } from './address.js';
 import { railView } from './comments.jsx';
 import { COMMENTABLE, docUrl } from './DocumentView.jsx';
-import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
+import { PAGE, buildPath, mb, shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
 import { writeHoverHighlight, writePerspective, writeRetina } from './store.js';
@@ -102,13 +102,10 @@ export function chromeView(s, props, deps) {
   // Opening a document: what its row does, what a row of a KiCad design's
   // menu (KicadView.jsx) does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
-  // says it as `?d=` (`pushChoice`). Given a schematic's `sheet` — a row of
-  // its sheets in the list (`SheetRows` in viewlist.jsx) — the address names
-  // that sheet as `s=`, the root none, and the schematic follows it
-  // (`followPage` in KicadView.jsx).
-  const openDoc = (id, sheet) => {
+  // says it as `?d=` (`pushChoice`).
+  const openDoc = (id) => {
     setState({ doc: id, viewsOpen: false });
-    pushChoice(s.view, id, sheet);
+    pushChoice(s.view, id);
   };
   // The rename window (rename.jsx, drawn by BuildPage.jsx), opened by a pencil
   // on a row of the views menu, a document's row and the strip: with the token
@@ -121,7 +118,7 @@ export function chromeView(s, props, deps) {
     onRename(subject);
   };
   // A document listed `hidden` has no row (viewlist.jsx).
-  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc, PAGE.base, buildKey(meta),
+  const docRows = documentRows(documents, docOpen ? docOpen.id : null, openDoc,
     askRename && ((doc) => askRename({ kind: 'document', variant, id: doc.id, name: doc.name })));
   // `View in AR` (`arBtn`) is on the bar in a browser with AR Quick Look, and
   // in one without it whose WebXR said it has AR (`s.xrCapable`). It can show
@@ -151,8 +148,7 @@ export function chromeView(s, props, deps) {
   // fresh load with an unknown `?d=` does. With no document open and the
   // Current view box ticked, from the camera's angle too (`cameraParam`), read
   // as this window renders; a document covers the model, so its link carries
-  // no frame and the window offers no box. A schematic open on a sheet below
-  // its root carries the sheet the address names (`s=`).
+  // no frame and the window offers no box.
   const shareCamera = !!(share && share.camera && !docOpen);
   const shareBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;'
     + `align-items:center;justify-content:center;font:600 10px ${MONO};`
@@ -161,7 +157,6 @@ export function chromeView(s, props, deps) {
     : `${location.origin}${format(fresh(buildPath(PAGE.pid, share.id, variant), {
       view: viewParam(s.view, views),
       doc: docOpen ? docOpen.id : null,
-      sheet: docOpen ? parse().sheet : null,
       camera: shareCamera ? cameraParam() : null,
       files: shareFiles ? shareKey : null,
     }))}`;

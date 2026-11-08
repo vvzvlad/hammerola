@@ -14,37 +14,27 @@ import "./properties-panel";
 import "./viewer";
 import "./erc-inspector";
 import type { KCErcInspectorElement } from "./erc-inspector";
-import type { PinCheckResult } from "../../../proto/component_erc_result";
 
 import { KicadSch } from "../../../kicad";
-import { SchematicSheet } from "../../../kicad/schematic";
-import { AssertType, Project } from "../../project";
+import { AssertType } from "../../project";
 import { SchPreviewListElement } from "./sch-preview-list";
-import "./selection-pop-menu";
 import {
-    ComponentERCResultEvent,
-    HierarchicalSheetPinClickEvent,
-    KiCanvasFitterMenuEvent,
-    LabelClickEvent,
     LinkClickEvent,
-    NetItemSelectEvent,
     ProjectERCResultEvent,
-    SelectDesignatorEvent,
-    SheetChangeEvent,
-    SheetLoadEvent,
-    type NetItemIndex,
 } from "../../../viewers/base/events";
-import type { NetRef } from "../../../kicad/net_ref";
-import type { SchematicViewer } from "../../../viewers/schematic/viewer";
-import type { ComponentERCResult } from "../../../proto/component_erc_result";
+import type {
+    PlaneViewer,
+    PlaneSource,
+} from "../../../viewers/schematic/plane-viewer";
+import { first_slot, slot_by_link } from "../../../viewers/schematic/plane";
 
 /**
  * Internal "parent" element for KiCanvas's schematic viewer. Handles
  * setting up the schematic viewer as well as interface controls. It's
- * basically KiCanvas's version of EESchema.
+ * basically KiCanvas's version of EESchema. Its viewer is the schematic
+ * plane, every sheet of the project at once (`show_plane`).
  */
 export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerElement> {
-    #selection_pop_menu: HTMLElement;
     override assert_type(): AssertType {
         return AssertType.SCH;
     }
@@ -58,221 +48,14 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
         return preview;
     }
 
-    get sch_viewer() {
-        return this.viewer as SchematicViewer;
+    get plane(): PlaneViewer {
+        return this.viewer as PlaneViewer;
     }
+
     override initialContentCallback() {
         super.initialContentCallback();
-        this.viewer.addEventListener(SheetChangeEvent.type, (e) => {
-            this.project.activate_child_sch(e.detail.uuid);
-        });
-
-        this.viewer.addEventListener(SheetLoadEvent.type, (e) => {
-            // Keep the label-instance menu open across sheet loads so Next/Prev
-            // can continue cycling global labels on other pages.
-            this.dispatchEvent(new SheetLoadEvent(e.detail));
-        });
-
-        this.viewer.addEventListener(NetItemSelectEvent.type, async (e) => {
-            this.#select_item(e.detail);
-        });
-
-        this.viewer.addEventListener(
-            HierarchicalSheetPinClickEvent.type,
-            (e) => {
-                // A click on a sheet entry selects it; it does not open the
-                // instance menu (sheet entries are indexed as net instances
-                // for hosts, which navigate between them themselves).
-                const it = this.project.find_net_item(e.detail.uuid);
-                if (!it || it.kind === "sheet-pin") return;
-                this.pop_up_label_ref_menu([it], e.detail.uuid);
-            },
-        );
-
-        window.addEventListener(SelectDesignatorEvent.type, (e) => {
-            const refs = this.project.find_designator(e.detail.designator);
-
-            const ref = refs?.[0];
-            if (ref) {
-                this.#select_item({
-                    sheet: ref.sheet_name,
-                    uuid: ref.uuid,
-                    project_path: ref.project_path,
-                });
-            } else {
-                console.log(`cannot find designator ${e.detail.designator}`);
-            }
-        });
-
-        window.addEventListener(ComponentERCResultEvent.type, (e) => {
-            Project.import_cjk_glyphs();
-            const component_erc_result: ComponentERCResult = e.detail;
-
-            if (component_erc_result.pins.length === 0) {
-                console.warn(
-                    `ERC: No pins specified for designator ${component_erc_result.designator}`,
-                );
-                return;
-            }
-
-            const designator = component_erc_result.designator;
-            const pins_by_uuid = new Map<string, PinCheckResult[]>();
-
-            for (const pin of component_erc_result.pins) {
-                const sch_symbol = this.project.find_designator_by_pin(
-                    designator,
-                    pin.pin_num,
-                );
-
-                if (sch_symbol) {
-                    const existing_pins =
-                        pins_by_uuid.get(sch_symbol.uuid) ?? [];
-                    existing_pins.push(pin);
-                    pins_by_uuid.set(sch_symbol.uuid, existing_pins);
-                }
-            }
-
-            if (pins_by_uuid.size === 0) {
-                console.warn(
-                    `ERC: Cannot find any symbol instances for designator ${designator}`,
-                );
-                return;
-            }
-
-            const erc_items = Array.from(pins_by_uuid.entries()).map(
-                ([uuid, pins]) => ({ uuid, pins }),
-            );
-
-            const first_pin = component_erc_result.pins[0];
-            const first_ref = first_pin
-                ? this.project.find_designator_by_pin(
-                      designator,
-                      first_pin.pin_num,
-                  )
-                : null;
-
-            if (first_ref) {
-                if (first_ref.project_path) {
-                    this.project.activate_sch(first_ref.project_path);
-                }
-                if (first_ref.sheet_name !== this.sch_viewer.sch_name) {
-                    const sch = this.project.file_by_name(first_ref.sheet_name);
-                    if (sch instanceof KicadSch) {
-                        this.viewer.load(sch);
-                    }
-                }
-
-                setTimeout(() => {
-                    const only = erc_items.length === 1 ? erc_items[0] : null;
-                    if (only) {
-                        this.sch_viewer.show_erc(only.uuid, only.pins);
-                    } else {
-                        this.sch_viewer.show_erc_multi(erc_items);
-                    }
-                }, 500);
-            } else {
-                console.warn(
-                    `ERC: Cannot find first pin's symbol instance for designator ${designator}`,
-                );
-            }
-        });
-
         this.viewer.addEventListener(LinkClickEvent.type, (e) => {
-            this.#open_hyperlink(e.detail);
-        });
-
-        this.viewer.addEventListener(LabelClickEvent.type, (e) => {
-            if (this.#host_opens_lists()) return;
-
-            const its = this.project.find_labels_by_name(e.detail.name);
-            if (!its?.length) return;
-
-            const clicked = this.project.find_net_item(e.detail.uuid);
-            const kind = clicked?.kind;
-            let refs = its;
-
-            if (kind === "net") {
-                const sheet = clicked?.sheet_name ?? this.sch_viewer.sch_name;
-                refs = its.filter(
-                    (it) => it.kind === "net" && it.sheet_name === sheet,
-                );
-            } else if (kind === "global") {
-                refs = its.filter((it) => it.kind === "global");
-            } else if (kind === "hierarchical") {
-                refs = its.filter((it) => it.kind === "hierarchical");
-            }
-
-            if (refs.length < 2) return;
-
-            this.pop_up_label_ref_menu(refs, e.detail.uuid);
-        });
-
-        this.renderRoot.addEventListener("erc-jump", (e: any) => {
-            const { designator, pins } = e.detail;
-
-            if (!pins || pins.length === 0) {
-                console.warn(
-                    `ERC: No pins specified for designator ${designator}`,
-                );
-                return;
-            }
-
-            const pins_by_uuid = new Map<string, PinCheckResult[]>();
-
-            for (const pin of pins) {
-                const sch_symbol = this.project.find_designator_by_pin(
-                    designator,
-                    pin.pin_num,
-                );
-
-                if (sch_symbol) {
-                    const existing_pins =
-                        pins_by_uuid.get(sch_symbol.uuid) ?? [];
-                    existing_pins.push(pin);
-                    pins_by_uuid.set(sch_symbol.uuid, existing_pins);
-                }
-            }
-
-            if (pins_by_uuid.size === 0) {
-                console.warn(
-                    `ERC: Cannot find any symbol instances for designator ${designator}`,
-                );
-                return;
-            }
-
-            const erc_items = Array.from(pins_by_uuid.entries()).map(
-                ([uuid, pins]) => ({ uuid, pins }),
-            );
-
-            const first_ref = this.project.find_designator_by_pin(
-                designator,
-                pins[0].pin_num,
-            );
-
-            if (first_ref) {
-                if (first_ref.project_path) {
-                    this.project.activate_sch(first_ref.project_path);
-                }
-                if (first_ref.sheet_name !== this.sch_viewer.sch_name) {
-                    const sch = this.project.file_by_name(first_ref.sheet_name);
-                    if (sch instanceof KicadSch) {
-                        this.viewer.load(sch);
-                    }
-                }
-
-                setTimeout(() => {
-                    const only = erc_items.length === 1 ? erc_items[0] : null;
-                    if (only) {
-                        this.sch_viewer.show_erc(only.uuid, only.pins);
-                    } else {
-                        this.sch_viewer.show_erc_multi(erc_items);
-                    }
-                }, 100);
-            } else {
-                console.warn(
-                    `ERC: Cannot find first pin's symbol instance for designator ${designator}`,
-                );
-            }
+            this.#open_hyperlink(e.detail.url, e.detail.page);
         });
 
         window.addEventListener(ProjectERCResultEvent.type, (e) => {
@@ -287,15 +70,17 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
     }
 
     /**
-     * Follow a schematic hyperlink.
+     * Follow a schematic hyperlink clicked on the sheet `page`.
      *
      * KiCad authors embedded links as `(href "...")` on a text item's
-     * effects. Two kinds exist: absolute URLs (web pages, mailto:) which
-     * open in a new browser tab, and project-relative file paths which
-     * navigate inside the loaded project the same way KiCad resolves
-     * sibling sheet references.
+     * effects. Three kinds exist: absolute URLs (web pages, mailto:) which
+     * open in a new browser tab; `#<page number>`, KiCad's own link to
+     * another page of the schematic; and project-relative file paths,
+     * resolved the way KiCad resolves sibling sheet references. A link to a
+     * sheet shows it whole on the plane; a file placed by several sheet
+     * symbols shows its first.
      */
-    #open_hyperlink(url: string) {
+    #open_hyperlink(url: string, page?: string) {
         if (!url) return;
 
         const scheme = url.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
@@ -313,132 +98,74 @@ export class KCSchematicAppElement extends KCViewerAppElement<KCSchematicViewerE
             return;
         }
 
-        // No scheme: a link to a file in the repo. Resolve it relative to
-        // the sheet the link was authored on, then switch to that page.
+        const sheets = this.plane.sheets;
+        const numbered = slot_by_link(sheets, url);
+        if (numbered) {
+            this.plane.show_sheet(numbered.page.key);
+            return;
+        }
+
+        // No scheme: a link to a file in the repo, relative to the sheet the
+        // link is on.
+        const from = page ? this.plane.sheet(page) : undefined;
+        if (!from) return;
         const resolved = this.project.resolve_schematic_filename(
-            this.sch_viewer.sch_name,
+            from.page.document.filename,
             url,
         );
-        if (resolved) {
-            const file = this.project.file_by_name(resolved);
-            if (file instanceof KicadSch) {
-                const page =
-                    this.project.pages.find(
-                        (candidate) => candidate.document === file,
-                    ) ??
-                    this.project.pages.find(
-                        (candidate) => candidate.filename === resolved,
-                    );
-                if (page) {
-                    this.project.activate_sch(page.project_path);
-                    return;
-                }
-                this.viewer.load(file);
-                return;
-            }
-        }
+        const file = resolved ? this.project.file_by_name(resolved) : null;
+        const target =
+            file instanceof KicadSch
+                ? first_slot(sheets, file.filename)
+                : undefined;
+        if (target) this.plane.show_sheet(target.page.key);
 
         // Not a loaded schematic: nothing opens. The path is the project's,
         // and a window opened on it would resolve it against the address of
         // the page the viewer is embedded in, which serves no such file.
     }
 
-    #select_item(idx: NetItemIndex & { project_path?: string }) {
-        if (
-            idx.project_path &&
-            idx.project_path !== this.project.active_sch_name
-        ) {
-            this.sch_viewer.focus_net_item = idx.uuid;
-            this.project.activate_sch(idx.project_path);
-            return;
-        }
-        const sch = this.project.file_by_name(idx.sheet);
-        if (sch instanceof KicadSch) {
-            if (sch.filename === this.sch_viewer.sch_name) {
-                this.sch_viewer.zoom_fit_item(idx.uuid);
-            } else {
-                this.sch_viewer.focus_net_item = idx.uuid;
-                // Through the project, as a sheet symbol's double click goes:
-                // its change event is what tells the host the page moved (the
-                // address and the browser's history). A file used by several
-                // sheet symbols opens at its first page. The page's own load
-                // fits the whole sheet, so the item is framed after it, as
-                // the element's cross-probe does.
-                const page = this.project.pages.find(
-                    (candidate) => candidate.filename === sch.filename,
-                );
-                if (page) {
-                    this.project.activate_sch(page.project_path);
-                    void this.viewer
-                        .load(sch)
-                        .then(() => this.sch_viewer.zoom_fit_item(idx.uuid));
-                } else this.viewer.load(sch);
-            }
-        }
-    }
-
-    /** Whether the `<ecad-viewer>` this app is drawn in turned its embedded
-     *  selection panel off: such a host opens a menu of its own on a click on
-     *  a label, so the click opens no list here. The app lives in the
-     *  element's shadow tree, which `closest` does not leave, so the host is
-     *  that tree's. */
-    #host_opens_lists(): boolean {
-        const root = this.getRootNode();
-        const host = root instanceof ShadowRoot ? root.host : null;
-        return host?.getAttribute("show-selection-panel") === "false";
-    }
-
-    pop_up_label_ref_menu(refs: NetRef[], activeUuid?: string) {
-        this.#selection_pop_menu.dispatchEvent(
-            new KiCanvasFitterMenuEvent({ items: refs, activeUuid }),
-        );
-    }
-
-    override on_viewer_select(item?: unknown, previous?: unknown) {
-        // Only handle double-selecting/double-clicking on items.
-        if (!item || item != previous) {
-            return;
-        }
-
-        // If it's a sheet instance, switch over to the new sheet.
-        if (item instanceof SchematicSheet) {
-            this.project.activate_child_sch(item.uuid);
-            return;
-        }
-    }
+    /** The plane reports its selections to the element; nothing to do here. */
+    override on_viewer_select() {}
 
     override can_load(src: KicadAssert): boolean {
         return src instanceof KicadSch;
     }
 
-    override async load(src: KicadAssert) {
-        if (src instanceof KicadSch) {
-            await this.viewerReady;
-            const page =
-                this.project.pages.find(
-                    (candidate) =>
-                        candidate.project_path === this.project.active_sch_name,
-                ) ??
-                this.project.pages.find(
-                    (candidate) => candidate.document === src,
-                );
-            const context = page?.schematic_context;
-            if (context) this.sch_viewer.set_instance_context(context);
-        }
-        await super.load(src);
+    /**
+     * The project changed (`"change"`: a variant, files added, the load
+     * settled). The plane's sheets come from the element (`show_plane`) and
+     * the variant reaches the scenes through it, so this only shows the
+     * content and draws.
+     */
+    override async load(_src: KicadAssert) {
+        await this.viewerReady;
+        this.revealLoadedContent();
+        this.viewer?.draw();
+    }
+
+    /**
+     * Show `source.pages`, the project's sheet instances, on the plane, the
+     * whole plane fitted. Resolves once the layout and the camera are set;
+     * the scenes are built after.
+     */
+    async show_plane(source: PlaneSource) {
+        await this.viewerReady;
+        this.revealLoadedContent();
+        await this.plane.load(source);
+        this.plane.draw_now();
     }
 
     protected override do_render() {
-        this.#selection_pop_menu =
-            html`<kc-sch-selection-menu></kc-sch-selection-menu>` as HTMLElement;
         const inspector =
             html`<kc-erc-inspector></kc-erc-inspector>` as KCErcInspectorElement;
         const content = super.render_viewer();
-        return html`${content} ${this.#selection_pop_menu} ${inspector}`;
+        return html`${content} ${inspector}`;
     }
 
     override make_viewer_element(): KCSchematicViewerElement {
-        return html`<kc-schematic-viewer></kc-schematic-viewer>` as KCSchematicViewerElement;
+        // `plane` before the element is connected: it picks its viewer then.
+        return html`<kc-schematic-viewer plane></kc-schematic-viewer>` as KCSchematicViewerElement;
     }
 }
 

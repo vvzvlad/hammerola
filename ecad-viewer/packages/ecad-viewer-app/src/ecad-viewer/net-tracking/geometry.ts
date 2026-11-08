@@ -1,16 +1,12 @@
 /*
-    The world view's geometry: where sheets go, the easing a sheet fades in
-    by, and which places of a net a line joins. Screen-independent maths
-    only; drawing is in paint.ts.
+    The schematic plane's geometry: where sheets go and which places of a
+    net a line joins. Screen-independent maths only; drawing is in paint.ts.
 */
 
 import { BBox, Vec2 } from "../../base/math";
 
 /** Space between sheets, in world units (mm). */
 export const SHEET_GAP = 50;
-
-export const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-export const ease_out = (t: number) => 1 - Math.pow(1 - clamp01(t), 3);
 
 /**
  * Rows of `cols` sheets, left to right. With `cols` fixed, adding sheets at

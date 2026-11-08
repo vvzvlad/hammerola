@@ -250,8 +250,8 @@ describe('the address bar', () => {
     const c = page(viewport(FRAME), { state: { meta: listing, view: 'assembled', doc: 'docs__a.md' } })
     c.writeView('print')
     expect(location.search).toBe('?d=docs__a.md&files=K')
-    // `writeDoc` names `d=` and no sheet of the schematic open before.
-    window.history.replaceState(null, '', `${HOME}?d=hw__a.kicad_sch&files=K&s=amp`)
+    // `writeDoc` names `d=`.
+    window.history.replaceState(null, '', `${HOME}?d=hw__a.kicad_sch&files=K`)
     c.writeDoc('docs__a.md')
     expect(location.search).toBe('?files=K&d=docs__a.md')
     c.writeDoc(null)

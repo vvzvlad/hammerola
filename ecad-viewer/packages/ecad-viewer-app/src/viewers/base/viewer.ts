@@ -752,7 +752,16 @@ export abstract class Viewer extends EventTarget {
 
     protected on_draw() {
         this.renderer.clear_canvas();
+        this.draw_overlays();
+    }
 
+    /**
+     * Draw this viewer's own layers, the overlays among them, through its
+     * camera over what the frame has drawn so far: the rest of a frame after
+     * the canvas is cleared. A viewer that draws its document some other way
+     * (the schematic plane) calls this last.
+     */
+    protected draw_overlays() {
         if (!this.layers) {
             return;
         }

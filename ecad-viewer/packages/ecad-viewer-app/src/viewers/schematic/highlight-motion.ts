@@ -5,8 +5,8 @@
     joins the highlight swells once as it arrives. The viewer samples this
     every frame while anything is still moving, and draws the scene and the
     sheet's dimming from the sample. With motion off, every change lands at
-    once (headless scenes for insets and the world view, which redraw only
-    when told).
+    once (headless scenes for insets and the schematic plane, which redraw
+    only when told).
 */
 
 const IN_MS = 220;

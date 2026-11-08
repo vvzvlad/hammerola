@@ -1,5 +1,5 @@
 import { later } from "../base/async";
-import { NetTracker, type NetInstancePage } from "./net-tracking";
+import { traceable_uuid, type NetInstancePage } from "./net-tracking";
 import type { SchematicNetMembers } from "../viewers/schematic/net-highlight";
 import { listen } from "../base/events";
 import { BBox, Vec2 } from "../base/math";
@@ -20,7 +20,7 @@ import {
     normalize_variant_name,
     resolve_variant_request,
 } from "../kicanvas/project";
-import type { LabelKind, NetRef } from "../kicad/net_ref";
+import type { NetRef } from "../kicad/net_ref";
 import {
     EcadHighlightChangeEvent,
     resolve_board_net,
@@ -37,7 +37,6 @@ import { KCBoardAppElement } from "../kicanvas/elements/kc-board/app";
 import { KCSchematicAppElement } from "../kicanvas/elements/kc-schematic/app";
 import { BomApp } from "../kicanvas/elements/bom/app";
 import { KicadPCB, KicadSch } from "../kicad";
-import { type SchematicInstanceContext } from "../kicad/schematic";
 import type { ItemsGroupedByFpValueDNP } from "../kicad/ItemsGroupedByFpValueDNP";
 
 import { area_items, type AreaDocument } from "./area-items";
@@ -48,7 +47,6 @@ import {
     picture_layers,
     type FootprintBox,
 } from "./board-picture";
-import { schematicPageStep } from "./page-keys";
 import { is_3d_model, is_kicad, TabHeaderElement } from "./tab_header";
 import {
     EcadCommentAreaEvent,
@@ -62,7 +60,6 @@ import {
     Online3dViewerLoaded,
     Online3dViewerUrlReady,
     OpenBarrierEvent,
-    SheetLoadEvent,
     TabActivateEvent,
     TabMenuClickEvent,
     TabMenuVisibleChangeEvent,
@@ -190,22 +187,6 @@ export {
     split_kiid_path,
 } from "./document-diff";
 
-export interface EcadSchematicPageState {
-    projectPath: string;
-    sheetPath: string;
-    filename: string;
-    parentProjectPath?: string;
-    name?: string;
-    page?: string;
-    depth: number;
-    active: boolean;
-}
-
-export interface EcadComparisonSchematicPages {
-    reference: EcadSchematicPageState[];
-    comparison: EcadSchematicPageState[];
-}
-
 export interface EcadPcbLayerState {
     name: string;
     color: string;
@@ -302,7 +283,6 @@ export interface EcadComparisonSession {
     getPreparation(
         viewport?: ECadViewer,
     ): EcadDocumentComparisonPreparation | null;
-    getSchematicPages(): EcadComparisonSchematicPages;
     getMetrics(): EcadComparisonSessionMetrics;
     dispose(): void;
 }
@@ -340,37 +320,6 @@ type EcadComparisonSessionState = {
     metrics: EcadComparisonSessionMetrics;
 };
 
-function schematic_page_states(project: Project): EcadSchematicPageState[] {
-    const active = project.active_sch_name;
-    return project.pages.map((page) => ({
-        projectPath: page.project_path,
-        sheetPath: page.sheet_path,
-        filename: page.filename,
-        parentProjectPath: page.parent_project_path,
-        name: page.name,
-        page: page.page,
-        depth: Math.max(
-            0,
-            page.sheet_path.split("/").filter(Boolean).length - 1,
-        ),
-        active: page.project_path === active,
-    }));
-}
-
-function requested_comparison_sheet(
-    request: EcadDocumentComparisonRequest,
-    side: "reference" | "comparison",
-    fallback: string,
-): string {
-    return (
-        (side === "reference"
-            ? request.referenceSheetPath
-            : request.comparisonSheetPath) ??
-        request.activeSheetPath ??
-        fallback
-    );
-}
-
 function comparison_heap_bytes(): number | undefined {
     const memory = (
         performance as Performance & {
@@ -395,22 +344,11 @@ function comparison_source_bytes(
 }
 
 /**
- * Stand-in for a sheet/board that exists on only one side of a revision pair.
+ * Stand-in for a board that exists on only one side of a revision pair.
  * Comparison remains the paint authority; an empty reference just means there
  * are no removals to inject for that path.
  */
-function empty_diff_document(
-    context: "SCH" | "PCB",
-    path: string,
-): KicadSch | KicadPCB {
-    if (context === "SCH") {
-        return new KicadSch(path, {
-            version: 20231120,
-            uuid: "00000000-0000-0000-0000-000000000000",
-            generator: "ecad-viewer-empty-diff",
-            generator_version: "0",
-        });
-    }
+function empty_diff_document(path: string): KicadPCB {
     return new KicadPCB(path, {
         version: 20240108,
         generator: "ecad-viewer-empty-diff",
@@ -433,7 +371,7 @@ function empty_diff_document(
     });
 }
 
-export { TabActivateEvent, SheetLoadEvent } from "../viewers/base/events";
+export { TabActivateEvent } from "../viewers/base/events";
 
 import { TabKind } from "./constraint";
 import type { InputContainer } from "./input_container";
@@ -448,7 +386,13 @@ import type { BoardViewer } from "../viewers/board/viewer";
 import type { LayerSet } from "../viewers/board/layers";
 import { MeasureTool, type MeasureState } from "../viewers/board/measure-tool";
 import type { MeasureUnits } from "../viewers/board/measure";
-import { SchematicViewer } from "../viewers/schematic/viewer";
+import type { PlaneViewer } from "../viewers/schematic/plane-viewer";
+import {
+    area_on_sheet,
+    first_slot,
+    plane_comments,
+    root_slot,
+} from "../viewers/schematic/plane";
 import {
     board_view_stats,
     set_board_view_gpu_sync,
@@ -571,15 +515,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.provideContext("project", this.#project);
         this.addDisposable(
             listen(this.#project, "change", () => {
-                const active = this.#project.active_sch_name;
-                if (
-                    active &&
-                    this.#project.pages.some(
-                        (page) => page.project_path === active,
-                    )
-                ) {
-                    this.#active_schematic_project_path = active;
-                }
                 this.dispatchEvent(
                     new CustomEvent("ecad-viewer:view-state-change", {
                         bubbles: false,
@@ -637,7 +572,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     #source_manifest_key: string | null = null;
     #source_names = new Set<string>();
     #comment_overlay_scenes = new Map<EcadCommentContext, EcadOverlayScene>();
-    #active_schematic_project_path: string | null = null;
     #document_comparison: EcadDocumentComparisonPreparation | null = null;
     #document_comparison_key: string | null = null;
     #document_comparison_revision_keys: {
@@ -772,7 +706,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         }
         if (!this.loaded) return;
         this.#project.set_active_variant(resolution.effective);
-        this.#safe_schematic_viewer()?.set_variant(resolution.effective);
+        this.#safe_plane()?.set_variant(resolution.effective);
         this.#safe_board_viewer()?.set_variant(resolution.effective);
     }
 
@@ -791,7 +725,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.#viewport_insets,
             reveal?.context === "PCB" ? box : null,
         );
-        this.#safe_schematic_viewer()?.set_viewport_insets(
+        this.#safe_plane()?.set_viewport_insets(
             this.#viewport_insets,
             reveal?.context === "SCH" ? box : null,
         );
@@ -826,23 +760,9 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 timestamp: new Date().toISOString(),
                 event,
                 revisionKey: this.#revision_key,
-                activePage: this.#active_schematic_project_path,
                 ...detail,
             }),
         );
-    }
-
-    #page_trace(page: ProjectPage | undefined | null) {
-        return page
-            ? {
-                  projectPath: page.project_path,
-                  sheetPath: page.sheet_path,
-                  filename: page.filename,
-                  parentProjectPath: page.parent_project_path,
-                  name: page.name,
-                  page: page.page,
-              }
-            : null;
     }
 
     get project() {
@@ -898,9 +818,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                     status: "ready",
                     generation,
                     revisionKey: update.revisionKey,
-                    resolvedPage: this.#page_trace(
-                        this.#active_schematic_page(),
-                    ),
                 });
             })
             .catch((error: unknown) => {
@@ -944,13 +861,15 @@ export class ECadViewer extends KCUIElement implements InputContainer {
 
         if (!this.loaded) {
             this.#project.reset();
-            await this.#setup_project({ urls: [], blobs: update.sources });
+            // The first load's failure rejects the replacement, so the host
+            // shows it instead of a blank tab that looks ready.
+            const failed = await this.#setup_project({
+                urls: [],
+                blobs: update.sources,
+            });
             assert_current();
+            if (failed) throw failed;
         } else {
-            const preferred_page =
-                this.#desired_page ??
-                this.#active_schematic_project_path ??
-                this.#project.active_sch_name;
             const previous_shape = {
                 sch: this.has_sch,
                 pcb: this.has_pcb,
@@ -969,7 +888,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                     await this.update();
                     assert_current();
                 }
-                await this.#settle_project_apps(preferred_page);
+                await this.#settle_project_apps();
                 assert_current();
             } finally {
                 this.loading = false;
@@ -983,7 +902,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         );
         this.#document_comparison_cache.clear();
         this.#ensure_camera_hook(this.#safe_board_viewer());
-        this.#ensure_camera_hook(this.#safe_schematic_viewer());
+        this.#ensure_camera_hook(this.#safe_plane());
         this.#apply_viewport_insets();
         this.#emit_view_state_change();
         this.#emit_camera_change();
@@ -1049,7 +968,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 status: "ready",
                 generation: load_generation,
                 requestedPage: request.documentPath ?? null,
-                resolvedPage: this.#page_trace(this.#active_schematic_page()),
                 detail: {
                     documentPath: result.document.path,
                     context: result.context,
@@ -1130,7 +1048,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 heapBytesCurrent: comparison_heap_bytes(),
             },
         };
-        const owner_viewer = this.#viewer_for_context(preparation.context);
+        const owner_viewer = this.#safe_board_viewer();
         owner_viewer?.enable_presentation_cache(
             new Set([ECadViewer.#DIFF_SELECTION_CHANNEL]),
         );
@@ -1161,10 +1079,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 ),
             getPreparation: (viewport = state.owner) =>
                 state.preparations.get(viewport) ?? null,
-            getSchematicPages: () => ({
-                reference: schematic_page_states(state.referenceProject),
-                comparison: schematic_page_states(state.comparisonProject),
-            }),
             getMetrics: () => ({
                 ...state.metrics,
                 heapBytesCurrent: comparison_heap_bytes(),
@@ -1187,9 +1101,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                         state.request.comparison.revisionKey;
                 }
                 for (const viewport of state.presentations.keys()) {
-                    viewport
-                        .#viewer_for_context(state.document.preparation.context)
-                        ?.disable_presentation_cache();
+                    viewport.#safe_board_viewer()?.disable_presentation_cache();
                 }
                 state.preparations.clear();
                 state.preparedPresentations.clear();
@@ -1231,7 +1143,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             // disconnects and later reuses its nested custom elements; their
             // one-shot disposable stacks then receive duplicate dispose calls.
             this.#ensure_camera_hook(this.#safe_board_viewer());
-            this.#ensure_camera_hook(this.#safe_schematic_viewer());
+            this.#ensure_camera_hook(this.#safe_plane());
             this.#apply_viewport_insets();
             return;
         }
@@ -1247,7 +1159,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.loading = false;
         }
         this.#ensure_camera_hook(this.#safe_board_viewer());
-        this.#ensure_camera_hook(this.#safe_schematic_viewer());
+        this.#ensure_camera_hook(this.#safe_plane());
         this.#apply_viewport_insets();
     }
 
@@ -1291,28 +1203,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         );
 
         const context = state.document.preparation.context;
-        if (context === "SCH" && viewport.#active_tab !== TabKind.sch) {
-            await viewport.#switchToTab(TabKind.sch);
-        } else if (context === "PCB" && viewport.#active_tab !== TabKind.pcb) {
+        if (viewport.#active_tab !== TabKind.pcb) {
             await viewport.#switchToTab(TabKind.pcb);
         }
         const document =
             presentation_mode === "reference"
                 ? state.document.referenceDocument
                 : state.document.comparisonDocument;
-        if (context === "SCH" && document.filename) {
-            await viewport.#activate_comparison_sheet(
-                requested_comparison_sheet(
-                    state.request,
-                    presentation_mode === "reference"
-                        ? "reference"
-                        : "comparison",
-                    document.filename,
-                ),
-                document,
-            );
-        }
-        const viewer = viewport.#viewer_for_context(context);
+        const viewer = viewport.#safe_board_viewer();
         if (!viewer) {
             throw new Error(`The ${context} comparison viewport is not ready`);
         }
@@ -1344,7 +1242,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         viewer.release_cached_presentation(null);
         viewport.#active_diff_scenes = scenes;
         await viewport.#reveal_comparison_shell(
-            context,
             document,
             viewer,
             /* alreadyPainted */ true,
@@ -1423,7 +1320,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         state.metrics.retainedScenes = [...state.presentations.keys()].reduce(
             (total, retained_viewport) =>
                 total +
-                (retained_viewport.#viewer_for_context(context)
+                (retained_viewport.#safe_board_viewer()
                     ?.presentation_cache_size ?? 0),
             0,
         );
@@ -1462,6 +1359,10 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             request.documentPath,
             request.diffFormat ?? "native-kicad",
         );
+        // The schematic tab shows every sheet on one plane and compares none.
+        if (prepared.context === "SCH") {
+            throw new Error("Schematic comparison is not supported");
+        }
         this.#document_comparison_request_id += 1;
         this.#cancel_diff_animation();
         this.#selected_document_diff = null;
@@ -1479,35 +1380,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             ? this.#document_comparison_cache.get(prepared.document.path)
             : undefined;
         if (cached) {
-            const viewer = this.#viewer_for_context(cached.preparation.context);
+            const viewer = this.#safe_board_viewer();
             if (!viewer) {
                 throw new Error(
                     `The ${cached.preparation.context} comparison viewer is not ready`,
                 );
             }
-            if (
-                cached.preparation.context === "SCH" &&
-                this.#active_tab !== TabKind.sch
-            ) {
-                await this.#switchToTab(TabKind.sch);
-            } else if (
-                cached.preparation.context === "PCB" &&
-                this.#active_tab !== TabKind.pcb
-            ) {
+            if (this.#active_tab !== TabKind.pcb) {
                 await this.#switchToTab(TabKind.pcb);
-            }
-            if (
-                cached.preparation.context === "SCH" &&
-                (request.comparisonSheetPath || request.activeSheetPath)
-            ) {
-                await this.#activate_comparison_sheet(
-                    requested_comparison_sheet(
-                        request,
-                        "comparison",
-                        cached.comparisonDocument.filename,
-                    ),
-                    cached.comparisonDocument as { filename?: string },
-                );
             }
             // Warm path: same prepared presentation — overlay/camera only when
             // the document+presentation are already installed.
@@ -1526,7 +1406,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 viewer,
             );
             await this.#reveal_comparison_shell(
-                cached.preparation.context,
                 cached.comparisonDocument,
                 viewer,
                 /* alreadyPainted */ true,
@@ -1572,14 +1451,13 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         }
 
         const path = prepared.document.path.replace(/^\.?\//, "");
-        const expected_type = prepared.context === "SCH" ? KicadSch : KicadPCB;
         const resolve_typed = (project: Project) => {
             const candidate =
                 project.file_by_name(path) ??
                 project.file_by_name(path.split("/").at(-1) ?? path);
-            return candidate instanceof expected_type ? candidate : null;
+            return candidate instanceof KicadPCB ? candidate : null;
         };
-        // Added/renamed sheets exist on only one side. Comparison remains the
+        // Added/renamed boards exist on only one side. Comparison remains the
         // paint authority; the missing side becomes an empty stub so removals
         // (or an empty reference) still compile without failing the click path.
         const reference_resolved = resolve_typed(this.#reference_project);
@@ -1596,59 +1474,20 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             );
         }
         const reference_document =
-            reference_resolved ?? empty_diff_document(prepared.context, path);
+            reference_resolved ?? empty_diff_document(path);
         const comparison_document =
-            comparison_resolved ?? empty_diff_document(prepared.context, path);
+            comparison_resolved ?? empty_diff_document(path);
         const missingReference = !reference_resolved;
         const missingComparison = !comparison_resolved;
-        let reference_schematic_context: SchematicInstanceContext | undefined;
-        let comparison_schematic_context: SchematicInstanceContext | undefined;
 
-        if (prepared.context === "SCH" && reference_resolved) {
-            const requested_reference = requested_comparison_sheet(
-                request,
-                "reference",
-                reference_document.filename,
-            );
-            const reference_page = this.#resolve_schematic_page_in(
-                this.#reference_project,
-                requested_reference,
-            );
-            if (reference_page) {
-                reference_schematic_context = reference_page.schematic_context;
-                this.#reference_project.activate_sch(
-                    reference_page.project_path,
-                );
-            }
-        }
-
-        // Activate tab/sheet without a pre-load paint. Cold path settles once
-        // via load_diff_document + reveal (not showPage/app.load round-trips).
-        if (prepared.context === "SCH") {
-            if (this.#active_tab !== TabKind.sch && this.has_sch) {
-                await this.#switchToTab(TabKind.sch);
-            }
-            if (comparison_resolved) {
-                const requested_comparison = requested_comparison_sheet(
-                    request,
-                    "comparison",
-                    comparison_document.filename,
-                );
-                await this.#activate_comparison_sheet(
-                    requested_comparison,
-                    comparison_document,
-                );
-                comparison_schematic_context =
-                    this.#resolve_schematic_page(
-                        requested_comparison,
-                    )?.schematic_context;
-            }
-        } else if (this.#active_tab !== TabKind.pcb) {
+        // Activate the tab without a pre-load paint. The cold path settles
+        // once via load_diff_document + reveal.
+        if (this.#active_tab !== TabKind.pcb) {
             await this.#switchToTab(TabKind.pcb);
         }
         assert_current();
 
-        const viewer = this.#viewer_for_context(prepared.context);
+        const viewer = this.#safe_board_viewer();
         if (!viewer) {
             throw new Error(
                 `The ${prepared.context} comparison viewer is not ready`,
@@ -1659,22 +1498,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             reference_document,
             comparison_document,
         );
-        const schematic_contexts = new Map<object, SchematicInstanceContext>();
-        if (reference_schematic_context) {
-            schematic_contexts.set(
-                reference_document,
-                reference_schematic_context,
-            );
-        }
-        if (comparison_schematic_context) {
-            schematic_contexts.set(
-                comparison_document,
-                comparison_schematic_context,
-            );
-        }
-        if (schematic_contexts.size) {
-            presentation.schematicContexts = schematic_contexts;
-        }
         const focus_presentation = build_diff_focus_presentation(presentation);
         const side_scene = (
             document: PaintableDocument,
@@ -1685,13 +1508,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 document,
                 side,
             );
-            const context =
-                side === "reference"
-                    ? reference_schematic_context
-                    : comparison_schematic_context;
-            if (context) {
-                scene.schematicContexts = new Map([[document, context]]);
-            }
             return { scene, focus: build_diff_focus_presentation(scene) };
         };
         const side_scenes = {
@@ -1708,7 +1524,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         };
         assert_current();
         await this.#reveal_comparison_shell(
-            prepared.context,
             comparison_document,
             viewer,
             /* alreadyPainted */ true,
@@ -1762,69 +1577,11 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     /**
-     * Prefer hierarchical sheet identity when present; fall back to filename.
-     * Does not await a full app.load — comparison settle owns the paint.
-     */
-    async #activate_comparison_sheet(
-        pageId: string,
-        fallbackDocument: { filename?: string },
-    ): Promise<void> {
-        if (!this.#schematic_app) {
-            this.#trace_transition("page.comparison.missing-app", {
-                status: "missing",
-                requestedPage: pageId,
-            });
-            return;
-        }
-        this.#desired_page = pageId;
-        const page =
-            this.#resolve_schematic_page(pageId) ??
-            (fallbackDocument.filename
-                ? this.#resolve_schematic_page(fallbackDocument.filename)
-                : null);
-        if (!page) {
-            this.#trace_transition("page.comparison.unresolved", {
-                status: "missing",
-                requestedPage: pageId,
-                detail: {
-                    fallbackFilename: fallbackDocument.filename ?? null,
-                    availablePages: this.#project.pages.map((candidate) => ({
-                        projectPath: candidate.project_path,
-                        sheetPath: candidate.sheet_path,
-                        filename: candidate.filename,
-                        name: candidate.name,
-                        page: candidate.page,
-                    })),
-                },
-            });
-            return;
-        }
-        if (this.#active_schematic_project_path !== page.project_path) {
-            // Comparison owns the following diff-scene paint. Updating the
-            // instance selection directly avoids Project.change scheduling a
-            // plain app.load that can race the retained presentation and leave
-            // an unused full-colour scene cached behind it.
-            this.#active_schematic_project_path = page.project_path;
-            this.#project.active_sch_name = page.project_path;
-        }
-        const context = page.schematic_context;
-        if (context) {
-            this.#schematic_app.sch_viewer.set_instance_context(context);
-        }
-        this.#trace_transition("page.comparison.activated", {
-            status: "ready",
-            requestedPage: pageId,
-            resolvedPage: this.#page_trace(page),
-        });
-    }
-
-    /**
-     * Unhide the SCH/PCB shell and fit the camera once. When alreadyPainted,
+     * Unhide the board's shell and fit the camera once. When alreadyPainted,
      * skips DocumentViewer.load / app.load so the comparison cold path does
      * not multi-paint the same retained scene.
      */
     async #reveal_comparison_shell(
-        context: "SCH" | "PCB",
         document: unknown,
         viewer: {
             document?: unknown;
@@ -1840,7 +1597,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         },
         alreadyPainted: boolean,
     ): Promise<void> {
-        const app = context === "SCH" ? this.#schematic_app : this.#board_app;
+        const app = this.#board_app;
         if (!app) return;
         if (!alreadyPainted || viewer.document !== document) {
             await app.load(document as never);
@@ -1960,7 +1717,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
 
     #paint_diff_emphasis(offset = 0): EcadPreparedDiffTarget | null {
         const active = this.#active_diff_target();
-        const viewer = active ? this.#viewer_for_context(active.context) : null;
+        const viewer = active ? this.#safe_board_viewer() : null;
         if (!active || !viewer) {
             const scenes = this.#active_diff_scenes;
             const board_viewer = this.#safe_board_viewer();
@@ -1976,7 +1733,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 ECadViewer.#DIFF_SELECTION_CHANNEL,
                 ECadViewer.#DIFF_CONTEXT_CHANNEL,
             ]) {
-                this.#safe_schematic_viewer()?.clear_overlay_scene(channel);
                 board_viewer?.clear_overlay_scene(channel);
             }
             return null;
@@ -2221,9 +1977,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.#selected_document_diff = selection;
         this.#preview_document_diff = null;
         let target = this.#active_diff_target()?.target;
-        const viewer = comparison
-            ? this.#viewer_for_context(comparison.context)
-            : null;
+        const viewer = comparison ? this.#safe_board_viewer() : null;
         if (!comparison || !target || !viewer) {
             this.#selected_document_diff = null;
             this.#trace_transition("selection.composite.missing", {
@@ -2513,17 +2267,15 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.#document_comparison_key = null;
         this.#document_comparison_revision_keys = null;
         this.#document_comparison_cache.clear();
-        for (const context of ["SCH", "PCB"] as const) {
-            const viewer = this.#viewer_for_context(context);
-            viewer?.clear_overlay_scene(ECadViewer.#DIFF_SELECTION_CHANNEL);
-            viewer?.set_diff_presentation(null);
-        }
+        const board_viewer = this.#safe_board_viewer();
+        board_viewer?.clear_overlay_scene(ECadViewer.#DIFF_SELECTION_CHANNEL);
+        board_viewer?.set_diff_presentation(null);
         this.#reference_project.reset();
         for (const page of Object.values(this.#tab_contents)) {
             page.classList.remove("active");
         }
-        this.#safe_board_viewer()?.set_active(false);
-        this.#safe_schematic_viewer()?.set_active(false);
+        board_viewer?.set_active(false);
+        this.#safe_plane()?.set_active(false);
         this.#apply_viewer_activity();
     }
 
@@ -2542,7 +2294,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         this.#tab_contents[tabKind]?.classList.add("active");
         this.#apply_viewer_activity();
         this.#ensure_camera_hook(this.#safe_board_viewer());
-        this.#ensure_camera_hook(this.#safe_schematic_viewer());
+        this.#ensure_camera_hook(this.#safe_plane());
         this.#emit_camera_change();
     }
 
@@ -2570,7 +2322,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.removeAttribute("comment-mode");
         }
         this.#safe_board_viewer()?.set_comment_mode(enabled);
-        this.#safe_schematic_viewer()?.set_comment_mode(enabled);
+        this.#safe_plane()?.set_comment_mode(enabled);
     }
 
     /**
@@ -2579,12 +2331,12 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      * passes it when only its inspected selection changed.
      */
     public clearSelection(options: { keepHighlights?: boolean } = {}): void {
-        this.#probe_generation += 1;
         this.#last_selection = null;
         const board_viewer = this.#safe_board_viewer();
         const had_nets = (board_viewer?.highlighted_nets.size ?? 0) > 0;
         board_viewer?.clear_selection(options.keepHighlights === true);
-        this.#safe_schematic_viewer()?.clear_selection();
+        // Also drops a cross-probe still waiting for its sheet.
+        this.#safe_plane()?.clear_selection();
         if (had_nets && !options.keepHighlights)
             this.#emit_highlight_change("clear");
     }
@@ -2597,12 +2349,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      * right click.
      */
     public selectAt(clientX: number, clientY: number): void {
-        // The world view lies over the schematic: the point is on it.
-        if (
-            this.#active_tab === TabKind.sch &&
-            this.#tracker.select_at(clientX, clientY)
-        )
-            return;
         this.#active_inner_viewer()?.select_at(clientX, clientY);
     }
 
@@ -2653,32 +2399,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
 
     /** Fit the board camera to the highlighted copper. False when empty. */
     /**
-     * Highlight nets on the schematic: every sheet dims and each net's
-     * members are drawn over it, on whichever sheet is open. The host supplies
-     * the members (the viewer has no netlist); an empty list clears it.
+     * Highlight nets on the schematic: each net's members are drawn over
+     * every sheet of the plane. The host supplies the members (the viewer has
+     * no netlist); an empty list clears it.
      */
-    /**
-     * World view: every sheet the net of a label, sheet entry or power symbol
-     * reaches, on one canvas that pans and zooms like a sheet, with the
-     * connections between them. A double-click on a label, sheet entry or
-     * power symbol of the schematic opens it too.
-     */
-    public async showWorldView(page: string, uuid: string): Promise<boolean> {
-        await this.ready;
-        return this.#tracker.show_world_view(page, uuid);
-    }
-
-    public hideWorldView() {
-        this.#tracker.hide_world_view();
-    }
-
     public async setSchematicHighlightedNets(
         nets: readonly SchematicNetMembers[],
     ): Promise<void> {
         await this.ready;
-        this.#safe_schematic_viewer()?.set_highlighted_nets(nets);
+        this.#safe_plane()?.set_highlighted_nets(nets);
         this.#schematic_inset_provider?.set_highlighted_nets(nets);
-        this.#tracker.set_highlighted_nets(nets);
     }
 
     public focusHighlightedNets(): boolean {
@@ -2701,7 +2431,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     public setCommentOverlays(
         request: EcadCommentOverlaySet,
     ): EcadCommentAnchorResolution[] {
-        const scene = comment_overlay_scene(request);
+        if (request.context === "SCH") this.#schematic_comments = request;
+        const scene = this.#comment_scene(request);
         this.#comment_overlay_scenes.set(request.context, scene);
         const viewer = this.#viewer_for_context(request.context);
         viewer?.set_overlay_scene(scene);
@@ -2715,31 +2446,53 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         );
     }
 
+    /** The schematic's comment marks as the host last gave them. */
+    #schematic_comments: EcadCommentOverlaySet | null = null;
+
+    /**
+     * The overlay scene of `request`. On the schematic plane a mark stands
+     * on every instance of the file its comment names (`plane_comments`).
+     */
+    #comment_scene(request: EcadCommentOverlaySet): EcadOverlayScene {
+        const plane = request.context === "SCH" ? this.#safe_plane() : null;
+        return comment_overlay_scene(
+            plane
+                ? {
+                      ...request,
+                      comments: plane_comments(request.comments, plane.sheets),
+                  }
+                : request,
+        );
+    }
+
     /**
      * What a comment's area holds, as its words (`area_items`): what each
      * layer of the viewer has painted, with the box it painted it in, named
-     * against `bounds` (`[x, y, w, h]` in the document's millimetres). Empty
-     * before the viewer has drawn.
+     * against `bounds` (`[x, y, w, h]` in the document's millimetres). On
+     * the schematic, `bounds` are in the coordinates of the sheet file
+     * `page` (the root sheet when unnamed), and its first instance on the
+     * plane is read. Empty before the viewer has drawn.
      */
     public itemsInArea(
         context: EcadCommentContext,
         bounds: [number, number, number, number],
+        page?: string,
     ): string[] {
-        const viewer = this.#viewer_for_context(context);
+        if (context === "SCH") {
+            const sheets = this.#safe_plane()?.sheets ?? [];
+            const sheet = page ? first_slot(sheets, page) : root_slot(sheets);
+            if (!sheet?.view) return [];
+            const on: AreaDocument = { context, instance: sheet.page.context };
+            return area_items(on, bounds, sheet.view.painted());
+        }
+        const viewer = this.#safe_board_viewer();
         if (!viewer) return [];
         const painted = function* () {
             for (const layer of viewer.layers?.in_order() ?? []) {
                 yield* layer.bboxes;
             }
         };
-        const on: AreaDocument =
-            context === "SCH"
-                ? {
-                      context,
-                      instance: (viewer as SchematicViewer).instance_context,
-                  }
-                : { context, board: (viewer as BoardViewer).board };
-        return area_items(on, bounds, painted());
+        return area_items({ context, board: viewer.board }, bounds, painted());
     }
 
     public clearCommentOverlays(context?: EcadCommentContext): void {
@@ -2747,6 +2500,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             ? [context]
             : ["SCH", "PCB"];
         for (const target of contexts) {
+            if (target === "SCH") this.#schematic_comments = null;
             this.#comment_overlay_scenes.delete(target);
             this.#viewer_for_context(target)?.clear_overlay_scene(
                 COMMENT_OVERLAY_CHANNELS[target],
@@ -2820,17 +2574,13 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     @attribute({ type: Boolean })
     public "hide-chrome": boolean;
 
-    // The page the host last requested via showPage()/switchPage(). Re-applied
-    // after the project finishes loading so a post-init auto-load can't override
-    // the caller's choice.
-    #desired_page?: string;
-    /** Bumped on clearSelection / new probe so late load().then focus is dropped. */
-    #probe_generation = 0;
-
     /**
-     * Move the camera to a specific location (in world coordinates)
+     * Move the camera to a specific location (in world coordinates). On the
+     * schematic the point is in the coordinates of the sheet file `page`
+     * (the root sheet when unnamed): its first instance on the plane is put
+     * in the middle, at no less than the zoom showing that sheet whole.
      */
-    public zoomToLocation(x: number, y: number): void {
+    public zoomToLocation(x: number, y: number, page?: string): void {
         const pos = new Vec2(x, y);
         // Helper to move camera on a viewer
         const moveCamera = (viewer: any) => {
@@ -2847,192 +2597,14 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         };
 
         moveCamera(this.#safe_board_viewer());
-        moveCamera(this.#safe_schematic_viewer());
+        const plane = this.#safe_plane();
+        const sheet = plane
+            ? page
+                ? first_slot(plane.sheets, page)
+                : root_slot(plane.sheets)
+            : undefined;
+        if (sheet) plane!.show_point(sheet.page.key, x, y);
         this.#emit_camera_change();
-    }
-
-    // ------------------------------------------------------------------
-    // Focus API
-    // ------------------------------------------------------------------
-
-    /**
-     * Fit the active viewer's camera to a world-space bbox and resolve with the
-     * settled camera (the bbox setter defers the zoom/center computation to the
-     * next paint, so we sample it a frame later).
-     */
-    public async focusBBox(
-        x: number,
-        y: number,
-        w: number,
-        h: number,
-    ): Promise<CameraState | null> {
-        const v = this.#active_inner_viewer();
-        const cam = v?.viewport?.camera;
-        if (!cam) return null;
-        cam.bbox = new BBox(x, y, w, h);
-        v.draw?.();
-        await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        this.#emit_camera_change();
-        return this.camera;
-    }
-
-    /**
-     * Focus an item by uuid: resolve its bbox inside the active viewer, fit the
-     * camera to it (grown a little), and optionally select/highlight it.
-     * Resolves with the settled camera, or null if the item can't be resolved.
-     */
-    public async focusItem(
-        uuid: string,
-        opts?: { select?: boolean; pad?: number },
-    ): Promise<CameraState | null> {
-        const v: any = this.#active_inner_viewer();
-        if (!v) return null;
-        const pad = opts?.pad ?? 20;
-        const bbox =
-            v.schematic_renderer?.get_item_bbox?.(uuid) ??
-            v.get_item_bbox?.(uuid) ??
-            null;
-        if (!bbox) return null;
-        v.viewport.camera.bbox = bbox.grow(pad);
-        if (opts?.select && typeof v.paint_selected === "function") {
-            v.paint_selected(bbox);
-        }
-        v.draw?.();
-        await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        this.#emit_camera_change();
-        return this.camera;
-    }
-
-    /**
-     * List schematic label / global-label / hierarchical-label instances that
-     * share the given text. Used by Prism's Selection inspector for Next/Prev.
-     * Accepts either bare label text or a hierarchical net path (uses the
-     * final path segment).
-     */
-    public findLabelInstances(name: string): Array<{
-        uuid: string;
-        sheet: string;
-        name: string;
-        kind?: LabelKind;
-    }> {
-        const candidates = [name];
-        if (name.includes("/")) {
-            const bare = name.split("/").filter(Boolean).at(-1);
-            if (bare && bare !== name) candidates.push(bare);
-        }
-        for (const candidate of candidates) {
-            const refs = this.#project.find_labels_by_name(candidate) ?? [];
-            if (refs.length) {
-                return refs.map((ref) => ({
-                    uuid: ref.uuid,
-                    sheet: ref.sheet_name,
-                    name: ref.name,
-                    kind: ref.kind,
-                }));
-            }
-        }
-        return [];
-    }
-
-    /**
-     * Switch to the sheet containing a label instance (by uuid) and frame it.
-     * Emits `ecad-viewer:selection` so hosts can update their inspector.
-     */
-    public async focusLabelInstance(uuid: string): Promise<boolean> {
-        await this.ready;
-        // Navigating the main view brings it back in front.
-        this.hideWorldView();
-        const ref = this.#project.find_net_item(uuid);
-        if (!ref) return false;
-        const sch = this.#project.file_by_name(ref.sheet_name);
-        if (!(sch instanceof KicadSch)) return false;
-
-        if (this.#active_tab !== TabKind.sch && this.has_sch) {
-            await this.#switchToTab(TabKind.sch);
-        }
-
-        const page = this.#resolve_schematic_page(ref.sheet_name);
-        if (page) {
-            this.#desired_page = page.project_path;
-            this.#activate_schematic_page(page.project_path);
-        }
-
-        const sch_viewer = this.#safe_schematic_viewer();
-        if (!sch_viewer) return false;
-
-        if (sch_viewer.sch_name !== ref.sheet_name) {
-            sch_viewer.focus_net_item = uuid;
-            await sch_viewer.load(sch);
-        } else {
-            sch_viewer.zoom_fit_item(uuid);
-        }
-
-        await new Promise<void>((r) => requestAnimationFrame(() => r()));
-
-        const schematic = sch_viewer.schematic;
-        if (schematic) {
-            const item =
-                schematic.global_labels.find((l) => l.uuid === uuid) ??
-                schematic.net_labels.find((l) => l.uuid === uuid) ??
-                schematic.hierarchical_labels.find((l) => l.uuid === uuid);
-            if (item) {
-                const detail = normalize_schematic_selection(
-                    item,
-                    schematic,
-                    sch_viewer.instance_context,
-                );
-                if (detail) {
-                    this.#attach_item_bounds_sch(detail, item, sch_viewer);
-                    this.dispatchEvent(new EcadSemanticSelectionEvent(detail));
-                }
-            }
-        }
-
-        this.#emit_camera_change();
-        this.#emit_view_state_change();
-        return true;
-    }
-
-    /**
-     * Convenience cross-probe: focus + highlight by designator/uuid in the
-     * ACTIVE viewer. Structured hosts should prefer requestCrossProbe().
-     */
-    public async crossProbe(reference: string): Promise<CameraState | null> {
-        const v: any = this.#active_inner_viewer();
-        if (!v) return null;
-
-        const board = v.board as
-            | {
-                  find_footprint?: (
-                      r: string,
-                  ) => { uuid?: string; bbox?: BBox } | null;
-              }
-            | undefined;
-        if (board?.find_footprint) {
-            const fp = board.find_footprint(reference);
-            if (!fp?.bbox) return null;
-            if (typeof v.highlight_fp === "function") v.highlight_fp(fp);
-            const b = fp.bbox;
-            v.viewport.camera.bbox = b.grow(b.w * 0.5, b.h * 0.5);
-            v.draw?.();
-            await new Promise<void>((r) => requestAnimationFrame(() => r()));
-            this.#emit_camera_change();
-            return this.camera;
-        }
-
-        const doc = v.document as
-            | { find_symbol?: (r: string) => { uuid?: string } | null }
-            | undefined;
-        if (doc?.find_symbol) {
-            const sym =
-                v instanceof SchematicViewer
-                    ? v.instance_context?.find_symbol(reference)
-                    : doc.find_symbol(reference);
-            if (!sym?.uuid) return null;
-            return this.focusItem(sym.uuid, { select: true });
-        }
-
-        return null;
     }
 
     // ------------------------------------------------------------------
@@ -3042,7 +2614,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     /** The inner viewer for the currently-active tab (or the only loaded one). */
     #active_inner_viewer(): any | null {
         const board_viewer = this.#safe_board_viewer();
-        const schematic_viewer = this.#safe_schematic_viewer();
+        const schematic_viewer = this.#safe_plane();
         const v =
             this.#active_tab === TabKind.pcb && board_viewer
                 ? board_viewer
@@ -3122,10 +2694,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
      */
     public resize(): void {
         this.#apply_viewport_insets();
-        for (const viewer of [
-            this.#safe_board_viewer(),
-            this.#safe_schematic_viewer(),
-        ]) {
+        for (const viewer of [this.#safe_board_viewer(), this.#safe_plane()]) {
             if (!viewer) continue;
             viewer.renderer?.update_canvas_size?.();
             viewer.viewport?.sync_from_canvas?.();
@@ -3175,26 +2744,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
 
         // A sheet file may be instantiated more than once in the hierarchy.
         // A filename request is document-scoped, so every such instance has
-        // the same paintable contents and native UUIDs. Prefer the active
-        // instance when possible, then use project traversal order instead of
-        // failing a valid cross-probe solely because the filename is reused.
+        // the same paintable contents and native UUIDs: take the first in
+        // project traversal order instead of failing a valid cross-probe
+        // solely because the filename is reused.
         const by_filename = pages.filter(
             (candidate) =>
                 same(candidate.filename) ||
                 normalize(candidate.filename).endsWith(`/${requested}`) ||
                 requested.endsWith(`/${normalize(candidate.filename)}`),
         );
-        if (by_filename.length) {
-            return (
-                by_filename.find(
-                    (candidate) =>
-                        candidate.project_path ===
-                        (project === this.#project
-                            ? this.#active_schematic_project_path
-                            : project.active_sch_name),
-                ) ?? by_filename[0]
-            );
-        }
+        if (by_filename.length) return by_filename[0];
 
         // Human hierarchy paths are not native KiCad sheet-instance UUID
         // paths. Match their final named segment only when it is unique; the
@@ -3245,110 +2804,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         return null;
     }
 
-    /**
-     * Switch the schematic view to a specific page and resolve once applied.
-     * Awaits project readiness first. Uses the instance-tree page model.
-     */
-    public async showPage(pageId: string): Promise<void> {
-        this.hideWorldView();
-        this.#trace_transition("page.show.request", {
-            status: "start",
-            requestedPage: pageId,
-        });
-        this.#desired_page = pageId;
-        try {
-            await this.ready;
-            await this.#apply_desired_page();
-            this.#trace_transition("page.show.complete", {
-                status: "ready",
-                requestedPage: pageId,
-                resolvedPage: this.#page_trace(this.#active_schematic_page()),
-            });
-        } catch (error) {
-            this.#trace_transition("page.show.failed", {
-                status: "error",
-                requestedPage: pageId,
-                detail: {
-                    error:
-                        error instanceof Error
-                            ? { name: error.name, message: error.message }
-                            : String(error),
-                    availablePages: this.#project.pages.map((page) => ({
-                        projectPath: page.project_path,
-                        sheetPath: page.sheet_path,
-                        filename: page.filename,
-                        name: page.name,
-                        page: page.page,
-                    })),
-                },
-            });
-            throw error;
-        }
-    }
-
-    async #apply_desired_page(): Promise<void> {
-        const pageId = this.#desired_page;
-        if (!pageId || !this.#schematic_app) return;
-        if (/\.kicad_pcb$/i.test(pageId)) {
-            throw new TypeError(`showPage cannot activate PCB path ${pageId}`);
-        }
-        const page = this.#resolve_schematic_page(pageId);
-        if (!page) {
-            throw new TypeError(`Could not resolve schematic page ${pageId}`);
-        }
-        if (this.#active_tab !== TabKind.sch && this.has_sch) {
-            await this.#switchToTab(TabKind.sch);
-        }
-        this.#activate_schematic_page(page.project_path);
-        // activate_sch only dispatches "change"; hosts must await the app
-        // load so content_container is unhidden before they mark ready.
-        if (page.document instanceof KicadSch) {
-            await this.#schematic_app.load(page.document);
-        }
-    }
-
-    /**
-     * Switch to a specific schematic page (by filename or sheet path).
-     * Synchronous path used by Prism today; also records the desired page for
-     * post-load reconcile.
-     */
-    public switchPage(pageId: string): boolean {
-        this.#desired_page = pageId;
-        if (!this.#schematic_app) return false;
-        const page = this.#resolve_schematic_page(pageId);
-        if (!page) {
-            console.warn(`switchPage: Could not find page with ID ${pageId}`);
-            return false;
-        }
-        return this.#activate_schematic_page(page.project_path);
-    }
-
-    public navigateSchematicPage(direction: -1 | 1): boolean {
-        const pages = this.#project.pages;
-        if (!pages.length) return false;
-        const current = this.#active_schematic_page();
-        const index = pages.findIndex(
-            (page) => page.project_path === current?.project_path,
-        );
-        const next =
-            pages[
-                ((index >= 0 ? index : 0) + direction + pages.length) %
-                    pages.length
-            ];
-        return next ? this.#activate_schematic_page(next.project_path) : false;
-    }
-
-    public navigateSchematicParent(): boolean {
-        const current = this.#active_schematic_page();
-        if (!current?.parent_project_path) return false;
-        const parent = this.#project.pages.find(
-            (page) => page.project_path === current.parent_project_path,
-        );
-        return parent
-            ? this.#activate_schematic_page(parent.project_path)
-            : false;
-    }
-
     #handle_host_keydown(event: KeyboardEvent) {
         if (!this.#host_active || event.defaultPrevented) return;
         if (document.querySelector('[role="dialog"][data-state="open"]'))
@@ -3374,56 +2829,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         }
         if (this.#inset_link?.key_down(event)) {
             event.preventDefault();
-            return;
         }
-        if (!this.has_sch) return;
-        if (this.#tracker.key_down(event)) {
-            event.preventDefault();
-            return;
-        }
-
-        const direction = schematicPageStep(event);
-        if (direction) {
-            if (this.navigateSchematicPage(direction)) event.preventDefault();
-            return;
-        }
-        if (
-            event.altKey &&
-            (event.key === "Backspace" ||
-                event.key === "Delete" ||
-                event.code === "Backspace" ||
-                event.code === "Delete") &&
-            this.navigateSchematicParent()
-        ) {
-            event.preventDefault();
-        }
-    }
-
-    public getActiveSchematicPage() {
-        const page = this.#active_schematic_page();
-        return page
-            ? {
-                  projectPath: page.project_path,
-                  sheetPath: page.sheet_path,
-                  filename: page.filename,
-                  parentProjectPath: page.parent_project_path,
-                  name: page.name,
-                  page: page.page,
-              }
-            : null;
-    }
-
-    public getSchematicPages(): EcadSchematicPageState[] {
-        // The project owns page activation; prefer its explicit active path so
-        // host controls update synchronously, even while the canvas is loading
-        // the new schematic document.
-        const active =
-            this.#project.active_sch_name ??
-            this.#active_schematic_page()?.project_path;
-        return schematic_page_states(this.#project).map((page) => ({
-            ...page,
-            active: page.projectPath === active,
-        }));
     }
 
     // The project's BOM as plain data, for the hub's BOM view
@@ -3606,35 +3012,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         );
     }
 
-    #active_schematic_page() {
-        const exact = this.#project.pages.find(
-            (page) => page.project_path === this.#active_schematic_project_path,
-        );
-        if (exact) return exact;
-        const filename = this.#safe_schematic_viewer()?.schematic?.filename;
-        return this.#project.pages
-            .filter((page) => !filename || page.filename === filename)
-            .sort(
-                (a, b) =>
-                    a.sheet_path.split("/").filter(Boolean).length -
-                    b.sheet_path.split("/").filter(Boolean).length,
-            )[0];
-    }
-
-    #activate_schematic_page(project_path: string): boolean {
-        const page = this.#project.pages.find(
-            (candidate) => candidate.project_path === project_path,
-        );
-        const viewer = this.#safe_schematic_viewer();
-        if (!page || !viewer || !(page.document instanceof KicadSch))
-            return false;
-        const context = page.schematic_context;
-        if (context) viewer.set_instance_context(context);
-        this.#active_schematic_project_path = page.project_path;
-        this.#project.activate_sch(page.project_path);
-        return true;
-    }
-
     /**
      * Get screen coordinates from world coordinates
      */
@@ -3645,7 +3022,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         const pos = new Vec2(x, y);
 
         const board_viewer = this.#safe_board_viewer();
-        const schematic_viewer = this.#safe_schematic_viewer();
+        const schematic_viewer = this.#safe_plane();
         const viewer =
             this.#active_tab === TabKind.pcb
                 ? board_viewer
@@ -3704,65 +3081,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                         width: canvas.width,
                         height: canvas.height,
                     };
-                }
-                break;
-            }
-            case "SCH": {
-                const schematicApp = this.#schematic_app;
-                const schViewer = schematicApp?.viewer;
-                if (schematicApp && schViewer?.canvas) {
-                    const schematics = Array.from(
-                        this.#project?.schematics() || [],
-                    );
-
-                    if (schematics.length > 1) {
-                        const images: Array<{
-                            image: string;
-                            width: number;
-                            height: number;
-                            name: string;
-                        }> = [];
-                        const originalSheet = (schViewer as any).sch_name;
-
-                        for (const sch of schematics) {
-                            if (sch instanceof KicadSch) {
-                                await schematicApp.viewer.load(sch);
-                                await new Promise((resolve) =>
-                                    requestAnimationFrame(resolve),
-                                );
-
-                                const canvas =
-                                    schViewer.canvas as HTMLCanvasElement;
-                                images.push({
-                                    image: canvas.toDataURL("image/png"),
-                                    width: canvas.width,
-                                    height: canvas.height,
-                                    name: sch.filename,
-                                });
-                            }
-                        }
-
-                        if (originalSheet) {
-                            const originalSch =
-                                this.#project.file_by_name(originalSheet);
-                            if (originalSch instanceof KicadSch) {
-                                await schematicApp.viewer.load(originalSch);
-                            }
-                        }
-
-                        result = {
-                            image: JSON.stringify(images),
-                            width: 0,
-                            height: 0,
-                        };
-                    } else {
-                        const canvas = schViewer.canvas as HTMLCanvasElement;
-                        result = {
-                            image: canvas.toDataURL("image/png"),
-                            width: canvas.width,
-                            height: canvas.height,
-                        };
-                    }
                 }
                 break;
             }
@@ -4270,23 +3588,17 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         await this.#setup_project({ urls, blobs });
     }
 
-    async #settle_project_apps(preferredPage?: string): Promise<void> {
+    async #settle_project_apps(): Promise<void> {
         const loads: Promise<unknown>[] = [];
         if (this.has_sch && this.#schematic_app) {
-            const page =
-                (preferredPage
-                    ? this.#resolve_schematic_page(preferredPage)
-                    : undefined) ??
-                this.#project.root_schematic_page ??
-                this.#project.pages[0];
-            if (page?.document instanceof KicadSch) {
-                this.#active_schematic_project_path = page.project_path;
-                this.#desired_page = page.project_path;
-                this.#project.active_sch_name = page.project_path;
-                loads.push(this.#schematic_app.load(page.document));
-            }
-        } else {
-            this.#active_schematic_project_path = null;
+            // Every sheet instance on the plane; resolves once the layout and
+            // the camera are set, before the sheets are drawn.
+            loads.push(
+                this.#schematic_app.show_plane({
+                    pages: this.#net_instance_pages(),
+                    host: this.#plane_host(),
+                }),
+            );
         }
         if (this.has_pcb && this.#board_app) {
             const board = this.#project.get_first_page(AssertType.PCB);
@@ -4295,6 +3607,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             }
         }
         await Promise.all(loads);
+        // The schematic's marks stand where the plane's new sheets are.
+        this.#restore_comment_overlay_scenes();
         // Apply the requested variant before the ready notification so the
         // first visible scene of a new revision is already the right one.
         this.#apply_variant_request();
@@ -4310,7 +3624,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         viewer?.draw_now?.() ?? viewer?.draw?.();
     }
 
-    async #setup_project(sources: EcadSources) {
+    /** Load `sources`; what went wrong, or null. */
+    async #setup_project(sources: EcadSources): Promise<unknown> {
         console.log(
             "[ECadViewer] #setup_project() called, has_sch:",
             this.has_sch,
@@ -4333,11 +3648,12 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                 this.#active_tab,
             );
             await this.update();
-            await this.#settle_project_apps(this.#desired_page);
+            await this.#settle_project_apps();
             this.#ensure_camera_hook(this.#safe_board_viewer());
-            this.#ensure_camera_hook(this.#safe_schematic_viewer());
+            this.#ensure_camera_hook(this.#safe_plane());
             // Post-load autofit / first paint should notify camera consumers.
             this.#emit_camera_change();
+            return null;
         } catch (error) {
             console.error(
                 "[ECadViewer] Error while setting up project:",
@@ -4349,6 +3665,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                     ? error.message
                     : "Unknown error while setting up project";
             window.dispatchEvent(new LoadZipErrorEvent(errorMessage));
+            return error;
         } finally {
             this.loading = false;
         }
@@ -4440,11 +3757,13 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     #repaint_for_new_project_settings() {
+        const board = this.#safe_board_viewer();
+        // The plane repaints the scenes it has built.
         for (const viewer of [
-            this.#safe_schematic_viewer(),
-            this.#safe_board_viewer(),
+            this.#safe_plane(),
+            board?.document ? board : null,
         ]) {
-            if (!viewer?.document) continue;
+            if (!viewer) continue;
             try {
                 viewer.paint();
                 viewer.draw();
@@ -4460,29 +3779,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     }
 
     #inset_link: InsetLink | null = null;
-    /** A double-click on a label of the schematic and the world view it opens. */
-    #tracker = new NetTracker({
-        pages: () => this.#net_instance_pages(),
-        viewer: () => this.#safe_schematic_viewer(),
-        scene_host: () => this.#schematic_provider_host(),
-        select: (detail) =>
-            this.dispatchEvent(
-                new EcadSemanticSelectionEvent(
-                    detail ?? { sourceContext: "SCH", itemType: "" },
-                ),
-            ),
-        open_page: (page, box) => void this.#open_page_at(page, box),
-    });
-
-    /** Show `page`, then put the schematic camera on `box` of it. */
-    async #open_page_at(page: string, box: BBox) {
-        await this.showPage(page);
-        const viewer = this.#safe_schematic_viewer();
-        if (!viewer) return;
-        viewer.viewport.camera.bbox = box;
-        viewer.draw();
-    }
-
     /**
      * Link this element to the one holding the other document (schematic ↔
      * PCB). Hovering a pin or pad here then opens an inset of the peer's
@@ -4527,6 +3823,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                           parent_key: page.parent_project_path,
                           sheet_uuid: page.sheet_uuid,
                           sheet_path: page.sheet_path,
+                          number: page.page,
                           context: page.schematic_context,
                       },
                   ]
@@ -4534,12 +3831,30 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         });
     }
 
+    /**
+     * What the plane's scenes read: as the insets' scenes, and each framed by
+     * the project's drawing sheet with its own instance's number and path.
+     */
+    #plane_host(): SchematicInsetHost {
+        return {
+            ...this.#schematic_provider_host(),
+            drawing_sheet_for: (page) =>
+                this.#project.drawing_sheet_for(
+                    AssertType.SCH,
+                    page.document,
+                    this.#project.pages.find(
+                        (candidate) => candidate.project_path === page.key,
+                    ),
+                ),
+        };
+    }
+
     #ensure_inset_link(): InsetLink {
         this.#inset_link ??= new InsetLink({
             insetProvider: (kind) => this.insetProvider(kind),
             overlay_parent: () => this.shadowRoot,
             source_viewers: () => ({
-                sch: this.has_sch ? this.#safe_schematic_viewer() : null,
+                sch: this.has_sch ? this.#safe_plane() : null,
                 pcb: this.has_pcb ? this.#safe_board_viewer() : null,
             }),
             mode_changed: (on) => {
@@ -4716,7 +4031,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.#schematic_provider_host(),
         );
         this.#schematic_inset_provider.set_highlighted_nets(
-            this.#safe_schematic_viewer()?.highlighted_nets ?? [],
+            this.#safe_plane()?.highlighted_nets ?? [],
         );
         return this.#schematic_inset_provider;
     }
@@ -4738,9 +4053,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                           ]
                         : [];
                 }),
-            theme: () =>
-                this.#safe_schematic_viewer()?.theme ??
-                themes.default.schematic,
+            theme: () => this.#safe_plane()?.theme ?? themes.default.schematic,
             container: () => this.shadowRoot ?? document.body,
             variant: () => this.getVariant(),
         };
@@ -4765,12 +4078,10 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         }
     }
 
-    #safe_schematic_viewer(): SchematicViewer | null {
+    /** The schematic tab's viewer: every sheet on one plane. */
+    #safe_plane(): PlaneViewer | null {
         try {
-            return (
-                (this.#schematic_app?.viewer as SchematicViewer | undefined) ??
-                null
-            );
+            return this.#schematic_app?.plane ?? null;
         } catch {
             return null;
         }
@@ -4778,7 +4089,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
 
     #viewer_for_context(context: "SCH" | "PCB") {
         return context === "SCH"
-            ? this.#safe_schematic_viewer()
+            ? this.#safe_plane()
             : this.#safe_board_viewer();
     }
 
@@ -4790,10 +4101,17 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.#host_active &&
             (this.#active_tab === TabKind.sch || !this.has_pcb);
         this.#safe_board_viewer()?.set_active(board_active);
-        this.#safe_schematic_viewer()?.set_active(schematic_active);
+        this.#safe_plane()?.set_active(schematic_active);
     }
 
     #restore_comment_overlay_scenes() {
+        // The schematic's again from what the host gave: the plane's sheets
+        // may have moved since.
+        if (this.#schematic_comments)
+            this.#comment_overlay_scenes.set(
+                "SCH",
+                this.#comment_scene(this.#schematic_comments),
+            );
         for (const scene of this.#comment_overlay_scenes.values()) {
             this.#viewer_for_context(scene.context)?.set_overlay_scene(scene);
         }
@@ -4863,30 +4181,25 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             );
             return;
         }
-        const viewer = this.#safe_schematic_viewer();
+        // The sheet the item is on; its key comes with the event.
+        const plane = this.#safe_plane();
+        const page = select.detail.page;
+        const sheet = page ? plane?.sheet(page) : undefined;
+        if (!plane || !sheet) return;
         if (select.detail.intent === "trace") {
-            this.#tracker.trace_in_main(
-                item,
-                viewer?.instance_context?.project_path ?? null,
-            );
+            const uuid = traceable_uuid(item);
+            if (uuid) plane.toggle_chain(sheet.page.key, uuid);
             return;
         }
-        const schematic = viewer?.schematic;
-        if (!schematic) return;
         const detail = normalize_schematic_selection(
             item,
-            schematic,
-            viewer?.instance_context,
+            sheet.page.document,
+            sheet.page.context,
         );
         if (!detail) return;
-        this.#attach_item_bounds_sch(detail, item, viewer!);
+        this.#attach_item_bounds_sch(detail, item, sheet);
         detail.operation = select.detail.operation ?? "replace";
         if (select.detail.modifiers) detail.modifiers = select.detail.modifiers;
-        const intent = select.detail.intent ?? "select";
-        if (intent === "crossprobe") {
-            this.dispatchEvent(new EcadCrossProbeEvent(detail));
-            return;
-        }
         this.dispatchEvent(new EcadSemanticSelectionEvent(detail));
     }
 
@@ -4903,16 +4216,26 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         return undefined;
     }
 
+    /** The item's box on the plane: its box on `sheet` moved by its offset. */
     #attach_item_bounds_sch(
         detail: EcadSemanticSelectionDetail,
         item: unknown,
-        viewer: SchematicViewer,
+        sheet: PlaneViewer["sheets"][number],
     ) {
         let bbox = ECadViewer.#item_bbox(item);
         if (!bbox && detail.uuid) {
-            bbox = viewer.schematic_renderer.get_item_bbox(detail.uuid);
+            bbox = sheet.view?.item_bbox(detail.uuid);
         }
-        ECadViewer.#apply_bounds(detail, bbox);
+        ECadViewer.#apply_bounds(
+            detail,
+            bbox &&
+                new BBox(
+                    bbox.x + sheet.offset.x,
+                    bbox.y + sheet.offset.y,
+                    bbox.w,
+                    bbox.h,
+                ),
+        );
     }
 
     #attach_item_bounds_pcb(
@@ -4960,8 +4283,16 @@ export class ECadViewer extends KCUIElement implements InputContainer {
     #relay_comment_area_event(event: Event) {
         event.stopPropagation();
         const detail = { ...(event as EcadCommentAreaEvent).detail };
-        if (detail.context === "SCH" && !detail.page) {
-            detail.page = this.#safe_schematic_viewer()?.schematic?.filename;
+        // An area drawn on the plane is on the sheet under its centre, else
+        // the nearest one: its file, and the area in that sheet's coordinates.
+        const plane = detail.context === "SCH" ? this.#safe_plane() : null;
+        const on = plane ? area_on_sheet(plane.sheets, detail.bounds) : null;
+        if (on) {
+            const [x, y, w, h] = on.bounds;
+            detail.page = on.slot.page.document.filename;
+            detail.bounds = on.bounds;
+            detail.x = x + w / 2;
+            detail.y = y + h / 2;
         }
         this.dispatchEvent(new EcadCommentAreaEvent(detail));
     }
@@ -4970,10 +4301,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
         request: EcadCrossProbeRequest,
         value: string,
     ): boolean {
-        const viewer = this.#safe_schematic_viewer();
-        if (!viewer) return false;
-
-        const probe_gen = ++this.#probe_generation;
+        const plane = this.#safe_plane();
+        if (!plane) return false;
 
         let sheet = request.sheet ?? request.page;
         // Semantic indexes sometimes use "/" as a root sentinel — that is not
@@ -5033,32 +4362,8 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             return false;
         }
 
-        const focus = (target_uuid: string): boolean => {
-            const candidates = [
-                target_uuid,
-                ...(request.uuids ?? []).filter(
-                    (id) => id && id !== target_uuid,
-                ),
-            ];
-            if (request.designator) {
-                const by_ref = viewer.instance_context?.find_symbol(
-                    request.designator,
-                );
-                if (by_ref?.uuid) candidates.push(by_ref.uuid);
-            }
-            for (const id of candidates) {
-                const bbox = viewer.schematic_renderer.get_item_bbox(id);
-                if (bbox) {
-                    viewer.zoom_fit_item(id);
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        // Resolve the hierarchical instance page. Filename equality with the
-        // currently loaded document is not enough — the same .kicad_sch can be
-        // instantiated multiple times.
+        // Resolve the hierarchical instance page. A filename is not enough —
+        // the same .kicad_sch can be instantiated multiple times.
         let page = sheet ? this.#resolve_schematic_page(sheet) : undefined;
         if (!page) {
             const located = this.#find_schematic_page_for_symbol(
@@ -5081,27 +4386,23 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             return false;
         }
 
-        if (page) {
-            const active_path = this.#active_schematic_project_path;
-            if (page.project_path !== active_path) {
-                this.#activate_schematic_page(page.project_path);
-            }
-            const target =
-                page.document instanceof KicadSch ? page.document : null;
-            if (target) {
-                // Prefer the viewer's post-load focus hook — bbox maps are not
-                // always ready in the same turn as load() resolves.
-                viewer.focus_net_item = uuid;
-                void viewer.load(target).then(() => {
-                    if (probe_gen !== this.#probe_generation) return;
-                    focus(uuid!);
-                });
-                return true;
-            }
+        // The camera on the target on its sheet, the root sheet when none
+        // resolved; the item, else one of the host's, else the designator's
+        // symbol on that sheet.
+        const target =
+            page ?? this.#project.root_schematic_page ?? this.#project.pages[0];
+        if (!target) return false;
+        const candidates = [
+            uuid,
+            ...(request.uuids ?? []).filter((id) => id && id !== uuid),
+        ];
+        if (request.designator) {
+            const by_ref = target.schematic_context?.find_symbol(
+                request.designator,
+            );
+            if (by_ref?.uuid) candidates.push(by_ref.uuid);
         }
-
-        focus(uuid);
-        return true;
+        return plane.show_item(target.project_path, candidates);
     }
     get has_3d() {
         return this.#project.has_boards || this.#project.has_3d;
@@ -5213,7 +4514,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.#tab_contents[tab.current]?.classList.add("active");
             this.#apply_viewer_activity();
             this.#ensure_camera_hook(this.#safe_board_viewer());
-            this.#ensure_camera_hook(this.#safe_schematic_viewer());
+            this.#ensure_camera_hook(this.#safe_plane());
             this.#emit_camera_change();
 
             if (tab.current === TabKind.step) {
@@ -5343,16 +4644,6 @@ export class ECadViewer extends KCUIElement implements InputContainer {
                     EcadCommentAreaEvent.type,
                     (event) => this.#relay_comment_area_event(event),
                 );
-                this.#schematic_app.addEventListener(
-                    SheetLoadEvent.type,
-                    (e) => {
-                        this.#tab_header.dispatchEvent(
-                            new SheetLoadEvent(e.detail),
-                        );
-                        // Re-dispatch from viewer so visualizer can track active sheet
-                        this.dispatchEvent(new SheetLoadEvent(e.detail));
-                    },
-                );
             }
             this.#schematic_app.showPropertyPanel = this.showSelectionPanel;
             this.#tab_contents[TabKind.sch] = this.#schematic_app;
@@ -5429,7 +4720,7 @@ export class ECadViewer extends KCUIElement implements InputContainer {
             this.#apply_viewport_insets();
             this.#restore_comment_overlay_scenes();
             this.#ensure_camera_hook(this.#safe_board_viewer());
-            this.#ensure_camera_hook(this.#safe_schematic_viewer());
+            this.#ensure_camera_hook(this.#safe_plane());
         });
     }
 }

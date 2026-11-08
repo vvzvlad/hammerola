@@ -14,7 +14,7 @@
 
     On one sheet, wires join labels, entries and power symbols into one net
     (`wired_instances`), and `net_closure` walks both until nothing new turns
-    up: the reach the world view draws.
+    up: the reach a chain on the schematic plane draws.
 
     The viewer has no netlist; a host with one can refine membership.
 */
@@ -40,6 +40,8 @@ export interface NetInstancePage {
     sheet_uuid?: string;
     /** The instance path (`/root/sheet`), as hosts name sheets in net members. */
     sheet_path?: string;
+    /** KiCad's page number of this instance, as its sheet symbol places it. */
+    number?: string;
     /** Per-instance values (a power symbol's rail name). */
     context?: SchematicInstanceContext;
 }
@@ -61,8 +63,8 @@ export interface NetInstance {
 /**
  * What a double-click traces from: a label or sheet entry, or a power symbol
  * (clicked on the symbol or on its pin). Null otherwise; a wire is not traced.
- * Here rather than in tracker.ts so the schematic viewer can ask it without
- * importing the world view's scenes, which import the viewer.
+ * Here so the schematic viewers can ask it without importing the plane's
+ * scenes, which import the viewer.
  */
 export function traceable_uuid(item: unknown): string | null {
     if (item instanceof Label && item.uuid) return item.uuid;
@@ -226,7 +228,7 @@ export const instance_key = (it: NetInstance) => `${it.page}#${it.uuid}`;
  * namesakes on their sheet. Every link points away from `from`. Global
  * labels of one name fan out from the first of them reached, and local
  * labels of one name on one sheet from the first of them reached there; the
- * world view joins the places they reach by a tree of its own (`spanning_pairs`).
+ * plane joins the places they reach by a tree of its own (`spanning_pairs`).
  */
 export function net_closure(
     pages: readonly NetInstancePage[],

@@ -4,7 +4,6 @@ import { ZipUtils } from "../utils/zip_utils";
 import {
     TabMenuClickEvent,
     TabActivateEvent,
-    SheetLoadEvent,
     OpenBarrierEvent,
 } from "../viewers/base/events";
 import { Sections, TabKind } from "./constraint";
@@ -120,10 +119,6 @@ export class TabHeaderElement extends KCUIElement {
             }
         `,
     ];
-
-    protected get sch_button() {
-        return this.#elements?.get(Sections.beginning)?.get(TabKind.sch);
-    }
 
     make_ecad_view = () => html`<ecad-viewer> </ecad-viewer>`;
 
@@ -462,10 +457,6 @@ export class TabHeaderElement extends KCUIElement {
                         break;
                 }
             });
-        });
-
-        this.addEventListener(SheetLoadEvent.type, (e) => {
-            if (this.sch_button) this.sch_button.textContent = e.detail;
         });
     }
 

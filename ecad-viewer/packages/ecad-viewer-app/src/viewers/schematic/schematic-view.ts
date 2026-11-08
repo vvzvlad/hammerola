@@ -66,7 +66,7 @@ export function render_schematic_view(
 
 /**
  * Draw the scene through `matrix` (world → CSS pixels) into `ctx` without
- * clearing it, so several sheets can share one canvas (the world view).
+ * clearing it, so several sheets can share one canvas (the schematic plane).
  * The caller sets any clip on `ctx` first.
  */
 export function render_schematic_into(

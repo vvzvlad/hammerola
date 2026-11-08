@@ -24,11 +24,14 @@ import {
     KiCanvasLoadEvent,
     KiCanvasSelectEvent,
 } from "../../../viewers/base/events";
-import { SchematicViewer } from "../../../viewers/schematic/viewer";
+import type { SchematicInstanceContext } from "../../../kicad/schematic";
+import type { PlaneViewer } from "../../../viewers/schematic/plane-viewer";
 
 export class KCSchematicPropertiesPanelElement extends KCUIElement {
-    viewer: SchematicViewer;
+    viewer: PlaneViewer;
     selected_item?: SchematicNode;
+    /** The sheet instance of the selected item: its references and units. */
+    #context?: SchematicInstanceContext;
     static override styles = [
         ...KCUIElement.styles,
         css`
@@ -84,6 +87,9 @@ export class KCSchematicPropertiesPanelElement extends KCUIElement {
         this.addDisposable(
             this.viewer.addEventListener(KiCanvasSelectEvent.type, (e) => {
                 this.selected_item = e.detail.item as SchematicSymbol;
+                this.#context = e.detail.page
+                    ? this.viewer.sheet(e.detail.page)?.page.context
+                    : undefined;
                 this.hidden = false;
                 this.update();
             }),
@@ -139,7 +145,7 @@ export class KCSchematicPropertiesPanelElement extends KCUIElement {
         } else if (it instanceof SchematicSymbol) {
             title.title = "Symbol";
             const lib = it.lib_symbol;
-            const context = this.viewer.instance_context;
+            const context = this.#context;
             const flags = context?.effective_flags(it);
             const in_bom = !(flags?.exclude_from_bom ?? !it.in_bom);
             const on_board = !(flags?.exclude_from_board ?? !it.on_board);

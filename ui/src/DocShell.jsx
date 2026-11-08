@@ -21,8 +21,7 @@
 // (`render.document_id`). Choosing a document is a step of the browser's
 // history, as a choice in the model page's menu of views is: Back returns to
 // the document chosen before, and a copied link lands on what was showing. The
-// address is read and written through address.js, the schematic's sheet (`s=`)
-// too, which KicadView.jsx reports here (`writeSheet`). A markdown link naming
+// address is read and written through address.js. A markdown link naming
 // an address of this page is a step too, followed as Back is (`onPop`); one
 // naming a view and no document opens nothing, this page having no views
 // (`docLinks` in DocumentView.jsx).
@@ -37,8 +36,8 @@
 //
 // The header reads this page through `headerParts()`: the comments' button,
 // the toast, and the revision picker's rows as links (`revisions.href`) to
-// their revision's address on the document and the sheet on screen (`d=`,
-// `s=`), so a switch is a page load, which mounts the page the revision needs.
+// their revision's address on the document on screen (`d=`), so a switch is a
+// page load, which mounts the page the revision needs.
 // No row carries a tick or a Share icon: a comparison is of the model's STEP,
 // and this page has no Share window.
 //
@@ -117,7 +116,7 @@ export function docBar({
   const measure = (tools && tools.measure) || null;
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
-    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta), onRename),
+    viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, onRename),
     docHref: doc.type === BOM_TYPE ? null : docUrl(base, doc),
     showTools: !narrow,
     tMeasure: measure ? onMeasure : undefined,
@@ -148,14 +147,11 @@ export function docBar({
 /**
  * The whole page, from what the shell holds. Pure. `onPick(id)` opens a
  * document: what a row of the list does, and a row of a KiCad design's menu
- * (KicadView.jsx); `onPick(id, sheet)` a schematic on a sheet, what a row of
- * its sheets does (`SheetRows` in viewlist.jsx); `viewsOpen` says the list is
- * open, `onToggle` opens or shuts it and `onClose` shuts it, from a click
- * anywhere else on the page. `tools` is what the open document's view told
- * the bar it can do through `onTools`; `narrow`, `viewer`, `tool` and
- * `onComment` are `docBar`'s. `addressDoc` reads which document an address
- * names, for a schematic's sheet in it (KicadView.jsx), and `onSheet` writes
- * the sheet a schematic reports into the address. `comments` are the values
+ * (KicadView.jsx); `viewsOpen` says the list is open, `onToggle` opens or
+ * shuts it and `onClose` shuts it, from a click anywhere else on the page.
+ * `tools` is what the open document's view told the bar it can do through
+ * `onTools`; `narrow`, `viewer`, `tool` and `onComment` are `docBar`'s.
+ * `comments` are the values
  * of the comments (`DocShell.comments`): what the open document is handed for
  * them (`docComment`), the composer's, the rail's and its button's, and the
  * ref the composer's textarea is focused through (`box`); with none the page
@@ -164,7 +160,7 @@ export function docBar({
  * asks to rename (`{kind, id, name}`, rename.jsx). `settings` is `docBar`'s.
  */
 export function DocPage({
-  meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
+  meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools,
   tool, onComment, onMeasure, comments, toast, onRename, settings,
 }) {
   const doc = pickDocument(meta.documents, active);
@@ -176,7 +172,7 @@ export function DocPage({
       <div style={css(BODY)}>
         <div style={css(STAGE)}>
           <DocumentLayers build={buildKey(meta)} doc={doc} layer={DOC_LAYER} documents={meta.documents} base={base}
-                          onOpen={onPick} onTools={onTools} addressDoc={addressDoc} onSheet={onSheet}
+                          onOpen={onPick} onTools={onTools}
                           comment={comments ? comments.docComment : undefined} />
           {/* Over the document, under the bar, as on the model's page. */}
           {comments && composerCard(comments, comments.box)}
@@ -198,9 +194,7 @@ export default class DocShell extends React.Component {
   constructor(props) {
     super(props);
     // The document address `at` (`parse` in address.js) names, its `?d=` or
-    // the default one where it has none: what is open, and what a schematic's
-    // sheet in the address is read against (`addressDoc` in KicadView.jsx),
-    // which a bare `d=` would miss for a default schematic.
+    // the default one where it has none: what is open.
     this.addressDoc = (at) => pickDocument(this.props.meta.documents, at.doc).id;
     this.state = {
       // The Retina, Perspective and Hover highlight answers are read once: their
@@ -233,7 +227,6 @@ export default class DocShell extends React.Component {
     // Back and Forward through the documents picked (`pick`): the entry's
     // document, read as the constructor reads it.
     this.onPop = (at) => this.set({ active: this.addressDoc(at) });
-    this.onSheet = (sheet, push) => this.writeSheet(sheet, push);
     this.onKey = (event) => this.key(event);
     this.onComment = () => this.toggleComment();
     this.onMeasure = () => this.toggleMeasure();
@@ -293,33 +286,16 @@ export default class DocShell extends React.Component {
     this.tt = setTimeout(() => this.setState({ toast: null }), TOAST_MS);
   }
 
-  /** Document `id` on screen, a schematic on its `sheet` where one is given
-   *  (its `s=` value, '' for the root), a step of history; the list shuts. A
-   *  sheet given that differs from the address's is a step on the document on
-   *  screen too. The address names no `?d=` for the default document, and no
-   *  place in the document left: the hash goes. The schematic's sheet (`s=`)
-   *  is the one given, which the schematic follows (`followPage` in
-   *  KicadView.jsx), else it goes too: a design picked after another document
-   *  opens on its root sheet, while its schematic picked after its own board,
-   *  the element kept, writes back the sheet it is on (`writeSheet`). */
-  pick(id, sheet) {
-    const at = parse();
-    if (id !== this.state.active || (sheet !== undefined && sheet !== (at.sheet || ''))) {
+  /** Document `id` on screen, a step of history; the list shuts. The
+   *  address names no `?d=` for the default document, and no place in the
+   *  document left: the hash goes. */
+  pick(id) {
+    if (id !== this.state.active) {
       const fallback = defaultDocument(this.props.meta.documents);
-      const next = respell(at, { doc: fallback && fallback.id === id ? null : id, sheet: sheet || null });
+      const next = respell(parse(), { doc: fallback && fallback.id === id ? null : id });
       navigate({ ...next, hash: '' }, { push: true });
     }
     this.set({ active: id, viewsOpen: false });
-  }
-
-  /** The schematic's sheet on screen as KicadView reports it (`onSheet`):
-   *  `sheet` the value of `s=`, '' for the root sheet. A step of history for
-   *  the reader's own change (`push`), else the entry on screen rewritten.
-   *  With the list of views open the page is drawn again, as the model's page
-   *  is (`writeSheet` in HammerolaViewer.jsx). */
-  writeSheet(sheet, push) {
-    navigate(respell(parse(), { sheet }), { push });
-    if (this.state.viewsOpen) this.forceUpdate();
   }
 
   /** The project's comment queue, fetched (`readFeed` in comments.jsx). */
@@ -403,7 +379,6 @@ export default class DocShell extends React.Component {
     const { threads, openCount } = feedView(s, {
       meta: this.props.meta, catalogue: null, stop, node: () => null, set,
       resolveComment: (id) => this.resolveComment(id),
-      docOn: s.active,
       openDoc: (id, patch) => {
         this.pick(id);
         this.set(patch);
@@ -433,8 +408,8 @@ export default class DocShell extends React.Component {
 
   /** What the header says of this page and does through it (Header.jsx): the
    *  revision picker's rows as links, each but the build on screen's to the
-   *  address of its revision of the variant on screen, on the document and the
-   *  sheet the address names (`d=`, `s=`); the comments' button; what the
+   *  address of its revision of the variant on screen, on the document the
+   *  address names (`d=`); the comments' button; what the
    *  token opens here; the toast. */
   headerParts() {
     const variant = pageVariant(PAGE, this.props.meta);
@@ -442,7 +417,7 @@ export default class DocShell extends React.Component {
       revisions: {
         href: (id) => {
           const at = parse();
-          return format(fresh(buildPath(PAGE.pid, id, variant), { doc: at.doc, sheet: at.sheet }));
+          return format(fresh(buildPath(PAGE.pid, id, variant), { doc: at.doc }));
         },
       },
       comments: this.comments(),
@@ -456,10 +431,9 @@ export default class DocShell extends React.Component {
   render() {
     const viewer = this.viewer();
     return <DocPage meta={this.props.meta} active={this.state.active}
-                    base={PAGE.base} onPick={(id, sheet) => this.pick(id, sheet)}
+                    base={PAGE.base} onPick={(id) => this.pick(id)}
                     narrow={this.state.narrow} viewer={viewer}
-                    tools={this.state.tools} onTools={this.onTools} addressDoc={this.addressDoc}
-                    onSheet={this.onSheet} viewsOpen={this.state.viewsOpen}
+                    tools={this.state.tools} onTools={this.onTools} viewsOpen={this.state.viewsOpen}
                     onToggle={(e) => {
                       e.stopPropagation();
                       this.setState({ viewsOpen: !this.state.viewsOpen, settingsOpen: false });

@@ -119,14 +119,6 @@ export type EcadTransitionTraceDetail = {
     generation?: number;
     revisionKey?: string | null;
     requestedPage?: string | null;
-    resolvedPage?: {
-        projectPath: string;
-        sheetPath: string;
-        filename: string;
-        name?: string;
-        page?: string;
-    } | null;
-    activePage?: string | null;
     detail?: Record<string, unknown>;
 };
 

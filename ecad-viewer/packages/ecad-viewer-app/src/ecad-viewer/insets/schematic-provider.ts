@@ -1,19 +1,19 @@
 /*
     Schematic insets: the schematic around a symbol.
 
-    Every inset is pinned to its sheet instance's own scene. Insets never
-    render from the live schematic viewer: its sheet changes as the user
-    navigates, and a reused sheet file shows different references per
-    instance, so a scene belongs to one (document, instance path) pair.
+    Every inset is pinned to its sheet instance's own scene: a reused sheet
+    file shows different references per instance, so a scene belongs to one
+    (document, instance path) pair.
 
     Scenes are headless SchematicViewers (Canvas2D, no GPU context) kept in a
     small cache. A scene is reference-counted by the insets showing it and is
     never evicted while one is open; beyond `cap`, the least recently used
-    idle scene is dropped.
+    idle scene is dropped. The schematic plane takes its sheets from a
+    provider of its own, every scene held for the plane's life.
 */
 
 import { BBox, Matrix3, Vec2 } from "../../base/math";
-import type { SchematicTheme } from "../../kicad";
+import type { DrawingSheet, SchematicTheme } from "../../kicad";
 import {
     PinInstance,
     type KicadSch,
@@ -47,6 +47,11 @@ export interface SchematicInsetHost {
     container(): Node;
     /** The design variant the main view shows; scenes follow it. */
     variant?(): string | null;
+    /**
+     * The drawing sheet a page's scene is framed by, with that instance's
+     * number, path and name; without it a scene takes the default one.
+     */
+    drawing_sheet_for?(page: SchematicInsetPage): DrawingSheet;
 }
 
 interface Scene {
@@ -59,7 +64,7 @@ interface Scene {
     used: number;
 }
 
-/** One page instance's scene, drawn by the caller (the net map). */
+/** One page instance's scene, drawn by the caller (the schematic plane). */
 export interface SchematicPageView {
     key: string;
     name: string;
@@ -71,6 +76,10 @@ export interface SchematicPageView {
     local_trace(): string | null;
     bounds: BBox;
     item_bbox(uuid: string): BBox | undefined;
+    /** The box `item` is painted in on this page, as picking finds it. */
+    item_box(item: unknown): BBox | undefined;
+    /** Every item painted on this page with its box, once per layer it is on. */
+    painted(): Iterable<[unknown, BBox]>;
     render(canvas: HTMLCanvasElement, camera: InsetCamera): void;
     /**
      * Draw into a shared canvas through `matrix`, without clearing it and
@@ -99,7 +108,7 @@ export class SchematicInsetProvider implements InsetProvider {
     constructor(
         private readonly host: SchematicInsetHost,
         private readonly cap = DEFAULT_CAP,
-        /** Draw each page's frame and border grid (the world view does). */
+        /** Draw each page's frame and border grid (the schematic plane does). */
         private readonly drawing_sheet = false,
     ) {}
 
@@ -176,7 +185,7 @@ export class SchematicInsetProvider implements InsetProvider {
 
     /**
      * A whole page instance as a scene the caller draws through its own
-     * camera (the net map's tiles). Held until `release`.
+     * camera (the schematic plane's sheets). Held until `release`.
      */
     async page_view(page_key: string): Promise<SchematicPageView | null> {
         const page = this.host.pages().find((p) => p.key === page_key);
@@ -199,6 +208,14 @@ export class SchematicInsetProvider implements InsetProvider {
             local_trace: () => scene.viewer.local_trace,
             bounds: renderer.scene_bbox,
             item_bbox: (uuid) => renderer.get_item_bbox(uuid),
+            item_box: (item) =>
+                scene.viewer.layers.query_item_bboxes(item).next().value as
+                    | BBox
+                    | undefined,
+            painted: function* () {
+                for (const layer of scene.viewer.layers?.in_order() ?? [])
+                    yield* layer.bboxes;
+            },
             render: (canvas, camera) => {
                 scene.used = ++this.#clock;
                 scene.viewer.render_view(canvas, (w, h) =>
@@ -222,6 +239,17 @@ export class SchematicInsetProvider implements InsetProvider {
                 this.#evict();
             },
         };
+    }
+
+    /**
+     * Paint every scene again: the project's settings arrived after the
+     * sheets were painted, and the text variables they hold are resolved
+     * while painting.
+     */
+    repaint() {
+        for (const scene of this.#scenes.values())
+            if (scene.viewer.document) scene.viewer.paint();
+        for (const listener of this.#listeners) listener();
     }
 
     /** The main view's highlighted nets: every scene draws them too. */
@@ -326,6 +354,9 @@ export class SchematicInsetProvider implements InsetProvider {
                 if (page.context) viewer.set_instance_context(page.context);
                 const variant = this.host.variant?.();
                 if (variant !== undefined) viewer.set_variant(variant);
+                // Before the load, which paints the frame with the sheet.
+                const sheet = this.host.drawing_sheet_for?.(page);
+                if (sheet) viewer.set_drawing_sheet(sheet);
                 await viewer.load(page.document);
                 if (this.#nets.length) viewer.set_highlighted_nets(this.#nets);
             })();

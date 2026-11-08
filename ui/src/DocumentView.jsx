@@ -287,7 +287,7 @@ const browsersClick = (event) => event.button !== 0 || event.metaKey || event.ct
 
 /** The fields of an address a link to the page's own address names: the whole
  *  screen, so a field it leaves out is none. */
-const SCREEN = ['view', 'doc', 'sheet'];
+const SCREEN = ['view', 'doc'];
 
 /**
  * What a markdown link becomes where it opens something on the page (`links`
@@ -296,11 +296,11 @@ const SCREEN = ['view', 'doc', 'sheet'];
  * document on screen (the hash) it does not keep.
  *
  *   * A link to the page's own address — a bare query (`?v=open`,
- *     `?d=<id>&s=<sheet>`) or this page's full address copied from the
- *     browser, the same origin and path, but not a bare `#…`: it names a whole
- *     screen, so its `v=`, `d=` and `s=` replace the page's, a field it leaves
- *     out going, while `files=` and the parameters it does not name stay as
- *     the address has them. A plain click makes it a step
+ *     `?d=<id>`) or this page's full address copied from the browser, the
+ *     same origin and path, but not a bare `#…`: it names a whole screen, so
+ *     its `v=` and `d=` replace the page's, a field it leaves out going, while
+ *     `files=` and the parameters it does not name stay as the address has
+ *     them. A plain click makes it a step
  *     of history the page follows as it follows Back (`follow` in address.js),
  *     none where the address already names that screen; one naming a view and
  *     no document opens nothing on the page of a build with no model, which has
@@ -362,10 +362,8 @@ export function docLinks(base, documents, onOpen, views) {
  *  build's) and `onOpen` (the page's door for opening one by id) are for a
  *  member of a KiCad design and for a markdown link to another document,
  *  `onTools` for a view the bar can drive, `onReady` for the page waiting on
- *  the file, `received` the bytes of a markdown or a text file in so far, `addressDoc`
- *  the page's reading of which document an address names, for a schematic's
- *  sheet in it (KicadView.jsx), `onSheet` the page's door for writing
- *  that sheet, `comment` what a KiCad design and the Gerbers need for the
+ *  the file, `received` the bytes of a markdown or a text file in so far,
+ *  `comment` what a KiCad design and the Gerbers need for the
  *  page's comments (KicadView.jsx, GerberView.jsx), and `quoting` what a
  *  markdown article does for them (`DocumentView`): its ref, its pointer's
  *  handlers, and whether the pointer is over a quote; `views` the build's,
@@ -373,8 +371,8 @@ export function docLinks(base, documents, onOpen, views) {
  *  `shown` false for a KiCad design kept hidden (KicadView.jsx).
  *  Pure but for a link's address, which is the page's current one
  *  (`docLinks`). */
-export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc,
-  onSheet, comment, quoting, views, shown) {
+export function documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, comment,
+  quoting, views, shown) {
   if (doc.type === 'markdown') {
     if (error) return <div style={css(NOTE)}>{error}</div>;
     if (text === null) return <div style={css(LOADING)}>{loadBar(received, doc.bytes, false)}</div>;
@@ -397,7 +395,7 @@ export function documentBody(doc, base, text, error, documents, onOpen, onTools,
   }
   if (viewOf(doc)) {
     return <KicadView doc={doc} documents={documents} base={base} onOpen={onOpen} onTools={onTools} onReady={onReady}
-                      addressDoc={addressDoc} onSheet={onSheet} comment={comment} shown={shown} />;
+                      comment={comment} shown={shown} />;
   }
   if (doc.type === GERBERS_TYPE) {
     return <GerberView url={docUrl(base, doc)} bytes={doc.bytes} onTools={onTools} onReady={onReady}
@@ -577,9 +575,9 @@ export default class DocumentView extends React.Component {
   }
 
   render() {
-    const { doc, base, documents, onOpen, onTools, onReady, addressDoc, onSheet, comment, views, shown } = this.props;
+    const { doc, base, documents, onOpen, onTools, onReady, comment, views, shown } = this.props;
     const { text, error, received, pointing } = this.state;
-    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received, addressDoc, onSheet,
+    return documentBody(doc, base, text, error, documents, onOpen, onTools, onReady, received,
       comment, comment ? { ...this.quoting, pointing } : null, views, shown);
   }
 }

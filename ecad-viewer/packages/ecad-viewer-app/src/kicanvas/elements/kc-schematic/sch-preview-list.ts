@@ -8,7 +8,7 @@ import { css, html } from "../../../base/web-components";
 import { KCUIElement } from "../../../kc-ui";
 import { KicadSch } from "../../../kicad/schematic";
 import { TabMenuVisibleChangeEvent } from "../../../viewers/base/events";
-import type { SchematicViewer } from "../../../viewers/schematic/viewer";
+import type { PlaneViewer } from "../../../viewers/schematic/plane-viewer";
 import type { Project } from "../../project";
 import { SchPreviewElement } from "./sch-preview";
 
@@ -65,15 +65,14 @@ export class SchPreviewListElement extends KCUIElement {
 
     #project: Project;
     #viewers: SchPreviewElement[] = [];
-    #sch_viewer: SchematicViewer;
+    #plane: PlaneViewer;
 
     override connectedCallback() {
         (async () => {
             this.#project = await this.requestContext("project");
             await this.#project.loaded;
-            this.#sch_viewer =
-                await this.requestLazyContext<SchematicViewer>("viewer");
-            await this.#sch_viewer.loaded;
+            this.#plane = await this.requestLazyContext<PlaneViewer>("viewer");
+            await this.#plane.loaded;
             super.connectedCallback();
         })();
     }
@@ -89,9 +88,13 @@ export class SchPreviewListElement extends KCUIElement {
             if (!(sch instanceof KicadSch)) continue;
             const viewer = new SchPreviewElement(sch);
             this.#viewers.push(viewer);
+            // The first sheet drawn from this file, whole on the plane.
             viewer.addEventListener("click", (e) => {
                 this.dispatchEvent(new TabMenuVisibleChangeEvent(true));
-                this.#sch_viewer.load(sch);
+                const page = this.#project.pages.find(
+                    (candidate) => candidate.document === sch,
+                );
+                if (page) this.#plane.show_sheet(page.project_path);
             });
 
             vertical_layout.appendChild(viewer);

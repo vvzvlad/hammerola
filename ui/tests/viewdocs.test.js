@@ -31,7 +31,7 @@ import { loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
 import { ERROR, MODEL, PROGRESS, STATE, VIEWPORT_TAG } from '../src/events.js'
 import { menuRow } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
-import { DocFile, documentRows, SheetRows, toolBar, viewList, viewMenuStyle } from '../src/viewlist.jsx'
+import { DocFile, toolBar, viewMenuStyle } from '../src/viewlist.jsx'
 import { guardSubscribers } from './addressguard.js'
 import { makeComponent, replaceState } from './component.js'
 import { collect, links, texts } from './eltree.js'
@@ -57,17 +57,6 @@ const KICAD = [kicad('hw/main', 'schematic', 'Главная · схема'), ki
   kicad('hw/psu', 'schematic', 'БП · схема'), kicad('hw/psu', 'board', 'БП · плата')]
 const DATASHEET = { id: 'ds__ne555.pdf', name: 'ds/ne555.pdf', type: 'pdf', file: 'ds/ne555.pdf',
   bytes: 9, hidden: true }
-
-// A schematic of three files, its root placing the other two, and their texts
-// as the build serves them.
-const placed = (uuid, name, file, page) => `(sheet (uuid "${uuid}") (property "Sheetname" "${name}")`
-  + ` (property "Sheetfile" "${file}") (instances (project "p" (path "/r" (page "${page}")))))`
-const SHEET_FILES = {
-  'hw/main.kicad_sch': `(kicad_sch (uuid "r") ${placed('a', 'amp', 'amp.kicad_sch', '2')} ${placed('b', 'psu', 'psu.kicad_sch', '3')})`,
-  'hw/amp.kicad_sch': '(kicad_sch (uuid "x"))',
-  'hw/psu.kicad_sch': '(kicad_sch (uuid "y"))',
-}
-const MAIN = { ...KICAD[0], kicad: { ...KICAD[0].kicad, schematics: Object.keys(SHEET_FILES) } }
 
 // Two views: few enough that without documents the views are a strip of tabs.
 const VIEWS = [
@@ -290,10 +279,9 @@ describe('the documents in the list of views', () => {
 
   it('make each choice a step of history, with no frame, and the row shown none', () => {
     // Back returns to the choice before (`pushChoice`). No entry carries the
-    // camera's frame, even with a camera to read, nor a schematic's sheet
-    // (`s=`) another document's. The rest of the address stays, and so does
-    // the state of the entry.
-    window.history.replaceState({ hmr: 'latest' }, '', '/?d=hw__a.kicad_sch&files=K&s=amp')
+    // camera's frame, even with a camera to read. The rest of the address
+    // stays, and so does the state of the entry.
+    window.history.replaceState({ hmr: 'latest' }, '', '/?d=hw__a.kicad_sch&files=K')
     const c = component()
     c.host = { current: { getCamera: () => ({
       position: [10, -20, 30.5], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 1.5 }) } }
@@ -309,25 +297,6 @@ describe('the documents in the list of views', () => {
     c.computed().viewTabs[1].onClick()
     expect(entries()).toEqual([3, '?files=K&v=open'])
     c.computed().viewTabs[1].onClick()
-    expect(push).toHaveBeenCalledTimes(3)
-  })
-
-  it('make a sheet chosen under a schematic a step whose address names it, the root none, on the schematic on screen too', () => {
-    window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
-    const c = component({ meta: meta([MAIN]), viewsOpen: true })
-    const push = vi.spyOn(window.history, 'pushState')
-    onTestFinished(() => push.mockRestore())
-    const choose = (value) => c.computed().docRows[0].chooseSheet(value)
-    choose('amp')
-    expect([push.mock.calls.length, window.location.search, c.state.doc, c.state.viewsOpen])
-      .toEqual([1, `?files=K&d=${MAIN.id}&s=amp`, MAIN.id, false])
-    // another sheet of the schematic on screen, then its root
-    choose('hw/psu.kicad_sch:/r/b')
-    expect(window.location.search).toBe(`?files=K&d=${MAIN.id}&s=${encodeURIComponent('hw/psu.kicad_sch:/r/b')}`)
-    choose('')
-    expect(window.location.search).toBe(`?files=K&d=${MAIN.id}`)
-    // the sheet the entry already names
-    choose('')
     expect(push).toHaveBeenCalledTimes(3)
   })
 
@@ -456,191 +425,10 @@ describe('the documents in the list of views', () => {
     expect(layersOf(c)[0].key).not.toBe(before.key)
   })
 
-  it('write the sheet the schematic reports as `s=`, a step of history for the reader\'s, in place otherwise', () => {
-    // The schematic's view tells the page its sheet (`onSheet`), and the page
-    // writes it beside the `d=` naming the schematic; the root sheet is none.
-    window.history.replaceState({ hmr: 'latest' }, '', `/?d=${KICAD[0].id}`)
-    const c = component({ meta: meta(KICAD), doc: KICAD[0].id })
-    const push = vi.spyOn(window.history, 'pushState')
-    const rewrite = vi.spyOn(window.history, 'replaceState')
-    onTestFinished(() => { push.mockRestore(); rewrite.mockRestore() })
-    const written = () => [push.mock.calls.length, rewrite.mock.calls.length, window.location.search]
-    shownDocs(c)[0].props.onSheet('amp', true)
-    expect(written()).toEqual([1, 0, `?d=${KICAD[0].id}&s=amp`])
-    shownDocs(c)[0].props.onSheet('', false)
-    expect(written()).toEqual([1, 1, `?d=${KICAD[0].id}`])
-  })
-
   it('show the model for a document this revision does not list', () => {
     const v = component({ doc: 'gone.md' }).computed()
     expect(v.docOpen).toBeNull()
     expect(v.viewLabel).toBe('closed')
-  })
-})
-
-describe('a schematic\'s sheets in a submenu beside its row', () => {
-  // The rows a page hands the list, and the sheets' component as `viewList`
-  // draws it, driven on an instance whose `setState` writes into its state and
-  // which is told of an update as React would tell it.
-  const rows = (open, choose = vi.fn(), build = 'c1') => documentRows([MAIN, KICAD[1], KICAD[2], ...DOCS], open, choose, PAGE.base, build)
-  const sheets = (row, open = true) => {
-    const one = new SheetRows({ row, open })
-    one.setState = (patch) => Object.assign(one.state, patch)
-    onTestFinished(() => one.componentWillUnmount())
-    return one
-  }
-  const MOUSE = { pointerType: 'mouse' }
-  /** The schematic's own row, and its chevron. */
-  const rowOf = (one) => collect(one.render(), (el) => (el.props.style === css(one.props.row.rowStyle) ? el : undefined))[0]
-  const chevronOf = (one) => collect(rowOf(one), (el) => (el.type === 'span' && el.props.onClick ? el : undefined))[0]
-  /** The submenu, the other element the pointer moves in and out of. */
-  const flyout = (one) => collect(one.render(), (el) => (el.props.onPointerEnter
-    && el.props.style !== css(one.props.row.rowStyle) ? el : undefined))[0]
-  /** The submenu's rows by what they say, none while it is not drawn. */
-  const under = (one) => collect(flyout(one)?.props.children, (el) => (el.type === 'div' ? texts(el).join('') : undefined))
-  /** The pointer, a touch's or the mouse's, entering or leaving `el`. */
-  const point = (one, el, event, how = MOUSE) => {
-    el.props[event](how)
-    one.componentDidUpdate()
-  }
-  const served = vi.fn(async (url) => new Response(SHEET_FILES[decodeURIComponent(url.slice(PAGE.base.length))]))
-  // files that never come, where what is drawn while they come is the point
-  const pending = vi.fn(() => new Promise(() => {}))
-  afterEach(() => {
-    served.mockClear()
-    pending.mockClear()
-    vi.unstubAllGlobals()
-    vi.useRealTimers()
-  })
-
-  it('are there for a schematic of several files alone, its row opening it, hidden until shown', () => {
-    vi.stubGlobal('fetch', served)
-    const choose = vi.fn()
-    const listed = rows(null, choose)
-    const drawn = (documents) => collect(viewList({ label: '', open: true, onToggle: () => {}, documents }),
-      (el) => (el.type === SheetRows ? [el.props.row.key, el.key] : undefined))
-    // keyed by the build too: another revision of the same document id, swapped
-    // in on the page, is a new component that reads its own sheets
-    expect([drawn(listed), drawn(rows(null, choose, 'c2'))]).toEqual([[[MAIN.id, `c1:${MAIN.id}`]], [[MAIN.id, `c2:${MAIN.id}`]]])
-    const one = sheets(listed[0])
-    const row = rowOf(one)
-    expect([texts(row), collect(row, (el) => (el.type === 'svg' ? el : undefined)).length]).toEqual([['Главная · схема', '3 sheets'], 1])
-    row.props.onClick()
-    expect(choose.mock.calls).toEqual([[MAIN.id]])
-    // hidden, and nothing read, with the schematic on screen as well
-    const onScreen = sheets(rows(MAIN.id)[0])
-    onScreen.componentDidUpdate()
-    expect([under(one), under(onScreen), served.mock.calls.length]).toEqual([[], [], 0])
-  })
-
-  it('show on the mouse entering the row, not a touch, and go a moment after it leaves the row and the submenu', () => {
-    vi.useFakeTimers()
-    vi.stubGlobal('fetch', pending)
-    const one = sheets(rows(MAIN.id)[0])
-    point(one, rowOf(one), 'onPointerEnter', { pointerType: 'touch' })
-    expect(under(one)).toEqual([])
-    point(one, rowOf(one), 'onPointerEnter')
-    expect(under(one)).toEqual(['loading…'])
-    // on the way from the row into the submenu
-    point(one, rowOf(one), 'onPointerLeave')
-    vi.advanceTimersByTime(199)
-    point(one, flyout(one), 'onPointerEnter')
-    vi.advanceTimersByTime(1000)
-    expect(under(one)).toEqual(['loading…'])
-    point(one, flyout(one), 'onPointerLeave')
-    vi.advanceTimersByTime(199)
-    expect(under(one)).toEqual(['loading…'])
-    vi.advanceTimersByTime(1)
-    expect(under(one)).toEqual([])
-  })
-
-  it('show and hide on a tap of the chevron, which is not the row\'s, the finger leaving taking nothing; a mouse\'s click only shows', () => {
-    vi.useFakeTimers()
-    vi.stubGlobal('fetch', pending)
-    const choose = vi.fn()
-    const one = sheets(rows(null, choose)[0])
-    const stop = vi.fn()
-    const TOUCH = { pointerType: 'touch' }
-    const press = (how) => {
-      chevronOf(one).props.onPointerDown(how)
-      chevronOf(one).props.onClick({ stopPropagation: stop })
-      one.componentDidUpdate()
-    }
-    press(TOUCH)
-    // the finger leaving the row once lifted, before the click, as a touch screen reports it
-    point(one, rowOf(one), 'onPointerLeave', TOUCH)
-    vi.advanceTimersByTime(1000)
-    expect([stop.mock.calls.length, under(one)]).toEqual([1, ['loading…']])
-    press(TOUCH)
-    expect([stop.mock.calls.length, under(one), choose.mock.calls]).toEqual([2, [], []])
-    // the mouse has shown it on entering the row; a click of the chevron keeps it
-    point(one, rowOf(one), 'onPointerEnter')
-    press(MOUSE)
-    expect(under(one)).toEqual(['loading…'])
-  })
-
-  it('are drawn only in an open card, hidden again once it closes', () => {
-    vi.stubGlobal('fetch', pending)
-    const one = sheets(rows(MAIN.id)[0], false)
-    const card = (open) => {
-      one.props = { ...one.props, open }
-      one.componentDidUpdate()
-    }
-    point(one, rowOf(one), 'onPointerEnter')
-    expect([under(one), pending.mock.calls.length]).toEqual([[], 0])
-    card(true)
-    expect(under(one)).toEqual([])
-    point(one, rowOf(one), 'onPointerEnter')
-    expect(under(one)).toEqual(['loading…'])
-    card(false)
-    card(true)
-    expect([under(one), pending.mock.calls.length]).toEqual([[], 3])
-  })
-
-  it('are read from the schematic\'s files once, the first time they are shown', async () => {
-    vi.stubGlobal('fetch', served)
-    const one = sheets(rows(MAIN.id)[0])
-    point(one, rowOf(one), 'onPointerEnter')
-    await vi.waitFor(() => expect(under(one)).toEqual(['Root', 'amp', 'psu']))
-    chevronOf(one).props.onClick({ stopPropagation() {} })
-    one.componentDidUpdate()
-    point(one, rowOf(one), 'onPointerEnter')
-    expect(under(one)).toEqual(['Root', 'amp', 'psu'])
-    expect(served.mock.calls.map(([url]) => url)).toEqual(Object.keys(SHEET_FILES).map((file) => `${PAGE.base}${file}`))
-  })
-
-  it('light the sheet the address names, the root for none, and hand a sheet\'s click to the page with its `s=`', async () => {
-    vi.stubGlobal('fetch', served)
-    const choose = vi.fn()
-    const one = sheets(rows(MAIN.id, choose)[0])
-    point(one, rowOf(one), 'onPointerEnter')
-    await vi.waitFor(() => expect(under(one)).toEqual(['Root', 'amp', 'psu']))
-    const lit = () => collect(flyout(one).props.children, (el) => (el.props.style === css(menuRow(true)) ? texts(el).join('') : undefined))
-    window.history.replaceState(null, '', `/?d=${MAIN.id}&s=psu`)
-    expect(lit()).toEqual(['psu'])
-    window.history.replaceState(null, '', `/?d=${MAIN.id}`)
-    expect(lit()).toEqual(['Root'])
-    const own = () => collect(flyout(one).props.children, (el) => (el.props.onClick ? el : undefined))
-    for (const row of own()) row.props.onClick()
-    expect(choose.mock.calls).toEqual([[MAIN.id, ''], [MAIN.id, 'amp'], [MAIN.id, 'psu']])
-    // none lit while another document is on screen
-    one.props = { ...one.props, row: rows(KICAD[1].id, choose)[0] }
-    expect([under(one), lit()]).toEqual([['Root', 'amp', 'psu'], []])
-    // the root's row not lit names the root by its path
-    choose.mockClear()
-    own()[0].props.onClick()
-    expect([choose.mock.calls, one.state.pages[0].name]).toEqual([[[MAIN.id, one.state.pages[0].projectPath]], 'Root'])
-  })
-
-  it('are none where the files do not come', async () => {
-    // a refusal whose body would read as the files: its status alone keeps the sheets out
-    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(SHEET_FILES[decodeURIComponent(url.slice(PAGE.base.length))],
-      { status: 404 })))
-    const one = sheets(rows(MAIN.id)[0])
-    point(one, rowOf(one), 'onPointerEnter')
-    await vi.waitFor(() => expect(one.state.pages).toEqual([]))
-    // no submenu at all, not an empty one
-    expect(flyout(one)).toBeUndefined()
   })
 })
 
@@ -731,7 +519,7 @@ describe('a markdown link to an address of the page', () => {
     // `readNotes` on mount, with no `localStorage` in this runner
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     window.history.replaceState({ hmr: 'latest' }, '', '/project/proj1/latest/?d=docs__cut-list.md&files=K')
-    const c = component({ meta: meta([...DOCS, MAIN]), doc: 'docs__cut-list.md', token: null })
+    const c = component({ meta: meta(DOCS), doc: 'docs__cut-list.md', token: null })
     c.load = vi.fn(async () => {})
     c.componentDidMount()
     onTestFinished(() => {
@@ -761,12 +549,6 @@ describe('a markdown link to an address of the page', () => {
     await popped
     expect([window.location.search, c.state.view, c.state.doc])
       .toEqual(['?d=docs__cut-list.md&files=K', 'closed', 'docs__cut-list.md'])
-  })
-
-  it('opens a schematic on the sheet it names', () => {
-    const { c, link } = onNote()
-    click(link(`?d=${MAIN.id}&s=amp`))
-    expect([window.location.search, c.state.doc]).toEqual([`?files=K&d=${MAIN.id}&s=amp`, MAIN.id])
   })
 })
 
@@ -841,7 +623,7 @@ describe('a comment on a KiCad design', () => {
     expect([KICAD[0].id, KICAD[1].id, DATASHEET.id].map(takes)).toEqual([true, true, false])
   })
 
-  it('opens the document of a row in the rail as a step of history and asks it to show the place, its sheet the reader\'s step where it was on screen', () => {
+  it('opens the document of a row in the rail as a step of history and asks it to show the place', () => {
     window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
     const c = component({ meta: meta(KICAD), feed: [comment] })
     const push = vi.spyOn(window.history, 'pushState')
@@ -850,15 +632,15 @@ describe('a comment on a KiCad design', () => {
     open()
     expect([push.mock.calls.length, window.location.search, c.state.doc, c.state.activePin])
       .toEqual([1, `?files=K&d=${KICAD[0].id}`, KICAD[0].id, 'c1'])
-    expect(c.state.docFocus).toEqual({ doc: 'hw/main.kicad_sch', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6], step: false })
+    expect(c.state.docFocus).toEqual({ doc: 'hw/main.kicad_sch', sheet: 'hw/amp.kicad_sch', area: [10, 20, 4, 6] })
     open()
-    expect([push.mock.calls.length, c.state.docFocus.step]).toEqual([1, true])
+    expect(push).toHaveBeenCalledTimes(1)
   })
 
   it('drops the place a row asked for at any other change of document, so a later opening of it is the reader\'s own', () => {
     window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
     const onModel = { ...comment, id: 'c2', doc: null, frame: null, sheet: null, area: null, items: null }
-    const c = component({ meta: meta([MAIN, ...KICAD.slice(1)]), feed: [comment, onModel] })
+    const c = component({ meta: meta(KICAD), feed: [comment, onModel] })
     const row = (i) => c.computed().threads[i].onOpen({ stopPropagation() {} })
     const asked = () => [c.state.docFocus, shownDocs(c).map((el) => el.props.comment.focus)]
     // Back before the schematic was ready to show the area
@@ -866,14 +648,14 @@ describe('a comment on a KiCad design', () => {
     window.history.replaceState({ hmr: 'latest' }, '', '/?files=K')
     c.followEntry()
     expect([c.state.doc, ...asked()]).toEqual([null, null, []])
-    // then opened from the menu on another sheet: nothing moves it
-    const choose = (value) => c.computed().docRows[0].chooseSheet(value)
-    choose('hw/psu.kicad_sch:/r/b')
-    expect([c.state.doc, ...asked()]).toEqual([MAIN.id, null, [null]])
+    // then opened from the menu: nothing moves it
+    const choose = () => c.computed().docRows[0].onClick()
+    choose()
+    expect([c.state.doc, ...asked()]).toEqual([KICAD[0].id, null, [null]])
     // a choice in the menu before the area was shown
     row(0)
     expect(c.state.docFocus).not.toBeNull()
-    choose('')
+    choose()
     expect(asked()).toEqual([null, [null]])
     // a row of a comment on the model
     row(0)

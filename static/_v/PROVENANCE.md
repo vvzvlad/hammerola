@@ -205,7 +205,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `93cc6f58e5ad9937288d33229f55045054273f535e2d74f54d34242278b909b3` |
+| `ecad-viewer.js` as committed | `f301ca0feac408715bb577089b29ba098e8a35fd2be6061e7cd5e0546a7d6d54` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -231,22 +231,26 @@ builds into a `blob:` URL.
 
 ### Our edits
 
-Twenty, in the TypeScript of `packages/ecad-viewer-app/src/` and, for edit 16,
-of `packages/kicad-parser/src/`, each with its reason in a comment at the spot.
+Eighteen, numbered 1 to 21 without 9, 11 and 13, in the TypeScript of
+`packages/ecad-viewer-app/src/` and, for edit 16, of
+`packages/kicad-parser/src/`, each with its reason in a comment at the spot.
 Edit 6 is checked by `ui/tests/schematicpins.test.js`, which reads sheets
 through the fork's own parser (`kicad-parser`, aliased in
 `ui/vitest.config.mjs`; the JS step of CI carries `ecad-viewer/packages` for
 it), edit 7 by `ui/tests/areaitems.test.js` the same way, edits 14 and 15 by
 `ui/tests/boardoutline.test.js`, edit 16 by `ui/tests/kicad5board.test.js`
 and edit 18 by `ui/tests/boardcopper.test.js` the same way, what edit 19 fits,
-draws and boxes by `ui/tests/boardpicture.test.js`, the link, the double-click's
-toggle and the keys of edit 20 by `ui/tests/worldview.test.js`, edit 9 by `ui/tests/pagekeys.test.js`, the text of edit 10 by
+draws and boxes by `ui/tests/boardpicture.test.js`, the links and the chains of
+edit 20 by `ui/tests/worldview.test.js`, the layout, the zoom floor and the
+comments' places and the title block's path of edit 21 by
+`ui/tests/plane.test.js`, where its camera goes on a cross-probe and on a
+double-click by `ui/tests/planeviewer.test.js`, the text of edit 10 by
 `ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
 `ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
 minifying, the bundles of this tree and the fork's at `acce697` differ in these
-twenty places and the comments beside them.
+eighteen places and the comments beside them.
 
 **1. A selected footprint is outlined, not filled over.** `paint_footprint` in
 `viewers/board/painter.ts` painted the whole footprint into the selection mask
@@ -304,13 +308,16 @@ menu (`ui/src/KicadView.jsx`) needs to know what is under the right one. Its
 `kicanvas:context-selection` and `kicanvas:sch-context-selection` events would
 not do: they are declared in `viewers/base/events.ts` and dispatched nowhere.
 A text carrying a hyperlink is selected by `select_at` as any item is: the
-schematic viewer's `on_click` (`viewers/schematic/viewer.ts`) follows a link
-only on a click, which `select_at` does not hand it. Followed, a link with a
-scheme opens as the fork has it (`http`, `https` and `mailto` only); a link
-without one is a file of the project, and when it is no loaded schematic
-(`#open_hyperlink` in `kicanvas/elements/kc-schematic/app.ts`) nothing opens:
-the fork opened a window on it, which resolves the path against the address of
-the page and finds no such file.
+schematic plane's `on_click` (`viewers/schematic/plane-viewer.ts`, edit 21)
+follows a link only on a click, which `select_at` does not hand it. Followed, a
+link with a scheme opens as the fork has it (`http`, `https` and `mailto`
+only); `#<page number>`, KiCad's link to another page, shows the sheet of that
+page whole on the plane; any other link is a file of the project, resolved
+against the file of the sheet it was clicked on, and the plane shows its first
+instance whole (`#open_hyperlink` in `kicanvas/elements/kc-schematic/app.ts`);
+a file that is no loaded schematic opens nothing: the fork opened a window on
+it, which resolves the path against the address of the page and finds no such
+file.
 
 **6. A placed symbol without pin records still has its pins.** The viewer drew a
 placed symbol's pins only from its own `(pin "N" (uuid …))` records; KiCad writes
@@ -321,11 +328,13 @@ is drawn is decided per placement), in body style 0 or its own, which is where
 `LibSymbol.pin_by_number` looks them up; with no uuid, since the file has none,
 and none at all when the library symbol is missing.
 
-**7. The element says what an area holds.** `itemsInArea(context, bounds)` of
-`<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`) hands what each layer of the
+**7. The element says what an area holds.** `itemsInArea(context, bounds, page)`
+of `<ecad-viewer>` (`ecad-viewer/ecad_viewer.ts`) hands what each layer of the
 viewer has painted, with the box it painted it in, to `area_items`
 (`ecad-viewer/area-items.ts`), which names what meets `bounds` (`[x, y, w, h]`
-in the document's millimetres): the designators of symbols and footprints and
+in the document's millimetres; on the schematic in those of the sheet whose
+file `page` names, read on that file's first instance on the plane, and of the
+root sheet without one): the designators of symbols and footprints and
 the names of nets, without power symbols and flags and without the names KiCad
 makes up for an unnamed net. The page reads it for the area of a comment
 (`ui/src/KicadView.jsx`).
@@ -342,14 +351,6 @@ without a change of viewport, and left them sized for the zoom before. Not in
 `render_layers`, under it, which every inset calls with its own camera on
 every frame it draws.
 
-**9. Command or Control with a bracket is the browser's.** `#handle_host_keydown`
-of `<ecad-viewer>` steps through the schematic's pages on `[` and `]`, and took
-them with Command or Control held as well. Command with `[` and `]` is Back and
-Forward on a Mac, so on a schematic Back moved to the previous sheet — from the
-root, round to the last — and added an entry to the history instead of leaving
-the page. The step is decided by `schematicPageStep` (`ecad-viewer/page-keys.ts`),
-which leaves the key to the browser with Command or Control held.
-
 **10. A global label shows its inter-sheet references.** The viewer parsed a
 global label's `Intersheetrefs` field (`Intersheet References` in KiCad 6) and
 the `.kicad_pro`'s `intersheets_ref_*` settings, and drew neither.
@@ -363,22 +364,6 @@ when the field still sits at the label's point, where KiCad places it itself,
 else at the field's saved place. The settings' defaults are left as they were,
 which is what KiCad's application settings load: no brackets, no own page.
 
-**11. The list of a label's namesakes is on screen, and a jump from it is a
-page change.** `SchSelectionPopMenu`
-(`kicanvas/elements/kc-schematic/selection-pop-menu.ts`), which a left click on a
-global or local label opens, is a fixed host the size of the view with no `top`
-or `left`; under `hide-chrome` it sat at its static place below the canvas, and
-the panel placed at the pointer inside it was drawn off the window. The host is
-pinned to the top left and lets the pointer through (`pointer-events: none`, the
-panel `auto`), so the wheel over the drawing still pans and zooms while the list
-is open; the panel is placed by the pointer's offset from the host's box once it
-is attached, and kept inside the window; a press of any button anywhere else
-closes it, so the page's right-click menu never stands on it. A jump from the list to another sheet
-(`#select_item` in `kc-schematic/app.ts`) loaded the file straight into the
-viewer; it now activates the sheet's page through the project, as a sheet
-symbol's double click does, so the page hears of the change, and frames the item
-after that load.
-
 **12. The element hands out its BOM.** `getBomItems()` of `<ecad-viewer>`
 (`ecad-viewer/ecad_viewer.ts`) returns the project's BOM, `bom_items`, as plain
 objects `{ references, value, footprint, qty, dnp }`: a row per footprint, value
@@ -390,15 +375,6 @@ the group's designators one by one, which `ItemsGroupedByFpValueDNP`
 joined `Reference`. The page draws the BOM view of a design from it as a table
 of its own (`ui/src/KicadView.jsx`), each designator a link to the part on the
 board.
-
-**13. A host that turns the selection panel off gets no list of a net from the
-viewer.** A click on a label opens the viewer's list of the places of its name
-(`kc-sch-selection-menu`) unless the host sets `show-selection-panel="false"`;
-the page sets it and opens a menu of its own (`ui/src/KicadView.jsx`). The fork
-checks that attribute through `closest("ecad-viewer")`, which does not leave the
-shadow tree the app is drawn in, so it never found the host:
-`#host_opens_lists` in `kc-schematic/app.ts` takes the host as the root of that
-tree. A click on a sheet pin opens no list in the fork itself.
 
 **14. A board is framed by the Edge.Cuts inside its footprints too.** The view
 is fitted on load and by Fit to `KicadPCB.bbox`, which is `edge_cuts_bbox`
@@ -492,71 +468,111 @@ footprint with, `outline_footprint` in `viewers/board/painter.ts`) combined with
 its pads' boxes, as a board inset frames a footprint, so a part with no
 silkscreen or fab graphics still has the box of its pads.
 
-**20. The world view opens on a double-click on a label, a local label's
-included, its lines are straight and still, its camera moves only by hand,
-closing it hands its picture to the main view, and a namesake on the label's
-own sheet is linked.** The fork's world view
-(`ecad-viewer/net-tracking/`) lays every sheet a label's net reaches on one
-canvas, with a line from the label to each place it reaches. It opened on `~`,
-held while clicking or pressed after a click, and chained more nets in the same
-way; each line was a curve leaving its label sideways, grew from the label, then
-ran in dashes with the net's name written on them and an arrowhead at its far
-end, the label it reached rippled once, and the view redrew every frame while
-open; the camera eased out from what the main view showed to every sheet,
-eased again to frame them all when a chain was added, and framed them again on
-a resize until moved by hand; `#add_chain` dropped a link whose two ends are on
-one sheet, so a global label's namesake on its own sheet got neither line nor
-mark; and `net_closure` stopped a local label at the wires of its sheet, so a
-local label's namesakes were lit by the schematic viewer's own overlay instead
-(lit boxes joined by straight dashes, `show_local_trace`), one name per sheet;
-the tracker no longer calls it. A double-click on a label, a sheet entry or a power
-symbol in the main view now traces it (`on_dblclick` in
-`viewers/schematic/viewer.ts` reports it as a select of intent `trace`, which
-`ecad_viewer.ts` hands to the tracker), a local label as anything else: it opens
-the view, `net_closure` taking a local label on to its namesakes on its sheet,
-which fan out from the first of them reached as global labels do. A sheet entry
-is taken before the sheet symbol it sits on, a double-click elsewhere on a sheet
-symbol still enters it, any other item is framed as before, and a wire is not
-traced; what is traced is `traceable_uuid`, now in `net-graph.ts`, so the viewer
-asks it without importing the view's scenes, which import the viewer. In the
-view, a double-click on such a label takes away every chain it is in, the view
-closing with the last of them and its sheets staying, or adds its net in the
-next colour (`WorldView.toggle`; the next colour is counted from the view's
-opening, not from the chains left). Closing the view moves nothing on screen:
-the main view takes over the picture it shows (`WorldView.hand_over`). Escape, a
-double-click on an empty place, between the sheets or on a sheet's blank paper,
-and taking away the last chain hand it the sheet under the middle of the canvas,
-or the one nearest it; a double-click on any other item hands it that item's
-sheet (the fork eased into the sheet first, then framed the first label of a
-chain on it with `zoom_fit_item`, far zoomed in). The main view shows that
-sheet, switching to it when another is on screen, with its camera on the box the
-view shows, taken from the world into that sheet's own coordinates (the host's
-`open_page`, `#open_page_at` in `ecad_viewer.ts`); the view covers the main
-view's canvas exactly, so the same box is the same picture. `~` is gone, its
-key-up wiring with it. The view opens with its
-camera where the main view's is, on the starting sheet framed as the main view
-frames it (on every sheet when the main view shows none of them), and only a
-pan or a zoom moves it after that; a line to a sheet off screen runs off the
-edge, and its zoom spans the main view's (`Viewer.MinZoom` to `Viewer.MaxZoom`;
-the fork's went further out and less far in), so the camera it hands back on
-closing is one the main view can hold. A chain's lines join the places it links, on every sheet shown,
-by the shortest tree of segments (`spanning_pairs` in `geometry.ts`), each
-place to a near one, where the fork drew a line from the traced label to every
-place it reached. A line is straight and solid in its chain's colour over a
-soft glow, with a ring on each label it joins and no name or arrowhead, drawn
-whole and still once the sheets at both its ends have faded in; frames are
-drawn while sheets
-fade in, and on a change (a hover, a click, a pan or a zoom). `shown_links`
-keeps a link with both ends on one sheet, and a net that stays on one sheet
-opens the view on that sheet alone (the fork wanted two sheets). The page
-(`ui/src/KicadView.jsx`) opens its menu for a net a left click picked on the
-schematic only once the time for a second click has passed, so the double-click
-opens none. While the view is open, `selectAt`, which the page's right click
-asks what is under the pointer, selects what the view shows there
-(`WorldView.select_at`, the view's own click), not the schematic under it; and
-a place the page's menu steps to on the schematic closes the view first
-(`hideWorldView`), since the schematic shows the place. That close, like the one
-in `showPage`, hands nothing over: the step frames its place itself.
+**20. A double-click on a label draws its net's chain on the schematic plane, a
+local label's included, in straight lines that stay still, and a namesake on the
+label's own sheet is linked.** The fork's world view
+(`ecad-viewer/net-tracking/`) laid every sheet a label's net reaches on a canvas
+of its own over the schematic, with a line from the label to each place it
+reaches. It opened on `~`, held while clicking or pressed after a click, and
+chained more nets in the same way; each line was a curve leaving its label
+sideways, grew from the label, then ran in dashes with the net's name written on
+them and an arrowhead at its far end, the label it reached rippled once, and the
+view redrew every frame while open; its camera eased out from what the main view
+showed to every sheet and eased again to frame them all when a chain was added;
+`#add_chain` dropped a link whose two ends are on one sheet, so a global label's
+namesake on its own sheet got neither line nor mark; and `net_closure` stopped a
+local label at the wires of its sheet, so a local label's namesakes were lit by
+the schematic viewer's own overlay instead (lit boxes joined by straight dashes,
+`show_local_trace`), one name per sheet. The view, its scenes, its camera and
+`~` are gone: every sheet is on the plane already (edit 21), and the chains are
+drawn there (`ecad-viewer/net-tracking/chains.ts`). A double-click on a label, a
+sheet entry or a power symbol traces it (`on_dblclick` in
+`viewers/schematic/plane-viewer.ts` reports it as a select of intent `trace`
+carrying its sheet's key, which `ecad_viewer.ts` hands to
+`PlaneViewer.toggle_chain`), a local label as anything else, `net_closure`
+taking a local label on to its namesakes on its sheet, which fan out from the
+first of them reached as global labels do. A sheet entry is taken before the
+sheet symbol it sits on, and a wire is not traced; what is traced is
+`traceable_uuid`, in `net-graph.ts`. A double-click on a place a chain reaches
+takes away every chain it is in; on any other traced place it adds that net's
+chain in the next colour (`Chains.toggle`; the colours start again once no chain
+is left); on a part it frames the part, as on one sheet; on anything else — a
+wire, a text, a drawing, blank paper, the background between the sheets — it
+takes every chain away. A net with one place on the whole schematic has nothing
+to join and draws none. Adding or taking away a chain moves no camera, and a
+line to a sheet off screen runs off the edge. A chain's lines join the places it
+links, on every sheet, by the shortest tree of segments (`spanning_pairs` in
+`geometry.ts`), each place to a near one, where the fork drew a line from the
+traced label to every place it reached. The places are found on every frame on
+the sheets drawn (`Chains.layout`), so a place on a sheet still being built
+joins its chain once that sheet is there, and one on a sheet that failed to
+build stays out. A line is straight and solid in its chain's colour over a soft
+glow, with a ring on each place it joins, a larger one where it started, and no
+name or arrowhead. The page (`ui/src/KicadView.jsx`) opens its menu for a net a
+left click picked on the schematic only once the time for a second click has
+passed, so the double-click opens none.
+
+**21. The schematic tab is one plane of every sheet.** The fork's schematic tab
+showed one sheet at a time, the one the project activated, reached by a
+double-click on its symbol, the list of pages, `[`, `]` and Alt+Backspace. The
+schematic app's viewer is now `PlaneViewer`
+(`viewers/schematic/plane-viewer.ts`, its arithmetic in `plane.ts`) where the
+element carries `plane`, as the app's own template makes it (`make_viewer_element`
+in `kicanvas/elements/kc-schematic/app.ts`); without it, as the sheets' previews
+make it, the element is the fork's `SchematicViewer`. The app's `show_plane`
+hands it every sheet instance of the project (`#net_instance_pages` in
+`ecad_viewer.ts`): the root first, then by KiCad's page numbers, then the rest
+in the project's walk (`plane_order`), laid out in rows by their paper, 50 mm
+apart (`plane_slots`). Each instance is a scene of the schematic inset provider
+(`insets/schematic-provider.ts`) drawn inside the project's drawing sheet for
+that instance, its page number and path in the title block
+(`Project.drawing_sheet_for` with the instance), the path spelled with the
+sheets' names as KiCad prints it, `/amp/`, not with their UUIDs
+(`readable_sheet_path` in `kicanvas/sheet-path.ts`); the scenes are built one after
+another, a task between two, and a sheet still being built is an empty cell. A
+sheet that fails to build shows its name and `failed to draw: <error>` and logs
+a warning naming its key. Each sheet's name stands above its paper in screen
+pixels. A frame draws the background, the sheets on screen, their names, the
+chains, the selection and the hover, and then the viewer's overlays: `on_draw`
+in `viewers/base/viewer.ts` draws them through `draw_overlays`, which the plane
+calls after its own drawing. There is one camera. It opens, and Fit puts it, on
+every sheet whole, with 24 px of the screen above the top row for the names; the
+gestures zoom out no further than the least of `Viewer.MinZoom`, that Fit and the
+camera's own zoom, set again whenever the canvas changes size
+(`Viewport.set_zoom_range`, which writes the bounds of `MoveAndZoom`). Only a
+gesture or a call moves it: `show_sheet`, a sheet whole (a double-click on a
+sheet symbol, a link to a sheet, a sheet's preview in the list); `show_point`,
+a comment's place (`zoomToLocation(x, y, page)`), the zoom raised to that sheet
+whole where it is smaller, the point in the middle; and `show_item`, a part or a
+place from the board (`requestCrossProbe`), which waits for its sheet's scene
+and is dropped by any other move of the camera, by a click the plane itself
+takes (`on_click`, `select_at`) and by `clearSelection`; a sheet whose scene
+failed is shown whole instead. What is under a point is on the sheet
+whose paper holds it, in that sheet's coordinates: hover, a click, the right
+click's `selectAt`, the insets and the properties panel work on any sheet, and a
+selection or a link clicked carries the sheet's key (`page` of `SelectDetails`
+and of `LinkClickEvent`). A comment's mark stands on every instance of its
+sheet's file, one naming no file on the root (`plane_comments`, by
+`setCommentOverlays`); an area drawn in comment mode goes to the sheet under its
+centre, else the nearest, with that sheet's file as `page` and its bounds in
+that sheet's coordinates, not cut at its edge (`area_on_sheet`). What kept one
+sheet on screen is gone from the element: `switchPage`, `showPage`,
+`getActiveSchematicPage`, `getSchematicPages`, `navigateSchematicPage` and
+`navigateSchematicParent` with the keys `[`, `]` and Alt+Backspace,
+`focusBBox`, `focusItem`, `findLabelInstances`, `focusLabelInstance`,
+`crossProbe`, `showWorldView` and `hideWorldView`, the schematic in
+`exportImage`, the viewer's list of a label's namesakes
+(`kc-schematic/selection-pop-menu.ts`), and the schematic half of a comparison
+of revisions, the session's `getSchematicPages` with it, whose load now fails
+with `Schematic comparison is not supported`. Gone with them: the viewer's ERC
+marks (`show_erc`, `show_erc_multi`), which only the schematic app's ERC
+handlers asked for; `SheetLoadEvent`, which put the name of the sheet on screen
+on the tab header, and `SheetChangeEvent`, a double-click on a sheet symbol in
+the one-sheet viewer; and the schematic's `crossprobe` selection, which the
+plane never sends, so `ecad-viewer:crossprobe` comes from the board alone. A
+first load that throws rejects `replaceSources` with the error
+(`#setup_project` returns it), where the fork sent `ecad-viewer:zip:error` to
+the window alone and the empty tab looked ready.
 
 ### Upgrading it
 
@@ -565,9 +581,10 @@ first with none of our edits and compare the two files with what Prism publishes
 from that commit, if it does; then re-apply the edits (a `git diff` of
 `ecad-viewer/` against the fork at `acce697` is them, at the fork's paths, with
 the three build files), run `make ecad` and the JS suite — `schematicpins.test.js`,
-`areaitems.test.js`, `pagekeys.test.js`, `intersheetrefs.test.js`,
-`boardoutline.test.js`, `kicad5board.test.js`, `boardcopper.test.js`,
-`boardpicture.test.js` and `worldview.test.js` fail if edit 6, 7, 9, 10, 14 and 15, 16, 18, 19 or 20 was lost (`wheelgesture.test.js` checks the
+`areaitems.test.js`, `intersheetrefs.test.js`, `boardoutline.test.js`,
+`kicad5board.test.js`, `boardcopper.test.js`, `boardpicture.test.js`,
+`worldview.test.js`, `plane.test.js` and `planeviewer.test.js` fail if edit 6,
+7, 10, 14 and 15, 16, 18, 19, 20 or 21 was lost (`wheelgesture.test.js` checks the
 arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
 update this section and the hashes, and commit the
 source and the built files together.

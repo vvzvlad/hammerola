@@ -270,18 +270,6 @@ describe('picking a revision', () => {
       expect(pushed(push)).toBe(`${path(B)}?d=notes.md`)
     })
 
-    it('keeps the schematic\'s sheet the address names with it', async () => {
-      const sheet = { id: 'hw__a.kicad_sch', name: 'hw/a.kicad_sch', type: 'schematic', file: 'hw/a.kicad_sch', bytes: 9 }
-      window.history.replaceState(null, '', `${path(A)}?d=${sheet.id}&s=amp`)
-      const push = vi.spyOn(history, 'pushState')
-      loadMeta.mockResolvedValue({ ...build(), documents: [sheet] })
-      await component({
-        doc: sheet.id,
-        meta: { project: 'fixture', commit: A, built: '2026-08-27T18:20:00Z', parts: PARTS, views: VIEWS, documents: [sheet] },
-      }).switchBuild('proj1', B)
-      expect(pushed(push)).toBe(`${path(B)}?d=${sheet.id}&s=amp`)
-    })
-
     it('drops it from the pushed address when the target does not', async () => {
       const push = vi.spyOn(history, 'pushState')
       loadMeta.mockResolvedValue(build())
@@ -2632,9 +2620,9 @@ describe('a target that will not load', () => {
     expect(c.state.viewError).toBeTruthy()
   })
 
-  it('loads the page of a build with no model, on the document and sheet open here', async () => {
+  it('loads the page of a build with no model, on the document open here', async () => {
     // DocShell draws such a build, and only a page load mounts it (main.jsx).
-    window.history.replaceState(null, '', `${path(A)}?d=notes.md&s=amp`)
+    window.history.replaceState(null, '', `${path(A)}?d=notes.md`)
     const went = watchNavigation()
     const c = component()
     c.state.doc = 'notes.md'
@@ -2643,7 +2631,7 @@ describe('a target that will not load', () => {
 
     await c.switchBuild('proj1', B)
 
-    expect(went).toEqual([`${path(B)}?d=notes.md&s=amp`])
+    expect(went).toEqual([`${path(B)}?d=notes.md`])
     expect(push).not.toHaveBeenCalled()
     expect(PAGE.slot).toBe(A)
     expect(c.state.viewError).toBeFalsy()

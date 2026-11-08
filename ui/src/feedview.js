@@ -40,13 +40,13 @@ export const openComments = (feed) => feed.filter((c) => c.status !== 'resolved'
 /**
  * The rail's rows and the count of open comments. `deps`: the build on screen
  * (`meta`, its `catalogue` of parts), `node` (a tree row by path), `set` (the
- * page's write), `resolveComment`, and where a row opens — `docOn`, the id of
- * the document on screen, or null; `openDoc(id, patch)`, the page opening
- * document `id` with `patch`; `openModel(patch)`, the model brought back with
+ * page's write), `resolveComment`, and where a row opens — `openDoc(id,
+ * patch)`, the page opening document `id` with `patch`, a step of history
+ * unless it is on screen; `openModel(patch)`, the model brought back with
  * `patch`, on the page that has one.
  */
 export function feedView(s, deps) {
-  const { meta, catalogue, stop, node: nodeAt, set, docOn, openDoc, openModel, resolveComment } = deps;
+  const { meta, catalogue, stop, node: nodeAt, set, openDoc, openModel, resolveComment } = deps;
 
   // -- the project's comment queue, as `loadFeed` fetched it
   //
@@ -117,12 +117,11 @@ export function feedView(s, deps) {
         + (anchor.state === 'orphan' && openModel ? 'var(--warn)' : 'var(--text-muted)'),
       // A row lights its comment and opens where it hangs. A comment on a
       // document opens that document (`openDoc`), as its row in the list of
-      // views does — a step of history unless it is on screen (`docOn`) —
-      // and asks it to show the place (`docFocus`): an area, on its sheet,
-      // which is a step of its own only where the document was already on
-      // screen (`step`, KicadView.jsx; GerberView.jsx); a part of the board's
-      // 3D model (BoardView3D.jsx); a quote (DocumentView.jsx). A comment on
-      // the model brings the model back (`openModel`) where the page has one.
+      // views does — a step of history unless it is on screen — and asks it
+      // to show the place (`docFocus`): an area, on its sheet (KicadView.jsx;
+      // GerberView.jsx); a part of the board's 3D model (BoardView3D.jsx); a
+      // quote (DocumentView.jsx). A comment on the model brings the model
+      // back (`openModel`) where the page has one.
       // A comment on a document this build does not list, and one on the
       // model on a page with none, open nothing.
       onOpen: stop(() => {
@@ -131,7 +130,7 @@ export function feedView(s, deps) {
             || (record.frame === 'part' && record.part && { part: record.part })
             || (record.quote && { quote: record.quote });
           openDoc(target.id, { activePin: record.id,
-            docFocus: place ? { doc: target.file, ...place, step: docOn === target.id } : null });
+            docFocus: place ? { doc: target.file, ...place } : null });
         } else if (anchor.state !== 'doc' && openModel) {
           openModel({ activePin: record.id });
         } else {

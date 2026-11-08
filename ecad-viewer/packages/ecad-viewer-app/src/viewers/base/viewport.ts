@@ -110,6 +110,16 @@ export class Viewport {
     }
 
     /**
+     * Change how far the gestures zoom out and in. Set on the gestures in
+     * place: new ones would lose the drag filter a mode installed.
+     */
+    set_zoom_range(min_zoom: number, max_zoom: number) {
+        if (!this.#pan_and_zoom) return;
+        this.#pan_and_zoom.min_zoom = min_zoom;
+        this.#pan_and_zoom.max_zoom = max_zoom;
+    }
+
+    /**
      * The matrix representing this viewport. This can be passed into rendering
      * methods to display things at the right spot.
      */

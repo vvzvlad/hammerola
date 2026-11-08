@@ -29,6 +29,7 @@ import {
 import type { FilledPolygon } from "../kicad/board";
 import { SchematicBomVisitor } from "../kicad/schematic_bom_visitor";
 import { NewStrokeGlyph } from "../kicad/text/newstroke-glyphs";
+import { readable_sheet_path } from "./sheet-path";
 
 import {
     FetchFileSystem,
@@ -983,9 +984,16 @@ export class Project extends EventTarget implements IDisposable {
         this.settings = ProjectSettings.load(data);
     }
 
+    /**
+     * The drawing sheet `document` is framed by. On a schematic its number,
+     * path and name are those of a sheet instance: `instance` when given (each
+     * instance on the schematic plane prints its own, a file placed twice
+     * included), else the one `#page_for_drawing_sheet` picks.
+     */
     public drawing_sheet_for(
         kind: AssertType,
         document?: KicadPCB | KicadSch,
+        instance?: ProjectPage,
     ): DrawingSheet {
         const configured =
             kind === AssertType.SCH
@@ -1029,7 +1037,7 @@ export class Project extends EventTarget implements IDisposable {
         }
         const page =
             kind === AssertType.SCH
-                ? this.#page_for_drawing_sheet(document)
+                ? (instance ?? this.#page_for_drawing_sheet(document))
                 : undefined;
         drawing_sheet.sheet_number = page?.page || "1";
         const numbered_pages = this.pages
@@ -1038,7 +1046,9 @@ export class Project extends EventTarget implements IDisposable {
         drawing_sheet.sheet_count = String(
             Math.max(1, ...numbered_pages, this.pages.length),
         );
-        drawing_sheet.sheet_path = page?.sheet_path || "/";
+        drawing_sheet.sheet_path = readable_sheet_path(page, (path) =>
+            this._pages_by_path.get(path),
+        );
         drawing_sheet.sheet_name = page?.name || "";
         drawing_sheet.kicad_version =
             document instanceof KicadSch
@@ -1264,30 +1274,6 @@ export class Project extends EventTarget implements IDisposable {
                 detail: this,
             }),
         );
-    }
-
-    public activate_sch(page_or_path: string) {
-        this.active_sch_name = page_or_path;
-        this.dispatchEvent(
-            new CustomEvent("change", {
-                detail: this,
-            }),
-        );
-    }
-
-    public activate_child_sch(sheet_uuid: string): boolean {
-        const current =
-            this._pages_by_path.get(this.active_sch_name ?? "") ??
-            this._root_schematic_page;
-        if (!current) return false;
-        const child = this.pages.find(
-            (page) =>
-                page.parent_project_path === current.project_path &&
-                page.sheet_uuid === sheet_uuid,
-        );
-        if (!child) return false;
-        this.activate_sch(child.project_path);
-        return true;
     }
 
     /**

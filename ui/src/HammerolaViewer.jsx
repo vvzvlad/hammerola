@@ -975,8 +975,8 @@ export default class HammerolaViewer extends React.Component {
       // The project's whole comment queue, as the hub answers it (`loadFeed`),
       // in the records' own shape — oldest first, as SPEC 7A.2 sorts them.
       // `docFocus`: the place in a document a row of the rail asked to be
-      // shown, `{ doc, sheet, area, step }`, `{ doc, part, step }` or `{ doc,
-      // quote, step }` (`feedView`), until the document has shown it
+      // shown, `{ doc, sheet, area }`, `{ doc, part }` or `{ doc, quote }`
+      // (`feedView`), until the document has shown it
       // (KicadView.jsx, BoardView3D.jsx, GerberView.jsx, DocumentView.jsx) or
       // anything else moves the document over the model (`dropStaleFocus`).
       // `docLost`: by a document's file, the ids of the comments on it that
@@ -1826,15 +1826,14 @@ export default class HammerolaViewer extends React.Component {
     if (this._gone || gen !== this._swapGen) return;
     // A BUILD WITH NO MODEL IS THE OTHER SHELL'S: `BuildPage.jsx` mounts
     // DocShell for it, and only a page load gets there. A pick loads its address on the
-    // document open here and that document's sheet, as the picker of that page
-    // keeps them; Back or Forward onto it loads the address the browser shows,
+    // document open here, as the picker of that page keeps it; Back or Forward
+    // onto it loads the address the browser shows,
     // in place of its entry. Without the hash: the address shown, fragment and
     // all, would only scroll to the fragment. Such a build has no
     // camera to keep, so the swap this page does to keep one has nothing to do.
     if (meta && meta.kind === DOCUMENTS_KIND) {
       if (!push) { location.replace(format({ ...parse(), hash: '' })); return; }
-      location.href = format(fresh(path, {
-        doc: this.state.doc, sheet: this.state.doc ? parse().sheet : null }));
+      location.href = format(fresh(path, { doc: this.state.doc }));
       return;
     }
     const views = Array.isArray(meta && meta.views) ? meta.views : [];
@@ -4818,23 +4817,14 @@ export default class HammerolaViewer extends React.Component {
   /**
    * What an address names so that opening it lands on what the menu of views
    * has chosen, as fields of address.js: `view` (none for the first,
-   * `viewParam`), then document `doc`. A schematic's sheet given as `chosen`
-   * is named as `s=`, '' — the root sheet — as none; without one the document
-   * the address already names keeps the schematic's sheet it names (`s=`),
-   * which is the one on screen; another revision without that sheet opens on
-   * the root one, as a fresh load with an unknown `?s=` does.
+   * `viewParam`), then document `doc`.
    *
    * Every address this page writes whole names these: the push that lands a
    * swap, the replace that calls one off, the moves onto and off a comparison,
    * and a choice in the menu of views (`pushChoice`).
    */
-  screenParams(view, views, doc, chosen) {
-    const at = parse();
-    return {
-      view: viewParam(view, views),
-      doc,
-      sheet: chosen !== undefined ? chosen : doc && doc === at.doc ? at.sheet : null,
-    };
+  screenParams(view, views, doc) {
+    return { view: viewParam(view, views), doc };
   }
 
   /**
@@ -4866,50 +4856,30 @@ export default class HammerolaViewer extends React.Component {
 
   /**
    * Rewrite `d=` in the address bar: the document now laid over the model, or
-   * none, so a copied address opens on what is on screen. The schematic's
-   * sheet (`s=`) goes with it. A replace, every other parameter kept as
-   * written: for the document the banner's build does not list
-   * (`takePending`), whose address does not move.
+   * none, so a copied address opens on what is on screen. A replace, every
+   * other parameter kept as written: for the document the banner's build does
+   * not list (`takePending`), whose address does not move.
    */
   writeDoc(id) {
-    navigate(respell(parse(), { doc: id, sheet: null }));
-  }
-
-  /**
-   * The schematic's sheet on screen as KicadView reports it (`onSheet`):
-   * `sheet` the value of `s=`, '' for the root sheet, which has none. A step of
-   * history for the reader's own change of sheet (`push`), the entry on screen
-   * rewritten for one the page made; the path and every other parameter stay.
-   * With the list of views open the page is drawn again, so that the sheet lit
-   * in the schematic's submenu (`SheetRows` in viewlist.jsx) follows a step
-   * the reader took in the viewer meanwhile, by a key: nothing else redraws it.
-   */
-  writeSheet(sheet, push) {
-    navigate(respell(parse(), { sheet }), { push });
-    if (this.state.viewsOpen) this.forceUpdate();
+    navigate(respell(parse(), { doc: id }));
   }
 
   /**
    * A choice in the menu of views — `view` with no document, or document
-   * `doc` over it, a schematic on its `sheet` where a row of its sheets was
-   * chosen (`SheetRows` in viewlist.jsx) — made a step of the browser's
-   * history, so Back returns to the choice before it (`followEntry`). Nothing
-   * is pushed for the choice the entry already names: the row already shown.
+   * `doc` over it — made a step of the browser's history, so Back returns to
+   * the choice before it (`followEntry`). Nothing is pushed for the choice the
+   * entry already names: the row already shown.
    *
    * The path and every other parameter stay as written (`files=` among them);
-   * `v=`, `d=` and `s=` are written anew (`respell`) as `screenParams` names
-   * them, which names the `sheet` given as `s=`, none for the root, and
-   * without one keeps the schematic's sheet only for the document already
-   * named: a design chosen after another document opens on its root sheet,
-   * while its schematic chosen after its own board, the element kept, writes
-   * back the sheet it is on (`writeSheet`). The entry keeps the state object
-   * of the one it follows, the build not having moved.
+   * `v=` and `d=` are written anew (`respell`) as `screenParams` names them.
+   * The entry keeps the state object of the one it follows, the build not
+   * having moved.
    */
-  pushChoice(view, doc, sheet) {
+  pushChoice(view, doc) {
     const views = (this.state.meta && this.state.meta.views) || [];
     const at = parse();
-    if (view === this.entryView(views) && doc === at.doc && (sheet === undefined || sheet === (at.sheet || ''))) return;
-    navigate(respell(at, this.screenParams(view, views, doc, sheet)), { push: true });
+    if (view === this.entryView(views) && doc === at.doc) return;
+    navigate(respell(at, this.screenParams(view, views, doc)), { push: true });
   }
 
   /**
@@ -5128,7 +5098,6 @@ export default class HammerolaViewer extends React.Component {
       node: this.node.bind(this),
       set: this.set.bind(this),
       resolveComment: this.resolveComment.bind(this),
-      docOn: s.doc,
       // A row's document opens over the model as its row in the list of views
       // opens it: a step of history unless it is on screen.
       openDoc: (id, patch) => {
@@ -5969,7 +5938,6 @@ export default class HammerolaViewer extends React.Component {
             <DocumentLayers build={buildKey(this.state.meta)} doc={v.docOpen} layer={v.docLayerStyle}
                             documents={this.state.meta.documents} views={this.state.meta.views}
                             base={PAGE.base} onOpen={v.onDocOpen} comment={v.docComment}
-                            onSheet={(sheet, push) => this.writeSheet(sheet, push)}
                             onTools={(tools) => this.setState({ docTools: tools })}
                             onReady={() => this.docReady()} />
 

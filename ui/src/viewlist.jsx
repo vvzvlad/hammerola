@@ -19,8 +19,7 @@
 // Every listed document is one row, a KiCad schematic, board and 3D model as
 // much as a PDF, and the BOM the page lists after each schematic
 // (kicadbom.js), except one listed `hidden`: it has no row and is still opened
-// by its address (`?d=`) or by a link from another document. A schematic of
-// more than one file has its sheets in a submenu beside its row (`SheetRows`).
+// by its address (`?d=`) or by a link from another document.
 //
 // THE ROWS STAND IN GROUPS, each under a heading: the views first, then the
 // documents a group per kind (`docGroup`), so the five markdown notes of a
@@ -30,18 +29,15 @@
 //
 // `viewList` and `toolBar` are the drawing and take everything as arguments,
 // so a test reads the tree they return without mounting anything
-// (ui/tests/viewmenu.test.js, viewdocs.test.js, docshell.test.js); the sheets'
-// rows are a component of their own (`SheetRows`).
+// (ui/tests/viewmenu.test.js, viewdocs.test.js, docshell.test.js).
 
 import React from 'react';
 
-import { parse } from './address.js';
 import CopyLink, { WORDS_CLASS } from './copylink.jsx';
 import { docExt, docHint, docSize, namedByExt } from './DocumentView.jsx';
 import { shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
-import { schematicSheets } from './kicadpages.js';
-import { fileUrl, sheetFromQuery, sheetQueryValue, viewOf } from './KicadView.jsx';
+import { viewOf } from './KicadView.jsx';
 import {
   BLANK_BOX, CARD_LOOK, DIALOG_BTN, ELLIPSIS, FAINT_MONO, GROUP_HEAD, INK, menuRow, OFF, ON_ACCENT, ON_ACCENT_EDGE,
   QUIET_BTN, RELATIVE, RULE, TAB_OFF, TAB_ON,
@@ -70,22 +66,16 @@ const rowHint = (doc) => (viewOf(doc) ? docHint(doc) : docSize(doc.bytes));
  * The build's documents as rows, one per document not listed `hidden`, in the
  * order the project lists them: the name (its `title`, else its path in the
  * tree), its heading (`docGroup`) and its hint. `open` is the id of the
- * document on screen, or null; `choose(id)` is what a row does. A KiCad
- * schematic of more than one file carries what its sheets need (`SheetRows`):
- * itself as `doc`, `base`, the address the build's files are served under,
- * `build`, the build's key (`buildKey` in hub.js), whether it is `on` screen,
- * and `chooseSheet(value)`, which is `choose(id, value)` with a sheet's `s=`
- * value. With `rename(doc)`, a row carries `onRename`, its pencil's
- * (rename.jsx), but a BOM's: the hub renames what it publishes, by the
- * document's id, and the BOM's name follows its schematic's.
+ * document on screen, or null; `choose(id)` is what a row does. With
+ * `rename(doc)`, a row carries `onRename`, its pencil's (rename.jsx), but a
+ * BOM's: the hub renames what it publishes, by the document's id, and the
+ * BOM's name follows its schematic's.
  */
-export function documentRows(documents, open, choose, base, build, rename) {
+export function documentRows(documents, open, choose, rename) {
   return documents.filter((doc) => !doc.hidden).map((doc) => ({
     key: doc.id, label: doc.name, group: docGroup(doc), hint: rowHint(doc), rowStyle: menuRow(open === doc.id),
     onClick: () => choose(doc.id),
     onRename: rename && doc.type !== BOM_TYPE ? () => rename(doc) : undefined,
-    ...(doc.type === 'schematic' && doc.kicad.schematics.length > 1
-      ? { doc, base, build, on: open === doc.id, chooseSheet: (value) => choose(doc.id, value) } : {}),
   }));
 }
 
@@ -158,7 +148,7 @@ export const viewMenuStyle = (open, wide = true) => 'position:absolute;left:0;bo
 export const DOC_LABEL = 'flex:1;min-width:0;overflow-wrap:anywhere';
 export const DOC_HINT = `flex:none;white-space:nowrap;${FAINT_MONO}`;
 // A name kept to one line and cut by an ellipsis where it runs out of room: the
-// view button's and a sheet's in its submenu (`SheetRows`).
+// view button's.
 const CUT_NAME = `${ELLIPSIS};min-width:0`;
 
 // The bar the button sits in, floating at the bottom of the page.
@@ -182,188 +172,13 @@ export const DOC_LAYER = 'position:absolute;top:0;left:0;right:0;bottom:0;overfl
 
 const CHEVRON = <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 6l4 4 4-4" /></svg>;
 
-// The chevron at the right end of a schematic's row, turned to point right:
-// the mark of a row with a submenu.
-const SUBMENU_MARK = 'flex:none;display:flex;color:var(--text-muted);transform:rotate(-90deg)';
-// The submenu of a schematic's sheets: the card's look, as wide as its longest
-// name within bounds, no taller than the card's cap and scrolling past that
-// (`SheetRows`); `height` is the cap, null until it is measured.
-const sheetsFlyout = (height) => 'position:fixed;box-sizing:border-box;min-width:160px;max-width:260px;'
-  + `overflow:auto;${CARD_LOOK}` + (height ? `max-height:${height}px` : '');
-// The one quiet row while the sheets' files come in, set in as a sheet's row.
-const SHEETS_LOADING = `padding:7px 14px 7px 22px;${FAINT_MONO}`;
-// How long the submenu outlives the pointer leaving the row or the submenu: the
-// way from one to the other may cross a gap or a corner of the next row.
-const SHEETS_LINGER_MS = 200;
-// How far the submenu stands from the card, and at least from the window's edges.
-const FLYOUT_GAP = 4;
-const FLYOUT_MARGIN = 8;
-
-/**
- * A KiCad schematic's row and the submenu of its sheets (`schematicSheets` in
- * kicadpages.js), for a row that carries `chooseSheet` (`documentRows`); `open`
- * is whether the card is. The row opens the schematic as any row does; the
- * chevron at its right end points right, the mark of a submenu. The submenu
- * stands beside the card, its top at the row's, raised where its bottom would
- * pass the card's: below the card is the bar, whose controls it would cover.
- * It reaches no higher than the card may — the card's cap (`viewMenuStyle`)
- * keeps clear of the page's header — and is no taller than that, so that a
- * short card does not squeeze it. The mouse shows it on entering the row, and
- * it goes a moment (`SHEETS_LINGER_MS`) after the pointer has left the row and
- * the submenu both, so that the way from one to the other keeps it; a click on
- * the chevron shows it too. A touch screen has no hover: there a tap on the
- * chevron shows or hides it, a tap that is not the row's. Hidden until shown,
- * the schematic on screen or not; drawn only in an open card, and hidden again
- * when the card closes, so that the next opening starts without it. Not drawn
- * where the sheets' files failed: there are no sheets to show.
- *
- * `position:fixed`, so that the card's `overflow:auto` does not cut it off at
- * the card's edge. The bar's `contain:layout` makes the bar, not the window,
- * what a `fixed` box is measured from (`viewMenuStyle`), so the submenu is
- * placed by measuring (`place`): the bar's corner in the window is where the
- * submenu stands less the offsets it was given. Kept inside the window: on a
- * narrow one, with no room beside the card, it lies over the card at the
- * window's right edge.
- *
- * The sheets are read from the schematic's files the first time the submenu
- * is shown in an open card, not at every opening: they are the files its viewer
- * reads, about a megabyte for a real design. Read once for each build: a
- * document keeps its id from revision to revision, so the list keys this
- * component by the build too (`viewList`), and a revision switched to in place
- * reads its own sheets. While they come in, one quiet row
- * says so; where they fail there are no sheets. A sheet's row is the page's
- * choice of it (`chooseSheet` with its `s=` value, `sheetQueryValue` in
- * KicadView.jsx); with the schematic on screen the sheet the address names is
- * lit (`sheetFromQuery`), no `s=` naming the root, as the open document's row is.
- * The root's row, unless it is the one lit, names the root by its path rather
- * than by no `s=`: an address with none is also what the schematic's own row
- * writes, which takes up the sheet the hidden schematic is on (KicadView.jsx
- * `componentDidUpdate`); the schematic then drops the path from the address.
- */
-export class SheetRows extends React.Component {
-  constructor(props) {
-    super(props);
-    // `shown`: whether the submenu is. `pages`: the sheets once read, null
-    // before. `left` and `top`: the submenu's offsets from the bar, and
-    // `height` the card's cap, as `place` measures them.
-    this.state = { shown: false, pages: null, left: 0, top: 0, height: null };
-    this.asked = false;
-    this.rowBox = React.createRef();
-    this.flyoutBox = React.createRef();
-    // The mouse's pointer alone: a touch's enters and leaves too, on its way
-    // to a click.
-    this.enter = (event) => {
-      if (event.pointerType !== 'mouse') return;
-      this.keep();
-      this.setState({ shown: true });
-    };
-    this.leave = (event) => {
-      if (event.pointerType !== 'mouse') return;
-      this.keep();
-      this.timer = setTimeout(() => this.setState({ shown: false }), SHEETS_LINGER_MS);
-    };
-    this.keep = () => clearTimeout(this.timer);
-    // The chevron's pointer, told on its press. A mouse's click only shows the
-    // submenu, which entering the row has shown already; a touch's shows or
-    // hides it. Not the row's click, which opens the schematic.
-    this.pressed = (event) => {
-      this.pointer = event.pointerType;
-    };
-    this.toggle = (event) => {
-      event.stopPropagation();
-      this.keep();
-      this.setState({ shown: this.pointer === 'mouse' || !this.state.shown });
-    };
-  }
-
-  componentDidUpdate() {
-    if (!this.props.open && this.state.shown) {
-      this.setState({ shown: false });
-      return;
-    }
-    this.read();
-    this.place();
-  }
-
-  componentWillUnmount() {
-    this.gone = true;
-    this.keep();
-  }
-
-  /** The submenu beside the card (the row's parent), inside the window and
-   *  within the card's reach, moved only where it is off by more than a
-   *  rounding, so that the move does not call for another. */
-  place() {
-    const flyout = this.flyoutBox.current;
-    if (!flyout) return;
-    const row = this.rowBox.current.getBoundingClientRect();
-    const cardBox = this.rowBox.current.parentElement;
-    const card = cardBox.getBoundingClientRect();
-    const cap = parseFloat(getComputedStyle(cardBox).maxHeight);
-    const box = flyout.getBoundingClientRect();
-    const { left, top, height } = this.state;
-    const x = Math.max(FLYOUT_MARGIN, Math.min(card.right + FLYOUT_GAP, window.innerWidth - box.width - FLYOUT_MARGIN))
-      - (box.left - left);
-    const y = Math.max(card.bottom - cap, Math.min(row.top, card.bottom - box.height)) - (box.top - top);
-    const off = (a, b) => b === null || Math.abs(a - b) > 0.5;
-    if (off(x, left) || off(y, top) || off(cap, height)) this.setState({ left: x, top: y, height: cap });
-  }
-
-  /** The sheets read once, when the submenu is first shown in an open card. */
-  read() {
-    if (this.asked || !this.props.open || !this.state.shown) return;
-    this.asked = true;
-    const { doc, base } = this.props.row;
-    const files = doc.kicad.schematics;
-    Promise.all(files.map((file) => fetch(fileUrl(base, file)).then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.text();
-    })))
-      .then((texts) => schematicSheets(Object.fromEntries(files.map((file, i) => [file, texts[i]])), files[0]), () => [])
-      .then((pages) => {
-        if (!this.gone) this.setState({ pages });
-      });
-  }
-
-  render() {
-    const { row, open } = this.props;
-    const { pages, shown, left, top, height } = this.state;
-    const named = row.on && pages && sheetFromQuery(pages, parse().sheet);
-    return (
-      <>
-        <div ref={this.rowBox} onClick={row.onClick} onPointerEnter={this.enter} onPointerLeave={this.leave}
-             className={row.onRename ? RENAME_HOST : undefined} style={css(row.rowStyle)}>
-          {row.onRename && <Pencil lead title="Rename document" onClick={row.onRename} />}
-          <span style={css(DOC_LABEL)}>{row.label}</span>
-          <span style={css(DOC_HINT)}>{row.hint}</span>
-          <span onPointerDown={this.pressed} onClick={this.toggle} style={css(SUBMENU_MARK)}>{CHEVRON}</span>
-        </div>
-        {open && shown && !(pages && !pages.length) && (
-          <div ref={this.flyoutBox} onPointerEnter={this.keep} onPointerLeave={this.leave}
-               style={{ ...css(sheetsFlyout(height)), left, top }}>
-            {pages ? pages.map((page) => (
-              <div key={page.projectPath} onClick={() => row.chooseSheet(page.parentProjectPath || page.projectPath === named
-                ? sheetQueryValue(pages, page.projectPath) : page.projectPath)}
-                   style={css(menuRow(page.projectPath === named))}>
-                <span style={css(CUT_NAME)}>{page.name}</span>
-              </div>
-            )) : <div style={css(SHEETS_LOADING)}>loading…</div>}
-          </div>
-        )}
-      </>
-    );
-  }
-}
-
 /**
  * The button and its card, as elements. `views` and `documents` are rows
  * (`{ key, label, hint, rowStyle, onClick }`, a document's with its `group`,
- * a schematic's of several files with what its sheets need, any of them with
- * `onRename`, which puts a pencil before its name), drawn in their
- * groups (`menuGroups`), the documents under the views; `wide` is whether the
- * bar holds the tools (`viewMenuStyle`). `onToggle` must stop the click: the
- * pages shut their menus on a click that reaches the root. Pure, but for the
- * sheets' rows (`SheetRows`).
+ * any of them with `onRename`, which puts a pencil before its name), drawn in
+ * their groups (`menuGroups`), the documents under the views; `wide` is
+ * whether the bar holds the tools (`viewMenuStyle`). `onToggle` must stop the
+ * click: the pages shut their menus on a click that reaches the root. Pure.
  *
  * The wrapper is `position:relative` so that the card is anchored to the
  * BUTTON: the bar carries `contain:layout` and is therefore already a
@@ -385,7 +200,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
             are siblings of different arrays rather than of one. */}
         {menuGroups(views, documents).map(([head, rows]) => [
           <div key={`group:${head}`} style={css(GROUP_HEAD)}>{head}</div>,
-          ...rows.map((t) => (t.chooseSheet ? <SheetRows key={`${t.build}:${t.key}`} row={t} open={open} /> : (
+          ...rows.map((t) => (
             <div key={t.key} onClick={t.onClick} className={t.onRename ? RENAME_HOST : undefined}
                  style={css(t.rowStyle)}>
               {t.onRename && (
@@ -394,7 +209,7 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
               <span style={css(DOC_LABEL)}>{t.label}</span>
               <span style={css(DOC_HINT)}>{t.hint}</span>
             </div>
-          ))),
+          )),
         ])}
       </div>
     </div>

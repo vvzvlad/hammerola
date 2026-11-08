@@ -209,9 +209,9 @@ export const WARN_BODY = `font:400 11.5px/1.5 ${SANS};color:var(--text-soft);mar
 
 /* -- the page's menu card -------------------------------------------------- *
  *
- * The card of the bottom bar's list of views and of its submenu of sheets
- * (viewlist.jsx), the variant switcher's rows (variants.jsx), and the menu a
- * click opens on a KiCad design (KicadView.jsx). That menu knows its height
+ * The card of the bottom bar's list of views (viewlist.jsx), the variant
+ * switcher's rows (variants.jsx), and the menu a click opens on a KiCad design
+ * (KicadView.jsx). That menu knows its height
  * before it is drawn (`menuHeight`) and counts it from the numbers below, the
  * card's border and padding, a row's and a heading's line and padding, so the
  * styles are drawn from them and the line heights are written out. */
@@ -225,9 +225,8 @@ export const GROUP_PAD = [8, 3];
 export const CARD_LOOK = `background:var(--card-bg);border:${CARD_BORDER}px solid var(--line);border-radius:9px;`
   + `box-shadow:0 10px 34px var(--shadow);padding:${CARD_PAD}px 0;`;
 /** One row of the card: a view's or a document's in the list of views, the
- *  same shape for both so the two halves read as one list, and a schematic's
- *  sheet in its submenu (`SheetRows` in viewlist.jsx). Set in from its group's
- *  heading (`GROUP_HEAD`). Positioned,
+ *  same shape for both so the two halves read as one list. Set in from its
+ *  group's heading (`GROUP_HEAD`). Positioned,
  *  for the rename pencil that stands in its left padding (`Pencil` with
  *  `lead`, rename.jsx). */
 export const menuRow = (on) => `display:flex;align-items:center;gap:10px;padding:${ROW_PAD}px 14px ${ROW_PAD}px 22px;`

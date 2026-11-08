@@ -47,6 +47,8 @@ interface SelectDetails {
     intent?: KiCanvasSelectIntent;
     operation?: KiCanvasSelectOperation;
     modifiers?: SelectModifiers;
+    /** The sheet instance (`project_path`) the item is on, on the schematic plane. */
+    page?: string;
 }
 
 export function select_modifiers(
@@ -259,27 +261,6 @@ export class TabMenuClickEvent extends CustomEvent<TabKind> {
     }
 }
 
-export interface SheetChangeDetail {
-    filename: string;
-    uuid: string;
-}
-
-export class SheetChangeEvent extends CustomEvent<SheetChangeDetail> {
-    static readonly type = "kicanvas:sheet:change";
-
-    constructor(detail: SheetChangeDetail) {
-        super(SheetChangeEvent.type, { detail });
-    }
-}
-
-export class SheetLoadEvent extends CustomEvent<string> {
-    static readonly type = "kicanvas:sheet:loaded";
-
-    constructor(sheet_name: string) {
-        super(SheetLoadEvent.type, { detail: sheet_name });
-    }
-}
-
 export class Online3dViewerUrlReady extends CustomEvent<string> {
     static readonly type = "3d:url:ready";
 
@@ -331,14 +312,16 @@ export class LabelClickEvent extends CustomEvent<LabelIndex> {
 /**
  * Dispatched when the user clicks a schematic item that carries an embedded
  * hyperlink (KiCad authors these as `(href "...")` on a text item's effects).
- * The detail is the raw URL as written in the file: an absolute URL for web
- * links, or a project-relative path for links to files within the repo.
+ * `url` is the raw URL as written in the file: an absolute URL for web
+ * links, a path for links to files within the repo, or `#<page number>`, as
+ * KiCad writes a link to a sheet. `page` is the sheet instance the link was
+ * clicked on, on the schematic plane: a path resolves against its file.
  */
-export class LinkClickEvent extends CustomEvent<string> {
+export class LinkClickEvent extends CustomEvent<{ url: string; page?: string }> {
     static readonly type = "sch:link:click";
 
-    constructor(url: string) {
-        super(LinkClickEvent.type, { detail: url });
+    constructor(url: string, page?: string) {
+        super(LinkClickEvent.type, { detail: { url, page } });
     }
 }
 
@@ -499,8 +482,6 @@ export interface KiCanvasEventMap {
     [KiCanvasFitterMenuEvent.type]: KiCanvasFitterMenuEvent;
     [KiCanvasContextMenuEvent.type]: KiCanvasContextMenuEvent;
     [KiCanvasSchContextMenuEvent.type]: KiCanvasSchContextMenuEvent;
-    [SheetChangeEvent.type]: SheetChangeEvent;
-    [SheetLoadEvent.type]: SheetLoadEvent;
     [Online3dViewerUrlReady.type]: Online3dViewerUrlReady;
     [Online3dViewerLoaded.type]: Online3dViewerLoaded;
     [LabelClickEvent.type]: LabelClickEvent;
@@ -521,8 +502,6 @@ declare global {
         [KiCanvasLoadEvent.type]: KiCanvasLoadEvent;
         [KiCanvasSelectEvent.type]: KiCanvasSelectEvent;
         [TabMenuVisibleChangeEvent.type]: TabMenuVisibleChangeEvent;
-        [SheetChangeEvent.type]: SheetChangeEvent;
-        [SheetLoadEvent.type]: SheetLoadEvent;
         [Online3dViewerUrlReady.type]: Online3dViewerUrlReady;
         [Online3dViewerLoaded.type]: Online3dViewerLoaded;
         [LabelClickEvent.type]: LabelClickEvent;
@@ -539,8 +518,6 @@ declare global {
         [KiCanvasLoadEvent.type]: KiCanvasLoadEvent;
         [KiCanvasSelectEvent.type]: KiCanvasSelectEvent;
         [TabMenuVisibleChangeEvent.type]: TabMenuVisibleChangeEvent;
-        [SheetChangeEvent.type]: SheetChangeEvent;
-        [SheetLoadEvent.type]: SheetLoadEvent;
         [Online3dViewerUrlReady.type]: Online3dViewerUrlReady;
         [Online3dViewerLoaded.type]: Online3dViewerLoaded;
         [LabelClickEvent.type]: LabelClickEvent;

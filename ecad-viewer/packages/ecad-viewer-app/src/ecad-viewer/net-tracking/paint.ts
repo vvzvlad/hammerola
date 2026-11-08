@@ -1,5 +1,5 @@
 /*
-    How the world view's marks look: connections, the labels they join,
+    How the schematic plane's marks look: chains, the labels they join,
     sheet titles, and the hover and selection boxes. Everything here draws
     in screen space (CSS pixels) into a 2D context.
 */
@@ -94,6 +94,12 @@ export function paint_endpoint(
     ctx.restore();
 }
 
+/** A sheet title's height, and the gap under it to its sheet (CSS px). */
+export const TITLE_HEIGHT = 18;
+export const TITLE_GAP = 6;
+/** How far above its sheet a title reaches on screen. */
+export const TITLE_SPACE = TITLE_HEIGHT + TITLE_GAP;
+
 /** A sheet's name above its frame, in Prism's badge style. */
 export function paint_title(
     ctx: CanvasRenderingContext2D,
@@ -103,7 +109,7 @@ export function paint_title(
 ) {
     ctx.font = `500 11px ${tokens.font}`;
     const w = ctx.measureText(text).width + 12;
-    const h = 18;
+    const h = TITLE_HEIGHT;
     ctx.fillStyle = tokens.card;
     ctx.strokeStyle = tokens.border;
     ctx.lineWidth = 1;
