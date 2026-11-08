@@ -127,10 +127,10 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	$(PYTEST)
 	@$(RUN_JS_TESTS)
 
-# --- The eighteen tests that need the CAD kernel ------------------------------
+# --- The twenty-eight tests that need the CAD kernel -------------------------
 # CI runs them too (ci/Dockerfile.test carries the kernel's libraries); this target is
 # for the edit-run loop on the export half. It fails when a test skips, because on a
-# machine without the kernel all eighteen would skip and pytest would exit 0.
+# machine without the kernel all twenty-eight would skip and pytest would exit 0.
 CAD_TESTS := \
 	tests/cadbuild/test_views.py::test_a_real_export_is_a_document_the_hub_would_accept \
 	tests/test_view_fixture.py::test_the_exporter_still_produces_the_committed_structure \
@@ -149,16 +149,26 @@ CAD_TESTS := \
 	tests/test_skill_instructions.py::test_the_travel_line_ends_on_the_exploded_leading_face \
 	tests/test_skill_instructions.py::test_upside_down_draws_the_assembly_turned_over \
 	tests/test_skill_instructions.py::test_a_faceted_prism_draws_its_rims_and_two_silhouette_edges \
-	tests/test_skill_instructions.py::test_a_run_prints_the_inventory_and_writes_one_page_per_step
+	tests/test_skill_instructions.py::test_a_run_prints_the_inventory_and_writes_one_page_per_step \
+	tests/cadbuild/test_kicadboard.py::test_it_asks_for_the_two_exports_with_the_board_alone \
+	tests/cadbuild/test_kicadboard.py::test_the_frame_is_kicads_step_frame \
+	tests/cadbuild/test_kicadboard.py::test_every_footprint_is_read_with_its_side_and_pads \
+	tests/cadbuild/test_kicadboard.py::test_a_location_is_where_kicad_put_the_part \
+	tests/cadbuild/test_kicadboard.py::test_the_parts_start_at_their_faces_and_the_unfitted_have_no_bounds \
+	tests/cadbuild/test_kicadboard.py::test_the_records_are_a_catalogue_moved_by_at \
+	tests/cadbuild/test_kicadboard.py::test_the_layers_are_their_outer_faces_merged \
+	tests/cadbuild/test_kicadboard.py::test_the_laminate_closes_only_the_drills_a_fitted_part_fills \
+	tests/cadbuild/test_kicadboard.py::test_a_prefix_that_is_no_catalogue_key_is_refused \
+	tests/buildproc/test_build_child.py::test_the_check_units_take_the_boards_exports_from_the_build
 
 .PHONY: cad-test
-cad-test: install ## Run just the eighteen tests that need the CAD kernel (CI runs them too)
+cad-test: install ## Run just the twenty-eight tests that need the CAD kernel (CI runs them too)
 	@out=$$($(PYTEST) -q -rs $(CAD_TESTS) 2>&1); status=$$?; \
 	printf '%s\n' "$$out"; \
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \
 		echo ""; \
 		echo "make cad-test: FAILED — a test skipped, so nothing was checked."; \
-		echo "               These eighteen need the CAD kernel, and it does not import"; \
+		echo "               These twenty-eight need the CAD kernel, and it does not import"; \
 		echo "               on this machine. Install it here, or run this where it"; \
 		echo "               does — CI's test container has it (issue #27)."; \
 		exit 1; \

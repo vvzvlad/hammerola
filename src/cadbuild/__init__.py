@@ -2,8 +2,9 @@
 """Take a model's source, compute its geometry, gate it, export the artefacts.
 
 The build half of `cad_publish`, run inside the hub (SPEC 8A.2 step 3); the
-client is `hammerola/`, which has no local build path. Nothing here talks to a
-network or reads a credential.
+client is `hammerola/`, which has no local build path. Nothing here reads a
+credential, and the one thing that talks to a network is `kicadboard`, which asks
+the hub's KiCad sidecar for a board's exports.
 
 What a model.py must define:
 

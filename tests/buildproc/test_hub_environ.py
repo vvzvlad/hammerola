@@ -285,6 +285,7 @@ def test_the_hub_refuses_to_start_when_the_hardening_fails(tmp_path):
         [sys.executable, "-s", str(launcher)],
         cwd=str(HUB_ROOT),
         env={"PATH": "/usr/bin:/bin", "EDIT_TOKEN": "x",
+             "KICAD_URL": "http://kicad.invalid:8080",
              "DATA_DIR": str(tmp_path / "data")},
         capture_output=True, text=True, timeout=60,
     )

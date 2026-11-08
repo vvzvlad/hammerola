@@ -1896,10 +1896,13 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
     assert build_arguments(args[0], args[1], keywords["pid"],
                            force=keywords["force"],
                            baseline=keywords["baseline"],
-                           distance_cache=keywords["distance_cache"]
+                           distance_cache=keywords["distance_cache"],
+                           kicad_url=keywords["kicad_url"]
                            ) == (args, keywords)
     # The project's own cache, not another project's or a fresh file per build.
     assert keywords["distance_cache"] == hub.store.distance_cache_path("proj1")
+    # The KiCad sidecar the hub was configured with, for the build's boards.
+    assert keywords["kicad_url"] == hub.server.settings.kicad_url
 
 
 def test_a_project_with_no_dev_build_has_no_baseline_to_offer(hub):

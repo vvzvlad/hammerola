@@ -34,6 +34,10 @@ volumes:
 networks:
   docker_main_net:
     external: true
+  # The hub and its KiCad sidecar only: the sidecar has no auth, so it is on no network
+  # another stack shares.
+  kicad:
+    internal: true
 
 services:
   hammerola:
@@ -62,6 +66,9 @@ services:
       # comment queue). The public pages have no read-side auth. The same value goes to
       # whatever publishes here: a model repository's CI secret and `hammerola login`.
       EDIT_TOKEN: XXX
+      # The KiCad sidecar below, by its service name on the `kicad` network. Required: it
+      # exports the boards builds place and the `.glb` documents the hub makes.
+      KICAD_URL: http://kicad:8080
       # Everything below has a default in src/settings.py and is spelled out here
       # only where a different value is wanted. DATA_DIR must match the mount
       # point of the volume declared above.
@@ -76,6 +83,7 @@ services:
       TZ: Europe/Moscow
     networks:
       - docker_main_net
+      - kicad
     logging:
       driver: "json-file"
       options:
@@ -83,6 +91,9 @@ services:
         max-size: 10m
     labels:
       traefik.enable: "true"
+      # The hub is on two networks; Traefik reaches it on this one and never on the internal
+      # `kicad` network, which Traefik is not on.
+      traefik.docker.network: docker_main_net
       # Placeholder host; the real domain is set in the deployment's own stack.
       traefik.http.routers.hammerola.rule: Host(`hammerola.example.com`)
       traefik.http.services.hammerola.loadBalancer.server.port: 8000
@@ -123,3 +134,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  # The hub's KiCad: kicad-cli behind HTTP (kicadsvc/server.py), kept out of the hub's image.
+  # Built and gated by image-check-publish.yml with the same tags as the hub's image. It runs
+  # as the image's own `kicad` user, keeps nothing between requests and needs no volume.
+  kicad:
+    image: gitea.vvzvlad.xyz/projects/hammerola-kicad:latest
+    container_name: hammerola_kicad
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - kicad
+    logging:
+      driver: "json-file"
+      options:
+        max-file: 5
+        max-size: 10m
+    labels:
+      io.portainer.update.enable: "true"

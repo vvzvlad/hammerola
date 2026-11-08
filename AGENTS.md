@@ -6,7 +6,8 @@
 клиент (stdlib only): настраивает репозиторий автора под `git push` в хаб и пушит
 черновик, версию публикует сам `git push`, `ui/` — браузерный бандл,
 `viewer/` — наш форк three-cad-viewer, `ecad-viewer/` — наш форк
-KiCad-вьювера, `skill/` — инструкции агенту, который проектирует деталь
+KiCad-вьювера, `kicadsvc/` — сервис KiCad отдельным образом (выгрузки плат
+для сборок; в образе хаба KiCad нет), `skill/` — инструкции агенту, который проектирует деталь
 (каталог: короткий `SKILL.md` плюс `references/*.md`), `ci/smoke.py` — гейт
 образа.
 
@@ -57,7 +58,7 @@ KiCad-вьювера, `skill/` — инструкции агенту, котор
 make install           # create .venv and install dev/test deps
 make env               # create .env from .env.example, then fill in the values
 make test              # pytest, plus the JS suite when npm is present
-make cad-test          # the eighteen tests that need the CAD kernel
+make cad-test          # the twenty-eight tests that need the CAD kernel
 make run               # runs .venv/bin/python main.py
 make ui                # build the browser bundle into static/_v/ (needs npm)
 make proxy             # the hub's projects with this checkout's static/_v/, on 127.0.0.1:8794

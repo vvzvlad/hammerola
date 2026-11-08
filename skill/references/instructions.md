@@ -112,7 +112,9 @@ bash <skill>/scripts/instructions.sh [PROJECT_DIR] [-o OUT.pdf]
 
 It runs the project's `model.py` in the hub's own image, with the kernel the
 hub builds with, through `docker`, which may be a remote daemon: nothing is
-mounted, the directory travels as a copy. It takes as long as a build. The PDF
+mounted, the directory travels as a copy. A model that places a board
+(`import kicadboard`) gets the hub's KiCad service beside it, started from its
+image for the run and removed after. It takes as long as a build. The PDF
 is written to `PROJECT_DIR/instructions.pdf` unless `-o` says otherwise, and
 its path is printed.
 

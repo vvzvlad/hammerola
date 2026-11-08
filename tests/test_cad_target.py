@@ -1,10 +1,10 @@
-"""`make cad-test` names eighteen tests by node id, and node ids rot.
+"""`make cad-test` names twenty-eight tests by node id, and node ids rot.
 
-The target runs those eighteen without the rest of the suite, for the edit-run-edit loop
+The target runs those twenty-eight without the rest of the suite, for the edit-run-edit loop
 on the export half; CI runs them too, since its test image (`ci/Dockerfile.test`)
 carries the kernel's libraries. The target fails on a missing name only for
 somebody who runs it, so the list is checked here on every run of the ordinary
-suite. This does NOT run the eighteen (that needs the kernel); it checks that each name
+suite. This does NOT run the twenty-eight (that needs the kernel); it checks that each name
 still points at a function.
 """
 
@@ -24,24 +24,27 @@ def _declared_node_ids() -> list[str]:
     text = (ROOT / "Makefile").read_text(encoding="utf-8")
     match = CAD_TESTS_RE.search(text)
     assert match, "the Makefile no longer declares CAD_TESTS; `make cad-test` " \
-                  "is what runs the eighteen kernel tests on their own (issue #27)"
+                  "is what runs the twenty-eight kernel tests on their own (issue #27)"
     body = match.group(1).replace("\\\n", " ")
     return body.split()
 
 
-def test_the_target_still_names_eighteen_tests():
-    """Eighteen, and the number is deliberate.
+def test_the_target_still_names_twenty_eight_tests():
+    """Twenty-eight, and the number is deliberate.
 
-    A nineteenth added or an eighteenth removed changes what the kernel-backed loop
+    A twenty-ninth added or a twenty-eighth removed changes what the kernel-backed loop
     covers, and neither should happen without somebody reading this line. One of
     them checks that the pieces the revision diff is drawn from stand, in world
     coordinates, on the part they were cut from -- placed with the view leaf's
     `at`, not its `loc` -- which nothing else in the suite would notice drifting;
     three measure STEP solids placed by the same `at` and tell a body the view
     draws as a shape of its own (`cadbuild.measure`); nine run the skill's
-    assembly-instructions script on small models built in the test.
+    assembly-instructions script on small models built in the test; nine load
+    the committed KiCad fixture board through `kicadboard` and check its frame,
+    footprints, parts, layers and laminate, and one builds a model that places it, to
+    count the exports its check units' workers ask for.
     """
-    assert len(_declared_node_ids()) == 18
+    assert len(_declared_node_ids()) == 28
 
 
 def test_every_name_the_target_runs_still_exists():
