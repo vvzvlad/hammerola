@@ -111,9 +111,9 @@ export function headerView(s, p, act) {
   const info = p.builds || { has_dev: false, latest: null, builds: [] };
   const rev = parts.revisions || {};
   const cmp = rev.cmp || [];
-  const { revRows, revEmpty } = revisionView({ cmp, versionsOnly: !!s.versionsOnly }, info, {
+  const { revRows, revEmpty } = revisionView({ cmp, tagsOnly: !!s.tagsOnly }, info, {
     stop, commitOf: rev.commitOf, toggleCmp: rev.toggleCmp, pick: rev.pick, href: rev.href,
-    toggleVersions: () => setState({ versionsOnly: !s.versionsOnly }),
+    toggleTags: () => setState({ tagsOnly: !s.tagsOnly }),
     share: rev.share && ((id) => {
       setState(SHUT);
       rev.share(id);
@@ -340,7 +340,7 @@ export default class Header extends React.Component {
       // Files card's list (`loadFiles`) and the directories opened in it;
       // whether the revision picker shows its tags alone, for this page only.
       variants: null, tokenDraft: '', tabs: [], files: null, filesDirs: {},
-      versionsOnly: false,
+      tagsOnly: false,
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
     };
     // The build on screen whose files an open card shows, asked for again when

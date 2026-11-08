@@ -77,7 +77,7 @@ const PICK = 'display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min
  * narrow, the card alone, a sheet the menu's row opens (`revisionRow`).
  * Without the token the button is a label and there is no card. In the card
  * the pointers stand on top and the history below, whose heading carries
- * "Versions only" when the history has tags; a row with an `href` is a
+ * "Tags only" when the history has tags; a row with an `href` is a
  * link to that revision, one without picks it through `onPick`. With
  * `startCompare` the ticks pick two to compare and the card ends in Compare.
  */
@@ -110,7 +110,7 @@ export function revisionPicker(v) {
                 <React.Fragment key={r.key}>
                   <div style={css(r.headStyle)}>
                     {r.head}
-                    {r.onVersions && <span onClick={r.onVersions} style={css(r.versionsStyle)}>Versions only</span>}
+                    {r.onTags && <span onClick={r.onTags} style={css(r.tagsStyle)}>Tags only</span>}
                   </div>
                   <div style={css(r.style)}>
                     <span onClick={r.onCmp} style={css(r.cmpStyle)}>{r.cmpMark}</span>
