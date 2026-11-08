@@ -33,8 +33,8 @@ def test_loads_from_env(monkeypatch):
 
 def test_defaults_match_the_spec(monkeypatch):
     # SPEC 7.5 fixes every default, and the deployment relies on them: only
-    # EDIT_TOKEN and KICAD_URL are set in docker-compose.yml, so a drift here
-    # silently changes how the deployment behaves.
+    # EDIT_TOKEN and the optional KICAD_URL are set in docker-compose.yml, so a
+    # drift here silently changes how the deployment behaves.
     monkeypatch.setenv("EDIT_TOKEN", "s3cret")
     for name in ("HOST", "PORT", "DATA_DIR", "LOG_LEVEL"):
         monkeypatch.delenv(name, raising=False)
@@ -43,6 +43,17 @@ def test_defaults_match_the_spec(monkeypatch):
     assert s.port == 8000
     assert s.data_dir == "data"
     assert s.log_level == "INFO"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_without_kicad_url_the_hub_loads_with_no_kicad_service(monkeypatch,
+                                                               value):
+    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
+    if value is None:
+        monkeypatch.delenv("KICAD_URL", raising=False)
+    else:
+        monkeypatch.setenv("KICAD_URL", value)
+    assert Settings(_env_file=None).kicad_url is None
 
 
 def test_there_is_no_retention_setting(monkeypatch):

@@ -8,7 +8,8 @@ synthetic s-expressions carrying only what that search reads,
 `(property "Sheetfile" "<path>")` (`"Sheet file"` in KiCad 6); what the viewer
 makes of a real design is checked in a browser, not here. The board's `.glb`
 is the hub's to make, from the board beside it, by the KiCad sidecar, which
-here is `kicadstub`.
+here is `kicadstub`; a hub without one (`KICAD_URL` unset) publishes the
+committed `.glb` instead.
 """
 
 import json
@@ -22,11 +23,15 @@ from kicadstub import FIXTURES, KicadStub
 from ci.smoke import REQUIRED_PATHS
 from src import docsbuild, render
 from src.app import BUILD_CONTENT_TYPES, OPEN_SUFFIXES
+from src.buildproc import run_build
 from src.errors import PublishError
 
 ROOT = Path(__file__).resolve().parent.parent
 TEXT = "text/plain; charset=utf-8"
 GLB = b"glTF\x02\x00\x00\x00"
+# A KiCad sidecar's address for `declared_documents`, which only asks whether
+# there is one.
+SIDECAR = "http://kicad.invalid:8080"
 
 
 def sheet(*named: str, prop: str = "Sheetfile") -> bytes:
@@ -74,7 +79,7 @@ def tree(tmp_path, files: dict, documents=LISTED) -> Path:
 
 def refusal(sources) -> str:
     with pytest.raises(PublishError) as caught:
-        docsbuild.declared_documents(sources)
+        docsbuild.declared_documents(sources, kicad_url=SIDECAR)
     assert caught.value.status == 422
     return str(caught.value)
 
@@ -89,7 +94,8 @@ def published(hub, files: dict, documents) -> str:
 # -- finding what each is published with ---------------------------------------
 
 def test_each_is_its_own_document_with_what_it_brings(tmp_path):
-    schematic, board, model = docsbuild.declared_documents(tree(tmp_path, DESIGN))
+    schematic, board, model = docsbuild.declared_documents(tree(tmp_path, DESIGN),
+                                                           kicad_url=SIDECAR)
     assert schematic.kicad == {"schematics": SCHEMATICS,
                                "project": "hw/board.kicad_pro"}
     assert schematic.files == (*SCHEMATICS, "hw/board.kicad_pro")
@@ -103,6 +109,24 @@ def test_a_glb_the_tree_holds_beside_its_board_refuses_the_push(tmp_path):
     message = refusal(tree(tmp_path, {**DESIGN, "hw/board.glb": GLB}))
     assert ("'hw/board.glb', which is made by the hub from 'hw/board.kicad_pcb'; "
             "remove it from the tree") in message
+
+
+def test_without_a_kicad_service_the_committed_glb_is_published(hub):
+    url = published(hub, {**DESIGN, "hw/board.glb": GLB}, list(LISTED))
+    *_, model = hub.get(f"{url}meta.json").json()["documents"]
+    assert (model["type"], model["bytes"]) == ("board3d", len(GLB))
+    assert hub.get(f"{url}hw/board.glb").content == GLB
+
+
+def test_without_a_kicad_service_a_glb_the_tree_lacks_refuses_the_push(hub):
+    reply = hub.publish_async("kicad0001", None, tar_gz(
+        {"project.json": project(list(LISTED)), **DESIGN}))
+    record = hub.await_job(reply.json()["job"]).record
+    assert (record["state"], record["code"]) == ("failed", 422), record
+    assert ("'hw/board.glb', which is made from 'hw/board.kicad_pcb' by the hub's "
+            "KiCad service, and this hub runs without one (KICAD_URL is not set), "
+            "so the .glb has to be exported from the board and committed"
+            ) in record["error"]
 
 
 def test_a_glb_with_no_board_of_its_name_is_the_file_pushed(tmp_path):
@@ -258,6 +282,41 @@ def test_a_kicad_service_that_does_not_answer_fails_the_build_naming_it(hub_fact
     assert (record["state"], record["code"]) == ("failed", 422), record
     assert "hw/board.glb is made by the hub from hw/board.kicad_pcb" in record["error"]
     assert "KICAD_URL=http://127.0.0.1:1 did not answer" in record["error"]
+
+
+# A model that places no board, built for real below.
+BOX = b"""import cadquery as cq
+
+
+def parts():
+    return {"body": {"shape": cq.Workplane("XY").box(20, 10, 5), "kind": "printable"}}
+
+
+def views():
+    return [{"id": "assembled", "name": "assembled", "parts": ["body"]}]
+"""
+
+
+def test_a_hub_without_a_kicad_service_builds_a_model_and_refuses_only_a_board(
+        hub_factory):
+    """The real build on a hub with no KICAD_URL: a model builds as it always
+    did, and one that loads a board fails saying no KiCad service is there."""
+    pytest.importorskip("cadquery", exc_type=ImportError)
+    hub = hub_factory(build_runner=run_build)
+    meta = {"project.json": json.dumps({"id": "kicad0001", "project": "box"}).encode()}
+
+    def build(files):
+        reply = hub.publish_async("kicad0001", None, tar_gz({**meta, **files}))
+        return hub.await_job(reply.json()["job"], timeout=300).record
+
+    built = build({"model.py": BOX})
+    assert (built["state"], built["code"]) == ("done", 201), built
+    failed = build({"amp.kicad_pcb": b"(kicad_pcb)\n",
+                    "model.py": b'import kicadboard\nkicadboard.load("amp.kicad_pcb")\n'})
+    assert (failed["state"], failed["code"]) == ("failed", 422), failed
+    assert ("kicadboard: amp.kicad_pcb: a board is exported by the hub's KiCad "
+            "service, and none is configured here (KICAD_URL is not set)"
+            ) in hub.job_log(failed["id"]).text
 
 
 def test_two_designs_in_one_project_are_four_documents(hub):

@@ -1875,7 +1875,7 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
 
     monkeypatch.setattr(jobs_module, "build_arguments", watched)
     recorder = CallRecorder()
-    hub = hub_factory(build_runner=recorder)
+    hub = hub_factory(build_runner=recorder, kicad_url="http://kicad.invalid:8080")
     assert hub.publish("proj1", "abc123", good_build()).status_code == 201
 
     args, keywords = recorder.call

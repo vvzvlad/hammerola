@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.config_errors import load_settings_or_exit
@@ -20,9 +20,17 @@ class Settings(BaseSettings):
 
     # The KiCad sidecar (kicadsvc/, src/kicadcli.py), e.g. http://kicad:8080 on
     # the stack's internal network: it exports the boards builds place and the
-    # `.glb` documents the hub makes. No default, as the address of a service of
-    # our own (docs/conventions.md).
-    kicad_url: str = Field(min_length=1)
+    # `.glb` documents the hub makes. Optional: without it the hub runs without
+    # its KiCad service, and only a model that loads a board or a listed `.glb`
+    # the hub would have to make fails.
+    kicad_url: str | None = None
+
+    @field_validator("kicad_url")
+    @classmethod
+    def _blank_kicad_url_is_none(cls, value):
+        # `KICAD_URL: ""` in a stack means no service as well, so builds and
+        # documents read one "none" instead of an empty address.
+        return value or None
 
     # Listening socket. No default host/port would be hostile: neither depends on
     # the deployment — Traefik reaches the container on the compose network.

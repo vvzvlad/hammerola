@@ -296,9 +296,10 @@
 - `kicadsvc/` — the KiCad service, an image of its own (`kicad/kicad:10.0.6-full`
   plus `server.py`, standard library only), so the hub's image carries no KiCad.
   One endpoint, `POST /export`: a tar of the board's files in, a tar of the
-  export and kicad-cli's output back. The hub reaches it at `KICAD_URL`, through
-  `src/kicadcli.py`, from the build process (`kicadboard`) and from the hub
-  process (`docsbuild`, the `.glb` of a board's 3D view). image-check-publish.yml
+  export and kicad-cli's output back. The hub reaches it at `KICAD_URL`, which is
+  optional (without it a build that needs KiCad fails and nothing else changes),
+  through `src/kicadcli.py`, from the build process (`kicadboard`) and from the
+  hub process (`docsbuild`, the `.glb` of a board's 3D view). image-check-publish.yml
   builds, checks and pushes it as `projects/hammerola-kicad`; the hub's tests
   answer for it with `tests/kicadstub.py` and the exports the real service made
   of `tests/fixtures/kicad/board.kicad_pcb`

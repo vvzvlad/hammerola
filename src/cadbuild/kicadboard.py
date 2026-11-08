@@ -203,9 +203,7 @@ def load(path):
     if not url:
         raise BuildError(
             f"kicadboard: {path}: a board is exported by the hub's KiCad "
-            f"service, whose address is {kicadcli.URL_ENV}, and {kicadcli.URL_ENV} "
-            f"is not set here: a build on the hub sets it, and so does "
-            f"skill/scripts/instructions.sh")
+            f"service, and none is configured here ({kicadcli.URL_ENV} is not set)")
     source = project_root() / path
     with ThreadPoolExecutor(max_workers=2) as pool:
         glb_job = pool.submit(_export, source, "glb", GLB_FLAGS, url)
