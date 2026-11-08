@@ -111,8 +111,9 @@ export function headerView(s, p, act) {
   const info = p.builds || { has_dev: false, latest: null, builds: [] };
   const rev = parts.revisions || {};
   const cmp = rev.cmp || [];
-  const { revRows, revEmpty } = revisionView({ cmp }, info, {
+  const { revRows, revEmpty } = revisionView({ cmp, tagsOnly: !!s.tagsOnly }, info, {
     stop, commitOf: rev.commitOf, toggleCmp: rev.toggleCmp, pick: rev.pick, href: rev.href,
+    toggleTags: () => setState({ tagsOnly: !s.tagsOnly }),
     share: rev.share && ((id) => {
       setState(SHUT);
       rev.share(id);
@@ -336,8 +337,10 @@ export default class Header extends React.Component {
       // `variants.json` once it comes (`loadVariants` in hub.js), the token's
       // draft, the strip of projects (seeded on the build's arrival, `arrive`)
       // and whether the window is narrow, read before the first paint; the
-      // Files card's list (`loadFiles`) and the directories opened in it.
+      // Files card's list (`loadFiles`) and the directories opened in it;
+      // whether the revision picker shows its tags alone, for this page only.
       variants: null, tokenDraft: '', tabs: [], files: null, filesDirs: {},
+      tagsOnly: false,
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
     };
     // The build on screen whose files an open card shows, asked for again when

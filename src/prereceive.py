@@ -60,7 +60,6 @@ from datetime import datetime
 
 from loguru import logger
 
-from hammerola.buildnames import first_nonprintable
 from src import render
 from src.buildproc import STATUS_CPU_EXHAUSTED, STATUS_TIMEOUT
 from src.docsbuild import DOCUMENTS_FIELD, VIEWS_FIELD, project_names
@@ -68,6 +67,7 @@ from src.errors import PublishError
 from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR, STATE_DONE,
                       STATE_FAILED, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
                       BuildTask)
+from src.render import revision_message
 from src.store import (BRANCH_PREFIX, DEV_LINK, DRAFT_PREFIX, JSON_TMP_PREFIX,
                        MAIN_BRANCH, MAIN_REF, PAYLOAD_DIGEST_FILE,
                        SOURCE_PREFIX, Store, build_path, git_failure,
@@ -369,19 +369,6 @@ def _refuse_links(repo, target: str, directory: str, ref: str,
     if links:
         raise Refused(ref, f"a symlink or a submodule cannot be published: "
                            f"{', '.join(links)}")
-
-
-def revision_message(subject: str) -> str | None:
-    """A commit's subject as a revision's message, or None for none.
-
-    Cleaned rather than refused: the message is in git already, and the hub
-    only shows it. What the rule for a part name refuses goes — non-printable
-    characters and angle brackets (`render._check_part_name`) — and the rest is
-    cut to `render.MAX_TEXT`.
-    """
-    kept = "".join(char for char in subject
-                   if first_nonprintable(char) is None and char not in "<>")
-    return kept.strip()[:render.MAX_TEXT].strip() or None
 
 
 def _reuse_draft(store: Store, jobs, repo, pid: str, env: dict, plan: Plan,

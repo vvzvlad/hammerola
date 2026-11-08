@@ -1,5 +1,5 @@
 """Designators without the model: plans a legal spot for every reference (boardgeo.Labels candidates, greedy start + simulated annealing, fixed seed) and applies the plan to a closed board (pcbnew) or the live one (kipy); prints placed N of M and why each unplaced ref is unplaced.
-usage: "$PY" silk.py plan <board.kicad_pcb> [--refs R1,R2] -o plan.json | "$PY" silk.py apply plan.json <board.kicad_pcb> | uv run --with kicad-python==0.8.0 python silk.py apply plan.json --live   (default refs: visible references minus mounting holes, fiducials, logos, test pads; an unplaced ref keeps its current spot)
+usage: "$PY" silk.py plan <board.kicad_pcb> [--refs R1,R2] -o plan.json | "$PY" silk.py apply plan.json <board.kicad_pcb> | uv run --with 'kicad-python==0.8.0' python silk.py apply plan.json --live   (default refs: visible references minus mounting holes, fiducials, logos, test pads; an unplaced ref keeps its current spot)
 needs: plan and file apply - KiCad's bundled Python with pcbnew ($PY), e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3, boardgeo.py beside this file; --live - kicad-python 0.8.0 and a running KiCad with its IPC API"""
 import sys, json, math, random, time, re, argparse, collections
 

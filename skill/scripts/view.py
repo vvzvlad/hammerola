@@ -1,5 +1,5 @@
 """Board region to PNG for layout agents: KiCad's own SVG plot of the layers (zones refilled in memory), cropped, with an mm grid in board coordinates, reference designators, net names and numbered markers; prints what is in the region.
-usage: "$PY" view.py <board.kicad_pcb> X1 Y1 X2 Y2 | ref REF | full  [--margin 2] [--layers F.Cu,F.Silkscreen,F.Courtyard,Edge.Cuts (ref REF: the layers of REF's side)] [--drc drc.json] [--marks marks.json] [--px 1000] [-o view.png]   (mm as KiCad shows them; --margin pads ref and full; marks = bq.py --json output or a list of {x,y,label}; reads the saved file only; listing on stdout, PNG path last)
+usage: "$PY" view.py <board.kicad_pcb> X1 Y1 X2 Y2 | ref REF | full  [--margin 2] [--layers F.Cu,F.Silkscreen,F.Courtyard,Edge.Cuts (ref REF: the layers of REF's side)] [--drc drc.json] [--marks marks.json] [--px 1000] [-o view.png]   (mm as KiCad shows them; --margin pads ref and full; marks = the --json output of bq.py via, corridor, clearance, labels, near or score, or a list of {x,y,label}; reads the saved file only; listing on stdout, PNG path last)
 needs: KiCad's bundled Python with pcbnew ($PY), e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3; rsvg-convert on PATH"""
 import sys, os, re, json, math, argparse, tempfile, shutil, subprocess
 from xml.sax.saxutils import escape
@@ -332,7 +332,7 @@ class View:
         return o.GetEffectiveShape(l)
 
     def mark_list(self, path):
-        """Markers from a bq.py --json result or a plain list of {x, y, label}, numbered in order."""
+        """Markers from a bq.py --json result of via, corridor, clearance, labels, near or score, or a plain list of {x, y, label}, numbered in order."""
         d = json.load(open(path))
         pts = []
         if isinstance(d, list):

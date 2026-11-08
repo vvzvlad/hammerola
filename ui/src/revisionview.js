@@ -2,7 +2,9 @@
  * The revision picker: the rows of the card the header's revision button opens
  * (revisions.jsx draws them, Header.jsx asks for them).
  *
- * `s.cmp` is the commits the page's ticks hold. The doors are the page's
+ * `s.cmp` is the commits the page's ticks hold, and `s.tagsOnly` keeps the
+ * history to its tags while it has any (`toggleTags()` flips it, Header.jsx
+ * holds it). The doors are the page's
  * (`headerParts().revisions`): on the model's page `pick(id)` swaps the build
  * in place, `commitOf(name)` resolves a row to the commit its tick holds,
  * `toggleCmp(commit)` ticks it and `share(id)` opens the Share window. The page
@@ -19,9 +21,13 @@ import { BLANK_BOX, HIDDEN, IDLE, ON_ACCENT_EDGE } from './panelstyle.js';
 import { MONO, SANS } from './style.jsx';
 
 export function revisionView(s, info, deps) {
-  const { stop, commitOf, toggleCmp, pick, share, href } = deps;
+  const { stop, commitOf, toggleCmp, pick, share, href, toggleTags } = deps;
 
-  const history = Array.isArray(info.builds) ? info.builds : [];
+  const builds = Array.isArray(info.builds) ? info.builds : [];
+  // A tag is a revision where the project's version changed (`tag` in
+  // builds.json, `Store._tagged`); "Tags only" keeps the history to them.
+  const tagged = builds.some((b) => b.tag === true);
+  const history = tagged && s.tagsOnly ? builds.filter((b) => b.tag === true) : builds;
   const revs = [];
   if (info.has_dev) {
     revs.push({ id: 'dev', head: 'POINTERS', badge: '→ dev slot',
@@ -40,6 +46,8 @@ export function revisionView(s, info, deps) {
     // What the author said this revision is (`-m`). Absent on older pushes and
     // on any push without `-m`, so it is read as "".
     message: typeof b.message === 'string' ? b.message : '',
+    // On a tag only: the rows after it until the next tag carry the same one.
+    version: b.tag === true && typeof b.version === 'string' ? b.version : '',
   }));
 
   const revRows = revs.map((r) => {
@@ -53,8 +61,16 @@ export function revisionView(s, info, deps) {
     return {
       key: r.id,
       head: r.head || '',
-      headStyle: r.head ? `padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : HIDDEN,
+      headStyle: r.head ? `display:flex;align-items:center;padding:7px 14px 3px;font:600 9.5px ${MONO};color:var(--text-muted);letter-spacing:.09em` : HIDDEN,
+      // "Tags only", at the end of the BUILDS heading, while a row is a
+      // tag: drawn where there is `onTags`.
+      onTags: tagged && r.head === 'BUILDS' ? stop(() => toggleTags()) : undefined,
+      tagsStyle: `margin-left:auto;padding:2px 7px;border-radius:4px;font:500 10.5px ${SANS};letter-spacing:0;cursor:pointer;user-select:none;border:1px solid `
+        + (s.tagsOnly ? 'var(--accent-line);background:var(--accent-bg);color:var(--accent-text)' : 'var(--line);color:var(--text-soft)'),
       id: r.pointer ? r.id : shortId(r.id),
+      version: r.version || '',
+      // Drawn on a tag only, where `version` is not empty.
+      versionStyle: `flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 5px;border-radius:4px;font:500 10.5px ${MONO};background:var(--chip-bg);color:var(--text-soft)`,
       date: r.date,
       // Takes the free width between the id and the date and ellipsizes, which
       // keeps the row one line; with no message it is just the flexible gap.

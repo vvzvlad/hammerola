@@ -1,7 +1,8 @@
 #!/bin/bash
 # usage: step.sh <in.kicad_pcb> <cand.json> <tag>   (one stitching step: add the vias of cand.json, refill + DRC, dump, measure)
-# needs: bash, python3, KiCad's Python (KICAD_PY) and, in the current directory, the helpers edit.py, drccmp.py, gdump.py,
-#        measure.py and venv/ (not part of this skill), plus work/ and a baseline report drc/base0/drc.json
+# needs: bash, python3, KiCad's Python (KICAD_PY) and, in the current directory, the helpers edit.py (its own, with
+#        (board ops out) arguments, not this skill's scripts/edit.py), drccmp.py, gdump.py, measure.py and venv/ (not part
+#        of this skill), plus work/ and a baseline report drc/base0/drc.json
 set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 PY="${KICAD_PY:-/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3}"

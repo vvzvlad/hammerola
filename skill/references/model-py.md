@@ -98,7 +98,10 @@ board of the project, which the hub exports on every build
     place. The reason is required and logged, and it is refused in `print`;
   * `{"group": "housing", "parts": [...]}` — groups nest and are presentation
     only: **no gate sees a group**. Its name obeys the key rule and may not be a
-    catalogue key; nesting past 64 levels is refused.
+    catalogue key; nesting past 64 levels is refused. `"whole": True` on a group
+    makes the scene pick it as one object — for a thing made of several meshes
+    or solids that a reader picks as one (a sticker split by ink, a board split
+    by colour); the tree still opens it onto its parts.
 
   One part may be referenced any number of times — five pins, five references.
 

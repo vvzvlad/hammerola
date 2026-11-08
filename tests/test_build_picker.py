@@ -41,7 +41,7 @@ def test_a_row_carries_what_its_revision_said_it_was(hub):
     """Each row carries its revision's message, from that revision's own meta.json.
 
     A digest and a timestamp tell two revisions apart without saying what either
-    is. The message is the subject of the commit (`prereceive.revision_message`),
+    is. The message is the subject of the commit (`render.revision_message`),
     is stored with the record, and is projected here beside the id. A revision
     built with none gets no key rather than an empty string, so the browser reads
     it as optional.

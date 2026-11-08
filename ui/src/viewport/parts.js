@@ -58,6 +58,8 @@ export function treeFromShapes(shapes, states) {
     };
     if (kids) {
       row.children = kids.map((kid) => walk(kid, path));
+      // A group the scene picks as one object (`"whole": True` in `views()`).
+      if (node.whole === true) row.whole = true;
       return row;
     }
     row.key = typeof node.key === "string" && node.key ? node.key : null;
