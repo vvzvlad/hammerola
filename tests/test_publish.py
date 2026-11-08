@@ -15,7 +15,7 @@ from harness import (DEFAULT_EXPORTS, commit_all, copying_builder, git,
                      good_build, meta_bytes, project_files, push, tar_gz,
                      view_bytes, write_files)
 
-from src import app, prereceive, render
+from src import app, render
 from src.store import PublishError, Store
 
 
@@ -214,12 +214,12 @@ def test_a_commit_subject_reaches_the_document_cleaned(subject, message):
 
     The commit is in git already and the hub only shows its subject, so what the
     rule for every displayed field refuses is dropped instead
-    (`prereceive.revision_message`): characters Unicode files under C, and angle
+    (`render.revision_message`): characters Unicode files under C, and angle
     brackets; then the cut to `render.MAX_TEXT`, which keeps one revision from
     pushing every other row of the picker off the screen. A subject of nothing
     but spaces is no message rather than an empty one.
     """
-    assert prereceive.revision_message(subject) == message
+    assert render.revision_message(subject) == message
 
 
 def test_identical_retry_ignores_tar_framing(hub):

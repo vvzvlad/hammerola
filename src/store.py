@@ -1044,6 +1044,25 @@ class Store:
                 return name
         return None
 
+    def _tagged(self, pid: str, branch: str, metas) -> set:
+        """The tags of `branch` among `metas`: walking its first-parent line
+        oldest first over the built commits, each whose version is set and
+        differs from the last version set before it. A built commit without a
+        version is passed over: it neither tags nor resets the version, so the
+        same version after it is not a tag again."""
+        versions = {meta["commit"]: meta.get("version") for meta in metas}
+        tagged, previous = set(), None
+        for sha, values in reversed(_trailed_log(
+                self.repo_dir(pid), f"{BRANCH_PREFIX}{branch}",
+                "--first-parent")):
+            name = self._built_name(pid, sha, values, versions)
+            if name is None or not versions[name]:
+                continue
+            if versions[name] != previous:
+                tagged.add(name)
+            previous = versions[name]
+        return tagged
+
     def _reached(self, pid: str, branch: str, names,
                  tip: str | None = None) -> set:
         """The builds among `names` whose commits `branch` reaches — or
@@ -1140,6 +1159,7 @@ class Store:
         reaches. The default variant's lists besides every build no branch
         reaches (the loser of a race), so no build drops out of every history.
         A variant with only a draft gets a `builds.json` with its slot alone.
+        The tags it marks are its branch's (`_tagged`).
         """
         metas = self.builds_of(pid)
         names = {meta["commit"] for meta in metas}
@@ -1148,13 +1168,16 @@ class Store:
                    for branch in branches}
         unreached = names.difference(*reached.values())
         for variant in {MAIN_BRANCH, *branches, *self._variants_on_disk(pid)}:
+            tagged = set()
             if variant in reached:
                 self._switch_latest(pid, variant, names)
+                tagged = self._tagged(pid, variant, metas)
             own = reached.get(variant, set())
             if variant == MAIN_BRANCH:
                 own = own | unreached
             self._write_builds_json(
-                pid, variant, [meta for meta in metas if meta["commit"] in own])
+                pid, variant, [meta for meta in metas if meta["commit"] in own],
+                tagged)
         self._write_variants_json(pid, branches, metas)
 
     def _write_variants_json(self, pid: str, branches: list,
@@ -1363,7 +1386,8 @@ class Store:
                       digest: str, job=None, message=None,
                       variant: str = MAIN_BRANCH,
                       variant_label: str = None,
-                      forced: bool = False) -> tuple[int, dict]:
+                      forced: bool = False,
+                      version: str = None) -> tuple[int, dict]:
         """Put one built tree at `<pid>/<commit>`. Returns (status, response).
 
         201 published, 200 identical retry, 409 same commit / different content.
@@ -1380,8 +1404,9 @@ class Store:
         the revision's document, and the mirror copies it into the slot with
         the rest. `variant` is the branch the revision is published from: it
         goes into the document, and the revision fills that variant's slot.
-        `variant_label` is the checked `"variant"` of its project.json, and
-        `forced` says the push skipped the model's checks().
+        `variant_label` is the checked `"variant"` of its project.json,
+        `forced` says the push skipped the model's checks(), and `version` is
+        what the tree's version.py gave, cleaned.
         """
         files = _hash_output(staging, names)
 
@@ -1389,7 +1414,7 @@ class Store:
             meta = self._finish_staging(pid, commit, staging, files, digest,
                                         message=message, variant=variant,
                                         variant_label=variant_label,
-                                        forced=forced)
+                                        forced=forced, version=version)
             return meta, job
 
         return self._publish_revision(pid, commit, staging, digest, variant,
@@ -1594,7 +1619,8 @@ class Store:
     def publish_dev_built(self, pid: str, staging: Path, names,
                           digest: str, job=None, variant: str = MAIN_BRANCH,
                           variant_label: str = None,
-                          forced: bool = False) -> tuple[int, dict]:
+                          forced: bool = False,
+                          version: str = None) -> tuple[int, dict]:
         """Overwrite a variant's ONE local slot, `<pid>/dev/` for the default
         variant and `.variants/<b>/dev/` for another (SPEC 7.6).
 
@@ -1617,8 +1643,8 @@ class Store:
 
         `job` goes into the slot's meta.json: the slot is the one build no
         revision addresses, so the job that filled it is the only place its log
-        exists. `variant`, `variant_label` and `forced` go there too, as on a
-        revision.
+        exists. `variant`, `variant_label`, `forced` and `version` go there
+        too, as on a revision.
         """
         files = _hash_output(staging, names)
         slot = self.pointer_dir(pid, variant, DEV_LINK)
@@ -1636,7 +1662,7 @@ class Store:
             meta = self._finish_staging(pid, DEV_LINK, staging, files, digest,
                                         job=job, variant=variant,
                                         variant_label=variant_label,
-                                        forced=forced)
+                                        forced=forced, version=version)
             self._swap_dev_slot(slot, staging)
 
             # `latest` is not touched: a local build is not a commit, so it
@@ -1932,17 +1958,18 @@ class Store:
     # -- staging -> publishable directory ----------------------------------
     def _finish_staging(self, pid, commit, staging: Path, files, digest,
                         job=None, message=None, variant=MAIN_BRANCH,
-                        variant_label=None, forced=False) -> dict:
+                        variant_label=None, forced=False,
+                        version=None) -> dict:
         """Validate meta.json and write everything the build page needs.
 
         `staging` is what the build wrote (SPEC 8A.2 step 5), so the meta.json
         read here is the build's own.
 
         `job` is handed on to `build_meta`, which records it in the slot's
-        document only. `message` is the subject of the pushed commit, already
-        cleaned to what a message may be (`prereceive.revision_message`).
-        `variant`, `variant_label` and `forced` go into the document as they
-        are.
+        document only. `message` is the subject of the pushed commit, and
+        `version` what the tree's version.py gave, both already cleaned
+        (`render.revision_message`). `variant`, `variant_label` and `forced`
+        go into the document as they are.
         """
         raw = self._read_meta(staging)
         try:
@@ -1950,7 +1977,7 @@ class Store:
                 pid=pid, commit=commit, raw=raw, staging=staging, files=files,
                 published=published_stamp(), dev=(commit == DEV_LINK), job=job,
                 message=message, variant=variant, variant_label=variant_label,
-                forced=forced)
+                forced=forced, version=version)
         except ValueError as error:
             # render.py validates without knowing about HTTP; every way it can
             # refuse is "the push described something that is not there", i.e. 422.
@@ -2120,8 +2147,10 @@ class Store:
         os.symlink(target, tmp_link)
         os.rename(tmp_link, directory / name)
 
-    def _write_builds_json(self, pid: str, variant: str, metas: list) -> None:
-        """Rewrite one variant's build picker: `metas`, its builds, newest first.
+    def _write_builds_json(self, pid: str, variant: str, metas: list,
+                           tagged=frozenset()) -> None:
+        """Rewrite one variant's build picker: `metas`, its builds, newest
+        first, the ones in `tagged` marked as its tags.
 
         Called AFTER the pointer has moved, so `latest` in the file names the
         build a reader following that link will actually land on. Temp file plus
@@ -2139,7 +2168,7 @@ class Store:
             return
         picker = render.builds_json(pid, metas, dev=dev_meta is not None,
                                     latest=self.latest_commit(pid, variant),
-                                    fallback=dev_meta)
+                                    fallback=dev_meta, tagged=tagged)
         renamed = self.project_title(pid)
         if renamed is not None:
             picker["title"] = renamed

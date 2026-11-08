@@ -29,7 +29,7 @@ record it. The real fix is the container's `pids` limit and a reaping
 supervisor (SPEC 8A.2 step 0).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 import shutil
@@ -101,6 +101,9 @@ _COMPARE_ARTEFACTS = ("scene.json", "report.json")
 INSPECT_SNAPSHOT = "snapshot"
 INSPECT_MEASURE = "measure"
 INSPECT_KINDS = (INSPECT_SNAPSHOT, INSPECT_MEASURE)
+
+# The file a project's version comes from (`run_version`), beside project.json.
+VERSION_FILE = "version.py"
 
 # Appended to the log of a build that left a straggler behind, so the leaked
 # thread and descriptor are visible.
@@ -336,6 +339,51 @@ def run_inspect(build_dir, *, pid, kind, view, angle=None, hide=(),
                                   threads=limits.occt_threads),
             guard=None)
         return _inspect_outcome(process, pid=pid, out=out)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def run_version(project_dir, *, pid, limits=DEFAULT_LIMITS):
+    """The version `version()` of the tree's `version.py` gives, in a process
+    of its own. -> `(BuildOutcome, version)`, or `(None, None)` for a tree
+    without the file, where nothing runs.
+
+    The file is the project's code, so `versionchild` runs it behind the
+    wrapper, as a model is run, and says the answer in a result file the
+    parent named. The version is a str only when the outcome is ok.
+    """
+    project_dir = Path(project_dir).resolve()
+    if not (project_dir / VERSION_FILE).is_file():
+        return None, None
+
+    # HOME and TMPDIR point here, as on the build path; the result file too.
+    # 0700, removed afterwards.
+    scratch = Path(tempfile.mkdtemp(prefix="hammerola-version-"))
+    try:
+        home = scratch / "home"
+        tmp = scratch / "tmp"
+        for directory in (home, tmp):
+            directory.mkdir(mode=0o700)
+        result_path = scratch / "result.json"
+
+        target = [
+            sys.executable, "-s", "-m", "src.buildproc.versionchild",
+            "--project", str(project_dir),
+            "--result", str(result_path),
+        ]
+        process = run_isolated(
+            target, limits=limits,
+            env=child_environment(home=home, tmp=tmp,
+                                  threads=limits.occt_threads),
+            guard=None)
+        outcome = _inspect_outcome(process, pid=pid)
+        if not outcome.ok:
+            return outcome, None
+        version = _read_version_file(result_path)
+        if version is None:
+            return replace(outcome, status=STATUS_CRASHED, log=outcome.log + (
+                "\nbuildproc: version.py exited 0 but wrote no version\n")), None
+        return outcome, version
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -599,7 +647,7 @@ def _compare_outcome(process, *, pid, out_dir=None):
 
 
 def _inspect_outcome(process, *, pid, out=None):
-    """Read a `ProcessResult` as a snapshot or a measurement.
+    """Read a `ProcessResult` as a snapshot, a measurement or a version.
 
     `_compare_outcome`'s reading, plus EXIT_BUILD_FAILED: the child's refusal
     of a question this revision cannot answer, said in its log. A snapshot
@@ -658,6 +706,17 @@ def _read_result_file(path):
     if not isinstance(data["files"], list):
         return None
     return data
+
+
+def _read_version_file(path):
+    """The str of `{"version": ...}`, `versionchild`'s result, or None."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or set(data) != {"version"}:
+        return None
+    return data["version"] if isinstance(data["version"], str) else None
 
 
 def _verified_files(claimed, out_dir, limits):

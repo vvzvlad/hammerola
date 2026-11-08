@@ -44,9 +44,10 @@ What the tree holds decides the build (`jobs._build_and_publish`):
   * a model (`has_model`) — the model is built as always, and after it
     succeeds its documents are copied in beside it (`add_documents`);
   * no model and a list — the documents are the build (`run_documents_build`):
-    no process and no import, since nothing in the tree is executed, and the
-    same `BuildOutcome` a model's build answers with, so publication is the
-    path every build takes;
+    no build process and no import, since nothing in the tree is executed
+    (its `version.py` aside, which `run_version` runs in a process of its own
+    before this), and the same `BuildOutcome` a model's build answers with,
+    so publication is the path every build takes;
   * neither — the model's build runs and says there is nothing to build
     (`cadbuild.geometry.load_model`).
 

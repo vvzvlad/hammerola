@@ -319,6 +319,41 @@ describe('the build picker', () => {
 
     expect(c.switchBuild.mock.calls.map((call) => call[1])).toEqual(['dev', 'latest'])
   })
+
+  // -- the tags, where the project's version changed -------------------------
+
+  const THIRD = 'c'.repeat(64)
+
+  it('keeps the pointers and the tags alone with Versions only', () => {
+    // The newest revision has the version of the tag below it, so it is no
+    // tag: hidden, the BUILDS heading goes to the first row left.
+    const h = headerOn(component({
+      builds: {
+        has_dev: true,
+        latest: OTHER,
+        builds: [{ commit: OTHER, built: '2026-08-28T10:00:00Z', version: '1.1' },
+                 { commit: REV, built: '2026-08-27T18:20:00Z', version: '1.1', tag: true },
+                 { commit: THIRD, built: '2026-08-26T10:00:00Z', version: '1.0', tag: true }],
+      },
+    }))
+    const shown = () => h.view().revRows.map((r) => [r.key, r.head, r.version])
+    expect(shown()).toEqual([['dev', 'POINTERS', ''], ['latest', '', ''],
+      [OTHER, 'BUILDS', ''], [REV, '', '1.1'], [THIRD, '', '1.0']])
+
+    h.view().revRows.find((r) => r.onVersions).onVersions({ stopPropagation() {} })
+
+    expect(shown()).toEqual([['dev', 'POINTERS', ''], ['latest', '', ''],
+      [REV, 'BUILDS', '1.1'], [THIRD, '', '1.0']])
+  })
+
+  it('offers no Versions only where no revision is a tag', () => {
+    const v = head(component({
+      builds: { has_dev: false, latest: null,
+                builds: [{ commit: REV, built: '2026-08-27T18:20:00Z', version: '1.0' }] },
+    }))
+    expect(v.revRows.some((r) => r.onVersions)).toBe(false)
+    expect(v.revRows[0].version).toBe('')
+  })
 })
 
 // -- what is open beside the model -------------------------------------------
