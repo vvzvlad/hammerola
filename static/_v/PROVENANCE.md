@@ -205,7 +205,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `c03af50f70de65d68b8e83d492adaa7c9f0625af848060b513c67dfa1a961bbb` |
+| `ecad-viewer.js` as committed | `fb366c9bcb71db75b6949c32e6ceb78274b78d9426ec19fc5b8b9a6727b48683` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -529,7 +529,11 @@ apart (`plane_slots`). Each instance is a scene of the schematic inset provider
 that instance, its page number and path in the title block
 (`Project.drawing_sheet_for` with the instance), the path spelled with the
 sheets' names as KiCad prints it, `/amp/`, not with their UUIDs
-(`readable_sheet_path` in `kicanvas/sheet-path.ts`). The scenes are built one after
+(`readable_sheet_path` in `kicanvas/sheet-path.ts`). Each instance shows its
+own references: the instance paths start at the top-level sheet the project
+file lists, and at the root file's own UUID where it lists the nil UUID:
+KiCad 10 writes that one there while the files' paths start at the root file's
+UUID (`top_level_sheet_uuid`, same file). The scenes are built one after
 another, a task between two, and a sheet still being built is an empty cell. A
 sheet that fails to build shows its name and `failed to draw: <error>` and logs
 a warning naming its key. Each sheet's name stands above its paper in screen

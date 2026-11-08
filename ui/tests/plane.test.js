@@ -2,13 +2,14 @@
 // ecad-viewer-app/src/viewers/schematic/plane.ts): where each sheet instance
 // stands, which one a point or a comment's area is on, the sheet a `#N` link
 // names, how far the gestures zoom out, and where a comment's mark stands; and
-// the path each sheet's title block prints (kicanvas/sheet-path.ts). How the
-// plane looks is checked in a browser, not here.
+// the path each sheet's title block prints and the UUID the instance paths
+// start at (kicanvas/sheet-path.ts). How the plane looks is checked in a
+// browser, not here.
 
 import { describe, expect, it } from 'vitest'
 
 import { BBox, Vec2 } from '../../ecad-viewer/packages/ecad-viewer-app/src/base/math/index.ts'
-import { readable_sheet_path } from '../../ecad-viewer/packages/ecad-viewer-app/src/kicanvas/sheet-path.ts'
+import { readable_sheet_path, top_level_sheet_uuid } from '../../ecad-viewer/packages/ecad-viewer-app/src/kicanvas/sheet-path.ts'
 import {
   area_on_sheet, fit_box, fit_zoom, plane_comments, plane_slots, slot_at, slot_by_link, zoom_floor,
 } from '../../ecad-viewer/packages/ecad-viewer-app/src/viewers/schematic/plane.ts'
@@ -84,5 +85,19 @@ describe('a sheet\'s title block', () => {
     ])
     const path = (key) => readable_sheet_path(pages.get(key), (at) => pages.get(at))
     expect(['top.kicad_sch', 'guard.kicad_sch:/g', 'b.kicad_sch:/a/b'].map(path)).toEqual(['/', '/guard/', '/a/b/'])
+  })
+})
+
+describe('the root of a schematic\'s instance paths', () => {
+  const NIL = '00000000-0000-0000-0000-000000000000'
+  it('is the top-level sheet the project file lists, by the root\'s name or as the only one', () => {
+    expect(top_level_sheet_uuid([{ uuid: 'u-other', filename: 'x.kicad_sch' }, { uuid: 'u-top', filename: 'top.kicad_sch' }], 'top.kicad_sch'))
+      .toBe('u-top')
+    expect(top_level_sheet_uuid([{ uuid: 'u-top', filename: 'renamed.kicad_sch' }], 'top.kicad_sch')).toBe('u-top')
+  })
+  it('is the root file\'s own where the project file lists the nil UUID or nothing', () => {
+    // KiCad 10 writes the nil UUID there while the files' paths start at the root's own
+    expect(top_level_sheet_uuid([{ uuid: NIL, filename: 'top.kicad_sch' }], 'top.kicad_sch')).toBeUndefined()
+    expect(top_level_sheet_uuid(undefined, 'top.kicad_sch')).toBeUndefined()
   })
 })

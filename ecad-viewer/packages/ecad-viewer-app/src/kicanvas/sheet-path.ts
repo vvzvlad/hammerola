@@ -24,3 +24,33 @@ export function readable_sheet_path<P extends SheetPathPage>(
     }
     return names.length ? `/${names.join("/")}/` : "/";
 }
+
+/** KiCad's nil UUID, written where no UUID was set. */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * The UUID KiCad 10 roots a schematic's instance paths at, from the project
+ * file's `schematic.top_level_sheets` (`listed`); undefined where it names
+ * none, and the paths then start at the root file's own UUID.
+ *
+ * Symbol and sheet instance paths start at the listed top-level sheet's UUID
+ * rather than the root file's own; the two differ in an imported project. A
+ * listed nil UUID names no sheet: KiCad 10 writes it into the project file
+ * while the paths in the schematic files start at the root file's UUID. A
+ * host may load the root under another name, so a lone top-level sheet is
+ * taken as the root's.
+ */
+export function top_level_sheet_uuid(
+    listed: unknown,
+    root_filename: string,
+): string | undefined {
+    if (!Array.isArray(listed)) return undefined;
+    const sheets = listed.filter(
+        (sheet): sheet is { uuid: string; filename?: unknown } =>
+            typeof sheet?.uuid === "string" &&
+            sheet.uuid !== "" &&
+            sheet.uuid !== NIL_UUID,
+    );
+    const named = sheets.find((sheet) => sheet.filename === root_filename);
+    return (named ?? (sheets.length === 1 ? sheets[0] : undefined))?.uuid;
+}
