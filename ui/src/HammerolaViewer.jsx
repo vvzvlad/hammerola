@@ -2676,9 +2676,14 @@ export default class HammerolaViewer extends React.Component {
    * it lights up all five. An ordinary leaf answers with its one path.
    *
    * A group keeps its own id and is not expanded to its leaves: `selectSolid`
-   * does nothing with a node path, so selecting an assembly highlights nothing,
-   * and lighting everything under it would be a separate feature. `[sel]` when
-   * there is no tree yet.
+   * does nothing with a node path, so selecting an assembly highlights nothing.
+   * A `whole` group is the exception: the scene picks it as one object
+   * (`wholeRow`), so its leaves are lit as a run of copies' are. Not while the
+   * Move tool is in hand: the manipulator stands on whatever this returns and
+   * turns each path about its own centre (`movePart`), which is right for
+   * copies of one part and tears apart the inks of one sticker, so a `whole`
+   * group then stays its own path and gets no manipulator, as any group does.
+   * `[sel]` when there is no tree yet.
    *
    * A copy of `leaves`, because the viewport keeps what it is given
    * (`applied.selected` in element.js), and the tree's list is what the eye,
@@ -2687,8 +2692,27 @@ export default class HammerolaViewer extends React.Component {
    */
   selectedPaths() {
     const node = this.node(this.state.sel);
-    if (node && !node.isNode) return node.leaves.slice();
+    if (node && (!node.isNode || (node.whole && this.state.tool !== 'move'))) {
+      return node.leaves.slice();
+    }
     return this.state.sel ? [this.state.sel] : [];
+  }
+
+  /**
+   * The row a pick in the scene acts on: the outermost group above `row`
+   * marked `whole` in the view file, or `row` itself where there is none.
+   *
+   * A sticker is several flat meshes, one per ink, and the reader hides it with
+   * one click, so a click on any of them is a click on the group. The tree
+   * still opens the group, and its rows select one leaf at a time. A pick with
+   * the Move tool in hand is not lifted (`onPick`, see `selectedPaths`).
+   */
+  wholeRow(row) {
+    let lifted = row;
+    for (let n = row; n; n = this.node(n.parent)) {
+      if (n.whole) lifted = n;
+    }
+    return lifted;
   }
 
   // -- comparing two revisions ----------------------------------------------
@@ -4509,9 +4533,13 @@ export default class HammerolaViewer extends React.Component {
       this.set({ cmpSel: (node && node.key) || null, menu: null });
       return;
     }
-    this.set({ sel: node ? node.id : id,
-               selName: (node && node.name) || picked, menu: null,
-               ...(node ? { expanded: this.expandedTo(node.id) } : null) });
+    // A leaf inside a `whole` group selects the group: it is one object. With
+    // the Move tool in hand it selects the leaf, the one thing the manipulator
+    // can move whole (see `selectedPaths`).
+    const row = node && (this.state.tool === 'move' ? node : this.wholeRow(node));
+    this.set({ sel: row ? row.id : id,
+               selName: (row && row.name) || picked, menu: null,
+               ...(row ? { expanded: this.expandedTo(row.id) } : null) });
   }
 
   /**
@@ -4565,8 +4593,13 @@ export default class HammerolaViewer extends React.Component {
     const plate = !id && Number.isInteger(d.plate)
       && filesKeyFor(s.builds, PAGE.slot, this._linkKey)
       && plateFiles(s.meta, s.view)[d.plate] ? d.plate : null;
+    // Inside a `whole` group the menu is the group's, as the pick is. Not in a
+    // comparison, whose pick and parts list stay keyed by the leaf's catalogue
+    // key (`onPick`), which a group does not have.
+    const node = this.comparePair() ? null : this.node(id);
+    const row = node && this.wholeRow(node);
     this.setState({
-      menu: id ? { id, ...menuAt(d.x, d.y) }
+      menu: id ? { id: row && row !== node ? row.id : id, ...menuAt(d.x, d.y) }
         : plate !== null ? { plate, ...menuAt(d.x, d.y) } : null,
     });
   }

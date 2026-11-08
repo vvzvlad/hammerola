@@ -245,6 +245,20 @@ describe('treeFromShapes', () => {
       .toEqual([`${branch.id}/${first.name}`, `${branch.id}/${second.name}`])
     expect(branch.known).toBeUndefined()
   })
+
+  it('marks a group the view file calls `whole`, and only with a real `true`', () => {
+    // The scene picks such a group as one object (`wholeRow` in the page).
+    const [first, second, ...others] = assembled.parts
+    const nested = {
+      ...assembled,
+      parts: [{ name: 'sticker', color: null, whole: true, parts: [first] },
+              { name: 'housing', color: null, whole: 'true', parts: [second] },
+              ...others],
+    }
+    const [sticker, housing] = treeFromShapes(nested, null).children
+    expect(sticker.whole).toBe(true)
+    expect(housing.whole).toBeUndefined()
+  })
 })
 
 describe('statesOf', () => {

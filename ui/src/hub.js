@@ -748,11 +748,11 @@ export function buildKey(meta) {
 }
 
 // -- the part tree ----------------------------------------------------------
-// It arrives on `hmr:model` as `{id, name, color, children?, key?, known?,
-// plate?}` nested as deep as the model nests — the shape `treeFromShapes`
-// builds from the pushed view file; `children` is a group's field and
-// `key`/`known`/`plate` are a leaf's. This is the assembly structure; reading
-// it is a walk.
+// It arrives on `hmr:model` as `{id, name, color, children?, whole?, key?,
+// known?, plate?}` nested as deep as the model nests — the shape
+// `treeFromShapes` builds from the pushed view file; `children`/`whole` are a
+// group's fields and `key`/`known`/`plate` are a leaf's. This is the assembly
+// structure; reading it is a walk.
 
 /** Same ceiling the hub refuses a push over (render.MAX_VIEW_DEPTH). */
 const MAX_DEPTH = 64;
@@ -956,6 +956,8 @@ export function indexTree(root) {
       key: typeof raw.key === 'string' && raw.key ? raw.key : null,
       color: typeof raw.color === 'string' ? raw.color : null,
       isNode: !!children,
+      // A group the scene picks as one object (`wholeRow` in HammerolaViewer).
+      whole: !!children && raw.whole === true,
       // A leaf's own `plate` is what put it under its bed, not a bed row.
       plate: children && Number.isInteger(raw.plate) ? raw.plate : null,
       known: raw.known !== false,
