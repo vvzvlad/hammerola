@@ -1,5 +1,5 @@
-"""Board queries for layout agents: what is near a point, copper clearance between two items, legal via sites, a track corridor, legal designator spots, placement score (HPWL and airwire crossings of signal nets); compact text, or JSON with --json.
-usage: "$PY" bq.py <board.kicad_pcb> near X Y [--r 2] [--layer L] | clearance A B | via X Y --net NET [--r 3] [--n 5] [--size D --drill d] | corridor X1 Y1 X2 Y2 --layer L --width W --net NET | labels REF | score [X1 Y1 X2 Y2] [--n 5]   (mm; A/B = REF, REF.PAD or net:NAME; cmd "-" reads one query per line from stdin, board loaded once; reads the saved file, zones refilled in memory; clearance, hole_clearance and edge_clearance rules of the .kicad_dru beside the board are applied, see boardgeo.py)
+"""Board queries for layout agents: what is near a point, copper clearance between two items, legal via sites, a track corridor, legal designator spots, a footprint's pads with what is attached to each, a net's copper, zones with their fill pieces, placement score (HPWL and airwire crossings of signal nets, bare pads once the board has tracks); compact text, or JSON with --json.
+usage: "$PY" bq.py <board.kicad_pcb> near X Y [--r 2] [--layer L] | clearance A B | via X Y --net NET [--r 3] [--n 5] [--size D --drill d] | corridor X1 Y1 X2 Y2 --layer L --width W --net NET | labels REF | pads REF | net NAME | zones [--layer L] [--net N] [--at X Y] | score [X1 Y1 X2 Y2] [--n 5]   (mm; A/B = REF, REF.PAD or net:NAME; cmd "-" reads one query per line from stdin, board loaded once; reads the saved file, zones refilled in memory; clearance, hole_clearance and edge_clearance rules of the .kicad_dru beside the board are applied, see boardgeo.py; a bare pad has a net other than KiCad's unconnected-* and nothing attached: no track, arc or via, no zone fill, no touching pad that has one)
 needs: KiCad's bundled Python with pcbnew ($PY), e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3; boardgeo.py beside this file"""
 import sys, json, math, shlex, argparse, collections
 import pcbnew
@@ -348,6 +348,163 @@ def labels(g, a):
     return res, txt
 
 
+# ---------------------------------------------------------------- pads, net, zones
+def conn(g):
+    """KiCad's connectivity of the board with its zones refilled in memory, built once per load."""
+    if not hasattr(g, "cn"):
+        g.board.BuildConnectivity()
+        g.cn = g.board.GetConnectivity()
+    return g.cn
+
+
+def bare(cn, p):
+    """A pad with a net that needs copper (not KiCad's unconnected-*) and none attached: no track, arc or via on it, and
+    its connectivity cluster holds pads only, so nothing but pads reaches it or the pads its copper touches (the other
+    parts of an exposed pad)."""
+    return (p.GetNetCode() > 0 and not p.GetNetname().startswith("unconnected-") and not len(cn.GetConnectedTracks(p))
+            and all(i.Type() == pcbnew.PCB_PAD_T for i in cn.GetConnectedItems(p)))
+
+
+def bare_pads(g):
+    """Bare pads by footprint reference: {ref: [pad numbers]}."""
+    cn = conn(g)
+    out = collections.defaultdict(list)
+    for f in g.board.GetFootprints():
+        for p in f.Pads():
+            if bare(cn, p):
+                out[f.GetReference()].append(p.GetNumber())
+    return out
+
+
+def via_row(v):
+    v = v.Cast()
+    return dict(at=at(v.GetPosition()), size=f3(v.GetWidth(v.TopLayer())), drill=f3(v.GetDrillValue()), uuid=v.m_Uuid.AsString())
+
+
+def track_row(g, t):
+    return dict(kind="arc" if t.GetClass() == "PCB_ARC" else "track", layer=g.ln(t.GetLayer()), a=at(t.GetStart()),
+                b=at(t.GetEnd()), width=f3(t.GetWidth()), uuid=t.m_Uuid.AsString())
+
+
+def pieces(fill):
+    """The separate pieces of one layer's zone fill, largest first: (piece as its own polygon set, area mm2, bbox)."""
+    out = []
+    for i in range(fill.OutlineCount()):
+        u = fill.UnitSet(i)
+        out.append((u, round(u.Area() / 1e12, 3), [f3(v) for v in box_of(u)]))
+    return sorted(out, key=lambda e: -e[1])
+
+
+def pads(g, a):
+    """Every pad of a footprint and what KiCad's connectivity attaches to it: tracks and arcs (with their ends that lie
+    on the pad or within half the track width of it), vias and touching pads; zone fills of its net that reach the pad on a flashed layer (geometry)."""
+    if a.ref not in g.fps:
+        raise SystemExit("bq: no footprint %s" % a.ref)
+    cn = conn(g)
+    rows = []
+    for p in g.fps[a.ref].Pads():
+        code, att = p.GetNetCode(), []
+        for t in cn.GetConnectedTracks(p):
+            if t.GetClass() == "PCB_VIA":
+                att.append(dict(kind="via", **via_row(t)))
+            else:
+                e = track_row(g, t)
+                # an end within half the track width of the pad still overlaps its copper, as KiCad's connectivity counts it
+                e["on_pad"] = [at(q) for q in (t.GetStart(), t.GetEnd()) if p.HitTest(q, (t.GetWidth() + 1) // 2, t.GetLayer())]
+                att.append(e)
+        for name in sorted({"%s.%s" % (q.GetParentFootprint().GetReference(), q.GetNumber()) for q in cn.GetConnectedPads(p)}):
+            att.append(dict(kind="pad", name=name))
+        for l in g.cu:
+            if code and p.IsOnLayer(l) and p.FlashLayer(l):
+                shape = p.GetEffectiveShape(l)
+                for z in g.zones:
+                    if z.code == code and z.layer == g.ln(l) and box_gap(z.box, box_of(shape)) == 0 and hit(shape, z.shape, 0):
+                        att.append(dict(kind="zone", name=z.ref, layer=z.layer))
+        rows.append(dict(pad=p.GetNumber(), net=p.GetNetname(), at=at(p.GetPosition()),
+                         layers=[g.ln(l) for l in g.cu if p.IsOnLayer(l)], bare=bare(cn, p), attached=att))
+
+    def show(e):
+        if e["kind"] in ("track", "arc"):
+            return "%s %s w%.3f %s on pad %s" % (e["kind"], e["layer"], e["width"], e["uuid"],
+                                                " ".join("(%.3f, %.3f)" % tuple(q) for q in e["on_pad"]) or "-")
+        if e["kind"] == "via":
+            return "via (%.3f, %.3f) %.3f/%.3f %s" % (e["at"][0], e["at"][1], e["size"], e["drill"], e["uuid"])
+        return " ".join(filter(None, (e["kind"], e["name"], e.get("layer"))))
+
+    res = dict(cmd="pads", ref=a.ref, bare=sum(r["bare"] for r in rows), pads=rows)
+    txt = ["pads %s: %d pads, %d bare" % (a.ref, len(rows), res["bare"])]
+    for r in rows:
+        txt.append("  %-5s %-20s %8.3f %8.3f  %-24s %s" % (r["pad"] or "-", r["net"] or "-", r["at"][0], r["at"][1], ",".join(r["layers"]),
+                                                       "BARE" if r["bare"] else "; ".join(show(e) for e in r["attached"]) or "-"))
+    return res, txt
+
+
+def net(g, a):
+    ni = g.board.FindNet(a.name)
+    if ni is None:
+        raise SystemExit("bq: no net %s" % a.name)
+    code = ni.GetNetCode()
+    pl = ["%s.%s" % (f.GetReference(), p.GetNumber()) for f in g.board.GetFootprints() for p in f.Pads() if p.GetNetCode() == code]
+    tracks, vias = [], []
+    for t in g.board.GetTracks():
+        if t.GetNetCode() == code:
+            if t.GetClass() == "PCB_VIA":
+                vias.append(via_row(t))
+            else:
+                tracks.append(track_row(g, t))
+    tracks.sort(key=lambda e: (e["layer"], e["a"], e["b"]))
+    fills = [dict(zone=z.ref, layer=z.layer, area=area, box=box) for z in g.zones if z.code == code for _, area, box in pieces(z.shape)]
+    res = dict(cmd="net", net=a.name, pads=pl, tracks=tracks, vias=vias, fills=fills)
+    txt = ["net %s: %d pads, %d tracks, %d vias, %d zone fill pieces" % (a.name, len(pl), len(tracks), len(vias), len(fills)),
+           "  pads " + (" ".join(pl) or "-")]
+    for e in tracks:
+        txt.append("  %-5s %-7s (%.3f, %.3f) (%.3f, %.3f) w%.3f %s" % (e["kind"], e["layer"], e["a"][0], e["a"][1], e["b"][0], e["b"][1],
+                                                                  e["width"], e["uuid"]))
+    for e in vias:
+        txt.append("  via   (%.3f, %.3f) %.3f/%.3f %s" % (e["at"][0], e["at"][1], e["size"], e["drill"], e["uuid"]))
+    for e in fills:
+        txt.append("  fill  %-7s %10.3f mm2  box %.3f %.3f %.3f %.3f  %s" % (e["layer"], e["area"], *e["box"], e["zone"] or "-"))
+    return res, txt
+
+
+def zones(g, a):
+    """Board and footprint zones with net, layers, priority, rule-area flag and outline bbox; the pieces of each copper
+    zone's fill (refilled in memory) with area, bbox and how many vias of the zone's net touch the piece (geometry);
+    with --at X Y only the pieces that contain that point, and only the zones that have one."""
+    lay = copper_layer(g, a.layer) if a.layer else None
+    if a.net and g.board.FindNet(a.net) is None:
+        raise SystemExit("bq: no net %s" % a.net)
+    rows = []
+    for z in list(g.board.Zones()) + [z for f in g.board.GetFootprints() for z in f.Zones()]:
+        layers = [l for l in z.GetLayerSet().UIOrder() if g.board.IsLayerEnabled(l)]
+        if (lay and lay not in [g.ln(l) for l in layers]) or (a.net and z.GetNetname() != a.net):
+            continue
+        fp, code, ps = z.GetParentFootprint(), z.GetNetCode(), []
+        for l in layers:
+            L = g.ln(l)
+            if z.GetIsRuleArea() or (lay and L != lay) or not z.HasFilledPolysForLayer(l):
+                continue
+            for u, area, box in pieces(z.GetFilledPolysList(l)):
+                if a.at and not u.Contains(V(nm(a.at[0]), nm(a.at[1]))):
+                    continue
+                nv = sum(1 for it in g.query(L, box_of(u)) if it.kind == "via" and it.code == code and hit(it.shape, u, 0))
+                ps.append(dict(layer=L, area=area, box=box, vias=nv))
+        if a.at and not ps:
+            continue
+        rows.append(dict(name=z.GetZoneName() or (fp.GetReference() if fp else ""), net=z.GetNetname() or None,
+                         layers=[g.ln(l) for l in layers], priority=z.GetAssignedPriority(), rule_area=z.GetIsRuleArea(),
+                         outline=[f3(v) for v in box_of(z.Outline())], pieces=ps))
+    res = dict(cmd="zones", layer=lay, net=a.net, zones=rows)
+    txt = ["zones%s%s: %d" % (" on " + lay if lay else "", " of net " + a.net if a.net else "", len(rows))]
+    for r in rows:
+        txt.append("  %-20s %-14s %-24s priority %d%s  outline %.3f %.3f %.3f %.3f  %d pieces" % (
+            r["name"] or "-", r["net"] or "-", ",".join(r["layers"]), r["priority"], "  rule area" if r["rule_area"] else "",
+            *r["outline"], len(r["pieces"])))
+        for e in r["pieces"]:
+            txt.append("    %-7s %10.3f mm2  box %.3f %.3f %.3f %.3f  vias %d" % (e["layer"], e["area"], *e["box"], e["vias"]))
+    return res, txt
+
+
 # ---------------------------------------------------------------- score
 def meets(p1, p2, q1, q2):
     """Two segments meet, touching included (OmniLayout placement_metrics._segments_intersect)."""
@@ -375,7 +532,8 @@ def score(g, a):
     """Placement numbers over signal nets (a net with a copper zone is a plane net and is left out): HPWL, the sum of
     each net's pad bounding-box half-perimeter, and airwire crossings, each pair of different nets' minimum-spanning-tree
     edges over pad centres that meet (OmniLayout placement_metrics compute_hpwl, compute_net_crossing). With a box
-    X1 Y1 X2 Y2 the crossing count and lists keep only crossings whose point lies in it; HPWL stays whole-board."""
+    X1 Y1 X2 Y2 the crossing count and lists keep only crossings whose point lies in it; HPWL stays whole-board. Once the
+    board has a track or arc, also the bare pads of the whole board (see bare) and the footprints with the most of them."""
     if a.box and len(a.box) != 4:
         raise SystemExit("bq: score box takes four numbers X1 Y1 X2 Y2")
     box = (min(a.box[0], a.box[2]), min(a.box[1], a.box[3]), max(a.box[0], a.box[2]), max(a.box[1], a.box[3])) if a.box else None
@@ -439,6 +597,14 @@ def score(g, a):
         txt.append("  crossings %9d  %s, e.g. at (%.3f, %.3f): %s %s-%s x %s %s-%s" % (
             e["crossings"], e["net"], c["at"][0], c["at"][1], c["a"]["net"], c["a"]["wire"][0], c["a"]["wire"][1],
             c["b"]["net"], c["b"]["wire"][0], c["b"]["wire"][1]))
+    # bare pads say where routing has not reached a pad yet, so they mean nothing before the first track
+    bp = bare_pads(g) if any(t.GetClass() != "PCB_VIA" for t in g.board.GetTracks()) else None
+    top = sorted(bp, key=lambda r: (-len(bp[r]), r))[:a.n] if bp is not None else []
+    res.update(bare_pads=sum(map(len, bp.values())) if bp is not None else None,
+               worst_bare=[dict(ref=r, bare=len(bp[r]), pads=bp[r]) for r in top])
+    if bp is not None:
+        txt[0] += ", %d bare pads" % res["bare_pads"]
+        txt += ["  bare      %9d  %s" % (len(bp[r]), r) for r in top]
     return res, txt
 
 
@@ -457,13 +623,17 @@ def parser():
         s.add_argument(k, type=float)
     s.add_argument("--layer", required=True); s.add_argument("--width", type=float, required=True); s.add_argument("--net", required=True)
     s = sp.add_parser("labels"); s.add_argument("ref")
+    s = sp.add_parser("pads"); s.add_argument("ref")
+    s = sp.add_parser("net"); s.add_argument("name")
+    s = sp.add_parser("zones"); s.add_argument("--layer"); s.add_argument("--net")
+    s.add_argument("--at", type=float, nargs=2, metavar=("X", "Y"))
     s = sp.add_parser("score"); s.add_argument("box", type=float, nargs="*"); s.add_argument("--n", type=int, default=5)
     for s in sp.choices.values():
         s.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     return p
 
 
-CMDS = dict(near=near, clearance=clearance, via=via, corridor=corridor, labels=labels, score=score)
+CMDS = dict(near=near, clearance=clearance, via=via, corridor=corridor, labels=labels, pads=pads, net=net, zones=zones, score=score)
 
 
 def run(g, argv, js):

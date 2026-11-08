@@ -40,7 +40,9 @@ does not name" narrows scope; it never removes an item from this list.
 ## Looking at the board
 
 - Numbers first: positions, distances, free spots and fits come from `scripts/bq.py`,
-  findings from `drc.sh` and `geocheck.py`.
+  findings from `drc.sh` and `geocheck.py`. A question about the board or a report (the pads
+  of a part and what reaches each, a net's copper, the fill piece at a point, the findings of
+  one part or type) is a `bq.py` or `scripts/findings.py` query, not a one-off script.
 - For what only the eye judges (crowding, alignment, silk legibility, the surroundings of a
   finding) render one region with `scripts/view.py` (`ref REF` or `X1 Y1 X2 Y2`; `--drc
   drc.json` or `--marks` with a `bq.py --json` result numbers the findings on the picture)
@@ -239,11 +241,22 @@ Fix by moving vias and parts first; add bends only where nothing can move.
   NOT applied` line), draws a fastroute draft (`--draft-time`, 300 s), optionally finishes with
   Freerouting 2.5.0 (`--finish freerouting`), refills zones, runs DRC and `geocheck.py`, and
   lists the unrouted connections. `--diagnose` adds fastroute's congestion/blocked class per
-  unrouted connection and costs minutes on a dense board. Push only the unlocked tracks/vias of
-  the routed copy to the live board, then route the rest by hand with `bq.py`.
+  unrouted connection and costs minutes on a dense board. Put the routed copy (the path after
+  `routed copy:`; the locks set for the run are gone from it) in place of the open board with
+  `put.py`, then route the rest by hand with `bq.py`.
 - A run lasts longer than a shell call's default timeout (Dionis: 5.5 min with no finish; a
   finish adds up to `--finish-time`): run it in the background, or with a timeout of at least
   `--draft-time` + `--finish-time` + 2 minutes.
+- A copper layer typed Power plane with a zone on it stays a plane for the router, a split
+  power layer included: no new track of another net goes on it, and the summary names these
+  layers. Type every plane layer so before the run; with the default export a Power-plane
+  layer without a zone is routed as signal. fastroute may join a via just outside a plane to
+  it with a short stub of the plane's net.
+- To compare placements, route each at the default `--draft-time` without `--diagnose`, and run
+  `--diagnose` once, on the placement you keep. On the probe-bench head board (five placements,
+  plane layers kept) 300 s and 450 s ranked them as 600 s did except two placements 5 parts
+  apart, and 120 s put the best one third. One placement gave 122 and 121 unrouted on two runs:
+  a difference of a few connections is a tie.
 - The defaults come from the owner's boards with all routing removed: the plugin export left 0
   connections unrouted on Ukuetis base against 36 with KiCad's plain DSN export (it hands zones
   over as solid planes); the minimum-width flags cut added DRC errors from 225 to 33; no finish,
@@ -259,8 +272,9 @@ Fix by moving vias and parts first; add bends only where nothing can move.
     beside it (without it the DSN has only the default netclass): lock every existing
     track/via → `pcbnew.ExportSpecctraDSN` → `java -jar freerouting.jar
     --gui.enabled=false -da --router.fanout.enabled=false -de in.dsn -do out.ses -mp N` →
-    `pcbnew.ImportSpecctraSES` (it deletes and recreates every unlocked track/via) → push
-    the unlocked items to the live board over IPC.
+    `pcbnew.ImportSpecctraSES` (it deletes and recreates every unlocked track/via) → unlock
+    what was locked for the run and delete the keep-outs added for the export → `put.py` the
+    copy.
   - The DSN carries netclass widths/clearances, zones and rule areas, not .kicad_dru rules.
     On the copy, add a rule-area keep-out for every .kicad_dru constraint (hole keep-outs,
     slot/edge clearances, isolation bands) before export.
@@ -321,6 +335,16 @@ A board with pours is not routed until these checks are measured on the saved bo
   back the open list with what blocks each item, usually placement: on the same placement
   more edit–check cycles do not converge (OmniRouting, arXiv 2608.04434: GPT-5-mini went
   from 18.4 to 23.7 steps and from 9.9 % to 6.8 % of nets routed).
+- A batch worked out on a copy goes through `scripts/edit.py apply <saved board> <copy> ops.json`,
+  which writes the ops to the copy for the checks above. A copy that passes them goes in place
+  of the open board with `scripts/put.py <copy>`: it overwrites the board's file and KiCad
+  reads it again. Edits made in the open KiCad and not saved are lost, so `save_project` before
+  taking the copy when the open board was edited. `put.py` refuses a copy with an `fp` trial
+  footprint: footprints come from the schematic.
+  - `apply` refuses a `pad` op on a pad with copper attached, and a track or via that KiCad
+    would move to another net. Copper drawn between pads of two nets is a short that only
+    `drc.sh` on the copy finds. A pad net set by a `pad` op reaches the board with the copy
+    and goes back at the next update from the schematic: change a pad's net in the schematic.
 - A `.kicad_dru` rule overrides the Board Setup minimum, whatever the manual says
   (KiCad 10.0.6: clearance, edge_clearance and hole_clearance rules set below 0.5 mm
   board minimums raised no error). DRC does not catch an exception written below the
@@ -348,7 +372,7 @@ A board with pours is not routed until these checks are measured on the saved bo
 These replace kicad-pcb rules 1, 5 and 10 and add rules 11 and 12.
 
 1. **Never edit .kicad_pcb directly** — all changes go through MCP tools (Channel 4 in
-   `references/kicad.md` is not a direct edit)
+   `references/kicad.md`, `scripts/put.py` included, is not a direct edit)
 5. **Check DRC before finishing** — run `run_drc()` and resolve all errors; DRC is
    necessary, not sufficient: finish against "Layout definition of done"
 10. **Signal-layer pours last** — plane layers and spec-required pours are declared before

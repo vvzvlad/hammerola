@@ -129,7 +129,8 @@ IPC, pcbnew Python on a closed file, `.kicad_dru` as text), defined in `referenc
 ### Concurrency
 
 - One edit channel per board at a time. Edit the file with pcbnew only when no
-  `~<name>.kicad_pcb.lck` exists. Before the first IPC edit compare `get_as_string()` with
+  `~<name>.kicad_pcb.lck` exists; `scripts/put.py` writes over an open board's file on
+  purpose and has KiCad read it again. Before the first IPC edit compare `get_as_string()` with
   the file (per-footprint version tokens differ harmlessly); if the file is newer (mtime,
   git log vs the GUI session start), never IPC-save — `board.revert()` first, which drops
   unsaved GUI edits.
