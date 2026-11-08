@@ -39,7 +39,11 @@ export class EDAText {
         this.attributes.mirrored = effects.justify.mirror;
         this.attributes.italic = effects.font.italic;
         this.attributes.bold = effects.font.bold;
-        this.attributes.size.set(effects.font.size.multiply(10000));
+        // KiCad writes a font size as (size HEIGHT WIDTH) (sch_io_kicad_sexpr_parser.cpp,
+        // T_size), so the parsed x is the height; a drawing sheet's (size WIDTH HEIGHT)
+        // does not come through here
+        const size = effects.font.size;
+        this.attributes.size.set(size.y * 10000, size.x * 10000);
         this.attributes.stroke_width = (effects.font.thickness ?? 0) * 10000;
         this.attributes.stroke_width = this.get_effective_text_thickness(1588);
         this.attributes.color = effects.font.color;
