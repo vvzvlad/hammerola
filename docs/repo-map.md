@@ -287,6 +287,21 @@
   FIRST on `sys.path` (so a project may deliberately shadow it) and the name
   then has to resolve on the path behind it — `/app` in the image. Smoke check
   (g) is what proves it reached the image
+- `kicadboard.py` — at the ROOT for the same reason as `checklib.py`: `import
+  kicadboard` places a KiCad board of the project in a model. It re-exports
+  `src/cadbuild/kicadboard.py`, which asks the KiCad service for two exports of
+  the board (a GLB with parts and copper, a board-only STEP for the laminate)
+  and turns them into catalogue records and footprint coordinates in KiCad's
+  STEP frame
+- `kicadsvc/` — the KiCad service, an image of its own (`kicad/kicad:10.0.6-full`
+  plus `server.py`, standard library only), so the hub's image carries no KiCad.
+  One endpoint, `POST /export`: a tar of the board's files in, a tar of the
+  export and kicad-cli's output back. The hub reaches it at `KICAD_URL`, through
+  `src/kicadcli.py`, from the build process (`kicadboard`) and from the hub
+  process (`docsbuild`, the `.glb` of a board's 3D view). image-check-publish.yml
+  builds, checks and pushes it as `projects/hammerola-kicad`; the hub's tests
+  answer for it with `tests/kicadstub.py` and the exports the real service made
+  of `tests/fixtures/kicad/board.kicad_pcb`
 - `githooks/` — the hooks git runs for a push to a project's repository on the
   hub, found through `core.hooksPath`, which `src/githttp.py` derives from its
   own location (`/app/githooks` in the image, `/src/githooks` in CI's test
