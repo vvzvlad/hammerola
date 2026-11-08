@@ -155,11 +155,20 @@ export class MoveAndZoom {
             this.#startDistance !== null
         ) {
             e.preventDefault();
+            // A pinch scales the view by as much as the fingers' distance
+            // changed since the last move, however fast they moved, about
+            // the point between them.
             const currentDistance = this.#getDistanceBetweenTouches(e.touches);
-            if (Math.abs(this.#startDistance - currentDistance) < 10) {
-                const scale = (currentDistance / this.#startDistance) * 5;
+            if (this.#startDistance > 0 && currentDistance > 0) {
+                const [a, b] = [e.touches[0]!, e.touches[1]!];
+                this.#rect = this.target.getBoundingClientRect();
                 this.#handle_zoom(
-                    this.#startDistance < currentDistance ? scale * -1 : scale,
+                    -Math.log(currentDistance / this.#startDistance) /
+                        zoom_speed,
+                    new Vec2(
+                        (a.clientX + b.clientX) / 2 - this.#rect.left,
+                        (a.clientY + b.clientY) / 2 - this.#rect.top,
+                    ),
                 );
             }
             this.#startDistance = currentDistance;

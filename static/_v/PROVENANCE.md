@@ -205,7 +205,7 @@ the edits the only difference between Prism's viewer and ours:
 | File | sha256 |
 | --- | --- |
 | `ecad-viewer.js` built without our edits, and Prism's | `679cf37da9a742ea36449f53c644a4e9e1aa0dd50a90f94ac00dfd3e1e8b44da` |
-| `ecad-viewer.js` as committed | `fb366c9bcb71db75b6949c32e6ceb78274b78d9426ec19fc5b8b9a6727b48683` |
+| `ecad-viewer.js` as committed | `8a9ec5c4bce6289f72bab22c74d9745ee7a1d168485f4227f57a3d80b4360d0d` |
 | `parser.worker.js` built without our edits, and Prism's | `4db7d8e5ef8d705bc9d2fe19fd6619d8e0fc27a833027dd08b1bdc76e22a7f1f` |
 | `parser.worker.js` as committed (edit 16 reaches it) | `594b1b7afb55d7ec1a173ef0168e846c6c22d337a68a1a970380e1360d3bd8c3` |
 | `ecad-viewer-LICENSE.md` | `8a8fc30b7593ddc63132baa9e58c1d09464aa434f3c5ed5166a52800de6208b3` |
@@ -246,8 +246,9 @@ comments' places and the title block's path of edit 21 by
 `ui/tests/plane.test.js`, where its camera goes on a cross-probe and on a
 double-click by `ui/tests/planeviewer.test.js`, its frame counter's arithmetic
 by `ui/tests/framemeter.test.js`, the text of edit 10 by
-`ui/tests/intersheetrefs.test.js` and the arithmetic of edit 2 by
-`ui/tests/wheelgesture.test.js`. The others are the viewer's drawing and input
+`ui/tests/intersheetrefs.test.js`, the arithmetic of edit 2 by
+`ui/tests/wheelgesture.test.js` and its touch pinch by
+`ui/tests/kicadpinch.test.js`. The others are the viewer's drawing and input
 code and what its element hands the page, checked in a browser; what keeps them
 is that they live in the source the files are built from. Built without
 minifying, the bundles of this tree and the fork's at `acce697` differ in these
@@ -277,7 +278,12 @@ the zoom by `exp(-delta · zoom_speed)` and keeps the world point under `point`
 where it is. The arithmetic is `wheel_gesture` (`base/dom/wheel-gesture.ts`),
 and the wheel over an inset (`ecad-viewer/insets/session.ts`) takes it too, the
 inset's own camera panned and zoomed about the pointer by the same numbers; Shift
-and the wheel still turn an inset, as the fork has it.
+and the wheel still turn an inset, as the fork has it. A two-finger pinch on a
+touch screen (`#on_touch_move`) multiplies the zoom by the ratio of the fingers'
+distance to the one at the last move, about the point between them
+(`ui/tests/kicadpinch.test.js`). The fork zoomed by one fixed step on every move
+whose distance changed by less than 10 px and dropped the rest, so a fast spread
+did not zoom and fingers held still kept zooming.
 
 **3. Selecting a footprint leaves the copper pours as they were.** The board
 viewer's `highlight_fp` (`viewers/board/viewer.ts`), which a double click on a
@@ -601,7 +607,8 @@ the three build files), run `make ecad` and the JS suite — `schematicpins.test
 `worldview.test.js`, `plane.test.js`, `planeviewer.test.js` and
 `framemeter.test.js` fail if edit 6,
 7, 10, 14 and 15, 16, 18, 19, 20 or 21 was lost (`wheelgesture.test.js` checks the
-arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it) —
+arithmetic of edit 2, not that `MoveAndZoom` and the inset panel still call it;
+`kicadpinch.test.js` checks its touch pinch) —
 update this section and the hashes, and commit the
 source and the built files together.
 
