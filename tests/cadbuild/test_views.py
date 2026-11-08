@@ -573,6 +573,16 @@ def test_a_nest_deeper_than_the_hub_accepts_is_refused():
     assert str(MAX_VIEW_DEPTH) in refusal([one_view(parts=[entry])])
 
 
+@pytest.mark.parametrize("whole", [1, 0, "yes"])
+def test_a_whole_that_is_not_true_or_false_is_refused(whole):
+    """A bool is the whole contract: `1` would pass a truthiness test and say
+    nothing about what the author meant."""
+    message = refusal(
+        [one_view(parts=[{"group": "sticker", "whole": whole,
+                          "parts": ["body"]}])])
+    assert "'sticker'" in message and "not True or False" in message
+
+
 # --------------------------------------------------------------------------
 # The exemption lists
 # --------------------------------------------------------------------------
@@ -893,6 +903,22 @@ def test_a_group_moves_nothing():
         [one_view(parts=[{"group": "housing", "parts": ["body"]}])])
     doc = shaped_document(flat_document("body"), prepared[0])
     assert doc["parts"][0]["loc"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+
+
+def test_a_whole_group_says_so_on_its_node_and_no_other_group_does():
+    """The viewer picks a `whole` group as one object. Every other group's node
+    is written as it always was, `whole: False` included, so no view file of
+    a model that does not use the key changes by a byte."""
+    prepared = prepare(
+        [one_view(parts=[
+            {"group": "sticker", "whole": True, "parts": ["body"]},
+            {"group": "housing", "whole": False, "parts": ["lid"]},
+            {"group": "loose", "parts": ["screw"]}])],
+        catalogue(body="printable", lid="printable", screw="hardware"))
+    sticker, housing, loose = shaped_document(
+        flat_document("body", "lid", "screw"), prepared[0])["parts"]
+    assert sticker["whole"] is True
+    assert "whole" not in housing and "whole" not in loose
 
 
 # ...and the mesh leaves written into it
