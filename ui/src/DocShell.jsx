@@ -55,6 +55,7 @@ import {
 import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
+import { MEASURE_HINT } from './KicadView.jsx';
 import { BOM_TYPE } from './kicadbom.js';
 import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
 import { readRetina } from './store.js';
@@ -91,8 +92,10 @@ const BAR = `${BAR_LAYER}18`;
  * open document's file (`docHref`, served under `base`) stand outside the bar
  * at the left of the strip (`DocFile` in viewlist.jsx), as they do over a
  * document there; a BOM, which has no file of its own (kicadbom.js), has
- * neither. Measure and Add primitive, about a model, are out of service, as
- * they are over a document there. Settings is in service: `settings` holds its
+ * neither. Add primitive, about a model, is out of service, as it is over a
+ * document there; so is Measure, but over a KiCad board, whose view hands
+ * `tools.measure` (KicadView.jsx): there it flips the board's measure mode
+ * (`onMeasure`) and is lit while the mode is on. Settings is in service: `settings` holds its
  * flag and toggle (`open`, `onToggle`) and its rows' answers (`settingsView` in
  * viewlist.jsx); with no model here its Retina row is out of service, as it is
  * over a document there. Comment is in service over a
@@ -108,14 +111,17 @@ const BAR = `${BAR_LAYER}18`;
  * before each row's name (`documentRows`). Pure.
  */
 export function docBar({
-  meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onRename, settings = {},
+  meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onMeasure, onRename,
+  settings = {},
 }) {
+  const measure = (tools && tools.measure) || null;
   return {
     viewMenu: true, viewLabel: doc.name, viewsOpen: !!viewsOpen, viewsToggle: onToggle,
     viewTabs: [], docRows: documentRows(meta.documents, doc.id, onPick, base, buildKey(meta), onRename),
     docHref: doc.type === BOM_TYPE ? null : docUrl(base, doc),
     showTools: !narrow,
-    measureBtnStyle: btn(false, false, true),
+    tMeasure: measure ? onMeasure : undefined,
+    measureBtnStyle: btn(Boolean(measure && measure.on), false, !measure),
     tInsets: tools && tools.insets ? tools.insets.toggle : undefined,
     insetsBtnStyle: btn(Boolean(tools && tools.insets && tools.insets.on), false, !(tools && tools.insets)),
     tComment: onComment,
@@ -155,11 +161,11 @@ export function docBar({
  */
 export function DocPage({
   meta, active, base, onPick, viewsOpen, onToggle, onClose, narrow, viewer, tools, onTools, addressDoc, onSheet,
-  tool, onComment, comments, toast, onRename, settings,
+  tool, onComment, onMeasure, comments, toast, onRename, settings,
 }) {
   const doc = pickDocument(meta.documents, active);
   const renameDoc = onRename && ((one) => onRename({ kind: 'document', id: one.id, name: one.name }));
-  const bar = docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment,
+  const bar = docBar({ meta, doc, base, onPick, viewsOpen, onToggle, narrow, viewer, tools, tool, onComment, onMeasure,
     onRename: renameDoc, settings });
   return (
     <div onClick={onClose} style={{ ...css(SHELL), ...FONTS }}>
@@ -225,6 +231,7 @@ export default class DocShell extends React.Component {
     this.onSheet = (sheet, push) => this.writeSheet(sheet, push);
     this.onKey = (event) => this.key(event);
     this.onComment = () => this.toggleComment();
+    this.onMeasure = () => this.toggleMeasure();
   }
 
   componentDidMount() {
@@ -355,6 +362,20 @@ export default class DocShell extends React.Component {
     if (arming) this.toast(COMMENTABLE.get(this.docOnScreen().type));
   }
 
+  /** The bar's Measure over a KiCad board: its measure mode flipped
+   *  (`tools.measure`, KicadView.jsx). Coming on, it puts the Comment tool
+   *  down — one click mode on the board at a time — shuts the list and says
+   *  how to measure. */
+  toggleMeasure() {
+    const measure = this.state.tools && this.state.tools.measure;
+    if (!measure) return;
+    if (!measure.on) {
+      this.setState({ tool: null, viewsOpen: false });
+      this.toast(MEASURE_HINT);
+    }
+    measure.toggle();
+  }
+
   /** Escape puts the Comment tool down. It is taken where the tool was armed
    *  on the document on screen, as the model's page takes an Escape that
    *  closed something, so the design under it keeps its selection. */
@@ -456,7 +477,7 @@ export default class DocShell extends React.Component {
                       tabStrip: this.props.tabStrip,
                       onTabStrip: this.props.onTabStrip,
                     }}
-                    tool={this.state.tool} onComment={this.onComment}
+                    tool={this.state.tool} onComment={this.onComment} onMeasure={this.onMeasure}
                     comments={this.comments()} toast={this.state.toast}
                     onRename={viewer ? undefined : (subject) => {
                       this.setState({ viewsOpen: false });

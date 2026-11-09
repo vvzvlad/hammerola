@@ -28,6 +28,7 @@ import CopyLink from '../src/copylink.jsx'
 import DocumentView, { DocumentLayers } from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
+import { MEASURE_HINT } from '../src/KicadView.jsx'
 import { ERROR, MODEL, PROGRESS, STATE, VIEWPORT_TAG } from '../src/events.js'
 import { menuRow } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
@@ -189,6 +190,21 @@ describe('the documents in the list of views', () => {
     const tree = collect(c.render(), (el) => (
       el.props.style && el.props.style.zIndex === '10' ? el : undefined))
     expect(tree.map((el) => el.props.style.display)).toEqual(['none'])
+  })
+
+  it('measure a KiCad board over the model with Measure, the board\'s own mode, which puts an armed tool down', () => {
+    // The owner's "measures на платах кикада".
+    const toggle = vi.fn()
+    const tools = (on) => ({ fit() {}, frame() {}, measure: { on, toggle } })
+    const c = component({ meta: meta([...DOCS, ...KICAD]), doc: KICAD[1].id, tool: 'comment', docTools: tools(false) })
+    expect(css(c.computed().measureBtnStyle).pointerEvents).toBeUndefined()
+    c.computed().tMeasure()
+    expect([toggle.mock.calls.length, c.state.tool, c.state.toast]).toEqual([1, null, MEASURE_HINT])
+    c.state.docTools = tools(true)
+    expect(c.computed().measureBtnStyle).toContain(LIT)
+    // over a schematic, which has no measure mode, it is out of service
+    const sch = component({ meta: meta([...DOCS, ...KICAD]), doc: KICAD[0].id, docTools: { fit() {}, frame() {} } })
+    expect(css(sch.computed().measureBtnStyle).pointerEvents).toBe('none')
   })
 
   it('put the open one\'s Download and Copy link beside the bar, and over the model neither', () => {

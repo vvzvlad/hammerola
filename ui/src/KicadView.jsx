@@ -183,6 +183,20 @@
 // none of it (`hostEscape`). The world view a double-click on a label of the
 // schematic opens, the viewer still closes on Escape itself.
 //
+// MEASURE on the board is the viewer's own measure mode (its
+// `viewers/board/measure-tool.ts`): a click places a point, the second the
+// other end, and the distance stands on the board; a point snaps to a pad, a
+// via, a track's end, a corner or the board's edge, and Shift places one where
+// the pointer is. The mode is the board element's, flipped by the bar's Measure
+// (`toggleMeasure`, handed to the page as `measure` of what the bar can do) and
+// by the viewer's Cmd/Ctrl+Shift+M, and reported by the element
+// (`MEASURE_EVENT`), which lights the button. One click mode at a time: the
+// viewer ends measuring when the insets come on, and the Comment tool armed on
+// the board ends it too (`armComment`); the pages put Comment down when the
+// bar's Measure brings it on (the viewer's own key does not). Escape takes the
+// points first, then the mode (`key`). The
+// schematic has no measure mode.
+//
 // FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
 // view on screen. The element has no fit of its own, and its `exportImage`
 // walks every sheet of a schematic, reloading each; so a drawn view is driven
@@ -303,6 +317,14 @@ export const SHEET_LOADED_EVENT = 'kicanvas:sheet:loaded';
 /** The event an element reports a change of its inset mode with
  *  (`{ on }`): its own, from `I` or `setInsetMode`, and its peer's. */
 export const INSET_EVENT = 'ecad-viewer:inset-mode';
+
+/** The event the board's element reports a change of its measure mode with
+ *  (`{ on }`): from the bar's Measure, its own Cmd/Ctrl+Shift+M, and the
+ *  insets coming on. */
+export const MEASURE_EVENT = 'ecad-viewer:measure-mode';
+
+/** What the toast says when Measure comes on over a board (both pages). */
+export const MEASURE_HINT = 'Click two points for the distance between them; hold Shift for a point that does not snap';
 
 /** The id the draft's marker stands under among `marks`. */
 export const DRAFT_MARK = 'draft';
@@ -677,23 +699,20 @@ export default class KicadView extends React.Component {
     // `received`: the bytes of the 2D views' files in so far; `got`: all of
     // them, the viewers being handed them. `bom`: the schematic's BOM in its
     // order (`bomRows`), once it has its files. `insets`: the design's inset
-    // mode, on or off, as its elements report it.
+    // mode, on or off, as its elements report it; `measure`: the board's
+    // measure mode, as its element reports it.
     // `net`: the name of the net lit on the board and in the 3D view, or null.
     this.state = {
       ready: false, error: '', selected: null, datasheets: new Map(), nets: NO_NETS, menu: null, hover: -1, sheet: null,
-      tools3d: null, received: 0, got: false, bom: [], insets: false, net: null,
+      tools3d: null, received: 0, got: false, bom: [], insets: false, measure: false, net: null,
       // Each part's `Datasheet` value that is a web address, and its `Price`
       // value, for the BOM.
       webDatasheets: new Map(), prices: new Map(),
     };
-    // What the bar can do with a drawn view on screen, one object for both, and
-    // the last thing the page was told (`report`). A design that draws both
-    // members has Insets too, an object for each state of the mode, so that
-    // the page is told when it changes.
-    this.drawnTools = { fit: () => this.fitDrawn(), frame: () => this.frameDrawn() };
-    const withInsets = (on) => ({ ...this.drawnTools, insets: { on, toggle: () => this.toggleInsets() } });
-    this.insetsOff = withInsets(false);
-    this.insetsOn = withInsets(true);
+    // What the bar can do with a drawn view on screen (`toolsFor`), one object
+    // per state of its Insets and Measure, so that the page is told when one
+    // changes, and the last thing the page was told (`report`).
+    this.toolSets = new Map();
     this.reported = undefined;
     this.onTools3D = (tools) => this.setState({ tools3d: tools });
     // A selection waiting for the page to hand down the member it is on:
@@ -823,6 +842,11 @@ export default class KicadView extends React.Component {
       [INSET_EVENT]: (event) => {
         if (event.detail.on !== this.state.insets) this.setState({ insets: event.detail.on });
       },
+      ...(context === PCB ? {
+        [MEASURE_EVENT]: (event) => {
+          if (event.detail.on !== this.state.measure) this.setState({ measure: event.detail.on });
+        },
+      } : {}),
       ...(context === SCH ? { [PAGE_EVENT]: () => this.paged(), [SHEET_LOADED_EVENT]: () => this.sheetLoaded() } : {}),
     };
     return (element) => {
@@ -851,14 +875,29 @@ export default class KicadView extends React.Component {
 
   /** What the bar can do with the view on screen: a drawn one once its files
    *  are in, with Insets where the design draws both members (`insets`: the
-   *  mode on or off, and `toggle`), the 3D model once it is loaded, the BOM
-   *  nothing. */
+   *  mode on or off, and `toggle`) and Measure on the board (`measure`,
+   *  likewise), the 3D model once it is loaded, the BOM nothing. */
   toolsOnScreen() {
     const side = this.side();
     if (side === BOARD3D) return this.state.tools3d;
     if (!DRAWN.includes(side) || !this.state.ready || this.state.error) return null;
-    if (drawnViews(this.members()).length < DRAWN.length) return this.drawnTools;
-    return this.state.insets ? this.insetsOn : this.insetsOff;
+    const insets = drawnViews(this.members()).length < DRAWN.length ? null : this.state.insets;
+    return this.toolsFor(insets, side === PCB ? this.state.measure : null);
+  }
+
+  /** Fit and Frame, with Insets and Measure in the state given, null leaving
+   *  one out: the same object for the same states, made on first ask. */
+  toolsFor(insets, measure) {
+    const key = `${insets}/${measure}`;
+    if (!this.toolSets.has(key)) {
+      this.toolSets.set(key, {
+        fit: () => this.fitDrawn(),
+        frame: () => this.frameDrawn(),
+        ...(insets === null ? {} : { insets: { on: insets, toggle: () => this.toggleInsets() } }),
+        ...(measure === null ? {} : { measure: { on: measure, toggle: () => this.toggleMeasure() } }),
+      });
+    }
+    return this.toolSets.get(key);
   }
 
   /** The bar's Insets: the inset mode of the drawn view on screen flipped,
@@ -866,6 +905,12 @@ export default class KicadView extends React.Component {
    *  (`INSET_EVENT`). */
   toggleInsets() {
     this.elements[this.side()].setInsetMode(!this.state.insets);
+  }
+
+  /** The bar's Measure: the board's measure mode flipped, which its element
+   *  reports (`MEASURE_EVENT`). */
+  toggleMeasure() {
+    this.elements[PCB].setMeasureMode(!this.state.measure);
   }
 
   /** The schematic and the board made each other's inset peer, as Prism's
@@ -1136,11 +1181,12 @@ export default class KicadView extends React.Component {
 
   /** Escape closes the passing things the page opened over the view before
    *  the insets the reader pinned: the datasheet's window, then the menu,
-   *  then the insets of the view on screen (its element's `escapeInsets`: the
-   *  preview, else every inset), or else puts out what is lit everywhere —
-   *  one thing of the page's per Escape, and one that closed the window or
-   *  insets is taken, as the page takes one that closed something of its
-   *  own. The viewer takes none of the insets' Escape (`hostEscape`,
+   *  then the board's measure (its element's `escapeMeasure`: the points,
+   *  else the mode), then the insets of the view on screen (its element's
+   *  `escapeInsets`: the preview, else every inset), or else puts out what is
+   *  lit everywhere — one thing of the page's per Escape, and one that closed
+   *  the window, the measure or insets is taken, as the page takes one that
+   *  closed something of its own. The viewer takes none of the insets' Escape (`hostEscape`,
    *  `linkInsets`); the world view a double-click on a label opens it still
    *  closes on its own, so an Escape over that view may close it and one
    *  thing of the page's.
@@ -1154,6 +1200,8 @@ export default class KicadView extends React.Component {
       this.closeSheet();
     } else if (this.state.menu) {
       this.closeMenu();
+    } else if (element && typeof element.escapeMeasure === 'function' && element.escapeMeasure()) {
+      event.preventDefault();
     } else if (element && typeof element.escapeInsets === 'function' && element.escapeInsets()) {
       event.preventDefault();
     } else {
@@ -1267,7 +1315,9 @@ export default class KicadView extends React.Component {
 
   /** The viewer's comment mode on the drawn view on screen while the page's
    *  tool is armed, off on the others and on all of a hidden design, each told
-   *  only of a change. */
+   *  only of a change. Armed on the board it ends measuring there: the viewer
+   *  gives a click in comment mode to the comment, so a measure left on would
+   *  take none. */
   armComment() {
     const on = this.onScreen() && Boolean(this.props.comment && this.props.comment.on) && this.state.ready
       && !this.state.error;
@@ -1277,6 +1327,7 @@ export default class KicadView extends React.Component {
       if (!element || typeof element.setCommentMode !== 'function' || this.commenting[context] === want) continue;
       this.commenting[context] = want;
       element.setCommentMode(want);
+      if (want && typeof element.setMeasureMode === 'function') element.setMeasureMode(false);
     }
   }
 

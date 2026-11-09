@@ -21,7 +21,7 @@ import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, {
   docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE, TEXT_TYPE,
 } from '../src/DocumentView.jsx'
-import KicadView, { DRAFT_MARK, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
+import KicadView, { DRAFT_MARK, MEASURE_HINT, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
 } from '../src/docmd.js'
@@ -974,6 +974,26 @@ describe('comments on the page of a build with no model', () => {
     const reader = opened({ token: null })
     expect(commentTool(reader).props.style.display).toBe('none')
     expect(css(values(reader).railBtnStyle).display).toBe('none')
+  })
+
+  it('measures a board with Measure, which puts Comment down, says how and is lit while the board measures', () => {
+    // The owner's "measures на платах кикада".
+    const shell = opened({ search: '?d=hw__board.kicad_pcb' })
+    const measureTool = (one) => collect(drawn(one), (el) => (texts(el).join('') === 'Measure' ? el : undefined))[0]
+    // out of service until the board's view hands its measure mode
+    expect(measureTool(shell).props.style.pointerEvents).toBe('none')
+    const toggle = vi.fn()
+    shell.onTools({ fit() {}, frame() {}, measure: { on: false, toggle } })
+    commentTool(shell).props.onClick()
+    measureTool(shell).props.onClick()
+    expect([toggle.mock.calls.length, shell.state.tool, shell.state.toast]).toEqual([1, null, MEASURE_HINT])
+    expect(measureTool(shell).props.style.background).toBeUndefined()
+    shell.onTools({ fit() {}, frame() {}, measure: { on: true, toggle } })
+    expect(measureTool(shell).props.style.background).toBe('var(--accent-bg)')
+    // off again, with nothing else touched
+    shell.state.toast = null
+    measureTool(shell).props.onClick()
+    expect([toggle.mock.calls.length, shell.state.toast]).toEqual([2, null])
   })
 
   it('keeps a draft on a schematic off the schematic\'s BOM, which is under the same file', () => {

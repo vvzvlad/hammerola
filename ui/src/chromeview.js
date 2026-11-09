@@ -21,6 +21,7 @@ import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
 import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
+import { MEASURE_HINT } from './KicadView.jsx';
 import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
 import { writeRetina } from './store.js';
@@ -82,6 +83,20 @@ export function chromeView(s, props, deps) {
   // the page (`insets` of `docTools`, KicadView.jsx), or null: over the model
   // and over any other document the tool is out of service.
   const docInsets = (docOpen && s.docTools && s.docTools.insets) || null;
+  // The measure mode of a KiCad board over the model, as its view told the
+  // page (`measure` of `docTools`, KicadView.jsx), or null: over any other
+  // document Measure is out of service. Coming on, it puts an armed tool down
+  // — the Comment tool on the board would take its clicks — and says how to
+  // measure.
+  const docMeasure = (docOpen && s.docTools && s.docTools.measure) || null;
+  const measureDoc = () => {
+    if (!docMeasure.on) {
+      set({ tool: null, viewsOpen: false, menu: null });
+      toast(MEASURE_HINT);
+    }
+    shutHeader();
+    docMeasure.toggle();
+  };
   // Opening a document: what its row does, what a row of a KiCad design's
   // menu (KicadView.jsx) does with the other member's id, and what a
   // markdown link to another document does. A step of history whose address
@@ -331,12 +346,14 @@ export function chromeView(s, props, deps) {
     // A document over the model takes none of them away: the bar is the same
     // on every page and over every view (`toolBar` in viewlist.jsx). The four
     // about the model — Measure, Comment, Add primitive, Settings — are out of
-    // service under it, Comment except over a document that takes a comment
+    // service under it, Measure except over a KiCad board (`docMeasure`),
+    // Comment except over a document that takes a comment
     // (`docCommentable`), Fit and Frame unless its view can do them. The
     // document's Download and Copy link (`docHref`) stay on a narrow window.
     showTools: !narrow,
     // Both are out of service while the scene is a comparison's, and under a
-    // document, which covers the model — Comment not under one that takes a
+    // document, which covers the model — Measure not over a KiCad board, which
+    // measures itself (`docMeasure`), Comment not under one that takes a
     // comment, whose own drawing it pins to. That differs from `viewer`: that one
     // is about who the reader is, this about what is under the cursor.
     // `toolsOff()` documents why it is not `s.compare`. The buttons are the
@@ -345,8 +362,10 @@ export function chromeView(s, props, deps) {
     // Move is armed from the object's row menu (`menuItems`), where the reader
     // has already picked the object; its share of `toolsOff` is the `compared`
     // exclusion that row sits inside.
-    tMeasure: setTool('measure'),
-    measureBtnStyle: btn(s.tool === 'measure', false, toolsOff() || !!docOpen),
+    // Over a KiCad board, the board's own measure mode (`docMeasure`).
+    tMeasure: docMeasure ? measureDoc : setTool('measure'),
+    measureBtnStyle: docOpen ? btn(!!docMeasure && docMeasure.on, false, !docMeasure)
+      : btn(s.tool === 'measure', false, toolsOff()),
     // Not one of `s.tool` either: the design's own inset mode, which its `I`
     // flips as well, lit while it is on (`docInsets`).
     tInsets: docInsets ? docInsets.toggle : undefined,

@@ -34,7 +34,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DOUBLE_CLICK_MS, DRAFT_MARK,
-  drawingOf, drawnViews, INSET_EVENT, MARKER_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
+  drawingOf, drawnViews, INSET_EVENT, MARKER_EVENT, MEASURE_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
   SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
 import { loadMeta } from '../src/hub.js'
@@ -95,6 +95,8 @@ function mounted(doc = DOCS[0], documents = DOCS, viewer = true) {
       element.setInsetPeer = vi.fn()
       element.setInsetMode = vi.fn()
       element.escapeInsets = vi.fn(() => false)
+      element.setMeasureMode = vi.fn()
+      element.escapeMeasure = vi.fn(() => false)
     }
     // The canvas the viewer draws on, and the element's hit test: `selectAt`
     // reports what is under the point, as the viewer's own click does.
@@ -418,7 +420,7 @@ describe('a design the page keeps while another document is on screen', () => {
     // shown again: the bar told afresh what the board can do
     keep(view, true)
     expect(view.props.onTools).toHaveBeenCalledTimes(told + 1)
-    expect(Object.keys(view.props.onTools.mock.lastCall[0])).toEqual(['fit', 'frame', 'insets'])
+    expect(Object.keys(view.props.onTools.mock.lastCall[0])).toEqual(['fit', 'frame', 'insets', 'measure'])
   })
 
   it('links its two elements as each other\'s inset peer once the viewer is loaded, and unlinks them when it goes', async () => {
@@ -1559,9 +1561,9 @@ describe('what the page\'s bar can do with the view on screen', () => {
     view.componentDidUpdate()
     const [, tools] = told(view)
     expect(Object.keys(tools)).toEqual(['fit', 'frame', 'insets'])
-    // the board on screen: the same tools, acting on it
+    // the board on screen: Fit and Frame act on it, and it has Measure too
     show(view, DOCS[1])
-    expect(told(view)).toHaveLength(2)
+    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame', 'insets', 'measure'])
     tools.fit()
     expect(drawings[PCB].viewer.zoom_fit_top_item).toHaveBeenCalledTimes(1)
     expect(drawings[SCH].viewer.zoom_fit_top_item).not.toHaveBeenCalled()
@@ -1588,7 +1590,7 @@ describe('what the page\'s bar can do with the view on screen', () => {
     view.componentDidUpdate()
     expect(told(view).at(-1)).toBe(three)
     show(view, DOCS[1])
-    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame', 'insets'])
+    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame', 'insets', 'measure'])
   })
 
   it('has Insets where the design draws both: the mode flipped on the view on screen, lit as the elements report it', () => {
@@ -1609,7 +1611,41 @@ describe('what the page\'s bar can do with the view on screen', () => {
     const lone = mounted(DOCS[4]).view
     lone.setState({ ready: true })
     lone.componentDidUpdate()
-    expect(Object.keys(told(lone).at(-1))).toEqual(['fit', 'frame'])
+    expect(Object.keys(told(lone).at(-1))).toEqual(['fit', 'frame', 'measure'])
+  })
+
+  it('has Measure on the board alone: the board\'s measure mode flipped, lit as its element reports it', () => {
+    // The owner's "measures на платах кикада".
+    const { view, elements } = mounted(DOCS[1])
+    view.setState({ ready: true })
+    view.componentDidUpdate()
+    expect(told(view).at(-1).measure.on).toBe(false)
+    told(view).at(-1).measure.toggle()
+    expect(elements[PCB].setMeasureMode.mock.calls).toEqual([[true]])
+    // the element reports the mode, its own Cmd+Shift+M and the insets ending it too
+    elements[PCB].dispatchEvent(new CustomEvent(MEASURE_EVENT, { detail: { on: true } }))
+    view.componentDidUpdate()
+    expect(told(view).at(-1).measure.on).toBe(true)
+    told(view).at(-1).measure.toggle()
+    expect(elements[PCB].setMeasureMode.mock.calls).toEqual([[true], [false]])
+    // the schematic has none
+    show(view, DOCS[0])
+    expect(Object.keys(told(view).at(-1))).toEqual(['fit', 'frame', 'insets'])
+  })
+
+  it('takes an Escape the board\'s measure took, before the insets and the selection', () => {
+    const { view, elements } = mounted(DOCS[1])
+    view.listen(true)
+    elements[PCB].escapeMeasure.mockReturnValueOnce(true)
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    window.dispatchEvent(escape)
+    expect([escape.defaultPrevented, elements[PCB].escapeInsets.mock.calls.length,
+      elements[PCB].clearSelection.mock.calls.length]).toEqual([true, 0, 0])
+    // one it did not take goes on to the insets and the selection
+    window.dispatchEvent(ESCAPE())
+    expect([elements[PCB].escapeMeasure.mock.calls.length, elements[PCB].escapeInsets.mock.calls.length,
+      elements[PCB].clearSelection.mock.calls.length]).toEqual([2, 1, 1])
+    view.listen(false)
   })
 
   it('finds the drawing only inside the element', () => {
@@ -1680,6 +1716,13 @@ describe('a comment on a design', () => {
     handed(view, { on: false })
     expect([elements[SCH].setCommentMode.mock.calls, elements[PCB].setCommentMode.mock.calls])
       .toEqual([[[true], [false]], [[false]]])
+  })
+
+  it('ends measuring on the board when the Comment tool is armed there, whose mode takes the clicks', async () => {
+    const { view, elements } = await opened(DOCS[1])
+    handed(view, { on: true })
+    handed(view, { on: false })
+    expect([elements[PCB].setMeasureMode.mock.calls, elements[SCH].setMeasureMode.mock.calls]).toEqual([[[false]], []])
   })
 
   it('hands the page an area drawn on either view, with the file of its sheet and what is in it', async () => {
