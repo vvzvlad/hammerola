@@ -58,6 +58,7 @@ import {
   GIZMO_MIN_SCALE, GIZMO_PLANE_GAP_PX, GIZMO_PLANE_PX, GIZMO_PX, GIZMO_RIM_PX,
   GIZMO_SHAFT_PX,
 } from '../src/viewport/options.js'
+import { applyJoints } from '../src/viewport/parts.js'
 import { GIZMO_ORDER } from '../src/viewport/scene3d.js'
 import {
   makeViewport, RECT, framesAsked, rendered, settled, stubFrames,
@@ -1462,6 +1463,48 @@ describe('one whole drag', () => {
 
     expect(stands(s.groups[PART])).toEqual([1, 12.34, -0.07])
     expect(details(s.vp, EVENT_MOVED)[0].delta).toEqual([1, 12.34, -0.07])
+  })
+
+  it('follows the arrow on a part a hinge holds open, and records it at the hinge`s 0', async () => {
+    // THE ARROWS STAND ON THE WORLD AXES and a move is recorded at joint value 0,
+    // with the joint composed after it (`stand` in parts.js). A hinge about +y
+    // held a quarter turn open sends the frame's x to world -z and its z to
+    // world +x, so a hand along world +X is the frame's +z: R⁻¹·(10, 0, 0) is
+    // (0, 0, 10). About y and not about x as in parts.test.js: a hinge about the
+    // arrow's own axis leaves that axis alone, and the drag would pass with the
+    // record taken straight off the world.
+    //
+    // ALREADY MOVED, so the offset standing has to be carried out to the world
+    // and back as well as the hand's (`outOfFrame`): measured as it is written,
+    // (2, 3, 0) plus ten along world X would read (12, 3, 0).
+    const s = scene()
+    s.vp.jointNodes.set(PART, {
+      joint: { id: 'hinge', type: 'revolute', origin: [6, 0, -4], axis: [0, 1, 0],
+               limits: [0, 110] },
+      loc: [[0, 0, 0], [0, 0, 0, 1]],
+    })
+    s.vp.jointValues = { hinge: 90 }
+    s.vp.moved.set(PART, { delta: [2, 3, 0], turn: [0, 0, 0] })
+    applyJoints(s.vp)
+    rendered(s.viewer)
+    const before = stands(s.groups[PART])
+
+    const spot = onArrow(s, 0)
+    press(s.canvas, spot)
+    dragFrom(spot)
+    pointerUp(dragged(spot))
+    await settled()
+
+    // On screen, ten along world X and nothing across it, whatever the hinge
+    // holds: the group is placed through the hinge's turn, so this is a
+    // closeness and not an equality.
+    stands(s.groups[PART]).forEach((value, axis) => expect(value, `axis ${axis}`)
+      .toBeCloseTo(before[axis] + [10, 0, 0][axis], 9))
+    // In the record, EXACTLY the standing offset plus R⁻¹ of the world delta:
+    // the turn out and back leaves binary digits no hand put there, and they
+    // would reach the document as text.
+    expect(s.vp.moved.get(PART)).toEqual({ delta: [2, 3, 10], turn: [0, 0, 0] })
+    expect(details(s.vp, EVENT_MOVED)[0].delta).toEqual([2, 3, 10])
   })
 
   it('is concluded when the pointer is taken away', async () => {

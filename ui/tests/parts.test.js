@@ -25,9 +25,10 @@ import { geometries, transforms } from '@jscad/modeling'
 import { internals } from '../src/viewport/internals.js'
 import { GHOST_OPACITY, renderOptions } from '../src/viewport/options.js'
 import {
-  anglesOf, applyGhost, applyHidden, applySelected, grabbable, movePart,
-  movableGroup, partCentre, partTop, quaternionOf, reconcileMoves, restageMoves,
-  statesOf, treeFromShapes, turned,
+  anglesOf, applyGhost, applyHidden, applyJoints, applySelected, grabbable,
+  intoFrame, movePart, movableGroup, partCentre, partFrame, partTop,
+  quaternionOf, reconcileMoves, restageMoves, statesOf, treeFromShapes,
+  turnIntoFrame, turned,
 } from '../src/viewport/parts.js'
 import { HmrViewport } from '../src/viewport/element.js'
 import {
@@ -914,28 +915,29 @@ describe('partCentre', () => {
     //
     // What is asserted is therefore the ORDER — recompose, then read — and a spy
     // states exactly that. Modelling the composition in the fake would mean
-    // reimplementing `Object3D.updateMatrixWorld`, and `movePart` writes an
+    // reimplementing `Object3D.updateWorldMatrix`, and `movePart` writes an
     // ABSOLUTE position already compensated for the pivot, so "the base plus
     // the position" is not the matrix three.js would build.
     //
-    // OF THE GROUP AND NOT OF `front`: that method composes an object's world
-    // matrix out of its PARENT's and walks down, never up, and the position that
-    // moved is the group's.
+    // OF THE GROUP AND NOT OF `front`, since the position that moved is the
+    // group's; and WITH ITS PARENTS (`true` first), since a joint may have moved
+    // a group above it since the last frame.
     const { solid, viewer } = scene()
     const seen = []
-    solid.updateMatrixWorld = vi.fn(() => {
+    solid.updateWorldMatrix = vi.fn(() => {
       solid.front.matrixWorld.elements[12] = 40
     })
     const original = solid.front.matrixWorld.elements
     Object.defineProperty(solid.front, 'matrixWorld', {
       get() {
-        seen.push(solid.updateMatrixWorld.mock.calls.length)
+        seen.push(solid.updateWorldMatrix.mock.calls.length)
         return { elements: original }
       },
     })
 
     expect(partCentre(viewer, PIN)).toEqual([BOX_CENTRE[0] + 40, 3, 0])
-    expect(solid.updateMatrixWorld).toHaveBeenCalledTimes(1)
+    expect(solid.updateWorldMatrix).toHaveBeenCalledTimes(1)
+    expect(solid.updateWorldMatrix).toHaveBeenCalledWith(true, true)
     // The read that produces the answer happens AFTER the recompose. The first
     // entry is the guard above it, which only asks whether there is a matrix at
     // all; the last is the one the arithmetic comes off.
@@ -1454,6 +1456,87 @@ describe('movePart, turning', () => {
 
     expect(vp.viewer.update).toHaveBeenCalledTimes(drawn)
     expect(at(solid)).toEqual(stood)
+  })
+})
+
+describe('movePart, on a part a joint holds', () => {
+  // The arrows and the rings are drawn on the WORLD axes, while a move is
+  // recorded at joint value 0 and the joint composed after it (`stand`). What
+  // a widget measures is carried into the part's frame first (`partFrame`);
+  // the expected numbers are worked out by hand, not by the module.
+
+  /** A hinge about +x through (0, -20, 30): a quarter turn sends y to z. */
+  const HINGE = { id: 'hinge', type: 'revolute', origin: [0, -20, 30], axis: [1, 0, 0],
+                  limits: [0, 110] }
+  const SQUARE = [0, 0, 0, 1]
+
+  /** A part at `home` that the hinge holds open a quarter turn. */
+  function hinged(home = [4, -2, 7]) {
+    const group = fakeGroup(home)
+    const vp = fakeViewport(fakeViewer({ states: statesFor([PIN]), groups: { [PIN]: group } }))
+    vp.jointNodes.set(PIN, { joint: HINGE, loc: [home, SQUARE] })
+    vp.jointValues = { hinge: 90 }
+    applyJoints(vp)
+    return { group, vp }
+  }
+
+  const at = (g) => [g.position.x, g.position.y, g.position.z]
+  const close = (actual, expected) => actual.forEach(
+    (value, axis) => expect(value, `axis ${axis}`).toBeCloseTo(expected[axis], 9))
+
+  it('moves the part along the world axis the arrow was dragged along', () => {
+    const { group, vp } = hinged()
+    const before = at(group)
+    const drag = [0, 10, 0]
+
+    expect(movePart(vp, [PIN], intoFrame(partFrame(vp, PIN), drag))).toBe(true)
+
+    close(at(group), before.map((value, axis) => value + drag[axis]))
+    // Recorded at value 0, where the open hinge's world y is the part's -z.
+    close(vp.moved.get(PIN).delta, [0, 0, -10])
+  })
+
+  it('keeps the move when the joint is set to another value', () => {
+    const { group, vp } = hinged()
+    movePart(vp, [PIN], intoFrame(partFrame(vp, PIN), [0, 10, 0]))
+    const record = vp.moved.get(PIN)
+
+    vp.jointValues = { hinge: 0 }
+    applyJoints(vp)
+
+    expect(vp.moved.get(PIN)).toBe(record)
+    close(at(group), [4, -2, 7 - 10])
+  })
+
+  it('turns a leaf inside a slid group about the leaf\'s own centre', () => {
+    // The drawer group stands where its joint slid it, 30 along y; the handle
+    // inside is placed in the group's frame, and its world matrix says both.
+    const DRAWER = '/model/drawer'
+    const HANDLE = '/model/drawer/handle'
+    const home = [4, -2, 7]
+    const drawer = fakeGroup([0, 0, 0])
+    const handle = fakeShapeSolid(HANDLE, {
+      positions: BOX_POSITIONS, index: BOX_INDEX,
+      matrix: fakeMatrix({ position: [home[0], home[1] + 30, home[2]] }),
+    })
+    handle.position.set(...home)
+    handle.parent = drawer
+    const vp = fakeViewport(fakeViewer({
+      states: statesFor([HANDLE]), groups: { [DRAWER]: drawer, [HANDLE]: handle } }))
+    vp.jointNodes.set(DRAWER, {
+      joint: { id: 'drawer', type: 'slider', axis: [0, 1, 0], limits: [0, 80] },
+      loc: [[0, 0, 0], SQUARE],
+    })
+    vp.jointValues = { drawer: 30 }
+    applyJoints(vp)
+    const centre = [BOX_CENTRE[0] + 4, BOX_CENTRE[1] + 28, BOX_CENTRE[2] + 7]
+    const turn = [0, 0, 90]
+
+    expect(movePart(vp, [HANDLE], [0, 0, 0], turnIntoFrame(partFrame(vp, HANDLE), turn)))
+      .toBe(true)
+
+    const spun = jscadTurn(turn, BOX_CENTRE)
+    close([0, 1, 2].map((axis) => at(drawer)[axis] + at(handle)[axis] + spun[axis]), centre)
   })
 })
 

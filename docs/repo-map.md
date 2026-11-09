@@ -734,6 +734,13 @@
   and lists as a row per place of the net on every sheet in its menu
 - `ui/src/sexpr.js` — the reader of KiCad's s-expressions that `kicadnets.js`
   and `kicadsheets.js` read a design's texts with
+- `ui/src/viewport/joints.js` — the joints and poses a view document declares
+  (issue #143), as pure arithmetic with no three.js: which nodes each joint
+  moves (`jointNodes`) and where a node stands at a value (`jointPose`,
+  `M(v) ∘ loc`). `parts.js` writes it onto the groups composed after the Move
+  tool's offset (`stand`, `applyJoints`), the element takes the values from the
+  page (`setJoints`), and the page's motion row in the parts tree holds a slider
+  per joint, the poses and Reset (`motionFor` in `HammerolaViewer.jsx`)
 - `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
   this tree (MIT, issue #14; the tag and commit it sits on are recorded in
   `static/_v/PROVENANCE.md` and nowhere else, so an upgrade moves one file),

@@ -42,7 +42,7 @@ import { gestureRecord, reportGesture } from "./gesture.js";
 import { internals } from "./internals.js";
 import { dot3, sineFromCos } from "./math.js";
 import {
-  grabbable, groupHome, movePart, nudgePart, partCentre,
+  grabbable, groupHome, intoFrame, movePart, nudgePart, outOfFrame, partCentre,
 } from "./parts.js";
 import { GIZMO_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
 import { niceStep, snap } from "./tools.js";
@@ -50,6 +50,7 @@ import {
   GIZMO_CASE_PX, GIZMO_DOT_PX, GIZMO_HEAD_PX, GIZMO_HIT_PX, GIZMO_MIN_SCALE,
   GIZMO_PLANE_GAP_PX, GIZMO_PLANE_PX, GIZMO_PX, GIZMO_RIM_PX, GIZMO_SHAFT_PX,
 } from "./options.js";
+import { tidy } from "../proposal.js";
 
 /** The three axes, in the order they are drawn and in the colours everything
  *  that draws an axis triad uses.
@@ -533,9 +534,20 @@ export function createGizmo(vp) {
     // of the anchor: one gesture moves the whole row by one delta.
     const asked = vp.snapSteps.get(d.paths[0]);
     const step = asked > 0 ? asked : niceStep(viewer);
-    const delta = drag.piece.kind === "axis"
-      ? alongAxis(d.base, world, drag.piece.world, drag.sine, step)
-      : acrossPlane(d.base, world, drag.piece.world, drag.view, step);
+    // On the world axes the arrows are drawn on, and recorded in the part's own
+    // frame (`partFrame`): the offset already standing is carried out to the
+    // world, the hand's displacement added and snapped there, and the sum
+    // carried back, so a part a joint holds away from 0 follows the arrow.
+    //
+    // The turn back leaves binary digits no hand put there (`1.8e-15` for a
+    // zero), which would reach the document and a twitch under one step would
+    // read as a move; rounded as the document rounds (`tidy`), with `-0` read
+    // as `0`.
+    const shown = outOfFrame(d.frame, d.base);
+    const delta = intoFrame(d.frame, drag.piece.kind === "axis"
+      ? alongAxis(shown, world, drag.piece.world, drag.sine, step)
+      : acrossPlane(shown, world, drag.piece.world, drag.view, step))
+      .map((v) => tidy(v) || 0);
     if (delta[0] === d.last[0] && delta[1] === d.last[1]
         && delta[2] === d.last[2]) return;
     d.last = delta;

@@ -36,8 +36,9 @@ import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
 import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
-import { applyGhost, applyHidden, applySelected, partTop, reconcileMoves,
-  restageMoves, statesOf, treeFromShapes } from "./parts.js";
+import { jointNodes } from "./joints.js";
+import { applyGhost, applyHidden, applyJoints, applySelected, partTop,
+  reconcileMoves, restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
 import { displayOptions, renderOptions, viewerOptions } from "./options.js";
 import { showXr, usdzOf } from "../ar.js";
@@ -195,10 +196,11 @@ function sameParts(a, b) {
  * `{p, n}`, or null without three (`vp.three`, kept by `show()`) or a mesh drawn
  * at `path`. `n` is null when no normal is given.
  *
- * The matrix is the mesh's, `front`, after its group is recomposed, since a move
- * writes the group and the matrix is composed by the next render (`partCentre`
- * in parts.js). `transformDirection` takes the rotation alone, which turns a
- * normal rightly: a placement is a turn and a shift, never a scale.
+ * The matrix is the mesh's, `front`, after it is recomposed from the root down,
+ * since a move writes the group, a joint may write a group above it
+ * (`applyJoints` in parts.js), and the matrix is composed by the next render.
+ * `transformDirection` takes the rotation alone, which turns a normal rightly:
+ * a placement is a turn and a shift, never a scale.
  */
 function throughPart(vp, path, point, normal, inverse) {
   const three = vp.three;
@@ -207,7 +209,7 @@ function throughPart(vp, path, point, normal, inverse) {
     ? g.nestedGroup.groups[path] : null;
   const front = group && group.front;
   if (!three || !front || !front.matrixWorld) return null;
-  group.updateMatrixWorld();
+  group.updateWorldMatrix(true, true);
   const m = inverse ? front.matrixWorld.clone().invert() : front.matrixWorld;
   const p = new three.Vector3(...point).applyMatrix4(m);
   const n = normal ? new three.Vector3(...normal).transformDirection(m) : null;
@@ -285,6 +287,12 @@ export class HmrViewport extends HTMLElement {
     // How coarsely a drag of each path rounds, in millimetres, where the
     // interface set it (`setSnapSteps`); otherwise `niceStep` in tools.js.
     this.snapSteps = new Map();
+    // The nodes the view document's joints move, by group id (`jointNodes` in
+    // joints.js), read off each document `show()` draws; and the value each
+    // joint stands at, `{jointId: value}`, as the interface last set it
+    // (`setJoints`). A joint the values do not name stands at 0.
+    this.jointNodes = new Map();
+    this.jointValues = {};
     // The ids of the pointers currently down on the canvas, not a flag: two
     // fingers are two presses. Only `installIdleClock` writes it.
     this.pointersDown = new Set();
@@ -712,6 +720,10 @@ export class HmrViewport extends HTMLElement {
         // Snap steps are keyed by path, and a path is only as stable as the
         // build (`/model/pin(2)` can name a different part next build).
         this.snapSteps.clear();
+        // The joints stand at 0 on a new document, like the offsets: the
+        // interface hands back the values it keeps after the model event
+        // (`setJoints`). A re-stage keeps them and re-applies them below.
+        this.jointValues = {};
       }
 
       if (!this.viewer) {
@@ -776,6 +788,9 @@ export class HmrViewport extends HTMLElement {
       // after the render succeeded: a refused document would otherwise be handed
       // back to the library on every keystroke.
       this.payload = shapes;
+      // Beside the payload, before `restageMoves` below reads it (`home` in
+      // parts.js): the joints of the document on screen.
+      this.jointNodes = jointNodes(shapes);
       // Which build the geometry on screen is of — not `state.buildKey`, which
       // moves when the interface announces a swap, before the fetch in `load()`
       // completes. Nothing disarms the Move tool in between, so a press there
@@ -794,6 +809,9 @@ export class HmrViewport extends HTMLElement {
       // ones at home. After `restoreLive` (which re-asserts tree states), so the
       // offset is the last thing written to a group's position.
       if (restage) restageMoves(this);
+      // The joints too: `render()` built the groups at their `loc`. After the
+      // moves, which a joint composes onto.
+      if (restage) applyJoints(this);
       this.overlay.refresh();
       // The tree travels with the render: the nesting and colours come from
       // the payload, and whether the library answers for a leaf comes from the
@@ -809,6 +827,10 @@ export class HmrViewport extends HTMLElement {
         // document's moves on every model event, which is wrong for a re-stage.
         // `live` cannot tell: a rebuild under the reader's camera is live too.
         restage: !!restage,
+        // What the interface draws the motion row and its sliders from: the
+        // document's own joints and poses, empty for a view that has none.
+        joints: Array.isArray(shapes.joints) ? shapes.joints : [],
+        poses: Array.isArray(shapes.poses) ? shapes.poses : [],
       });
     } catch (error) {
       if (token !== this.loadToken) return;
@@ -956,6 +978,21 @@ export class HmrViewport extends HTMLElement {
    */
   setMoves(list) {
     reconcileMoves(this, Array.isArray(list) ? list : []);
+  }
+
+  /**
+   * Where the document's joints stand, `{jointId: value}`: degrees for a
+   * revolute joint, millimetres for a slider (joints.js). The whole set every
+   * time; a joint left out stands at 0.
+   *
+   * Like `setMoves`, not a re-stage: synchronous, nothing rebuilt or
+   * tessellated, the nodes' groups re-placed (`applyJoints`). The values
+   * survive the next re-stage, which re-applies them; a new document starts
+   * them at 0 (`show`).
+   */
+  setJoints(values) {
+    this.jointValues = values;
+    applyJoints(this);
   }
 
   /**
