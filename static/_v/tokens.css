@@ -216,6 +216,13 @@
    * layers wear KiCad's default colours (ui/src/gerber.js), which were chosen
    * for it — its silkscreen is a pale yellow a white sheet would swallow. */
   --gerber-bg: #001023;
+
+  /* -- the halo under a measurement on a board's 3D view -------------------
+   * The dark band the measured line, its legs and its points are drawn on in
+   * ui/src/BoardView3D.jsx. DARK IN BOTH THEMES, as the 2D board's own halo
+   * (`HALO` in ecad-viewer's viewers/board/measure-tool.ts): it is read
+   * against the board and its parts, not against the page. */
+  --measure-halo: #020617;
 }
 
 :root[data-theme="dark"] {
@@ -321,6 +328,8 @@
   --paper-bg: #ffffff;
 
   --gerber-bg: #001023;
+
+  --measure-halo: #020617;
 }
 
 /* THE PAGE COLOUR, before there is a page.

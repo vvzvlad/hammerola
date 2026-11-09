@@ -147,7 +147,8 @@ const MEASURE_LINE_PX = 2;
 const MEASURE_HALO_PX = 4;
 const MEASURE_LEG_PX = 1.5;
 const MEASURE_LEG_HALO_PX = 3;
-const HALO = '#020617';
+// The halo's colour, a role of static/_v/tokens.css.
+const HALO = '--measure-halo';
 /** How many dashes, each with the gap after it, the legs' dashing fits into
  *  the line from A to B: a dash is measured in the world, so it is sized by
  *  the measurement. Dash and gap are the 2D board's 4 to 3. */
@@ -155,7 +156,7 @@ const MEASURE_DASHES = 24;
 // A measured point, A or B, placed over the canvas as the label is: a dot of
 // the selection's colour (the holder's `color`) on a dark ring.
 const DOT = 'position:absolute;left:0;top:0;display:none;width:6px;height:6px;transform:translate(-50%,-50%);'
-  + `border-radius:50%;background:currentColor;border:2px solid ${HALO};pointer-events:none`;
+  + `border-radius:50%;background:currentColor;border:2px solid var(${HALO});pointer-events:none`;
 /** How much nearer than a snapped point, as a share of its distance from the
  *  camera, something has to be to hide it (`seen`): the surface the point
  *  lies on meets the ray at the point itself, give or take rounding. */
@@ -742,10 +743,12 @@ class Stage {
       const period = a.distanceTo(b) / MEASURE_DASHES;
       const dashes = { dashed: true, dashSize: (period * 4) / 7, gapSize: (period * 3) / 7 };
       const { LineSegments2, LineSegmentsGeometry, LineMaterial } = this.lines;
-      const colour = window.getComputedStyle(this.host).color;
+      const style = window.getComputedStyle(this.host);
+      const { color: colour } = style;
+      const halo = style.getPropertyValue(HALO).trim();
       const lines = [
-        [legs, MEASURE_LEG_HALO_PX, HALO, dashes], [legs, MEASURE_LEG_PX, colour, dashes],
-        [[...a.toArray(), ...b.toArray()], MEASURE_HALO_PX, HALO, {}],
+        [legs, MEASURE_LEG_HALO_PX, halo, dashes], [legs, MEASURE_LEG_PX, colour, dashes],
+        [[...a.toArray(), ...b.toArray()], MEASURE_HALO_PX, halo, {}],
         [[...a.toArray(), ...b.toArray()], MEASURE_LINE_PX, colour, {}],
       ];
       lines.forEach(([segments, width, color, dashing], order) => {
