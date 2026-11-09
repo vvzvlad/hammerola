@@ -40,7 +40,8 @@ import { jointNodes } from "./joints.js";
 import { applyGhost, applyHidden, applyJoints, applySelected, partTop,
   reconcileMoves, restageMoves, statesOf, treeFromShapes } from "./parts.js";
 import { applySection, keepSectionCut, suspendSectionCut } from "./section.js";
-import { displayOptions, renderOptions, viewerOptions } from "./options.js";
+import { GHOST_OPACITY, STUDIO_GHOST_OPACITY, displayOptions, renderOptions,
+  viewerOptions } from "./options.js";
 import { showXr, usdzOf } from "../ar.js";
 
 /** The state the viewport starts in — the mock-up's shape, plus the fields a
@@ -69,6 +70,9 @@ const INITIAL_STATE = {
   // The renderer's pixel ratio: the display's own when true, 1 when false —
   // the interface's "Retina resolution" setting (store.js remembers it).
   retina: true,
+  // The bar's Studio: the fork's studio look (`Viewer.setStudio`), not the
+  // library's Studio tab.
+  studio: false,
   tool: null,
   pins: [],
   camera: null,
@@ -262,7 +266,7 @@ export class HmrViewport extends HTMLElement {
     this.state = { ...INITIAL_STATE };
     this.applied = {
       hidden: null, ghost: null, selected: undefined, camera: null,
-      cutHatch: null,
+      cutHatch: null, studio: false,
     };
     this.viewer = null;
     // The three namespace the library brought, null until `show()` has it.
@@ -798,9 +802,11 @@ export class HmrViewport extends HTMLElement {
       // revision a path can be a different part. Set here, beside the payload.
       this.drawnKey = this.state.buildKey;
       this.lastPick = null;
+      // Studio is carried over: the viewer keeps it on for a new model
+      // (`setStudio`).
       this.applied = {
         hidden: null, ghost: null, selected: undefined, camera: null,
-        cutHatch: null,
+        cutHatch: null, studio: this.applied.studio,
       };
       this.reconcile();
       if (keep) restoreLive(this, keep);
@@ -855,9 +861,13 @@ export class HmrViewport extends HTMLElement {
       applyHidden(this.viewer, s.hidden);
       this.applied.hidden = s.hidden;
     }
-    if (!same(s.ghost, this.applied.ghost)) {
-      applyGhost(this.viewer, s.ghost);
+    // Studio ghosts denser (options.js `STUDIO_GHOST_OPACITY`), so turning it
+    // on or off re-applies the ghosts as well.
+    const ghostOpacity = s.studio ? STUDIO_GHOST_OPACITY : GHOST_OPACITY;
+    if (!same(s.ghost, this.applied.ghost) || ghostOpacity !== this.applied.ghostOpacity) {
+      applyGhost(this.viewer, s.ghost, ghostOpacity);
       this.applied.ghost = s.ghost;
+      this.applied.ghostOpacity = ghostOpacity;
     }
     // By value: `selectedPaths` in HammerolaViewer mints a new array on every
     // push, and one push goes out per section-slider step, so an identity
@@ -882,6 +892,16 @@ export class HmrViewport extends HTMLElement {
     if (!same(s.cutHatch, this.applied.cutHatch)) {
       setCutHatch(internals(this.viewer), s.cutHatch);
       this.applied.cutHatch = s.cutHatch;
+    }
+    // Studio: the light and the edges at once, and a frame drawn; and the
+    // canvas under the model takes Studio's colour (`--studio-bg` in
+    // tokens.css). Inline on the box, because the box carries a `data-theme`
+    // the palette's `[data-theme][data-theme]` rule writes `--tcv-bg-color` on.
+    if (s.studio !== this.applied.studio) {
+      this.viewer.setStudio(s.studio);
+      if (s.studio) this.box.style.setProperty("--tcv-bg-color", "var(--studio-bg)");
+      else this.box.style.removeProperty("--tcv-bg-color");
+      this.applied.studio = s.studio;
     }
     // The pixel ratio, asked of the renderer rather than memo'd in `applied`
     // (which every render resets): `setPixelRatio` reallocates the drawing

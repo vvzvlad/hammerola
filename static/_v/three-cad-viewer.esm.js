@@ -5811,14 +5811,23 @@ function createPeelUniforms() {
         uPeelOpaqueDepth: { value: null },
         uPeelPrevDepth: { value: null },
         uPeelResolution: { value: new THREE.Vector2(1, 1) },
+        uPeelToneMapped: { value: false },
+        polygonOffsets: new WeakMap(),
     };
 }
+// three declares the tone-mapping curves only in a program that draws to the
+// canvas with tone mapping on; a peel pass draws to a render target.
 const PEEL_FRAGMENT_HEADER = `
 uniform bool uPeelActive;
 uniform bool uPeelFirstLayer;
 uniform sampler2D uPeelOpaqueDepth;
 uniform sampler2D uPeelPrevDepth;
-uniform vec2 uPeelResolution;`;
+uniform vec2 uPeelResolution;
+uniform bool uPeelToneMapped;
+uniform vec2 uPeelPolygonOffset;
+#ifndef TONE_MAPPING
+#include <tonemapping_pars_fragment>
+#endif`;
 /**
  * Keep only fragments in front of the opaque scene and behind the previous
  * layer. Injected right after clipping, so a clipped-away fragment never takes
@@ -5829,11 +5838,19 @@ uniform vec2 uPeelResolution;`;
  * same surface sees in the next pass are not always bit-equal (ANGLE on Metal),
  * and without the margin that surface is peeled a second time at scattered
  * pixels, which shows as speckle on every translucent face.
+ *
+ * The opaque scene is compared after giving the fragment its material's
+ * polygon offset (`uPeelPolygonOffset`: factor times the depth slope, plus
+ * units of the 24-bit opaque depth), as the depth test of pass A does: the
+ * opaque depth carries the solids' offsets, the peel passes draw without one.
+ * Compared bare, a solid lying a hair above a translucent face, like the
+ * silkscreen on a board whose solder mask is translucent, would go behind it.
  */
 const PEEL_DISCARD = `
   if ( uPeelActive ) {
     vec2 peelUv = gl_FragCoord.xy / uPeelResolution;
-    if ( gl_FragCoord.z >= texture2D( uPeelOpaqueDepth, peelUv ).r ) discard;
+    float peelOffset = uPeelPolygonOffset.x * max( abs( dFdx( gl_FragCoord.z ) ), abs( dFdy( gl_FragCoord.z ) ) ) + uPeelPolygonOffset.y / 16777216.0;
+    if ( gl_FragCoord.z + peelOffset >= texture2D( uPeelOpaqueDepth, peelUv ).r ) discard;
     if ( ! uPeelFirstLayer && gl_FragCoord.z <= texture2D( uPeelPrevDepth, peelUv ).r + 1e-6 ) discard;
   }`;
 const CLIPPING_ANCHOR = "#include <clipping_planes_fragment>";
@@ -5845,9 +5862,16 @@ const CLIPPING_ANCHOR = "#include <clipping_planes_fragment>";
  * so a peeled layer looks the same as an unpeeled one. Injected right after the
  * output encoding, so fog and premultiplication still follow it as on the
  * canvas.
+ *
+ * A render target is not tone-mapped either, so the curve is applied here
+ * while the renderer has one (`uPeelToneMapped`), before the encoding as three
+ * applies it on the canvas: the composite only blends what the layers hold.
  */
 const PEEL_ENCODE = `
-  if ( uPeelActive ) gl_FragColor = sRGBTransferOETF( gl_FragColor );`;
+  if ( uPeelActive ) {
+    if ( uPeelToneMapped ) gl_FragColor.rgb = ACESFilmicToneMapping( gl_FragColor.rgb );
+    gl_FragColor = sRGBTransferOETF( gl_FragColor );
+  }`;
 const COLORSPACE_ANCHOR = "#include <colorspace_fragment>";
 /**
  * Patch a CAD face material (front or back) for peeling. Both hooks are
@@ -5858,13 +5882,17 @@ const COLORSPACE_ANCHOR = "#include <colorspace_fragment>";
 function patchPeelMaterial(material, uniforms) {
     const prevCompile = material.onBeforeCompile;
     const prevKey = material.customProgramCacheKey;
+    const polygonOffset = { value: new THREE.Vector2() };
+    uniforms.polygonOffsets.set(material, polygonOffset);
     material.onBeforeCompile = (shader, renderer) => {
         prevCompile.call(material, shader, renderer);
+        shader.uniforms.uPeelPolygonOffset = polygonOffset;
         shader.uniforms.uPeelActive = uniforms.uPeelActive;
         shader.uniforms.uPeelFirstLayer = uniforms.uPeelFirstLayer;
         shader.uniforms.uPeelOpaqueDepth = uniforms.uPeelOpaqueDepth;
         shader.uniforms.uPeelPrevDepth = uniforms.uPeelPrevDepth;
         shader.uniforms.uPeelResolution = uniforms.uPeelResolution;
+        shader.uniforms.uPeelToneMapped = uniforms.uPeelToneMapped;
         // A three upgrade that renames an anchor must fail loudly: without the
         // discard every peel pass draws the nearest surface again, and a ghost
         // stacks up into an opaque part drawn over the solids in front of it;
@@ -5908,8 +5936,6 @@ varying vec2 vUv;
 void main() {
   gl_FragColor = texture2D( tAccum, vUv );
 }`;
-/** How long the camera must stay still before the peeled frame is drawn, ms. */
-const SETTLE_MS = 150;
 /** Margin around the projected bounding boxes, in drawing-buffer pixels. */
 const PEEL_RECT_PAD = 2;
 const _corner = new THREE.Vector3();
@@ -5975,27 +6001,13 @@ function peelRect(translucent, camera, size, rect) {
  * they write 8-bit targets and run only inside the screen rectangle of the
  * translucent faces (see {@link peelRect}).
  *
- * Even so a peeled frame costs several plain ones, so it is drawn only for a
- * still camera. While the camera moves, a frame draws the solids first and the
- * translucent faces over them in three's per-object order: no solid can come
- * out in front of a translucent part, and only translucent faces behind one
- * another may blend in the wrong order. {@link SETTLE_MS} after the camera last
- * changed the viewer is asked for one more frame, which is peeled.
+ * Every frame is peeled, a moving camera's too. A cheaper frame for a moving
+ * camera, the solids and then the translucent parts each drawn whole, would
+ * disagree with the peeled one on parts inside or on one another, and the
+ * picture would jump when the camera stops.
  */
 class DepthPeeling {
-    /**
-     * @param requestRender - draws a frame of the viewer; called once the camera
-     *   has settled, for the peeled frame.
-     */
-    constructor(renderer, requestRender) {
-        /**
-         * The camera of the last frame that had translucent faces on screen: world
-         * matrix, then projection matrix.
-         */
-        this._lastView = new Float64Array(32);
-        this._settleTimer = null;
-        /** The camera changed less than {@link SETTLE_MS} ago. */
-        this._moving = false;
+    constructor(renderer) {
         this._targets = null;
         this._bufferSize = new THREE.Vector2();
         this._rect = new THREE.Vector4();
@@ -6007,7 +6019,6 @@ class DepthPeeling {
         this._savedTargetScissorTest = false;
         this._quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
         this._renderer = renderer;
-        this._requestRender = requestRender;
         // One triangle covering the viewport, as three's FullScreenQuad builds it.
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
@@ -6045,10 +6056,8 @@ class DepthPeeling {
      * pass, depth-tested against pass A's depth, which (d) left in place. (c) and
      * (d) are scissored to the rectangle of the translucent faces; (a), (b) and
      * (e) are full-screen.
-     *
-     * @param exact - peel even if the camera moved (a screenshot).
      */
-    render(scene, camera, nestedGroup, exact = false) {
+    render(scene, camera, nestedGroup) {
         const renderer = this._renderer;
         const translucent = translucentGroups(nestedGroup.groups);
         renderer.getDrawingBufferSize(this._bufferSize);
@@ -6056,18 +6065,6 @@ class DepthPeeling {
         if (translucent.length === 0 ||
             !peelRect(translucent, camera, this._bufferSize, rect)) {
             renderer.render(scene, camera);
-            return;
-        }
-        // peelRect brought the camera's world matrix up to date. Moving lasts from
-        // any change of the camera until the settle timer fires, not just for the
-        // frame that saw the change: the viewer can draw more than one frame per
-        // camera step.
-        if (this._cameraMoved(camera)) {
-            this._moving = true;
-            this._scheduleSettle();
-        }
-        if (this._moving && !exact) {
-            this._renderUnpeeled(scene, camera, translucent);
             return;
         }
         const targets = this._ensureTargets(this._bufferSize.x, this._bufferSize.y);
@@ -6108,7 +6105,12 @@ class DepthPeeling {
             // (c) peel. The nearest surviving surface must OVERWRITE the layer, not
             // blend into it, and the depth it writes must be its gl_FragCoord.z, so
             // the next pass can peel behind it: no blending, depth written, no offset.
+            // The material's offset goes to the shader, which adds it only when it
+            // compares with the opaque depth (PEEL_DISCARD).
             for (const state of states) {
+                uniforms.polygonOffsets
+                    .get(state.material)
+                    ?.value.set(state.polygonOffset ? state.material.polygonOffsetFactor : 0, state.polygonOffset ? state.material.polygonOffsetUnits : 0);
                 state.material.blending = THREE.NoBlending;
                 state.material.depthWrite = true;
                 state.material.depthTest = true;
@@ -6117,6 +6119,8 @@ class DepthPeeling {
             uniforms.uPeelActive.value = true;
             uniforms.uPeelOpaqueDepth.value = targets.opaque.depthTexture;
             uniforms.uPeelResolution.value.copy(this._bufferSize);
+            uniforms.uPeelToneMapped.value =
+                renderer.toneMapping === THREE.ACESFilmicToneMapping;
             // Clears honour the scissor as draws do, so outside the rectangle the
             // layer and accumulation targets keep stale pixels that nothing reads.
             targets.layer.scissor.copy(rect);
@@ -6180,55 +6184,6 @@ class DepthPeeling {
             renderer.setClearColor(this._savedClearColor, savedClearAlpha);
         }
     }
-    /** Whether `camera` moved since the last frame; remembers where it is now. */
-    _cameraMoved(camera) {
-        const last = this._lastView;
-        const world = camera.matrixWorld.elements;
-        const projection = camera.projectionMatrix.elements;
-        let moved = false;
-        for (let i = 0; i < 16; i++) {
-            if (last[i] !== world[i] || last[16 + i] !== projection[i])
-                moved = true;
-            last[i] = world[i];
-            last[16 + i] = projection[i];
-        }
-        return moved;
-    }
-    /**
-     * The frame for a moving camera: the solids, then the translucent faces as
-     * three orders and blends them, then the overlay, all into the current
-     * target. The solids write depth first, so a translucent face behind one is
-     * hidden and one in front blends over it.
-     */
-    _renderUnpeeled(scene, camera, translucent) {
-        const renderer = this._renderer;
-        try {
-            assignPassLayers(scene, camera, translucent, this._snapshot);
-            renderer.render(scene, camera);
-            camera.layers.set(PEEL_LAYER);
-            renderer.render(scene, camera);
-            camera.layers.set(OVERLAY_LAYER);
-            renderer.render(scene, camera);
-        }
-        finally {
-            restorePassLayers(this._snapshot);
-        }
-    }
-    /** End the move {@link SETTLE_MS} after this camera change, with a peeled frame. */
-    _scheduleSettle() {
-        this._cancelSettle();
-        this._settleTimer = setTimeout(() => {
-            this._settleTimer = null;
-            this._moving = false;
-            this._requestRender();
-        }, SETTLE_MS);
-    }
-    _cancelSettle() {
-        if (this._settleTimer !== null) {
-            clearTimeout(this._settleTimer);
-            this._settleTimer = null;
-        }
-    }
     /**
      * Put back the scissor of the renderer and of `target`, the target the frame
      * is drawn into, and bind `target` again, which applies the scissor it uses.
@@ -6288,7 +6243,6 @@ class DepthPeeling {
     }
     /** Release the render targets and the quad. */
     dispose() {
-        this._cancelSettle();
         this._disposeTargets();
         this._quad.geometry.dispose();
         this._underMaterial.dispose();
@@ -18319,6 +18273,159 @@ class Tools {
 const version = "5.0.7";
 
 /**
+ * HAMMEROLA'S PATCH: what Studio (`Viewer.setStudio`) puts into a scene — a
+ * studio room as the environment every face reflects, a light from the sky and
+ * the ground, a key and a fill that turn with the camera, and a soft shadow on
+ * the ground under the model.
+ *
+ * Not the library's own Studio mode (studio-manager.ts): that one swaps in
+ * materials shared between parts, which loses a part's own transparency. This
+ * one leaves the materials alone.
+ *
+ * The values are those of https://seguar.github.io/rfsoc-pulse-array/#mech,
+ * written for a three before r155: the light intensities are multiplied by π
+ * into today's units — exactly, not through `scaleLight`, which rounds the
+ * product to a whole number (the fill would come out 9 % dimmer, the sky 16 %
+ * brighter).
+ */
+/** A light intensity of a three before r155, in today's units. */
+const legacy = (k) => Math.PI * k;
+/** The exposure of Studio's ACES tone mapping. */
+const STUDIO_EXPOSURE = 0.95;
+/**
+ * The key and the fill as directions in the camera's frame (x right, y up, z
+ * toward the reader): the rig turns with the camera, so whichever side the
+ * reader turns the model to is lit.
+ */
+const KEY_DIRECTION = new THREE.Vector3(-0.35, 1, 0.75).normalize();
+const FILL_DIRECTION = new THREE.Vector3(-0.8, 0.4, -0.6).normalize();
+/** The blur the room is prefiltered with (`PMREMGenerator.fromScene`). */
+const ROOM_BLUR = 0.035;
+/** How much wider than the model's footprint its ground shadow is. */
+const GROUND_SPREAD = 1.3;
+/** The ground shadow's opacity from its centre (0) to its rim (1). */
+const GROUND_STOPS = [
+    [0, 0.42],
+    [0.45, 0.26],
+    [0.75, 0.09],
+    [1, 0],
+];
+/** The side of the canvas the ground shadow is painted on, in pixels. */
+const GROUND_TEXTURE_SIZE = 256;
+/** A colour as bright as `k`, above 1 for the panels that light the room. */
+const glow = (k) => new THREE.Color().setScalar(k);
+/**
+ * The room, Y-up: grey walls, a darker floor, and four lit panels — the
+ * ceiling, a soft box on the left, a dim one on the right and one in front.
+ */
+function buildRoom() {
+    const room = new THREE.Scene();
+    const walls = new THREE.Mesh(new THREE.BoxGeometry(10, 6, 10), new THREE.MeshBasicMaterial({ color: 0x8a9096, side: THREE.BackSide }));
+    walls.position.y = 2;
+    room.add(walls);
+    const panel = (width, height, position, rotationX, rotationY, color) => {
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+        mesh.position.set(...position);
+        mesh.rotation.set(rotationX, rotationY, 0);
+        room.add(mesh);
+    };
+    panel(6, 4, [0, 4.9, 0], Math.PI / 2, 0, glow(2.2));
+    panel(3, 3, [-4.9, 2.2, 1], 0, Math.PI / 2, glow(1.4));
+    panel(3, 3, [4.9, 2.6, -1], 0, -Math.PI / 2, glow(0.55));
+    panel(4, 2.5, [0, 2.2, 4.9], 0, Math.PI, glow(1.6));
+    panel(10, 10, [0, -0.95, 0], -Math.PI / 2, 0, new THREE.Color(0x5b6168));
+    return room;
+}
+/** The ground shadow: black, its opacity falling off from the centre by `GROUND_STOPS`. */
+function groundTexture() {
+    const canvas = document.createElement("canvas");
+    canvas.width = GROUND_TEXTURE_SIZE;
+    canvas.height = GROUND_TEXTURE_SIZE;
+    const context = canvas.getContext("2d");
+    const r = GROUND_TEXTURE_SIZE / 2;
+    const gradient = context.createRadialGradient(r, r, 0, r, r, r);
+    for (const [stop, alpha] of GROUND_STOPS) {
+        gradient.addColorStop(stop, `rgba(0,0,0,${alpha})`);
+    }
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, GROUND_TEXTURE_SIZE, GROUND_TEXTURE_SIZE);
+    return new THREE.CanvasTexture(canvas);
+}
+/**
+ * The lights, the room and the ground shadow, built once per Viewer and moved
+ * from scene to scene: `attach` puts them into a scene, `detach` takes them out
+ * before the scene is disposed, so they outlive it.
+ */
+class StudioLook {
+    constructor() {
+        this._sky = new THREE.HemisphereLight(0xffffff, 0x9aa3ad, legacy(0.55));
+        this._key = new THREE.DirectionalLight(0xffffff, legacy(1.1));
+        this._fill = new THREE.DirectionalLight(0xffffff, legacy(0.35));
+        this._groundTexture = groundTexture();
+        this._ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+            map: this._groundTexture,
+            transparent: true,
+            depthWrite: false,
+            toneMapped: false,
+        }));
+        /** The room prefiltered for the renderer, made on the first `attach`. */
+        this._environment = null;
+        // Scenery: no ray finds it, so no tool or menu takes it for a part.
+        this._ground.raycast = () => { };
+    }
+    /**
+     * Put the look into `scene`: the room as its environment, the lights, and
+     * the ground shadow under `box` (the parts), at its lowest point along the
+     * up axis and `GROUND_SPREAD` times its footprint.
+     */
+    attach(scene, renderer, box, upIsZ) {
+        if (this._environment === null) {
+            const room = buildRoom();
+            const generator = new THREE.PMREMGenerator(renderer);
+            this._environment = generator.fromScene(room, ROOM_BLUR);
+            generator.dispose();
+            deepDispose(room);
+        }
+        scene.environment = this._environment.texture;
+        // The room is built Y-up; for a Z-up scene its ceiling is turned to +Z.
+        scene.environmentRotation.set(upIsZ ? Math.PI / 2 : 0, 0, 0);
+        // The sky's colour comes from the up axis, the ground's from below.
+        this._sky.position.set(0, upIsZ ? 0 : 1, upIsZ ? 1 : 0);
+        const size = box.getSize(new THREE.Vector3());
+        const centre = box.getCenter(new THREE.Vector3());
+        if (upIsZ) {
+            this._ground.rotation.set(0, 0, 0);
+            this._ground.position.set(centre.x, centre.y, box.min.z);
+            this._ground.scale.set(size.x * GROUND_SPREAD, size.y * GROUND_SPREAD, 1);
+        }
+        else {
+            // The plane faces +Z as built; laid down it faces +Y, its height along -Z.
+            this._ground.rotation.set(-Math.PI / 2, 0, 0);
+            this._ground.position.set(centre.x, box.min.y, centre.z);
+            this._ground.scale.set(size.x * GROUND_SPREAD, size.z * GROUND_SPREAD, 1);
+        }
+        scene.add(this._sky, this._key, this._fill, this._ground);
+    }
+    /** Take the look out of `scene`, which is left as a fresh scene is. */
+    detach(scene) {
+        scene.environment = null;
+        scene.environmentRotation.set(0, 0, 0);
+        scene.remove(this._sky, this._key, this._fill, this._ground);
+    }
+    /** Turn the key and the fill with `camera`; their targets stay at the origin. */
+    aim(camera) {
+        this._key.position.copy(KEY_DIRECTION).applyQuaternion(camera.quaternion);
+        this._fill.position.copy(FILL_DIRECTION).applyQuaternion(camera.quaternion);
+    }
+    dispose() {
+        this._environment?.dispose();
+        this._ground.geometry.dispose();
+        this._ground.material.dispose();
+        this._groundTexture.dispose();
+    }
+}
+
+/**
  * `PickedComponent` over a GPU id-pick result. Drives the shader
  * `HighlightController` by `componentId` (faces of a solid via `*Solid`), with no
  * per-component `ObjectGroup` and no exploded graph.
@@ -18548,10 +18655,14 @@ class PickingController {
      * endlessly and the B-rep readout ("area ≈ …") is meaningless, so GDS is
      * double-click-identify only. Also disabled in Studio (presentation) mode: hover
      * tint/status is a CAD/analysis affordance, not wanted in Studio, and skipping it
-     * means the id buffer is never re-rendered for a bare mouse-move there.
+     * means the id buffer is never re-rendered for a bare mouse-move there. The
+     * studio look (`Viewer.setStudio`) turns it off for the same reason, but keeps
+     * double-click, which the Studio tab does not.
      */
     hoverPreselectActive() {
-        return this.host.shapes?.format !== "GDS" && !this.host.studioActive;
+        return (this.host.shapes?.format !== "GDS" &&
+            !this.host.studioActive &&
+            !this.host.studioLookActive);
     }
     /**
      * Called once per render: drive hover preselection unless a model is GDS or the
@@ -29863,6 +29974,10 @@ class Viewer {
     get studioActive() {
         return this._studioManager.isActive;
     }
+    /** True while {@link setStudio} has the studio look on. PickHost member. */
+    get studioLookActive() {
+        return this._studio;
+    }
     // ---------------------------------------------------------------------------
     // Constructor & Initialization
     // ---------------------------------------------------------------------------
@@ -29895,6 +30010,13 @@ class Viewer {
         // GPU id-based picker. Created/attached per render() once the scene + compact
         // registry exist; drives hover, selection, measure and double-click pick.
         this.idPicker = null;
+        // HAMMEROLA'S PATCH: Studio (setStudio) — whether it is on, which outlives
+        // render(); its lights, room and ground shadow, built when first turned on;
+        // and the renderer's tone mapping it replaced, put back when it is turned off.
+        this._studio = false;
+        this._studioLook = null;
+        this._studioToneMapping = THREE.NoToneMapping;
+        this._studioExposure = 1;
         // ---------------------------------------------------------------------------
         // Render Loop & Scene Updates
         // ---------------------------------------------------------------------------
@@ -30042,6 +30164,10 @@ class Viewer {
             // large assembly zoomed out renders ~12000 stencil/cap draws/frame → GPU
             // watchdog → context loss on clip+rotate.
             this.rendered.clipping.cull(this.rendered.camera.getCamera(), this.state.get("cadWidth"), this.state.get("height"), this.renderer.localClippingEnabled);
+            // HAMMEROLA'S PATCH: Studio's key and fill follow the camera of this frame.
+            if (this._studio) {
+                this._studioLook.aim(this.rendered.camera.getCamera());
+            }
             // Render: use composer pipeline when available (AO + tone mapping + SMAA),
             // otherwise fall back to direct renderer.render().
             if (this._studioManager.hasComposer) {
@@ -31214,7 +31340,7 @@ class Viewer {
                         this._studioManager.render();
                     }
                     else {
-                        this._depthPeeling.render(this.rendered.scene, this.rendered.camera.getCamera(), this.rendered.nestedGroup, true);
+                        this._depthPeeling.render(this.rendered.scene, this.rendered.camera.getCamera(), this.rendered.nestedGroup);
                     }
                 },
                 onComplete: () => {
@@ -31440,7 +31566,7 @@ class Viewer {
         this.renderer.setSize(this.state.get("cadWidth"), this.state.get("height"));
         this.renderer.setClearColor(0xffffff, 0);
         this.renderer.autoClear = false;
-        this._depthPeeling = new DepthPeeling(this.renderer, () => this.update(true, false));
+        this._depthPeeling = new DepthPeeling(this.renderer);
         // Create studio manager (env, floor, composer created lazily inside)
         this.lastNotification = {};
         this.lastBbox = null;
@@ -31707,6 +31833,7 @@ class Viewer {
         // dispose studio resources (composer, floor, env, shadows — must be before renderer)
         this._studioManager.dispose();
         this._depthPeeling.dispose();
+        this._studioLook?.dispose();
         // dispose renderer
         this.renderer.renderLists.dispose();
         this.renderer.dispose();
@@ -31791,6 +31918,10 @@ class Viewer {
                     this.display.setTool(currentTool, false);
                 }
             }
+            // HAMMEROLA'S PATCH: Studio's lights and ground shadow outlive the scene
+            // (setStudio), so they leave it before it is disposed.
+            if (this._studio)
+                this._studioLook.detach(this._rendered.scene);
             // dispose all rendered state objects
             deepDispose(this._rendered.scene);
             // Studio lights were children of the scene and have been disposed by
@@ -32124,6 +32255,12 @@ class Viewer {
         // show the rendering
         //
         this.toggleAnimationLoop(this.hasAnimationLoop);
+        // HAMMEROLA'S PATCH: Studio stays on for a new model (setStudio). Before
+        // `ready`, which a fresh viewer and clear() leave false: no frame of the
+        // new scene is drawn without the look, and `update()`, which aims it, finds
+        // it built.
+        if (this._studio)
+            this._enterStudio();
         this.ready = true;
         if (!this.state.get("tools")) {
             this.display.showToolsPanel(false);
@@ -32523,6 +32660,74 @@ class Viewer {
      */
     setOrtho(flag, notify = true) {
         this.switchCamera(flag, notify);
+    }
+    /**
+     * HAMMEROLA'S PATCH: Studio, a look for showing a model rather than for
+     * drawing it — no edges on the parts, ACES tone mapping, and the lights,
+     * room and ground shadow of {@link StudioLook}. The camera stays as it is:
+     * the page's gestures and its widgets in the scene work under an ortho
+     * camera only (ui/src/viewport/internals.js `gestureInternals`). Laid over
+     * whatever is rendered and kept for the next model while on; turned off,
+     * the view is put back as it was.
+     * @param on - whether Studio is on.
+     * @public
+     */
+    setStudio(on) {
+        if (on === this._studio)
+            return;
+        this._studio = on;
+        if (on) {
+            this._studioToneMapping = this.renderer.toneMapping;
+            this._studioExposure = this.renderer.toneMappingExposure;
+            this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            this.renderer.toneMappingExposure = STUDIO_EXPOSURE;
+        }
+        else {
+            this.renderer.toneMapping = this._studioToneMapping;
+            this.renderer.toneMappingExposure = this._studioExposure;
+        }
+        if (this._rendered === null)
+            return;
+        if (on) {
+            // Hover preselection stops here, so its own release no longer runs: drop
+            // the tint the cursor left.
+            this.pickingController.clearHover();
+            this._enterStudio();
+        }
+        else
+            this._leaveStudio();
+        this.update(true);
+    }
+    /** Studio over the scene on screen: its look in, the default look out (`_showDefaultLook`). */
+    _enterStudio() {
+        const { scene, nestedGroup } = this.rendered;
+        const look = (this._studioLook ?? (this._studioLook = new StudioLook()));
+        look.attach(scene, this.renderer, nestedGroup.boundingBox(), this.state.get("up") !== "Y");
+        this._showDefaultLook(false);
+    }
+    /** Studio off over the scene on screen: everything `_enterStudio` changed, put back. */
+    _leaveStudio() {
+        this._studioLook.detach(this.rendered.scene);
+        this._showDefaultLook(true);
+    }
+    /**
+     * Show or hide what Studio replaces: the ambient light, the headlight, and
+     * the edges and vertices of every part with faces. Object visibility, apart
+     * from a part's own edge state (its edge material's, which the tree sets),
+     * so that state is the reader's whichever way Studio goes. A group of edges
+     * alone keeps its lines: they are the part.
+     */
+    _showDefaultLook(visible) {
+        this.rendered.ambientLight.visible = visible;
+        this.rendered.directLight.visible = visible;
+        for (const group of Object.values(this.rendered.nestedGroup.groups)) {
+            if (!(group instanceof ObjectGroup) || group.front === null)
+                continue;
+            if (group.edges !== null)
+                group.edges.visible = visible;
+            if (group.vertices !== null)
+                group.vertices.visible = visible;
+        }
     }
     /**
      * Set zscaling value.

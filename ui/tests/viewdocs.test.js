@@ -77,9 +77,9 @@ const VIEWS = [
 
 // The bar's tools, in the order it draws them, and the styles they are drawn
 // with.
-const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
+const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Studio', 'Frame', 'Settings']
 const TOOL_STYLES = ['measureBtnStyle', 'insetsBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle',
-  'frameBtnStyle', 'settingsBtnStyle']
+  'studioBtnStyle', 'frameBtnStyle', 'settingsBtnStyle']
 
 const meta = (documents = DOCS) => ({
   project: 'terrarium', title: 'Terrarium (terrarium)', commit: 'abc1234',

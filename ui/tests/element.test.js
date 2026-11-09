@@ -109,6 +109,7 @@ import {
   applyGhost, applyHidden, applySelected, reconcileMoves, restageMoves,
 } from '../src/viewport/parts.js'
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
+import { GHOST_OPACITY, STUDIO_GHOST_OPACITY } from '../src/viewport/options.js'
 import * as THREE from '../../static/_v/three.module.js'
 import { fakeViewer } from './fakes.js'
 import { drained, runFrames, stubFrames } from './component.js'
@@ -129,12 +130,12 @@ function element(state = {}, viewer = fakeViewer()) {
   vp.state = {
     hidden: [], ghost: [], selected: [], camera: null,
     cut: false, cutOffset: 0, cutFlip: false, cutHatch: true, pins: [],
-    base: null, views: [], view: null, buildKey: null, tool: null,
+    base: null, views: [], view: null, buildKey: null, tool: null, studio: false,
     ...state,
   }
   vp.applied = {
     hidden: null, ghost: null, selected: undefined, camera: null,
-    cutHatch: null,
+    cutHatch: null, studio: false,
   }
   vp.sectionSeed = null
   vp.moved = new Map()
@@ -238,7 +239,7 @@ describe('reconcile', () => {
     const vp = element({ hidden: ['/Group/a'], ghost: ['/Group/b'] })
     vp.reconcile()
     expect(applyHidden).toHaveBeenCalledWith(vp.viewer, ['/Group/a'])
-    expect(applyGhost).toHaveBeenCalledWith(vp.viewer, ['/Group/b'])
+    expect(applyGhost).toHaveBeenCalledWith(vp.viewer, ['/Group/b'], GHOST_OPACITY)
     // Even though nothing is selected: `applied.selected` is `undefined` until
     // the first pass, so this is the call that clears whatever the library
     // highlighted on its own.
@@ -432,6 +433,54 @@ describe('reconcile', () => {
         expect(each.viewer.renderer.setPixelRatio).not.toHaveBeenCalled()
         expect(each.viewer.update).not.toHaveBeenCalled()
       }
+    })
+  })
+
+  describe('Studio', () => {
+    /** A settled viewport with the box its canvas colour is written on. */
+    const studio = (state) => {
+      const vp = element(state)
+      vp.box = document.createElement('div')
+      vp.reconcile()
+      vi.clearAllMocks()
+      return vp
+    }
+    const turn = (vp, on) => {
+      vp.state = { ...vp.state, studio: on }
+      vp.reconcile()
+    }
+
+    it('reaches the viewer once per turn, and not on a pass that changes something else', () => {
+      // `setStudio` swaps lights and edge visibility and asks for a frame, and a
+      // reconcile runs on every step of the section slider.
+      const vp = studio()
+      turn(vp, true)
+      vp.state = { ...vp.state, hidden: ['/Group/a'] }
+      vp.reconcile()
+      turn(vp, true)
+      turn(vp, false)
+      vp.reconcile()
+      expect(vp.viewer.setStudio.mock.calls).toEqual([[true], [false]])
+    })
+
+    it('gives the canvas Studio`s colour while on, and the palette`s back after', () => {
+      // Inline on the box: the palette's rule writes `--tcv-bg-color` there too.
+      const vp = studio()
+      const canvas = () => vp.box.style.getPropertyValue('--tcv-bg-color')
+      turn(vp, true)
+      expect(canvas()).toBe('var(--studio-bg)')
+      turn(vp, false)
+      expect(canvas()).toBe('')
+    })
+
+    it('re-applies the ghosts at Studio`s opacity and back, with the list unchanged', () => {
+      const vp = studio({ ghost: ['/Group/b'] })
+      turn(vp, true)
+      expect(applyGhost).toHaveBeenCalledTimes(1)
+      expect(applyGhost).toHaveBeenLastCalledWith(vp.viewer, ['/Group/b'], STUDIO_GHOST_OPACITY)
+      turn(vp, false)
+      expect(applyGhost).toHaveBeenCalledTimes(2)
+      expect(applyGhost).toHaveBeenLastCalledWith(vp.viewer, ['/Group/b'], GHOST_OPACITY)
     })
   })
 
@@ -1110,6 +1159,34 @@ describe('show', () => {
     expect(viewer.render).toHaveBeenCalledTimes(1)
     const [, , options] = viewer.render.mock.calls[0]
     expect(options.clipObjectColors).toBe(true)
+  })
+
+  it('turns Studio on for the viewer it builds, and leaves it on for the next scene untold', async () => {
+    // A viewer just built starts without Studio and is told once. The library
+    // keeps it on across `clear()` and `render()` (`setStudio`), so the next
+    // scene on the same viewer asks nothing of it; its ghosts are new, though,
+    // and take Studio's opacity.
+    const { vp, viewer } = rendering()
+    vp.state = { ...vp.state, studio: true, ghost: ['/Group/b'] }
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    expect(viewer.setStudio.mock.calls).toEqual([[true]])
+
+    // The second scene, on the same viewer; `rendering()`'s undo resets this too.
+    viewer.clear = vi.fn()
+    loadViewerLibrary.mockImplementationOnce(async () => ({
+      Viewer: function Viewer() { return viewer },
+      Display: function Display() {},
+    }))
+    applyGhost.mockClear()
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+
+    const types = vp.dispatchEvent.mock.calls.map(([event]) => event.type)
+    expect(types.filter((type) => type === EVENT_MODEL)).toHaveLength(2)
+    expect(types).not.toContain(EVENT_ERROR)
+    expect(viewer.clear).toHaveBeenCalledTimes(1)
+    expect(viewer.setStudio).toHaveBeenCalledTimes(1)
+    expect(vp.box.style.getPropertyValue('--tcv-bg-color')).toBe('var(--studio-bg)')
+    expect(applyGhost).toHaveBeenCalledWith(viewer, ['/Group/b'], STUDIO_GHOST_OPACITY)
   })
 
   it('undoes the loader it queued, with nothing in the test doing it by hand', () => {

@@ -407,6 +407,9 @@ export function fakeViewer({
     update: vi.fn(() => {
       if (viewer.onBeforeRender) viewer.onBeforeRender()
     }),
+    // `Viewer.setStudio`, the fork's Studio (viewer/src/core/viewer.ts). A spy:
+    // what the viewport owes it is one call per turn of the bar's button.
+    setStudio: vi.fn(),
     dispose: vi.fn(),
   }
   return viewer

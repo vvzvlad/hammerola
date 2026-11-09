@@ -28,6 +28,8 @@ export interface PickHost {
   readonly hasAnimationLoop: boolean;
   /** True while the Studio (presentation) tab owns the render. */
   readonly studioActive: boolean;
+  /** True while the studio look (`Viewer.setStudio`) is on: no hover tint there. */
+  readonly studioLookActive: boolean;
   readonly shapes: Shapes | null;
   readonly renderer: THREE.WebGLRenderer;
   readonly rendered: RenderedState;
@@ -155,10 +157,16 @@ export class PickingController {
    * endlessly and the B-rep readout ("area ≈ …") is meaningless, so GDS is
    * double-click-identify only. Also disabled in Studio (presentation) mode: hover
    * tint/status is a CAD/analysis affordance, not wanted in Studio, and skipping it
-   * means the id buffer is never re-rendered for a bare mouse-move there.
+   * means the id buffer is never re-rendered for a bare mouse-move there. The
+   * studio look (`Viewer.setStudio`) turns it off for the same reason, but keeps
+   * double-click, which the Studio tab does not.
    */
   private hoverPreselectActive(): boolean {
-    return this.host.shapes?.format !== "GDS" && !this.host.studioActive;
+    return (
+      this.host.shapes?.format !== "GDS" &&
+      !this.host.studioActive &&
+      !this.host.studioLookActive
+    );
   }
 
   /**
