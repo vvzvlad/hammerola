@@ -36,9 +36,12 @@ Whether a number is a problem is the model's own `assert`.
 `Number` and its three constructors are not checks: a check measures the solid
 that came out, a `Number` says where the figure that went in came from. They
 live here because `checklib` is what a model already imports; checking them
-needs the project root and lives in `cadbuild.provenance`. The only function
-here that opens a file is `unsupported_area`, which measures the mesh the gate
-exported (print orientation is a property of that file); it is handed the path.
+needs the project root and lives in `cadbuild.provenance`. `Joint` and its two
+constructors are not checks either: a joint says how a part moves, for the
+viewer's slider and, through `Joint.sweep`, for `swept_clearance`. The only
+function here that opens a file is `unsupported_area`, which measures the mesh
+the gate exported (print orientation is a property of that file); it is handed
+the path.
 """
 
 import collections
@@ -1169,9 +1172,11 @@ def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
     or a hinge clear at both ends and not in the middle --
     `pairwise_interference` only sees the assembled position.
 
-    `moving_positions` is the moving part already placed at each stop, a list
-    the model builds because only it knows the kinematics. Ten to twenty stops
-    is the useful range; fewer than two is refused.
+    `moving_positions` is the moving part already placed at each stop. For a
+    part on a joint the list is `joint.sweep(part, stops=12)`, the travel the
+    viewer's slider runs through; for any other motion the model builds it,
+    because only it knows the kinematics. Ten to twenty stops is the useful
+    range; fewer than two is refused.
 
     At every stop: the shared volume (an interference is a problem, as in
     pairwise_interference, with the same `tol`) and the minimum distance
@@ -1994,6 +1999,170 @@ def deviation(scan, model, tolerance, *, name="deviation", thresholds=None):
                                    / weight.sum())
                 for edge in ((tolerance,) if thresholds is None else thresholds)},
         points=len(at_point))
+
+
+# --------------------------------------------------------------------------
+# 9. How a part moves: a joint, and the positions along it
+# --------------------------------------------------------------------------
+#
+# A joint is declared once in model.py and used twice: on a reference or a
+# group in views(), where the viewer's slider moves the part along it without a
+# rebuild, and in checks(), where `sweep` hands `swept_clearance` the part at
+# stops along the same travel. Value 0 is where the view's `at` already puts
+# the part, so every gate sees the joint at 0 and nothing else; the geometry
+# (origin, axis) is in the view's frame with every joint at 0.
+
+def _three_numbers(value, field, where):
+    """`origin` or `axis` -> a tuple of three finite floats, or a ValueError."""
+    numbers = list(value) if isinstance(value, (list, tuple)) else None
+    if (numbers is None or len(numbers) != 3
+            or any(isinstance(number, bool)
+                   or not isinstance(number, (int, float))
+                   or not math.isfinite(number) for number in numbers)):
+        raise ValueError(
+            f"{where}: {field} is {value!r}, which is not three finite "
+            f"numbers. Write it as a tuple in the view's frame: "
+            f"{field}=(0, 0, 1).")
+    return tuple(float(number) for number in numbers)
+
+
+class Joint:
+    """One degree of freedom of a part: a hinge or a slide, with its travel.
+
+    Made by `revolute` or `slider`, not directly. Every attribute is plain
+    floats, so the build writes it into the view file without a kernel:
+
+      * `id` -- the name the view file and the poses call it by;
+      * `type` -- "revolute" or "slider";
+      * `origin` -- a point on the hinge's axis, None on a slider;
+      * `axis` -- a unit vector, normalised here;
+      * `limits` -- `(lo, hi)`, degrees on a hinge and millimetres on a slide,
+        with `lo <= 0 <= hi`.
+    """
+
+    def __init__(self, id, type, *, origin, axis, limits):
+        where = f"checklib.{type}({id!r})"
+        if type not in ("revolute", "slider"):
+            raise ValueError(
+                f"Joint({id!r}): type is {type!r}. A joint is a hinge or a "
+                "slide: make it with checklib.revolute(...) or "
+                "checklib.slider(...).")
+        if not isinstance(id, str) or not id:
+            raise ValueError(
+                f"{where}: the id is {id!r}, and it has to be a non-empty "
+                "string. The view file names the joint by it, on every part "
+                "it moves and in every pose that sets it.")
+        if type == "revolute":
+            origin = _three_numbers(origin, "origin", where)
+        axis = _three_numbers(axis, "axis", where)
+        length = math.hypot(*axis)
+        if length == 0:
+            raise ValueError(
+                f"{where}: axis is {axis!r}, which names no direction -- a "
+                "part turns ABOUT something and slides ALONG something.")
+        bounds = list(limits) if isinstance(limits, (list, tuple)) else None
+        if (bounds is None or len(bounds) != 2
+                or any(isinstance(bound, bool)
+                       or not isinstance(bound, (int, float))
+                       or not math.isfinite(bound) for bound in bounds)):
+            raise ValueError(
+                f"{where}: limits is {limits!r}, which is not two finite "
+                "numbers. Write it as limits=(lo, hi), degrees on a hinge and "
+                "millimetres on a slide.")
+        lo, hi = float(bounds[0]), float(bounds[1])
+        if not lo < hi:
+            raise ValueError(
+                f"{where}: limits is ({lo:g}, {hi:g}), and the low end has to "
+                "be below the high one, or there is no travel to move along.")
+        if not lo <= 0 <= hi:
+            raise ValueError(
+                f"{where}: limits is ({lo:g}, {hi:g}), which leaves out 0. "
+                "Value 0 is where the view's `at` puts the part -- what the "
+                "view shows and every gate checks -- so it has to be a "
+                "position on the travel. Measure the limits from there.")
+        self.id = id
+        self.type = type
+        self.origin = origin if type == "revolute" else None
+        self.axis = tuple(component / length for component in axis)
+        self.limits = (lo, hi)
+
+    def location(self, value):
+        """The motion at `value` as a cq.Location, in the view's frame.
+
+        A hinge turns `value` degrees about `axis` through `origin`; a slide
+        shifts `value` millimetres along `axis`. Apply it on top of where the
+        view puts the part: `shape.moved(joint.location(55))`.
+        """
+        import cadquery as cq
+        from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
+
+        value = float(value)
+        motion = gp_Trsf()
+        if self.type == "revolute":
+            motion.SetRotation(gp_Ax1(gp_Pnt(*self.origin), gp_Dir(*self.axis)),
+                               math.radians(value))
+        else:
+            motion.SetTranslation(gp_Vec(*(component * value
+                                           for component in self.axis)))
+        return cq.Location(motion)
+
+    def sweep(self, obj, stops=12):
+        """`obj` at `stops` evenly spaced values from lo to hi, both ends in.
+
+            problems += checklib.swept_clearance(
+                HINGE.sweep(lid_as_assembled(), stops=12), build_base(),
+                names=("lid", "base"))
+
+        `obj` is the part where the view puts it -- at 0 -- and every body of
+        it moves, as `at` moves a reference in a view: a Workplane comes back a
+        Workplane holding all of its bodies, a Shape a Shape. The positions are
+        the ones the viewer's slider runs through, so the check and the picture
+        are one travel.
+        """
+        # The count is checked before any geometry, so it answers on a machine
+        # without the kernel.
+        if stops < 2:
+            raise ValueError(
+                f"checklib.{self.type}({self.id!r}).sweep: stops is "
+                f"{stops!r}. A sweep is the part at several positions along "
+                "its travel, both ends included, so it takes at least two; "
+                "ten to twenty is the useful range.")
+        shapes = _shapes(obj, f"checklib.{self.type}({self.id!r}).sweep")
+        lo, hi = self.limits
+        positions = []
+        for index in range(stops):
+            share = index / (stops - 1)
+            # Weighted rather than `lo + (hi - lo) * share`, so the last stop
+            # is `hi` exactly and not `hi` plus a rounding error.
+            location = self.location(lo * (1 - share) + hi * share)
+            moved = [shape.moved(location) for shape in shapes]
+            positions.append(obj.newObject(moved) if hasattr(obj, "newObject")
+                             else moved[0])
+        return positions
+
+
+def revolute(id, *, origin, axis, limits):
+    """A hinge: the part turns about `axis` through `origin`, `limits` in degrees.
+
+        HINGE = checklib.revolute("hinge", origin=(0, -WIDTH / 2, HEIGHT),
+                                  axis=(1, 0, 0), limits=(0, 110))
+
+    `origin` and `axis` are in the view's frame with every joint at 0, and 0
+    is where the view's `at` puts the part. Positive turns by the right hand
+    about `axis`.
+    """
+    return Joint(id, "revolute", origin=origin, axis=axis, limits=limits)
+
+
+def slider(id, *, axis, limits):
+    """A slide: the part moves along `axis`, `limits` in millimetres.
+
+        DRAWER = checklib.slider("drawer", axis=(0, 1, 0), limits=(0, 80))
+
+    `axis` is in the view's frame, and 0 is where the view's `at` puts the
+    part.
+    """
+    return Joint(id, "slider", origin=None, axis=axis, limits=limits)
 
 
 # --------------------------------------------------------------------------

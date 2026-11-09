@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from src.cadbuild import checklib
 from src.cadbuild.errors import BuildError
 from src.cadbuild.hubspec import MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS
 from src.cadbuild.palette import HARDWARE_COLOR, MOCK_COLOR, PART_PALETTE
@@ -386,7 +387,7 @@ def test_an_unknown_reference_key_is_said_out_loud(capsys):
     prepare([one_view(parts=[{"part": "body", "alfa": 0.5, "notes": "typo"}])])
     printed = capsys.readouterr().out
     assert "'alfa'" in printed and "'notes'" in printed
-    assert "Known keys: alpha, at, deformed, part, plate, shape" in printed
+    assert "Known keys: alpha, at, deformed, joint, part, plate, shape" in printed
 
 
 # --------------------------------------------------------------------------
@@ -524,7 +525,7 @@ def test_an_unknown_group_key_is_said_out_loud(capsys):
                               "colour": "red"}])])
     printed = capsys.readouterr().out
     assert "'colour'" in printed
-    assert "Known keys: group, parts" in printed
+    assert "Known keys: group, joint, parts" in printed
 
 
 def test_two_groups_at_one_level_may_not_share_a_name():
@@ -919,6 +920,114 @@ def test_a_whole_group_says_so_on_its_node_and_no_other_group_does():
         flat_document("body", "lid", "screw"), prepared[0])["parts"]
     assert sticker["whole"] is True
     assert "whole" not in housing and "whole" not in loose
+
+
+# ...and the joints written into it
+# --------------------------------------------------------------------------
+
+def hinge(limits=(0, 110)):
+    return checklib.revolute("hinge", origin=(0, -20, 30), axis=(1, 0, 0),
+                             limits=limits)
+
+
+def test_joints_land_on_the_nodes_they_move_and_on_the_root(capsys):
+    """The viewer's whole contract: which node each joint moves, the joints
+    themselves in the order first met, and the poses. A joint on a group
+    nested in another is the chain -- the elbow rides on the shoulder."""
+    shoulder = checklib.revolute("shoulder", origin=(0, 0, 10),
+                                 axis=(0, 1, 0), limits=(-45, 90))
+    elbow = checklib.revolute("elbow", origin=(0, 0, 30), axis=(0, 2, 0),
+                              limits=(0, 120))
+    drawer = checklib.slider("drawer", axis=(0, 1, 0), limits=(0, 80))
+    prepared = prepare(
+        [one_view(parts=[
+            {"group": "arm", "joint": shoulder, "parts": [
+                "upper", {"group": "forearm", "joint": elbow,
+                          "parts": ["lower"]}]},
+            {"part": "tray", "joint": drawer}, "body"],
+            poses={"reach": {"shoulder": 30, "elbow": 90}, "rest": {}})],
+        catalogue(upper="printable", lower="printable", tray="printable",
+                  body="printable"))
+
+    doc = shaped_document(flat_document("upper", "lower", "tray", "body"),
+                          prepared[0])
+
+    arm, tray, body = doc["parts"]
+    upper, forearm = arm["parts"]
+    assert (arm["joint"], forearm["joint"], tray["joint"]) == (
+        "shoulder", "elbow", "drawer")
+    assert "joint" not in upper and "joint" not in forearm["parts"][0]
+    assert "joint" not in body
+    assert doc["joints"] == [
+        {"id": "shoulder", "type": "revolute", "origin": [0.0, 0.0, 10.0],
+         "axis": [0.0, 1.0, 0.0], "limits": [-45.0, 90.0]},
+        # The axis comes out a unit vector whatever length it went in.
+        {"id": "elbow", "type": "revolute", "origin": [0.0, 0.0, 30.0],
+         "axis": [0.0, 1.0, 0.0], "limits": [0.0, 120.0]},
+        {"id": "drawer", "type": "slider", "axis": [0.0, 1.0, 0.0],
+         "limits": [0.0, 80.0]}]
+    assert doc["poses"] == [
+        {"name": "reach", "values": {"shoulder": 30.0, "elbow": 90.0}},
+        {"name": "rest", "values": {}}]
+    printed = capsys.readouterr().out
+    assert "  assembled: joint 'shoulder', revolute -45..90 deg" in printed
+    assert "  assembled: joint 'drawer', slider 0..80 mm" in printed
+
+
+def test_a_view_without_joints_carries_no_joint_key_anywhere():
+    """So the file of every view that declares none is what it was before."""
+    prepared = prepare(
+        [one_view(parts=[{"group": "housing", "parts": ["body"]}])])
+    doc = shaped_document(flat_document("body"), prepared[0])
+    assert "joints" not in doc and "poses" not in doc
+    assert "joint" not in doc["parts"][0]
+    assert "joint" not in doc["parts"][0]["parts"][0]
+
+
+def test_one_id_is_one_joint_and_two_definitions_of_it_are_refused():
+    """One id is one slider: a lid and its handle may share the joint, but two
+    different motions under one id would be driven by one handle."""
+    prepared = prepare(
+        [one_view(parts=[{"part": "body", "joint": hinge()},
+                         {"part": "lid", "joint": hinge()}])],
+        catalogue(body="printable", lid="printable"))
+    assert [node["joint"] for node in prepared[0]["nodes"]] == ["hinge",
+                                                                "hinge"]
+    assert len(prepared[0]["joints"]) == 1
+
+    message = refusal(
+        [one_view(parts=[{"part": "body", "joint": hinge()},
+                         {"part": "lid", "joint": hinge(limits=(0, 90))}])],
+        body="printable", lid="printable")
+    assert "'hinge' is already in this view" in message
+
+
+def test_a_joint_on_a_group_is_refused_again_on_an_entry_inside_it():
+    """The group already moves the lid: the viewer would apply the joint twice
+    down the chain while `sweep` checks it once."""
+    message = refusal(
+        [one_view(parts=[{"group": "cover", "joint": hinge(), "parts": [
+            {"part": "lid", "joint": hinge()}, "body"]}])],
+        body="printable", lid="printable")
+    assert "'hinge' is already on group 'cover'" in message
+
+
+def test_a_pose_naming_a_joint_the_view_does_not_have_is_refused():
+    message = refusal([one_view(parts=[{"part": "body", "joint": hinge()}],
+                                poses={"open": {"hings": 110}})])
+    assert "'hings'" in message and "'hinge'" in message
+
+
+def test_a_pose_outside_the_joint_s_limits_is_refused():
+    """The slider runs between the limits, so the pose is never reached."""
+    message = refusal([one_view(parts=[{"part": "body", "joint": hinge()}],
+                                poses={"open": {"hinge": 120}})])
+    assert "outside its limits 0..110" in message
+
+
+def test_a_joint_that_is_not_a_checklib_joint_is_refused():
+    message = refusal([one_view(parts=[{"part": "body", "joint": "hinge"}])])
+    assert "not a joint" in message and "checklib.revolute" in message
 
 
 # ...and the mesh leaves written into it

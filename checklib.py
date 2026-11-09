@@ -104,6 +104,7 @@ DEFAULT_VOLUME_TOL = _impl.DEFAULT_VOLUME_TOL
 DERIVED = _impl.DERIVED
 ESTIMATED = _impl.ESTIMATED
 EXTRUSION_LINES = _impl.EXTRUSION_LINES
+Joint = _impl.Joint
 KINDS = _impl.KINDS
 MAX_NOTE_CHARS = _impl.MAX_NOTE_CHARS
 MEASURED = _impl.MEASURED
@@ -127,7 +128,9 @@ recorded_clearance = _impl.recorded_clearance
 recorded_interference = _impl.recorded_interference
 recorded_sections = _impl.recorded_sections
 registered_units = _impl.registered_units
+revolute = _impl.revolute
 section = _impl.section
+slider = _impl.slider
 swept_clearance = _impl.swept_clearance
 thin_walls = _impl.thin_walls
 tool_access = _impl.tool_access
@@ -143,6 +146,7 @@ __all__ = [
     "DERIVED",
     "ESTIMATED",
     "EXTRUSION_LINES",
+    "Joint",
     "KINDS",
     "MAX_NOTE_CHARS",
     "MEASURED",
@@ -166,7 +170,9 @@ __all__ = [
     "recorded_interference",
     "recorded_sections",
     "registered_units",
+    "revolute",
     "section",
+    "slider",
     "swept_clearance",
     "thin_walls",
     "tool_access",
