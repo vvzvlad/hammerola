@@ -16,8 +16,10 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
-import { STATE } from '../src/events.js'
-import { jointPose } from '../src/viewport/joints.js'
+import { JOINTS, STATE } from '../src/events.js'
+import {
+  jointAbove, jointInWorld, jointPose, rayAngle, slidBy, unwrapped, withinLimits,
+} from '../src/viewport/joints.js'
 import * as THREE from '../../static/_v/three.module.js'
 import { makeComponent, replaceState } from './component.js'
 import { texts } from './eltree.js'
@@ -104,6 +106,73 @@ describe('jointPose', () => {
   })
 })
 
+describe('dragging a joint in the scene', () => {
+  it('takes the nearest joint up the tree from the part under the press', () => {
+    const door = { joint: HINGE, loc: LOC }
+    const latch = { joint: DRAWER, loc: LOC }
+    const nodes = new Map([['/model/door', door], ['/model/door/latch', latch]])
+    expect(jointAbove(nodes, '/model/door/latch/bar')).toEqual({ path: '/model/door/latch', node: latch })
+    expect(jointAbove(nodes, '/model/door/panel')).toEqual({ path: '/model/door', node: door })
+    // A path segment, not a string prefix: `door(2)` is not inside `door`.
+    expect(jointAbove(nodes, '/model/door(2)/panel')).toBeNull()
+    expect(jointAbove(nodes, '/model/frame')).toBeNull()
+  })
+
+  it('carries the hinge line into the world through its parent\'s matrix', () => {
+    const parent = placed(LOC)
+    const { origin, axis } = jointInWorld(HINGE, parent.elements)
+    const want = new THREE.Vector3(...HINGE.origin).applyMatrix4(parent).toArray()
+    origin.forEach((v, i) => expect(v).toBeCloseTo(want[i], 9))
+    const dir = new THREE.Vector3(...HINGE.axis).transformDirection(parent).toArray()
+    axis.forEach((v, i) => expect(v).toBeCloseTo(dir[i], 9))
+    expect(jointInWorld(DRAWER, parent.elements).origin).toBeNull()
+  })
+
+  it('reads the angle a point is turned about the hinge, where a ray meets its plane', () => {
+    // The point turned by three about the hinge's own axis, so a pair `u`, `v`
+    // wound the wrong way round (or the wrong plane) comes out as -37 or worse.
+    const o = new THREE.Vector3(...HINGE.origin)
+    const n = new THREE.Vector3(...HINGE.axis)
+    const off = new THREE.Vector3(5, -1, 0).projectOnPlane(n)
+    const turnedBy = (deg) => o.clone().add(off.clone().applyAxisAngle(n, deg * RADIANS))
+    // A ray from far off along a slant direction, aimed through the point.
+    const dir = [0.2, -0.3, 0.9327379053088815]
+    const rayTo = (p) => ({ origin: [p.x - 40 * dir[0], p.y - 40 * dir[1], p.z - 40 * dir[2]], dir })
+    const from = rayAngle(rayTo(turnedBy(0)), HINGE.origin, HINGE.axis)
+    const to = rayAngle(rayTo(turnedBy(37)), HINGE.origin, HINGE.axis)
+    expect(unwrapped(to - from)).toBeCloseTo(37, 9)
+    // A ray lying in the plane meets it nowhere (`2, -1, 0` is square to the
+    // axis exactly, in floating point too).
+    expect(rayAngle({ origin: [0, 0, 0], dir: [2, -1, 0] }, HINGE.origin, HINGE.axis)).toBeNull()
+  })
+
+  it('keeps counting through the half turn, step by step', () => {
+    // Four quarter steps read off atan2 (which jumps from 180 to -180).
+    const read = [0, 90, 180, -90, 0]
+    let swept = 0
+    for (let i = 1; i < read.length; i += 1) swept += unwrapped(read[i] - read[i - 1])
+    expect(swept).toBe(360)
+    expect(unwrapped(180)).toBe(180)
+    expect(unwrapped(-180)).toBe(180)
+  })
+
+  it('slides a part as far as the hand went along its foreshortened axis', () => {
+    // The part moved by 7 along an axis the view sees at a slant: what the hand
+    // has to travel is that move with its component along the view removed.
+    const view = [0, 0, -1]
+    const t = 7
+    const along = DRAWER.axis[0] * view[0] + DRAWER.axis[1] * view[1] + DRAWER.axis[2] * view[2]
+    const hand = DRAWER.axis.map((a, i) => t * (a - along * view[i]))
+    expect(slidBy(hand, DRAWER.axis, Math.sqrt(1 - along * along))).toBeCloseTo(t, 9)
+  })
+
+  it('holds a value to the joint\'s limits', () => {
+    expect(withinLimits(HINGE, 150)).toBe(120)
+    expect(withinLimits(HINGE, -5)).toBe(0)
+    expect(withinLimits(HINGE, 42)).toBe(42)
+  })
+})
+
 describe('the motion row', () => {
   const click = { stopPropagation() {}, preventDefault() {} }
   const TREE = { id: '/model', name: 'model', children: [] }
@@ -161,6 +230,28 @@ describe('the motion row', () => {
 
     pill('Reset').onClick(click)
     expect(el.setJoints).toHaveBeenLastCalledWith({ hinge: 0, drawer: 0 })
+  })
+
+  it('takes a drag in the scene by the slider\'s own path', () => {
+    // Mounted, so the viewport's event reaches the handler the page listens
+    // with; the fetches the mount starts are stubbed.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { c, el } = page()
+    c.load = vi.fn(async () => {})
+    c.loadFeed = vi.fn(async () => {})
+    c.loadProposal = vi.fn(async () => {})
+    c.componentDidMount()
+    onTestFinished(() => {
+      c.componentWillUnmount()
+      vi.restoreAllMocks()
+    })
+    c.onModel({ view: 'assembled', tree: TREE, live: false, joints: [HINGE, DRAWER], poses: POSES })
+    c.setState({ measure: { text: '12.00 mm', note: '', full: '12.00 mm' } })
+
+    window.dispatchEvent(new CustomEvent(JOINTS, { detail: { values: { hinge: 45, drawer: 0 } } }))
+    expect(el.setJoints).toHaveBeenLastCalledWith({ hinge: 45, drawer: 0 })
+    expect(c.computed().motionRows.find((row) => row.key === 'hinge').value).toBe(45)
+    expect(c.state.measure).toBeNull()
   })
 
   it('keeps the values across a rebuild of the view, clamped to the new limits, and starts another view at 0', () => {

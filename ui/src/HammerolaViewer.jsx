@@ -77,7 +77,7 @@ import React from 'react';
 
 import {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
-  PLACE, PIN, MODEL, ERROR, TOOL, PROGRESS, VIEWPORT_TAG,
+  JOINTS, PLACE, PIN, MODEL, ERROR, TOOL, PROGRESS, VIEWPORT_TAG,
 } from './events.js';
 // The page's address and its history, every read of them and every write.
 import {
@@ -1234,6 +1234,9 @@ export default class HammerolaViewer extends React.Component {
         const d = e.detail || {};
         this.editBody(d.name, d.turn, turnNodes);
       },
+      // A part dragged along its joint in the scene: the slider's own path, so
+      // the slider follows and the scene is placed only through `setJoints`.
+      [JOINTS]: (e) => this.setJointValues(e.detail.values),
       [PLACE]: (e) => {
         // A comment is a task for the agent, and only the customer files one.
         if (this.viewer()) return;

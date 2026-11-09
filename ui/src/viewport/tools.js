@@ -8,6 +8,11 @@
 // the press is watched so a release without movement can be reported as a pick,
 // and rotation stays the library's.
 //
+// Except a plain left press on a part a joint moves (no tool, or Move): it
+// drags that joint (`jointGrip`), and the values go up as `hmr:joints`. With
+// Alt nothing of ours takes the left press, whatever is armed: Alt is the
+// reader's way to orbit from anywhere (scene3d.js refuses it too).
+//
 // `wheel` is left alone in every mode, so zoom works while a tool is up.
 //
 // The right button is a second gesture on the same listener and takes nothing
@@ -20,13 +25,18 @@
 // same menu, and leaves its release nothing to do.
 
 import {
-  EVENT_FACE, EVENT_MEASURE, EVENT_MENU, EVENT_PICK, EVENT_PLACE, emit,
+  EVENT_FACE, EVENT_JOINTS, EVENT_MEASURE, EVENT_MENU, EVENT_PICK, EVENT_PLACE, emit,
 } from "./events.js";
-import { cameraBasis, canvasXY, ndcAt } from "./camera.js";
+import { cameraBasis, canvasXY, ndcAt, ndcOffset, ndcRay } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { internals } from "./internals.js";
-import { dot3, finite3, vec3 } from "./math.js";
+import {
+  jointAbove, jointInWorld, rayAngle, slidBy, unwrapped, withinLimits,
+} from "./joints.js";
+import { dot3, finite3, sineFromCos, vec3 } from "./math.js";
 import { measureDistance, measureEntity } from "./measure.js";
+import { GIZMO_MIN_SCALE } from "./options.js";
+import { movableGroup } from "./parts.js";
 import { capOwnerAt, faceNormalAt, pickEntity } from "./picking.js";
 import {
   dragSection, keepSectionCut, placeSectionPlane, sectionAxis,
@@ -163,7 +173,7 @@ export function installTools(vp) {
    * report that re-stages runs `endGesture` again, which finds `press` cleared.
    */
   const conclude = (p) => {
-    if (p && p.moved && p.tool === "cut") reportCut(vp);
+    if (p && p.moved && p.tool === "cut" && !p.alt) reportCut(vp);
   };
 
   // Published so the element can end a gesture the reader has not let go of
@@ -350,11 +360,107 @@ export function installTools(vp) {
     emit(vp, EVENT_MEASURE, answer);
   };
 
+  /**
+   * The joint a plain left press on the canvas drags, as the gesture's record,
+   * or null when the press is not one (no joint above the part under it, a
+   * modifier, a line the view cannot drag along), and the trackball keeps it.
+   *
+   * The joint's line is carried into the world once, through the world matrix
+   * of the node's parent group (the frame `jointNodes` declares it in): the drag
+   * moves the node, never its parent. A revolute plane seen nearly edge-on, or a
+   * slider axis pointing nearly at the reader, is refused at the floor the Move
+   * tool hides its quads and arrows at (`GIZMO_MIN_SCALE`): the same hand would
+   * swing the value wildly there.
+   *
+   * A finger never drags a joint: a pinch begun on such a part needs its first
+   * finger in the trackball, which a drag would have taken. On a touch screen
+   * the slider moves the part.
+   */
+  const jointGrip = (g, event) => {
+    // Under the perspective camera a screen offset is no world distance at the
+    // part's depth (`ndcOffset`), so the drag is refused there like every other
+    // gesture on a part (`gestureInternals`).
+    if (!vp.jointNodes.size || !g.cam.isOrthographicCamera || event.pointerType === "touch"
+        || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return null;
+    }
+    const at = canvasXY(g.canvas, event);
+    const entity = at ? entityAt(g, event, at[0], at[1]) : null;
+    const held = entity ? jointAbove(vp.jointNodes, entity.id) : null;
+    const group = held ? movableGroup(vp.viewer, held.path) : null;
+    const parent = group && group.parent;
+    if (!parent) return null;
+    // As `partCentre` reads it: a joint or a move above may have written a
+    // group since the last frame composed the matrix.
+    parent.updateWorldMatrix(true, false);
+    const { joint } = held.node;
+    const { origin, axis } = jointInWorld(joint, parent.matrixWorld.elements);
+    const basis = axis ? cameraBasis(vp.viewer, g) : null;
+    const ndc = basis ? ndcAt(g.canvas, event) : null;
+    if (!ndc) return null;
+    const facing = dot3(basis.view, axis);
+    const value = vp.jointValues[joint.id] || 0;
+    const grip = { joint, axis, start: value, value, ndc };
+    if (joint.type === "revolute") {
+      if (Math.abs(facing) < GIZMO_MIN_SCALE || !finite3(entity.point)) return null;
+      // The point the hand took turns in the plane through it square to the
+      // axis, about the axis's foot in that plane. The joint's own origin is
+      // any point of the axis, often far along it (a door's hinge at the end
+      // of the box): seen at a slant, a plane through it would put the cursor
+      // somewhere else and the part would lag or turn against the hand.
+      const p = entity.point;
+      const h = dot3([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]], axis);
+      const centre = [origin[0] + h * axis[0], origin[1] + h * axis[1], origin[2] + h * axis[2]];
+      const ray = ndcRay(g, basis.eye, basis.view, ndc[0], ndc[1]);
+      const angle = ray ? rayAngle(ray, centre, axis) : null;
+      if (angle === null) return null;
+      // `swept` is the unclamped sum of the steps: a hand that runs past a
+      // limit leaves the part waiting there until it comes back to it.
+      return { ...grip, centre, angle, swept: 0 };
+    }
+    const sine = sineFromCos(facing);
+    return sine < GIZMO_MIN_SCALE ? null : { ...grip, sine };
+  };
+
+  /** One step of a joint drag: the value under the hand, clamped to the
+   *  joint's limits, sent up with every other joint where it stands. */
+  const dragJoint = (grip, event) => {
+    const g = internals(vp.viewer);
+    const ndc = g ? ndcAt(g.canvas, event) : null;
+    const basis = ndc ? cameraBasis(vp.viewer, g) : null;
+    if (!basis) return;
+    let raw;
+    if (grip.joint.type === "revolute") {
+      const ray = ndcRay(g, basis.eye, basis.view, ndc[0], ndc[1]);
+      const angle = ray ? rayAngle(ray, grip.centre, grip.axis) : null;
+      if (angle === null) return;
+      grip.swept += unwrapped(angle - grip.angle);
+      grip.angle = angle;
+      raw = grip.start + grip.swept;
+    } else {
+      // The difference of the two ends' offsets, as gizmo.js measures an arrow.
+      const from = ndcOffset(g, basis.eye, basis.view, grip.ndc[0], grip.ndc[1]);
+      const to = ndcOffset(g, basis.eye, basis.view, ndc[0], ndc[1]);
+      if (!from || !to) return;
+      raw = grip.start + slidBy(
+        [to[0] - from[0], to[1] - from[1], to[2] - from[2]], grip.axis, grip.sine);
+    }
+    const value = withinLimits(grip.joint, raw);
+    if (value === grip.value) return;
+    grip.value = value;
+    emit(vp, EVENT_JOINTS, { values: { ...vp.jointValues, [grip.joint.id]: value } });
+  };
+
   function onMove(event) {
     if (!press) return;
     if (!travelled(event, press)) return;
     press.moved = true;
-    if (press.tool === "cut") {
+    if (press.joint) {
+      dragJoint(press.joint, event);
+      return;
+    }
+    // An Alt press is the trackball's: the plane stays where it is.
+    if (press.tool === "cut" && !press.alt) {
       const g = internals(vp.viewer);
       if (!g || !vp.sectionSeed) return;
       // Once per gesture: the controls are held off for its whole duration, so
@@ -540,22 +646,25 @@ export function installTools(vp) {
       tool,
       // A finger, whose long press opens the menu (`onContextMenu`).
       touch: event.pointerType === "touch",
+      // Alt: the trackball orbits on it, and a tool keeps only its click.
+      alt: event.altKey === true,
       x: event.clientX, y: event.clientY,
       startX: event.clientX, startY: event.clientY,
       moved: false, axis: undefined,
     };
     watch.arm();
-    if (!tool) return;
-    // The move tool takes no press here, so the trackball still shares the
-    // canvas with it. A part is moved only by its manipulator: an axis arrow or
-    // plane quad (gizmo.js) or a rotation disc (rings.js), each taking its press
-    // in a capture-phase window listener that runs first. A press reaching this
-    // line under `move` missed the widget and means what it means with no tool:
-    // a click selects, a drag orbits.
-    //
-    // The tool stays on `press` rather than null: the press falls through
-    // `onUp` to the plain pick, like an unknown tool.
-    if (tool === "move") return;
+    if (press.alt) return;
+    if (!tool || tool === "move") {
+      // The move tool takes no press of its own here: its manipulator (gizmo.js,
+      // rings.js) takes its presses in a capture-phase window listener that
+      // runs first, so a press reaching this line under `move` missed it and
+      // means what it means with no tool: on a part a joint moves it drags the
+      // joint; elsewhere a click selects and a drag orbits. The tool stays on
+      // `press` rather than null: a click falls through `onUp` to the plain
+      // pick, like an unknown tool.
+      press.joint = jointGrip(g, event);
+      if (!press.joint) return;
+    }
     // Take the press from the trackball: a capture-phase listener on the
     // container runs before the canvas's pointerdown handler, so the controls
     // never begin a rotation. preventDefault also suppresses compatibility

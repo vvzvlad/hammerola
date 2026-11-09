@@ -118,10 +118,11 @@ function drawn(s) {
   return inScene(s.viewer)
 }
 
-/** A press on the canvas, with both refusals watched. */
-function pressAt(canvas, [clientX, clientY], button = 0) {
+/** A press on the canvas, with both refusals watched; `keys` are the modifier
+ *  flags held. */
+function pressAt(canvas, [clientX, clientY], button = 0, keys = {}) {
   const event = new MouseEvent('pointerdown', {
-    button, clientX, clientY, bubbles: true, cancelable: true,
+    button, clientX, clientY, bubbles: true, cancelable: true, ...keys,
   })
   vi.spyOn(event, 'stopImmediatePropagation')
   vi.spyOn(event, 'preventDefault')
@@ -589,6 +590,18 @@ describe('the press', () => {
     } finally {
       removeEventListener('pointerdown', later, true)
     }
+  })
+
+  it('leaves a press with Alt to the trackball, even on the widget', () => {
+    // Alt is the reader's orbit from anywhere: the Move arrows, the rings and
+    // the section grip all stand over the model and would otherwise take it.
+    const s = aimed()
+    drawn(s)
+
+    const event = pressAt(s.canvas, [400, 300], 0, { altKey: true })
+    expect(s.calls.press).toBe(0)
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled()
+    expect(event.preventDefault).not.toHaveBeenCalled()
   })
 
   it('leaves a press that misses completely alone', () => {

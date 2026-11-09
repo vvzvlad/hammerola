@@ -23,6 +23,7 @@ import {
   EVENT_PROPOSALMOVE as PROPOSALMOVE,
   EVENT_TURNED as TURNED,
   EVENT_PROPOSALTURN as PROPOSALTURN,
+  EVENT_JOINTS as JOINTS,
   EVENT_PLACE as PLACE,
   EVENT_PIN as PIN,
   EVENT_MODEL as MODEL,
@@ -54,6 +55,8 @@ import {
  *            `turn` is how far this gesture took it, to be added to the body's
  *            own `rot`, because the document is where a body's pose lives and
  *            the viewport has never read it
+ *   JOINTS   {values: {jointId: value}}  -- a part a joint moves was dragged in
+ *            the scene; the whole map, answered as the motion slider is
  *   PLACE    {id, name, p: [x, y, z], n: [x, y, z] | null}
  *                                           -- a point was picked for a comment;
  *            `n` is the face normal there, turned toward the camera
@@ -75,13 +78,13 @@ import {
  */
 export {
   STATE, PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE, TURNED, PROPOSALTURN,
-  PLACE, PIN, MODEL, ERROR, TOOL, PROGRESS,
+  JOINTS, PLACE, PIN, MODEL, ERROR, TOOL, PROGRESS,
 };
 
 /** Every event the viewport sends us, in one list — see componentDidMount. */
 export const UP_EVENTS = [PICK, MENU, FACE, MEASURE, MOVED, PROPOSALMOVE,
-                          TURNED, PROPOSALTURN, PLACE, PIN, MODEL, ERROR, TOOL,
-                          PROGRESS];
+                          TURNED, PROPOSALTURN, JOINTS, PLACE, PIN, MODEL, ERROR,
+                          TOOL, PROGRESS];
 
 /** The custom element the adapter registers.
  *

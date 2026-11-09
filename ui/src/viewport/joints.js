@@ -14,7 +14,7 @@
 // are in the frame the node's `loc` is in, its parent's, so a jointed node under
 // a jointed group is a chain the library's parent groups compose.
 
-import { after, turned } from "./math.js";
+import { after, clamp, cross3, dot3, turned, unit3 } from "./math.js";
 
 const DEGREES = Math.PI / 180;
 
@@ -98,3 +98,82 @@ export function restPoint(point, from, to) {
 
 /** Does any joint stand away from 0 in `values` (`{jointId: value}`)? */
 export const posed = (values) => Object.values(values).some((value) => value !== 0);
+
+// -- dragging a joint in the scene (tools.js) ---------------------------------
+
+/**
+ * The node a press on the part at `path` drags: the nearest one up the tree a
+ * joint moves, as `{path, node}` with `node` from `jointNodes`, or null.
+ *
+ * Longest prefix first, so a latch inside a door group moves the latch's own
+ * joint and not the door's.
+ */
+export function jointAbove(nodes, path) {
+  const steps = String(path || "").split("/");
+  for (let n = steps.length; n > 0; n -= 1) {
+    const prefix = steps.slice(0, n).join("/");
+    const node = nodes.get(prefix);
+    if (node) return { path: prefix, node };
+  }
+  return null;
+}
+
+/**
+ * A joint's line carried into the world: `{origin, axis}`, `origin` null for a
+ * slider and `axis` a unit vector (null if it has none).
+ *
+ * `e` is the world matrix of the frame the joint is declared in, its node's
+ * parent group, as three keeps `matrixWorld.elements` (column-major).
+ */
+export function jointInWorld(joint, e) {
+  const [x, y, z] = joint.axis;
+  const axis = unit3([e[0] * x + e[4] * y + e[8] * z,
+                      e[1] * x + e[5] * y + e[9] * z,
+                      e[2] * x + e[6] * y + e[10] * z]);
+  if (joint.type !== "revolute") return { origin: null, axis };
+  const [a, b, c] = joint.origin;
+  return {
+    origin: [e[0] * a + e[4] * b + e[8] * c + e[12],
+             e[1] * a + e[5] * b + e[9] * c + e[13],
+             e[2] * a + e[6] * b + e[10] * c + e[14]],
+    axis,
+  };
+}
+
+/**
+ * Where a world ray `{origin, dir}` meets the plane through `centre` normal to
+ * the unit `axis`, as an angle in degrees about `axis`; null for a ray lying in
+ * the plane.
+ *
+ * `ringAngle` in rings.js for any axis: `atan2` in a pair `u`, `v` of the plane
+ * with `u × v = axis`, so the angle grows the way a revolute value does. `u`
+ * depends on `axis` alone, so every call of one gesture measures from one zero.
+ */
+export function rayAngle(ray, centre, axis) {
+  const along = dot3(ray.dir, axis);
+  if (!along) return null;
+  const t = (dot3(axis, centre) - dot3(axis, ray.origin)) / along;
+  const on = [ray.origin[0] + t * ray.dir[0] - centre[0],
+              ray.origin[1] + t * ray.dir[1] - centre[1],
+              ray.origin[2] + t * ray.dir[2] - centre[2]];
+  // The world axis least along `axis`, so the cross product is never short.
+  const [ax, ay, az] = axis.map(Math.abs);
+  const seed = ax <= ay && ax <= az ? [1, 0, 0] : ay <= az ? [0, 1, 0] : [0, 0, 1];
+  const u = unit3(cross3(seed, axis));
+  const v = cross3(axis, u);
+  const theta = Math.atan2(dot3(on, v), dot3(on, u)) / DEGREES;
+  return Number.isFinite(theta) ? theta : null;
+}
+
+/** A step of a dragged angle in degrees, brought into (-180, 180]: summed step
+ *  by step, a sweep past the half turn keeps counting instead of jumping back. */
+export const unwrapped = (step) => step - 360 * Math.ceil((step - 180) / 360);
+
+/** How far a slider goes for a hand that moved by `world` (the world vector the
+ *  screen displacement spans, `ndcOffset`): `alongAxis` in gizmo.js, the
+ *  component along the unit `axis` over `sine²`, `sine` being how much of the
+ *  axis survives the projection. */
+export const slidBy = (world, axis, sine) => dot3(world, axis) / (sine * sine);
+
+/** `value` held to the joint's limits. */
+export const withinLimits = (joint, value) => clamp(value, joint.limits[0], joint.limits[1]);

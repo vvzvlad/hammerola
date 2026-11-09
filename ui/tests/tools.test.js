@@ -29,7 +29,7 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 }))
 
 import {
-  EVENT_FACE, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PLACE,
+  EVENT_FACE, EVENT_JOINTS, EVENT_MENU, EVENT_MOVED, EVENT_PICK, EVENT_PLACE,
 } from '../src/viewport/events.js'
 import { projectPoint } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
@@ -83,14 +83,17 @@ function toolViewport(state = {}, viewer = fakeViewer()) {
   return vp
 }
 
-/** A press on the canvas. The event is returned so a test can ask who got it. */
-function pointerDown(vp, [clientX, clientY] = [100, 100], button = 0, pointerType = 'mouse') {
+/** A press on the canvas. The event is returned so a test can ask who got it.
+ *  `keys` are the modifier flags held, `{altKey: true}` and the like. */
+function pointerDown(vp, [clientX, clientY] = [100, 100], button = 0, pointerType = 'mouse',
+                     keys = {}) {
   const event = {
     button,
     pointerType,
     target: vp.viewer.canvas,
     clientX,
     clientY,
+    ...keys,
     preventDefault: vi.fn(),
     stopPropagation: vi.fn(),
   }
@@ -941,6 +944,176 @@ describe('with the move tool armed', () => {
     ])
     expect(at(groups[PINS[0]])).toEqual([0, 0, 0])
     expect(emitted(vp)).not.toContain(EVENT_MOVED)
+  })
+})
+
+describe('a press on a part a joint moves', () => {
+  // The door and the tray hang in a group turned a quarter about x and set off
+  // to (3, 4, 0). The hinge, along the group's own y through its origin, so
+  // stands along world z through (3, 4, 0): square to the view (`orthoCamera`
+  // looks down -Z). Read in the group's own frame it would be edge-on and refuse
+  // the press. The tray's axis, (0.6, 0.8, 0) of the group, is (0.6, 0, 0.8) in
+  // the world: seen at a slant, a fifth of it foreshortened away.
+  const DOOR = { id: 'door', type: 'revolute', origin: [0, 0, 0], axis: [0, 1, 0], limits: [-30, 300] }
+  const TRAY = { id: 'tray', type: 'slider', axis: [0.6, 0.8, 0], limits: [0, 50] }
+  const LOC = [[0, 0, 0], [0, 0, 0, 1]]
+  const PANEL = { id: '/model/door/panel', name: 'panel', point: [8, 4, 0] }
+
+  /** The pixel of the fake canvas that shows world (x, y): 800 x 600 over 40 x 30. */
+  const pixel = ([x, y]) => [(x / 20 + 1) * 400, (1 - y / 15) * 300]
+
+  function jointed(state = { tool: null }) {
+    const frame = new THREE.Group()
+    frame.position.set(3, 4, 0)
+    frame.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2)
+    const door = new THREE.Group()
+    const tray = new THREE.Group()
+    frame.add(door, tray)
+    const vp = toolViewport(state, fakeViewer({
+      groups: { '/model/door': door, '/model/tray': tray },
+    }))
+    vp.jointNodes = new Map([['/model/door', { joint: DOOR, loc: LOC }],
+                             ['/model/tray', { joint: TRAY, loc: LOC }]])
+    vp.jointValues = { door: 10, tray: 0 }
+    pickEntity.mockReturnValue(PANEL)
+    return vp
+  }
+
+  const doorAt = (vp) => details(vp, EVENT_JOINTS).map((d) => d.values.door)
+
+  it('turns the hinge under the hand, from where it stood, on past the half turn', () => {
+    const vp = jointed()
+    const event = pointerDown(vp, pixel([8, 4]))
+    // Taken from the trackball, or the camera would turn under the hand.
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(event.stopPropagation).toHaveBeenCalled()
+
+    // A quarter, a half and three quarters round the hinge at (3, 4).
+    for (const at of [[3, 9], [-2, 4], [3, -1]]) pointerMove(pixel(at))
+    expect(doorAt(vp)).toEqual([100, 190, 280].map((want) => expect.closeTo(want, 6)))
+    // The whole map goes up, the joint not dragged where it stood.
+    expect(details(vp, EVENT_JOINTS).every((d) => d.values.tray === 0)).toBe(true)
+
+    // A drag is not a click: nothing is selected at the release.
+    pointerUp(pixel([3, -1]))
+    expect(emitted(vp)).not.toContain(EVENT_PICK)
+  })
+
+  it('slides the tray as far as the hand went along its foreshortened axis', () => {
+    const vp = jointed()
+    pickEntity.mockReturnValue({ id: '/model/tray', name: 'tray', point: [0, 0, 0] })
+    pointerDown(vp, pixel([0, 0]))
+    // 3 across the screen along the axis's visible part, 0.6 of it: 3 * 0.6 /
+    // 0.36 = 5 along the axis.
+    pointerMove(pixel([3, 0]))
+    expect(details(vp, EVENT_JOINTS).map((d) => d.values.tray)).toEqual([expect.closeTo(5, 6)])
+  })
+
+  it('stays a click without travel: taken from the trackball, and it selects', () => {
+    const vp = jointed()
+    const event = pointerDown(vp, pixel([8, 4]))
+    pointerUp(pixel([8, 4]))
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(details(vp, EVENT_PICK)).toEqual([PANEL])
+    expect(emitted(vp)).not.toContain(EVENT_JOINTS)
+  })
+
+  it('is dragged under Move as with no tool, and left to any other tool', () => {
+    const moving = jointed({ tool: 'move' })
+    expect(pointerDown(moving, pixel([8, 4])).preventDefault).toHaveBeenCalled()
+    pointerMove(pixel([3, 9]))
+    expect(doorAt(moving)).toHaveLength(1)
+    pointerUp(pixel([3, 9]))
+
+    // The measure tool keeps its own press: a drag on the door moves nothing.
+    const measuring = jointed({ tool: 'measure' })
+    pointerDown(measuring, pixel([8, 4]))
+    pointerMove(pixel([3, 9]))
+    pointerUp(pixel([3, 9]))
+    expect(emitted(measuring)).not.toContain(EVENT_JOINTS)
+  })
+
+  it('turns a hinge seen at a slant with the point the hand took, wherever along the axis', () => {
+    // A lid hinged along (0, 0.6, 0.8) through the world origin, taken 10 along
+    // the axis and 5 off it, at (5, 6, 8). A quarter turn carries that point to
+    // (0, 10, 5), which the camera looking down -z shows at (0, 10). Measured in
+    // the plane through the origin instead, the same hand reads 33.7 degrees.
+    const LID = { id: 'lid', type: 'revolute', origin: [0, 0, 0], axis: [0, 0.6, 0.8], limits: [-30, 300] }
+    const root = new THREE.Group()
+    const lid = new THREE.Group()
+    root.add(lid)
+    const vp = toolViewport({ tool: null }, fakeViewer({ groups: { '/model/lid': lid } }))
+    vp.jointNodes = new Map([['/model/lid', { joint: LID, loc: LOC }]])
+    vp.jointValues = { lid: 10 }
+    pickEntity.mockReturnValue({ id: '/model/lid', name: 'lid', point: [5, 6, 8] })
+
+    pointerDown(vp, pixel([5, 6]))
+    pointerMove(pixel([0, 10]))
+    expect(details(vp, EVENT_JOINTS).map((d) => d.values.lid)).toEqual([expect.closeTo(100, 6)])
+    pointerUp(pixel([0, 10]))
+  })
+
+  it('leaves a slider to the trackball under the perspective camera', () => {
+    // There a screen offset is no distance at the tray's depth: the tray would
+    // creep a fraction of the hand while the camera stood still.
+    const vp = jointed()
+    pickEntity.mockReturnValue({ id: '/model/tray', name: 'tray', point: [8, 4, 0] })
+    expect(pointerDown(vp, pixel([8, 4])).preventDefault).toHaveBeenCalled()
+    pointerUp(pixel([8, 4]))
+
+    vp.viewer.camera.getCamera().isOrthographicCamera = false
+    expect(pointerDown(vp, pixel([8, 4])).preventDefault).not.toHaveBeenCalled()
+    pointerUp(pixel([8, 4]))
+  })
+
+  it('leaves a press with a key, on an edge-on hinge or by a finger to the trackball', () => {
+    // The plain press first, so the refusals below are not just a press that
+    // nothing takes.
+    const vp = jointed()
+    expect(pointerDown(vp, pixel([8, 4])).preventDefault).toHaveBeenCalled()
+    pointerUp(pixel([8, 4]))
+
+    const refused = (what, press) => {
+      vi.clearAllMocks()
+      pickEntity.mockReturnValue(PANEL)
+      const event = press()
+      pointerMove(pixel([3, 9]))
+      pointerUp(pixel([3, 9]))
+      expect(event.preventDefault, what).not.toHaveBeenCalled()
+      expect(event.stopPropagation, what).not.toHaveBeenCalled()
+      expect(emitted(vp), what).not.toContain(EVENT_JOINTS)
+    }
+    for (const key of ['altKey', 'shiftKey', 'ctrlKey', 'metaKey']) {
+      refused(key, () => pointerDown(vp, pixel([8, 4]), 0, 'mouse', { [key]: true }))
+    }
+    // A finger on the part: the first of a pinch has to reach the trackball.
+    refused('a finger', () => pointerDown(vp, pixel([8, 4]), 0, 'touch'))
+    // A hinge along the group's z stands along world -y, edge-on to the view.
+    vp.jointNodes.set('/model/door', { joint: { ...DOOR, axis: [0, 0, 1] }, loc: LOC })
+    refused('an edge-on hinge', () => pointerDown(vp, pixel([8, 4])))
+  })
+})
+
+describe('a press with Alt', () => {
+  it('leaves an armed cut its click but not the press: the plane stays where it was', () => {
+    const vp = toolViewport({ tool: 'cut' })
+    placeSectionPlane(vp, internals(vp.viewer), [1, 0, 0], [0, 0, 0])
+    const before = sectionOffset(vp)
+    vi.clearAllMocks()
+
+    const event = pointerDown(vp, [100, 100], 0, 'mouse', { altKey: true })
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(event.stopPropagation).not.toHaveBeenCalled()
+    pointerMove([300, 100])
+    pointerUp([300, 100])
+    expect(sectionOffset(vp)).toBe(before)
+    // Reporting the plane would disarm the tool (`conclude`).
+    expect(emitted(vp)).not.toContain(EVENT_FACE)
+
+    // Without travel it is still the tool's click.
+    pointerDown(vp, [100, 100], 0, 'mouse', { altKey: true })
+    pointerUp([100, 100])
+    expect(faceNormalAt).toHaveBeenCalledTimes(1)
   })
 })
 

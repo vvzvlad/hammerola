@@ -374,6 +374,10 @@ export function createScene3D(vp,
    */
   function onDown(event) {
     if (handOver) handOver(event);
+    // Alt is the reader's unconditional orbit (tools.js): no widget takes it,
+    // even on its own pieces. After `handOver`, since a new press still ends
+    // whatever gesture was left live.
+    if (event.altKey) return false;
     const g = wanted() ? internals(vp.viewer) : null;
     if (!g || event.target !== g.canvas) return false;
     const at = hit(g, event);
