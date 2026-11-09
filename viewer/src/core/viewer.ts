@@ -47,6 +47,7 @@ import { MeshMeasureBackend } from "../tools/cad_tools/mesh-measure.js";
 import { version } from "../_version.js";
 import { IdPicker, clipSignature } from "../rendering/id-picking.js";
 import { DepthPeeling } from "../rendering/depth-peeling.js";
+import { StudioLook, STUDIO_EXPOSURE } from "../rendering/studio-look.js";
 import { type PickedComponent } from "../rendering/picked.js";
 import { PickingController } from "./picking-controller.js";
 import { StudioManager } from "./studio-manager.js";
@@ -392,6 +393,14 @@ class Viewer {
   // The direct (non-composer) render: translucent faces depth-peeled.
   private _depthPeeling: DepthPeeling;
 
+  // HAMMEROLA'S PATCH: Studio (setStudio) — whether it is on, which outlives
+  // render(); its lights, room and ground shadow, built when first turned on;
+  // and the renderer's tone mapping it replaced, put back when it is turned off.
+  private _studio = false;
+  private _studioLook: StudioLook | null = null;
+  private _studioToneMapping: THREE.ToneMapping = THREE.NoToneMapping;
+  private _studioExposure = 1;
+
   /** Environment manager — proxied from StudioManager for display.ts access. */
   get envManager() {
     return this._studioManager.envManager;
@@ -400,6 +409,11 @@ class Viewer {
   /** True while the Studio (presentation) tab owns the render. PickHost member. */
   get studioActive(): boolean {
     return this._studioManager.isActive;
+  }
+
+  /** True while {@link setStudio} has the studio look on. PickHost member. */
+  get studioLookActive(): boolean {
+    return this._studio;
   }
   // Z-scale
   zScale!: number;
@@ -1016,6 +1030,11 @@ class Viewer {
       this.renderer.localClippingEnabled,
     );
 
+    // HAMMEROLA'S PATCH: Studio's key and fill follow the camera of this frame.
+    if (this._studio) {
+      this._studioLook!.aim(this.rendered.camera.getCamera());
+    }
+
     // Render: use composer pipeline when available (AO + tone mapping + SMAA),
     // otherwise fall back to direct renderer.render().
     if (this._studioManager.hasComposer) {
@@ -1143,6 +1162,7 @@ class Viewer {
     // dispose studio resources (composer, floor, env, shadows — must be before renderer)
     this._studioManager.dispose();
     this._depthPeeling.dispose();
+    this._studioLook?.dispose();
     // dispose renderer
     this.renderer.renderLists.dispose();
     this.renderer.dispose();
@@ -1242,6 +1262,10 @@ class Viewer {
           this.display.setTool(currentTool, false);
         }
       }
+
+      // HAMMEROLA'S PATCH: Studio's lights and ground shadow outlive the scene
+      // (setStudio), so they leave it before it is disposed.
+      if (this._studio) this._studioLook!.detach(this._rendered.scene);
 
       // dispose all rendered state objects
       deepDispose(this._rendered.scene);
@@ -1747,6 +1771,12 @@ class Viewer {
     //
 
     this.toggleAnimationLoop(this.hasAnimationLoop);
+
+    // HAMMEROLA'S PATCH: Studio stays on for a new model (setStudio). Before
+    // `ready`, which a fresh viewer and clear() leave false: no frame of the
+    // new scene is drawn without the look, and `update()`, which aims it, finds
+    // it built.
+    if (this._studio) this._enterStudio();
 
     this.ready = true;
 
@@ -3197,6 +3227,75 @@ class Viewer {
    */
   setOrtho(flag: boolean, notify: boolean = true): void {
     this.switchCamera(flag, notify);
+  }
+
+  /**
+   * HAMMEROLA'S PATCH: Studio, a look for showing a model rather than for
+   * drawing it — no edges on the parts, ACES tone mapping, and the lights,
+   * room and ground shadow of {@link StudioLook}. The camera stays as it is:
+   * the page's gestures and its widgets in the scene work under an ortho
+   * camera only (ui/src/viewport/internals.js `gestureInternals`). Laid over
+   * whatever is rendered and kept for the next model while on; turned off,
+   * the view is put back as it was.
+   * @param on - whether Studio is on.
+   * @public
+   */
+  setStudio(on: boolean): void {
+    if (on === this._studio) return;
+    this._studio = on;
+    if (on) {
+      this._studioToneMapping = this.renderer.toneMapping;
+      this._studioExposure = this.renderer.toneMappingExposure;
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = STUDIO_EXPOSURE;
+    } else {
+      this.renderer.toneMapping = this._studioToneMapping;
+      this.renderer.toneMappingExposure = this._studioExposure;
+    }
+    if (this._rendered === null) return;
+    if (on) {
+      // Hover preselection stops here, so its own release no longer runs: drop
+      // the tint the cursor left.
+      this.pickingController.clearHover();
+      this._enterStudio();
+    } else this._leaveStudio();
+    this.update(true);
+  }
+
+  /** Studio over the scene on screen: its look in, the default look out (`_showDefaultLook`). */
+  private _enterStudio(): void {
+    const { scene, nestedGroup } = this.rendered;
+    const look = (this._studioLook ??= new StudioLook());
+    look.attach(
+      scene,
+      this.renderer,
+      nestedGroup.boundingBox(),
+      this.state.get("up") !== "Y",
+    );
+    this._showDefaultLook(false);
+  }
+
+  /** Studio off over the scene on screen: everything `_enterStudio` changed, put back. */
+  private _leaveStudio(): void {
+    this._studioLook!.detach(this.rendered.scene);
+    this._showDefaultLook(true);
+  }
+
+  /**
+   * Show or hide what Studio replaces: the ambient light, the headlight, and
+   * the edges and vertices of every part with faces. Object visibility, apart
+   * from a part's own edge state (its edge material's, which the tree sets),
+   * so that state is the reader's whichever way Studio goes. A group of edges
+   * alone keeps its lines: they are the part.
+   */
+  private _showDefaultLook(visible: boolean): void {
+    this.rendered.ambientLight.visible = visible;
+    this.rendered.directLight.visible = visible;
+    for (const group of Object.values(this.rendered.nestedGroup.groups)) {
+      if (!(group instanceof ObjectGroup) || group.front === null) continue;
+      if (group.edges !== null) group.edges.visible = visible;
+      if (group.vertices !== null) group.vertices.visible = visible;
+    }
   }
 
   /**

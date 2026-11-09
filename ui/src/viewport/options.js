@@ -110,6 +110,14 @@ export const CLICK_PX = 4;
  */
 export const GHOST_OPACITY = 0.5;
 
+/**
+ * The same under Studio (`setStudio`): Evgeny Boger's viewer shows a
+ * translucent case at 60 % («Плотность корпуса: 60%»), which the owner held up
+ * as the better one. Studio draws no edges, so a ghost at 0.5 kept only faint
+ * faces to show its shape.
+ */
+export const STUDIO_GHOST_OPACITY = 0.6;
+
 /** Ring radii, in CSS pixels, for sampling a face around the cursor.
  *
  * Not to be retuned by eye. `IdPicker.pickAt` renders at `width * dpr * 0.5`

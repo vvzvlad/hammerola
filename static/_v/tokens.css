@@ -203,6 +203,14 @@
    * moving it. */
   --canvas-bg: #ffffff;
 
+  /* -- the 3D canvas under Studio -----------------------------------------
+   * Laid in place of `--canvas-bg` while the bar's Studio is on
+   * (ui/src/viewport/element.js). Not white: Studio's light makes pale faces
+   * and a translucent case nearly white, and on a white canvas they vanish.
+   * The tone of Evgeny Boger's viewer, which the owner held up as better. In
+   * dark it stays the canvas's own, against which pale faces already read. */
+  --studio-bg: #e6ebf1;
+
   /* -- a document's own sheet ---------------------------------------------
    * What a published HTML page, SVG drawing or picture is laid on in a
    * project of documents (ui/src/DocShell.jsx). WHITE IN BOTH THEMES: such a
@@ -324,6 +332,7 @@
   --mark-hole: #1c1f23;
 
   --canvas-bg: #444444;
+  --studio-bg: #444444;
 
   --paper-bg: #ffffff;
 

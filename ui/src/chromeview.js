@@ -129,6 +129,9 @@ export function chromeView(s, props, deps) {
   // schematic or a board's 3D among them, has none.
   const arShown = !!arCapable || !!s.xrCapable;
   const arReady = arShown && views.length > 0 && !docOpen;
+  // Studio (`tStudio`) works where AR does: on a model view, not under a
+  // document, which covers the canvas it changes.
+  const studioReady = views.length > 0 && !docOpen;
 
   // The Share window's address and the key it may add, read once: the link
   // text and Copy must say the same thing. `s.share.id` is `latest` or a full
@@ -284,6 +287,14 @@ export function chromeView(s, props, deps) {
     arBtn: !arShown ? null : {
       onClick: arReady && !(s.ar && s.ar.busy) ? () => (arCapable ? openAr() : openXr()) : null,
     },
+    // Studio, the model drawn for showing rather than for reading
+    // (`setStudio` in the viewer): no edges, a studio's light, a shadow on the
+    // ground and its own canvas colour. Lit while on; out of service and unlit
+    // where no model view is on screen (`studioReady`), so the bar keeps its
+    // shape (AGENTS.md). The page's own flag, not remembered (`studio`), which
+    // the viewport hears through `sync`.
+    tStudio: studioReady ? () => set({ studio: !s.studio }) : undefined,
+    studioBtnStyle: btn(studioReady && s.studio, false, !studioReady),
     // The strip's one pencil, at its end: it renames the view on screen. One
     // for the whole strip rather than one per pill, so the strip keeps its
     // width and its pills their places from view to view (AGENTS.md).

@@ -30,6 +30,7 @@ vi.mock('../src/hub.js', async (importOriginal) => ({
 }))
 
 import HammerolaViewer, { VIEW_TABS_MAX } from '../src/HammerolaViewer.jsx'
+import { STATE } from '../src/events.js'
 import { css } from '../src/style.jsx'
 import { viewButtonStyle, viewMenuStyle } from '../src/viewlist.jsx'
 import { headerOn, makeComponent, replaceState } from './component.js'
@@ -503,5 +504,41 @@ describe('View in AR, in a browser with WebXR AR and no Quick Look', () => {
     expect(sessions[0].end).toHaveBeenCalledTimes(1)
     expect(c.state.ar).toBe(null)
     expect(typeof arButtons(c)[0].props.onClick).toBe('function')
+  })
+})
+
+// -- Studio ----------------------------------------------------------------------
+
+describe('Studio', () => {
+  const NOTES = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+
+  it('turns on and off from its button, lit while on, and the viewport hears each turn', () => {
+    // The REAL `sync`, as settings.test.js has it: the flag only matters once it
+    // has reached the viewport, through the `hmr:state` it puts on the window.
+    const seen = []
+    const listen = (event) => seen.push(event.detail.studio)
+    window.addEventListener(STATE, listen)
+    onTestFinished(() => window.removeEventListener(STATE, listen))
+    const c = component()
+    c.sync = HammerolaViewer.prototype.sync
+    const unlit = c.computed().studioBtnStyle
+    expect(css(unlit).pointerEvents).toBeUndefined()
+
+    c.computed().tStudio()
+    expect([c.state.studio, seen.at(-1)]).toEqual([true, true])
+    expect(c.computed().studioBtnStyle).not.toBe(unlit)
+    c.computed().tStudio()
+    expect([c.state.studio, seen.at(-1)]).toEqual([false, false])
+    expect(c.computed().studioBtnStyle).toBe(unlit)
+  })
+
+  it('stays in the bar out of service with no view on screen and under a document', () => {
+    // In its place either way, so the bar keeps its shape (AGENTS.md).
+    const off = (c) => [c.computed().tStudio, css(c.computed().studioBtnStyle).pointerEvents]
+    expect(off(component({ views: [] }))).toEqual([undefined, 'none'])
+    const c = component()
+    c.state = { ...c.state, studio: true, doc: NOTES.id, meta: { ...c.state.meta, documents: [NOTES] } }
+    expect(off(c)).toEqual([undefined, 'none'])
+    expect(texts(c.render())).toContain('Studio')
   })
 })

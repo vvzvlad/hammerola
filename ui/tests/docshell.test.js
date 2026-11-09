@@ -546,7 +546,7 @@ describe('the page of a build with no model', () => {
   })
 
   it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can, Settings live', async () => {
-    const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
+    const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Studio', 'Frame', 'Settings']
     const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word))
     expect(drawn({})).toEqual(TOOLS)
     // a narrow window keeps the list and Fit, as the model's page does
@@ -559,12 +559,13 @@ describe('the page of a build with no model', () => {
     const bar = (extra) => docBar({ meta: META, doc: META.documents[2], onPick: () => {}, ...extra })
     const off = (values, key) => css(values[key]).pointerEvents === 'none'
     const KEYS = ['measureBtnStyle', 'insetsBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle',
-      'frameBtnStyle', 'settingsBtnStyle']
-    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true, false])
+      'studioBtnStyle', 'frameBtnStyle', 'settingsBtnStyle']
+    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true, true, false])
     const blob = new Blob(['png'], { type: 'image/png' })
     const tools = { fit: vi.fn(), frame: vi.fn(async () => blob) }
     const live = bar({ tools })
-    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, true, false, false, false])
+    // Studio is about a model's canvas, which this page has none of
+    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, true, false, true, false, false])
     // Insets where the view hands them (a KiCad design's, KicadView.jsx), lit while the mode is on
     const insets = { on: true, toggle: vi.fn() }
     const kicad = bar({ tools: { ...tools, insets } })

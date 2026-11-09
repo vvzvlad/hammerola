@@ -104,7 +104,8 @@ const BAR = `${BAR_LAYER}18`;
  * the document when its view can do them (`tools`, `onTools` in
  * DocumentView.jsx) and are out of service when it cannot; so is Insets, in
  * service over a KiCad schematic or board whose view hands `tools.insets`
- * (KicadView.jsx) and lit while its mode is on. A narrow window
+ * (KicadView.jsx) and lit while its mode is on. Studio, about a model, is out
+ * of service. A narrow window
  * keeps the list and Fit. AR, which only the model's page has, is not drawn
  * here. `onRename(doc)`, with the token, puts a pencil
  * before each row's name (`documentRows`). Pure.
@@ -137,6 +138,8 @@ export function docBar({
     grabFrame: tools ? () => tools.frame().then((blob) => blob && savePng(blob, meta))
       .catch((error) => console.warn('frame', error)) : undefined,
     frameBtnStyle: quietBtn(!tools),
+    // Studio is about a model's canvas, and this page has none.
+    studioBtnStyle: btn(false, false, true),
   };
 }
 

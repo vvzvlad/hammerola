@@ -164,6 +164,12 @@ export interface PeelUniforms {
   uPeelPrevDepth: THREE.IUniform<THREE.Texture | null>;
   /** Drawing-buffer size, to turn `gl_FragCoord` into a texture coordinate. */
   uPeelResolution: THREE.IUniform<THREE.Vector2>;
+  /**
+   * The renderer tone-maps with ACES (HAMMEROLA'S PATCH: Studio, the one curve
+   * this viewer draws with outside the library's own Studio mode, whose
+   * composer bypasses peeling). Written every peeled frame.
+   */
+  uPeelToneMapped: THREE.IUniform<boolean>;
 }
 
 /** Fresh uniforms with peeling off. */
@@ -174,15 +180,22 @@ export function createPeelUniforms(): PeelUniforms {
     uPeelOpaqueDepth: { value: null },
     uPeelPrevDepth: { value: null },
     uPeelResolution: { value: new THREE.Vector2(1, 1) },
+    uPeelToneMapped: { value: false },
   };
 }
 
+// three declares the tone-mapping curves only in a program that draws to the
+// canvas with tone mapping on; a peel pass draws to a render target.
 const PEEL_FRAGMENT_HEADER = `
 uniform bool uPeelActive;
 uniform bool uPeelFirstLayer;
 uniform sampler2D uPeelOpaqueDepth;
 uniform sampler2D uPeelPrevDepth;
-uniform vec2 uPeelResolution;`;
+uniform vec2 uPeelResolution;
+uniform bool uPeelToneMapped;
+#ifndef TONE_MAPPING
+#include <tonemapping_pars_fragment>
+#endif`;
 
 /**
  * Keep only fragments in front of the opaque scene and behind the previous
@@ -212,9 +225,16 @@ const CLIPPING_ANCHOR = "#include <clipping_planes_fragment>";
  * so a peeled layer looks the same as an unpeeled one. Injected right after the
  * output encoding, so fog and premultiplication still follow it as on the
  * canvas.
+ *
+ * A render target is not tone-mapped either, so the curve is applied here
+ * while the renderer has one (`uPeelToneMapped`), before the encoding as three
+ * applies it on the canvas: the composite only blends what the layers hold.
  */
 const PEEL_ENCODE = `
-  if ( uPeelActive ) gl_FragColor = sRGBTransferOETF( gl_FragColor );`;
+  if ( uPeelActive ) {
+    if ( uPeelToneMapped ) gl_FragColor.rgb = ACESFilmicToneMapping( gl_FragColor.rgb );
+    gl_FragColor = sRGBTransferOETF( gl_FragColor );
+  }`;
 
 const COLORSPACE_ANCHOR = "#include <colorspace_fragment>";
 
@@ -238,6 +258,7 @@ export function patchPeelMaterial(
     shader.uniforms.uPeelOpaqueDepth = uniforms.uPeelOpaqueDepth;
     shader.uniforms.uPeelPrevDepth = uniforms.uPeelPrevDepth;
     shader.uniforms.uPeelResolution = uniforms.uPeelResolution;
+    shader.uniforms.uPeelToneMapped = uniforms.uPeelToneMapped;
     // A three upgrade that renames an anchor must fail loudly: without the
     // discard every peel pass draws the nearest surface again, and a ghost
     // stacks up into an opaque part drawn over the solids in front of it;
@@ -563,6 +584,8 @@ export class DepthPeeling {
       uniforms.uPeelActive.value = true;
       uniforms.uPeelOpaqueDepth.value = targets.opaque.depthTexture;
       uniforms.uPeelResolution.value.copy(this._bufferSize);
+      uniforms.uPeelToneMapped.value =
+        renderer.toneMapping === THREE.ACESFilmicToneMapping;
 
       // Clears honour the scissor as draws do, so outside the rectangle the
       // layer and accumulation targets keep stale pixels that nothing reads.

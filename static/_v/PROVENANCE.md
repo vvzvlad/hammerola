@@ -51,7 +51,7 @@ its tsconfig. Its `docs/`, `examples/` and `tests/` are not vendored.
 
 ## What we changed, and why
 
-Six files, all of them but `package.json` carrying the reason in a comment of
+Eight files, all of them but `package.json` carrying the reason in a comment of
 their own:
 
 * `viewer/src/index.ts` re-exports three's namespace, so the page can name the
@@ -73,6 +73,13 @@ their own:
   hands it `update` to draw the peeled frame once the camera has settled, and
   has the screenshot pass `exact` so it is peeled even mid-move.
   `ui/tests/peeling.test.js` asserts the bundle still does all of it;
+* the studio look behind the page's Studio button: `viewer/src/rendering/studio-look.ts`
+  is ours (the room the faces reflect, the lights that follow the camera, the
+  shadow under the model), `viewer/src/core/viewer.ts` switches it with
+  `setStudio` (tone mapping, the default lights and the edges), and
+  `viewer/src/core/picking-controller.ts` drops the hover tint while it is on.
+  The peel shader in `depth-peeling.ts` tone-maps its layers itself when the
+  renderer does, because three tone-maps only what it draws to the screen;
 * `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
   — and drops the outputs and the dev-server branch we do not use;
 * `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no
