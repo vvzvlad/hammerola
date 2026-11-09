@@ -140,7 +140,7 @@ export function applyHidden(viewer, hidden) {
  * Studio mode shares materials between parts and would leak opacity, which is
  * one reason `studioTool` is off in options.js.
  */
-export function applyGhost(viewer, ghost) {
+export function applyGhost(viewer, ghost, opacity = GHOST_OPACITY) {
   const g = internals(viewer);
   if (!g || !g.nestedGroup || !g.nestedGroup.groups) return;
   const list = Array.isArray(ghost) ? ghost : [];
@@ -150,11 +150,11 @@ export function applyGhost(viewer, ghost) {
     const on = list.some((entry) => covers(entry, path));
     try {
       // Divided, because the library shows the face at
-      // `group.opacity * group.alpha`, and `GHOST_OPACITY` is what that product
-      // must be. `Math.min` makes it a ceiling (`min(alpha, GHOST_OPACITY)`), so
-      // an already translucent part is not dimmed again (see options.js).
-      // `|| 1` avoids dividing by an alpha of 0.
-      if (on) group.opacity = Math.min(1, GHOST_OPACITY / (group.alpha || 1));
+      // `group.opacity * group.alpha`, and `opacity` (`GHOST_OPACITY`, or
+      // Studio's) is what that product must be. `Math.min` makes it a ceiling
+      // (`min(alpha, opacity)`), so an already translucent part is not dimmed
+      // again (see options.js). `|| 1` avoids dividing by an alpha of 0.
+      if (on) group.opacity = Math.min(1, opacity / (group.alpha || 1));
       group.setTransparent(on);
       // `setTransparent` reaches only the library's face materials; the outline
       // takes the face's opacity, read after the toggle, because the cut face

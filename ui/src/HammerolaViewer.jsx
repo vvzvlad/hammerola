@@ -893,6 +893,9 @@ export default class HammerolaViewer extends React.Component {
       secFace: null, secPop: false,
       // The Settings card's one answer, remembered per browser (store.js).
       retina: readRetina(),
+      // The bar's Studio (`tStudio` in chromeview.js), for this page only:
+      // not remembered.
+      studio: false,
       // `opsOpen` is the `Add primitive` menu in the floating toolbar, and it is
       // one of these rather than one of the proposal's own fields below for the
       // reason it is written beside `viewsOpen`: it is a menu of the chrome's,
@@ -3262,7 +3265,7 @@ export default class HammerolaViewer extends React.Component {
       detail: {
         ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
-        retina: s.retina,
+        retina: s.retina, studio: s.studio,
         tool: s.tool,
         diffShow: s.diffShow, pins,
         ...(extra || {}),

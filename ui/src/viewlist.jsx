@@ -6,7 +6,7 @@
 // which has documents only.
 //
 // THE BAR IS THE SAME EVERYWHERE (`toolBar`): the views, Measure, Insets,
-// Comment, Add primitive, Fit, Frame and Settings, in that order, over the model, over a
+// Comment, Add primitive, Fit, Studio, Frame and Settings, in that order, over the model, over a
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
 // While a document is on screen, of whatever type, Download and Copy link for
@@ -550,9 +550,10 @@ export function settingsCard(b) {
  *                and `tMeasure`, `insetsBtnStyle` and `tInsets` (a KiCad
  *                design's inset mode), `commentBtnStyle` and `tComment`,
  *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
- *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle`
- *                and `tSettings`. A tool out of service is drawn `OFF` and
- *                takes no click, so its handler may be absent. And `arBtn`,
+ *                `fitView`, `studioBtnStyle` and `tStudio`, `frameBtnStyle`
+ *                and `grabFrame`, `settingsBtnStyle` and `tSettings`. A tool
+ *                out of service is drawn `OFF` and takes no click, so its
+ *                handler may be absent. And `arBtn`,
  *                `View in AR` beside Fit (`{ onClick }`, `onClick` null out of
  *                service), or null: only the model's page has it, and only in
  *                a browser with AR Quick Look or WebXR AR.
@@ -649,6 +650,10 @@ function floatBar(b, menus) {
       )}
       {b.showTools && (
         <>
+          <div onClick={b.tStudio} title="show the model with a studio's light, without edges" style={css(b.studioBtnStyle)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="7" r="4.2" /><path d="M2.5 13.6h11" /><path d="M5.6 5.4a2.6 2.6 0 0 1 2-1.4" /></svg>
+            Studio
+          </div>
           <div onClick={b.grabFrame} title="save the current frame as a PNG" style={css(b.frameBtnStyle)}>
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
             Frame
