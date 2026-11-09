@@ -5812,6 +5812,7 @@ function createPeelUniforms() {
         uPeelPrevDepth: { value: null },
         uPeelResolution: { value: new THREE.Vector2(1, 1) },
         uPeelToneMapped: { value: false },
+        polygonOffsets: new WeakMap(),
     };
 }
 // three declares the tone-mapping curves only in a program that draws to the
@@ -5823,6 +5824,7 @@ uniform sampler2D uPeelOpaqueDepth;
 uniform sampler2D uPeelPrevDepth;
 uniform vec2 uPeelResolution;
 uniform bool uPeelToneMapped;
+uniform vec2 uPeelPolygonOffset;
 #ifndef TONE_MAPPING
 #include <tonemapping_pars_fragment>
 #endif`;
@@ -5836,11 +5838,19 @@ uniform bool uPeelToneMapped;
  * same surface sees in the next pass are not always bit-equal (ANGLE on Metal),
  * and without the margin that surface is peeled a second time at scattered
  * pixels, which shows as speckle on every translucent face.
+ *
+ * The opaque scene is compared after giving the fragment its material's
+ * polygon offset (`uPeelPolygonOffset`: factor times the depth slope, plus
+ * units of the 24-bit opaque depth), as the depth test of pass A does: the
+ * opaque depth carries the solids' offsets, the peel passes draw without one.
+ * Compared bare, a solid lying a hair above a translucent face, like the
+ * silkscreen on a board whose solder mask is translucent, would go behind it.
  */
 const PEEL_DISCARD = `
   if ( uPeelActive ) {
     vec2 peelUv = gl_FragCoord.xy / uPeelResolution;
-    if ( gl_FragCoord.z >= texture2D( uPeelOpaqueDepth, peelUv ).r ) discard;
+    float peelOffset = uPeelPolygonOffset.x * max( abs( dFdx( gl_FragCoord.z ) ), abs( dFdy( gl_FragCoord.z ) ) ) + uPeelPolygonOffset.y / 16777216.0;
+    if ( gl_FragCoord.z + peelOffset >= texture2D( uPeelOpaqueDepth, peelUv ).r ) discard;
     if ( ! uPeelFirstLayer && gl_FragCoord.z <= texture2D( uPeelPrevDepth, peelUv ).r + 1e-6 ) discard;
   }`;
 const CLIPPING_ANCHOR = "#include <clipping_planes_fragment>";
@@ -5872,8 +5882,11 @@ const COLORSPACE_ANCHOR = "#include <colorspace_fragment>";
 function patchPeelMaterial(material, uniforms) {
     const prevCompile = material.onBeforeCompile;
     const prevKey = material.customProgramCacheKey;
+    const polygonOffset = { value: new THREE.Vector2() };
+    uniforms.polygonOffsets.set(material, polygonOffset);
     material.onBeforeCompile = (shader, renderer) => {
         prevCompile.call(material, shader, renderer);
+        shader.uniforms.uPeelPolygonOffset = polygonOffset;
         shader.uniforms.uPeelActive = uniforms.uPeelActive;
         shader.uniforms.uPeelFirstLayer = uniforms.uPeelFirstLayer;
         shader.uniforms.uPeelOpaqueDepth = uniforms.uPeelOpaqueDepth;
@@ -5923,8 +5936,6 @@ varying vec2 vUv;
 void main() {
   gl_FragColor = texture2D( tAccum, vUv );
 }`;
-/** How long the camera must stay still before the peeled frame is drawn, ms. */
-const SETTLE_MS = 150;
 /** Margin around the projected bounding boxes, in drawing-buffer pixels. */
 const PEEL_RECT_PAD = 2;
 const _corner = new THREE.Vector3();
@@ -5990,27 +6001,13 @@ function peelRect(translucent, camera, size, rect) {
  * they write 8-bit targets and run only inside the screen rectangle of the
  * translucent faces (see {@link peelRect}).
  *
- * Even so a peeled frame costs several plain ones, so it is drawn only for a
- * still camera. While the camera moves, a frame draws the solids first and the
- * translucent faces over them in three's per-object order: no solid can come
- * out in front of a translucent part, and only translucent faces behind one
- * another may blend in the wrong order. {@link SETTLE_MS} after the camera last
- * changed the viewer is asked for one more frame, which is peeled.
+ * Every frame is peeled, a moving camera's too. A cheaper frame for a moving
+ * camera, the solids and then the translucent parts each drawn whole, would
+ * disagree with the peeled one on parts inside or on one another, and the
+ * picture would jump when the camera stops.
  */
 class DepthPeeling {
-    /**
-     * @param requestRender - draws a frame of the viewer; called once the camera
-     *   has settled, for the peeled frame.
-     */
-    constructor(renderer, requestRender) {
-        /**
-         * The camera of the last frame that had translucent faces on screen: world
-         * matrix, then projection matrix.
-         */
-        this._lastView = new Float64Array(32);
-        this._settleTimer = null;
-        /** The camera changed less than {@link SETTLE_MS} ago. */
-        this._moving = false;
+    constructor(renderer) {
         this._targets = null;
         this._bufferSize = new THREE.Vector2();
         this._rect = new THREE.Vector4();
@@ -6022,7 +6019,6 @@ class DepthPeeling {
         this._savedTargetScissorTest = false;
         this._quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
         this._renderer = renderer;
-        this._requestRender = requestRender;
         // One triangle covering the viewport, as three's FullScreenQuad builds it.
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
@@ -6060,10 +6056,8 @@ class DepthPeeling {
      * pass, depth-tested against pass A's depth, which (d) left in place. (c) and
      * (d) are scissored to the rectangle of the translucent faces; (a), (b) and
      * (e) are full-screen.
-     *
-     * @param exact - peel even if the camera moved (a screenshot).
      */
-    render(scene, camera, nestedGroup, exact = false) {
+    render(scene, camera, nestedGroup) {
         const renderer = this._renderer;
         const translucent = translucentGroups(nestedGroup.groups);
         renderer.getDrawingBufferSize(this._bufferSize);
@@ -6071,18 +6065,6 @@ class DepthPeeling {
         if (translucent.length === 0 ||
             !peelRect(translucent, camera, this._bufferSize, rect)) {
             renderer.render(scene, camera);
-            return;
-        }
-        // peelRect brought the camera's world matrix up to date. Moving lasts from
-        // any change of the camera until the settle timer fires, not just for the
-        // frame that saw the change: the viewer can draw more than one frame per
-        // camera step.
-        if (this._cameraMoved(camera)) {
-            this._moving = true;
-            this._scheduleSettle();
-        }
-        if (this._moving && !exact) {
-            this._renderUnpeeled(scene, camera, translucent);
             return;
         }
         const targets = this._ensureTargets(this._bufferSize.x, this._bufferSize.y);
@@ -6123,7 +6105,12 @@ class DepthPeeling {
             // (c) peel. The nearest surviving surface must OVERWRITE the layer, not
             // blend into it, and the depth it writes must be its gl_FragCoord.z, so
             // the next pass can peel behind it: no blending, depth written, no offset.
+            // The material's offset goes to the shader, which adds it only when it
+            // compares with the opaque depth (PEEL_DISCARD).
             for (const state of states) {
+                uniforms.polygonOffsets
+                    .get(state.material)
+                    ?.value.set(state.polygonOffset ? state.material.polygonOffsetFactor : 0, state.polygonOffset ? state.material.polygonOffsetUnits : 0);
                 state.material.blending = THREE.NoBlending;
                 state.material.depthWrite = true;
                 state.material.depthTest = true;
@@ -6197,55 +6184,6 @@ class DepthPeeling {
             renderer.setClearColor(this._savedClearColor, savedClearAlpha);
         }
     }
-    /** Whether `camera` moved since the last frame; remembers where it is now. */
-    _cameraMoved(camera) {
-        const last = this._lastView;
-        const world = camera.matrixWorld.elements;
-        const projection = camera.projectionMatrix.elements;
-        let moved = false;
-        for (let i = 0; i < 16; i++) {
-            if (last[i] !== world[i] || last[16 + i] !== projection[i])
-                moved = true;
-            last[i] = world[i];
-            last[16 + i] = projection[i];
-        }
-        return moved;
-    }
-    /**
-     * The frame for a moving camera: the solids, then the translucent faces as
-     * three orders and blends them, then the overlay, all into the current
-     * target. The solids write depth first, so a translucent face behind one is
-     * hidden and one in front blends over it.
-     */
-    _renderUnpeeled(scene, camera, translucent) {
-        const renderer = this._renderer;
-        try {
-            assignPassLayers(scene, camera, translucent, this._snapshot);
-            renderer.render(scene, camera);
-            camera.layers.set(PEEL_LAYER);
-            renderer.render(scene, camera);
-            camera.layers.set(OVERLAY_LAYER);
-            renderer.render(scene, camera);
-        }
-        finally {
-            restorePassLayers(this._snapshot);
-        }
-    }
-    /** End the move {@link SETTLE_MS} after this camera change, with a peeled frame. */
-    _scheduleSettle() {
-        this._cancelSettle();
-        this._settleTimer = setTimeout(() => {
-            this._settleTimer = null;
-            this._moving = false;
-            this._requestRender();
-        }, SETTLE_MS);
-    }
-    _cancelSettle() {
-        if (this._settleTimer !== null) {
-            clearTimeout(this._settleTimer);
-            this._settleTimer = null;
-        }
-    }
     /**
      * Put back the scissor of the renderer and of `target`, the target the frame
      * is drawn into, and bind `target` again, which applies the scissor it uses.
@@ -6305,7 +6243,6 @@ class DepthPeeling {
     }
     /** Release the render targets and the quad. */
     dispose() {
-        this._cancelSettle();
         this._disposeTargets();
         this._quad.geometry.dispose();
         this._underMaterial.dispose();
@@ -31403,7 +31340,7 @@ class Viewer {
                         this._studioManager.render();
                     }
                     else {
-                        this._depthPeeling.render(this.rendered.scene, this.rendered.camera.getCamera(), this.rendered.nestedGroup, true);
+                        this._depthPeeling.render(this.rendered.scene, this.rendered.camera.getCamera(), this.rendered.nestedGroup);
                     }
                 },
                 onComplete: () => {
@@ -31629,7 +31566,7 @@ class Viewer {
         this.renderer.setSize(this.state.get("cadWidth"), this.state.get("height"));
         this.renderer.setClearColor(0xffffff, 0);
         this.renderer.autoClear = false;
-        this._depthPeeling = new DepthPeeling(this.renderer, () => this.update(true, false));
+        this._depthPeeling = new DepthPeeling(this.renderer);
         // Create studio manager (env, floor, composer created lazily inside)
         this.lastNotification = {};
         this.lastBbox = null;

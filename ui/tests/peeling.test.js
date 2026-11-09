@@ -20,7 +20,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 
@@ -209,7 +209,7 @@ function peelingModule() {
   }
   const end = SOURCE.indexOf('\n}\n', classStart) + 3
   return new Function('THREE', `${SOURCE.slice(start, end)}
-return { peelRect, DepthPeeling, createPeelUniforms };`)(THREE)
+return { peelRect, DepthPeeling, createPeelUniforms, patchPeelMaterial };`)(THREE)
 }
 
 const peeling = peelingModule()
@@ -263,10 +263,8 @@ describe('the rectangle the peel passes are cut to', () => {
   })
 })
 
-describe('peeling waits for the camera to settle', () => {
-  afterEach(() => vi.useRealTimers())
-
-  /** A renderer that draws nothing and records which path a frame took. */
+describe('every frame is peeled', () => {
+  /** A renderer that draws nothing and records whether a frame was peeled. */
   function stage() {
     const renderer = {
       render: vi.fn(),
@@ -283,50 +281,50 @@ describe('peeling waits for the camera to settle', () => {
       setScissorTest: vi.fn(),
       getPixelRatio: () => 1,
     }
-    const requestRender = vi.fn()
     const part = cube()
     const scene = new THREE.Scene()
     scene.add(part)
     const nestedGroup = { groups: { '/a': part }, peelUniforms: peeling.createPeelUniforms() }
+    peeling.patchPeelMaterial(part.front.material, nestedGroup.peelUniforms)
     const camera = topCamera()
-    const peel = new peeling.DepthPeeling(renderer, requestRender)
-    const frame = (exact = false) => {
-      renderer.render.mockClear()
+    const peel = new peeling.DepthPeeling(renderer)
+    const frame = () => {
       renderer.setRenderTarget.mockClear()
-      peel.render(scene, camera, nestedGroup, exact)
+      peel.render(scene, camera, nestedGroup)
       return renderer.setRenderTarget.mock.calls.length > 0 ? 'peeled' : 'unpeeled'
     }
-    return { renderer, requestRender, camera, peel, frame }
+    return { camera, part, nestedGroup, frame }
   }
 
-  it('draws a moving camera unpeeled in three passes, then asks for one peeled frame', () => {
-    vi.useFakeTimers()
+  it('peels a moving camera`s frame as it peels a still one`s', () => {
+    // A cheaper frame for a moving camera would disagree with the peeled one,
+    // and the picture would jump when the camera stops.
     const s = stage()
-    expect(s.frame()).toBe('unpeeled')
-    expect(s.renderer.render).toHaveBeenCalledTimes(3)
-    expect(s.frame(), 'a second frame of the same step is still the move').toBe('unpeeled')
-    expect(s.requestRender).not.toHaveBeenCalled()
-
-    vi.advanceTimersByTime(150)
-    expect(s.requestRender).toHaveBeenCalledTimes(1)
     expect(s.frame()).toBe('peeled')
-    vi.advanceTimersByTime(1000)
-    expect(s.requestRender, 'a still camera asks for nothing more').toHaveBeenCalledTimes(1)
+    s.camera.position.x += 1
+    expect(s.frame()).toBe('peeled')
   })
 
-  it('peels a screenshot even mid-move', () => {
-    vi.useFakeTimers()
+  it('hands each layer its own material`s polygon offset, none when it has it off', () => {
     const s = stage()
-    expect(s.frame(true)).toBe('peeled')
-  })
-
-  it('stops waiting once disposed', () => {
-    vi.useFakeTimers()
-    const s = stage()
+    const material = s.part.front.material
+    const offset = s.nestedGroup.peelUniforms.polygonOffsets.get(material)
+    Object.assign(material, { polygonOffset: true, polygonOffsetFactor: 1.1, polygonOffsetUnits: 33 })
     s.frame()
-    s.peel.dispose()
-    vi.advanceTimersByTime(1000)
-    expect(s.requestRender).not.toHaveBeenCalled()
+    expect(offset.value.toArray()).toEqual([1.1, 33])
+    expect(material.polygonOffset, 'the frame puts the offset back').toBe(true)
+    material.polygonOffset = false
+    s.frame()
+    expect(offset.value.toArray()).toEqual([0, 0])
+
+    // The shader reads this very uniform, or it reads (0, 0) whatever is set.
+    const shader = {
+      uniforms: THREE.UniformsUtils.clone(THREE.ShaderLib.standard.uniforms),
+      vertexShader: THREE.ShaderLib.standard.vertexShader,
+      fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+    }
+    material.onBeforeCompile(shader, null)
+    expect(shader.uniforms.uPeelPolygonOffset).toBe(offset)
   })
 })
 
@@ -346,7 +344,12 @@ describe('the shader text the peel patch is spliced into', () => {
     })
   }
 
-  it('is reached by the screenshot with `exact`', () => {
-    expect(SOURCE).toMatch(/_depthPeeling\.render\([^;]*nestedGroup, true\)/)
+  it('compares a layer with the opaque depth after its material`s polygon offset', () => {
+    // The opaque depth is drawn with the solids' offsets, the peel passes
+    // without one. Compared bare, a silkscreen a hair above a translucent solder
+    // mask would go under the mask.
+    expect(SOURCE).toMatch(
+      /uPeelPolygonOffset\.x \* max\( abs\( dFdx\( gl_FragCoord\.z \) \), abs\( dFdy\( gl_FragCoord\.z \) \) \) \+ uPeelPolygonOffset\.y \/ 16777216\.0;\s*if \( gl_FragCoord\.z \+ peelOffset >= texture2D\( uPeelOpaqueDepth, peelUv \)\.r \) discard;/,
+    )
   })
 })

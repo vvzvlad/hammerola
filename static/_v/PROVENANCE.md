@@ -69,10 +69,11 @@ their own:
   a cover over a body) in the wrong order: `viewer/src/rendering/depth-peeling.ts`
   is ours, `viewer/src/scene/nestedgroup.ts` patches every face material for it
   in `renderShape`, and `viewer/src/core/viewer.ts` renders through it in
-  `update()` and the screenshot instead of calling `renderer.render` directly,
-  hands it `update` to draw the peeled frame once the camera has settled, and
-  has the screenshot pass `exact` so it is peeled even mid-move.
-  `ui/tests/peeling.test.js` asserts the bundle still does all of it;
+  `update()` and the screenshot instead of calling `renderer.render` directly.
+  Every frame is peeled, a moving camera's too, and a layer is compared with
+  the opaque depth after its own material's polygon offset, as pass A's depth
+  test compares it. `ui/tests/peeling.test.js` asserts the bundle still does all
+  of it;
 * the studio look behind the page's Studio button: `viewer/src/rendering/studio-look.ts`
   is ours (the room the faces reflect, the lights that follow the camera, the
   shadow under the model), `viewer/src/core/viewer.ts` switches it with
