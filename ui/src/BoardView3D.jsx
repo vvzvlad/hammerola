@@ -50,7 +50,8 @@
 // world, `size W × D × H mm` over the top; a second, different one as the
 // line between the nearest points of the two (`minDistance`, the model
 // page's own), the gap at its middle; a third starts over from it. Drawn over
-// the model in the selection's colour, the label over the canvas. While
+// the model in the selection's colour, 2 px wide on a dark halo as the 2D
+// board's measurement is, the label over the canvas. While
 // measuring a left click does nothing else and the cursor is a crosshair;
 // the right button, drags and the wheel are as ever. The Comment tool armed
 // here puts measuring away; Escape (KicadView.jsx) clears the picks, then
@@ -98,7 +99,7 @@
 import React from 'react';
 
 import {
-  designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree,
+  boxEdges, designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree,
   mergeByMaterial, partPlace, partsOf, pickedPart, pickGeometry, plainColours, sharedGeometries, sizeMm, sizeText,
 } from './board3d.js';
 import {
@@ -133,6 +134,12 @@ const SEPARATION_INPUT = 'width:100%;margin:0;accent-color:var(--accent)';
 const LABEL = 'position:absolute;left:0;top:0;display:none;transform:translate(-50%,-50%);white-space:nowrap;'
   + 'pointer-events:none;padding:3px 7px;border-radius:4px;background:var(--tooltip-bg);'
   + `color:var(--tooltip-text);font:600 11px ${MONO}`;
+// The measurement's lines in screen pixels and the dark halo under them, as
+// the 2D board's measure draws its line (`viewers/board/measure-tool.ts` of
+// the KiCad viewer), so that they read on any part and on the board.
+const MEASURE_LINE_PX = 2;
+const MEASURE_HALO_PX = 4;
+const HALO = '#020617';
 
 /** What the page toasts as the bar's Measure comes on here, and the model
  *  page's Measure over the model (chromeview.js): the same tool. */
@@ -163,9 +170,10 @@ const GLTF_UP = [0, 1, 0];
 /** One loaded model on its canvas: the WebGL half of the view. */
 class Stage {
   constructor(lib, host, gltf, handlers) {
-    const { THREE, TrackballControls, mergeGeometries, minDistance } = lib;
+    const { THREE, TrackballControls, mergeGeometries, minDistance, lines } = lib;
     this.THREE = THREE;
     this.minDistance = minDistance;
+    this.lines = lines;
     this.host = host;
     this.handlers = handlers;
     this.active = false;
@@ -643,7 +651,9 @@ class Stage {
    * one; a third starts over from it, and the same one twice stays one. One
    * pick is drawn as its box in the world, its size over the top's centre; two
    * as the line between their nearest points (`minDistance`), the gap at its
-   * middle. Drawn over the model, in the selection's colour.
+   * middle. Drawn over the model in the selection's colour, as wide as the 2D
+   * board's measurement (`MEASURE_LINE_PX` on `MEASURE_HALO_PX` of `HALO`), in
+   * the library's screen-wide lines (`lines`).
    */
   measurePick(nodes) {
     if (!nodes) this.picks = [];
@@ -652,24 +662,28 @@ class Stage {
     const { THREE } = this;
     this.freeMeasured();
     this.measureAt = null;
-    const colour = new THREE.Color().setStyle(window.getComputedStyle(this.host).color);
-    let drawn = null;
+    let segments = null;
     if (this.picks.length === 1) {
       const box = new THREE.Box3().setFromArray(pickGeometry(THREE, this.picks[0]).positions);
-      drawn = new THREE.Box3Helper(box, colour);
+      segments = boxEdges(box);
       this.measureAt = box.getCenter(new THREE.Vector3()).setY(box.max.y);
       this.label.textContent = sizeText(sizeMm(THREE, box));
     } else if (this.picks.length === 2) {
       const { distance, point1, point2 } = this.minDistance(...this.picks.map((pick) => pickGeometry(THREE, pick)));
-      drawn = new THREE.Line(new THREE.BufferGeometry().setFromPoints([point1, point2]),
-        new THREE.LineBasicMaterial({ color: colour }));
+      segments = [...point1.toArray(), ...point2.toArray()];
       this.measureAt = new THREE.Vector3().addVectors(point1, point2).multiplyScalar(0.5);
       this.label.textContent = gapText(distance);
     }
-    if (drawn) {
-      Object.assign(drawn.material, { depthTest: false, depthWrite: false, transparent: true });
-      drawn.renderOrder = 1;
-      this.measured.add(drawn);
+    if (segments) {
+      const { LineSegments2, LineSegmentsGeometry, LineMaterial } = this.lines;
+      const colour = window.getComputedStyle(this.host).color;
+      for (const [width, color, order] of [[MEASURE_HALO_PX, HALO, 1], [MEASURE_LINE_PX, colour, 2]]) {
+        const line = new LineSegments2(new LineSegmentsGeometry().setPositions(segments),
+          new LineMaterial({ color: new THREE.Color().setStyle(color), linewidth: width, depthTest: false,
+            depthWrite: false, transparent: true }));
+        line.renderOrder = order;
+        this.measured.add(line);
+      }
     }
     this.request();
   }

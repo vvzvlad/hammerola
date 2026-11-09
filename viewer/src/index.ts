@@ -197,3 +197,10 @@ export { CADTrackballControls } from "./camera/controls/CADTrackballControls.js"
 // are measured as two parts of a model are.
 export { minDistance } from "./tools/cad_tools/mesh-measure.js";
 export type { MeshComponentGeometry } from "./tools/cad_tools/mesh-measure.js";
+
+// HAMMEROLA'S PATCH: the screen-wide lines the library's own measurement is
+// drawn with (tools/cad_tools/measure.ts), for the measurement on the 3D view
+// of a board: WebGL draws a plain line one pixel wide whatever its width.
+export { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+export { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+export { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";

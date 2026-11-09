@@ -36848,4 +36848,4 @@ class Display {
     }
 }
 
-export { CADTrackballControls, CLIP_INDICES, CollapseState, Display, EnvironmentManager, MATERIAL_PRESETS, MATERIAL_PRESET_NAMES, Timer$1 as Timer, Viewer, decodeBuffers, decodeInstancedFormat, gpuTracker, hasSegmentsPerEdge, hasTrianglesPerFace, isClipIndex, isInstancedFormat, isMaterialXMaterial, isShapeBinaryFormat, logger, minDistance, resolveInstances, version };
+export { CADTrackballControls, CLIP_INDICES, CollapseState, Display, EnvironmentManager, LineMaterial, LineSegments2, LineSegmentsGeometry$1 as LineSegmentsGeometry, MATERIAL_PRESETS, MATERIAL_PRESET_NAMES, Timer$1 as Timer, Viewer, decodeBuffers, decodeInstancedFormat, gpuTracker, hasSegmentsPerEdge, hasTrianglesPerFace, isClipIndex, isInstancedFormat, isMaterialXMaterial, isShapeBinaryFormat, logger, minDistance, resolveInstances, version };

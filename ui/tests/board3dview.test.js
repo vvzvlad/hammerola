@@ -93,6 +93,23 @@ let parser = null
 const GAP = { distance: 1.8, point1: new THREE.Vector3(0, 2.6, 0), point2: new THREE.Vector3(0, 0.8, 0) }
 let minDistance = null
 
+/** Stand-ins for the library's screen-wide lines (`lines` of `loadThree`),
+ *  which live in its bundle: a geometry that keeps its segments, a material
+ *  that keeps what it was made with. */
+class LineSegmentsGeometry extends THREE.BufferGeometry {
+  setPositions(segments) {
+    this.segments = segments
+    return this
+  }
+}
+class LineMaterial extends THREE.Material {
+  constructor(parameters) {
+    super()
+    Object.assign(this, parameters)
+  }
+}
+class LineSegments2 extends THREE.Mesh {}
+
 class Loader {
   parseAsync() {
     return Promise.resolve({ scene: model, parser })
@@ -174,7 +191,7 @@ beforeEach(() => {
   stubFrames()
   minDistance = vi.fn(() => GAP)
   loadThree.mockResolvedValue({ THREE: { ...THREE, WebGLRenderer: Renderer }, TrackballControls: Trackball, GLTFLoader: Loader,
-    mergeGeometries, minDistance })
+    mergeGeometries, minDistance, lines: { LineSegments2, LineSegmentsGeometry, LineMaterial } })
 })
 
 afterEach(() => {
@@ -314,6 +331,9 @@ describe('the 3D view of a board', () => {
     // failure ui/tests/picking.test.js guards its `export { THREE }` against.
     expect(bundle).toContain('CADTrackballControls,')
     expect(bundle).toMatch(/^export \{[^}]*\bminDistance\b/m)
+    for (const name of ['LineSegments2', 'LineSegmentsGeometry', 'LineMaterial']) {
+      expect(bundle).toMatch(new RegExp(`^export \\{[^}]*\\b${name}\\b`, 'm'))
+    }
     const factors = bundle.match(/trackball: \{\s*pan: ([\d.]+),\s*rotate: ([\d.]+),\s*zoom: ([\d.]+),/)
     const defaults = ['panSpeed', 'rotateSpeed', 'zoomSpeed'].map((key) => bundle.match(new RegExp(`\\b${key}: ([\\d.]+),`))[1])
     expect(defaults).toEqual(['1.0', '1.0', '1.0'])

@@ -42,9 +42,10 @@ export const GEOMETRY_UTILS_URL = '/_v/BufferGeometryUtils.js';
 let pending = null;
 
 /**
- * `{ THREE, GLTFLoader, TrackballControls, mergeGeometries, minDistance }`,
- * fetched once per page. A rejected import is dropped, so opening the 3D view
- * again tries again (`loadViewerLibrary` says why).
+ * `{ THREE, GLTFLoader, TrackballControls, mergeGeometries, minDistance, lines }`,
+ * fetched once per page; `lines` holds three's screen-wide lines
+ * (`LineSegments2`, `LineSegmentsGeometry`, `LineMaterial`). A rejected import is
+ * dropped, so opening the 3D view again tries again (`loadViewerLibrary` says why).
  */
 export function loadThree() {
   if (!pending) {
@@ -56,6 +57,10 @@ export function loadThree() {
     ]).then(([THREE, loader, library, utils]) => ({
       THREE, GLTFLoader: loader.GLTFLoader, TrackballControls: library.CADTrackballControls,
       mergeGeometries: utils.mergeGeometries, minDistance: library.minDistance,
+      lines: {
+        LineSegments2: library.LineSegments2, LineSegmentsGeometry: library.LineSegmentsGeometry,
+        LineMaterial: library.LineMaterial,
+      },
     }), (error) => {
       pending = null;
       throw error;
@@ -201,6 +206,20 @@ export function pickGeometry(THREE, nodes) {
     }
   }
   return { topo: 'solid', geomType: -1, positions, indices };
+}
+
+/** The twelve edges of `box` as line segments, two corners each, flat
+ *  (`setPositions` of a `LineSegmentsGeometry`). */
+export function boxEdges(box) {
+  const { min, max } = box;
+  const corner = (i) => [i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z];
+  const edges = [];
+  for (let i = 0; i < 8; i += 1) {
+    for (const bit of [1, 2, 4]) {
+      if (!(i & bit)) edges.push(...corner(i), ...corner(i | bit));
+    }
+  }
+  return edges;
 }
 
 /** The size of a measured box of the model in millimetres, `[width, depth,

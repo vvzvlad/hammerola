@@ -11,7 +11,8 @@ import * as THREE from '../../static/_v/three.module.js'
 import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
 import { GLTFLoader } from '../../static/_v/GLTFLoader.js'
 import {
-  designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree, mergeByMaterial,
+  boxEdges, designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree,
+  mergeByMaterial,
   partOf, partPlace, partsOf, pickedPart, pickGeometry, plainColours, sharedGeometries, sizeMm, sizeText,
 } from '../src/board3d.js'
 
@@ -331,6 +332,15 @@ describe('a measurement', () => {
     size.forEach((mm, i) => expect(mm).toBeCloseTo([50, 40, 1.6][i], 9))
     expect(sizeText(size)).toBe('size 50.00 × 40.00 × 1.60 mm')
     expect(gapText(0.0012345)).toBe('1.23 mm')
+  })
+
+  it('draws a box as its twelve edges, each joining two corners that differ along one axis', () => {
+    const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 2, 3))
+    const flat = boxEdges(box)
+    const edges = Array.from({ length: flat.length / 6 }, (_, i) => [flat.slice(i * 6, i * 6 + 3), flat.slice(i * 6 + 3, i * 6 + 6)])
+    expect(edges).toHaveLength(12)
+    for (const [a, b] of edges) expect(a.filter((v, axis) => v !== b[axis])).toHaveLength(1)
+    expect(new Set(edges.map((edge) => JSON.stringify([...edge].sort()))).size).toBe(12)
   })
 })
 
