@@ -55,7 +55,6 @@ import {
 import { COMMENTABLE, DocumentLayers, docUrl } from './DocumentView.jsx';
 import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
-import { MEASURE_HINT } from './KicadView.jsx';
 import { BOM_TYPE } from './kicadbom.js';
 import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
 import { readRetina } from './store.js';
@@ -365,13 +364,13 @@ export default class DocShell extends React.Component {
   /** The bar's Measure over a KiCad board: its measure mode flipped
    *  (`tools.measure`, KicadView.jsx). Coming on, it puts the Comment tool
    *  down — one click mode on the board at a time — shuts the list and says
-   *  how to measure. */
+   *  how to measure (`hint`). */
   toggleMeasure() {
     const measure = this.state.tools && this.state.tools.measure;
     if (!measure) return;
     if (!measure.on) {
       this.setState({ tool: null, viewsOpen: false });
-      this.toast(MEASURE_HINT);
+      this.toast(measure.hint);
     }
     measure.toggle();
   }

@@ -11,9 +11,10 @@
 // its non-tumbling mode, leaves the camera's turn alone on `update` — and a
 // loader whose model is a small scene built in the test: a board layer and one
 // part, `C1`, or for the copper a board's body, copper and solder mask, named
-// in the loader's record as KiCad names them. What the view does to a model
-// (board3d.js) runs for real and is tested in board3d.test.js. `fetch` and the
-// animation frames are driven by hand.
+// in the loader's record as KiCad names them; and the model library's
+// `minDistance`, which lives in viewer/ and is not here, a stand-in answering
+// one gap. What the view does to a model (board3d.js) runs for real and is
+// tested in board3d.test.js. `fetch` and the animation frames are driven by hand.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,7 +26,7 @@ vi.mock('../src/board3d.js', async (importOriginal) => ({ ...(await importOrigin
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import BoardView3D, { CLICK_SLOP, TRACKBALL_SPEEDS } from '../src/BoardView3D.jsx'
+import BoardView3D, { CLICK_SLOP, MEASURE_HINT, TRACKBALL_SPEEDS } from '../src/BoardView3D.jsx'
 import { loadThree, TRACKBALL_URL } from '../src/board3d.js'
 import { VIEWER_MODULE_URL } from '../src/viewport/library.js'
 import { PIN_PX } from '../src/viewport/options.js'
@@ -86,6 +87,11 @@ function boardScene() {
 /** The loader's record of the model's meshes, by which the board's layers are
  *  told apart (`glbLayers`): none unless a test names them. */
 let parser = null
+
+/** The gap the stand-in for the library's `minDistance` answers: from the
+ *  bottom of `C1` lifted 3 over the board to the board's top face. */
+const GAP = { distance: 1.8, point1: new THREE.Vector3(0, 2.6, 0), point2: new THREE.Vector3(0, 0.8, 0) }
+let minDistance = null
 
 class Loader {
   parseAsync() {
@@ -166,8 +172,9 @@ beforeEach(() => {
   model = boardScene()
   parser = { json: {}, associations: new Map() }
   stubFrames()
+  minDistance = vi.fn(() => GAP)
   loadThree.mockResolvedValue({ THREE: { ...THREE, WebGLRenderer: Renderer }, TrackballControls: Trackball, GLTFLoader: Loader,
-    mergeGeometries })
+    mergeGeometries, minDistance })
 })
 
 afterEach(() => {
@@ -306,6 +313,7 @@ describe('the 3D view of a board', () => {
     // survives every gate and kills the view only in a browser — the same
     // failure ui/tests/picking.test.js guards its `export { THREE }` against.
     expect(bundle).toContain('CADTrackballControls,')
+    expect(bundle).toMatch(/^export \{[^}]*\bminDistance\b/m)
     const factors = bundle.match(/trackball: \{\s*pan: ([\d.]+),\s*rotate: ([\d.]+),\s*zoom: ([\d.]+),/)
     const defaults = ['panSpeed', 'rotateSpeed', 'zoomSpeed'].map((key) => bundle.match(new RegExp(`\\b${key}: ([\\d.]+),`))[1])
     expect(defaults).toEqual(['1.0', '1.0', '1.0'])
@@ -478,6 +486,93 @@ describe('comments on the 3D view of a board', () => {
     update({ comment: { ...comment, focus: { part: 'C1' } } })
     expect(controls.target.distanceTo(LIFTED)).toBeCloseTo(0, 6)
     expect(comment.onFocused).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('measuring on the 3D view of a board', () => {
+  /** The part's place: lifted off the board, where a pointer on its centre picks it. */
+  const LIFTED = new THREE.Vector3(0, 3, 0)
+  beforeEach(() => {
+    model.children[0].children[1].position.copy(LIFTED)
+  })
+
+  /** What the bar was last told it can do, and the label as the reader sees it. */
+  const tools = (view) => view.props.onTools.mock.calls.at(-1)[0]
+  const label = (view) => {
+    runFrames()
+    const { textContent, style } = view.stage.label
+    return style.display === 'none' ? null : textContent
+  }
+  /** The box of a body `minDistance` was handed. */
+  const spans = (geometry) => {
+    const box = new THREE.Box3().setFromArray(geometry.positions)
+    return [...box.min.toArray(), ...box.max.toArray()].map((v) => Math.round(v * 1e6) / 1e6)
+  }
+
+  it('measures a part, then the gap to the board, and starts over at a third, selecting and lighting nothing', async () => {
+    // The owner's "measures на платах кикада", on the board's 3D view.
+    const { view, canvas } = await loaded({ onNet: vi.fn() })
+    const off = tools(view)
+    expect(off.measure).toEqual({ on: false, toggle: expect.any(Function), hint: MEASURE_HINT })
+    off.measure.toggle()
+    expect([tools(view).measure.on, canvas.style.cursor]).toEqual([true, 'crosshair'])
+    const part = onCanvas(view, LIFTED)
+    const board = onCanvas(view, new THREE.Vector3(10, 0.8, 5))
+    clickAt(canvas, part)
+    expect(label(view)).toBe('size 1600.00 × 800.00 × 800.00 mm')
+    // the same part again is still one pick
+    clickAt(canvas, part)
+    expect(minDistance).not.toHaveBeenCalled()
+    // the board beside it: the gap between the two bodies, each in the world
+    clickAt(canvas, board)
+    expect(minDistance.mock.calls.map((bodies) => bodies.map(spans))).toEqual([[
+      [-0.8, 2.6, -0.4, 0.8, 3.4, 0.4], [-25, -0.8, -20, 25, 0.8, 20]]])
+    expect(minDistance.mock.calls[0][0].topo).toBe('solid')
+    expect(label(view)).toBe('1800.00 mm')
+    // a third starts over from it: the board's width, depth and height
+    clickAt(canvas, board)
+    expect(label(view)).toBe('size 50000.00 × 40000.00 × 1600.00 mm')
+    // nothing under the pointer clears it
+    clickAt(canvas, [1, 1])
+    expect(label(view)).toBeNull()
+    expect([view.props.onSelect.mock.calls, view.props.onNet.mock.calls, view.stage.selected]).toEqual([[], [], null])
+    // the right button selects and opens the menu as ever
+    pointer(canvas, 'pointerdown', ...part, 2)
+    pointer(canvas, 'pointerup', ...part, 2)
+    expect([view.props.onSelect.mock.calls, view.props.onMenu.mock.calls]).toEqual([[['C1']], [['C1', ...part]]])
+  })
+
+  it('takes Escape for the picks, then for measuring, then not at all, the bar told the same object per state', async () => {
+    const { view, canvas } = await loaded()
+    const off = tools(view)
+    expect(view.escapeMeasure()).toBe(false)
+    off.measure.toggle()
+    const on = tools(view)
+    clickAt(canvas, onCanvas(view, LIFTED))
+    expect(view.escapeMeasure()).toBe(true)
+    expect([label(view), tools(view)]).toEqual([null, on])
+    expect(view.escapeMeasure()).toBe(true)
+    expect(canvas.style.cursor).toBe('')
+    expect(view.escapeMeasure()).toBe(false)
+    // the page compares what it is told by identity
+    expect(view.props.onTools.mock.calls.map(([told]) => [told === off, told === on])).toEqual([
+      [true, false], [false, true], [true, false]])
+    // a click selects again
+    clickAt(canvas, onCanvas(view, LIFTED))
+    expect(view.props.onSelect.mock.calls).toEqual([['C1']])
+  })
+
+  it('stops measuring, its picks cleared, when the Comment tool is armed here', async () => {
+    const comment = { on: false, marks: [], focus: null, onPoint: vi.fn(), onMarker: vi.fn(), onLost: vi.fn(),
+      onFocused: vi.fn() }
+    const { view, update, canvas } = await loaded({ comment })
+    tools(view).measure.toggle()
+    clickAt(canvas, onCanvas(view, LIFTED))
+    update({ comment: { ...comment, on: true } })
+    expect([tools(view).measure.on, label(view), canvas.style.cursor]).toEqual([false, null, 'crosshair'])
+    // the click is the comment's again
+    clickAt(canvas, onCanvas(view, LIFTED))
+    expect(comment.onPoint).toHaveBeenCalledTimes(1)
   })
 })
 

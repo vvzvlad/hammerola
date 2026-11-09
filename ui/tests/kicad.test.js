@@ -34,7 +34,7 @@ import PcbPanel from '../src/PcbPanel.jsx'
 import { documentRows } from '../src/viewlist.jsx'
 import KicadView, {
   AREA_EVENT, BOARD3D, BOM, crossProbeRequest, designFiles, designKey, designMembers, designSources, DOUBLE_CLICK_MS, DRAFT_MARK,
-  drawingOf, drawnViews, INSET_EVENT, MARKER_EVENT, MEASURE_EVENT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
+  drawingOf, drawnViews, INSET_EVENT, MARKER_EVENT, MEASURE_EVENT, MEASURE_HINT, menuFor, menuHeight, menuPlace, PAGE_EVENT, PAN_SLOP, PCB, SCH,
   SELECTION_EVENT, SHEET_LOADED_EVENT,
 } from '../src/KicadView.jsx'
 import { loadMeta } from '../src/hub.js'
@@ -1619,7 +1619,7 @@ describe('what the page\'s bar can do with the view on screen', () => {
     const { view, elements } = mounted(DOCS[1])
     view.setState({ ready: true })
     view.componentDidUpdate()
-    expect(told(view).at(-1).measure.on).toBe(false)
+    expect([told(view).at(-1).measure.on, told(view).at(-1).measure.hint]).toEqual([false, MEASURE_HINT])
     told(view).at(-1).measure.toggle()
     expect(elements[PCB].setMeasureMode.mock.calls).toEqual([[true]])
     // the element reports the mode, its own Cmd+Shift+M and the insets ending it too
@@ -1645,6 +1645,24 @@ describe('what the page\'s bar can do with the view on screen', () => {
     window.dispatchEvent(ESCAPE())
     expect([elements[PCB].escapeMeasure.mock.calls.length, elements[PCB].escapeInsets.mock.calls.length,
       elements[PCB].clearSelection.mock.calls.length]).toEqual([2, 1, 1])
+    view.listen(false)
+  })
+
+  it('takes an Escape the 3D model\'s measure took, after the menu, before the selection', () => {
+    const { view, elements } = mounted(DOCS[2])
+    view.listen(true)
+    view.view3D = { escapeMeasure: vi.fn(() => true) }
+    view.setState({ menu: { view: BOARD3D } })
+    window.dispatchEvent(ESCAPE())
+    expect([view.state.menu, view.view3D.escapeMeasure.mock.calls.length]).toEqual([null, 0])
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    window.dispatchEvent(escape)
+    expect([escape.defaultPrevented, elements[PCB].clearSelection.mock.calls.length]).toEqual([true, 0])
+    // one it did not take puts out the selection; the board's element is not asked
+    view.view3D.escapeMeasure.mockReturnValue(false)
+    window.dispatchEvent(ESCAPE())
+    expect([view.view3D.escapeMeasure.mock.calls.length, elements[PCB].clearSelection.mock.calls.length,
+      elements[PCB].escapeMeasure.mock.calls.length]).toEqual([2, 1, 0])
     view.listen(false)
   })
 

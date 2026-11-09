@@ -28,7 +28,6 @@ import CopyLink from '../src/copylink.jsx'
 import DocumentView, { DocumentLayers } from '../src/DocumentView.jsx'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { loadBuilds, loadMeta, rereadPage } from '../src/hub.js'
-import { MEASURE_HINT } from '../src/KicadView.jsx'
 import { ERROR, MODEL, PROGRESS, STATE, VIEWPORT_TAG } from '../src/events.js'
 import { menuRow } from '../src/panelstyle.js'
 import { css } from '../src/style.jsx'
@@ -195,11 +194,12 @@ describe('the documents in the list of views', () => {
   it('measure a KiCad board over the model with Measure, the board\'s own mode, which puts an armed tool down', () => {
     // The owner's "measures на платах кикада".
     const toggle = vi.fn()
-    const tools = (on) => ({ fit() {}, frame() {}, measure: { on, toggle } })
+    // the toast is the hint the view hands, whichever view it is
+    const tools = (on) => ({ fit() {}, frame() {}, measure: { on, toggle, hint: 'how to measure here' } })
     const c = component({ meta: meta([...DOCS, ...KICAD]), doc: KICAD[1].id, tool: 'comment', docTools: tools(false) })
     expect(css(c.computed().measureBtnStyle).pointerEvents).toBeUndefined()
     c.computed().tMeasure()
-    expect([toggle.mock.calls.length, c.state.tool, c.state.toast]).toEqual([1, null, MEASURE_HINT])
+    expect([toggle.mock.calls.length, c.state.tool, c.state.toast]).toEqual([1, null, 'how to measure here'])
     c.state.docTools = tools(true)
     expect(c.computed().measureBtnStyle).toContain(LIT)
     // over a schematic, which has no measure mode, it is out of service

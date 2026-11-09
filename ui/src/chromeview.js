@@ -19,9 +19,9 @@
  */
 import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
+import { MEASURE_HINT as PART_MEASURE_HINT } from './BoardView3D.jsx';
 import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
-import { MEASURE_HINT } from './KicadView.jsx';
 import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
 import { writeRetina } from './store.js';
@@ -59,7 +59,8 @@ export function chromeView(s, props, deps) {
     if (t === 'comment' && s.tool !== 'comment') {
       toast(docCommentable ? COMMENTABLE.get(docOpen.type) : 'Click a spot on the model to pin the task');
     }
-    if (t === 'measure' && s.tool !== 'measure') toast('Click a part for its size, or two for the gap between them');
+    // The model's Measure says what the board's 3D one does (BoardView3D.jsx).
+    if (t === 'measure' && s.tool !== 'measure') toast(PART_MEASURE_HINT);
   };
 
   const railOpen = s.rail === null ? props.commentsOpen : s.rail;
@@ -87,12 +88,12 @@ export function chromeView(s, props, deps) {
   // page (`measure` of `docTools`, KicadView.jsx), or null: over any other
   // document Measure is out of service. Coming on, it puts an armed tool down
   // — the Comment tool on the board would take its clicks — and says how to
-  // measure.
+  // measure (`hint`).
   const docMeasure = (docOpen && s.docTools && s.docTools.measure) || null;
   const measureDoc = () => {
     if (!docMeasure.on) {
       set({ tool: null, viewsOpen: false, menu: null });
-      toast(MEASURE_HINT);
+      toast(docMeasure.hint);
     }
     shutHeader();
     docMeasure.toggle();

@@ -16,8 +16,10 @@
 //   onSelect  a click: the designator of the part under the pointer, or null
 //   onMenu    a right click on a part, which selects it as a click does: its
 //             designator and the pointer's page point (`clientX`, `clientY`)
-//   onTools   told `{ fit, frame }` once the model is drawn: what the page's
-//             bar does with this view (DocumentView.jsx)
+//   onTools   told `{ fit, frame, measure }` once the model is drawn, and
+//             again as measuring comes on or goes off: what the page's bar
+//             does with this view (DocumentView.jsx); `measure` is `{ on,
+//             toggle, hint }`, `hint` what the page toasts as it comes on
 //   onFetched told each time the `.glb` has come in or failed to: KicadView.jsx
 //             holds the design's other files back for it
 //   copper    null until the board's own element has its files, then a call
@@ -41,6 +43,18 @@
 //             click on it named back (`onMarker`), the ids of those whose
 //             part the model has none of told (`onLost`) as that changes;
 //             `focus`, a part to frame, which then is told done (`onFocused`)
+//
+// MEASURE, the bar's, measures as the model page's does: a left click on a
+// part picks the part, one on anything else of the model the board's body,
+// and one on nothing clears the picks. One pick is drawn as its box in the
+// world, `size W × D × H mm` over the top; a second, different one as the
+// line between the nearest points of the two (`minDistance`, the model
+// page's own), the gap at its middle; a third starts over from it. Drawn over
+// the model in the selection's colour, the label over the canvas. While
+// measuring a left click does nothing else and the cursor is a crosshair;
+// the right button, drags and the wheel are as ever. The Comment tool armed
+// here puts measuring away; Escape (KicadView.jsx) clears the picks, then
+// turns measuring off (`escapeMeasure`).
 //
 // THE BOARD IS DRIVEN AS THE MODEL IS. The camera is turned by the model's own
 // trackball (`CADTrackballControls`, board3d.js) at the model's speeds: a left
@@ -76,15 +90,16 @@
 // frame into the inset's canvas. Asked to, it fetches the `.glb` with the view
 // off screen. Its subscribers hear of every change of what it draws.
 //
-// Drawing is on demand — a frame when the camera, the size or the selection
-// changes, none while the view is hidden. Everything three holds is freed on
-// unmount, the WebGL context included: a page has few of them to give.
+// Drawing is on demand — a frame when the camera, the size, the selection or
+// the measurement changes, none while the view is hidden. Everything three
+// holds is freed on unmount, the WebGL context included: a page has few of
+// them to give.
 
 import React from 'react';
 
 import {
-  designatorOf, disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, mergeByMaterial,
-  partPlace, partsOf, pickedPart, plainColours, sharedGeometries,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree,
+  mergeByMaterial, partPlace, partsOf, pickedPart, pickGeometry, plainColours, sharedGeometries, sizeMm, sizeText,
 } from './board3d.js';
 import {
   COPPER, copperModel, fade, glbLayers, insetView, place, separationLook, stackOffsets,
@@ -113,6 +128,15 @@ const SEPARATION = 'flex:none;display:flex;flex-direction:column;gap:4px;padding
 const SEPARATION_HEAD = 'display:flex;align-items:center;gap:6px;color:var(--text-soft);cursor:pointer;user-select:none';
 const SEPARATION_VALUE = `margin-left:auto;font:400 10.5px ${MONO};color:var(--text-muted)`;
 const SEPARATION_INPUT = 'width:100%;margin:0;accent-color:var(--accent)';
+// The measurement's label, placed over the canvas (`placeLabel`), looking as
+// the model page's `.hmr_measure_label` does (HammerolaViewer.jsx).
+const LABEL = 'position:absolute;left:0;top:0;display:none;transform:translate(-50%,-50%);white-space:nowrap;'
+  + 'pointer-events:none;padding:3px 7px;border-radius:4px;background:var(--tooltip-bg);'
+  + `color:var(--tooltip-text);font:600 11px ${MONO}`;
+
+/** What the page toasts as the bar's Measure comes on here, and the model
+ *  page's Measure over the model (chromeview.js): the same tool. */
+export const MEASURE_HINT = 'Click a part for its size, or two for the gap between them';
 
 /** The vertical field of view, degrees. */
 const FOV = 35;
@@ -139,8 +163,9 @@ const GLTF_UP = [0, 1, 0];
 /** One loaded model on its canvas: the WebGL half of the view. */
 class Stage {
   constructor(lib, host, gltf, handlers) {
-    const { THREE, TrackballControls, mergeGeometries } = lib;
+    const { THREE, TrackballControls, mergeGeometries, minDistance } = lib;
     this.THREE = THREE;
+    this.minDistance = minDistance;
     this.host = host;
     this.handlers = handlers;
     this.active = false;
@@ -198,6 +223,19 @@ class Stage {
     canvas.setAttribute('style', CANVAS);
     host.append(canvas);
 
+    // Measuring (`setMeasuring`, `measurePick`): whether a left click
+    // measures, the picks, each a part's nodes or the board's body, what is
+    // drawn of them, beside the model as the arrows are, and the world point
+    // of the label over the canvas.
+    this.measuring = false;
+    this.picks = [];
+    this.measured = new THREE.Group();
+    this.scene.add(this.measured);
+    this.measureAt = null;
+    this.label = document.createElement('div');
+    this.label.setAttribute('style', LABEL);
+    host.append(this.label);
+
     // The model's trackball, with the model's speeds. It moves the camera from
     // its own pointer handlers and says `change` each time, so it needs no
     // frame of its own.
@@ -214,9 +252,10 @@ class Stage {
 
     // A click with the left button or the right one: `[button, x, y]` of the
     // press. The right one selects as the left does and opens the menu too.
-    // A left one on a comment's arrow names it, and with the Comment tool
-    // armed one on a part is a comment's place, selecting nothing; what is
-    // nearest decides, so a part in front of an arrow hides it.
+    // While measuring a left one measures and does nothing else. A left one
+    // on a comment's arrow names it, and with the Comment tool armed one on a
+    // part is a comment's place, selecting nothing; what is nearest decides,
+    // so a part in front of an arrow hides it.
     this.raycaster = new THREE.Raycaster();
     this.down = null;
     canvas.addEventListener('pointerdown', (event) => {
@@ -228,6 +267,11 @@ class Stage {
       if (!down || event.button !== down[0]
         || Math.hypot(event.clientX - down[1], event.clientY - down[2]) > CLICK_SLOP) return;
       this.aim(event);
+      if (down[0] === 0 && this.measuring) {
+        const hits = this.hits([this.root]);
+        this.measurePick(hits.length ? this.parts.get(pickedPart(hits, this.root)) || this.glb.board : null);
+        return;
+      }
       if (down[0] === 0) {
         const [hit] = this.hits([this.root, this.pins]);
         const mark = hit ? this.markOf(hit.object) : null;
@@ -291,6 +335,20 @@ class Stage {
     this.camera.far = distance + this.radius * 4;
     this.camera.updateProjectionMatrix();
     this.renderer.render(this.scene, this.camera);
+    this.placeLabel();
+  }
+
+  /** The measurement's label over its point as the camera sees it now; none
+   *  with no measurement or with its point behind the camera. */
+  placeLabel() {
+    const at = this.measureAt && this.measureAt.clone().project(this.camera);
+    if (!at || at.z > 1) {
+      this.label.style.display = 'none';
+      return;
+    }
+    this.label.style.display = '';
+    this.label.style.left = `${((at.x + 1) / 2) * this.host.clientWidth}px`;
+    this.label.style.top = `${((1 - at.y) / 2) * this.host.clientHeight}px`;
   }
 
   resize() {
@@ -483,7 +541,11 @@ class Stage {
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(width, height, false);
+    // The measurement is this view's, its label over this canvas only: an
+    // inset draws the board without it.
+    this.measured.visible = false;
     this.renderer.render(this.scene, camera);
+    this.measured.visible = true;
     const [w, h] = [Math.round(width * ratio), Math.round(height * ratio)];
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
@@ -569,6 +631,58 @@ class Stage {
     this.request();
   }
 
+  /** Measuring on or off, the measurement cleared either way. */
+  setMeasuring(on) {
+    this.measuring = on;
+    this.measurePick(null);
+  }
+
+  /**
+   * A measuring click on `nodes`, a part's or the board's body, or on nothing
+   * (null), which clears the picks. A first pick, then a second, different
+   * one; a third starts over from it, and the same one twice stays one. One
+   * pick is drawn as its box in the world, its size over the top's centre; two
+   * as the line between their nearest points (`minDistance`), the gap at its
+   * middle. Drawn over the model, in the selection's colour.
+   */
+  measurePick(nodes) {
+    if (!nodes) this.picks = [];
+    else if (this.picks.length !== 1) this.picks = [nodes];
+    else if (this.picks[0] !== nodes) this.picks = [this.picks[0], nodes];
+    const { THREE } = this;
+    this.freeMeasured();
+    this.measureAt = null;
+    const colour = new THREE.Color().setStyle(window.getComputedStyle(this.host).color);
+    let drawn = null;
+    if (this.picks.length === 1) {
+      const box = new THREE.Box3().setFromArray(pickGeometry(THREE, this.picks[0]).positions);
+      drawn = new THREE.Box3Helper(box, colour);
+      this.measureAt = box.getCenter(new THREE.Vector3()).setY(box.max.y);
+      this.label.textContent = sizeText(sizeMm(THREE, box));
+    } else if (this.picks.length === 2) {
+      const { distance, point1, point2 } = this.minDistance(...this.picks.map((pick) => pickGeometry(THREE, pick)));
+      drawn = new THREE.Line(new THREE.BufferGeometry().setFromPoints([point1, point2]),
+        new THREE.LineBasicMaterial({ color: colour }));
+      this.measureAt = new THREE.Vector3().addVectors(point1, point2).multiplyScalar(0.5);
+      this.label.textContent = gapText(distance);
+    }
+    if (drawn) {
+      Object.assign(drawn.material, { depthTest: false, depthWrite: false, transparent: true });
+      drawn.renderOrder = 1;
+      this.measured.add(drawn);
+    }
+    this.request();
+  }
+
+  /** What is drawn of the measurement, taken out of the scene and freed. */
+  freeMeasured() {
+    for (const line of this.measured.children) {
+      line.geometry.dispose();
+      line.material.dispose();
+    }
+    this.measured.clear();
+  }
+
   dispose() {
     if (this.frame) cancelAnimationFrame(this.frame);
     if (this.observer) this.observer.disconnect();
@@ -576,6 +690,8 @@ class Stage {
     this.host.removeEventListener('wheel', this.onWheel, true);
     this.controls.dispose();
     this.kit.dispose();
+    this.freeMeasured();
+    this.label.remove();
     disposeModel(this.model);
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -599,8 +715,13 @@ export default class BoardView3D extends React.Component {
     this.setHost = (element) => {
       this.host = element;
     };
-    // What the page's bar does with this view (`onTools`).
-    this.tools = { fit: () => this.stage.fit(), frame: () => this.stage.snapshot() };
+    // What the page's bar does with this view (`onTools`): one object per
+    // state of Measure, so that the page is told when it flips.
+    this.toolSets = [false, true].map((on) => ({
+      fit: () => this.stage.fit(),
+      frame: () => this.stage.snapshot(),
+      measure: { on, toggle: () => this.setMeasuring(!this.stage.measuring), hint: MEASURE_HINT },
+    }));
     // The board's insets' 3D view (see the header), and what its subscribers
     // last heard drawn.
     this.listeners = new Set();
@@ -665,8 +786,27 @@ export default class BoardView3D extends React.Component {
     const { isolate, stacked, separation } = this.state;
     this.stage.setLook({ net: this.props.net || null, isolate, separation: stacked ? separation : 0 });
     if (active !== prev.active) this.stage.setActive(active);
+    // The Comment tool armed here puts measuring away: one click mode at a time.
+    if (this.props.comment && this.props.comment.on) this.setMeasuring(false);
     this.comments();
     this.tellInsets();
+  }
+
+  /** Measuring on or off (see the header), the bar told. */
+  setMeasuring(on) {
+    if (on === this.stage.measuring) return;
+    this.stage.setMeasuring(on);
+    this.cursor();
+    this.props.onTools(this.toolSets[Number(on)]);
+  }
+
+  /** Escape over the view (KicadView.jsx, `key`): the measurement cleared,
+   *  else measuring turned off; true when it did either. */
+  escapeMeasure() {
+    if (!this.stage || !this.stage.measuring) return false;
+    if (this.stage.picks.length) this.stage.measurePick(null);
+    else this.setMeasuring(false);
+    return true;
   }
 
   /** The insets' subscribers told, when the model, its selection or its
@@ -681,7 +821,7 @@ export default class BoardView3D extends React.Component {
 
   /** The stage in line with `comment` (see the header): its arrows, rebuilt
    *  only when the marks changed, the lost ones told only when they changed;
-   *  a focus not yet framed; and a crosshair while the tool is armed. */
+   *  a focus not yet framed; and the cursor (`cursor`). */
   comments() {
     const { comment } = this.props;
     const marks = (comment && comment.marks) || [];
@@ -700,7 +840,14 @@ export default class BoardView3D extends React.Component {
       this.stage.framePart(focus.part);
       comment.onFocused();
     }
-    this.stage.renderer.domElement.style.cursor = comment && comment.on ? 'crosshair' : '';
+    this.cursor();
+  }
+
+  /** A crosshair while a left click places something: with the Comment tool
+   *  armed here, or measuring. */
+  cursor() {
+    const { comment } = this.props;
+    this.stage.renderer.domElement.style.cursor = (comment && comment.on) || this.stage.measuring ? 'crosshair' : '';
   }
 
   fetchModel() {
@@ -742,7 +889,7 @@ export default class BoardView3D extends React.Component {
         this.stage.setActive(Boolean(this.props.active));
         this.follow(this.props);
         this.setState({ loading: false });
-        this.props.onTools(this.tools);
+        this.props.onTools(this.toolSets[0]);
       })
       .catch((error) => {
         this.loading = false;

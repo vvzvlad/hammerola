@@ -21,7 +21,7 @@ import DocShell, { docBar, DocPage, pickDocument } from '../src/DocShell.jsx'
 import DocumentView, {
   docBase, docHint, DocumentLayers, documentBody, docUrl, FILE_TYPE, TEXT_TYPE,
 } from '../src/DocumentView.jsx'
-import KicadView, { DRAFT_MARK, MEASURE_HINT, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
+import KicadView, { DRAFT_MARK, PAGE_EVENT, SCH } from '../src/KicadView.jsx'
 import {
   findQuote, markdownElements, offsetOf, quoteOf, rangeOf, resolveHref, textIndex,
 } from '../src/docmd.js'
@@ -983,12 +983,13 @@ describe('comments on the page of a build with no model', () => {
     // out of service until the board's view hands its measure mode
     expect(measureTool(shell).props.style.pointerEvents).toBe('none')
     const toggle = vi.fn()
-    shell.onTools({ fit() {}, frame() {}, measure: { on: false, toggle } })
+    // the toast is the hint the view hands, whichever view it is
+    shell.onTools({ fit() {}, frame() {}, measure: { on: false, toggle, hint: 'how to measure here' } })
     commentTool(shell).props.onClick()
     measureTool(shell).props.onClick()
-    expect([toggle.mock.calls.length, shell.state.tool, shell.state.toast]).toEqual([1, null, MEASURE_HINT])
+    expect([toggle.mock.calls.length, shell.state.tool, shell.state.toast]).toEqual([1, null, 'how to measure here'])
     expect(measureTool(shell).props.style.background).toBeUndefined()
-    shell.onTools({ fit() {}, frame() {}, measure: { on: true, toggle } })
+    shell.onTools({ fit() {}, frame() {}, measure: { on: true, toggle, hint: 'how to measure here' } })
     expect(measureTool(shell).props.style.background).toBe('var(--accent-bg)')
     // off again, with nothing else touched
     shell.state.toast = null

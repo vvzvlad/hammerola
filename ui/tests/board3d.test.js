@@ -11,8 +11,8 @@ import * as THREE from '../../static/_v/three.module.js'
 import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
 import { GLTFLoader } from '../../static/_v/GLTFLoader.js'
 import {
-  designatorOf, disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, mergeByMaterial,
-  partOf, partPlace, partsOf, pickedPart, plainColours, sharedGeometries,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree, mergeByMaterial,
+  partOf, partPlace, partsOf, pickedPart, pickGeometry, plainColours, sharedGeometries, sizeMm, sizeText,
 } from '../src/board3d.js'
 
 const vec3 = (count, offset) => ({ bufferView: offset, componentType: 5126, count, type: 'VEC3' })
@@ -284,6 +284,53 @@ describe('a comment on a part', () => {
     close(p.toArray(), world().toArray())
     close(n.toArray(), faceInWorld().toArray())
     expect(fromPart(THREE, part, place.point, null).n).toBeNull()
+  })
+})
+
+describe('a measurement', () => {
+  it('reads a pick in the world, every mesh where it is drawn: a shared geometry, an unindexed one, each instance', () => {
+    // A part 10 along x and turned a quarter about y, so its local (x, y, z)
+    // is the world's (10 + z, y, -x); five boxes of side 2, each 24 square
+    // units of surface: two drawing one geometry, one unindexed, two instances.
+    const material = new THREE.MeshStandardMaterial()
+    const shared = new THREE.BoxGeometry(2, 2, 2)
+    const kept = Array.from(shared.attributes.position.array)
+    const near = new THREE.Mesh(shared, material)
+    const far = new THREE.Mesh(shared, material)
+    far.position.set(0, 0, 5)
+    const flat = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2).toNonIndexed(), material)
+    flat.position.set(0, 5, 0)
+    const many = new THREE.InstancedMesh(shared, material, 2)
+    many.setMatrixAt(0, new THREE.Matrix4().makeTranslation(0, -5, 0))
+    many.setMatrixAt(1, new THREE.Matrix4().makeTranslation(0, -10, 0))
+    const part = new THREE.Group().add(near, far, flat, many)
+    part.position.set(10, 0, 0)
+    part.rotation.y = Math.PI / 2
+    new THREE.Group().add(part)
+    const { topo, positions, indices } = pickGeometry(THREE, [part])
+    expect([topo, positions.length / 3, indices.length]).toEqual(['solid', 24 * 4 + 36, 36 * 5])
+    // the triangles, through their indices, span all five boxes where they are drawn
+    const corner = (i) => new THREE.Vector3().fromArray(positions, indices[i] * 3)
+    const spanned = new THREE.Box3()
+    let area = 0
+    for (let i = 0; i < indices.length; i += 3) {
+      const [a, b, c] = [corner(i), corner(i + 1), corner(i + 2)]
+      spanned.expandByPoint(a).expandByPoint(b).expandByPoint(c)
+      area += b.clone().sub(a).cross(c.clone().sub(a)).length() / 2
+    }
+    expect(spanned.min.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([9, -11, -1])
+    expect(spanned.max.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([16, 6, 1])
+    expect(area).toBeCloseTo(24 * 5, 6)
+    // read, not moved: the meshes still drawing it see it as it was
+    expect(Array.from(shared.attributes.position.array)).toEqual(kept)
+  })
+
+  it('sizes a box in millimetres, width, depth and height of the board, and labels it and a gap', () => {
+    const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0.05, 0.0016, 0.04))
+    const size = sizeMm(THREE, box)
+    size.forEach((mm, i) => expect(mm).toBeCloseTo([50, 40, 1.6][i], 9))
+    expect(sizeText(size)).toBe('size 50.00 × 40.00 × 1.60 mm')
+    expect(gapText(0.0012345)).toBe('1.23 mm')
   })
 })
 
