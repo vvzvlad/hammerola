@@ -34,6 +34,7 @@ import { internals } from "./internals.js";
 import { finite3 } from "./math.js";
 import {
   grabbable, groupFacing, groupHome, movePart, nudgeTurn, partCentre,
+  turnIntoFrame,
 } from "./parts.js";
 import { RINGS_ORDER, createScene3D, widgetMaterial } from "./scene3d.js";
 import {
@@ -634,10 +635,14 @@ export function createRings(vp) {
     // as in any CAD tool. `turnedFrom` is the document's function for this sum
     // (with `tidy`), and the panel uses the same one (`turnNodes`), so preview
     // and document agree.
+    //
+    // The world turn is read in the part's own frame first (`partFrame`), where
+    // the record is written: a part a joint holds away from 0 still turns about
+    // the ring it was grabbed by.
     const d = drag.turn;
     const gesture = [0, 0, 0];
     gesture[drag.axis] = degrees;
-    const turn = turnedFrom(d.base, gesture);
+    const turn = turnedFrom(d.base, turnIntoFrame(d.frame, gesture));
     if (turn[0] === d.last[0] && turn[1] === d.last[1]
         && turn[2] === d.last[2]) {
       // The part did not move (most events of a drag: `swept` is continuous,

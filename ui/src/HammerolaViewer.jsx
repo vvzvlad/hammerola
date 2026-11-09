@@ -407,6 +407,31 @@ function snapsKept(steps, doc) {
   return kept;
 }
 
+/**
+ * The joints of the view a model event has just drawn, and the value each one
+ * stands at: `{view, joints, poses, values}`, or null for a view with none (no
+ * motion row).
+ *
+ * Another build of the same view keeps the value of each joint with the same
+ * id, clamped to its new limits; a joint new to the view, and every joint of
+ * another view, starts at 0, the document's own placement. A re-stage is not
+ * asked here: it draws the same document, so `onModel` keeps what stands.
+ *
+ * A module function so the state updater it is spread into stays pure.
+ */
+function motionFor(d, before) {
+  const joints = Array.isArray(d.joints) ? d.joints : [];
+  if (!joints.length) return null;
+  const kept = before && before.view === d.view ? before.values : {};
+  const values = {};
+  for (const joint of joints) {
+    const [lo, hi] = joint.limits;
+    values[joint.id] = Object.hasOwn(kept, joint.id)
+      ? Math.min(hi, Math.max(lo, kept[joint.id])) : 0;
+  }
+  return { view: d.view, joints, poses: Array.isArray(d.poses) ? d.poses : [], values };
+}
+
 // How many views fit as a strip of pills before the switcher becomes a menu.
 // The strip is what gives up its width when the toolbar is short of room
 // (`TAB_STRIP` in viewlist.jsx), so a too-wide row squeezes its pills until the
@@ -891,6 +916,9 @@ export default class HammerolaViewer extends React.Component {
       hidden: [], ghost: [], expanded: {},
       secOn: false, secOff: 0, secRange: null, secFlip: false, hatch: true,
       secFace: null, secPop: false,
+      // The joints of the view on screen and where each stands (`motionFor`),
+      // null for a view that declares none; `motionPop` is its popover.
+      motion: null, motionPop: false,
       // The Settings card's one answer, remembered per browser (store.js).
       retina: readRetina(),
       // The bar's Studio (`tStudio` in chromeview.js), for this page only:
@@ -1313,8 +1341,9 @@ export default class HammerolaViewer extends React.Component {
         return;
       }
       if (e.key !== 'Escape') return;
-      const shut = { menu: null, secPop: false, viewsOpen: false, opsOpen: false,
-                     settingsOpen: false, notePop: null, tool: null, share: null };
+      const shut = { menu: null, secPop: false, motionPop: false, viewsOpen: false,
+                     opsOpen: false, settingsOpen: false, notePop: null, tool: null,
+                     share: null };
       // An armed tool is not on screen under an open document — the document
       // covers the model and the tool's button is out of service — so it does
       // not count as something this Escape closed; the Comment tool over a
@@ -2568,6 +2597,12 @@ export default class HammerolaViewer extends React.Component {
       // paths are the same across a rebuild, and this is the tree they were
       // reading a moment ago.
       expanded: s.expanded,
+      // The joints of the document that landed: a re-stage draws the same one
+      // and keeps where they stand (the viewport re-applies them itself).
+      motion: d.restage ? s.motion : motionFor(d, s.motion),
+      // A view without joints has no motion row, so its popover cannot stay
+      // open behind it and reappear on the way back.
+      motionPop: d.restage || motionFor(d, s.motion) ? s.motionPop : false,
       ...(rejoined || null),
     }), () => {
       // Not on a live one: `home` is the frame the library fitted, and a live
@@ -2628,6 +2663,10 @@ export default class HammerolaViewer extends React.Component {
       // body's path is spelled against the overlay's group, which
       // `proposalSnaps` reads from `state.tree`.
       this.proposalSnaps(this.state.proposal || emptyProposal());
+      // The joints' values go back too: the viewport starts a new document's
+      // joints at 0 (`show()` in viewport/element.js). Before `sync`, whose pins
+      // are read off the parts where the joints stand.
+      this.pushJoints();
       // The rejoined ids have to reach the viewport, and a state event is the
       // only way there — but every model event needs this one now, rejoin or
       // not: the tree that has just landed is what the comment pins hang on, so
@@ -3599,6 +3638,33 @@ export default class HammerolaViewer extends React.Component {
     } catch (error) {
       console.error('proposal moves', error);
     }
+  }
+
+  /**
+   * Where the joints of the view stand, handed to the viewport (`setJoints` in
+   * viewport/element.js). A ref call like `proposalMoves`, and the whole set
+   * every time. Nothing for a view without joints: the viewport starts every
+   * new document's joints at 0, and a re-stage draws the same document.
+   */
+  pushJoints() {
+    const el = this.el();
+    const motion = this.state.motion;
+    if (!el || !motion || typeof el.setJoints !== 'function') return;
+    el.setJoints(motion.values);
+  }
+
+  /**
+   * The reader moved the joints: a slider, a pose or Reset in the motion
+   * popover. The parts move without a rebuild (`pushJoints`), then `sync`
+   * stands the comment pins on them where they now are. The measurement goes,
+   * on both sides (`__clearMeasure`): its points and number were taken on
+   * parts that have moved since.
+   */
+  setJointValues(values) {
+    this.setState((s) => ({ motion: { ...s.motion, values }, measure: null }), () => {
+      this.pushJoints();
+      this.sync({ __clearMeasure: true });
+    });
   }
 
   /**
@@ -5010,6 +5076,38 @@ export default class HammerolaViewer extends React.Component {
       : 'off';
     const secRange = Array.isArray(s.secRange) ? s.secRange : [-30, 30];
 
+    // -- the motion row and its popover: the joints the view document declares
+    // (`motionFor`), each a slider over its limits, then a pill per pose and
+    // Reset. A pose sets the joints it names; the rest go to 0.
+    const motion = s.motion || null;
+    const motionRows = motion ? motion.joints.map((joint) => {
+      const [lo, hi] = joint.limits;
+      const value = motion.values[joint.id];
+      return {
+        key: joint.id,
+        label: joint.id,
+        min: lo, max: hi,
+        // Any value: a fixed step snaps to a grid laid from `lo`, which misses
+        // 0 and the limits themselves (0..110 at 0.3 tops out at 109.8), the
+        // very positions a pose and `sweep` stand at.
+        step: 'any',
+        value,
+        valueLabel: `${value.toFixed(1)}${joint.type === 'revolute' ? '°' : ' mm'}`,
+        onChange: (e) => this.setJointValues({
+          ...motion.values, [joint.id]: parseFloat(e.target.value) }),
+      };
+    }) : [];
+    const jointsAt = (values) => Object.fromEntries((motion ? motion.joints : [])
+      .map((joint) => [joint.id, Object.hasOwn(values, joint.id) ? values[joint.id] : 0]));
+    const motionPills = motion ? [
+      ...motion.poses.map((pose) => ({
+        key: `pose:${pose.name}`, label: pose.name,
+        onClick: stop(() => this.setJointValues(jointsAt(pose.values))),
+      })),
+      { key: 'reset', label: 'Reset', onClick: stop(() => this.setJointValues(jointsAt({}))) },
+    ] : [];
+    const posedNow = !!motion && motion.joints.some((joint) => motion.values[joint.id] !== 0);
+
     // -- whether the build ships files at all, which the row menu's file rows
     //    need (`downloadsView`)
     const catalogue = (meta && meta.parts) || null;
@@ -5237,7 +5335,9 @@ export default class HammerolaViewer extends React.Component {
       }),
       secEyeOuter: eyeOuter(cutOn ? 'on' : 'off'), secEyeDot: eyeDot(cutOn ? 'on' : 'off'),
       secSub: s.held ? `held · ${HOLD_KEY_LABEL}` : secSub,
-      openSecPop: stop(() => this.setState({ secPop: true })),
+      // One of the two popovers of the rows above the tree at a time: they open
+      // at the same corner.
+      openSecPop: stop(() => this.setState({ secPop: true, motionPop: false })),
       closeSecPop: stop(() => this.setState({ secPop: false })),
       // Clamped to the screen: at `left:278px` and 270px wide, the close cross
       // sits past 540px, off a phone screen. `rootClick` does not clear this
@@ -5260,6 +5360,22 @@ export default class HammerolaViewer extends React.Component {
       toggleHatch: stop(() => this.set({ hatch: !s.hatch })),
       hatchBox: 'width:15px;height:15px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px monospace;' + (s.hatch ? ON_ACCENT : BLANK_BOX),
       hatchMark: s.hatch ? '✓' : '',
+
+      // The motion row, under the section row and drawn like it, only for a
+      // view whose document declares joints. Lit while any joint stands away
+      // from 0, as the section row is while the cut is on: the parts are not
+      // where the build put them.
+      motionShown: !!motion,
+      motionRowStyle: 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (posedNow ? 'var(--accent-line);background:var(--accent-bg-soft)' : 'transparent;background:var(--float-bg-soft)'),
+      motionSub: posedNow ? 'moved' : 'rest',
+      openMotionPop: stop(() => this.setState({ motionPop: true, secPop: false })),
+      closeMotionPop: stop(() => this.setState({ motionPop: false })),
+      // The section popover's recipe, one row lower.
+      motionPopStyle: popover({
+        narrow, anchor: 'left:278px;top:80px', width: '270px', radius: '10px',
+        pad: '13px 14px', z: 15, open: s.motionPop && !!motion }),
+      motionRows,
+      motionPills,
 
       // -- the proposal's branch of the tree, and the menu's rows ------------
       //
@@ -5499,6 +5615,17 @@ export default class HammerolaViewer extends React.Component {
                   <span onClick={v.openSecPop} style={css(`font:600 12px ${MONO};color:var(--text);cursor:pointer;white-space:nowrap`)}>section</span>
                   <span onClick={v.openSecPop} style={css(`font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer;white-space:nowrap;padding-right:2px`)}>{v.secSub}</span>
                 </div>
+
+                {/* The joints of the view: no eye (there is nothing to switch
+                    off), its slot kept so the icon stands under the section's. */}
+                {v.motionShown && (
+                  <div style={css(v.motionRowStyle)}>
+                    <span style={css('width:24px;flex:none')} />
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-soft)" strokeWidth="1.4" style={{ flex: 'none' }}><circle cx="8" cy="8" r="1.6" /><path d="M8 8L14 4" /><path d="M2.5 8a5.5 5.5 0 0 1 11 0" /></svg>
+                    <span onClick={v.openMotionPop} style={css(`font:600 12px ${MONO};color:var(--text);cursor:pointer;white-space:nowrap`)}>motion</span>
+                    <span onClick={v.openMotionPop} style={css(`font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer;white-space:nowrap;padding-right:2px`)}>{v.motionSub}</span>
+                  </div>
+                )}
 
                 <div style={css('padding:1px 0 6px;display:flex;flex-direction:column;align-items:flex-start')}>
                   {v.rows.map((row) => (
@@ -5967,6 +6094,30 @@ export default class HammerolaViewer extends React.Component {
               <div onClick={v.toggleHatch} style={css('display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:11px')}>
                 <span style={css(v.hatchBox)}>{v.hatchMark}</span>
                 <span style={css(`font:400 11.5px ${SANS};color:var(--text-soft)`)}>hatch the cut face</span>
+              </div>
+            </div>
+
+            {/* the joints: a slider each over its limits, then the poses and
+                Reset. The parts move without a rebuild. */}
+            <div onClick={(e) => e.stopPropagation()} style={css(v.motionPopStyle)}>
+              <div style={css('display:flex;align-items:center;gap:8px;margin-bottom:10px')}>
+                <span style={css(HEAD_SANS)}>Motion</span>
+                <span style={css(FILL)} />
+                <span onClick={v.closeMotionPop} style={css(FAINT_CLICK)}>&#10005;</span>
+              </div>
+              {v.motionRows.map((row) => (
+                <div key={row.key} style={css('margin-bottom:8px')}>
+                  <div style={css(`display:flex;justify-content:space-between;font:500 11px ${MONO};color:var(--text-soft);margin-bottom:5px`)}>
+                    <span>{row.label}</span><span style={css(INK)}>{row.valueLabel}</span>
+                  </div>
+                  <input type="range" min={row.min} max={row.max} step={row.step}
+                         value={row.value} onChange={row.onChange} style={{ width: '100%' }} />
+                </div>
+              ))}
+              <div style={css('display:flex;flex-wrap:wrap;gap:6px;margin-top:4px')}>
+                {v.motionPills.map((pill) => (
+                  <div key={pill.key} onClick={pill.onClick} style={css(HALF_BTN)}>{pill.label}</div>
+                ))}
               </div>
             </div>
 

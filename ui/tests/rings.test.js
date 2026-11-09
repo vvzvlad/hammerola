@@ -42,7 +42,7 @@ import {
 } from '../src/viewport/events.js'
 import { createGizmo } from '../src/viewport/gizmo.js'
 import { createRings } from '../src/viewport/rings.js'
-import { after, quaternionOf, turned } from '../src/viewport/parts.js'
+import { after, applyJoints, quaternionOf, turned } from '../src/viewport/parts.js'
 import {
   CLICK_PX, GIZMO_PX, RING_ARC_DEG, RING_CASE_PX, RING_DISC_PX, RING_MIN_PX,
   RING_PX, RING_RIM_PX, RING_SHAFT_PX,
@@ -1327,6 +1327,43 @@ describe('one whole drag', () => {
     await settled()
 
     expect(s.vp.moved.get(PART)).toEqual({ delta: [1, 2, 3], turn: [0, 0, 90] })
+  })
+
+  it('turns a part a hinge holds open about the world axis of the ring grabbed', async () => {
+    // THE RINGS STAND ON THE WORLD AXES and a turn is recorded at joint value 0,
+    // with the joint composed after it (`stand` in parts.js). So the part has
+    // to end up turned about world Z ON TOP OF the pose the hinge gives it:
+    // `q_z ⊗ previous`. Recorded as measured, the hinge would be composed after
+    // the turn instead, `previous ⊗ q_z`, which is a turn about the part's own
+    // turned z.
+    //
+    // A HINGE ABOUT +y, because one about z commutes with a turn about z and the
+    // two orders would be one answer. The group has no parent here, so its own
+    // quaternion is its world one.
+    const s = scene()
+    s.vp.jointNodes.set(PART, {
+      joint: { id: 'hinge', type: 'revolute', origin: [6, 0, -4], axis: [0, 1, 0],
+               limits: [0, 110] },
+      loc: [[0, 0, 0], [0, 0, 0, 1]],
+    })
+    s.vp.jointValues = { hinge: 90 }
+    applyJoints(s.vp)
+    rendered(s.viewer)
+    const previous = facing(s.groups[PART])
+    const qz = quaternionOf([0, 0, 90])
+    // Where a rotation sends the three world axes: the same for `q` and `-q`.
+    const sends = (q) => [[1, 0, 0], [0, 1, 0], [0, 0, 1]].flatMap((v) => turned(q, v))
+    const wanted = sends(after(qz, previous))
+    expect(sends(after(previous, qz)).some((v, k) => Math.abs(v - wanted[k]) > 1e-6),
+      'the premise: the two orders really are two answers').toBe(true)
+
+    press(s.canvas, AT_KNOB)
+    pointerMove(AT_QUARTER)
+    pointerUp(AT_QUARTER)
+    await settled()
+
+    sends(facing(s.groups[PART])).forEach((value, k) =>
+      expect(value, `component ${k}`).toBeCloseTo(wanted[k], 6))
   })
 
   it('says nothing when the press never moved', async () => {

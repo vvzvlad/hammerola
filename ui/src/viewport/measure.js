@@ -10,6 +10,7 @@
 // does not work from outside, because only `selectedShapeIDs` reaches
 // `notifyCallback`; the numbers stay in the panel.
 
+import { posed } from "./joints.js";
 import { nameOf, solidOf } from "./picking.js";
 
 /** The backend, or null if the library has moved it. */
@@ -28,9 +29,10 @@ function backend(viewer) {
  *
  * `crossPart` and `moved` are reported because the numbers are in the
  * coordinates the tessellation arrived in: a distance between two parts is
- * between where they stand now, which in a print-layout view or after a drag is
- * not where they are in the assembly. Within one part (wall thickness, hole
- * diameter, edge length) it is correct in every view. The interface decides
+ * between where they stand now, which in a print-layout view, after a drag or
+ * with a joint away from 0 is not where they are in the assembly. Within one
+ * part (wall thickness, hole diameter, edge length) it is correct in every
+ * view. The interface decides
  * whether to refuse or label such a measurement; a bare number must not reach
  * the agent as a task.
  */
@@ -57,7 +59,7 @@ export function measureDistance(vp, a, b) {
     to: { id: solidB, name: nameOf(solidB), path: b.path, point: b.point },
     points: [a.point, b.point],
     crossPart: solidA !== solidB,
-    moved: vp.moved.size > 0,
+    moved: vp.moved.size > 0 || posed(vp.jointValues),
   };
 }
 

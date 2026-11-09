@@ -45,6 +45,9 @@ vi.mock('../src/viewport/parts.js', () => ({
   // offsets on real groups — and taking back the ones the document stopped
   // claiming — is parts.test.js's subject.
   reconcileMoves: vi.fn(),
+  // A re-stage reaches it after `restageMoves`; this file does not ask what it
+  // does to the groups.
+  applyJoints: vi.fn(),
   statesOf: vi.fn(() => ({})),
   treeFromShapes: vi.fn(() => ({})),
   // NOT REACHED FROM element.js AT ALL — the two halves of the manipulator ask

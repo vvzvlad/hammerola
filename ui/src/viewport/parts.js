@@ -2,6 +2,7 @@
 // ghost it, select it, drag it, and hand the interface the tree it draws.
 
 import { internals } from "./internals.js";
+import { jointPose, restPoint } from "./joints.js";
 import { after, anglesOf, finite3, quaternionOf, turned } from "./math.js";
 import { GHOST_OPACITY } from "./options.js";
 import { outlineChild, refreshSectionOutline } from "./outline.js";
@@ -250,10 +251,16 @@ export function applySelected(viewer, selected) {
  * Where a part's group sits before anything moved it, remembered on first
  * touch, so a move can be undone without reloading (the library keeps no copy:
  * its group positions are the assembly's own transforms).
+ *
+ * A node a joint moves is read off its document (`vp.jointNodes`), not off the
+ * group: the group may stand where a joint holds it, and the Move tool works
+ * from joint value 0 (`stand` composes the joint after it).
  */
 function home(vp, path, group) {
   if (!vp.partHome.has(path)) {
-    vp.partHome.set(path, [group.position.x, group.position.y, group.position.z]);
+    const node = vp.jointNodes.get(path);
+    vp.partHome.set(path, node ? [...node.loc[0]]
+      : [group.position.x, group.position.y, group.position.z]);
   }
   return vp.partHome.get(path);
 }
@@ -273,11 +280,15 @@ function home(vp, path, group) {
  *
  * So the reader's turn is composed onto it, never written over it, and "put it
  * back" restores it; otherwise a seated part would flip on a plain drag.
+ *
+ * A node a joint moves is read off its document, as in `home`.
  */
 function facing(vp, path, group) {
   if (!vp.partFacing.has(path)) {
-    vp.partFacing.set(path, [group.quaternion.x, group.quaternion.y,
-                             group.quaternion.z, group.quaternion.w]);
+    const node = vp.jointNodes.get(path);
+    vp.partFacing.set(path, node ? [...node.loc[1]]
+      : [group.quaternion.x, group.quaternion.y,
+         group.quaternion.z, group.quaternion.w]);
   }
   return vp.partFacing.get(path);
 }
@@ -286,8 +297,8 @@ function facing(vp, path, group) {
 const NO_TURN = [0, 0, 0];
 
 /**
- * Where a part's group was turned about before anything turned it: the world
- * centre of its box, remembered on first touch beside `partHome`.
+ * Where a part's group was turned about before anything turned it: the centre
+ * of its box, remembered on first touch beside `partHome`.
  *
  * Memoised because `partCentre` reads `front.matrixWorld`, the current pose: a
  * live read after a turn would answer for the turned part, so two 90° steps
@@ -296,10 +307,118 @@ const NO_TURN = [0, 0, 0];
  * Null is a real answer: a tree node (`CompoundGroup`, put into
  * `nestedGroup.groups` by `renderLoop`) has no tessellation and no centre;
  * `movePart` refuses to turn it and only displaces it.
+ *
+ * The centre is in the frame `home` and `facing` are in, the one the move is
+ * recorded in (`partFrame`), at joint value 0: read off the scene in the world,
+ * it is carried from where the group stands there (through every group above
+ * it, any of which a joint may have moved, and the joint holding the node, if
+ * one does; `group` is not yet moved on a first touch) to the part's own seat.
+ * So a part inside a jointed group turns about its own centre, and a re-stage
+ * that reads it before `applyJoints` re-places the groups gets the same point.
  */
-function pivot(vp, path) {
-  if (!vp.partPivot.has(path)) vp.partPivot.set(path, partCentre(vp.viewer, path));
+function pivot(vp, path, group) {
+  if (!vp.partPivot.has(path)) {
+    const centre = partCentre(vp.viewer, path);
+    vp.partPivot.set(path, centre && restPoint(centre, worldPlacement(group),
+      [home(vp, path, group), facing(vp, path, group)]));
+  }
   return vp.partPivot.get(path);
+}
+
+/** Where a group stands now, as `[position, quaternion]`. */
+const placement = (group) => [
+  [group.position.x, group.position.y, group.position.z],
+  [group.quaternion.x, group.quaternion.y, group.quaternion.z, group.quaternion.w],
+];
+
+/** `inner` placed inside `outer` (each `[position, quaternion]`): `outer ∘ inner`. */
+function within(outer, inner) {
+  const [p, q] = outer;
+  const moved = turned(q, inner[0]);
+  return [[p[0] + moved[0], p[1] + moved[1], p[2] + moved[2]], after(q, inner[1])];
+}
+
+/** Where a group stands in the world: its own placement carried through every
+ *  group above it, as three.js composes `matrixWorld` (a placement is a turn
+ *  and a shift, never a scale). */
+function worldPlacement(group) {
+  let world = placement(group);
+  for (let up = group.parent; up; up = up.parent) world = within(placement(up), world);
+  return world;
+}
+
+/** The turn `q` undone: its conjugate, the inverse of a unit quaternion. */
+const undo = (q) => [-q[0], -q[1], -q[2], q[3]];
+
+/**
+ * How the frame a part's move is recorded in is turned from the world, as a
+ * quaternion, or null where it is not turned.
+ *
+ * The frame is the one the part's seated placement is written in (`stand`):
+ * its parent's world placement, then the joint holding the node itself. A
+ * record is a statement about joint value 0 (`home`, `facing`, `pivot`) and
+ * means the same at every pose. The arrows and the rings stand on the world
+ * axes (`place` in gizmo.js and rings.js), so what they measure is carried into
+ * this frame before it is recorded (`intoFrame`, `turnIntoFrame`), and on
+ * screen the part follows the arrow whatever the joints hold.
+ *
+ * Only the turn: neither a displacement nor a turn about the part's own centre
+ * sees where the frame's origin is (the centre is `pivot`'s).
+ *
+ * Null for a frame square to the world, which is every part no turned group
+ * or joint holds, so what the widgets measure is recorded exactly as measured:
+ * carried through an identity, a half turn could come back spelt -180.
+ */
+export function partFrame(vp, path) {
+  const group = movableGroup(vp.viewer, path);
+  const node = vp.jointNodes.get(path);
+  const value = node ? vp.jointValues[node.joint.id] : 0;
+  let frame = value ? jointPose(node.joint, value, [[0, 0, 0], [0, 0, 0, 1]])[1]
+    : [0, 0, 0, 1];
+  for (let up = group.parent; up; up = up.parent) frame = after(placement(up)[1], frame);
+  return frame[0] || frame[1] || frame[2] ? frame : null;
+}
+
+/** A displacement measured on the world axes, as the frame `partFrame`
+ *  answered with reads it: `R⁻¹·d`, and `d` itself where that is null. */
+export const intoFrame = (frame, d) => (frame ? turned(undo(frame), d) : d);
+
+/** A displacement recorded in that frame, as the world sees it: `R·d`. */
+export const outOfFrame = (frame, d) => (frame ? turned(frame, d) : d);
+
+/** Three degrees of turn about the world axes (`quaternionOf`), as the same
+ *  turn reads in that frame: `R⁻¹·q·R`, back in three degrees. */
+export const turnIntoFrame = (frame, turn) => (frame
+  ? anglesOf(after(undo(frame), after(quaternionOf(turn), frame))) : turn);
+
+/**
+ * Write one group's placement: `position` and `quaternion` are where the Move
+ * tool alone would put it, and a joint holding the node is composed after them
+ * (`M(v) ∘ that`, `jointPose`). The one writer of a build part's group, so a
+ * drag keeps the pose and a pose keeps the drag.
+ *
+ * At value 0 (or a joint the values do not name) the placement is written as
+ * given, so a node at rest stands exactly at its document's `loc`.
+ */
+function stand(vp, path, group, position, quaternion) {
+  const node = vp.jointNodes.get(path);
+  const value = node ? vp.jointValues[node.joint.id] : 0;
+  const [p, q] = value ? jointPose(node.joint, value, [position, quaternion])
+    : [position, quaternion];
+  group.position.set(p[0], p[1], p[2]);
+  group.quaternion.set(q[0], q[1], q[2], q[3]);
+}
+
+/**
+ * The frame after groups were written. The pick buffer is marked stale first:
+ * the library re-renders it on a camera or clip change only
+ * (viewer/src/core/viewer.ts, `update`), so a part that moved would still be
+ * picked where it stood. `idPicker` is null before the first render.
+ */
+function repaint(vp) {
+  const picker = vp.viewer.idPicker;
+  if (picker && typeof picker.setDirty === "function") picker.setDirty();
+  vp.viewer.update(true, false);
 }
 
 /**
@@ -407,10 +526,11 @@ export function partCentre(viewer, path) {
   // `group.position`, so until the next frame the matrix is stale. The axis
   // arrows run their own rAF loop and would trail the part by a frame.
   //
-  // Asked of the group, not of `front`: `updateMatrixWorld` composes from the
-  // parent downwards and never walks up, and `movePart` writes the group's
-  // position.
-  if (typeof group.updateMatrixWorld === "function") group.updateMatrixWorld();
+  // Asked of the group, not of `front`, since `movePart` writes the group's
+  // position, and from the root down (`updateWorldMatrix(true, …)`), since a
+  // joint may have moved a group above the part (`applyJoints`), as in
+  // `partTop`.
+  if (typeof group.updateWorldMatrix === "function") group.updateWorldMatrix(true, true);
   try {
     if (!geometry.boundingBox
         && typeof geometry.computeBoundingBox === "function") {
@@ -448,8 +568,11 @@ export function partCentre(viewer, path) {
  *
  * The world box is the box of the eight corners of the geometry's local box,
  * each carried through `matrixWorld`: on a turned part the local box's top face
- * need not be the top in the world. Read as `partCentre` reads it: the group's
- * matrix recomposed first, and a box asked of the geometry if it has none yet.
+ * need not be the top in the world. Read as `partCentre` reads it: the matrix
+ * recomposed first, and a box asked of the geometry if it has none yet. The
+ * matrix is recomposed from the root down (`updateWorldMatrix(true, …)`): a
+ * joint may have moved a group above the part since the last frame
+ * (`applyJoints`), and the arrow stands where the part stands.
  */
 export function partTop(viewer, path) {
   const g = internals(viewer);
@@ -458,7 +581,7 @@ export function partTop(viewer, path) {
   const front = group && group.front;
   const geometry = front && front.geometry;
   if (!geometry || !front.matrixWorld || !front.matrixWorld.elements) return null;
-  if (typeof group.updateMatrixWorld === "function") group.updateMatrixWorld();
+  if (typeof group.updateWorldMatrix === "function") group.updateWorldMatrix(true, true);
   try {
     if (!geometry.boundingBox
         && typeof geometry.computeBoundingBox === "function") {
@@ -495,7 +618,7 @@ export function partTop(viewer, path) {
 /**
  * The cut contour, rebuilt for solids that have just moved under a standing
  * plane. Every move in this file ends with it (`movePart`, `nudgePart`,
- * `reconcileMoves`).
+ * `reconcileMoves`, `applyJoints`).
  *
  * No plane write follows a move, so this drops the memo and redraws. Called
  * outside the caller's `try` and catching its own failures, so it cannot turn a
@@ -521,7 +644,9 @@ function redrawCut(vp) {
 
 /**
  * Offset a part from where the build put it and turn it where it stands.
- * `delta` is world units, `turn` is three degrees (`quaternionOf`).
+ * `delta` is millimetres, `turn` is three degrees (`quaternionOf`), both on the
+ * axes of the frame the move is recorded in (`partFrame`): the world's for a
+ * part no joint or turned group holds.
  *
  * Not a change to the model, and the interface says so: nothing is written,
  * the next rebuild puts the part back, and the offset reaches the agent as part
@@ -533,9 +658,9 @@ function redrawCut(vp) {
  * `quaternion` (`facing`). The group's origin is not the part's centre, so the
  * quaternion alone would swing the part across the scene.
  *
- * With `home` the group's position, `R` the build's pose, `C` the part's world
- * centre and `q` the turn: a vertex `v` lands at `position + Q·v`, and unturned
- * at `home + R·v`. Turning about `C` sends it to
+ * With `home` the group's position, `R` the build's pose, `C` the part's
+ * centre (in that frame, `pivot`) and `q` the turn: a vertex `v` lands at
+ * `position + Q·v`, and unturned at `home + R·v`. Turning about `C` sends it to
  * `C + q·(home + R·v - C)` = `(C - q·(C - home)) + (q⊗R)·v`, so
  *
  *     position = C - q·(C - home) + delta
@@ -569,7 +694,7 @@ export function movePart(vp, paths, delta, turn) {
   if (groups.some((group) => !group)) return false;
   // Before anything moves (see `pivot`): the centre is read off the current
   // matrix, and by the second path of a row the first is already written.
-  const centres = list.map((path) => pivot(vp, path));
+  const centres = list.map((path, at) => pivot(vp, path, groups[at]));
   const q = quaternionOf(spin);
   if (spin.some((angle) => angle !== 0) && centres.some((centre) => !centre)) {
     return false;
@@ -582,11 +707,10 @@ export function movePart(vp, paths, delta, turn) {
       // a zero turn, where the pivot cancels out.
       const centre = centres[at] || base;
       const seat = seated(q, base, pose, centre, delta);
-      groups[at].position.set(...seat.position);
-      groups[at].quaternion.set(...seat.quaternion);
+      stand(vp, path, groups[at], seat.position, seat.quaternion);
       vp.moved.set(path, { delta, turn: spin });
     });
-    vp.viewer.update(true, false);
+    repaint(vp);
   } catch (error) {
     console.warn("move", error);
     return false;
@@ -629,7 +753,7 @@ export function nudgePart(vp, paths, homes, delta) {
       group.position.set(
         base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
     });
-    vp.viewer.update(true, false);
+    repaint(vp);
   } catch (error) {
     console.warn("nudge", error);
     return false;
@@ -682,7 +806,7 @@ export function nudgeTurn(vp, paths, seats, turn) {
       group.position.set(...seat.position);
       group.quaternion.set(...seat.quaternion);
     });
-    vp.viewer.update(true, false);
+    repaint(vp);
   } catch (error) {
     console.warn("nudge turn", error);
     return false;
@@ -719,6 +843,42 @@ export function restageMoves(vp) {
   for (const [path, stood] of offsets) {
     movePart(vp, [path], stood.delta, stood.turn);
   }
+}
+
+/**
+ * Stand every node a joint moves where `vp.jointValues` puts it, on the groups
+ * on screen: nothing is rebuilt or tessellated, only placements are written.
+ *
+ * What each joint composes onto is what the Move tool alone would show: the
+ * document's `loc`, or for a part the reader dragged the same `seated` placement
+ * `movePart` wrote, from that node's `loc` and the centre `pivot` remembered for
+ * the drag. So a slider does not lose a drag, and the drag's record stays a
+ * statement about joint value 0 (`home`, `facing`).
+ *
+ * Called by the element after the values change (`setJoints`) and after a
+ * re-stage has rebuilt the groups at their `loc` (`show`).
+ */
+export function applyJoints(vp) {
+  if (!vp.viewer || !vp.jointNodes.size) return;
+  try {
+    for (const [path, node] of vp.jointNodes) {
+      const group = movableGroup(vp.viewer, path);
+      if (!group) continue;
+      const [base, pose] = node.loc;
+      const stood = vp.moved.get(path);
+      const seat = stood
+        ? seated(quaternionOf(stood.turn), base, pose,
+                 vp.partPivot.get(path) || base, stood.delta)
+        : { position: base, quaternion: pose };
+      stand(vp, path, group, seat.position, seat.quaternion);
+    }
+    repaint(vp);
+  } catch (error) {
+    console.warn("joints", error);
+    return;
+  }
+  // The contour the moved parts carried off the plane (see `redrawCut`).
+  redrawCut(vp);
 }
 
 /**
@@ -768,17 +928,17 @@ export function reconcileMoves(vp, wanted) {
     vp.moved.delete(path);
     if (!group || !base || !pose) continue;
     try {
-      group.position.set(base[0], base[1], base[2]);
       // The turn comes off with the offset: the deleted node said both. Back to
       // the build's pose, not the identity, since the group's quaternion holds
-      // the view's `loc[1]` (a seated lid stands at a half turn).
-      group.quaternion.set(pose[0], pose[1], pose[2], pose[3]);
+      // the view's `loc[1]` (a seated lid stands at a half turn). A joint
+      // holding the part keeps holding it (`stand`).
+      stand(vp, path, group, base, pose);
       home = true;
     } catch (error) {
       console.warn("move reset", error);
     }
   }
-  if (home && vp.viewer) vp.viewer.update(true, false);
+  if (home && vp.viewer) repaint(vp);
 
   // One call per entry: a row standing for several copies moves all of them by
   // one offset, each from its own home.

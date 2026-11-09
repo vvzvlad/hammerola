@@ -830,6 +830,9 @@ export function fakeViewport(viewer, state = {}) {
     // Empty, exactly as `connectedCallback` starts it: a viewport nothing has
     // pushed a step at, where every drag rounds to the grid's own.
     snapSteps: new Map(),
+    // A document with no joints, as `connectedCallback` starts it.
+    jointNodes: new Map(),
+    jointValues: {},
     overlay: { refresh: vi.fn() },
     // The printer's beds (beds.js), none of which is under any pixel unless a
     // test stands one there.

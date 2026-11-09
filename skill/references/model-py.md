@@ -105,6 +105,22 @@ board of the project, which the hub exports on every build
 
   One part may be referenced any number of times — five pins, five references.
 
+  **A joint moves a part in the viewer, by a slider, without a rebuild.**
+  `HINGE = checklib.revolute("hinge", origin=(0, -WIDTH / 2, HEIGHT), axis=(1,
+  0, 0), limits=(0, 110))` turns in degrees about `axis` through `origin`;
+  `checklib.slider("drawer", axis=(0, 1, 0), limits=(0, 80))` slides in
+  millimetres. Put it on a reference, `{"part": "lid", "at": LID_SEATED,
+  "joint": HINGE}`, or on a group, which it moves whole; a joint on a group
+  inside another rides on the outer one (an elbow on a shoulder). Value 0 is
+  where `at` puts the part — what the gates check — so `limits` must hold 0,
+  and `origin` and `axis` are in the view's frame with every joint at 0. Named
+  positions go on the view, `"poses": {"open": {"hinge": 110}}`, any joint not
+  named at 0. The same joint drives `checks()`: `HINGE.location(55)` is one
+  position as a `cq.Location`, and
+  `checklib.swept_clearance(HINGE.sweep(lid_as_assembled(), stops=12),
+  build_base(), names=("lid", "base"))` runs the lid through the travel the
+  slider shows.
+
   **Fasteners are never fused.** Each piece a person fits on its own — a nut,
   its lock nut, a washer, a screw — stays a solid of its own: one record
   referenced at each seat, or the pieces collected into one record with
@@ -181,7 +197,8 @@ board of the project, which the hub exports on every build
   point probe; `volume` and `is_empty` say whether a boolean left anything
   (`assert wp.vals()` cannot); `section` times a stretch of `checks()` in the
   log; `check` registers a unit the hub runs in a worker of its own (see
-  «Keeping checks fast enough to run» in `references/checks.md`). Each reads
+  «Keeping checks fast enough to run» in `references/checks.md`); `revolute`
+  and `slider` declare a joint (above). Each reads
   EVERY body of the part it is
   handed, `.add()` assemblies included. It lives in the hub's image; nothing to
   install or vendor.

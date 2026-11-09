@@ -330,3 +330,25 @@ this operation")`, если `render()` ещё не вызван. Это **не �
 7. Поведение mesh-бэкенда на формате GDS: `meshGeometry` регистрируется, но наличие
    `face_types`/`edge_types` не проверено; ховер-преселект для GDS библиотека отключает
    явно (`viewer/src/core/picking-controller.ts:161`).
+
+---
+
+## 9. Узел двигают через его группу, а буфер пикинга помечают сами
+
+`viewer.nestedGroup.groups[id]` — группа узла под его `id` из документа вида:
+`ObjectGroup` у листа (`viewer/src/scene/nestedgroup.ts:1296`), `CompoundGroup` у
+группы (`viewer/src/scene/nestedgroup.ts:1277`). `renderLoop` пишет в неё `loc`
+(`viewer/src/scene/nestedgroup.ts:1260–1262` у листа, `:1274` у группы). Запись в
+`position`/`quaternion` двигает узел вместе с потомками без пересборки и тесселяции;
+так двигают детали инструмент Move и шарниры (`ui/src/viewport/parts.js`).
+
+**Буфер пикинга после этого устарел.** `update()` помечает его грязным только при
+смене камеры, клиппинга или идущей анимации (`viewer/src/core/viewer.ts:951–991`),
+а сдвиг детали ни то, ни другое: клик попал бы туда, где деталь стояла. Пометить
+руками — `viewer.idPicker.setDirty()` (`viewer/src/rendering/id-picking.ts:958`);
+`idPicker` равен `null` до первого `render()` (`viewer/src/core/viewer.ts:384`,
+создаётся на `:1668`).
+
+`matrixWorld` пересчитывает рендер. Точку на детали до него читают после
+`updateWorldMatrix(true, true)` (это three.js): `updateMatrixWorld()` идёт только
+вниз от узла и не видит сдвинутого предка.

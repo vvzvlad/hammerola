@@ -152,7 +152,7 @@ export function rowMenu(s, deps) {
    * With nothing to delete, Delete is a grey 'said' row, like `fileRows`.
    */
   const sectionItems = [
-    mi('Edit', '', () => setState({ secPop: true })),
+    mi('Edit', '', () => setState({ secPop: true, motionPop: false })),
     ...(secSet
       ? [mi('Delete', 'clear the plane', clearSection, 'top')]
       : [mi('No section to delete', '', () => {}, 'said')]),

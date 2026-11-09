@@ -124,6 +124,13 @@ def test_swept_clearance_refuses_something_that_is_not_geometry():
         checklib.swept_clearance(["not a solid", "nor this one"], "body")
 
 
+def test_a_joint_whose_limits_leave_out_0_is_refused():
+    """0 is where the view's `at` puts the part and what every gate checks."""
+    with pytest.raises(ValueError, match="leaves out 0"):
+        checklib.revolute("hinge", origin=(0, 0, 0), axis=(1, 0, 0),
+                          limits=(10, 110))
+
+
 def test_the_clearance_record_starts_empty():
     assert checklib.recorded_clearance() == {}
 
@@ -426,6 +433,42 @@ def test_a_lid_three_tenths_wider_fouls_in_the_middle_of_the_travel():
     assert not any(f"position {len(stops) - 1} of" in p for p in fouled), (
         "the assembled position is clear -- a problem reported there means the "
         "geometry, not the sweep, is what this test caught")
+
+
+def _where(shape):
+    return tuple(round(value, 9) for value in shape.Center().toTuple())
+
+
+def test_a_hinge_turns_a_point_about_its_own_axis_not_the_world_s():
+    """A quarter turn about Z through (10, 0, 5): (20, 0, 5) lands on
+    (10, 10, 5). About the world's Z it would land on (0, 20, 5)."""
+    cq = _cq()
+    hinge = checklib.revolute("hinge", origin=(10, 0, 5), axis=(0, 0, 1),
+                              limits=(0, 180))
+    turned = cq.Vertex.makeVertex(20, 0, 5).moved(hinge.location(90))
+    assert _where(turned) == (10.0, 10.0, 5.0)
+
+
+def test_a_slider_moves_its_value_along_its_axis():
+    """The axis (0, 3, 4) is five long; 10 mm along it is (0, 6, 8)."""
+    cq = _cq()
+    drawer = checklib.slider("drawer", axis=(0, 3, 4), limits=(0, 80))
+    moved = cq.Vertex.makeVertex(0, 0, 0).moved(drawer.location(10))
+    assert _where(moved) == (0.0, 6.0, 8.0)
+
+
+def test_a_sweep_runs_from_one_limit_to_the_other_moving_every_body():
+    cq = _cq()
+    drawer = checklib.slider("drawer", axis=(1, 0, 0), limits=(-20, 40))
+    tray = (cq.Workplane("XY").box(2, 2, 2)
+            .add(cq.Workplane("XY").box(2, 2, 2).translate((0, 10, 0))))
+
+    positions = drawer.sweep(tray, stops=4)
+
+    assert len(positions) == 4
+    assert [[_where(body) for body in position.vals()]
+            for position in positions] == [
+        [(x, 0.0, 0.0), (x, 10.0, 0.0)] for x in (-20.0, 0.0, 20.0, 40.0)]
 
 
 def _bracket():

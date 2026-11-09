@@ -38,12 +38,20 @@ shape of its own to be a different shape from, and that second refusal is what
 holds the leaf names apart (see `_mesh_leaf`).
 
 A group -- `{"group": "housing", "parts": [...]}`, nested to `MAX_VIEW_DEPTH`
-and REFUSED past it -- is presentation and nothing else: it is the author's own
-structure, not a classification by kind, and no gate can see it. Every gate
-reads the flat list of leaves. `"whole": True` on a group makes the scene treat
-it as one object -- a click on any part inside selects the group, and Hide,
-Isolate and Translucent take all of it -- while the tree still opens it onto
-its parts. That is presentation too: no gate sees it either.
+and REFUSED past it -- is the author's own structure, not a classification by
+kind, and no gate can see it. Every gate reads the flat list of leaves.
+`"whole": True` on a group makes the scene treat it as one object -- a click on
+any part inside selects the group, and Hide, Isolate and Translucent take all
+of it -- while the tree still opens it onto its parts. That is presentation
+too: no gate sees it either.
+
+A reference or a group may carry `"joint": HINGE`, a `checklib.Joint`, and the
+view may name `"poses"`, `{"open": {"hinge": 110}}`. A group with a joint is no
+longer only presentation for the viewer: its slider moves everything inside the
+group, and a joint on a group nested in another rides on the outer one, a
+chain. Still no gate reads a joint: value 0 is where `at` already puts the
+part, and the gates see value 0. The same travel reaches `checks()` through
+`joint.sweep`, into `checklib.swept_clearance`.
 """
 
 import json
@@ -63,12 +71,12 @@ from .parts import KIND_MOCK, catalogue_colors
 # Every key a view dict is read for. Anything else is reported as unknown, so a
 # misspelt exemption (`nestedok`) is not silently ignored.
 VIEW_KEYS = frozenset({"id", "name", "parts", "nested_ok", "interference_ok",
-                       "absent_ok", "bed"})
+                       "absent_ok", "bed", "poses"})
 # ...and every key one REFERENCE is read for. Only `part` is required.
 REFERENCE_KEYS = frozenset({"part", "at", "alpha", "shape", "deformed",
-                            "plate"})
-# ...and a GROUP is these three, `group` and `parts` required.
-GROUP_KEYS = frozenset({"group", "parts", "whole"})
+                            "plate", "joint"})
+# ...and a GROUP is these, `group` and `parts` required.
+GROUP_KEYS = frozenset({"group", "parts", "whole", "joint"})
 
 # The three axes a bounding box is measured on. The viewer reads the six numbers
 # as `xmin`/`xmax` and so on, which is the spelling `_widen_bb` writes.
@@ -90,14 +98,17 @@ def prepare_views(views, catalogue):
          "interference_ok": {frozenset((key, key)): "reason"},
          "absent_ok":       {key: "reason"},
          "bed":             (width, depth) of the printer's bed in mm, or None,
+         "joints":          [checklib.Joint, ...] in the order first met,
+         "poses":           {name: {joint id: value}},
          "tree":            groups and leaf indices, for the export,
          "nodes":           [{"key", "shape", "mesh", "color", "alpha", "at",
-                              "deformed", "plate", "label"}, ...]}
+                              "deformed", "plate", "joint", "label"}, ...]}
 
     `nodes` IS THE FLAT LIST OF LEAVES and it is what every gate reads; `tree`
     holds the author's grouping and is read only when the view file is written.
-    The two are kept apart on purpose: a group is presentation only, and no
-    gate should have to decide what it means.
+    The two are kept apart on purpose: to the gates a group is presentation
+    only, and no gate should have to decide what it means. A leaf's `joint`
+    and a group's are joint ids for the view file; no gate reads them either.
     """
     if not isinstance(views, (list, tuple)) or not views:
         raise BuildError("views() must return a non-empty list")
@@ -131,7 +142,13 @@ def prepare_views(views, catalogue):
                 "that already ran. Keep it to plain, printable text, or leave "
                 f'the key out and the view is captioned {vid!r}.')
 
-        tree, nodes = read_parts(view, vid, catalogue, colors)
+        tree, nodes, joints = read_parts(view, vid, catalogue, colors)
+        for joint in joints.values():
+            lo, hi = joint.limits
+            print(f"  {vid}: joint {joint.id!r}, {joint.type} "
+                  f"{lo:g}..{hi:g} {_unit(joint)}")
+        declared = view.get("poses")
+        poses = {} if declared is None else _poses(declared, joints, vid)
         _label_nodes(nodes)
         _refuse_deformed_on_the_plate(vid, nodes)
         _warn_about_transparency(vid, nodes)
@@ -211,6 +228,8 @@ def prepare_views(views, catalogue):
             "interference_ok": interference_ok,
             "absent_ok": absent_ok,
             "bed": bed,
+            "joints": list(joints.values()),
+            "poses": poses,
             "tree": tree,
             "nodes": nodes,
         })
@@ -227,14 +246,15 @@ def prepare_views(views, catalogue):
 
 
 def read_parts(view, vid, catalogue, colors):
-    """One view's `parts` as `(tree, nodes)`.
+    """One view's `parts` as `(tree, nodes, joints)`.
 
     `nodes` is every LEAF in the order the author wrote them, each one already
     placed (`at` applied) and coloured. `tree` mirrors the author's structure:
     a group is `{"group": name, "parts": [...]}`, with `"whole": True` added
-    where the author marked it so, and a leaf is the INDEX of its
-    entry in `nodes`, so the leaf data has exactly one owner and the grouping
-    cannot drift away from it.
+    where the author marked it so and `"joint": id` where it carries one, and a
+    leaf is the INDEX of its entry in `nodes`, so the leaf data has exactly one
+    owner and the grouping cannot drift away from it. `joints` is every joint a
+    reference or a group carries, `{id: checklib.Joint}` in the order first met.
     """
     parts = view.get("parts")
     if not isinstance(parts, (list, tuple)) or not parts:
@@ -243,13 +263,19 @@ def read_parts(view, vid, catalogue, colors):
             'the catalogue: "parts": ["lid", {"part": "pin", "at": here}, ...]'
         )
     nodes = []
-    tree = _read_entries(parts, vid, catalogue, colors, nodes, depth=1,
-                         where=f"view {vid!r}")
-    return tree, nodes
+    joints = {}
+    tree = _read_entries(parts, vid, catalogue, colors, nodes, joints, {},
+                         depth=1, where=f"view {vid!r}")
+    return tree, nodes, joints
 
 
-def _read_entries(entries, vid, catalogue, colors, nodes, depth, where):
-    """The recursive half of read_parts: one level of `parts`, in order."""
+def _read_entries(entries, vid, catalogue, colors, nodes, joints, enclosing,
+                  depth, where):
+    """The recursive half of read_parts: one level of `parts`, in order.
+
+    `enclosing` is the joints of the groups this level is inside, `{id: group
+    name}`: they already move everything here (see `_read_joint`).
+    """
     if depth > MAX_VIEW_DEPTH:
         # The hub's ceiling, transcribed (see hubspec.MAX_VIEW_DEPTH). It also
         # bounds the recursion below, so a pathological nest is refused rather
@@ -276,7 +302,8 @@ def _read_entries(entries, vid, catalogue, colors, nodes, depth, where):
         spot = f"{where} entry #{index}"
         if isinstance(entry, str):
             built.append(_read_reference({"part": entry}, vid, catalogue,
-                                         colors, nodes, spot))
+                                         colors, nodes, joints, enclosing,
+                                         spot))
             continue
         if not isinstance(entry, dict):
             raise BuildError(
@@ -317,17 +344,28 @@ def _read_entries(entries, vid, catalogue, colors, nodes, depth, where):
                     "object; leave the key out for a group whose parts are "
                     "picked one by one."
                 )
+            # Read before the parts inside, so a group's joint comes before the
+            # joints of what it carries in the order joints are first met.
+            joint = entry.get("joint")
+            joint_id = (None if joint is None else
+                        _read_joint(joint, joints, enclosing,
+                                    f"{spot} (group {name!r})"))
+            inside = (enclosing if joint_id is None
+                      else {**enclosing, joint_id: name})
             group = {
                 "group": name,
                 "parts": _read_entries(entry.get("parts"), vid, catalogue,
-                                       colors, nodes, depth + 1,
-                                       f"{where} group {name!r}"),
+                                       colors, nodes, joints, inside,
+                                       depth + 1, f"{where} group {name!r}"),
             }
             if whole:
                 group["whole"] = True
+            if joint_id is not None:
+                group["joint"] = joint_id
             built.append(group)
             continue
-        built.append(_read_reference(entry, vid, catalogue, colors, nodes, spot))
+        built.append(_read_reference(entry, vid, catalogue, colors, nodes,
+                                     joints, enclosing, spot))
     return built
 
 
@@ -364,7 +402,8 @@ def _check_group_name(name, catalogue, spot):
     return name
 
 
-def _read_reference(entry, vid, catalogue, colors, nodes, spot):
+def _read_reference(entry, vid, catalogue, colors, nodes, joints, enclosing,
+                    spot):
     """One reference into the catalogue -> the index of the node it made."""
     key = entry.get("part")
     if key is None:
@@ -394,6 +433,10 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
             'cq.Location((10, 0, 0)) moves it, cq.Location(cq.Vector(0, 0, 0), '
             "cq.Vector(0, 0, 1), 90) turns it."
         )
+
+    joint = entry.get("joint")
+    joint_id = (None if joint is None
+                else _read_joint(joint, joints, enclosing, spot))
 
     shape = entry.get("shape")
     reason = entry.get("deformed")
@@ -508,8 +551,135 @@ def _read_reference(entry, vid, catalogue, colors, nodes, spot):
         "at": at,
         "deformed": reason,
         "plate": plate,
+        "joint": joint_id,
     })
     return len(nodes) - 1
+
+
+def _read_joint(joint, joints, enclosing, spot):
+    """A `"joint"` on a reference or a group -> its id, kept in `joints`.
+
+    The id is what the view file calls the joint by, on every node it moves and
+    in the poses, so it is held to the key rule for the reason a group's name
+    is. One joint may move several entries -- a lid and the handle on it -- but
+    one id is one slider, so the same id defined twice differently is refused:
+    the viewer would drive two motions with one handle. Nor may it be on an
+    entry inside a group it already moves (`enclosing`): the viewer would apply
+    it twice down the chain, while `sweep` checks it once.
+    """
+    if not isinstance(joint, checklib.Joint):
+        raise BuildError(
+            f'{spot}: "joint" is {joint!r}, which is not a joint. Make one in '
+            'model.py with checklib.revolute("hinge", origin=(x, y, z), '
+            'axis=(1, 0, 0), limits=(0, 110)) -- degrees -- or '
+            'checklib.slider("drawer", axis=(0, 1, 0), limits=(0, 80)) -- '
+            'millimetres -- and hand that over: {"part": "lid", "joint": '
+            "HINGE}."
+        )
+    if not MEMBER_RE.match(joint.id):
+        raise BuildError(
+            f"{spot}: joint id {joint.id!r} is not usable (allowed: letters, "
+            "digits, dot, dash and underscore, starting with a letter or a "
+            "digit, up to 128 characters). The view file names the joint by "
+            "it on every part it moves and in every pose, so it is held to "
+            "the same rule as a catalogue key."
+        )
+    known = joints.get(joint.id)
+    if known is None:
+        joints[joint.id] = joint
+    elif ((known.type, known.origin, known.axis, known.limits)
+          != (joint.type, joint.origin, joint.axis, joint.limits)):
+        raise BuildError(
+            f"{spot}: joint {joint.id!r} is already in this view as a "
+            f"{known.type} with origin {known.origin}, axis {known.axis} and "
+            f"limits {known.limits}, and here it is a {joint.type} with origin "
+            f"{joint.origin}, axis {joint.axis} and limits {joint.limits}. One "
+            "id is one slider in the viewer, so it cannot mean two motions: "
+            "give the second joint an id of its own, or hand over the same "
+            "joint object both times."
+        )
+    if joint.id in enclosing:
+        raise BuildError(
+            f"{spot}: joint {joint.id!r} is already on group "
+            f"{enclosing[joint.id]!r}, which holds this entry. A joint on a "
+            "group moves everything inside it, so here it would move this "
+            "entry a second time, twice as far as the slider says, while "
+            "joint.sweep checks the travel once. Leave the joint on the group "
+            "alone."
+        )
+    return joint.id
+
+
+def _unit(joint):
+    """The unit a joint's value is in: degrees on a hinge, mm on a slide."""
+    return "deg" if joint.type == "revolute" else "mm"
+
+
+def _poses(declared, joints, vid):
+    """The view's named poses -> `{name: {joint id: value}}`, as declared.
+
+        "poses": {"open": {"hinge": 110}, "half": {"hinge": 55}}
+
+    A pose sets the joints it names and leaves every other at 0, so an empty
+    one is the view as `at` placed it. The name is a caption on the page,
+    checked as the view's own name is; every joint id has to be a joint of this
+    view; every value is a number within that joint's limits, in its unit.
+    """
+    if not isinstance(declared, dict):
+        raise BuildError(
+            f'view {vid!r}: "poses" is {declared!r}, which is not a dict of '
+            'poses. Write it as "poses": {"open": {"hinge": 110}}, a pose '
+            "name to the joints it sets."
+        )
+    poses = {}
+    for name, values in declared.items():
+        problem = hub_text_problem(name, MAX_VIEW_NAME_CHARS,
+                                   angle_brackets_ok=True)
+        # An empty name passes the hub's text rule and would be a pill with
+        # nothing on it, a pose nobody can tell from the next one.
+        if problem is None and not name.strip():
+            problem = "is empty"
+        if problem:
+            raise BuildError(
+                f"view {vid!r}: pose name {problem}: {name!r}. It is a "
+                "caption on the page and travels in the view file, so it is "
+                'held to the rule the view\'s own "name" is.'
+            )
+        if not isinstance(values, dict):
+            raise BuildError(
+                f"view {vid!r}: pose {name!r} is {values!r}, which is not a "
+                'dict of joint values. Write it as {"hinge": 110}, a joint id '
+                "to its value; an empty one is every joint at 0."
+            )
+        pose = {}
+        for joint_id, value in values.items():
+            joint = joints.get(joint_id)
+            if joint is None:
+                ids = ", ".join(repr(other) for other in joints)
+                raise BuildError(
+                    f"view {vid!r}: pose {name!r} sets {joint_id!r}, which is "
+                    f"not a joint of this view ({ids or 'it has none'}). A "
+                    "joint is declared on a reference or a group, "
+                    '{"part": "lid", "joint": HINGE}, and a pose names it by '
+                    'its id: {"hinge": 110}.'
+                )
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise BuildError(
+                    f"view {vid!r}: pose {name!r} sets {joint_id!r} to "
+                    f"{value!r}, which is not a number. It is the joint's "
+                    f"value in {_unit(joint)}."
+                )
+            lo, hi = joint.limits
+            if not lo <= value <= hi:
+                raise BuildError(
+                    f"view {vid!r}: pose {name!r} puts {joint_id!r} at "
+                    f"{value:g} {_unit(joint)}, outside its limits "
+                    f"{lo:g}..{hi:g}. The slider runs between the limits, so "
+                    "the pose is a position the part never reaches."
+                )
+            pose[joint_id] = float(value)
+        poses[name] = pose
+    return poses
 
 
 def _placed(obj, at, where):
@@ -919,7 +1089,11 @@ def shaped_document(doc, view):
 
     A leaf of a reference that brought a shape of its own also gets
     `"deformed": true`, and every leaf of the `print` view its bed,
-    `"plate": N`.
+    `"plate": N`. Every leaf and group a joint moves gets `"joint": id`, and a
+    view with joints gets two root keys for the viewer's slider: `joints`, each
+    `{"id", "type", "origin" (a hinge only), "axis", "limits"}`, and `poses`,
+    each `{"name", "values": {id: value}}`. A view without joints has neither,
+    so its file is what it was before joints existed.
 
     Separated from the export so the whole rewrite can be tested without a CAD
     kernel: what goes in is a JSON document and what comes out is one.
@@ -965,6 +1139,8 @@ def shaped_document(doc, view):
         # leaf's id stays the path the author's tree gives it.
         if view["id"] == PRINT_VIEW_ID:
             leaf["plate"] = node["plate"]
+        if node["joint"] is not None:
+            leaf["joint"] = node["joint"]
         leaves.append(leaf)
 
     def rebuild(entries, parent_id):
@@ -1002,6 +1178,10 @@ def shaped_document(doc, view):
             # stays exactly what it was.
             if entry.get("whole"):
                 node["whole"] = True
+            # Like `whole`, only where it is set. The joint moves everything
+            # under this node, a joint on a group inside riding on it.
+            if "joint" in entry:
+                node["joint"] = entry["joint"]
             built.append(node)
         return built
 
@@ -1016,8 +1196,22 @@ def shaped_document(doc, view):
             "the whole tree hangs off a name that is not there."
         )
     doc["parts"] = rebuild(view["tree"], root_id)
+    if view["joints"]:
+        doc["joints"] = [_joint_document(joint) for joint in view["joints"]]
+        doc["poses"] = [{"name": name, "values": dict(values)}
+                        for name, values in view["poses"].items()]
     _widen_bb(doc, nodes)
     return doc
+
+
+def _joint_document(joint):
+    """One joint as the view file carries it: plain numbers, no kernel."""
+    entry = {"id": joint.id, "type": joint.type}
+    if joint.origin is not None:
+        entry["origin"] = list(joint.origin)
+    entry["axis"] = list(joint.axis)
+    entry["limits"] = list(joint.limits)
+    return entry
 
 
 def _motion_loc(at):

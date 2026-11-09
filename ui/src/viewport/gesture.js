@@ -13,6 +13,7 @@
 // slide (gizmo.js), the seats with pose and body centre of a turn (rings.js).
 
 import { emit } from "./events.js";
+import { partFrame } from "./parts.js";
 
 /**
  * Everything a gesture has to remember about the scene it started on, assembled
@@ -52,6 +53,10 @@ import { emit } from "./events.js";
  * `body` is the name the panel drew a proposal body under (how the panel finds
  * the node), and also the flag `reportGesture` splits on: a build part has none.
  *
+ * `frame` is how the anchor's move frame is turned from the world
+ * (`partFrame` in parts.js), read at the press like the camera: the widgets
+ * measure on the world axes and carry what they measure into it.
+ *
  * The local is `already`, not `stood`, which is the last value a gesture landed.
  */
 export function gestureRecord(vp, paths, anchor, proposal, field) {
@@ -70,6 +75,7 @@ export function gestureRecord(vp, paths, anchor, proposal, field) {
     }),
     build: vp.drawnKey,
     body: proposal ? vp.overlayBody(anchor) : null,
+    frame: partFrame(vp, anchor),
   };
 }
 
