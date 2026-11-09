@@ -57,8 +57,8 @@ their own:
 * `viewer/src/index.ts` re-exports three's namespace, so the page can name the
   very classes the library renders with, and the library's `CADTrackballControls`,
   so the 3D view of a board (`ui/src/BoardView3D.jsx`) turns under the model's hand,
-  and, for the measurement on that view, the model page's `minDistance` and three's
-  screen-wide lines (`LineSegments2`, `LineSegmentsGeometry`, `LineMaterial`);
+  and, for the measurement on that view, three's screen-wide lines
+  (`LineSegments2`, `LineSegmentsGeometry`, `LineMaterial`);
 * `viewer/src/core/viewer.ts` gains an `onBeforeRender` hook — the twin of the
   library's own `onAfterRender`, called at the top of `update()` — because this
   viewer renders ON DEMAND and a widget of ours standing in its scene has to be

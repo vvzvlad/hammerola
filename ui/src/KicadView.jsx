@@ -194,9 +194,10 @@
 // viewer ends measuring when the insets come on, and the Comment tool armed on
 // the board ends it too (`armComment`); the pages put Comment down when the
 // bar's Measure brings it on (the viewer's own key does not). Escape takes the
-// points first, then the mode (`key`). The 3D model measures its own way
-// (BoardView3D.jsx), handed to the bar in its tools, and takes Escape in the
-// same place (`escapeMeasure`). The schematic has no measure mode.
+// points first, then the mode (`key`). The 3D model measures between two
+// points too, with its own tool (BoardView3D.jsx), handed to the bar in its
+// tools, and takes Escape in the same place (`escapeMeasure`). The schematic
+// has no measure mode.
 //
 // FIT AND FRAME of the page's bar (`onTools` in DocumentView.jsx) act on the
 // view on screen. The element has no fit of its own, and its `exportImage`
@@ -267,7 +268,7 @@
 import React from 'react';
 
 import { parse, subscribe, unsubscribe } from './address.js';
-import BoardView3D from './BoardView3D.jsx';
+import BoardView3D, { MEASURE_HINT } from './BoardView3D.jsx';
 import BomView from './BomView.jsx';
 import DocumentView from './DocumentView.jsx';
 import { PAGE } from './hub.js';
@@ -325,8 +326,8 @@ export const INSET_EVENT = 'ecad-viewer:inset-mode';
 export const MEASURE_EVENT = 'ecad-viewer:measure-mode';
 
 /** What the toast says when Measure comes on over the board (`hint` of the
- *  bar's `measure`, both pages). */
-export const MEASURE_HINT = 'Click two points for the distance between them; hold Shift for a point that does not snap';
+ *  bar's `measure`, both pages): the 3D view's, which measures alike. */
+export { MEASURE_HINT };
 
 /** The id the draft's marker stands under among `marks`. */
 export const DRAFT_MARK = 'draft';

@@ -11,10 +11,9 @@
 // its non-tumbling mode, leaves the camera's turn alone on `update` — and a
 // loader whose model is a small scene built in the test: a board layer and one
 // part, `C1`, or for the copper a board's body, copper and solder mask, named
-// in the loader's record as KiCad names them; and the model library's
-// `minDistance`, which lives in viewer/ and is not here, a stand-in answering
-// one gap. What the view does to a model (board3d.js) runs for real and is
-// tested in board3d.test.js. `fetch` and the animation frames are driven by hand.
+// in the loader's record as KiCad names them. What the view does to a model
+// (board3d.js) runs for real and is tested in board3d.test.js. `fetch` and the
+// animation frames are driven by hand.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,8 +25,9 @@ vi.mock('../src/board3d.js', async (importOriginal) => ({ ...(await importOrigin
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import BoardView3D, { CLICK_SLOP, MEASURE_HINT, TRACKBALL_SPEEDS } from '../src/BoardView3D.jsx'
+import BoardView3D, { CLICK_SLOP, TRACKBALL_SPEEDS } from '../src/BoardView3D.jsx'
 import { loadThree, TRACKBALL_URL } from '../src/board3d.js'
+import { MEASURE_HINT as BOARD_MEASURE_HINT } from '../src/KicadView.jsx'
 import { VIEWER_MODULE_URL } from '../src/viewport/library.js'
 import { PIN_PX } from '../src/viewport/options.js'
 import { drained, runFrames, stubFrames } from './component.js'
@@ -88,14 +88,9 @@ function boardScene() {
  *  told apart (`glbLayers`): none unless a test names them. */
 let parser = null
 
-/** The gap the stand-in for the library's `minDistance` answers: from the
- *  bottom of `C1` lifted 3 over the board to the board's top face. */
-const GAP = { distance: 1.8, point1: new THREE.Vector3(0, 2.6, 0), point2: new THREE.Vector3(0, 0.8, 0) }
-let minDistance = null
-
 /** Stand-ins for the library's screen-wide lines (`lines` of `loadThree`),
  *  which live in its bundle: a geometry that keeps its segments, a material
- *  that keeps what it was made with. */
+ *  that keeps what it was made with, and lines that can be dashed. */
 class LineSegmentsGeometry extends THREE.BufferGeometry {
   setPositions(segments) {
     this.segments = segments
@@ -108,7 +103,11 @@ class LineMaterial extends THREE.Material {
     Object.assign(this, parameters)
   }
 }
-class LineSegments2 extends THREE.Mesh {}
+class LineSegments2 extends THREE.Mesh {
+  computeLineDistances() {
+    return this
+  }
+}
 
 class Loader {
   parseAsync() {
@@ -171,16 +170,16 @@ async function loaded(props) {
 /** The vertical field of view the view builds its camera with. */
 const FOV_3D = 35
 
-const pointer = (canvas, type, clientX, clientY, button = 0) => canvas.dispatchEvent(
-  new MouseEvent(type, { clientX, clientY, button, bubbles: true }))
+const pointer = (canvas, type, clientX, clientY, button = 0, shiftKey = false) => canvas.dispatchEvent(
+  new MouseEvent(type, { clientX, clientY, button, shiftKey, bubbles: true }))
 /** Where a world point is drawn on the 200 px canvas `loaded` gives. */
 const onCanvas = (view, point) => {
   const at = point.clone().project(view.stage.camera)
   return [(at.x + 1) * 100, (1 - at.y) * 100]
 }
-const clickAt = (canvas, [x, y]) => {
-  pointer(canvas, 'pointerdown', x, y)
-  pointer(canvas, 'pointerup', x, y)
+const clickAt = (canvas, [x, y], shiftKey = false) => {
+  pointer(canvas, 'pointerdown', x, y, 0, shiftKey)
+  pointer(canvas, 'pointerup', x, y, 0, shiftKey)
 }
 
 beforeEach(() => {
@@ -189,9 +188,8 @@ beforeEach(() => {
   model = boardScene()
   parser = { json: {}, associations: new Map() }
   stubFrames()
-  minDistance = vi.fn(() => GAP)
   loadThree.mockResolvedValue({ THREE: { ...THREE, WebGLRenderer: Renderer }, TrackballControls: Trackball, GLTFLoader: Loader,
-    mergeGeometries, minDistance, lines: { LineSegments2, LineSegmentsGeometry, LineMaterial } })
+    mergeGeometries, lines: { LineSegments2, LineSegmentsGeometry, LineMaterial } })
 })
 
 afterEach(() => {
@@ -330,7 +328,6 @@ describe('the 3D view of a board', () => {
     // survives every gate and kills the view only in a browser — the same
     // failure ui/tests/picking.test.js guards its `export { THREE }` against.
     expect(bundle).toContain('CADTrackballControls,')
-    expect(bundle).toMatch(/^export \{[^}]*\bminDistance\b/m)
     for (const name of ['LineSegments2', 'LineSegmentsGeometry', 'LineMaterial']) {
       expect(bundle).toMatch(new RegExp(`^export \\{[^}]*\\b${name}\\b`, 'm'))
     }
@@ -510,67 +507,84 @@ describe('comments on the 3D view of a board', () => {
 })
 
 describe('measuring on the 3D view of a board', () => {
-  /** The part's place: lifted off the board, where a pointer on its centre picks it. */
-  const LIFTED = new THREE.Vector3(0, 3, 0)
+  /** The part's place, ten times its size: a box from (−8, 1, −4) to
+   *  (8, 9, 4) over the board, its corners drawn more than SNAP_PX apart. */
+  const PART = new THREE.Vector3(0, 5, 0)
   beforeEach(() => {
-    model.children[0].children[1].position.copy(LIFTED)
+    model.children[0].children[1].position.copy(PART)
+    model.children[0].children[1].scale.setScalar(10)
   })
 
-  /** What the bar was last told it can do, and the label as the reader sees it. */
+  /** What the bar was last told it can do. */
   const tools = (view) => view.props.onTools.mock.calls.at(-1)[0]
-  const label = (view) => {
+  /** What the reader sees of the measurement: whether the dots of A and B
+   *  show, and the label, null while hidden. */
+  const shown = (view) => {
     runFrames()
-    const { textContent, style } = view.stage.label
-    return style.display === 'none' ? null : textContent
+    const { dots, label } = view.stage
+    return [...dots.map((dot) => dot.style.display !== 'none'), label.style.display === 'none' ? null : label.textContent]
   }
-  /** The box of a body `minDistance` was handed. */
-  const spans = (geometry) => {
-    const box = new THREE.Box3().setFromArray(geometry.positions)
-    return [...box.min.toArray(), ...box.max.toArray()].map((v) => Math.round(v * 1e6) / 1e6)
+  /** A pointer 4 px from where `corner` is drawn, toward where `middle` is:
+   *  on a face beside the corner. */
+  const beside = (view, corner, middle) => {
+    const at = new THREE.Vector2(...onCanvas(view, corner))
+    return at.add(new THREE.Vector2(...onCanvas(view, middle)).sub(at).normalize().multiplyScalar(4)).toArray()
   }
 
-  it('measures a part, then the gap to the board, and starts over at a third, selecting and lighting nothing', async () => {
-    // The owner's "measures на платах кикада", on the board's 3D view.
+  it('measures from a point to a second one, each snapped to the corner beside it, and starts over at a third', async () => {
+    // The owner: "я не могу напримре измерить дырку в плате"; he chose points
+    // that snap to the nearest corner or edge, the 2D board's way.
     const { view, canvas } = await loaded({ onNet: vi.fn() })
     const off = tools(view)
-    expect(off.measure).toEqual({ on: false, toggle: expect.any(Function), hint: MEASURE_HINT })
+    expect(off.measure).toEqual({ on: false, toggle: expect.any(Function), hint: BOARD_MEASURE_HINT })
     off.measure.toggle()
     expect([tools(view).measure.on, canvas.style.cursor]).toEqual([true, 'crosshair'])
-    const part = onCanvas(view, LIFTED)
-    const board = onCanvas(view, new THREE.Vector3(10, 0.8, 5))
-    clickAt(canvas, part)
-    expect(label(view)).toBe('size 1600.00 × 800.00 × 800.00 mm')
-    // the same part again is still one pick
-    clickAt(canvas, part)
-    expect(minDistance).not.toHaveBeenCalled()
-    // the board beside it: the gap between the two bodies, each in the world
-    clickAt(canvas, board)
-    expect(minDistance.mock.calls.map((bodies) => bodies.map(spans))).toEqual([[
-      [-0.8, 2.6, -0.4, 0.8, 3.4, 0.4], [-25, -0.8, -20, 25, 0.8, 20]]])
-    expect(minDistance.mock.calls[0][0].topo).toBe('solid')
-    expect(label(view)).toBe('1800.00 mm')
-    // a third starts over from it: the board's width, depth and height
-    clickAt(canvas, board)
-    expect(label(view)).toBe('size 50000.00 × 40000.00 × 1600.00 mm')
-    // nothing under the pointer clears it
+    // A by the board's top front right corner, B by the part's
+    const a = beside(view, new THREE.Vector3(25, 0.8, 20), new THREE.Vector3(0, 0.8, 0))
+    const b = beside(view, new THREE.Vector3(8, 9, 4), PART)
+    clickAt(canvas, a)
+    expect(shown(view)).toEqual([true, false, null])
+    clickAt(canvas, b)
+    // 17 along the board's X, 16 along its Y (the world's z), 8.2 up; glTF metres in mm
+    expect(shown(view)).toEqual([true, true, '24743.484 mm\nX 17000.000  Y 16000.000  Z 8200.000'])
+    // a third is a new A, B gone
+    clickAt(canvas, a)
+    expect(shown(view)).toEqual([true, false, null])
+    // nothing under the pointer clears the points
     clickAt(canvas, [1, 1])
-    expect(label(view)).toBeNull()
+    expect(shown(view)).toEqual([false, false, null])
     expect([view.props.onSelect.mock.calls, view.props.onNet.mock.calls, view.stage.selected]).toEqual([[], [], null])
     // the right button selects and opens the menu as ever
+    const part = onCanvas(view, PART)
     pointer(canvas, 'pointerdown', ...part, 2)
     pointer(canvas, 'pointerup', ...part, 2)
     expect([view.props.onSelect.mock.calls, view.props.onMenu.mock.calls]).toEqual([[['C1']], [['C1', ...part]]])
   })
 
-  it('takes Escape for the picks, then for measuring, then not at all, the bar told the same object per state', async () => {
+  it('places a point where the click hits with Shift held, and never snaps to a corner the part hides', async () => {
+    const { view, canvas } = await loaded()
+    tools(view).measure.toggle()
+    const corner = new THREE.Vector3(25, 0.8, 20)
+    clickAt(canvas, beside(view, corner, new THREE.Vector3(0, 0.8, 0)), true)
+    const [free] = view.stage.points
+    expect([free.y, free.distanceTo(corner) > 0.1]).toEqual([expect.closeTo(0.8, 6), true])
+    // the part's bottom back corner is drawn under its top face, where the
+    // click lands: the point stays on the top face
+    const hidden = new THREE.Vector3(8, 1, -4)
+    clickAt(canvas, onCanvas(view, hidden))
+    expect(view.stage.points[1].y).toBeCloseTo(9, 6)
+  })
+
+  it('takes Escape for the points, then for measuring, then not at all, the bar told the same object per state', async () => {
     const { view, canvas } = await loaded()
     const off = tools(view)
     expect(view.escapeMeasure()).toBe(false)
     off.measure.toggle()
     const on = tools(view)
-    clickAt(canvas, onCanvas(view, LIFTED))
+    clickAt(canvas, onCanvas(view, PART))
+    expect(shown(view)).toEqual([true, false, null])
     expect(view.escapeMeasure()).toBe(true)
-    expect([label(view), tools(view)]).toEqual([null, on])
+    expect([shown(view), tools(view)]).toEqual([[false, false, null], on])
     expect(view.escapeMeasure()).toBe(true)
     expect(canvas.style.cursor).toBe('')
     expect(view.escapeMeasure()).toBe(false)
@@ -578,20 +592,20 @@ describe('measuring on the 3D view of a board', () => {
     expect(view.props.onTools.mock.calls.map(([told]) => [told === off, told === on])).toEqual([
       [true, false], [false, true], [true, false]])
     // a click selects again
-    clickAt(canvas, onCanvas(view, LIFTED))
+    clickAt(canvas, onCanvas(view, PART))
     expect(view.props.onSelect.mock.calls).toEqual([['C1']])
   })
 
-  it('stops measuring, its picks cleared, when the Comment tool is armed here', async () => {
+  it('stops measuring, its points cleared, when the Comment tool is armed here', async () => {
     const comment = { on: false, marks: [], focus: null, onPoint: vi.fn(), onMarker: vi.fn(), onLost: vi.fn(),
       onFocused: vi.fn() }
     const { view, update, canvas } = await loaded({ comment })
     tools(view).measure.toggle()
-    clickAt(canvas, onCanvas(view, LIFTED))
+    clickAt(canvas, onCanvas(view, PART))
     update({ comment: { ...comment, on: true } })
-    expect([tools(view).measure.on, label(view), canvas.style.cursor]).toEqual([false, null, 'crosshair'])
+    expect([tools(view).measure.on, shown(view), canvas.style.cursor]).toEqual([false, [false, false, null], 'crosshair'])
     // the click is the comment's again
-    clickAt(canvas, onCanvas(view, LIFTED))
+    clickAt(canvas, onCanvas(view, PART))
     expect(comment.onPoint).toHaveBeenCalledTimes(1)
   })
 })

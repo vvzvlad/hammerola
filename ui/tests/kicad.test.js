@@ -21,7 +21,7 @@
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null } }))
+vi.mock('../src/BoardView3D.jsx', () => ({ default: function BoardView3D() { return null }, MEASURE_HINT: 'the 3D view\'s hint' }))
 // The viewer's module, imported by its address on the hub: a module of nothing
 // here, the elements below carrying what it would define.
 vi.mock('/_v/ecad-viewer.js', () => ({}))

@@ -19,7 +19,6 @@
  */
 import { format, fresh, parse, viewParam } from './address.js';
 import { railView } from './comments.jsx';
-import { MEASURE_HINT as PART_MEASURE_HINT } from './BoardView3D.jsx';
 import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
@@ -27,6 +26,9 @@ import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panels
 import { writeRetina } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, settingsView } from './viewlist.jsx';
+
+/** What the page toasts as the model's Measure comes on. */
+const PART_MEASURE_HINT = 'Click a part for its size, or two for the gap between them';
 
 export function chromeView(s, props, deps) {
   const {
@@ -59,7 +61,6 @@ export function chromeView(s, props, deps) {
     if (t === 'comment' && s.tool !== 'comment') {
       toast(docCommentable ? COMMENTABLE.get(docOpen.type) : 'Click a spot on the model to pin the task');
     }
-    // The model's Measure says what the board's 3D one does (BoardView3D.jsx).
     if (t === 'measure' && s.tool !== 'measure') toast(PART_MEASURE_HINT);
   };
 

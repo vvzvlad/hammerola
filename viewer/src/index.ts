@@ -192,12 +192,6 @@ export * as THREE from "three";
 // restricted under Ctrl/Meta), and it carries the one three instance with it.
 export { CADTrackballControls } from "./camera/controls/CADTrackballControls.js";
 
-// HAMMEROLA'S PATCH: the model page's exact gap between two meshes, for Measure
-// on the 3D view of a board (ui/src/BoardView3D.jsx), so two parts of a board
-// are measured as two parts of a model are.
-export { minDistance } from "./tools/cad_tools/mesh-measure.js";
-export type { MeshComponentGeometry } from "./tools/cad_tools/mesh-measure.js";
-
 // HAMMEROLA'S PATCH: the screen-wide lines the library's own measurement is
 // drawn with (tools/cad_tools/measure.ts), for the measurement on the 3D view
 // of a board: WebGL draws a plain line one pixel wide whatever its width.

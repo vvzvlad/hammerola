@@ -11,9 +11,9 @@ import * as THREE from '../../static/_v/three.module.js'
 import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
 import { GLTFLoader } from '../../static/_v/GLTFLoader.js'
 import {
-  boxEdges, designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, measureText,
   mergeByMaterial,
-  partOf, partPlace, partsOf, pickedPart, pickGeometry, plainColours, sharedGeometries, sizeMm, sizeText,
+  partOf, partPlace, partsOf, pickedPart, plainColours, sharedGeometries, SNAP_PX, snapPoint,
 } from '../src/board3d.js'
 
 const vec3 = (count, offset) => ({ bufferView: offset, componentType: 5126, count, type: 'VEC3' })
@@ -289,58 +289,93 @@ describe('a comment on a part', () => {
 })
 
 describe('a measurement', () => {
-  it('reads a pick in the world, every mesh where it is drawn: a shared geometry, an unindexed one, each instance', () => {
-    // A part 10 along x and turned a quarter about y, so its local (x, y, z)
-    // is the world's (10 + z, y, -x); five boxes of side 2, each 24 square
-    // units of surface: two drawing one geometry, one unindexed, two instances.
-    const material = new THREE.MeshStandardMaterial()
-    const shared = new THREE.BoxGeometry(2, 2, 2)
-    const kept = Array.from(shared.attributes.position.array)
-    const near = new THREE.Mesh(shared, material)
-    const far = new THREE.Mesh(shared, material)
-    far.position.set(0, 0, 5)
-    const flat = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2).toNonIndexed(), material)
-    flat.position.set(0, 5, 0)
-    const many = new THREE.InstancedMesh(shared, material, 2)
-    many.setMatrixAt(0, new THREE.Matrix4().makeTranslation(0, -5, 0))
-    many.setMatrixAt(1, new THREE.Matrix4().makeTranslation(0, -10, 0))
-    const part = new THREE.Group().add(near, far, flat, many)
-    part.position.set(10, 0, 0)
-    part.rotation.y = Math.PI / 2
-    new THREE.Group().add(part)
-    const { topo, positions, indices } = pickGeometry(THREE, [part])
-    expect([topo, positions.length / 3, indices.length]).toEqual(['solid', 24 * 4 + 36, 36 * 5])
-    // the triangles, through their indices, span all five boxes where they are drawn
-    const corner = (i) => new THREE.Vector3().fromArray(positions, indices[i] * 3)
-    const spanned = new THREE.Box3()
-    let area = 0
-    for (let i = 0; i < indices.length; i += 3) {
-      const [a, b, c] = [corner(i), corner(i + 1), corner(i + 2)]
-      spanned.expandByPoint(a).expandByPoint(b).expandByPoint(c)
-      area += b.clone().sub(a).cross(c.clone().sub(a)).length() / 2
-    }
-    expect(spanned.min.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([9, -11, -1])
-    expect(spanned.max.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([16, 6, 1])
-    expect(area).toBeCloseTo(24 * 5, 6)
-    // read, not moved: the meshes still drawing it see it as it was
-    expect(Array.from(shared.attributes.position.array)).toEqual(kept)
+  // A box of side 2 at x = 5, seen from above, in front and to the right on a
+  // 200 px canvas: the corner (6, 1, 1) and the three faces round it face the camera.
+  const SIZE = { width: 200, height: 200 }
+  const CORNER = new THREE.Vector3(6, 1, 1)
+  /** The box and the camera, everything `scale` times as big. */
+  function scene(scale = 1) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(2 * scale, 2 * scale, 2 * scale), new THREE.MeshBasicMaterial())
+    mesh.position.set(5 * scale, 0, 0)
+    mesh.updateMatrixWorld()
+    const camera = new THREE.PerspectiveCamera(35, 1, 0.1 * scale, 100 * scale)
+    camera.position.set(9 * scale, 5 * scale, 6 * scale)
+    camera.lookAt(5 * scale, 0, 0)
+    camera.updateMatrixWorld()
+    return { mesh, camera }
+  }
+  /** Where `point` is drawn on the canvas, CSS pixels. */
+  const drawnAt = (camera, point) => {
+    const at = point.clone().project(camera)
+    return new THREE.Vector2((at.x + 1) * 100, (1 - at.y) * 100)
+  }
+  /** A click `px` pixels from where `point` is drawn toward the box's middle:
+   *  its ray and what it hits of the box. */
+  function clickBeside(mesh, camera, point, px) {
+    const at = drawnAt(camera, point)
+    at.add(drawnAt(camera, mesh.position).sub(at).normalize().multiplyScalar(px))
+    const raycaster = new THREE.Raycaster()
+    raycaster.setFromCamera(new THREE.Vector2(at.x / 100 - 1, 1 - at.y / 100), camera)
+    const [hit] = raycaster.intersectObject(mesh)
+    return { hit, ray: raycaster.ray }
+  }
+  /** Whether the box hides `point` from the camera, as the view asks it. */
+  const inSight = (mesh, camera) => (point) => {
+    const distance = camera.position.distanceTo(point)
+    const toward = point.clone().sub(camera.position).normalize()
+    return !new THREE.Raycaster(camera.position, toward, 0, distance * (1 - 1e-4)).intersectObject(mesh).length
+  }
+
+  it('snaps a click near a corner to the corner, one near an edge onto the edge, and one far from both not at all', () => {
+    const { mesh, camera } = scene()
+    const seen = inSight(mesh, camera)
+    const corner = clickBeside(mesh, camera, CORNER, 6)
+    expect(corner.hit.point.distanceTo(CORNER)).toBeGreaterThan(0.05)
+    expect(snapPoint(THREE, corner.hit, corner.ray, camera, SIZE, seen).distanceTo(CORNER)).toBeCloseTo(0, 6)
+    // beside the middle of the edge from (4, 1, 1) to (6, 1, 1), no corner in reach
+    const edge = clickBeside(mesh, camera, new THREE.Vector3(5, 1, 1), 6)
+    const on = snapPoint(THREE, edge.hit, edge.ray, camera, SIZE, seen)
+    expect([on.y, on.z]).toEqual([expect.closeTo(1, 6), expect.closeTo(1, 6)])
+    expect(Math.abs(on.x - 5)).toBeLessThan(0.5)
+    expect(drawnAt(camera, on).distanceTo(drawnAt(camera, edge.hit.point))).toBeLessThan(SNAP_PX)
+    // the middle of the top face, where the box's hidden back edges are drawn too
+    const face = clickBeside(mesh, camera, new THREE.Vector3(5, 1, 0), 0)
+    expect(snapPoint(THREE, face.hit, face.ray, camera, SIZE, seen)).toEqual(face.hit.point)
   })
 
-  it('sizes a box in millimetres, width, depth and height of the board, and labels it and a gap', () => {
-    const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0.05, 0.0016, 0.04))
-    const size = sizeMm(THREE, box)
-    size.forEach((mm, i) => expect(mm).toBeCloseTo([50, 40, 1.6][i], 9))
-    expect(sizeText(size)).toBe('size 50.00 × 40.00 × 1.60 mm')
-    expect(gapText(0.0012345)).toBe('1.23 mm')
+  it('snaps as well on a box a fiftieth of a millimetre across, the model being in metres', () => {
+    const { mesh, camera } = scene(1e-5)
+    const corner = CORNER.clone().multiplyScalar(1e-5)
+    const { hit, ray } = clickBeside(mesh, camera, corner, 6)
+    expect(snapPoint(THREE, hit, ray, camera, SIZE, inSight(mesh, camera)).distanceTo(corner)).toBeLessThan(1e-9)
   })
 
-  it('draws a box as its twelve edges, each joining two corners that differ along one axis', () => {
-    const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 2, 3))
-    const flat = boxEdges(box)
-    const edges = Array.from({ length: flat.length / 6 }, (_, i) => [flat.slice(i * 6, i * 6 + 3), flat.slice(i * 6 + 3, i * 6 + 6)])
-    expect(edges).toHaveLength(12)
-    for (const [a, b] of edges) expect(a.filter((v, axis) => v !== b[axis])).toHaveLength(1)
-    expect(new Set(edges.map((edge) => JSON.stringify([...edge].sort()))).size).toBe(12)
+  it('snaps to where the corners are now once the vertices have moved in place, as a via\'s tube does', () => {
+    const { mesh, camera } = scene()
+    const first = clickBeside(mesh, camera, CORNER, 6)
+    snapPoint(THREE, first.hit, first.ray, camera, SIZE, inSight(mesh, camera))
+    mesh.geometry.translate(0, 0.2, 0)
+    const moved = CORNER.clone().setY(1.2)
+    const { hit, ray } = clickBeside(mesh, camera, moved, 6)
+    expect(snapPoint(THREE, hit, ray, camera, SIZE, inSight(mesh, camera)).distanceTo(moved)).toBeCloseTo(0, 6)
+  })
+
+  it('passes over a point out of sight for the next nearest, and over all of them for the point hit', () => {
+    const { mesh, camera } = scene()
+    const { hit, ray } = clickBeside(mesh, camera, CORNER, 6)
+    const seen = vi.fn((point) => point.distanceTo(CORNER) > 1e-6)
+    const on = snapPoint(THREE, hit, ray, camera, SIZE, seen)
+    expect(seen.mock.calls[0][0].distanceTo(CORNER)).toBeCloseTo(0, 6)
+    // on one of the three edges that meet there, off the corner itself
+    expect(on.distanceTo(CORNER)).toBeGreaterThan(1e-6)
+    expect(on.toArray().filter((v, axis) => Math.abs(v - CORNER.getComponent(axis)) < 1e-6)).toHaveLength(2)
+    expect(snapPoint(THREE, hit, ray, camera, SIZE, () => false)).toEqual(hit.point)
+  })
+
+  it('labels the distance, and under it the legs along the board\'s X and Y and the height, in mm', () => {
+    // glTF is metres and Y-up: the board's Y is the world's z, the height its y
+    expect(measureText(new THREE.Vector3(0.001, 0.002, 0.003), new THREE.Vector3(0.011, 0.0036, -0.002)))
+      .toBe('11.294 mm\nX 10.000  Y 5.000  Z 1.600')
   })
 })
 

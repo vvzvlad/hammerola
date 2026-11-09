@@ -44,18 +44,20 @@
 //             part the model has none of told (`onLost`) as that changes;
 //             `focus`, a part to frame, which then is told done (`onFocused`)
 //
-// MEASURE, the bar's, measures as the model page's does: a left click on a
-// part picks the part, one on anything else of the model the board's body,
-// and one on nothing clears the picks. One pick is drawn as its box in the
-// world, `size W × D × H mm` over the top; a second, different one as the
-// line between the nearest points of the two (`minDistance`, the model
-// page's own), the gap at its middle; a third starts over from it. Drawn over
-// the model in the selection's colour, 2 px wide on a dark halo as the 2D
-// board's measurement is, the label over the canvas. While
-// measuring a left click does nothing else and the cursor is a crosshair;
-// the right button, drags and the wheel are as ever. The Comment tool armed
-// here puts measuring away; Escape (KicadView.jsx) clears the picks, then
-// turns measuring off (`escapeMeasure`).
+// MEASURE, the bar's, measures between two points as the 2D board does: a
+// left click on the model places a point on what it hits, snapped to the
+// nearest corner or edge of that mesh drawn within 12 px of the pointer and
+// in sight (`snapPoint`, board3d.js), or where it hit with Shift held; a
+// click on nothing clears the points. The first click places A, the second
+// B, a third a new A. A and B are dots; with both, the line from A to B and,
+// dashed, its legs along the board's X, its Y and the height, the distance
+// and those three lengths labelled beside the line's middle. Drawn over the model
+// in the selection's colour on a dark halo, as wide as the 2D board's
+// measurement, the dots and the label over the canvas. While measuring a left
+// click does nothing else and the cursor is a crosshair; the right button,
+// drags and the wheel are as ever. The Comment tool armed here puts measuring
+// away; Escape (KicadView.jsx) clears the points, then turns measuring off
+// (`escapeMeasure`).
 //
 // THE BOARD IS DRIVEN AS THE MODEL IS. The camera is turned by the model's own
 // trackball (`CADTrackballControls`, board3d.js) at the model's speeds: a left
@@ -99,8 +101,8 @@
 import React from 'react';
 
 import {
-  boxEdges, designatorOf, disposeModel, exportRoot, frameBox, fromPart, gapText, layersWriteDepth, light, loadThree,
-  mergeByMaterial, partPlace, partsOf, pickedPart, pickGeometry, plainColours, sharedGeometries, sizeMm, sizeText,
+  designatorOf, disposeModel, exportRoot, frameBox, fromPart, layersWriteDepth, light, loadThree, measureText,
+  mergeByMaterial, partPlace, partsOf, pickedPart, plainColours, sharedGeometries, snapPoint,
 } from './board3d.js';
 import {
   COPPER, copperModel, fade, glbLayers, insetView, place, separationLook, stackOffsets,
@@ -130,20 +132,38 @@ const SEPARATION_HEAD = 'display:flex;align-items:center;gap:6px;color:var(--tex
 const SEPARATION_VALUE = `margin-left:auto;font:400 10.5px ${MONO};color:var(--text-muted)`;
 const SEPARATION_INPUT = 'width:100%;margin:0;accent-color:var(--accent)';
 // The measurement's label, placed over the canvas (`placeLabel`), looking as
-// the model page's `.hmr_measure_label` does (HammerolaViewer.jsx).
-const LABEL = 'position:absolute;left:0;top:0;display:none;transform:translate(-50%,-50%);white-space:nowrap;'
-  + 'pointer-events:none;padding:3px 7px;border-radius:4px;background:var(--tooltip-bg);'
+// the model page's `.hmr_measure_label` does (HammerolaViewer.jsx), in two
+// lines: the distance, then its legs.
+const LABEL = 'position:absolute;left:0;top:0;display:none;transform:translate(-50%,-50%);white-space:pre;'
+  + 'text-align:center;pointer-events:none;padding:3px 7px;border-radius:4px;background:var(--tooltip-bg);'
   + `color:var(--tooltip-text);font:600 11px ${MONO}`;
+// How far the label stands off the measured line, the 2D board's 16 px.
+const LABEL_OFF_PX = 16;
 // The measurement's lines in screen pixels and the dark halo under them, as
-// the 2D board's measure draws its line (`viewers/board/measure-tool.ts` of
-// the KiCad viewer), so that they read on any part and on the board.
+// the 2D board's measure draws its line and, dashed, its legs
+// (`viewers/board/measure-tool.ts` of the KiCad viewer), so that they read on
+// any part and on the board.
 const MEASURE_LINE_PX = 2;
 const MEASURE_HALO_PX = 4;
+const MEASURE_LEG_PX = 1.5;
+const MEASURE_LEG_HALO_PX = 3;
 const HALO = '#020617';
+/** How many dashes, each with the gap after it, the legs' dashing fits into
+ *  the line from A to B: a dash is measured in the world, so it is sized by
+ *  the measurement. Dash and gap are the 2D board's 4 to 3. */
+const MEASURE_DASHES = 24;
+// A measured point, A or B, placed over the canvas as the label is: a dot of
+// the selection's colour (the holder's `color`) on a dark ring.
+const DOT = 'position:absolute;left:0;top:0;display:none;width:6px;height:6px;transform:translate(-50%,-50%);'
+  + `border-radius:50%;background:currentColor;border:2px solid ${HALO};pointer-events:none`;
+/** How much nearer than a snapped point, as a share of its distance from the
+ *  camera, something has to be to hide it (`seen`): the surface the point
+ *  lies on meets the ray at the point itself, give or take rounding. */
+const SIGHT_TOLERANCE = 1e-4;
 
-/** What the page toasts as the bar's Measure comes on here, and the model
- *  page's Measure over the model (chromeview.js): the same tool. */
-export const MEASURE_HINT = 'Click a part for its size, or two for the gap between them';
+/** What the page toasts as the bar's Measure comes on over a board: here, and
+ *  over the 2D board (KicadView.jsx, which hands it on), which measures alike. */
+export const MEASURE_HINT = 'Click two points for the distance between them; hold Shift for a point that does not snap';
 
 /** The vertical field of view, degrees. */
 const FOV = 35;
@@ -170,9 +190,8 @@ const GLTF_UP = [0, 1, 0];
 /** One loaded model on its canvas: the WebGL half of the view. */
 class Stage {
   constructor(lib, host, gltf, handlers) {
-    const { THREE, TrackballControls, mergeGeometries, minDistance, lines } = lib;
+    const { THREE, TrackballControls, mergeGeometries, lines } = lib;
     this.THREE = THREE;
-    this.minDistance = minDistance;
     this.lines = lines;
     this.host = host;
     this.handlers = handlers;
@@ -231,15 +250,21 @@ class Stage {
     canvas.setAttribute('style', CANVAS);
     host.append(canvas);
 
-    // Measuring (`setMeasuring`, `measurePick`): whether a left click
-    // measures, the picks, each a part's nodes or the board's body, what is
-    // drawn of them, beside the model as the arrows are, and the world point
-    // of the label over the canvas.
+    // Measuring (`setMeasuring`, `measurePoint`): whether a left click
+    // measures, the points in the world, the lines drawn between them, beside
+    // the model as the arrows are, and over the canvas the dots of A and B
+    // and the label with the world point it stands at.
     this.measuring = false;
-    this.picks = [];
+    this.points = [];
     this.measured = new THREE.Group();
     this.scene.add(this.measured);
     this.measureAt = null;
+    this.dots = [0, 1].map(() => {
+      const dot = document.createElement('div');
+      dot.setAttribute('style', DOT);
+      host.append(dot);
+      return dot;
+    });
     this.label = document.createElement('div');
     this.label.setAttribute('style', LABEL);
     host.append(this.label);
@@ -265,6 +290,9 @@ class Stage {
     // part is a comment's place, selecting nothing; what is nearest decides,
     // so a part in front of an arrow hides it.
     this.raycaster = new THREE.Raycaster();
+    // A measuring click's other rays, from the camera toward each point it
+    // may snap to (`seen`).
+    this.sight = new THREE.Raycaster();
     this.down = null;
     canvas.addEventListener('pointerdown', (event) => {
       this.down = event.button === 0 || event.button === 2 ? [event.button, event.clientX, event.clientY] : null;
@@ -276,8 +304,8 @@ class Stage {
         || Math.hypot(event.clientX - down[1], event.clientY - down[2]) > CLICK_SLOP) return;
       this.aim(event);
       if (down[0] === 0 && this.measuring) {
-        const hits = this.hits([this.root]);
-        this.measurePick(hits.length ? this.parts.get(pickedPart(hits, this.root)) || this.glb.board : null);
+        const [hit] = this.hits([this.root]);
+        this.measurePoint(!hit ? null : event.shiftKey ? hit.point.clone() : this.snap(hit));
         return;
       }
       if (down[0] === 0) {
@@ -346,17 +374,42 @@ class Stage {
     this.placeLabel();
   }
 
-  /** The measurement's label over its point as the camera sees it now; none
-   *  with no measurement or with its point behind the camera. */
+  /** The measurement's dots and label over their points as the camera sees
+   *  them now; each none with no point or with its point behind the camera. */
   placeLabel() {
-    const at = this.measureAt && this.measureAt.clone().project(this.camera);
+    this.dots.forEach((dot, i) => this.placeOver(dot, this.points[i]));
+    this.placeOver(this.label, this.measureAt);
+    if (this.label.style.display !== 'none') this.labelBeside();
+  }
+
+  /** The label moved off the line from A to B as it is drawn, `LABEL_OFF_PX`
+   *  clear of it on the side above it on screen (right of an upright line),
+   *  as the 2D board sets its label off the line: over the line it would hide
+   *  a short measurement, a small hole's, dots and all. */
+  labelBeside() {
+    const [a, b] = this.points.map((point) => point.clone().project(this.camera));
+    const dx = ((b.x - a.x) * this.host.clientWidth) / 2;
+    const dy = ((a.y - b.y) * this.host.clientHeight) / 2;
+    const length = Math.hypot(dx, dy);
+    if (!length) return;
+    let [nx, ny] = [-dy / length, dx / length];
+    if (ny > 0 || (ny === 0 && nx < 0)) [nx, ny] = [-nx, -ny];
+    const off = LABEL_OFF_PX + (Math.abs(nx) * this.label.offsetWidth + Math.abs(ny) * this.label.offsetHeight) / 2;
+    this.label.style.left = `${parseFloat(this.label.style.left) + nx * off}px`;
+    this.label.style.top = `${parseFloat(this.label.style.top) + ny * off}px`;
+  }
+
+  /** An element over the canvas at the world `point`, or hidden (see
+   *  `placeLabel`). */
+  placeOver(element, point) {
+    const at = point && point.clone().project(this.camera);
     if (!at || at.z > 1) {
-      this.label.style.display = 'none';
+      element.style.display = 'none';
       return;
     }
-    this.label.style.display = '';
-    this.label.style.left = `${((at.x + 1) / 2) * this.host.clientWidth}px`;
-    this.label.style.top = `${((1 - at.y) / 2) * this.host.clientHeight}px`;
+    element.style.display = '';
+    element.style.left = `${((at.x + 1) / 2) * this.host.clientWidth}px`;
+    element.style.top = `${((1 - at.y) / 2) * this.host.clientHeight}px`;
   }
 
   resize() {
@@ -455,11 +508,12 @@ class Stage {
     this.raycaster.setFromCamera(at, this.camera);
   }
 
-  /** What the raycaster meets among `objects`, nearest first, of what is
-   *  drawn and stops a click: nothing hidden, not the solder mask nor the
-   *  silkscreen, and with Isolate on no copper but the lit net's. */
-  hits(objects) {
-    return this.raycaster.intersectObjects(objects, true).filter((hit) => {
+  /** What `raycaster`, the click's unless given, meets among `objects`,
+   *  nearest first, of what is drawn and stops a click: nothing hidden, not
+   *  the solder mask nor the silkscreen, and with Isolate on no copper but
+   *  the lit net's. */
+  hits(objects, raycaster = this.raycaster) {
+    return raycaster.intersectObjects(objects, true).filter((hit) => {
       for (let node = hit.object; node; node = node.parent) {
         if (!node.visible || this.skin.has(node)) return false;
       }
@@ -549,8 +603,8 @@ class Stage {
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(width, height, false);
-    // The measurement is this view's, its label over this canvas only: an
-    // inset draws the board without it.
+    // The measurement is this view's, its dots and label over this canvas
+    // only: an inset draws the board without it.
     this.measured.visible = false;
     this.renderer.render(this.scene, camera);
     this.measured.visible = true;
@@ -642,48 +696,68 @@ class Stage {
   /** Measuring on or off, the measurement cleared either way. */
   setMeasuring(on) {
     this.measuring = on;
-    this.measurePick(null);
+    this.measurePoint(null);
+  }
+
+  /** Where a measuring click on `hit` lands (`snapPoint`, board3d.js), each
+   *  point it may snap to asked whether it is in sight (`seen`). */
+  snap(hit) {
+    const box = this.renderer.domElement.getBoundingClientRect();
+    return snapPoint(this.THREE, hit, this.raycaster.ray, this.camera, box, (point) => this.seen(point));
+  }
+
+  /** Whether nothing drawn that stops a click (`hits`) stands between the
+   *  camera and `point`: a ray toward it meets nothing nearer than itself,
+   *  less `SIGHT_TOLERANCE` of its distance. */
+  seen(point) {
+    const eye = new this.THREE.Vector3().setFromMatrixPosition(this.camera.matrixWorld);
+    const distance = eye.distanceTo(point);
+    this.sight.set(eye, point.clone().sub(eye).divideScalar(distance));
+    this.sight.far = distance * (1 - SIGHT_TOLERANCE);
+    return !this.hits([this.root], this.sight).length;
   }
 
   /**
-   * A measuring click on `nodes`, a part's or the board's body, or on nothing
-   * (null), which clears the picks. A first pick, then a second, different
-   * one; a third starts over from it, and the same one twice stays one. One
-   * pick is drawn as its box in the world, its size over the top's centre; two
-   * as the line between their nearest points (`minDistance`), the gap at its
-   * middle. Drawn over the model in the selection's colour, as wide as the 2D
-   * board's measurement (`MEASURE_LINE_PX` on `MEASURE_HALO_PX` of `HALO`), in
-   * the library's screen-wide lines (`lines`).
+   * A measuring click's point in the world, or null for a click on nothing,
+   * which clears the points. The first is A, the second B; a third starts
+   * over as a new A. A and B are dots over the canvas (`placeLabel`). With
+   * both, the line from A to B, and its legs from A along the board's X (the
+   * world's x), then its Y (z), then the height (y) to B, dashed and thinner,
+   * as the 2D board draws its ΔX and ΔY; the label beside the line's middle
+   * (`measureText`). Drawn over the model in the selection's colour, each line
+   * on a dark halo (`HALO`) as wide as the 2D board's, in the library's
+   * screen-wide lines (`lines`).
    */
-  measurePick(nodes) {
-    if (!nodes) this.picks = [];
-    else if (this.picks.length !== 1) this.picks = [nodes];
-    else if (this.picks[0] !== nodes) this.picks = [this.picks[0], nodes];
+  measurePoint(point) {
+    if (!point) this.points = [];
+    else if (this.points.length !== 1) this.points = [point];
+    else this.points = [this.points[0], point];
     const { THREE } = this;
     this.freeMeasured();
     this.measureAt = null;
-    let segments = null;
-    if (this.picks.length === 1) {
-      const box = new THREE.Box3().setFromArray(pickGeometry(THREE, this.picks[0]).positions);
-      segments = boxEdges(box);
-      this.measureAt = box.getCenter(new THREE.Vector3()).setY(box.max.y);
-      this.label.textContent = sizeText(sizeMm(THREE, box));
-    } else if (this.picks.length === 2) {
-      const { distance, point1, point2 } = this.minDistance(...this.picks.map((pick) => pickGeometry(THREE, pick)));
-      segments = [...point1.toArray(), ...point2.toArray()];
-      this.measureAt = new THREE.Vector3().addVectors(point1, point2).multiplyScalar(0.5);
-      this.label.textContent = gapText(distance);
-    }
-    if (segments) {
+    if (this.points.length === 2) {
+      const [a, b] = this.points;
+      const turns = [new THREE.Vector3(b.x, a.y, a.z), new THREE.Vector3(b.x, a.y, b.z)];
+      const legs = [a, turns[0], turns[0], turns[1], turns[1], b].flatMap((at) => at.toArray());
+      const period = a.distanceTo(b) / MEASURE_DASHES;
+      const dashes = { dashed: true, dashSize: (period * 4) / 7, gapSize: (period * 3) / 7 };
       const { LineSegments2, LineSegmentsGeometry, LineMaterial } = this.lines;
       const colour = window.getComputedStyle(this.host).color;
-      for (const [width, color, order] of [[MEASURE_HALO_PX, HALO, 1], [MEASURE_LINE_PX, colour, 2]]) {
+      const lines = [
+        [legs, MEASURE_LEG_HALO_PX, HALO, dashes], [legs, MEASURE_LEG_PX, colour, dashes],
+        [[...a.toArray(), ...b.toArray()], MEASURE_HALO_PX, HALO, {}],
+        [[...a.toArray(), ...b.toArray()], MEASURE_LINE_PX, colour, {}],
+      ];
+      lines.forEach(([segments, width, color, dashing], order) => {
         const line = new LineSegments2(new LineSegmentsGeometry().setPositions(segments),
           new LineMaterial({ color: new THREE.Color().setStyle(color), linewidth: width, depthTest: false,
-            depthWrite: false, transparent: true }));
-        line.renderOrder = order;
+            depthWrite: false, transparent: true, ...dashing }));
+        if (dashing.dashed) line.computeLineDistances();
+        line.renderOrder = order + 1;
         this.measured.add(line);
-      }
+      });
+      this.measureAt = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+      this.label.textContent = measureText(a, b);
     }
     this.request();
   }
@@ -706,6 +780,7 @@ class Stage {
     this.kit.dispose();
     this.freeMeasured();
     this.label.remove();
+    for (const dot of this.dots) dot.remove();
     disposeModel(this.model);
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -814,11 +889,11 @@ export default class BoardView3D extends React.Component {
     this.props.onTools(this.toolSets[Number(on)]);
   }
 
-  /** Escape over the view (KicadView.jsx, `key`): the measurement cleared,
-   *  else measuring turned off; true when it did either. */
+  /** Escape over the view (KicadView.jsx, `key`): the points cleared, else
+   *  measuring turned off; true when it did either. */
   escapeMeasure() {
     if (!this.stage || !this.stage.measuring) return false;
-    if (this.stage.picks.length) this.stage.measurePick(null);
+    if (this.stage.points.length) this.stage.measurePoint(null);
     else this.setMeasuring(false);
     return true;
   }

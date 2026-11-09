@@ -29,11 +29,10 @@
 // instance the page imports here.
 
 /** Where the hub serves three and the add-ons this view uses. The camera is
- *  turned by the model's own trackball, `CADTrackballControls`, and a gap is
- *  measured by the model's own `minDistance`, both of which the model's
- *  library exports (viewer/src/index.ts): the same URL as the model page's
- *  (`VIEWER_MODULE_URL` in viewport/library.js), so on that page the browser
- *  hands this import the module already loaded. */
+ *  turned by the model's own trackball, `CADTrackballControls`, which the
+ *  model's library exports (viewer/src/index.ts): the same URL as the model
+ *  page's (`VIEWER_MODULE_URL` in viewport/library.js), so on that page the
+ *  browser hands this import the module already loaded. */
 export const THREE_URL = '/_v/three.module.js';
 export const GLTF_LOADER_URL = '/_v/GLTFLoader.js';
 export const TRACKBALL_URL = '/_v/three-cad-viewer.esm.js';
@@ -42,7 +41,7 @@ export const GEOMETRY_UTILS_URL = '/_v/BufferGeometryUtils.js';
 let pending = null;
 
 /**
- * `{ THREE, GLTFLoader, TrackballControls, mergeGeometries, minDistance, lines }`,
+ * `{ THREE, GLTFLoader, TrackballControls, mergeGeometries, lines }`,
  * fetched once per page; `lines` holds three's screen-wide lines
  * (`LineSegments2`, `LineSegmentsGeometry`, `LineMaterial`). A rejected import is
  * dropped, so opening the 3D view again tries again (`loadViewerLibrary` says why).
@@ -56,7 +55,7 @@ export function loadThree() {
       import(/* @vite-ignore */ GEOMETRY_UTILS_URL),
     ]).then(([THREE, loader, library, utils]) => ({
       THREE, GLTFLoader: loader.GLTFLoader, TrackballControls: library.CADTrackballControls,
-      mergeGeometries: utils.mergeGeometries, minDistance: library.minDistance,
+      mergeGeometries: utils.mergeGeometries,
       lines: {
         LineSegments2: library.LineSegments2, LineSegmentsGeometry: library.LineSegmentsGeometry,
         LineMaterial: library.LineMaterial,
@@ -156,83 +155,112 @@ export function fromPart(THREE, node, point, normal) {
   };
 }
 
+/** Edges where a model's faces meet at more than this many degrees are its
+ *  features — a hole's rim, a part's corner, the board's outline — and what a
+ *  measuring click snaps to; flatter ones only facet a curved face. Clear of
+ *  the 30° between the faces of a via's twelve-sided tube (board3dcopper.js),
+ *  where rounding would decide seam by seam. */
+export const FEATURE_ANGLE_DEG = 35;
+
+/** How near the pointer, in CSS pixels, a feature has to be drawn for a
+ *  measuring click to snap to it: the 2D board's radius (`SNAP_RADIUS_PX` of
+ *  ecad-viewer/packages/ecad-viewer-app/src/viewers/board/measure-tool.ts). */
+export const SNAP_PX = 12;
+
+/** How many candidates of each kind, nearest first, are asked whether they are
+ *  in sight: each answer is a ray cast over the model. */
+const SNAP_TRIES = 5;
+
+/** The feature edges of each geometry a measuring click has landed on, in the
+ *  geometry's own space, two points an edge, flat, with the `version` of the
+ *  positions they were worked out from: worked out again once the vertices
+ *  have moved in place, as the vias' tubes do with the layers pulled apart
+ *  (`place` in board3dcopper.js). */
+const featureEdges = new WeakMap();
+
+function edgesOf(THREE, geometry) {
+  const { position } = geometry.attributes;
+  let cached = featureEdges.get(geometry);
+  if (!cached || cached.version !== position.version) {
+    // EdgesGeometry welds vertices to four decimals of a unit, a tenth of a
+    // millimetre in glTF's metres, which would weld away a via's rim; it reads
+    // a copy in millimetres instead.
+    const copy = new THREE.BufferGeometry();
+    copy.setAttribute('position', position.clone());
+    copy.setIndex(geometry.index);
+    copy.scale(MM_PER_UNIT, MM_PER_UNIT, MM_PER_UNIT);
+    const lines = new THREE.EdgesGeometry(copy, FEATURE_ANGLE_DEG);
+    cached = { version: position.version, edges: lines.attributes.position.array.map((mm) => mm / MM_PER_UNIT) };
+    copy.dispose();
+    lines.dispose();
+    featureEdges.set(geometry, cached);
+  }
+  return cached.edges;
+}
+
 /**
- * What a measuring click picked, `nodes` (a part's, or the board's body), as
- * the model page's `minDistance` takes a body (`MeshComponentGeometry` in
- * viewer/src/tools/cad_tools/mesh-measure.ts): `topo: 'solid'`, every vertex
- * in the world and the triangles as indices into them. Each mesh is read
- * through its own world matrix and left as it is, so a geometry
- * `mergeByMaterial` baked into its part's frame and one several meshes draw
- * (`sharedGeometries`) both come out where they are drawn; an instanced mesh
- * gives every instance. A geometry with no index is a list of triangles.
+ * Where a measuring click lands, snapped as the 2D board snaps. `hit` is the
+ * nearest drawn thing the click's `ray` met (a raycaster's hit), and the
+ * candidates are the feature edges of its mesh (`FEATURE_ANGLE_DEG`), put in
+ * the world through the mesh and, for an instanced one, the instance hit: the
+ * nearest END of an edge drawn within `SNAP_PX` of the pointer, else the
+ * nearest point ON an edge — the edge's point closest to the ray — drawn
+ * within it, else the hit's own point. Distances are taken on the screen:
+ * `camera` draws onto a canvas `size` (`{ width, height }`, CSS pixels) big,
+ * and the pointer is where the hit is drawn. A candidate counts only if
+ * `visible(point)` says nothing hides it, asked of the `SNAP_TRIES` nearest of
+ * each kind. A new vector.
  */
-export function pickGeometry(THREE, nodes) {
-  const meshes = [];
-  let vertices = 0;
-  let corners = 0;
-  for (const node of nodes) {
-    node.updateWorldMatrix(true, true);
-    node.traverse((mesh) => {
-      if (!mesh.isMesh) return;
-      const copies = mesh.isInstancedMesh ? mesh.count : 1;
-      const { index, attributes: { position } } = mesh.geometry;
-      meshes.push(mesh);
-      vertices += position.count * copies;
-      corners += (index || position).count * copies;
-    });
+export function snapPoint(THREE, hit, ray, camera, size, visible) {
+  const mesh = hit.object;
+  const matrix = mesh.matrixWorld.clone();
+  if (mesh.isInstancedMesh) matrix.multiply(mesh.getMatrixAt(hit.instanceId, new THREE.Matrix4()));
+  const pointer = hit.point.clone().project(camera);
+  const drawn = new THREE.Vector3();
+  /** How far from the pointer `point` is drawn, or Infinity out of the
+   *  camera's depth, behind it included. */
+  const away = (point) => {
+    drawn.copy(point).project(camera);
+    return Math.abs(drawn.z) > 1 ? Infinity
+      : Math.hypot(((drawn.x - pointer.x) * size.width) / 2, ((drawn.y - pointer.y) * size.height) / 2);
+  };
+  // The edges that meet at a corner share its end: one candidate.
+  const ends = new Map();
+  const along = [];
+  const edges = edgesOf(THREE, mesh.geometry);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const on = new THREE.Vector3();
+  for (let i = 0; i < edges.length; i += 6) {
+    a.fromArray(edges, i).applyMatrix4(matrix);
+    b.fromArray(edges, i + 3).applyMatrix4(matrix);
+    for (const end of [a, b]) {
+      const off = away(end);
+      const key = off <= SNAP_PX && end.toArray().join();
+      if (key && !ends.has(key)) ends.set(key, [off, end.clone()]);
+    }
+    ray.distanceSqToSegment(a, b, undefined, on);
+    const off = away(on);
+    if (off <= SNAP_PX) along.push([off, on.clone()]);
   }
-  const positions = new Float32Array(vertices * 3);
-  const indices = new Uint32Array(corners);
-  const at = new THREE.Vector3();
-  const matrix = new THREE.Matrix4();
-  const instance = new THREE.Matrix4();
-  let vertex = 0;
-  let corner = 0;
-  for (const mesh of meshes) {
-    const { index, attributes: { position } } = mesh.geometry;
-    for (let copy = 0; copy < (mesh.isInstancedMesh ? mesh.count : 1); copy += 1) {
-      matrix.copy(mesh.matrixWorld);
-      if (mesh.isInstancedMesh) {
-        mesh.getMatrixAt(copy, instance);
-        matrix.multiply(instance);
-      }
-      const base = vertex;
-      for (let i = 0; i < position.count; i += 1, vertex += 1) {
-        at.fromBufferAttribute(position, i).applyMatrix4(matrix).toArray(positions, vertex * 3);
-      }
-      for (let i = 0; i < (index || position).count; i += 1, corner += 1) {
-        indices[corner] = base + (index ? index.getX(i) : i);
-      }
+  for (const found of [[...ends.values()], along]) {
+    for (const [, point] of found.sort((x, y) => x[0] - y[0]).slice(0, SNAP_TRIES)) {
+      if (visible(point)) return point;
     }
   }
-  return { topo: 'solid', geomType: -1, positions, indices };
+  return hit.point.clone();
 }
 
-/** The twelve edges of `box` as line segments, two corners each, flat
- *  (`setPositions` of a `LineSegmentsGeometry`). */
-export function boxEdges(box) {
-  const { min, max } = box;
-  const corner = (i) => [i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z];
-  const edges = [];
-  for (let i = 0; i < 8; i += 1) {
-    for (const bit of [1, 2, 4]) {
-      if (!(i & bit)) edges.push(...corner(i), ...corner(i | bit));
-    }
-  }
-  return edges;
+/** The label of a measurement from `a` to `b`, two points in the world: the
+ *  distance, and under it how far apart they are along the board's X and Y
+ *  and in height, in millimetres to the micrometre as the 2D board's label
+ *  (`format_length` of …/viewers/board/measure.ts). glTF is Y-up: the board's
+ *  X is the world's x, its Y the world's z, the height the world's y. */
+export function measureText(a, b) {
+  const mm = (units) => (units * MM_PER_UNIT).toFixed(3);
+  return `${mm(a.distanceTo(b))} mm\n`
+    + `X ${mm(Math.abs(b.x - a.x))}  Y ${mm(Math.abs(b.z - a.z))}  Z ${mm(Math.abs(b.y - a.y))}`;
 }
-
-/** The size of a measured box of the model in millimetres, `[width, depth,
- *  height]`: glTF is Y-up, so the board's width and depth are x and z. */
-export function sizeMm(THREE, box) {
-  const size = box.getSize(new THREE.Vector3()).multiplyScalar(MM_PER_UNIT);
-  return [size.x, size.z, size.y];
-}
-
-/** The label of a pick's size (`sizeMm`), and of the gap between two picks,
- *  a distance in the model's units. */
-export const sizeText = (size) => `size ${size.map((mm) => mm.toFixed(2)).join(' × ')} mm`;
-export const gapText = (distance) => `${(distance * MM_PER_UNIT).toFixed(2)} mm`;
 
 /**
  * Turn a node's meshes into one mesh per material, under the node itself.
