@@ -254,21 +254,25 @@ export function createPins(vp) {
    * from the bounding box the hub published with the view (`payload.bb`), which
    * is a fetched document and so is read a field at a time. A view that carries
    * no usable box leaves the arrow at `PIN_PX * k`, the size it had on the
-   * screen when it was a screen widget, rather than at nothing.
+   * screen when it was a screen widget, rather than at nothing — `k` at the
+   * arrow's own point, which under perspective is each arrow's own depth.
    *
-   * One length for every arrow, worked out once a frame.
+   * An arrow whose point is on or behind the eye of a perspective camera, where
+   * `k` answers null, is not drawn.
    */
   function place(root, g, k) {
     const bb = vp.payload && vp.payload.bb;
     const span = bb
       ? [bb.xmax - bb.xmin, bb.ymax - bb.ymin, bb.zmax - bb.zmin] : null;
     const half = finite3(span) ? Math.hypot(span[0], span[1], span[2]) / 2 : 0;
-    const length = half > 0 ? PIN_LENGTH_FRACTION * half : PIN_PX * k;
-    const scale = length / PIN_PX;
     for (const arrow of arrows.values()) {
       const p = arrow.point;
+      const here = k(p);
+      arrow.node.visible = here !== null;
+      if (here === null) continue;
+      const length = half > 0 ? PIN_LENGTH_FRACTION * half : PIN_PX * here;
       arrow.node.position.set(p[0], p[1], p[2]);
-      arrow.node.scale.setScalar(scale);
+      arrow.node.scale.setScalar(length / PIN_PX);
     }
     return true;
   }

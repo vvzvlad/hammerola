@@ -19,6 +19,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import { internals } from '../src/viewport/internals.js'
 import { vec3 } from '../src/viewport/math.js'
 import { MIN_SINE, SECTION_BIAS, SECTION_INDEX } from '../src/viewport/options.js'
@@ -28,7 +30,7 @@ import {
   sectionRange, sectionValueFor, suspendSectionCut,
 } from '../src/viewport/section.js'
 import { RECT } from './component.js'
-import { fakeViewer, fakeViewport, orthoCamera } from './fakes.js'
+import { alongRay, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera } from './fakes.js'
 
 function scene({ gridSize = 100, clipCenter = [0, 0, 0] } = {}) {
   const camera = orthoCamera({
@@ -681,6 +683,54 @@ describe('dragSection', () => {
     // travel.
     expect(travelled).toBeGreaterThan(0)
     expect(before - distance(g, face)).toBeCloseTo(travelled, 9)
+  })
+})
+
+describe('the drag and the measure under the perspective camera', () => {
+  // The eye 80 back down -Z, the face at the origin in the middle of the canvas.
+  function perspectiveScene() {
+    const viewer = fakeViewer({ camera: perspectiveCamera(THREE, { eye: [0, 0, 80] }), rect: RECT })
+    return { viewer, vp: fakeViewport(viewer), g: internals(viewer) }
+  }
+
+  it('takes the same step from the pointer as from its travel under ortho', () => {
+    const { viewer, vp, g } = scene()
+    viewer.setClipNormal(SECTION_INDEX, [1, 0, 0], null, true)
+    const axis = sectionAxis(viewer, g, [0, 0, 0])
+    const v = viewer.getClipSlider(SECTION_INDEX)
+    const byPixels = dragSection(vp, g, axis, 40, 30)
+    viewer.setClipSlider(SECTION_INDEX, v, true)
+    expect(dragSection(vp, g, axis, 40, 30, [440, 330])).toBeCloseTo(byPixels, 9)
+  })
+
+  it('follows the hand to the point of a normal into the depth under the pointer ray', () => {
+    // The normal comes towards the eye, so a stretch of it nearer the eye shows
+    // larger: the pixel scale at the face, taken for the whole drag, overshoots.
+    const { viewer, vp, g } = perspectiveScene()
+    const n = [0.6, 0, 0.8]
+    viewer.setClipNormal(SECTION_INDEX, n, null, true)
+    const face = [0, 0, 0]
+    const axis = sectionAxis(viewer, g, face)
+    const before = distance(g, face)
+    let travelled = 0
+    for (let x = 410; x <= 550; x += 10) travelled += dragSection(vp, g, axis, 10, 0, [x, 300])
+    const want = alongRay(THREE, g.cam, RECT, [550, 300], face, n)
+      - alongRay(THREE, g.cam, RECT, [400, 300], face, n)
+    expect(travelled).toBeCloseTo(want, 6)
+    expect(before - distance(g, face)).toBeCloseTo(travelled, 9)
+    expect(Math.abs(want - (150 * axis.sx) / axis.s2)).toBeGreaterThan(2)
+  })
+
+  it('measures the normal against the sight line to the face', () => {
+    // A normal along the view axis, on a face off to one side: the sight to it
+    // leans 0.24 off the normal, where under ortho the normal is end-on.
+    const { viewer, g } = perspectiveScene()
+    viewer.setClipNormal(SECTION_INDEX, [0, 0, 1], null, true)
+    const axis = sectionAxis(viewer, g, [20, 0, 0])
+    expect(axis.sine).toBeCloseTo(20 / Math.hypot(20, 80), 9)
+    const flat = scene()
+    flat.viewer.setClipNormal(SECTION_INDEX, [0, 0, 1], null, true)
+    expect(sectionAxis(flat.viewer, flat.g, [20, 0, 0])).toBeNull()
   })
 })
 

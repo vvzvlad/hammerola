@@ -22,6 +22,8 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import { projectPoint } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
 import { capOwnerAt, nameOf, planePointAt, solidOf } from '../src/viewport/picking.js'
@@ -29,7 +31,7 @@ import { SECTION_INDEX } from '../src/viewport/options.js'
 import { applySection, placeSectionPlane } from '../src/viewport/section.js'
 import { RECT } from './component.js'
 import {
-  fakeCapUnits, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
+  fakeCapUnits, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera,
 } from './fakes.js'
 
 /** A repo file, MEMOISED: the two below are megabytes each and every `it()` in
@@ -84,10 +86,9 @@ function cube(origin = [0, 0, 0]) {
  * CLIPPED side, because `placeSectionPlane` turns the seed normal away from the
  * camera — the pose the correction is allowed to fire in.
  */
-function cutScene(parts, { cut = [1, 1, 1], omit = [] } = {}) {
-  const camera = orthoCamera({
-    eye: [0, 0, 80], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
-  })
+function cutScene(parts, { cut = [1, 1, 1], omit = [], camera = orthoCamera({
+  eye: [0, 0, 80], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
+}) } = {}) {
   const solids = parts.map(([, name, origin, matrix]) =>
     fakeShapeSolid(name, { ...cube(origin), matrix }))
   const groups = Object.fromEntries(
@@ -192,6 +193,22 @@ describe('planePointAt', () => {
     const { viewer, vp, g } = cutScene([PLATE])
     viewer.setClipNormal(SECTION_INDEX, [1, 0, 0], 0)
     expect(planePointAt(vp, g, pixelOver(g, 1, 1))).toBeNull()
+  })
+
+  it('lands under its pixel from the eye under perspective, and not behind it', () => {
+    const { camera, viewer, vp, g } = cutScene([PLATE], {
+      camera: perspectiveCamera(THREE, { eye: [0, 0, 80] }),
+    })
+    const ndc = pixelOver(g, 7, -3)
+    const { point } = planePointAt(vp, g, ndc)
+    expect(g.plane.distanceToPoint({ x: point[0], y: point[1], z: point[2] }))
+      .toBeCloseTo(0, 9)
+    const back = camera.project(point)
+    expect(back[0]).toBeCloseTo(ndc[0], 9)
+    expect(back[1]).toBeCloseTo(ndc[1], 9)
+    // The eye gone below the plane, still looking down: every ray leaves it.
+    viewer.setCameraLocationSettings([0, 0, -10], null, [0, 0, -70], null, true)
+    expect(planePointAt(vp, g, [0.2, 0.1])).toBeNull()
   })
 
   it('is null when the camera basis is unusable', () => {

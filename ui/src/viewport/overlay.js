@@ -50,8 +50,11 @@ export function createOverlay(vp) {
     const at = spot(g, rect, box, point);
     // z > 1 is behind the camera's far plane, i.e. behind the reader. Under an
     // ortho projection that is a real case rather than a curiosity: the frustum
-    // has a back and the model rotates through it.
-    if (!at || at[2] > 1) {
+    // has a back and the model rotates through it. Under perspective a point
+    // behind the eye comes out at z > 1 as well, and one between the eye and
+    // the near plane at z < -1.
+    const out = at && (at[2] > 1 || (!g.cam.isOrthographicCamera && at[2] < -1));
+    if (!at || out) {
       el.style.display = "none";
       return;
     }

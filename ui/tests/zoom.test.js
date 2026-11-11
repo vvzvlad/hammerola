@@ -4,8 +4,10 @@
 // The law under test is `k = 1 - z0/z1`, and it is deliberately NOT restated
 // here. What is asserted instead is the thing the law exists to produce: THE
 // POINT UNDER THE CURSOR DOES NOT MOVE. That reading is what makes the fake
-// camera worth having — it models three.js's ortho projection, so "did not
-// move" can be measured by projecting a world point twice.
+// cameras worth having — the ortho one models three.js's projection and the
+// perspective one is three's own, so "did not move" can be measured by
+// projecting a world point twice. Under perspective the controls walk the eye
+// to the target instead of scaling the frustum, and `dolly` below does that.
 //
 // The one behaviour that has no visible symptom until it is wrong is the early
 // exit at `k === 0`, and it gets tests of its own: a horizontal scroll and a
@@ -20,9 +22,11 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import { zoomWheelAfter, zoomWheelBefore } from '../src/viewport/zoom.js'
 import { RECT } from './component.js'
-import { eventAt, fakeViewer, orthoCamera } from './fakes.js'
+import { eventAt, fakeViewer, orthoCamera, perspectiveCamera } from './fakes.js'
 
 // A cursor well away from the centre: at the centre every zoom law agrees,
 // including a broken one.
@@ -156,13 +160,6 @@ describe('the anchor', () => {
     expect(viewer.setCameraLocationSettings).not.toHaveBeenCalled()
   })
 
-  it('is dropped under a perspective camera, leaving the library its own zoom', () => {
-    const { camera, viewer, vp } = ctx
-    camera.cam.isOrthographicCamera = false
-    zoomWheelBefore(vp, eventAt(viewer, ...CURSOR))
-    expect(vp.zoomAnchor).toBeNull()
-  })
-
   it('is consumed once: a second bubble with no press in between does nothing', () => {
     const { camera, viewer, vp } = ctx
     zoomWheelBefore(vp, eventAt(viewer, ...CURSOR))
@@ -182,5 +179,98 @@ describe('the anchor', () => {
     expect(() => zoomWheelBefore(vp, eventAt(viewer, ...CURSOR))).not.toThrow()
     expect(vp.zoomAnchor).toBeNull()
     vi.restoreAllMocks()
+  })
+})
+
+describe('zoom to the cursor under the perspective camera', () => {
+  // The target is 60 ahead of the eye, the picked part half way there.
+  let camera, viewer, vp
+  beforeEach(() => {
+    camera = perspectiveCamera(THREE, { eye: [4, 3, 50], distance: 60 })
+    viewer = fakeViewer({ camera, rect: RECT })
+    viewer.idPicker.pickAt = vi.fn(() => null)
+    vp = { viewer, zoomAnchor: null, zoomPoint: null }
+  })
+
+  /** What the controls do between the two listeners: the eye walked along its
+   *  line to the target until the zoom reads `z1`. */
+  function dolly(z1) {
+    const T = viewer.target
+    const off = camera.eye.map((c, i) => c - T[i])
+    const s = camera.distance / z1 / Math.hypot(...off)
+    camera.eye = T.map((t, i) => t + off[i] * s)
+  }
+
+  /** The point of the ray through a pixel at a depth along the view. */
+  function onRay(at, depth) {
+    const nx = (at[0] / RECT.width) * 2 - 1
+    const ny = 1 - (at[1] / RECT.height) * 2
+    const far = camera.unproject([nx, ny, 0.5])
+    const dir = far.map((c, i) => c - camera.eye[i])
+    const k = depth / -dir[2]                 // the view is -Z
+    return camera.eye.map((c, i) => c + dir[i] * k)
+  }
+
+  function notch(at, z1) {
+    zoomWheelBefore(vp, eventAt(viewer, ...at))
+    dolly(z1)
+    zoomWheelAfter(vp)
+  }
+
+  const expectStill = (point, before) => {
+    const after = seen(camera, point)
+    expect(after[0]).toBeCloseTo(before[0], 9)
+    expect(after[1]).toBeCloseTo(before[1], 9)
+  }
+
+  const away = (P) => Math.hypot(...camera.eye.map((c, i) => c - P[i]))
+
+  it('brings the eye to the part under the cursor by the zoom, the pixel held', () => {
+    // A point a little off the ray, as a vertex the picker prefers would be:
+    // the zoom holds the ray's point at its depth.
+    const P = onRay(CURSOR, 30)
+    viewer.idPicker.pickAt = vi.fn(() => ({ point: new THREE.Vector3(P[0] + 0.2, P[1], P[2]) }))
+    const before = seen(camera, P)
+    const start = away(P)
+    notch(CURSOR, 2.5)
+    expectStill(P, before)
+    expect(away(P)).toBeCloseTo(start / 2.5, 9)
+    notch(CURSOR, 0.7)
+    expectStill(P, before)
+    expect(away(P)).toBeCloseTo(start / 0.7, 9)
+  })
+
+  it('holds the point at the depth of the target over the background', () => {
+    // Nothing under the cursor: the target's depth stands in for the part.
+    const P = onRay(CURSOR, 60)
+    const before = seen(camera, P)
+    const start = away(P)
+    notch(CURSOR, 2.5)
+    expectStill(P, before)
+    expect(away(P)).toBeCloseTo(start / 2.5, 9)
+  })
+
+  it('holds the point after a pan, the zoom read against the target the trackball turns about', () => {
+    // The library's `Camera.getZoom` measures the eye against the target the
+    // camera was built with, which a pan leaves behind.
+    viewer.setCameraLocationSettings([14, 3, 50], null, [14, 3, -10], null, true)
+    const P = onRay(CURSOR, 30)
+    viewer.idPicker.pickAt = vi.fn(() => ({ point: new THREE.Vector3(...P) }))
+    const before = seen(camera, P)
+    const start = away(P)
+    notch(CURSOR, 2.5)
+    expectStill(P, before)
+    expect(away(P)).toBeCloseTo(start / 2.5, 9)
+  })
+
+  it('picks again only on another pixel or a camera something else moved', () => {
+    notch(CURSOR, 1.5)
+    notch(CURSOR, 2)
+    expect(viewer.idPicker.pickAt).toHaveBeenCalledTimes(1)
+    notch([CURSOR[0] + 1, CURSOR[1]], 2.5)
+    expect(viewer.idPicker.pickAt).toHaveBeenCalledTimes(2)
+    viewer.setCameraLocationSettings([10, 3, 40], null, [10, 3, -20], null, true)
+    notch([CURSOR[0] + 1, CURSOR[1]], 3)
+    expect(viewer.idPicker.pickAt).toHaveBeenCalledTimes(3)
   })
 })

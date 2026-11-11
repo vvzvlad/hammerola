@@ -23,11 +23,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import {
   FACES, SIZE, applyCameraTarget, cameraTarget, cellDirection, createViewCube,
   halfChord, projectCubePoint, rotateByConjugate, visibleFaces,
 } from '../src/viewport/viewcube.js'
-import { fakeViewer } from './fakes.js'
+import { fakeViewer, perspectiveCamera } from './fakes.js'
 
 const IDENTITY = [0, 0, 0, 1]
 
@@ -415,6 +417,44 @@ describe('the camera call — the trap this whole module is written around', () 
 
   it('routes without a viewer rather than throwing', () => {
     expect(() => applyCameraTarget(null, [1, 1, 1])).not.toThrow()
+  })
+
+  it('keeps the zoom under perspective, on a face and on a corner', () => {
+    // The library's moves, modelled on a real perspective camera: both stand
+    // the eye `camera_distance` from `Camera.target` along the direction, and
+    // `presetCamera` then sets the zoom it was given, `camera.zoom` (always 1
+    // here) when given none; under perspective `setZoom` walks the eye to
+    // `camera_distance / zoom`.
+    const camera = perspectiveCamera(THREE, { eye: [0, 0, 60] })
+    const viewer = fakeViewer({ camera })
+    const at = viewer.camera.target
+    const aim = () => camera.cam.lookAt(at.x, at.y, at.z)
+    const stand = (dir) => {
+      const n = Math.hypot(...dir)
+      camera.eye = [0, 1, 2].map((i) => [at.x, at.y, at.z][i] + (dir[i] / n) * camera.distance)
+    }
+    viewer.bbox = { center: () => [10, 20, 30] }
+    viewer.controls.setTarget = (v) => { viewer.target = [v.x, v.y, v.z] }
+    viewer.camera.lookAtTarget = aim
+    viewer.setCameraPosition = vi.fn((position) => stand(position))
+    viewer.presetCamera = vi.fn((preset, zoom = null) => {
+      at.set(...viewer.bbox.center())
+      stand(FACES.find((f) => f.preset === preset).n)
+      viewer.setCameraZoom(zoom === null ? camera.cam.zoom : zoom)
+      aim()
+      viewer.controls.setTarget(at)
+    })
+    // Three times as close as the library stands the eye, after a pan the
+    // library's own target did not follow.
+    viewer.target = [5, 0, 0]
+    camera.eye = [5, 0, 20]
+    const zoom = 60 / 20
+    for (const dir of [FACES.find((f) => f.preset === 'front').n, [1, 1, 1]]) {
+      applyCameraTarget(viewer, dir)
+      expect(viewer.getCameraZoom()).toBeCloseTo(zoom, 9)
+      const off = camera.eye.map((v, i) => v - [10, 20, 30][i])
+      expect(Math.hypot(...off)).toBeCloseTo(20, 9)
+    }
   })
 
   it('classifies every direction, so nothing falls between the two paths', () => {

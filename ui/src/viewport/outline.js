@@ -52,13 +52,20 @@ const OUTLINE_COLOR = 0x303030;
  *
  * The correction puts the shifted corner back on the plane. The shift is known
  * in view units and the plane's normal in view space, and a plane is flat, so
- * one step is exact:
+ * one step is exact. ORTHO (`projectionMatrix[2][3]` is 0), the shifted pixel's
+ * ray runs along view z from the corner moved by `d`:
  *
  *     n . (d + dz) = 0   ->   dz = -(n.x * d.x + n.y * d.y) / n.z
  *
- * Orthographic only (`options.js`, `ortho: true`). Under perspective a corner's
- * `clip.w` moves with its depth, so the branch checks the projection and does
- * nothing there.
+ * PERSPECTIVE, the shifted pixel's ray runs from the eye through `V + d`, `V`
+ * the corner in view space and `d = offset / (P00, P11)` (`offset` is in clip
+ * units, `clip.w` already in it). Its point on the plane is `mu (V + d)` with
+ * `mu = n.V / (n.V + n.d)`, and with `clip.w` kept, its depth comes out as
+ *
+ *     clip.z += P32 * (n . d) / (n . V)
+ *
+ * Each branch is off where its divisor is near zero: the plane edge-on to the
+ * view axis, or passing through the eye.
  */
 const CUT_DEPTH_GLSL = `
   if ( hmrCutNormal.w > 0.5 && projectionMatrix[2][3] == 0.0
@@ -68,6 +75,15 @@ const CUT_DEPTH_GLSL = `
     float dz = -( hmrCutNormal.x * dView.x + hmrCutNormal.y * dView.y )
                / hmrCutNormal.z;
     clip.z += projectionMatrix[2][2] * dz * clip.w;
+  }
+  if ( hmrCutNormal.w > 0.5 && projectionMatrix[2][3] != 0.0 ) {
+    vec3 hmrCorner = ( ( position.y < 0.5 ) ? start : end ).xyz;
+    float hmrFacing = dot( hmrCutNormal.xyz, hmrCorner );
+    if ( abs( hmrFacing ) > 1e-3 * length( hmrCorner ) ) {
+      clip.z += projectionMatrix[3][2]
+        * ( hmrCutNormal.x * offset.x / projectionMatrix[0][0]
+            + hmrCutNormal.y * offset.y / projectionMatrix[1][1] ) / hmrFacing;
+    }
   }
 `;
 

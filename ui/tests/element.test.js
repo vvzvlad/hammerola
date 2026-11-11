@@ -131,11 +131,12 @@ function element(state = {}, viewer = fakeViewer()) {
     hidden: [], ghost: [], selected: [], camera: null,
     cut: false, cutOffset: 0, cutFlip: false, cutHatch: true, pins: [],
     base: null, views: [], view: null, buildKey: null, tool: null, studio: false,
+    perspective: false,
     ...state,
   }
   vp.applied = {
     hidden: null, ghost: null, selected: undefined, camera: null,
-    cutHatch: null, studio: false,
+    cutHatch: null, studio: false, perspective: false,
   }
   vp.sectionSeed = null
   vp.moved = new Map()
@@ -1024,6 +1025,61 @@ describe('show', () => {
     // so the same call one line earlier would patch nothing and say nothing.
     expect(safeHatch.mock.invocationCallOrder[0])
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
+  })
+
+  it('builds the camera the reader chose, and switches it on the standing scene', async () => {
+    // The Settings card's Perspective: passed to `render()`, which makes a new
+    // camera every time, and switched without a reload when it changes after.
+    const { vp, viewer } = rendering()
+    vp.state.perspective = true
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    expect(viewer.render.mock.calls[0][2].ortho).toBe(false)
+    expect(viewer.switchCamera).not.toHaveBeenCalled()
+
+    vp.state = { ...vp.state, perspective: false }
+    vp.reconcile()
+    vp.reconcile()
+    expect(viewer.switchCamera.mock.calls).toEqual([[true]])
+    vp.state = { ...vp.state, perspective: true }
+    vp.reconcile()
+    expect(viewer.switchCamera.mock.calls).toEqual([[true], [false]])
+    expect(viewer.render).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the camera to the next render while the viewer has none', async () => {
+    // A failed render leaves the library without a camera to switch, and
+    // `switchCamera` throws there on every reconcile.
+    const { vp, viewer } = rendering()
+    viewer.render.mockImplementation(() => {
+      viewer.ready = false
+      throw new Error('no WebGL')
+    })
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    viewer.switchCamera.mockImplementation(() => { throw new TypeError('rendered is undefined') })
+    vp.state = { ...vp.state, perspective: true }
+    expect(() => vp.reconcile()).not.toThrow()
+    expect(viewer.switchCamera).not.toHaveBeenCalled()
+  })
+
+  it('stands the frame on screen again after the switch, as the new camera shows it', async () => {
+    // `switchCamera` keeps the eye where it was; an ortho camera wants it
+    // `camera_distance` back, or the near plane cuts what a close perspective
+    // eye was looking at.
+    const { vp, viewer } = rendering()
+    vp.state.perspective = true
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    viewer.camera.camera_distance = 100
+    viewer.getCameraLocationSettings = () => ({
+      position: [1, 2, 23], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 2,
+    })
+    viewer.locationCalls.length = 0
+    vp.state = { ...vp.state, perspective: false }
+    vp.reconcile()
+    expect(viewer.switchCamera.mock.invocationCallOrder[0])
+      .toBeLessThan(viewer.setCameraLocationSettings.mock.invocationCallOrder.at(-1))
+    expect(viewer.locationCalls).toEqual([{
+      position: [1, 2, 103], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 2, notify: true,
+    }])
   })
 
   it('orders the coplanar parts of the scene it has just rendered', async () => {

@@ -23,9 +23,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import { installPinchGuard } from '../src/viewport/pinch.js'
 import { createOverlay } from '../src/viewport/overlay.js'
-import { fakeViewer } from './fakes.js'
+import { fakeViewer, perspectiveCamera } from './fakes.js'
 
 /** A `THREE.Vector2` as the trackball holds its holroyd state in one. */
 function vector2(x = 0, y = 0) {
@@ -441,6 +443,28 @@ describe('the overlay measures once per frame', () => {
 
     expect(canvasRect).not.toHaveBeenCalled()
     expect(box.getBoundingClientRect).not.toHaveBeenCalled()
+    overlay.destroy()
+  })
+})
+
+describe('the overlay under the perspective camera', () => {
+  it('hides a label behind the eye or nearer than the near plane', () => {
+    // The eye at z = 60 looking down -Z, the near plane 0.1 in front of it.
+    const viewer = fakeViewer({ camera: perspectiveCamera(THREE) })
+    viewer.renderer = { domElement: viewer.canvas }
+    const box = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) }
+    const vp = { viewer, box, measureLabel: null }
+    const overlay = createOverlay(vp)
+    const label = overlay.root.querySelector('.hmr_measure_label')
+    const shownAt = (point) => {
+      vp.measureLabel = { text: '12.00', point }
+      overlay.refresh()
+      runFrames()
+      return label.style.display !== 'none'
+    }
+    expect(shownAt([1, 2, 45])).toBe(true)
+    expect(shownAt([1, 2, 70])).toBe(false)
+    expect(shownAt([0.001, 0.001, 59.95])).toBe(false)
     overlay.destroy()
   })
 })

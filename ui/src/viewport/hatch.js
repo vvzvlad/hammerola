@@ -163,11 +163,16 @@ uniform float hatchPitch;
  * below float precision): `log2(0)` would make `hatchStep` zero. An edge-on cap
  * has a huge gradient, gets a coarse level and renders as one flat tone.
  *
- * The viewport is orthographic (`ortho: true`, options.js), so the uv-to-pixel
- * map is one constant linear map per flat cap: the gradient is constant over a
- * face and a level boundary can fall inside a face only through float noise at
- * the threshold. The map is not isotropic, which is why the length is taken per
- * fragment. Under a perspective camera a level boundary would be a visible seam.
+ * Under ORTHO the uv-to-pixel map is one constant linear map per flat cap: the
+ * gradient is constant over a face and a level boundary can fall inside a face
+ * only through float noise at the threshold, so the level switches outright.
+ * The map is not isotropic, which is why the length is taken per fragment.
+ * Under PERSPECTIVE the gradient grows across a receding face and a boundary
+ * runs through it, so the two levels either side are crossfaded by the
+ * fraction of the way to the next: the odd lines of the finer level fade out as
+ * its spacing falls towards half the target, and nothing jumps at the
+ * boundary. `isOrthographic` is three's own uniform of the fragment stage,
+ * which carries no projection matrix.
  *
  * Flat: this replaces `gl_FragColor` instead of tinting the lit result, so the
  * lighting does not shade the cut face. It is spliced in before
@@ -196,9 +201,21 @@ const HATCH = `
     // gives a fraction of a period, which is what hatchF is measured in
     float hatchHalf = ${HALF_LINE_PX} * hatchGrad / hatchStep;
     float hatchAa = ${HALF_AA_PX} * hatchGrad / hatchStep;
-    float hatchCov = (1.0 - smoothstep(hatchHalf - hatchAa,
-                                       hatchHalf + hatchAa,
-                                       hatchF)) * hatchOn;
+    float hatchCov = 1.0 - smoothstep(hatchHalf - hatchAa,
+                                      hatchHalf + hatchAa,
+                                      hatchF);
+    // perspective: crossfaded with the finer level (half the step, so twice
+    // the periods and the same ink in pixels), whose odd lines fade out as its
+    // spacing falls towards half the target
+    if (!isOrthographic) {
+      float hatchLevel = log2(hatchPitch * hatchGrad);
+      float hatchFine = abs(fract(2.0 * hatchS + 0.5) - 0.5);
+      float hatchCovFine = 1.0 - smoothstep(2.0 * (hatchHalf - hatchAa),
+                                            2.0 * (hatchHalf + hatchAa),
+                                            hatchFine);
+      hatchCov = mix(hatchCov, hatchCovFine, ceil(hatchLevel) - hatchLevel);
+    }
+    hatchCov *= hatchOn;
     // The ink is the part's own colour taken further, so the hatch says the
     // same thing about the material as the fill does. A part whose colour is
     // already near black is lightened instead, because there is nothing below

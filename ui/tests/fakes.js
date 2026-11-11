@@ -155,7 +155,7 @@ export function orthoCamera({
     forward: norm(forward),
     halfW, halfH, zoom, depth,
     // The object the adapter passes around as `g.cam`. `isOrthographicCamera`
-    // is what gestureInternals() gates every camera gesture on.
+    // is what the arithmetic in camera.js branches on.
     //
     // THE FRUSTUM IS FIVE GETTERS and not five numbers, because two of the
     // fields they read are written DURING a test: `setCameraLocationSettings`
@@ -222,6 +222,8 @@ export function orthoCamera({
  * places a point at z = 0.
  */
 export function realCamera(three, camera) {
+  // A perspective camera below is real already.
+  if (camera.cam && camera.cam.isPerspectiveCamera) return camera.cam
   const cam = new three.OrthographicCamera(
     -camera.halfW, camera.halfW, camera.halfH, -camera.halfH,
     0.1, 2 * camera.depth)
@@ -237,6 +239,58 @@ export function realCamera(three, camera) {
   cam.updateMatrixWorld(true)
   camera.cam = cam
   return cam
+}
+
+/**
+ * A PERSPECTIVE camera: a real `THREE.PerspectiveCamera` at a pose, behind the
+ * fields `orthoCamera` gives the rest of this directory (`eye`, `forward`,
+ * `cam`, `position()`, `project`, `unproject`). Nothing here models the
+ * projection: it is three's own, which is why `three` is passed in (as to
+ * `realCamera`).
+ *
+ * `position()` is the camera's own `Vector3`, as `Camera.getPosition` hands it
+ * out, and writing `eye` moves it. `distance` is the library's
+ * `camera_distance`: `fakeViewer` answers the zoom as that over the eye's
+ * distance to the target (`Camera.getZoom` under perspective). The aspect is
+ * the 800x600 canvas every suite draws on.
+ */
+export function perspectiveCamera(three, {
+  eye = [0, 0, 60], right = [1, 0, 0], up = [0, 1, 0], forward = [0, 0, -1],
+  fov = 30, distance = 60,
+} = {}) {
+  const cam = new three.PerspectiveCamera(fov, 4 / 3, 0.1, 1000)
+  cam.quaternion.setFromRotationMatrix(new three.Matrix4().makeBasis(
+    new three.Vector3(...norm(right)), new three.Vector3(...norm(up)),
+    new three.Vector3(...norm(forward)).negate()))
+  cam.updateProjectionMatrix()
+  const camera = {
+    right: norm(right), up: norm(up), forward: norm(forward), distance, cam,
+    get eye() { return cam.position.toArray() },
+    set eye(p) {
+      cam.position.set(p[0], p[1], p[2])
+      cam.updateMatrixWorld(true)
+    },
+    project: (p) => new three.Vector3(...p).project(cam).toArray(),
+    unproject: (n) => new three.Vector3(...n).unproject(cam).toArray(),
+    position: () => cam.position,
+  }
+  camera.eye = eye
+  return camera
+}
+
+/** How far along the line through `at` with unit direction `n` its point
+ *  nearest the ray under the pixel `[x, y]` of `rect` stands: three's own
+ *  `Ray.distanceSqToSegment`, the yardstick for the drags that read rays. */
+export function alongRay(three, cam, rect, [x, y], at, n) {
+  const caster = new three.Raycaster()
+  caster.setFromCamera(new three.Vector2(((x - rect.left) / rect.width) * 2 - 1,
+                                         1 - ((y - rect.top) / rect.height) * 2), cam)
+  const A = new three.Vector3(...at)
+  const N = new three.Vector3(...n)
+  const onLine = new three.Vector3()
+  caster.ray.distanceSqToSegment(A.clone().addScaledVector(N, -1000),
+                                 A.clone().addScaledVector(N, 1000), null, onLine)
+  return onLine.sub(A).dot(N)
 }
 
 /** A `THREE.Plane`: `distanceToPoint(p) = normal . p + constant`.
@@ -297,9 +351,18 @@ export function fakeViewer({
     ready: true,
     gridSize,
     clipCenter,
+    // `Camera`: under perspective `camera_distance`, and `target`, the point
+    // `getZoom` and `setZoom` measure the eye against. It is set when the
+    // camera is built and is NOT the controls' target (`viewer.target` here),
+    // which every pan moves alone.
     camera: {
       getCamera: () => camera.cam,
       getPosition: () => camera.position(),
+      camera_distance: camera.distance,
+      target: {
+        x: aim[0], y: aim[1], z: aim[2],
+        set(x, y, z) { Object.assign(this, { x, y, z }) },
+      },
     },
     clipping: {
       clipPlanes: planes,
@@ -355,13 +418,18 @@ export function fakeViewer({
     target: [...aim],
 
     // -- camera ------------------------------------------------------------
-    getCameraZoom: () => camera.zoom,
+    getCameraZoom: () => {
+      if (!camera.cam.isPerspectiveCamera) return camera.zoom
+      const off = sub(camera.eye, kept())
+      return camera.distance / Math.sqrt(dot(off, off))
+    },
     getCameraTarget: () => [...viewer.target],
+    setCameraZoom: vi.fn((zoom) => setZoom(zoom)),
     setCameraLocationSettings: vi.fn((position, quaternion, at, zoom, notify) => {
       viewer.locationCalls.push({ position, quaternion, target: at, zoom, notify })
       if (position) camera.eye = [...position]
       if (at) viewer.target = [...at]
-      if (zoom !== null && zoom !== undefined) camera.zoom = zoom
+      if (zoom !== null && zoom !== undefined) setZoom(zoom)
     }),
     locationCalls: [],
 
@@ -410,7 +478,22 @@ export function fakeViewer({
     // `Viewer.setStudio`, the fork's Studio (viewer/src/core/viewer.ts). A spy:
     // what the viewport owes it is one call per turn of the bar's button.
     setStudio: vi.fn(),
+    // `Viewer.switchCamera(ortho)`, the same: one call per turn of Perspective.
+    switchCamera: vi.fn(),
     dispose: vi.fn(),
+  }
+  /** `Camera.target`, as an array. */
+  const kept = () => [viewer.camera.target.x, viewer.camera.target.y, viewer.camera.target.z]
+  /** `Camera.setZoom`: under perspective the eye walked along its line to
+   *  `Camera.target` to `camera_distance / zoom` of it. */
+  const setZoom = (zoom) => {
+    if (!camera.cam.isPerspectiveCamera) {
+      camera.zoom = zoom
+      return
+    }
+    const at = kept()
+    const off = sub(camera.eye, at)
+    camera.eye = add(at, mul(off, camera.distance / zoom / Math.sqrt(dot(off, off))))
   }
   return viewer
 }

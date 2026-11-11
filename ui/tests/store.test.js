@@ -24,9 +24,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  clearToken, forgetTab, readAssembly, readNotes, readProjectSort, readProjectView, readRetina,
+  clearToken, forgetTab, readAssembly, readNotes, readPerspective, readProjectSort,
+  readProjectView, readRetina,
   readTabs, readTabStrip, readToken, rememberPointer, rememberTab, TAB_CAP, writeAssembly, writeNotes,
-  writeProjectSort, writeProjectView, writeRetina, writeTabStrip, writeToken,
+  writePerspective, writeProjectSort, writeProjectView, writeRetina, writeTabStrip,
+  writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
@@ -607,6 +609,21 @@ describe('the retina setting', () => {
     writeRetina(false)
     writeRetina(true)
     expect(readRetina()).toBe(true)
+  })
+})
+
+// -- the perspective setting -------------------------------------------------
+// Whether the model's camera is perspective. One site-wide key, and NOTHING
+// STORED IS OFF — the orthographic camera the page always had.
+
+describe('the perspective setting', () => {
+  it('reads OFF where nothing was stored, ON once turned on, under one key', () => {
+    expect(readPerspective()).toBe(false)
+    writePerspective(true)
+    expect([...storage.cells.keys()]).toEqual(['hammerola.perspective'])
+    expect(readPerspective()).toBe(true)
+    writePerspective(false)
+    expect(readPerspective()).toBe(false)
   })
 })
 

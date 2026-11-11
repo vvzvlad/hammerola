@@ -50,7 +50,9 @@ import {
   sectionAxis, sectionGripAxis, sectionOffset,
 } from '../src/viewport/section.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
-import { fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
+import {
+  alongRay, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera, realCamera,
+} from './fakes.js'
 
 const handles = []
 
@@ -548,8 +550,10 @@ describe('one whole drag', () => {
     pointerMove([450, 330])
 
     expect(dragSection).toHaveBeenCalledTimes(2)
-    expect(dragSection.mock.calls[0].slice(3)).toEqual([40, 0])
-    expect(dragSection.mock.calls[1].slice(3)).toEqual([10, 30])
+    // The travel since the previous event, and where the pointer is now (the
+    // rays `dragSection` reads the step off).
+    expect(dragSection.mock.calls[0].slice(3)).toEqual([40, 0, [440, 300]])
+    expect(dragSection.mock.calls[1].slice(3)).toEqual([10, 30, [450, 330]])
     // ONE axis for the whole gesture: the camera cannot move under a press this
     // one owns, and re-measuring per frame would let the plane drift.
     expect(dragSection.mock.calls[0][2]).toBe(dragSection.mock.calls[1][2])
@@ -1170,5 +1174,41 @@ describe('one whole turn', () => {
     expect(dragSection).toHaveBeenCalledTimes(1)
     isVector(vp.sectionSeed.normal, [1, 0, 0])
     pointerUp([CROSS_AT[0] + 40, CROSS_AT[1]])
+  })
+})
+
+describe('under the perspective camera', () => {
+  // The eye 40 straight back from the seed, so the seed is still the middle of
+  // the canvas and the second ring, square on at that depth, is still the
+  // circle `onRing` walks.
+  const persp = () => perspectiveCamera(THREE, { eye: [0, 0, 85] })
+
+  it('slides the plane to the point of a normal into the depth under the hand', () => {
+    // The normal runs away from the eye, so a stretch of it further off shows
+    // smaller: the pixel scale at the seed, taken for the whole drag, falls short.
+    const { viewer, vp, g, canvas, group } = scene({ camera: persp(), normal: [0.6, 0, 0.8] })
+    rendered(viewer)
+    const seed = vp.sectionSeed
+    const axis = sectionGripAxis(viewer, g, seed.point)
+    expect(grab(canvas).stopImmediatePropagation).toHaveBeenCalled()
+    for (let x = 390; x >= 250; x -= 10) {
+      pointerMove([x, 300])
+      rendered(viewer)
+    }
+    const want = alongRay(THREE, g.cam, RECT, [250, 300], seed.point, seed.normal)
+      - alongRay(THREE, g.cam, RECT, MIDDLE, seed.point, seed.normal)
+    expect(sectionOffset(vp)).toBeCloseTo(want, 6)
+    stands(group).forEach((v, i) => expect(v).toBeCloseTo(seed.point[i] + seed.normal[i] * want, 6))
+    expect(Math.abs(want - (-150 * axis.sx) / axis.s2)).toBeGreaterThan(1)
+    pointerUp([250, 300])
+  })
+
+  it('tips the plane about the ring the hand is on, the ray met with its plane', () => {
+    const { viewer, vp, canvas } = scene({ camera: persp() })
+    rendered(viewer)
+    expect(grab(canvas, onRing(HELD_T)).stopImmediatePropagation).toHaveBeenCalled()
+    pointerMove(onRing(HELD_T + (45.4 * Math.PI) / 180))
+    isVector(vp.sectionSeed.normal, [Math.SQRT1_2, Math.SQRT1_2, 0])
+    pointerUp(onRing(HELD_T + (45.4 * Math.PI) / 180))
   })
 })

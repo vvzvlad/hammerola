@@ -57,7 +57,7 @@ import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
-import { readRetina } from './store.js';
+import { readPerspective, readRetina } from './store.js';
 import { css, FONTS, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 import {
   BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, settingsCard, settingsView, toolBar,
@@ -96,8 +96,8 @@ const BAR = `${BAR_LAYER}18`;
  * `tools.measure` (KicadView.jsx): there it flips the board's measure mode
  * (`onMeasure`) and is lit while the mode is on. Settings is in service: `settings` holds its
  * flag and toggle (`open`, `onToggle`) and its rows' answers (`settingsView` in
- * viewlist.jsx); with no model here its Retina row is out of service, as it is
- * over a document there. Comment is in service over a
+ * viewlist.jsx); with no model here its Retina and Perspective rows are out of
+ * service, as they are over a document there. Comment is in service over a
  * document that takes a comment (`COMMENTABLE`), lit while armed (`tool`) and
  * armed or put down by `onComment`; Comment and Add primitive are hidden from
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
@@ -130,7 +130,8 @@ export function docBar({
     tSettings: settings.onToggle,
     settingsBtnStyle: btn(!!settings.open, false, false),
     ...settingsView({
-      open: settings.open, retina: settings.retina, tabStrip: settings.tabStrip, onTabStrip: settings.onTabStrip,
+      open: settings.open, retina: settings.retina, perspective: settings.perspective,
+      tabStrip: settings.tabStrip, onTabStrip: settings.onTabStrip,
     }),
     fitView: tools ? () => tools.fit() : undefined,
     fitBtnStyle: quietBtn(!tools),
@@ -201,9 +202,10 @@ export default class DocShell extends React.Component {
     // which a bare `d=` would miss for a default schematic.
     this.addressDoc = (at) => pickDocument(this.props.meta.documents, at.doc).id;
     this.state = {
-      // The Retina answer is read once: its row is out of service here, so
-      // nothing on this page changes it.
-      active: this.addressDoc(parse()), viewsOpen: false, settingsOpen: false, retina: readRetina(), tools: null,
+      // The Retina and Perspective answers are read once: their rows are out
+      // of service here, so nothing on this page changes them.
+      active: this.addressDoc(parse()), viewsOpen: false, settingsOpen: false, retina: readRetina(),
+      perspective: readPerspective(), tools: null,
       // Read at once and kept current (`componentDidMount`), as the model's
       // page keeps its own.
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
@@ -476,6 +478,7 @@ export default class DocShell extends React.Component {
                         this.props.shutHeader();
                       },
                       retina: this.state.retina,
+                      perspective: this.state.perspective,
                       tabStrip: this.props.tabStrip,
                       onTabStrip: this.props.onTabStrip,
                     }}

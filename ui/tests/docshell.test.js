@@ -696,10 +696,10 @@ describe('the shell', () => {
     expect(shell.render().props.active).toBe('report.pdf')
   })
 
-  it('opens Settings, its Retina row out of service and Project tabs handed up to BuildPage', () => {
+  it('opens Settings, its Retina and Perspective rows out of service and Project tabs handed up to BuildPage', () => {
     // The owner asked why the project tabs could not be switched here: they
-    // are about the whole site. Retina is about a model's canvas, and this
-    // page has none.
+    // are about the whole site. Retina and Perspective are about a model's
+    // canvas, and this page has none.
     mount('')
     const onTabStrip = vi.fn()
     shell.props = { ...shell.props, tabStrip: false, onTabStrip }
@@ -711,9 +711,12 @@ describe('the shell', () => {
     expect(css(bar().settingsMenuStyle).display).toBe('none')
     bar().tSettings(CLICK)
     expect(css(bar().settingsMenuStyle).display).toBe('block')
-    expect(texts(DocPage(shell.render().props))).toEqual(expect.arrayContaining(['Retina resolution', 'Project tabs']))
-    expect(css(row('retina').style).pointerEvents).toBe('none')
-    expect(row('retina').onClick).toBeUndefined()
+    expect(texts(DocPage(shell.render().props)))
+      .toEqual(expect.arrayContaining(['Retina resolution', 'Perspective', 'Project tabs']))
+    for (const key of ['retina', 'perspective']) {
+      expect(css(row(key).style).pointerEvents).toBe('none')
+      expect(row(key).onClick).toBeUndefined()
+    }
     row('tabs').onClick(CLICK)
     expect(onTabStrip).toHaveBeenLastCalledWith(true)
 
@@ -733,7 +736,8 @@ describe('the shell', () => {
     shell = new DocShell({ meta: WITH_KICAD, ...DOORS() })
     shell.setState = (patch) => Object.assign(shell.state, patch)
     expect(shell.state).toEqual({
-      active: SCHEMATIC.id, viewsOpen: false, settingsOpen: false, retina: true, tools: null, narrow: false, ...AT_REST,
+      active: SCHEMATIC.id, viewsOpen: false, settingsOpen: false, retina: true, perspective: false, tools: null,
+      narrow: false, ...AT_REST,
     })
     // the door a row of the menu on the schematic opens the board through
     shell.render().props.onPick(BOARD.id)

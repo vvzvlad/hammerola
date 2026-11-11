@@ -12,6 +12,7 @@
 // orthographic (camera-space z dropped), independent of the scene's own
 // projection.
 
+import { syncCameraTarget } from "./camera.js";
 import { internals } from "./internals.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -184,8 +185,12 @@ export function cellDirection(face, col, row) {
  *     `presetCamera` applies it after the `lookAt`.
  *
  * So the faces go through `presetCamera` (`front`, `rear`, `left`, `right` too:
- * same table, the library's own entry point, and `presetCamera(dir, zoom =
- * null)` keeps the current zoom).
+ * same table, the library's own entry point, and under ortho `presetCamera(dir,
+ * zoom = null)` keeps the current zoom). Under perspective it takes
+ * `camera.zoom`, always 1 on a `PerspectiveCamera`, while the zoom there is the
+ * eye's distance to the target; both paths stand the eye `camera_distance`
+ * back, so the zoom on screen is read before the move and written after it
+ * (`perspectiveZoom`).
  *
  * The twelve edges and eight corners have no preset. None is parallel to
  * `[0, 0, 1]`, so the roll is well defined, and `relative: true` makes the
@@ -232,8 +237,10 @@ export function applyCameraTarget(viewer, dir) {
   if (!viewer) return;
   const target = cameraTarget(dir);
   try {
+    const zoom = perspectiveZoom(viewer);
     if (target.kind === "preset") {
-      viewer.presetCamera(target.preset);
+      if (zoom === null) viewer.presetCamera(target.preset);
+      else viewer.presetCamera(target.preset, zoom);
       return;
     }
     const g = internals(viewer);
@@ -247,10 +254,22 @@ export function applyCameraTarget(viewer, dir) {
     // `viewer.update(true, true)` below renders it and notifies subscribers.
     viewer.setCameraPosition(target.position, true, false);
     g.camera.lookAtTarget();
+    if (zoom !== null) viewer.setCameraZoom(zoom, false);
     if (typeof viewer.update === "function") viewer.update(true, true);
   } catch (error) {
     console.warn("viewcube", error);
   }
+}
+
+/** The zoom on screen under perspective, read against the target the
+ *  trackball turns about (`syncCameraTarget`); null under ortho, where the
+ *  cube's moves keep it. */
+function perspectiveZoom(viewer) {
+  const g = internals(viewer);
+  if (!g || g.cam.isOrthographicCamera) return null;
+  syncCameraTarget(viewer);
+  const zoom = viewer.getCameraZoom();
+  return Number.isFinite(zoom) && zoom > 0 ? zoom : null;
 }
 
 /**

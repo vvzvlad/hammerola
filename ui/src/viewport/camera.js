@@ -2,10 +2,63 @@
 // maths every gesture is built out of.
 //
 // Three gestures — the cursor zoom, the swipe pan and the cursor pivot — all end
-// in `panCamera` and compute its argument from `ndcOffset`. A second copy of
-// either would let the model drift under the reader by a pixel per event.
+// in `panCamera` and compute its argument from `ndcOffset`, `ndcRay` and
+// `pointAtDepth`. A second copy of any would let the model drift under the
+// reader by a pixel per event.
+//
+// The camera is orthographic or perspective (Settings, element.js). Every
+// function here answers for both; the branch is `isOrthographicCamera`.
 
-import { dot3, sub3, unit3 } from "./math.js";
+import { dot3, finite3, sub3, unit3 } from "./math.js";
+
+/**
+ * Put the library's `Camera.target` on `target`, the controls' own target by
+ * default.
+ *
+ * They are two objects (viewcube.js, `recentre`): a preset writes both, every
+ * pan moves the controls' alone. Under perspective `Camera.getZoom` and
+ * `setZoom` measure and walk the eye against `Camera.target`, so after a pan
+ * they read a zoom the view does not have and walk the eye off the line
+ * through the point the trackball turns about; `switchCamera` and every
+ * camera write with a zoom go through them. Called before each of those.
+ * Under ortho nothing reads it but a preset and `lookAtTarget`, which set it
+ * first.
+ */
+export function syncCameraTarget(viewer, target = viewer.getCameraTarget()) {
+  const kept = viewer.camera && viewer.camera.target;
+  if (kept && typeof kept.set === "function" && finite3(target)) {
+    kept.set(target[0], target[1], target[2]);
+  }
+}
+
+/**
+ * Stand the camera at a frame `{position, quaternion, target, zoom}` — a
+ * stored one, or the one on screen carried across a switch — as the camera
+ * now drawing shows it.
+ *
+ * A frame does not say which camera took it: Settings decides that, not the
+ * link. Along the frame's own line from the target to the eye, the eye stands
+ * `camera_distance / zoom` back under perspective, the library's meaning of
+ * the zoom there, and `camera_distance` back under ortho, where the library
+ * stands it, so a frame taken close in under perspective does not leave half
+ * the model behind the ortho camera's near plane. The zoom itself is written
+ * only under ortho; under perspective `setZoom` would walk the eye again.
+ */
+export function standFrame(viewer, c, notify) {
+  const ortho = !!viewer.camera.getCamera().isOrthographicCamera;
+  const D = viewer.camera.camera_distance;
+  const zoom = Number.isFinite(c.zoom) && c.zoom > 0 ? c.zoom : null;
+  let position = c.position || null;
+  const off = finite3(position) && finite3(c.target)
+    ? unit3(position.map((v, i) => v - c.target[i])) : null;
+  if (off && D > 0 && (ortho || zoom)) {
+    const back = ortho ? D : D / zoom;
+    position = [0, 1, 2].map((i) => c.target[i] + off[i] * back);
+  }
+  syncCameraTarget(viewer, c.target || viewer.getCameraTarget());
+  viewer.setCameraLocationSettings(position, c.quaternion || null, c.target || null,
+                                   ortho ? zoom : null, notify);
+}
 
 /** Where an event sits on the canvas, in NDC (-1..1, y up), or null. */
 export function ndcAt(canvas, event) {
@@ -45,17 +98,16 @@ export function cameraBasis(viewer, g) {
  * projection throws away, and the part that must not move the camera. Null when
  * anything in it is not finite.
  *
- * The one place where a position on the canvas becomes a position in the world.
- * The cursor zoom takes the offset of the point under the cursor; the swipe pan
- * takes the DIFFERENCE of two offsets, which is exactly the world vector a
- * screen displacement spans. Under ortho neither has to pick anything — every
- * point on the ray through a pixel has the same perpendicular offset.
+ * The ORTHO cursor zoom takes the offset of the point under the cursor. Under
+ * ortho it needs no depth — every point on the ray through a pixel has the same
+ * perpendicular offset — so `pointAtDepth` builds its ortho answer on it. Under
+ * perspective the offset depends on the depth `unproject` happened to choose,
+ * and nothing reads it there.
  *
  * `unproject` rather than the frustum numbers by hand: it goes through the
  * projection matrix the camera is actually drawing with, so an off-centre or
  * offset frustum needs no separate handling. z = 0 puts the point midway between
- * near and far, and under ortho the depth along the ray does not enter the
- * answer anyway.
+ * near and far.
  *
  * `eye.clone()` is how a `Vector3` is obtained at all: the bundle exports none,
  * so the one the library just handed back is borrowed and overwritten.
@@ -75,24 +127,109 @@ export function ndcOffset(g, eye, view, nx, ny) {
 
 /**
  * The world ray a canvas pixel looks along, as `{ origin, dir }` with `dir` a
- * unit vector — or null, ORTHO ONLY.
+ * unit vector, or null.
  *
- * The companion of `ndcOffset`, from the same single `unproject` call. Under
- * ortho every point of a pixel's ray has the same offset from the camera, so
- * the unprojected point is on the ray and the direction is the view axis.
- * (Taking the eye as origin would send every ray down the screen's centre.)
- *
- * A non-orthographic camera is declined, like `gestureInternals`
- * (internals.js): the viewport is ortho by construction (options.js), so a
- * perspective branch would be unreachable.
+ * One `unproject` call. Under ORTHO every point of a pixel's ray has the same
+ * offset from the camera, so the unprojected point is on the ray and the
+ * direction is the view axis (taking the eye as origin would send every ray down
+ * the screen's centre). Under PERSPECTIVE every ray starts at the eye, and the
+ * unprojected point is any second point on it; z = 0.5 keeps it off the eye at
+ * any near plane. Such a ray says so (`fromEye`): nothing behind its origin is
+ * on screen.
  */
 export function ndcRay(g, eye, view, nx, ny) {
-  if (!g.cam.isOrthographicCamera) return null;
-  const p = eye.clone().set(nx, ny, 0).unproject(g.cam);
+  const ortho = !!g.cam.isOrthographicCamera;
+  const p = eye.clone().set(nx, ny, ortho ? 0 : 0.5).unproject(g.cam);
   if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)
       || !Number.isFinite(p.z)) return null;
-  return view && view.every(Number.isFinite)
-    ? { origin: [p.x, p.y, p.z], dir: view } : null;
+  if (ortho) {
+    return view && view.every(Number.isFinite)
+      ? { origin: [p.x, p.y, p.z], dir: view } : null;
+  }
+  const dir = unit3([p.x - eye.x, p.y - eye.y, p.z - eye.z]);
+  return finite3(dir) ? { origin: [eye.x, eye.y, eye.z], dir, fromEye: true } : null;
+}
+
+/**
+ * The point on the ray through NDC (nx, ny) whose distance from the eye ALONG
+ * THE VIEW AXIS is `depth` — `b` is `cameraBasis` — or null.
+ *
+ * Ortho: `C + ndcOffset + depth * view`. Perspective: `C + dir * depth / (dir .
+ * view)`, a ray that does not run forwards being no ray to a visible point.
+ *
+ * The cursor pivot, the swipe pan and the perspective cursor zoom hold a point
+ * at a depth: the depth is what a pan keeps, so a point taken at the same depth
+ * on two pixels spans the world vector of the screen displacement there.
+ */
+export function pointAtDepth(g, b, nx, ny, depth) {
+  let p = null;
+  if (g.cam.isOrthographicCamera) {
+    const off = ndcOffset(g, b.eye, b.view, nx, ny);
+    if (!off) return null;
+    p = [b.C[0] + off[0] + depth * b.view[0],
+         b.C[1] + off[1] + depth * b.view[1],
+         b.C[2] + off[2] + depth * b.view[2]];
+  } else {
+    const ray = ndcRay(g, b.eye, b.view, nx, ny);
+    const along = ray ? dot3(ray.dir, b.view) : 0;
+    if (!(along > 0)) return null;
+    const t = depth / along;
+    p = [ray.origin[0] + t * ray.dir[0],
+         ray.origin[1] + t * ray.dir[1],
+         ray.origin[2] + t * ray.dir[2]];
+  }
+  return finite3(p) ? p : null;
+}
+
+/**
+ * The unit direction the camera sees `point` along: the view axis under ortho,
+ * where every pixel looks one way, and the ray from the eye under perspective.
+ * Null for a point on the eye or unmeasurable numbers.
+ *
+ * What a widget's foreshortening is measured against at its anchor: how much of
+ * an arrow survives, whether a ring is edge-on, which side of a face the reader
+ * is on.
+ */
+export function sightAt(g, b, point) {
+  if (g.cam.isOrthographicCamera) return b.view;
+  const dir = finite3(point) ? unit3([point[0] - b.C[0], point[1] - b.C[1],
+                                      point[2] - b.C[2]]) : null;
+  return finite3(dir) ? dir : null;
+}
+
+/**
+ * Where a ray comes closest to the line `at + t * axis` (`axis` a unit vector),
+ * as `t`, or null for a ray parallel to the line or one from the eye whose
+ * nearest point is behind the eye.
+ *
+ * The answer a drag along a line takes from the pixel under the hand: a line
+ * and a ray miss each other in 3D. Under ortho the difference of two answers is
+ * the screen displacement's world vector along `axis` over `sine^2`
+ * (`alongAxis` in gizmo.js), exactly.
+ */
+export function rayLineParam(ray, at, axis) {
+  const b = dot3(ray.dir, axis);
+  const w = [at[0] - ray.origin[0], at[1] - ray.origin[1],
+             at[2] - ray.origin[2]];
+  const denominator = 1 - b * b;
+  if (!(denominator > 0)) return null;
+  const t = (b * dot3(ray.dir, w) - dot3(axis, w)) / denominator;
+  if (ray.fromEye && !(dot3(ray.dir, w) + t * b > 0)) return null;
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Where a ray meets the plane through `at` normal to `normal`, or null for a
+ *  ray lying in it or one from the eye meeting it behind the eye. Behind the
+ *  origin of an ortho ray is kept: that origin is at mid depth, and a visible
+ *  point can lie behind it. */
+export function rayPlanePoint(ray, at, normal) {
+  const into = dot3(ray.dir, normal);
+  if (!into) return null;
+  const t = (dot3(normal, at) - dot3(normal, ray.origin)) / into;
+  if (ray.fromEye && !(t > 0)) return null;
+  const p = [ray.origin[0] + t * ray.dir[0], ray.origin[1] + t * ray.dir[1],
+             ray.origin[2] + t * ray.dir[2]];
+  return finite3(p) ? p : null;
 }
 
 /**
@@ -143,7 +280,9 @@ export function projectPoint(g, point) {
  * this sum.
  *
  * `z > 1` is for the caller to read: behind the far plane, i.e. behind the
- * reader, which happens as the model rotates through the frustum's back.
+ * reader, which happens as the model rotates through the frustum's back. Under
+ * perspective a point behind the eye reads `z > 1` as well, and one between the
+ * eye and the near plane `z < -1`.
  */
 export function spot(g, rect, box, point) {
   const ndc = projectPoint(g, point);

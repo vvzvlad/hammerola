@@ -95,7 +95,7 @@ import {
 // The reader's notes, the pointer they were last on and the Settings card's
 // answer: per-reader state, which store.js is the one module to keep.
 import {
-  readNotes, writeNotes, rememberPointer, readRetina,
+  readNotes, writeNotes, rememberPointer, readRetina, readPerspective,
 } from './store.js';
 // The proposal: a rough body the reader assembles out of numbers so the agent
 // has something to design against or to copy — the motor the bracket has to
@@ -919,8 +919,10 @@ export default class HammerolaViewer extends React.Component {
       // The joints of the view on screen and where each stands (`motionFor`),
       // null for a view that declares none; `motionPop` is its popover.
       motion: null, motionPop: false,
-      // The Settings card's one answer, remembered per browser (store.js).
+      // The Settings card's answers about the model, remembered per browser
+      // (store.js).
       retina: readRetina(),
+      perspective: readPerspective(),
       // The bar's Studio (`tStudio` in chromeview.js), for this page only:
       // not remembered.
       studio: false,
@@ -3307,7 +3309,7 @@ export default class HammerolaViewer extends React.Component {
       detail: {
         ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
-        retina: s.retina, studio: s.studio,
+        retina: s.retina, perspective: s.perspective, studio: s.studio,
         tool: s.tool,
         diffShow: s.diffShow, pins,
         ...(extra || {}),

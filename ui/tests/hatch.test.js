@@ -550,6 +550,53 @@ describe('one pitch for every cut face, anchored to the part', () => {
       pitch: HATCH_PITCH_PX, line: HATCH_LINE_PX, band: HATCH_AA_PX,
     })
   })
+
+  it('crossfades the two levels under perspective, so no line jumps at a boundary', () => {
+    // A receding face runs through a level boundary. Transcribed scalar, as
+    // above: the coverage just below the boundary and just above it, at every
+    // place across the stripes, with the phase folded into `uv`.
+    const g = fakeInternals(['|model|lid'], { planes: [[0, 0, 1]] })
+    hatchSectionCaps(g)
+    const shader = compile(capsOf(g)[0], rendererAt(1))
+    const source = shader.fragmentShader
+    // Off under ortho, where a face sits on one level; three's own uniform,
+    // which the renderer sets for the cap's material from the camera it draws.
+    expect(source).toContain('if (!isOrthographic) {')
+    expect(repoFile(THREE_MODULE)).toContain("'isOrthographic', camera.isOrthographicCamera === true")
+    expect(source).toContain('float hatchLevel = log2(hatchPitch * hatchGrad);')
+    expect(source).toContain('float hatchFine = abs(fract(2.0 * hatchS + 0.5) - 0.5);')
+    expect(source).toMatch(/float hatchCovFine = 1\.0 - smoothstep\(2\.0 \* \(hatchHalf - hatchAa\),\s*2\.0 \* \(hatchHalf \+ hatchAa\),\s*hatchFine\);/)
+    expect(source).toContain('hatchCov = mix(hatchCov, hatchCovFine, ceil(hatchLevel) - hatchLevel);')
+
+    const { pitch, line, band } = inkOf(shader)
+    const fract = (x) => x - Math.floor(x)
+    const smooth = (a, b, x) => {
+      const t = Math.min(Math.max((x - a) / (b - a), 0), 1)
+      return t * t * (3 - 2 * t)
+    }
+    const cover = (uv, grad, perspective) => {
+      const level = Math.log2(pitch * grad)
+      const step = 2 ** Math.ceil(level)
+      const s = uv / step
+      const half = (line / 2) * grad / step
+      const aa = (band / 2) * grad / step
+      const coarse = 1 - smooth(half - aa, half + aa, Math.abs(fract(s + 0.5) - 0.5))
+      if (!perspective) return coarse
+      const fine = 1 - smooth(2 * (half - aa), 2 * (half + aa), Math.abs(fract(2 * s + 0.5) - 0.5))
+      return coarse + (fine - coarse) * (Math.ceil(level) - level)
+    }
+    // The gradient the level steps at, from a 2^-6 uv period to 2^-5.
+    const edge = 2 ** -6 / pitch
+    let jump = 0
+    let ortho = 0
+    for (let uv = 0; uv < 2 ** -3; uv += 2 ** -12) {
+      jump = Math.max(jump, Math.abs(cover(uv, edge * (1 - 1e-9), true) - cover(uv, edge * (1 + 1e-9), true)))
+      ortho = Math.max(ortho, Math.abs(cover(uv, edge * (1 - 1e-9), false) - cover(uv, edge * (1 + 1e-9), false)))
+    }
+    expect(jump).toBeLessThan(1e-6)
+    // Where the orthographic camera switches outright, every other line goes.
+    expect(ortho).toBeGreaterThan(0.9)
+  })
 })
 
 describe('setCutHatch', () => {

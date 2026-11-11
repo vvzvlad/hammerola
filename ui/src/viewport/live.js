@@ -9,6 +9,7 @@
 // down, put it back on the replacement, and say whether a gesture is in
 // progress.
 
+import { standFrame, syncCameraTarget } from "./camera.js";
 import { internals } from "./internals.js";
 import { IDLE_MS } from "./options.js";
 import { captureSection, restoreSection } from "./section.js";
@@ -18,6 +19,8 @@ import { statesOf } from "./parts.js";
 export function cameraState(viewer) {
   try {
     if (!viewer) return null;
+    // The zoom is the eye's distance to `Camera.target` under perspective.
+    syncCameraTarget(viewer);
     if (typeof viewer.getCameraLocationSettings === "function") {
       const c = viewer.getCameraLocationSettings();
       return { position: c.position, quaternion: c.quaternion,
@@ -80,8 +83,7 @@ export function restoreLive(vp, keep) {
     if (c && typeof viewer.setCameraLocationSettings === "function") {
       // notify: false — this is restoring the frame the reader already had, not
       // a camera move anything downstream should react to.
-      viewer.setCameraLocationSettings(c.position, c.quaternion, c.target,
-                                       c.zoom, false);
+      standFrame(viewer, c, false);
     }
   } catch (error) {
     console.warn("live camera", error);

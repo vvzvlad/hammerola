@@ -16,6 +16,7 @@
 import {
   EVENT_ERROR, EVENT_MODEL, EVENT_PROGRESS, EVENT_STATE, EVENT_TOOL, emit,
 } from "./events.js";
+import { standFrame } from "./camera.js";
 import { settleCoplanar } from "./coplanar.js";
 import { safeHatch, setCutHatch } from "./hatch.js";
 import { installHoldKey } from "./holdkey.js";
@@ -70,6 +71,9 @@ const INITIAL_STATE = {
   // The renderer's pixel ratio: the display's own when true, 1 when false —
   // the interface's "Retina resolution" setting (store.js remembers it).
   retina: true,
+  // The camera: perspective when true, orthographic when false — the
+  // interface's "Perspective" setting (store.js remembers it).
+  perspective: false,
   // The bar's Studio: the fork's studio look (`Viewer.setStudio`), not the
   // library's Studio tab.
   studio: false,
@@ -266,7 +270,7 @@ export class HmrViewport extends HTMLElement {
     this.state = { ...INITIAL_STATE };
     this.applied = {
       hidden: null, ghost: null, selected: undefined, camera: null,
-      cutHatch: null, studio: false,
+      cutHatch: null, studio: false, perspective: false,
     };
     this.viewer = null;
     // The three namespace the library brought, null until `show()` has it.
@@ -277,6 +281,9 @@ export class HmrViewport extends HTMLElement {
     this.chrome = [0, 0];
     this.chromeKnown = false;
     this.zoomAnchor = null;
+    // The point a perspective wheel zoom holds still, with the pixel and the
+    // camera it holds for (zoom.js).
+    this.zoomPoint = null;
     this.orbitAnchor = null;
     this.sectionSeed = null;
     this.measurePicks = [];
@@ -704,6 +711,8 @@ export class HmrViewport extends HTMLElement {
       // would make `keepSectionCut` re-assert clipping on a scene being torn
       // down.
       this.sectionSeed = null;
+      // A point of the outgoing geometry, under a camera this render rebuilds.
+      this.zoomPoint = null;
       // The outline children hung on the scene's own ObjectGroups, so they are
       // gone with it — the rebuild memo has to be, or it would suppress the
       // first outline of the new scene (outline.js).
@@ -753,7 +762,11 @@ export class HmrViewport extends HTMLElement {
       // is framed on them as well as on the parts.
       const entry = (Array.isArray(this.state.views) ? this.state.views : [])
         .find((one) => one && one.id === named);
-      this.viewer.render(framedWithBeds(scene, entry), renderOptions, viewerOptions);
+      // The camera the reader chose, built so rather than switched after the
+      // frame: `render()` makes a new one every time.
+      const perspective = !!this.state.perspective;
+      this.viewer.render(framedWithBeds(scene, entry), renderOptions,
+                         { ...viewerOptions, ortho: !perspective });
       // And back into the new THREE.Scene `render()` just built. The namespace
       // is handed over here because this is where the page has it.
       this.handle.attach(library.THREE);
@@ -803,10 +816,10 @@ export class HmrViewport extends HTMLElement {
       this.drawnKey = this.state.buildKey;
       this.lastPick = null;
       // Studio is carried over: the viewer keeps it on for a new model
-      // (`setStudio`).
+      // (`setStudio`). The camera is the one just built.
       this.applied = {
         hidden: null, ghost: null, selected: undefined, camera: null,
-        cutHatch: null, studio: this.applied.studio,
+        cutHatch: null, studio: this.applied.studio, perspective,
       };
       this.reconcile();
       if (keep) restoreLive(this, keep);
@@ -902,6 +915,18 @@ export class HmrViewport extends HTMLElement {
       if (s.studio) this.box.style.setProperty("--tcv-bg-color", "var(--studio-bg)");
       else this.box.style.removeProperty("--tcv-bg-color");
       this.applied.studio = s.studio;
+    }
+    // The camera, switched on the scene standing: the library keeps the eye,
+    // the turn and the zoom across the switch and draws a frame, and the frame
+    // on screen is stood again as the new camera shows it (`standFrame`).
+    // Only on a scene that rendered: after a failed render the library has no
+    // camera and `switchCamera` throws, and the next render builds the one
+    // `state.perspective` names.
+    if (!!s.perspective !== this.applied.perspective && internals(this.viewer)) {
+      const frame = cameraState(this.viewer);
+      this.viewer.switchCamera(!s.perspective);
+      if (frame) standFrame(this.viewer, frame, true);
+      this.applied.perspective = !!s.perspective;
     }
     // The pixel ratio, asked of the renderer rather than memo'd in `applied`
     // (which every render resets): `setPixelRatio` reallocates the drawing
@@ -1110,9 +1135,7 @@ export class HmrViewport extends HTMLElement {
   setCamera(c) {
     try {
       if (this.viewer && c && typeof this.viewer.setCameraLocationSettings === "function") {
-        this.viewer.setCameraLocationSettings(
-          c.position || null, c.quaternion || null, c.target || null,
-          Number.isFinite(c.zoom) ? c.zoom : null, false);
+        standFrame(this.viewer, c, false);
       }
     } catch (error) {
       console.warn("camera", error);

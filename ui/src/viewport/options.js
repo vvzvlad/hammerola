@@ -63,11 +63,9 @@ export const renderOptions = {
 };
 
 export const viewerOptions = {
-  // Orthographic, and load-bearing: under ortho every world point on the ray
-  // through a pixel has the same offset from the camera once the view-axis
-  // component is dropped, so the wheel zoom, swipe pan and cursor pivot need no
-  // depth and no picking. `gestureInternals` checks `isOrthographicCamera` and
-  // leaves everything to the library (its centre zoom) under perspective.
+  // The camera a render starts with when nobody says otherwise. The reader's
+  // Settings choose it (`perspective` in element.js's state, which overrides
+  // this at every render), and every gesture and widget answers for both.
   ortho: true,
   // `trackball`, not `orbit`: OrbitControls clamps the polar angle, so you
   // cannot get under a part. CADTrackballControls defaults to

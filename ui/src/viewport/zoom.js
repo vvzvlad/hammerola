@@ -1,17 +1,17 @@
 // Zoom to the cursor, on top of a trackball that zooms to the centre.
 //
-// `TrackballControls._zoomCamera` scales `camera.zoom` and moves nothing
+// `TrackballControls._zoomCamera` scales `camera.zoom` (ortho) or walks the
+// camera along its axis to the target (perspective) and moves nothing
 // sideways, with no option to change it. OrbitControls has `zoomToCursor`, but
 // it clamps the polar angle, which is why options.js picks the trackball.
 //
-// THE CAMERA IS ORTHOGRAPHIC, and that makes the correction not just exact but
-// DEPTH-FREE. Every world point on the ray through the cursor lands on the same
-// pixel, and zoom scales the frustum without touching the view axis, so all of
-// them stay on that pixel together. There is nothing to pick: whether the cursor
-// is over a face, an edge or empty background cannot change the answer, which is
-// also why this has no "cursor over the background" special case to get wrong.
+// UNDER ORTHO the correction is not just exact but DEPTH-FREE. Every world point
+// on the ray through the cursor lands on the same pixel, and zoom scales the
+// frustum without touching the view axis, so all of them stay on that pixel
+// together. There is nothing to pick: whether the cursor is over a face, an edge
+// or empty background cannot change the answer.
 //
-// THE CORRECTION. Write R and U for the camera's screen axes, C for its position
+// THE ORTHO CORRECTION. Write R and U for the camera's screen axes, C for its position
 // and take any point P on the cursor ray. three.js divides the frustum by `zoom`
 // in `OrthographicCamera.updateProjectionMatrix`, so P's horizontal NDC is
 //
@@ -27,13 +27,75 @@
 // camera towards the cursor; zooming out walks it back by the same law, so a
 // scroll down undoes a scroll up.
 //
+// UNDER PERSPECTIVE the zoom is `camera_distance / |C - T|` and the controls
+// scale `C - T` by `s = z0/z1`: a homothety of the camera about the target T.
+// The same homothety about a point P of the cursor ray keeps that ray on its
+// pixel (it moves the eye along the ray and turns nothing), and the two differ
+// by a pan of
+//
+//     d = (1 - z0/z1) * (P - T0)
+//
+// Any P of the ray holds the pixel; what P sets is how near the eye comes, since
+// the homothety scales the eye's distance to P by s. So P is taken at the depth
+// of what the picker finds under the cursor: the part there grows by exactly the
+// zoom and no notch walks the eye through it. Over the background P stands at
+// the target's depth. P stays where it is in the world under this zoom, so it is
+// picked again only when the cursor stands on another pixel or something else
+// moved the camera.
+//
 // TWO LISTENERS, not one, and that is the subtle half: the anchor has to be
 // measured against the camera the reader was LOOKING at. By the time the event
 // bubbles back out of the canvas the controls have already changed `zoom`
 // underneath it.
 
-import { cameraBasis, ndcAt, ndcOffset, panCamera } from "./camera.js";
+import {
+  cameraBasis, ndcAt, ndcOffset, panCamera, pointAtDepth, syncCameraTarget,
+} from "./camera.js";
 import { gestureInternals } from "./internals.js";
+import { dot3 } from "./math.js";
+
+/** Whether two camera poses are one, to a billionth of the distance to the
+ *  target: the library writes a position back as `target + (position -
+ *  target)`, which may move its last bit. */
+const samePose = (was, b) => {
+  const scale = Math.hypot(b.target[0] - b.C[0], b.target[1] - b.C[1],
+                           b.target[2] - b.C[2]) * 1e-9;
+  return [0, 1, 2].every((i) => Math.abs(was.C[i] - b.C[i]) <= scale
+    && Math.abs(was.target[i] - b.target[i]) <= scale);
+};
+
+/**
+ * The world point a perspective zoom is held about, or null.
+ *
+ * The picked point is put back on the cursor ray at its own depth, as the orbit
+ * pivot is: the picker prefers a vertex or an edge near the cursor to the face
+ * under it, and holding that corner would let the model slide under the cursor.
+ *
+ * `vp.zoomPoint` remembers the last answer with the pixel it was taken at and
+ * the camera it holds for (the one it was picked under, then the one each
+ * correction leaves): the same pixel under that same camera shows the same
+ * point, and a pick costs a render of the pick buffer.
+ */
+function zoomPoint(vp, g, b, event, ndc) {
+  const was = vp.zoomPoint;
+  if (was && was.x === event.clientX && was.y === event.clientY
+      && samePose(was, b)) return was.P;
+  let depth = dot3([b.target[0] - b.C[0], b.target[1] - b.C[1],
+                    b.target[2] - b.C[2]], b.view);
+  try {
+    const rect = g.canvas.getBoundingClientRect();
+    const hit = g.picker.pickAt(event.clientX - rect.left, event.clientY - rect.top);
+    const at = hit && hit.point;
+    const picked = at && dot3([at.x - b.C[0], at.y - b.C[1], at.z - b.C[2]], b.view);
+    if (picked > 0) depth = picked;
+  } catch (error) {
+    console.warn("zoom pick", error);
+  }
+  const P = pointAtDepth(g, b, ndc[0], ndc[1], depth);
+  vp.zoomPoint = P ? { x: event.clientX, y: event.clientY, P, C: b.C, target: b.target }
+    : null;
+  return P;
+}
 
 /** Capture phase: remember the camera the wheel is about to zoom. */
 export function zoomWheelBefore(vp, event) {
@@ -45,10 +107,17 @@ export function zoomWheelBefore(vp, event) {
   const ndc = ndcAt(g.canvas, event);
   if (!ndc) return;
   try {
+    // Under perspective the zoom is the eye's distance to `Camera.target`.
+    if (!g.cam.isOrthographicCamera) syncCameraTarget(viewer);
     const z0 = viewer.getCameraZoom();
     if (!Number.isFinite(z0) || z0 <= 0) return;
     const b = cameraBasis(viewer, g);
     if (!b) return;
+    if (!g.cam.isOrthographicCamera) {
+      const P = zoomPoint(vp, g, b, event, ndc);
+      if (P) vp.zoomAnchor = { z0, P, g, target: b.target };
+      return;
+    }
     const off = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
     if (!off) return;
     vp.zoomAnchor = { z0, off, C: b.C, target: b.target };
@@ -72,6 +141,18 @@ export function zoomWheelAfter(vp) {
     // the camera anyway would drift the model sideways at the end of the travel.
     const k = 1 - a.z0 / z1;
     if (!Number.isFinite(k) || k === 0) return;
+    if (a.P) {
+      // From the camera the controls left: a perspective zoom moved it.
+      const b = cameraBasis(viewer, a.g);
+      if (!b) return;
+      const d = [(a.P[0] - a.target[0]) * k, (a.P[1] - a.target[1]) * k,
+                 (a.P[2] - a.target[2]) * k];
+      if (!d.every(Number.isFinite)) return;
+      panCamera(viewer, b, d);
+      const after = vp.zoomPoint && cameraBasis(viewer, a.g);
+      if (after) Object.assign(vp.zoomPoint, { C: after.C, target: after.target });
+      return;
+    }
     const d = [a.off[0] * k, a.off[1] * k, a.off[2] * k];
     if (!d.every(Number.isFinite)) return;
     panCamera(viewer, a, d);
