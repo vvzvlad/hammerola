@@ -153,6 +153,8 @@ export function rayAngle(ray, centre, axis) {
   const along = dot3(ray.dir, axis);
   if (!along) return null;
   const t = (dot3(axis, centre) - dot3(axis, ray.origin)) / along;
+  // Behind the eye of a perspective camera the plane is not on screen.
+  if (ray.fromEye && !(t > 0)) return null;
   const on = [ray.origin[0] + t * ray.dir[0] - centre[0],
               ray.origin[1] + t * ray.dir[1] - centre[1],
               ray.origin[2] + t * ray.dir[2] - centre[2]];
@@ -168,12 +170,6 @@ export function rayAngle(ray, centre, axis) {
 /** A step of a dragged angle in degrees, brought into (-180, 180]: summed step
  *  by step, a sweep past the half turn keeps counting instead of jumping back. */
 export const unwrapped = (step) => step - 360 * Math.ceil((step - 180) / 360);
-
-/** How far a slider goes for a hand that moved by `world` (the world vector the
- *  screen displacement spans, `ndcOffset`): `alongAxis` in gizmo.js, the
- *  component along the unit `axis` over `sine²`, `sine` being how much of the
- *  axis survives the projection. */
-export const slidBy = (world, axis, sine) => dot3(world, axis) / (sine * sine);
 
 /** `value` held to the joint's limits. */
 export const withinLimits = (joint, value) => clamp(value, joint.limits[0], joint.limits[1]);

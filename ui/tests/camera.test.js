@@ -10,11 +10,14 @@
 
 import { describe, expect, it } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import {
-  cameraBasis, canvasXY, ndcAt, ndcOffset, ndcRay, panCamera, projectPoint,
+  cameraBasis, canvasXY, ndcAt, ndcOffset, ndcRay, panCamera, pointAtDepth, projectPoint,
+  rayLineParam, rayPlanePoint, sightAt, standFrame, syncCameraTarget,
 } from '../src/viewport/camera.js'
 import { dot3 } from '../src/viewport/math.js'
-import { eventAt, fakeViewer, orthoCamera } from './fakes.js'
+import { eventAt, fakeViewer, orthoCamera, perspectiveCamera } from './fakes.js'
 
 const RECT = { left: 40, top: 20, width: 800, height: 600 }
 
@@ -22,6 +25,15 @@ function scene(options = {}) {
   const camera = orthoCamera({
     eye: [10, -5, 60], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1],
     ...options,
+  })
+  const viewer = fakeViewer({ camera, rect: RECT })
+  return { camera, viewer, g: internalsOf(viewer) }
+}
+
+/** The same, under a real perspective camera looking down a slant. */
+function perspectiveScene() {
+  const camera = perspectiveCamera(THREE, {
+    eye: [10, -5, 60], right: [1, 0, 0], up: [0, 0.8, 0.6], forward: [0, 0.6, -0.8],
   })
   const viewer = fakeViewer({ camera, rect: RECT })
   return { camera, viewer, g: internalsOf(viewer) }
@@ -202,14 +214,19 @@ describe('ndcRay', () => {
     expect([b.eye.x, b.eye.y, b.eye.z]).toEqual(before)
   })
 
-  it('declines a camera that is not orthographic', () => {
-    // The viewport's standing answer to a non-ortho camera, the same one
-    // `gestureInternals` gives: decline. Nothing here serves perspective, so
-    // nothing here may quietly hand back an ortho ray for one.
-    const { viewer, g } = scene()
+  it('starts every perspective ray at the eye, and every point of it is on its pixel', () => {
+    const { camera, viewer, g } = perspectiveScene()
     const b = cameraBasis(viewer, g)
-    g.cam.isOrthographicCamera = false
-    expect(ndcRay(g, b.eye, b.view, 0.4, -0.7)).toBeNull()
+    const ndc = [0.4, -0.7]
+    const ray = ndcRay(g, b.eye, b.view, ndc[0], ndc[1])
+    expect(ray.origin).toEqual(b.C)
+    expect(ray.fromEye).toBe(true)
+    expect(Math.hypot(...ray.dir)).toBeCloseTo(1, 12)
+    for (const t of [5, 60, 400]) {
+      const back = camera.project(along(ray, t))
+      expect(back[0]).toBeCloseTo(ndc[0], 10)
+      expect(back[1]).toBeCloseTo(ndc[1], 10)
+    }
   })
 
   it('is null when the projection comes back unusable', () => {
@@ -270,5 +287,143 @@ describe('projectPoint', () => {
     const { viewer, g } = scene()
     viewer.camera.getPosition = () => ({ x: 0, y: 0, z: 0 })
     expect(projectPoint(g, [1, 2, 3])).toBeNull()
+  })
+})
+
+describe('pointAtDepth', () => {
+  // Asked what it is for: the point is on the pixel's ray, at the depth asked
+  // for along the view axis, under either camera.
+  for (const [name, make] of [['ortho', scene], ['perspective', perspectiveScene]]) {
+    it(`stands on its pixel at the depth it was asked for, under ${name}`, () => {
+      const { camera, viewer, g } = make()
+      const b = cameraBasis(viewer, g)
+      for (const depth of [20, 60, 150]) {
+        const p = pointAtDepth(g, b, 0.3, -0.55, depth)
+        const back = camera.project(p)
+        expect(back[0]).toBeCloseTo(0.3, 9)
+        expect(back[1]).toBeCloseTo(-0.55, 9)
+        expect(dot3([p[0] - b.C[0], p[1] - b.C[1], p[2] - b.C[2]], b.view)).toBeCloseTo(depth, 9)
+      }
+    })
+  }
+
+  it('is under ortho the offset of `ndcOffset` walked out along the view, as the pivot always was', () => {
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    const off = ndcOffset(g, b.eye, b.view, 0.3, -0.55)
+    const p = pointAtDepth(g, b, 0.3, -0.55, 42)
+    for (let i = 0; i < 3; i += 1) expect(p[i]).toBeCloseTo(b.C[i] + off[i] + 42 * b.view[i], 12)
+  })
+})
+
+describe('sightAt', () => {
+  it('is the view axis under ortho and the ray from the eye under perspective', () => {
+    const ortho = scene()
+    const ob = cameraBasis(ortho.viewer, ortho.g)
+    expect(sightAt(ortho.g, ob, [30, 30, 0])).toBe(ob.view)
+    const persp = perspectiveScene()
+    const pb = cameraBasis(persp.viewer, persp.g)
+    const sight = sightAt(persp.g, pb, [30, 30, 0])
+    const to = [30 - pb.C[0], 30 - pb.C[1], 0 - pb.C[2]]
+    const length = Math.hypot(...to)
+    for (let i = 0; i < 3; i += 1) expect(sight[i]).toBeCloseTo(to[i] / length, 12)
+    expect(sightAt(persp.g, pb, pb.C)).toBeNull()
+  })
+})
+
+describe('rayLineParam and rayPlanePoint', () => {
+  const AXIS = [0, 0.6, 0.8]
+  const AT = [12, 30, -4]
+
+  it('moves under ortho by the hand along the axis over sine squared', () => {
+    // What a slider joint and an arrow always were under ortho: the hand's
+    // screen-plane world vector along the axis, over the square of the part of
+    // the axis the view leaves.
+    const { viewer, g } = scene()
+    const b = cameraBasis(viewer, g)
+    const from = ndcRay(g, b.eye, b.view, 0.1, 0.2)
+    const to = ndcRay(g, b.eye, b.view, -0.3, 0.5)
+    const hand = ndcOffset(g, b.eye, b.view, -0.3, 0.5)
+      .map((v, i) => v - ndcOffset(g, b.eye, b.view, 0.1, 0.2)[i])
+    const cos = dot3(AXIS, b.view)
+    expect(rayLineParam(to, AT, AXIS) - rayLineParam(from, AT, AXIS))
+      .toBeCloseTo(dot3(hand, AXIS) / (1 - cos * cos), 9)
+  })
+
+  it('answers the point of the line nearest the ray under perspective', () => {
+    const { viewer, g } = perspectiveScene()
+    const b = cameraBasis(viewer, g)
+    const ray = ndcRay(g, b.eye, b.view, -0.2, 0.35)
+    const t = rayLineParam(ray, AT, AXIS)
+    const onLine = AT.map((v, i) => v + t * AXIS[i])
+    const w = onLine.map((v, i) => v - ray.origin[i])
+    const onRay = ray.origin.map((v, i) => v + dot3(w, ray.dir) * ray.dir[i])
+    const gap = onLine.map((v, i) => v - onRay[i])
+    // The shortest segment between the two is square to both.
+    expect(dot3(gap, AXIS)).toBeCloseTo(0, 9)
+    expect(dot3(gap, ray.dir)).toBeCloseTo(0, 9)
+  })
+
+  it('meets a plane behind an ortho ray origin, and refuses one behind the eye', () => {
+    const ortho = scene()
+    const ob = cameraBasis(ortho.viewer, ortho.g)
+    // The plane z = 80 is behind the camera at z = 60 that looks down -z.
+    expect(rayPlanePoint(ndcRay(ortho.g, ob.eye, ob.view, 0, 0), [0, 0, 80], [0, 0, 1])).not.toBeNull()
+    const persp = perspectiveScene()
+    const pb = cameraBasis(persp.viewer, persp.g)
+    const ray = ndcRay(persp.g, pb.eye, pb.view, 0, 0)
+    expect(rayPlanePoint(ray, [0, 0, 80], [0, 0, 1])).toBeNull()
+    const hit = rayPlanePoint(ray, [0, 0, 0], [0, 0, 1])
+    expect(hit[2]).toBeCloseTo(0, 9)
+  })
+})
+
+describe('syncCameraTarget and standFrame', () => {
+  const gap = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  const kept = (viewer) => {
+    const t = viewer.camera.target
+    return [t.x, t.y, t.z]
+  }
+
+  it('reads the zoom of the view again after a pan, under perspective', () => {
+    // A pan moves the controls' target alone; the library's zoom measured
+    // against the target it was built with then reads a view nobody sees.
+    const { viewer, g } = perspectiveScene()
+    const z0 = viewer.getCameraZoom()
+    panCamera(viewer, cameraBasis(viewer, g), [30, 0, 0])
+    expect(viewer.getCameraZoom()).toBeLessThan(z0)
+    syncCameraTarget(viewer)
+    expect(kept(viewer)).toEqual(viewer.getCameraTarget())
+    expect(viewer.getCameraZoom()).toBeCloseTo(z0, 12)
+  })
+
+  it('stands the eye camera_distance / zoom back along the frame, under perspective', () => {
+    const { camera, viewer } = perspectiveScene()
+    const target = [1, 2, 3]
+    const frame = { position: [1, 2, 23], quaternion: null, target, zoom: 2 }
+    standFrame(viewer, frame, false)
+    expect(gap(camera.eye, target)).toBeCloseTo(camera.distance / 2, 9)
+    expect(camera.eye[2] - target[2]).toBeCloseTo(camera.distance / 2, 9)
+    // Written as a position: `setZoom` would walk the eye again.
+    expect(viewer.locationCalls.at(-1).zoom).toBeNull()
+    expect(kept(viewer)).toEqual(target)
+    expect(viewer.getCameraZoom()).toBeCloseTo(2, 12)
+  })
+
+  it('stands the eye camera_distance back and writes the zoom, under ortho', () => {
+    const { camera, viewer } = scene()
+    viewer.camera.camera_distance = 100
+    const target = [1, 2, 3]
+    standFrame(viewer, { position: [1, 2, 23], quaternion: null, target, zoom: 2 }, true)
+    expect(camera.eye).toEqual([1, 2, 103])
+    const call = viewer.locationCalls.at(-1)
+    expect(call.zoom).toBe(2)
+    expect(call.notify).toBe(true)
+  })
+
+  it('keeps the frame eye where it is when the frame carries no zoom, under perspective', () => {
+    const { camera, viewer } = perspectiveScene()
+    standFrame(viewer, { position: [1, 2, 23], quaternion: null, target: [1, 2, 3], zoom: null }, false)
+    expect(camera.eye).toEqual([1, 2, 23])
   })
 })

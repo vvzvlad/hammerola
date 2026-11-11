@@ -1,13 +1,14 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Nine things are kept, all under the `hammerola.` prefix the rest of the site
-// uses (`hammerola.pointing_device`, viewport/options.js). Eight live in
+// Ten things are kept, all under the `hammerola.` prefix the rest of the site
+// uses (`hammerola.pointing_device`, viewport/options.js). Nine live in
 // `localStorage`; the theme is a cookie because the server has to know it to
-// send the page already painted (see the theme section). Three of the eight are
+// send the page already painted (see the theme section). Three of the nine are
 // keyed by project (notes, the pointer, and the BOM's Sourced and Placed marks,
 // by design too) so that editing one model and viewing another do not collide;
-// the token, the project-list arrangement, the tab strip, whether it is drawn
-// and the retina setting are one key for the whole site.
+// the token, the project-list arrangement, the tab strip, whether it is drawn,
+// the retina setting and the camera's perspective are one key for the whole
+// site.
 //
 // EVERY access goes through the two functions at the top and the cookie's two
 // at the bottom. `localStorage` and `document.cookie` THROW on the getter in a
@@ -307,6 +308,19 @@ const RETINA_KEY = `${NS}retina`;
 export const readRetina = () => read(RETINA_KEY) !== 'off';
 
 export const writeRetina = (on) => write(RETINA_KEY, on ? 'on' : 'off');
+
+// -- whether the model is drawn in perspective -------------------------------
+// The Settings card's "Perspective": on, the model's camera is perspective; off,
+// orthographic (viewport/element.js). One key for the whole site, like the
+// resolution: it is how this reader likes to look at a model, not any model's.
+//
+// Nothing stored reads as off; only the exact word `on` turns it on.
+
+const PERSPECTIVE_KEY = `${NS}perspective`;
+
+export const readPerspective = () => read(PERSPECTIVE_KEY) === 'on';
+
+export const writePerspective = (on) => write(PERSPECTIVE_KEY, on ? 'on' : 'off');
 
 // -- whether the header draws the strip of projects --------------------------
 // The Settings card's "Project tabs". The owner found the strip in the way, so

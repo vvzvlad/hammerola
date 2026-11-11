@@ -2,20 +2,23 @@
 // about the middle of the canvas.
 //
 // The trackball turns the model about `target`, which is always at the canvas
-// centre: `update()` rebuilds the camera as `target + eye` and, on the ortho
-// camera, ends in `lookAt(target)`. Moving the target to the picked point does
-// not work, because `lookAt` would turn the camera to face it and the view would
-// swing on press; the pivot must stay on the view axis.
+// centre: `update()` rebuilds the camera as `target + eye`, facing `target`.
+// Moving the target to the picked point does not work, because the camera would
+// turn to face it and the view would swing on press; the pivot must stay on the
+// view axis.
 //
 // So, like the cursor zoom: let the library rotate, then slide the camera
 // sideways so the grabbed point lands back on the pixel it was grabbed at. With
 // C the camera, v the unit view axis, P the grabbed point and n its pixel in
-// NDC:
+// NDC, the point the pixel shows at P's depth is Q = pointAtDepth(n, (P - C).v),
+// and
 //
-//     d = perp(P - C) - ndcOffset(n)
+//     d = P - Q
 //
-// and moving camera and target both by d puts it right. Recomputed from scratch
-// every frame, so nothing accumulates.
+// moves camera and target so the pixel's ray passes through P again: a pan
+// keeps the ray's direction and the depth, so Q moves onto P. Under ortho that
+// is `perp(P - C) - ndcOffset(n)`. Recomputed from scratch every frame, so
+// nothing accumulates.
 //
 // Measured in Chrome over CDP with trusted pointer events (ortho, 1266x722
 // canvas, 15-step drag of (+140, -70) px), distance of the grabbed point from
@@ -34,7 +37,7 @@
 // startup: `render()` builds a new controls object on every view switch and live
 // reload, so a one-time subscription would stop working after the first swap.
 
-import { cameraBasis, ndcAt, ndcOffset, panCamera } from "./camera.js";
+import { cameraBasis, ndcAt, panCamera, pointAtDepth } from "./camera.js";
 import { gestureInternals, internals } from "./internals.js";
 import { dot3 } from "./math.js";
 
@@ -82,14 +85,11 @@ export function installOrbit(vp) {
     try {
       const b = cameraBasis(viewer, g);
       if (!b) return;
-      const off = ndcOffset(g, b.eye, b.view, a.ndc[0], a.ndc[1]);
-      if (!off) return;
       const rel = [a.pivot[0] - b.C[0], a.pivot[1] - b.C[1], a.pivot[2] - b.C[2]];
-      const along = dot3(rel, b.view);
-      if (!Number.isFinite(along)) return;
-      const d = [rel[0] - along * b.view[0] - off[0],
-                 rel[1] - along * b.view[1] - off[1],
-                 rel[2] - along * b.view[2] - off[2]];
+      const shown = pointAtDepth(g, b, a.ndc[0], a.ndc[1], dot3(rel, b.view));
+      if (!shown) return;
+      const d = [a.pivot[0] - shown[0], a.pivot[1] - shown[1],
+                 a.pivot[2] - shown[2]];
       if (!d.every(Number.isFinite)) return;
       // The first frame of every gesture, or a change that was not a rotation:
       // nothing to correct, and panning would render for nothing.
@@ -177,19 +177,13 @@ export function installOrbit(vp) {
     if (!point) return;
     const b = cameraBasis(viewer, g);
     if (!b) return;
-    const off = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
-    if (!off) return;
     const rel = [point.x - b.C[0], point.y - b.C[1], point.z - b.C[2]];
-    const along = dot3(rel, b.view);
-    if (!Number.isFinite(along)) return;
     // The picked point snapped onto the ray through the cursor: its depth from
     // the picker, its sideways position from the projection. The two differ by a
     // fraction of a pixel, which would otherwise be a twitch on the first frame;
     // this keeps the correction zero until the model moves.
-    const pivot = [b.C[0] + off[0] + along * b.view[0],
-                   b.C[1] + off[1] + along * b.view[1],
-                   b.C[2] + off[2] + along * b.view[2]];
-    if (!pivot.every(Number.isFinite)) return;
+    const pivot = pointAtDepth(g, b, ndc[0], ndc[1], dot3(rel, b.view));
+    if (!pivot) return;
     vp.orbitAnchor = { pivot, ndc, tb };
     tb.addEventListener("change", onChange);
     // On the window and in the capture phase, for the same reason the tool drags

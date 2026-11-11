@@ -57,21 +57,15 @@ export function internals(viewer) {
  *
  * Both wheel gestures ask it and so does the press that anchors the cursor
  * pivot: the event is a `wheel` or a `pointerdown` and the questions are the
- * same three — is the library still where we left it, did this land on the
+ * same two — is the library still where we left it, and did this land on the
  * CANVAS (the interface's own chrome bubbles through the same container and the
- * controls ignore those), and is the camera orthographic.
- *
- * Perspective would need the depth of the point under the cursor, i.e. the
- * picker, and a whole second code path for a cursor over the background. The
- * viewport is ortho by construction (options.js), so that path would be dead
- * code; a viewer that is somehow not ortho keeps the library's own centre zoom
- * and gets no swipe pan and no cursor pivot.
+ * controls ignore those). Either camera is served: the maths in camera.js
+ * answers for both.
  */
 export function gestureInternals(viewer, event) {
   const g = internals(viewer);
   if (!g) return null;
   if (event.target !== g.canvas) return null;
-  if (!g.cam.isOrthographicCamera) return null;
   if (typeof viewer.getCameraZoom !== "function") return null;
   if (typeof viewer.getCameraTarget !== "function") return null;
   if (typeof viewer.setCameraLocationSettings !== "function") return null;

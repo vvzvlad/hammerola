@@ -31,7 +31,9 @@ import {
 import { createPins, pinDirection } from '../src/viewport/pins.js'
 import { PINS_ORDER, RINGS_ORDER } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
-import { fakeGroup, fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
+import {
+  fakeGroup, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera, realCamera,
+} from './fakes.js'
 
 const widgets = []
 
@@ -73,8 +75,7 @@ const LENGTH = PIN_LENGTH_FRACTION * BB_HALF
  * The library's GPU picker answers the background — no part under any pixel —
  * until a test stands a part there (`picks`).
  */
-function scene(pins, payload = { bb: BB }) {
-  const model = orthoCamera()
+function scene(pins, payload = { bb: BB }, model = orthoCamera()) {
   realCamera(THREE, model)
   const viewer = fakeViewer({ camera: model, rect: RECT })
   viewer.idPicker.pickAt = vi.fn(() => null)
@@ -256,6 +257,22 @@ describe('where an arrow stands', () => {
     model.cam.zoom = 2
     rendered(viewer)
     expect(length(group, group.children[0])).toBeCloseTo((PIN_PX * K) / 2, 9)
+  })
+
+  it('falls back per arrow under the perspective camera, and draws none behind the eye', () => {
+    // The eye at z = 60 looking down -Z: a pixel at depth d is
+    // 2 d tan(15 deg) / 600 of the world, so each arrow is its own size.
+    const perPx = (depth) => (2 * depth * Math.tan(Math.PI / 12)) / RECT.height
+    const { viewer, group } = scene([
+      { id: 'near', p: [0, 0, 45], n: [0, 0, 1] },
+      { id: 'far', p: [0, 0, 30], n: [0, 0, 1] },
+      { id: 'behind', p: [0, 0, 70], n: [0, 0, 1] },
+    ], null, perspectiveCamera(THREE))
+    rendered(viewer)
+    const [near, far, behind] = group.children
+    expect(length(group, near)).toBeCloseTo(PIN_PX * perPx(15), 9)
+    expect(length(group, far)).toBeCloseTo(PIN_PX * perPx(30), 9)
+    expect(behind.visible).toBe(false)
   })
 
   it('follows the list: new comments get an arrow, gone ones lose theirs', () => {

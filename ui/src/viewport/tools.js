@@ -27,11 +27,13 @@
 import {
   EVENT_FACE, EVENT_JOINTS, EVENT_MEASURE, EVENT_MENU, EVENT_PICK, EVENT_PLACE, emit,
 } from "./events.js";
-import { cameraBasis, canvasXY, ndcAt, ndcOffset, ndcRay } from "./camera.js";
+import {
+  cameraBasis, canvasXY, ndcAt, ndcRay, rayLineParam, sightAt,
+} from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { internals } from "./internals.js";
 import {
-  jointAbove, jointInWorld, rayAngle, slidBy, unwrapped, withinLimits,
+  jointAbove, jointInWorld, rayAngle, unwrapped, withinLimits,
 } from "./joints.js";
 import { dot3, finite3, sineFromCos, vec3 } from "./math.js";
 import { measureDistance, measureEntity } from "./measure.js";
@@ -299,8 +301,8 @@ export function installTools(vp) {
    * product, whose sign is whichever way the samples happened to wind, and a
    * mesh may be wound inwards. An arrow stood along it would come out of the
    * back of the face. So the camera decides, as it does for the cut in
-   * `placeSectionPlane` (which wants the opposite side). Under the orthographic
-   * camera every pixel looks along the one view axis.
+   * `placeSectionPlane` (which wants the opposite side), against the line it
+   * sees the clicked point along (`sightAt`).
    *
    * Guarded like `seedCut`: a picker or a ray that throws costs the arrow its
    * direction, not the comment its point.
@@ -316,14 +318,16 @@ export function installTools(vp) {
     } catch (error) {
       console.warn("comment normal", error);
     }
-    return towardsReader(g, n);
+    return towardsReader(g, n, entity.point);
   };
 
-  /** `n` turned to face the camera, or null without a normal or a camera. */
-  const towardsReader = (g, n) => {
+  /** `n` at `point` turned to face the camera, or null without a normal or a
+   *  camera. */
+  const towardsReader = (g, n, point) => {
     const basis = n ? cameraBasis(vp.viewer, g) : null;
-    if (!basis) return null;
-    return dot3(n, basis.view) > 0 ? [-n[0], -n[1], -n[2]] : n;
+    const sight = basis && sightAt(g, basis, point);
+    if (!sight) return null;
+    return dot3(n, sight) > 0 ? [-n[0], -n[1], -n[2]] : n;
   };
 
   /** One click of the measure tool. */
@@ -369,18 +373,16 @@ export function installTools(vp) {
    * of the node's parent group (the frame `jointNodes` declares it in): the drag
    * moves the node, never its parent. A revolute plane seen nearly edge-on, or a
    * slider axis pointing nearly at the reader, is refused at the floor the Move
-   * tool hides its quads and arrows at (`GIZMO_MIN_SCALE`): the same hand would
-   * swing the value wildly there.
+   * tool hides its quads and arrows at (`GIZMO_MIN_SCALE`), measured against the
+   * sight line to the point the hand took: the same hand would swing the value
+   * wildly there.
    *
    * A finger never drags a joint: a pinch begun on such a part needs its first
    * finger in the trackball, which a drag would have taken. On a touch screen
    * the slider moves the part.
    */
   const jointGrip = (g, event) => {
-    // Under the perspective camera a screen offset is no world distance at the
-    // part's depth (`ndcOffset`), so the drag is refused there like every other
-    // gesture on a part (`gestureInternals`).
-    if (!vp.jointNodes.size || !g.cam.isOrthographicCamera || event.pointerType === "touch"
+    if (!vp.jointNodes.size || event.pointerType === "touch"
         || event.ctrlKey || event.metaKey || event.shiftKey) {
       return null;
     }
@@ -389,37 +391,41 @@ export function installTools(vp) {
     const held = entity ? jointAbove(vp.jointNodes, entity.id) : null;
     const group = held ? movableGroup(vp.viewer, held.path) : null;
     const parent = group && group.parent;
-    if (!parent) return null;
+    if (!parent || !finite3(entity.point)) return null;
     // As `partCentre` reads it: a joint or a move above may have written a
     // group since the last frame composed the matrix.
     parent.updateWorldMatrix(true, false);
     const { joint } = held.node;
     const { origin, axis } = jointInWorld(joint, parent.matrixWorld.elements);
     const basis = axis ? cameraBasis(vp.viewer, g) : null;
-    const ndc = basis ? ndcAt(g.canvas, event) : null;
-    if (!ndc) return null;
-    const facing = dot3(basis.view, axis);
+    const p = entity.point;
+    const sight = basis && sightAt(g, basis, p);
+    const ndc = sight ? ndcAt(g.canvas, event) : null;
+    const ray = ndc && ndcRay(g, basis.eye, basis.view, ndc[0], ndc[1]);
+    if (!ray) return null;
+    const facing = dot3(sight, axis);
     const value = vp.jointValues[joint.id] || 0;
-    const grip = { joint, axis, start: value, value, ndc };
+    const grip = { joint, axis, start: value, value };
     if (joint.type === "revolute") {
-      if (Math.abs(facing) < GIZMO_MIN_SCALE || !finite3(entity.point)) return null;
+      if (Math.abs(facing) < GIZMO_MIN_SCALE) return null;
       // The point the hand took turns in the plane through it square to the
       // axis, about the axis's foot in that plane. The joint's own origin is
       // any point of the axis, often far along it (a door's hinge at the end
       // of the box): seen at a slant, a plane through it would put the cursor
       // somewhere else and the part would lag or turn against the hand.
-      const p = entity.point;
       const h = dot3([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]], axis);
       const centre = [origin[0] + h * axis[0], origin[1] + h * axis[1], origin[2] + h * axis[2]];
-      const ray = ndcRay(g, basis.eye, basis.view, ndc[0], ndc[1]);
-      const angle = ray ? rayAngle(ray, centre, axis) : null;
+      const angle = rayAngle(ray, centre, axis);
       if (angle === null) return null;
       // `swept` is the unclamped sum of the steps: a hand that runs past a
       // limit leaves the part waiting there until it comes back to it.
       return { ...grip, centre, angle, swept: 0 };
     }
-    const sine = sineFromCos(facing);
-    return sine < GIZMO_MIN_SCALE ? null : { ...grip, sine };
+    if (sineFromCos(facing) < GIZMO_MIN_SCALE) return null;
+    // The slider's line through the point the hand took, and where the ray
+    // under the hand comes closest to it: the arrow's arithmetic in gizmo.js.
+    const from = rayLineParam(ray, p, axis);
+    return from === null ? null : { ...grip, line: p, from };
   };
 
   /** One step of a joint drag: the value under the hand, clamped to the
@@ -428,22 +434,19 @@ export function installTools(vp) {
     const g = internals(vp.viewer);
     const ndc = g ? ndcAt(g.canvas, event) : null;
     const basis = ndc ? cameraBasis(vp.viewer, g) : null;
-    if (!basis) return;
+    const ray = basis && ndcRay(g, basis.eye, basis.view, ndc[0], ndc[1]);
+    if (!ray) return;
     let raw;
     if (grip.joint.type === "revolute") {
-      const ray = ndcRay(g, basis.eye, basis.view, ndc[0], ndc[1]);
-      const angle = ray ? rayAngle(ray, grip.centre, grip.axis) : null;
+      const angle = rayAngle(ray, grip.centre, grip.axis);
       if (angle === null) return;
       grip.swept += unwrapped(angle - grip.angle);
       grip.angle = angle;
       raw = grip.start + grip.swept;
     } else {
-      // The difference of the two ends' offsets, as gizmo.js measures an arrow.
-      const from = ndcOffset(g, basis.eye, basis.view, grip.ndc[0], grip.ndc[1]);
-      const to = ndcOffset(g, basis.eye, basis.view, ndc[0], ndc[1]);
-      if (!from || !to) return;
-      raw = grip.start + slidBy(
-        [to[0] - from[0], to[1] - from[1], to[2] - from[2]], grip.axis, grip.sine);
+      const now = rayLineParam(ray, grip.line, grip.axis);
+      if (now === null) return;
+      raw = grip.start + now - grip.from;
     }
     const value = withinLimits(grip.joint, raw);
     if (value === grip.value) return;
@@ -476,7 +479,7 @@ export function installTools(vp) {
       const dy = event.clientY - press.y;
       press.x = event.clientX;
       press.y = event.clientY;
-      dragSection(vp, g, press.axis, dx, dy);
+      dragSection(vp, g, press.axis, dx, dy, [event.clientX, event.clientY]);
     }
   }
 
@@ -577,7 +580,8 @@ export function installTools(vp) {
         const d0 = d([0, 0, 0]);
         emit(vp, EVENT_PLACE, {
           id: cap.id, name: cap.name, p: cap.point,
-          n: towardsReader(g, [d([1, 0, 0]) - d0, d([0, 1, 0]) - d0, d([0, 0, 1]) - d0]),
+          n: towardsReader(g, [d([1, 0, 0]) - d0, d([0, 1, 0]) - d0, d([0, 0, 1]) - d0],
+                           cap.point),
         });
         return;
       }

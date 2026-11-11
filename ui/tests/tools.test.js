@@ -41,7 +41,7 @@ import { menuOpened } from '../src/longpress.js'
 import { makeViewport, RECT, settled } from './component.js'
 import {
   fakeCapUnits, fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
-  realCamera,
+  perspectiveCamera, realCamera,
 } from './fakes.js'
 
 const teardowns = []
@@ -962,7 +962,7 @@ describe('a press on a part a joint moves', () => {
   /** The pixel of the fake canvas that shows world (x, y): 800 x 600 over 40 x 30. */
   const pixel = ([x, y]) => [(x / 20 + 1) * 400, (1 - y / 15) * 300]
 
-  function jointed(state = { tool: null }) {
+  function jointed(state = { tool: null }, camera = undefined) {
     const frame = new THREE.Group()
     frame.position.set(3, 4, 0)
     frame.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2)
@@ -970,7 +970,7 @@ describe('a press on a part a joint moves', () => {
     const tray = new THREE.Group()
     frame.add(door, tray)
     const vp = toolViewport(state, fakeViewer({
-      groups: { '/model/door': door, '/model/tray': tray },
+      camera, groups: { '/model/door': door, '/model/tray': tray },
     }))
     vp.jointNodes = new Map([['/model/door', { joint: DOOR, loc: LOC }],
                              ['/model/tray', { joint: TRAY, loc: LOC }]])
@@ -1053,17 +1053,22 @@ describe('a press on a part a joint moves', () => {
     pointerUp(pixel([0, 10]))
   })
 
-  it('leaves a slider to the trackball under the perspective camera', () => {
-    // There a screen offset is no distance at the tray's depth: the tray would
-    // creep a fraction of the hand while the camera stood still.
-    const vp = jointed()
-    pickEntity.mockReturnValue({ id: '/model/tray', name: 'tray', point: [8, 4, 0] })
-    expect(pointerDown(vp, pixel([8, 4])).preventDefault).toHaveBeenCalled()
-    pointerUp(pixel([8, 4]))
-
-    vp.viewer.camera.getCamera().isOrthographicCamera = false
-    expect(pointerDown(vp, pixel([8, 4])).preventDefault).not.toHaveBeenCalled()
-    pointerUp(pixel([8, 4]))
+  it('slides the tray to the point of its axis under the hand, under the perspective camera', () => {
+    // The tray's axis, (0.6, 0, 0.8) in the world, runs towards the eye at
+    // (0, 0, 60): the far end of a drag stands nearer and so looks larger. 20
+    // along the axis is (12, 0, 16); a screen offset read at the press's depth,
+    // as the orthographic camera may, would take the same hand to about 25.
+    const camera = perspectiveCamera(THREE)
+    const seen = (p) => {
+      const [x, y] = camera.project(p)
+      return [(x + 1) * 400, (1 - y) * 300]
+    }
+    const vp = jointed({ tool: null }, camera)
+    pickEntity.mockReturnValue({ id: '/model/tray', name: 'tray', point: [0, 0, 0] })
+    expect(pointerDown(vp, seen([0, 0, 0])).preventDefault).toHaveBeenCalled()
+    pointerMove(seen([12, 0, 16]))
+    expect(details(vp, EVENT_JOINTS).map((d) => d.values.tray)).toEqual([expect.closeTo(20, 6)])
+    pointerUp(seen([12, 0, 16]))
   })
 
   it('leaves a press with a key, on an edge-on hinge or by a finger to the trackball', () => {

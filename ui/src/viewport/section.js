@@ -7,7 +7,9 @@
 // (`setClipSlider`). The face normal comes from `picking.js`; the slider's frame
 // of reference is described at `sectionValueFor`.
 
-import { cameraBasis, projectPoint } from "./camera.js";
+import {
+  cameraBasis, ndcAt, ndcRay, projectPoint, rayLineParam, sightAt,
+} from "./camera.js";
 import { internals } from "./internals.js";
 import {
   clamp, cross3, dot3, finite3, sineFromCos, sub3, unit3, vec3,
@@ -69,15 +71,15 @@ function viewDir(g, point) {
 }
 
 /**
- * How much of a unit world vector survives the projection, between 0 and 1:
- * 1 square across the view, 0 pointing down the camera's axis (for the grip's
- * arrow, the whole of it versus its end).
+ * How much of a unit world vector at `point` survives the projection, between
+ * 0 and 1: 1 square across the view, 0 pointing down the line of sight (for the
+ * grip's arrow, the whole of it versus its end).
  *
- * Measured against the camera's own axis, not the ray to a point: under the
- * orthographic camera every point projects along one direction, so
- * foreshortening does not depend on screen position. The ray from the eye
- * (`viewDir`) swings across the frame: on a 45-degree plane it gave 0.55 on one
- * side of a part and 0.83 on the other.
+ * Measured against the line the camera sees `point` along (`sightAt`): under
+ * ortho that is the camera's own axis, since every point projects along one
+ * direction and the ray from the eye (`viewDir`) would swing across the frame
+ * (on a 45-degree plane it gave 0.55 on one side of a part and 0.83 on the
+ * other); under perspective it is that ray.
  *
  * The drag guard in `sectionAxis` stays on `viewDir`: it asks whether px ->
  * world runs away under the pointer, which does move along the ray.
@@ -85,11 +87,12 @@ function viewDir(g, point) {
  * Null when the camera cannot be read; the caller then draws the arrow at full
  * length, visible and grabbable.
  */
-function foreshorten(viewer, g, n) {
+function foreshorten(viewer, g, n, point) {
   const basis = cameraBasis(viewer, g);
-  if (!basis) return null;
+  const sight = basis && sightAt(g, basis, point);
+  if (!sight) return null;
   // Both are unit vectors, so the dot is the cosine; `sineFromCos` clamps it.
-  return sineFromCos(dot3(n, basis.view));
+  return sineFromCos(dot3(n, sight));
 }
 
 /**
@@ -253,8 +256,9 @@ export function applySection(vp, given) {
 /** Canvas px of screen travel per one world unit along the clip normal.
  *
  * `{sx, sy}` is that travel and `s2` its squared length; `sine` is how much of
- * the normal survives the projection, between 0 and 1 (`foreshorten`). The drag
- * reads the first three and the grip's ink is drawn at `sine`.
+ * the normal survives the projection, between 0 and 1 (`foreshorten`). `line`
+ * is the normal's line through `point`, which the plane slides along: the drag
+ * reads the step off the rays under the hand against it (`dragSection`).
  *
  * null when the normal is too close to the view axis: its projection collapses
  * and px -> world runs away, so a two-pixel twitch would fling the plane.
@@ -272,11 +276,11 @@ export function sectionAxis(viewer, g, point) {
   const view = viewDir(g, point);
   if (!view) return null;
   if (sineFromCos(dot3(n, view)) < MIN_SINE) return null;
-  const sine = foreshorten(viewer, g, n);
+  const sine = foreshorten(viewer, g, n, point);
   const rect = g.canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;
-  // A short step: a local linearisation on a perspective camera, exact at any
-  // length on the ortho camera used here.
+  // A short step: exact at any length under ortho, a local linearisation at
+  // `point` under perspective, where the drag reads the rays instead.
   const L = (sectionLimit(viewer) || 1) / 100;
   // Through `projectPoint`, which also refuses a camera that cannot be read.
   const a = projectPoint(g, point);
@@ -287,17 +291,18 @@ export function sectionAxis(viewer, g, point) {
   const sy = (-(b[1] - a[1]) * rect.height / 2) / L;  // NDC y up, pixels down
   const s2 = sx * sx + sy * sy;
   if (!(s2 > 1e-12)) return null;
-  return { sx, sy, s2, sine };
+  return { sx, sy, s2, sine, line: { at: point, n } };
 }
 
 /** The screen axis the grip is drawn along and dragged on: `sectionAxis` where
  *  that answers, and a vertical axis where it declines. Null only for a scene
  *  that cannot answer at all.
  *
- * `sine` comes from `foreshorten` on both branches, against the camera's
- * projection axis. The branch is chosen by the guard's sine (against the ray
- * to the anchor), so `sine` does not jump at the switch, and the fallback's is
- * not bounded by `MIN_SINE`.
+ * `sine` comes from `foreshorten` on both branches, against the sight line to
+ * the anchor. The branch is chosen by the guard's sine (against the ray to the
+ * anchor), so `sine` does not jump at the switch, and the fallback's is not
+ * bounded by `MIN_SINE`. The fallback has no `line`: the normal points nearly
+ * along the rays, and a step read off them would run away.
  *
  * Two functions rather than a looser guard: `sectionAxis` refuses when the
  * plane's normal points nearly at or away from the camera, which is right for
@@ -336,8 +341,8 @@ export function sectionGripAxis(viewer, g, point) {
   // The same measurement `sectionAxis` returns, so the grip's ink comes from
   // one number on both branches. This branch does not imply a foreshortening
   // below `MIN_SINE`: the branch is chosen by the guard's sine against the ray
-  // to the anchor, which can differ by as much as the frame is wide.
-  const sine = foreshorten(viewer, g, unit);
+  // to the anchor, which under ortho can differ by as much as the frame is wide.
+  const sine = foreshorten(viewer, g, unit, point);
   const rect = g.canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;
   // A world direction across the view, the only thing the screen scale can be
@@ -367,11 +372,27 @@ export function sectionGripAxis(viewer, g, point) {
 }
 
 /**
+ * How far along `line` the nearest point to the ray under a pointer at client
+ * `[x, y]` stands, or null.
+ */
+function lineAt(vp, g, line, x, y) {
+  const ndc = ndcAt(g.canvas, { clientX: x, clientY: y });
+  const b = ndc && cameraBasis(vp.viewer, g);
+  const ray = b && ndcRay(g, b.eye, b.view, ndc[0], ndc[1]);
+  return ray ? rayLineParam(ray, line.at, line.n) : null;
+}
+
+/**
  * One pointermove of drag: move the plane and return the world distance it
- * travelled, or 0.
+ * travelled, or 0. `dx, dy` is the pointer's travel since the previous event
+ * and `at` (client `[x, y]`) where it is now.
  *
- * Least-squares projection of the pixel delta onto the screen direction of the
- * normal: only the component along that direction moves the plane.
+ * With `at` and an axis that has a `line`, the step is how far the nearest point
+ * of that line to the ray under the pointer moved: the plane follows the hand
+ * along its normal under either camera. Otherwise (the grip's fallback for a
+ * normal nearly along the view) it is the least-squares projection of the
+ * pixel delta onto the screen direction of the normal. Under ortho the two
+ * agree.
  *
  * The distance is signed along the normal in force (the library slider's
  * frame), not `sectionOffset`'s frame; on a flipped cut the signs differ. The
@@ -379,10 +400,17 @@ export function sectionGripAxis(viewer, g, point) {
  * interface reads `sectionOffset` at `onUp`. `section.test.js` asserts the
  * value.
  */
-export function dragSection(vp, g, axis, dx, dy) {
+export function dragSection(vp, g, axis, dx, dy, at) {
   const viewer = vp.viewer;
   const cap = stepCap(viewer);
-  const step = clamp((dx * axis.sx + dy * axis.sy) / axis.s2, -cap, cap);
+  let raw = (dx * axis.sx + dy * axis.sy) / axis.s2;
+  if (axis.line && at) {
+    const from = lineAt(vp, g, axis.line, at[0] - dx, at[1] - dy);
+    const to = lineAt(vp, g, axis.line, at[0], at[1]);
+    if (from === null || to === null) return 0;
+    raw = to - from;
+  }
+  const step = clamp(raw, -cap, cap);
   const v = viewer.getClipSlider(SECTION_INDEX);
   if (!Number.isFinite(v)) return 0;
   // `value = -normal . (point - centre)` (see `sectionValueFor`) has slope -1

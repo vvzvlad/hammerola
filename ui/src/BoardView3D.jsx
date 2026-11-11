@@ -63,8 +63,8 @@
 // trackball (`CADTrackballControls`, board3d.js) at the model's speeds: a left
 // drag turns it without tumbling it, a right drag pans, a middle drag zooms.
 // The WHEEL is the model page's second layer (ui/src/viewport/wheel.js and
-// zoom.js), which is written for that page's orthographic camera and so could
-// not simply be reached for: a two-finger swipe moves the board under the
+// zoom.js), which is written for that page's viewer and its internals and so
+// could not simply be reached for: a two-finger swipe moves the board under the
 // fingers, a pinch — a wheel event with Control held — and Control and the
 // wheel zoom about the pointer, by the arithmetic the Gerbers' view uses
 // (`wheelMove` in gerber.js). The trackball's own wheel zooms to the centre off
@@ -465,8 +465,8 @@ class Stage {
    * is the camera's screen axes times the pointer's place in the frame. Moving
    * the camera and the target together by `(1 − scale)` of that offset while
    * the eye shrinks by `scale` leaves the point under the pointer exactly where
-   * it was — the orthographic page's law (viewport/zoom.js), with the depth it
-   * is exact at being the target's.
+   * it was — the model page's law (viewport/zoom.js), with the depth it is
+   * exact at being the target's.
    */
   wheel(event) {
     event.preventDefault();

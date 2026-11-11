@@ -17,8 +17,10 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import * as THREE from '../../static/_v/three.module.js'
+
 import { internals } from '../src/viewport/internals.js'
-import { GHOST_OPACITY, viewerOptions } from '../src/viewport/options.js'
+import { GHOST_OPACITY } from '../src/viewport/options.js'
 import {
   OUTLINE_NAME, clearSectionOutlines, insideSection, sectionOutline,
   sectionSegments,
@@ -519,12 +521,40 @@ describe('sectionOutline', () => {
     expect(material.customProgramCacheKey).toBeUndefined()
   })
 
-  it('builds an ORTHOGRAPHIC camera, which is what makes the depth patch exact', () => {
-    // Under a perspective projection a corner's `clip.w` moves with its depth
-    // and the correction would have to move both; the shader reads the
-    // projection and does nothing there, so this option is the reason the
-    // contour is whole rather than merely better.
-    expect(viewerOptions.ortho).toBe(true)
+  it('puts the widened corner on the plane under the perspective camera too', () => {
+    // The perspective branch, transcribed: `clip.w` kept, `clip.z` moved by
+    // P32 (n . d) / (n . V). Checked against three's own projection: the depth
+    // the shifted pixel's ray meets the plane at.
+    const { solid, vp, g } = cubeScene()
+    sectionOutline(vp, g, [1, 0, 0], -1)
+    const shader = { uniforms: {}, vertexShader: shaderSource() }
+    outlineOf(solid).material.onBeforeCompile(shader)
+    const source = shader.vertexShader
+    expect(source).toContain('if ( hmrCutNormal.w > 0.5 && projectionMatrix[2][3] != 0.0 ) {')
+    expect(source).toContain('vec3 hmrCorner = ( ( position.y < 0.5 ) ? start : end ).xyz;')
+    expect(source).toContain('float hmrFacing = dot( hmrCutNormal.xyz, hmrCorner );')
+    expect(source).toContain('if ( abs( hmrFacing ) > 1e-3 * length( hmrCorner ) ) {')
+    expect(source).toContain('clip.z += projectionMatrix[3][2]')
+    expect(source).toContain('* ( hmrCutNormal.x * offset.x / projectionMatrix[0][0]')
+    expect(source).toContain('+ hmrCutNormal.y * offset.y / projectionMatrix[1][1] ) / hmrFacing;')
+
+    const cam = new THREE.PerspectiveCamera(40, 4 / 3, 0.5, 200)
+    cam.updateProjectionMatrix()
+    const P = cam.projectionMatrix.elements
+    const V = new THREE.Vector3(3, -2, -25)
+    const n = new THREE.Vector3(0.3, 0.5, 0.8).normalize()
+    const clip = new THREE.Vector4(V.x, V.y, V.z, 1).applyMatrix4(cam.projectionMatrix)
+    const offset = [0.01 * clip.w, -0.02 * clip.w]
+    const z = clip.z + P[14] * (n.x * offset[0] / P[0] + n.y * offset[1] / P[5]) / n.dot(V)
+
+    const ndc = [(clip.x + offset[0]) / clip.w, (clip.y + offset[1]) / clip.w]
+    const a = new THREE.Vector3(ndc[0], ndc[1], -1).applyMatrix4(cam.projectionMatrixInverse)
+    const b = new THREE.Vector3(ndc[0], ndc[1], 1).applyMatrix4(cam.projectionMatrixInverse)
+    const along = b.clone().sub(a)
+    const onPlane = a.clone().addScaledVector(along, (n.dot(V) - n.dot(a)) / n.dot(along))
+    expect(z / clip.w).toBeCloseTo(onPlane.applyMatrix4(cam.projectionMatrix).z, 9)
+    // And it is a correction, not the corner's own depth again.
+    expect(Math.abs(z - clip.z) / clip.w).toBeGreaterThan(1e-5)
   })
 
   it('says so rather than drawing on when the vendored shader moves', () => {

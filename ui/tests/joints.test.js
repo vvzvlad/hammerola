@@ -18,7 +18,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { JOINTS, STATE } from '../src/events.js'
 import {
-  jointAbove, jointInWorld, jointPose, rayAngle, slidBy, unwrapped, withinLimits,
+  jointAbove, jointInWorld, jointPose, rayAngle, unwrapped, withinLimits,
 } from '../src/viewport/joints.js'
 import * as THREE from '../../static/_v/three.module.js'
 import { makeComponent, replaceState } from './component.js'
@@ -154,16 +154,6 @@ describe('dragging a joint in the scene', () => {
     expect(swept).toBe(360)
     expect(unwrapped(180)).toBe(180)
     expect(unwrapped(-180)).toBe(180)
-  })
-
-  it('slides a part as far as the hand went along its foreshortened axis', () => {
-    // The part moved by 7 along an axis the view sees at a slant: what the hand
-    // has to travel is that move with its component along the view removed.
-    const view = [0, 0, -1]
-    const t = 7
-    const along = DRAWER.axis[0] * view[0] + DRAWER.axis[1] * view[1] + DRAWER.axis[2] * view[2]
-    const hand = DRAWER.axis.map((a, i) => t * (a - along * view[i]))
-    expect(slidBy(hand, DRAWER.axis, Math.sqrt(1 - along * along))).toBeCloseTo(t, 9)
   })
 
   it('holds a value to the joint\'s limits', () => {

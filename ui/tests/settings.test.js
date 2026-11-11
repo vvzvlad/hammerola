@@ -1,6 +1,6 @@
 // The Settings card at the right end of the floating toolbar, and the answers it
-// holds: whether the model is drawn at the display's full density, and whether
-// the header draws its strip of projects.
+// holds: whether the model is drawn at the display's full density, whether its
+// camera is perspective, and whether the header draws its strip of projects.
 //
 // NOTHING IS MOUNTED, this directory's arrangement (viewmenu.test.js): the real
 // prototype over a hand-spelled state, the real `computed()` and handlers. `sync`
@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
-import { readRetina } from '../src/store.js'
+import { readPerspective, readRetina } from '../src/store.js'
 import { css } from '../src/style.jsx'
 import { headerOn, makeComponent, replaceState } from './component.js'
 import { texts } from './eltree.js'
@@ -129,6 +129,25 @@ describe('the Settings card', () => {
     expect(readRetina()).toBe(true)
   })
 
+  it('flips Perspective on its row, remembers it and tells the viewport', () => {
+    // Off where nothing was stored: the orthographic camera the page had.
+    const seen = listening()
+    const c = component({ settingsOpen: true, perspective: false })
+    expect(texts(c.render())).toContain('Perspective')
+    expect(row(c, 'perspective').mark).toBe('')
+
+    row(c, 'perspective').onClick(click)
+    expect(c.state.perspective).toBe(true)
+    expect(seen.at(-1).perspective).toBe(true)
+    expect(readPerspective()).toBe(true)
+    expect(row(c, 'perspective').mark).toBe('✓')
+    expect(new HammerolaViewer({}).state.perspective).toBe(true)
+
+    row(c, 'perspective').onClick(click)
+    expect(seen.at(-1).perspective).toBe(false)
+    expect(readPerspective()).toBe(false)
+  })
+
   it('hands the flip of Project tabs up to BuildPage, which owns the answer', () => {
     // The header is not this page's, so the row writes nothing here: it calls
     // BuildPage's door, and its tick is the prop that comes back down.
@@ -145,10 +164,10 @@ describe('the Settings card', () => {
     expect(onTabStrip).toHaveBeenLastCalledWith(false)
   })
 
-  it('stays in service over a document, its Retina row out of service there', () => {
+  it('stays in service over a document, its Retina and Perspective rows out of service there', () => {
     // The owner asked why the project tabs could not be switched over a
-    // document: they are about the whole site. Retina is about the model's
-    // canvas, which the document covers, so its row is grey in its place.
+    // document: they are about the whole site. Retina and Perspective are about
+    // the model's canvas, which the document covers, so their rows are grey.
     const DOC = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 10 }
     const meta = { project: 'fixture', title: 'Fixture', commit: 'abc1234', parts: {}, views: [], documents: [DOC] }
     const onTabStrip = vi.fn()
@@ -159,8 +178,10 @@ describe('the Settings card', () => {
     expect(css(c.computed().settingsBtnStyle).pointerEvents).toBeUndefined()
     c.computed().tSettings(click)
     expect(css(c.computed().settingsMenuStyle).display).toBe('block')
-    expect(css(row(c, 'retina').style).pointerEvents).toBe('none')
-    expect(row(c, 'retina').onClick).toBeUndefined()
+    for (const key of ['retina', 'perspective']) {
+      expect(css(row(c, key).style).pointerEvents).toBe('none')
+      expect(row(c, key).onClick).toBeUndefined()
+    }
     row(c, 'tabs').onClick(click)
     expect(onTabStrip).toHaveBeenLastCalledWith(true)
   })

@@ -487,19 +487,21 @@ const settingsBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;
 
 /**
  * The Settings card's values, the same rows on both pages. `open` is the
- * page's flag. `retina` is the stored answer and `onRetina` its flip, absent
- * where no model is on screen (under a document, on the documents page): the
- * resolution is the model's canvas', so there the row is drawn `OFF`, in its
- * place, as a bar button that does not apply is. `tabStrip` and `onTabStrip`
- * are BuildPage's: the strip of projects under the header is about the whole
- * site, so that row is live on every page.
+ * page's flag. `retina` and `perspective` are the stored answers and `onRetina`
+ * and `onPerspective` their flips, absent where no model is on screen (under a
+ * document, on the documents page): the resolution and the camera are the
+ * model's canvas', so there the rows are drawn `OFF`, in their place, as a bar
+ * button that does not apply is. `tabStrip` and `onTabStrip` are BuildPage's:
+ * the strip of projects under the header is about the whole site, so that row
+ * is live on every page.
  *
  * `right:0` AND NOT `left:0`: Settings is the last button in the bar, so a card
  * measured from its left edge would hang out past the bar's end.
  */
-export function settingsView({ open, retina, onRetina, tabStrip, onTabStrip }) {
+export function settingsView({ open, retina, onRetina, perspective, onPerspective, tabStrip, onTabStrip }) {
   const rows = [
     { key: 'retina', label: 'Retina resolution', on: !!retina, onClick: onRetina },
+    { key: 'perspective', label: 'Perspective', on: !!perspective, onClick: onPerspective },
     { key: 'tabs', label: 'Project tabs', on: !!tabStrip, onClick: onTabStrip && (() => onTabStrip(!tabStrip)) },
   ];
   return {

@@ -23,7 +23,7 @@ import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
-import { writeRetina } from './store.js';
+import { writePerspective, writeRetina } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, settingsView } from './viewlist.jsx';
 
@@ -452,6 +452,12 @@ export function chromeView(s, props, deps) {
       onRetina: docOpen ? undefined : () => {
         set({ retina: !s.retina });
         writeRetina(!s.retina);
+      },
+      // The camera (viewport/element.js), remembered and heard the same way.
+      perspective: s.perspective,
+      onPerspective: docOpen ? undefined : () => {
+        set({ perspective: !s.perspective });
+        writePerspective(!s.perspective);
       },
       // Whether the header draws its strip of projects: BuildPage's answer and
       // door, since the header belongs to neither page (the theme's way).

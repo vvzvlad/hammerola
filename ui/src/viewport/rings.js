@@ -26,7 +26,7 @@
 // itself while the part turns; `place` turns it by the angle the part has taken
 // so far, which goes in steps unless Shift is held (`stepped`).
 
-import { cameraBasis, ndcAt, ndcRay } from "./camera.js";
+import { cameraBasis, ndcAt, ndcRay, sightAt } from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { EVENT_PROPOSALTURN, EVENT_TURNED } from "./events.js";
 import { gestureRecord, reportGesture } from "./gesture.js";
@@ -228,6 +228,8 @@ function ringAngle(vp, g, axis, centre, event) {
   const along = ray.dir[axis];
   if (!along) return null;
   const t = (centre[axis] - ray.origin[axis]) / along;
+  // Behind the eye of a perspective camera the plane is not on screen.
+  if (ray.fromEye && !(t > 0)) return null;
   const u = (axis + 1) % 3;
   const v = (axis + 2) % 3;
   const theta = Math.atan2(ray.origin[v] + t * ray.dir[v] - centre[v],
@@ -499,7 +501,8 @@ export function createRings(vp) {
     const centre = partCentre(vp.viewer, sel.paths[0]);
     if (!centre) return false;
     const basis = cameraBasis(vp.viewer, g);
-    if (!basis) return false;
+    const sight = basis && sightAt(g, basis, centre);
+    if (!sight) return false;
     root.position.set(centre[0], centre[1], centre[2]);
     // A drag keeps its ring lit wherever the pointer is: turning the part
     // carries the hand off the knob at once.
@@ -507,9 +510,10 @@ export function createRings(vp) {
     rings.forEach((ring, k) => {
       // A ring seen edge-on is removed, not flattened (see `RING_MIN_PX`): its
       // knob flattens with it and cannot be aimed at. The minor semi-axis of a
-      // circle of `RING_PX` seen along `view` is `RING_PX * |n . view|`, and the
-      // ring's normal is world axis `k`, so the dot is one component.
-      ring.node.visible = Math.abs(basis.view[k]) * RING_PX >= RING_MIN_PX;
+      // circle of `RING_PX` seen along the sight line to its centre is
+      // `RING_PX * |n . sight|`, and the ring's normal is world axis `k`, so the
+      // dot is one component.
+      ring.node.visible = Math.abs(sight[k]) * RING_PX >= RING_MIN_PX;
       // The whole circle is the hover feedback: it shows the plane the part is
       // about to turn in before the reader commits.
       const glow = ring.node.visible && k === on;

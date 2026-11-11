@@ -64,7 +64,8 @@ import {
   makeViewport, RECT, framesAsked, rendered, settled, stubFrames,
 } from './component.js'
 import {
-  fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera, realCamera,
+  fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera,
+  realCamera,
 } from './fakes.js'
 
 const PART = '/Group/plate'
@@ -1823,5 +1824,92 @@ describe('a press this widget does take', () => {
       expect(s.vp.endGesture, 'the canvas gesture was left running')
         .toHaveBeenCalled()
     }
+  })
+})
+
+describe('under the perspective camera', () => {
+  // Every pixel looks along its own ray from the eye, so a drag is a ray met
+  // with the piece's line or plane, not a screen offset read at one depth. The
+  // eye stands 40 back from the part, the widget's pixel is the world span of
+  // one at that depth (fov 30 over 600 px), and the step is a thousandth so the
+  // numbers below are the arithmetic and not the snap.
+  const DEPTH = 40
+  const perPxAt = (depth) => (2 * depth * Math.tan(Math.PI / 12)) / RECT.height
+  const atDepth = (s, offsets) => canvasAt(s, PART_AT.map((c, i) => c + offsets[i] * perPxAt(DEPTH)))
+  const FINE = 0.001
+
+  function obliqueScene() {
+    const s = scene({ camera: perspectiveCamera(THREE, {
+      ...OBLIQUE, eye: PART_AT.map((v, i) => v - VIEW[i] * DEPTH),
+    }) })
+    s.vp.snapSteps.set(PART, FINE)
+    rendered(s.viewer)
+    return s
+  }
+
+  /** The unit ray from the eye through a canvas pixel, three's own unproject. */
+  const rayOf = (s, [x, y]) => {
+    const far = s.model.unproject([(x / RECT.width) * 2 - 1, 1 - (y / RECT.height) * 2, 0.5])
+    return unit(far.map((v, i) => v - s.model.eye[i]))
+  }
+
+  /** The screen-plane world vector of the drag at the part's depth, which is
+   *  what a construction for one fixed view would have taken. */
+  const flat = RIGHT.map((v, i) => (v * DRAG[0] - UP[i] * DRAG[1]) * perPxAt(DEPTH))
+
+  it('measures each piece against the sight line to the part, not the view axis', () => {
+    // Looking straight down -Z at a part off to one side: the sight to it
+    // leans 0.29 off the axis, so the Z arrow and the X quad are open to the
+    // reader. Under ortho, down the same axis, both are end-on.
+    const s = scene({ camera: perspectiveCamera(THREE, { eye: [-12, 0, 85] }) })
+    rendered(s.viewer)
+    expect(upright(s, armOf(s, 2))).toBe(true)
+    expect(upright(s, quadOf(s, 0))).toBe(true)
+    const flatScene = scene()
+    rendered(flatScene.viewer)
+    expect(upright(flatScene, armOf(flatScene, 2))).toBe(false)
+    expect(upright(flatScene, quadOf(flatScene, 0))).toBe(false)
+  })
+
+  it('keeps the grabbed point of a quad under the cursor', () => {
+    const s = obliqueScene()
+    const spot = atDepth(s, [GIZMO_PLANE_GAP_PX + GIZMO_PLANE_PX * 0.75,
+                             GIZMO_PLANE_GAP_PX + GIZMO_PLANE_PX * 0.25, 0])
+    press(s.canvas, spot)
+    dragFrom(spot)
+    // Where the ray under each pixel meets the plane through the part square to Z.
+    const meets = (px) => {
+      const dir = rayOf(s, px)
+      const t = (PART_AT[2] - s.model.eye[2]) / dir[2]
+      return s.model.eye.map((v, i) => v + dir[i] * t)
+    }
+    const wanted = meets(dragged(spot)).map((v, i) => v - meets(spot)[i])
+    const went = stands(s.groups[PART])
+    for (const i of [0, 1]) expect(Math.abs(went[i] - wanted[i])).toBeLessThanOrEqual(FINE)
+    expect(went[2]).toBe(0)
+    // One view for every pixel would have put the part a fifth of a unit off.
+    const oneView = flat.map((v, i) => v - VIEW[i] * flat[2] / VIEW[2])
+    expect(Math.abs(oneView[1] - wanted[1])).toBeGreaterThan(0.2)
+  })
+
+  it('takes the nearest point of an arrow`s line to the ray under the hand', () => {
+    const s = obliqueScene()
+    const spot = atDepth(s, [GIZMO_PX / 2, 0, 0])
+    press(s.canvas, spot)
+    dragFrom(spot)
+    // The line through the part along X, and each ray's nearest point of it.
+    const along = (px) => {
+      const dir = rayOf(s, px)
+      const w = PART_AT.map((v, i) => v - s.model.eye[i])
+      const b = dir[0]
+      return (b * scalar(dir, w) - w[0]) / (1 - b * b)
+    }
+    const wanted = along(dragged(spot)) - along(spot)
+    const went = stands(s.groups[PART])
+    expect(Math.abs(went[0] - wanted)).toBeLessThanOrEqual(FINE)
+    expect(went.slice(1)).toEqual([0, 0])
+    // The screen offset at the part's depth over `sine^2` is a third of a unit
+    // further.
+    expect(Math.abs(flat[0] / (2 / 3) - wanted)).toBeGreaterThan(0.3)
   })
 })

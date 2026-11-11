@@ -16,31 +16,33 @@
 // press; the paint band settles it, since `joinPresses` in scene3d.js asks the
 // topmost band first. `GIZMO_ORDER` puts this widget on top.
 //
-// Constrained handles exist because a free drag under an ortho camera can
-// change all three axes at once, and sentences like "three millimetres further
-// out" name a direction (Blender's widget, which readers already know). There
-// is no free drag (tools.js): a press anywhere but on a piece means what it
-// means with no tool up, so an armed tool does not cost the orbit.
+// Constrained handles exist because a free drag can change all three axes at
+// once, and sentences like "three millimetres further out" name a direction
+// (Blender's widget, which readers already know). There is no free drag
+// (tools.js): a press anywhere but on a piece means what it means with no tool
+// up, so an armed tool does not cost the orbit.
 //
 // Objects in the scene, not divs over it: a cylinder along a world axis is
 // projected by the camera like everything else, so what remains of the
-// screen-space maths is two components of `cameraBasis().view` (`scene3d.js`
-// carries the shared half).
+// screen-space maths is two components of the sight line to the part
+// (`sightAt` in camera.js; `scene3d.js` carries the shared half).
 //
-// Each constrained delta is the hand's unconstrained world displacement put
-// back on the piece's geometry: an arrow takes the NEAREST POINT of its line, a
-// quad the point where the ray through the cursor MEETS its plane (a plane and
-// a ray meet; a line and a ray do not, so only the quad can keep the part
-// exactly under the pointer). Both then use `niceStep` and `snap` (tools.js),
+// Each constrained delta is read off the ray through the cursor, under either
+// camera: an arrow takes the NEAREST POINT of its line, a quad the point where
+// the ray MEETS its plane (a plane and a ray meet; a line and a ray do not, so
+// only the quad can keep the part exactly under the pointer). Both then use
+// `niceStep` and `snap` (tools.js),
 // `movePart`/`nudgePart`, and the record and report in gesture.js, so arrow,
 // quad and disc moves reach the proposal document as the same kind of sentence.
 
-import { cameraBasis, ndcAt, ndcOffset } from "./camera.js";
+import {
+  cameraBasis, ndcAt, ndcRay, rayLineParam, rayPlanePoint, sightAt,
+} from "./camera.js";
 import { travelled, watchDrag } from "./drag.js";
 import { EVENT_MOVED, EVENT_PROPOSALMOVE } from "./events.js";
 import { gestureRecord, reportGesture } from "./gesture.js";
 import { internals } from "./internals.js";
-import { dot3, sineFromCos } from "./math.js";
+import { sineFromCos } from "./math.js";
 import {
   grabbable, groupHome, intoFrame, movePart, nudgePart, outOfFrame, partCentre,
 } from "./parts.js";
@@ -140,78 +142,80 @@ const MOVE_REPORT = {
 };
 
 /**
- * Where an ARROW drag lands: the offset already standing, with the component
- * along `axis` of the hand's own world displacement added to it and snapped.
+ * Where an ARROW drag lands: the offset already standing, with `along` world
+ * units along `axis` added to it and snapped.
  *
- * The nearest point of the line: a line and the ray through the cursor miss
- * each other in 3D, so an arrow answers with the place on its line closest to
- * where the hand went (unlike `acrossPlane`).
+ * `along` is how far the nearest point of the arrow's line to the ray under
+ * the hand has moved since the press (`rayLineParam` in camera.js): a line and
+ * the ray through the cursor miss each other in 3D, so an arrow answers with the
+ * place on its line closest to where the hand went (unlike `acrossPlane`).
+ * Under ortho that is the hand's screen-plane world vector along the axis over
+ * `sine^2`: the vector sees only the axis's projected part (length `sine`),
+ * moving the part by `t` moves its projection by `t * sine`, and the dot with
+ * the axis takes another `sine` off.
  *
  * Only the axis the hand is on is snapped; the other two pass through
  * untouched, since a standing offset may come from hand-typed `delta.<axis>`
  * fields and need not be on this grid.
- *
- * `sine^2` divides: the screen-plane world vector sees only the axis's
- * projected part (length `sine`); moving the part by `t` moves its projection
- * by `t * sine`, and the dot with the axis takes another `sine` off. Without
- * the division the part lags the cursor by that factor.
  */
-function alongAxis(base, world, axis, sine, step) {
-  const along = dot3(world, axis) / (sine * sine);
+function alongAxis(base, along, axis, step) {
   return base.map((v, i) => (axis[i] ? snap(v + axis[i] * along, step) : v));
 }
 
 /**
- * Where a QUAD drag lands: the same offset with the hand's world displacement
- * added to it on the plane's two axes, and the third left exactly as it was.
+ * Where a QUAD drag lands: the same offset with `inPlane` added to it on the
+ * plane's two axes, and the third left exactly as it was.
  *
- * The part follows the pointer. The orthogonal projection `w - n (w . n)` does
- * that only when the plane faces the reader. Under the ortho camera every pixel
- * looks along one fixed `view`, so two points share a pixel exactly when they
- * differ by a multiple of it; the displacement that stays in the plane and
- * lands the grabbed point back under the cursor is
+ * `inPlane` is how far the point where the ray under the hand MEETS the plane
+ * has moved since the press (`rayPlanePoint` in camera.js), so the part follows
+ * the pointer. Under ortho every pixel looks along one `view` and that is
  *
  *     p = w - view * (w . n) / (view . n)
  *
- * which satisfies `p . n = 0` and has `p - w` parallel to `view`.
+ * for the hand's screen-plane world vector `w`, where the orthogonal projection
+ * `w - n (w . n)` would follow it only with the plane facing the reader.
  *
- * The division cannot blow up: `view . n` is exactly the `face` `place` hides
- * the quad by, so a pressable quad has `|face| >= GIZMO_MIN_SCALE` (a fifth)
- * and the factor is at most five. An edge-on plane has no in-plane answer, and
- * the widget removes the target instead. `gizmo.test.js` pins the two as one
- * number. The bound is from the last `place` before the press (one frame old),
- * the same assumption the arrow makes.
- *
- * The sign of `view` does not matter: it appears above and below the line.
+ * Under ortho the division by the ray's `dir . n` cannot blow up: `place`
+ * hides a quad whose `|sight . n|` is under `GIZMO_MIN_SCALE` (a fifth), so the
+ * factor is at most five; `gizmo.test.js` pins the two as one number. Under
+ * perspective every pixel has its own ray: a hand carried towards the plane's
+ * horizon takes the part as far along the plane as the point under the cursor
+ * goes, and past it the ray misses the plane (`rayPlanePoint` answers null)
+ * and the part waits.
  *
  * The rest is the arrow's: `niceStep`, `snap` on the two plane axes, and the
  * held axis passed through untouched.
  */
-function acrossPlane(base, world, normal, view, step) {
-  const out = dot3(world, normal);
-  const into = dot3(view, normal);
-  // Not `held`, which in this file is the selection the widget stands on.
-  const inPlane = world.map((v, i) => v - view[i] * (out / into));
+function acrossPlane(base, inPlane, normal, step) {
   return base.map((v, i) => (normal[i] ? v : snap(v + inPlane[i], step)));
 }
 
 /**
  * What a SLIDE remembers on top of `gestureRecord` (gesture.js).
  *
- * `ndc` is where the pointer was at the press: `onMove` constrains the world
- * span between it and the current reading (a turn reads an angle per event
- * instead, `turnRecord` in rings.js).
- *
  * `homes` is where the groups stand at the press, read off the scene rather
  * than `vp.partHome`: a proposal body's home is whatever the document last said,
  * which the previous drag's re-stage changed.
  */
-function moveRecord(vp, paths, ndc, anchor, proposal) {
+function moveRecord(vp, paths, anchor, proposal) {
   return {
     ...gestureRecord(vp, paths, anchor, proposal, MOVE_REPORT.key),
-    ndc,
     homes: proposal ? paths.map((path) => groupHome(vp.viewer, path)) : null,
   };
+}
+
+/**
+ * Where the ray under `event` lands on a piece's geometry: the parameter along
+ * an arrow's line, or the point on a quad's plane, both through `origin`; null
+ * where the ray has no answer (parallel, or behind the eye).
+ */
+function landing(g, b, piece, origin, event) {
+  const ndc = ndcAt(g.canvas, event);
+  const ray = ndc ? ndcRay(g, b.eye, b.view, ndc[0], ndc[1]) : null;
+  if (!ray) return null;
+  return piece.kind === "axis"
+    ? rayLineParam(ray, origin, piece.world)
+    : rayPlanePoint(ray, origin, piece.world);
 }
 
 export function createGizmo(vp) {
@@ -235,8 +239,7 @@ export function createGizmo(vp) {
   /** The three arrows and the three quads: `{kind, axis, world, node}`.
    *
    * `kind` picks the arithmetic in `onMove` (`alongAxis` or `acrossPlane`) and
-   * what `onDown` measures: both take the camera basis, and `"axis"` also takes
-   * `sine`. A quad's divisor is not measured there, because `place` fenced it.
+   * what `landing` meets the ray with: the arrow's line or the quad's plane.
    *
    * `world` is the axis an arrow is constrained to and the NORMAL a quad holds
    * still.
@@ -251,10 +254,10 @@ export function createGizmo(vp) {
   /** Which piece each pressable mesh belongs to. */
   const targets = new Map();
 
-  // The gesture in progress: the piece, how much of its axis the camera leaves
-  // (`sine`, measured at the press; unused on a quad), the camera's projection
-  // axis, where the press landed, the move record, and whether the pointer has
-  // travelled far enough to be a drag. Null between gestures.
+  // The gesture in progress: the piece, the part's centre its line or plane
+  // passes through, where the press landed on it (`landing`), the move record,
+  // and whether the pointer has travelled far enough to be a drag. Null between
+  // gestures.
   let drag = null;
 
   /**
@@ -451,22 +454,23 @@ export function createGizmo(vp) {
     const at = partCentre(vp.viewer, sel.paths[0]);
     if (!at) return false;
     const basis = cameraBasis(vp.viewer, g);
-    if (!basis) return false;
+    const sight = basis && sightAt(g, basis, at);
+    if (!sight) return false;
     root.position.set(at[0], at[1], at[2]);
-    // One component of `view` serves all six: `|view[k]|` is the fraction of
-    // the plane that survives projection and `sineFromCos(view[k])` that of the
-    // axis, so they are never both gone.
+    // One component of the sight line to the centre serves all six:
+    // `|sight[k]|` is the fraction of the plane that survives projection and
+    // `sineFromCos(sight[k])` that of the axis, so they are never both gone.
     arms.forEach((arm, k) => {
       // Nearly end-on is hidden, not shortened (`GIZMO_MIN_SCALE`): the drag
       // divides by `sine^2`, so past the floor a steady hand jumps several steps.
-      arm.node.visible = sineFromCos(basis.view[k]) >= GIZMO_MIN_SCALE;
+      arm.node.visible = sineFromCos(sight[k]) >= GIZMO_MIN_SCALE;
     });
     quads.forEach((quad, k) => {
       // Nearly edge-on is hidden, and this is the whole fence round
-      // `acrossPlane`'s division by `view . n` (this same component): every
-      // pressable quad has a divisor of at least a fifth. An edge-on square is
-      // also a sliver across its two arrows.
-      quad.node.visible = Math.abs(basis.view[k]) >= GIZMO_MIN_SCALE;
+      // `acrossPlane`'s division by `dir . n` (this same component): every
+      // pressable quad has a divisor of about a fifth or more. An edge-on
+      // square is also a sliver across its two arrows.
+      quad.node.visible = Math.abs(sight[k]) >= GIZMO_MIN_SCALE;
     });
     // Faced to the reader every frame; the group carries only position and a
     // uniform scale, so the camera's orientation squares the circle to the
@@ -513,21 +517,16 @@ export function createGizmo(vp) {
     const viewer = vp.viewer;
     const g = internals(viewer);
     if (!g) return;
-    const ndc = ndcAt(g.canvas, event);
-    if (!ndc) return;
     const b = cameraBasis(viewer, g);
     if (!b) return;
     const d = drag.move;
-    // The unconstrained displacement — the difference of the two ends'
-    // `ndcOffset` readings, as the swipe pan computes it, depth-free under ortho
-    // — put back on the piece's geometry. Starting from it gets the scale, zoom
-    // and pan right without asking about them. The arrow divides by `sine^2`
-    // (25x at the `GIZMO_MIN_SCALE` floor) and the quad by `view . n` (at most
-    // 5x), both bounded by `place` hiding the piece.
-    const from = ndcOffset(g, b.eye, b.view, d.ndc[0], d.ndc[1]);
-    const to = ndcOffset(g, b.eye, b.view, ndc[0], ndc[1]);
-    if (!from || !to) return;
-    const world = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    // Where the ray under the hand lands on the piece's geometry now, against
+    // where the press landed: the scale, zoom and pan come with the ray. The
+    // arrow's answer runs away as `1 / sine^2` (25x at the `GIZMO_MIN_SCALE`
+    // floor) and the quad's as `1 / (dir . n)`, both bounded by `place` hiding
+    // the piece.
+    const now = landing(g, b, drag.piece, drag.origin, event);
+    if (now === null) return;
     // The step and snap are tools.js's, so arrow, quad and disc land on the
     // same numbers in `vp.moved`, the event and the document — unless the
     // interface set a step for this path (`setSnapSteps` in element.js). Asked
@@ -545,8 +544,9 @@ export function createGizmo(vp) {
     // as `0`.
     const shown = outOfFrame(d.frame, d.base);
     const delta = intoFrame(d.frame, drag.piece.kind === "axis"
-      ? alongAxis(shown, world, drag.piece.world, drag.sine, step)
-      : acrossPlane(shown, world, drag.piece.world, drag.view, step))
+      ? alongAxis(shown, now - drag.from, drag.piece.world, step)
+      : acrossPlane(shown, now.map((v, i) => v - drag.from[i]),
+                    drag.piece.world, step))
       .map((v) => tidy(v) || 0);
     if (delta[0] === d.last[0] && delta[1] === d.last[1]
         && delta[2] === d.last[2]) return;
@@ -628,37 +628,25 @@ export function createGizmo(vp) {
     vp.endGesture();
     const sel = held();
     if (!sel) return false;
-    const ndc = ndcAt(g.canvas, event);
-    if (!ndc) return false;
     // The anchor is the first selected path, where `place` stands the widget:
     // the row converges onto that copy (`movePart`), so it is the only answer
-    // that does not move what the reader is aiming at.
-    //
-    // Both kinds need the camera's projection direction (`acrossPlane` meets
-    // the ray with the plane along it; an arrow's foreshortening is measured
-    // against it). `cameraBasis` builds a fresh array each call, so holding it
-    // is safe.
-    const basis = cameraBasis(vp.viewer, g);
+    // that does not move what the reader is aiming at. Its centre at the press
+    // is what the piece's line or plane passes through for the whole gesture.
+    const origin = partCentre(vp.viewer, sel.paths[0]);
+    const basis = origin && cameraBasis(vp.viewer, g);
     // The scene refusing to be measured at all, which takes the gesture away.
     if (!basis) return false;
-    const view = basis.view;
-    let sine = 0;
-    if (piece.kind === "axis") {
-      // The same component and function `place` draws from, so the arrow on
-      // screen is the arrow that drags. Zero (pointing at the reader) is never
-      // drawn and would break `alongAxis`'s division.
-      sine = sineFromCos(view[piece.axis]);
-      if (!(sine > 0)) return false;
-    }
-    // Nothing for a quad: `place` already fenced its divisor `view . n`.
+    // A ray along the arrow or in the quad's plane has no answer, and is never
+    // drawn (`place`).
+    const from = landing(g, basis, piece, origin, event);
+    if (from === null) return false;
     drag = {
       piece,
-      // `alongAxis` divides by its square; zero on a quad, which never reads it.
-      sine,
-      view,
+      origin,
+      from,
       startX: event.clientX,
       startY: event.clientY,
-      move: moveRecord(vp, sel.paths, ndc, sel.paths[0], sel.proposal),
+      move: moveRecord(vp, sel.paths, sel.paths[0], sel.proposal),
       moved: false,
     };
     watch.arm();

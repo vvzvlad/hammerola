@@ -27,8 +27,9 @@
 // setting must stay reachable on a Mac, where a plain mouse would otherwise
 // have no zoom.
 
-import { cameraBasis, ndcOffset, panCamera } from "./camera.js";
+import { cameraBasis, panCamera, pointAtDepth, syncCameraTarget } from "./camera.js";
 import { gestureInternals } from "./internals.js";
+import { dot3 } from "./math.js";
 import { INPUT_KEY, PINCH_DELTA_PER_E_FOLD } from "./options.js";
 import { zoomWheelAfter, zoomWheelBefore } from "./zoom.js";
 
@@ -109,9 +110,13 @@ function panWheel(vp, event) {
     if (!b) return false;
     // BOTH ENDS of the displacement, not one: the centre of the canvas is only
     // the camera's own axis on a symmetric frustum, and the difference is right
-    // whatever the projection matrix turns out to be.
-    const far = ndcOffset(g, b.eye, b.view, nx, ny);
-    const near = ndcOffset(g, b.eye, b.view, 0, 0);
+    // whatever the projection matrix turns out to be. At the target's depth:
+    // under perspective the model at the target follows the fingers exactly,
+    // nearer parts more and farther ones less; under ortho the depth cancels.
+    const depth = dot3([b.target[0] - b.C[0], b.target[1] - b.C[1],
+                        b.target[2] - b.C[2]], b.view);
+    const far = pointAtDepth(g, b, nx, ny, depth);
+    const near = pointAtDepth(g, b, 0, 0, depth);
     if (!far || !near) return false;
     const d = [far[0] - near[0], far[1] - near[1], far[2] - near[2]];
     if (!d.every(Number.isFinite)) return false;
@@ -149,9 +154,12 @@ function pinchWheel(vp, event) {
   if (event.deltaMode !== 0) return false;
   const viewer = vp.viewer;
   if (!viewer) return false;
-  if (!gestureInternals(viewer, event)) return false;
+  const g = gestureInternals(viewer, event);
+  if (!g) return false;
   let z1;
   try {
+    // Under perspective `setCameraZoom` walks the eye to `Camera.target`.
+    if (!g.cam.isOrthographicCamera) syncCameraTarget(viewer);
     const z0 = viewer.getCameraZoom();
     if (!Number.isFinite(z0) || z0 <= 0) return false;
     z1 = z0 * Math.exp(-event.deltaY / PINCH_DELTA_PER_E_FOLD);

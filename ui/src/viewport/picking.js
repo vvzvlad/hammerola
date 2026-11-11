@@ -63,7 +63,8 @@ export function pickEntity(g, x, y, options) {
  * returned so both come from one computation.
  *
  * Null when the ray is parallel to the plane (as `sectionAxis` refuses to drag
- * in that pose).
+ * in that pose), and for a perspective ray, which starts at the eye, when the
+ * plane is behind the eye.
  */
 export function planePointAt(vp, g, ndc) {
   const b = cameraBasis(vp.viewer, g);
@@ -78,6 +79,7 @@ export function planePointAt(vp, g, ndc) {
   const slope = d1 - d0;
   if (!Number.isFinite(d0) || !Number.isFinite(slope) || slope === 0) return null;
   const t = -d0 / slope;
+  if (ray.fromEye && !(t > 0)) return null;
   const point = [at0[0] + t * ray.dir[0],
                  at0[1] + t * ray.dir[1],
                  at0[2] + t * ray.dir[2]];
@@ -139,15 +141,17 @@ function capOnScreen(unit, solid) {
  * pose is one Flip or one orbit away.
  *
  * The ray, not the eye: an ortho ray starts at its own laterally offset point,
- * not at the eye. Near edge-on they disagree: a 2-unit cube cut at z = 1.895
+ * not at the eye (a perspective ray does start there, and the two tests are
+ * one). Near edge-on they disagree: a 2-unit cube cut at z = 1.895
  * with the camera 4.6 degrees off edge-on gives `normal . dir = +0.08` (looking
  * into the cut) while the eye's signed distance is `+0.202`. The band is about
  * `arcsin(d / 5R)` wide (`d` the plane's distance from the camera target, `R`
  * the model's bounding radius, `Camera.DISTANCE_FACTOR` 5), wider when the model
  * is panned off centre.
  *
- * No `t > 0` test: under ortho `unproject` puts the ray origin at mid depth, so
- * a visible cut face can sit at negative `t`.
+ * `t > 0` only for a ray from the eye (`planePointAt`): under ortho `unproject`
+ * puts the ray origin at mid depth, so a visible cut face can sit at negative
+ * `t`.
  *
  * The path is found by identity: `nestedGroup.groups` is keyed by the slash
  * path, while `unit.solid.name` is the library's pipe form

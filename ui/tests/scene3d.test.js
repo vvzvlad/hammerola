@@ -31,7 +31,9 @@ import {
   widgetMaterial,
 } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
-import { fakeViewer, fakeViewport, orthoCamera, realCamera } from './fakes.js'
+import {
+  fakeViewer, fakeViewport, orthoCamera, perspectiveCamera, realCamera,
+} from './fakes.js'
 
 const widgets = []
 
@@ -450,17 +452,24 @@ describe('one unit of geometry is one pixel', () => {
     expect(group.scale.x).toBeCloseTo(before / 2, 12)
   })
 
-  it('draws nothing at all on a camera it cannot measure', () => {
-    // The viewport is orthographic BY CONSTRUCTION (options.js), and a
-    // perspective camera would need the widget's distance from the eye as well.
-    // Nothing here has ever seen one, so a guess would be a size that is wrong
-    // by however far the handle is from the camera — with nothing on screen
-    // saying so. An undrawn widget is the honest answer.
-    const s = stage()
+  it('is one pixel per unit where the widget stands, under perspective', () => {
+    // A perspective camera shrinks the world with distance, so the scale is
+    // taken at the depth `place` stood the group at: twice as far is twice the
+    // world scale and the same 20 px on screen. Behind the eye nothing is drawn.
+    const camera = perspectiveCamera(THREE, { eye: [0, 0, 100] })
+    let where = [10, -5, 45]
+    const s = stage({ camera, place: (group) => { group.position.set(...where); return true } })
     const group = drawn(s)
-    expect(group.visible).toBe(true)
-
-    s.model.cam.isOrthographicCamera = false
+    const px = (p) => camera.project(p).slice(0, 2).map((v, i) => v * (i ? RECT.height : RECT.width) / 2)
+    for (const at of [[10, -5, 45], [10, -5, -10]]) {
+      where = at
+      rendered(s.viewer)
+      expect(group.visible).toBe(true)
+      const [x0, y0] = px(at)
+      const [x1, y1] = px([at[0] + group.scale.x, at[1], at[2]])
+      expect(Math.hypot(x1 - x0, y1 - y0)).toBeCloseTo(1, 2)
+    }
+    where = [0, 0, 120]
     rendered(s.viewer)
     expect(group.visible).toBe(false)
   })

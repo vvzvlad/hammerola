@@ -19,7 +19,7 @@
 // section manipulator). A separate widget would need another band in
 // `scene3d.js`.
 
-import { cameraBasis, ndcAt, ndcRay } from "./camera.js";
+import { cameraBasis, ndcAt, ndcRay, sightAt } from "./camera.js";
 import { internals } from "./internals.js";
 import { watchDrag } from "./drag.js";
 import { dot3, finite3, unit3 } from "./math.js";
@@ -138,6 +138,8 @@ function turnAngle(vp, g, frame, at, event) {
   const along = dot3(ray.dir, frame.axis);
   if (!along) return null;
   const t = (dot3(frame.axis, at) - dot3(frame.axis, ray.origin)) / along;
+  // Behind the eye of a perspective camera the plane is not on screen.
+  if (ray.fromEye && !(t > 0)) return null;
   const on = [ray.origin[0] + t * ray.dir[0] - at[0],
               ray.origin[1] + t * ray.dir[1] - at[1],
               ray.origin[2] + t * ray.dir[2] - at[2]];
@@ -415,16 +417,17 @@ export function createHandle(vp) {
     }
     // A ring seen edge-on is hidden rather than flattened (`RING_MIN_PX`): a
     // control the reader sees but cannot aim at is worse than none. The minor
-    // semi-axis of the ring is `HANDLE_RING_PX * |axis . view|`, and the floor
-    // is above the 9 px half-width of the hit tube, under which the ring
-    // becomes a sliver taking presses meant for the arrow.
+    // semi-axis of the ring is `HANDLE_RING_PX * |axis . sight|`, the sight line
+    // to the anchor, and the floor is above the 9 px half-width of the hit tube,
+    // under which the ring becomes a sliver taking presses meant for the arrow.
     //
     // An unmeasurable camera hides the rings and keeps the arrow, which needs
     // no basis.
     const basis = cameraBasis(vp.viewer, g);
+    const sight = basis && sightAt(g, basis, at);
     for (const turn of turns) {
-      turn.node.visible = !!basis
-        && Math.abs(dot3(worldOf(turn.axis), basis.view)) * HANDLE_RING_PX
+      turn.node.visible = !!sight
+        && Math.abs(dot3(worldOf(turn.axis), sight)) * HANDLE_RING_PX
           >= RING_MIN_PX;
     }
     return true;
@@ -459,7 +462,7 @@ export function createHandle(vp) {
     drag.x = event.clientX;
     drag.y = event.clientY;
     drag.moved = true;
-    dragSection(vp, g, drag.axis, dx, dy);
+    dragSection(vp, g, drag.axis, dx, dy, [event.clientX, event.clientY]);
   }
 
   /**

@@ -52,7 +52,8 @@ import {
   makeViewport, RECT, framesAsked, rendered, settled, stubFrames,
 } from './component.js'
 import {
-  fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera, realCamera,
+  fakeGroup, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera,
+  realCamera,
 } from './fakes.js'
 
 const PART = '/Group/plate'
@@ -1939,5 +1940,47 @@ describe('what puts the widget on the part', () => {
     for (const [name, over, tweak, want] of cases) {
       expect(bothOn(over, tweak), name).toEqual(want)
     }
+  })
+})
+
+describe('under the perspective camera', () => {
+  // Every pixel looks along its own ray, and the angle is taken where that ray
+  // meets the ring's plane. The eye stands 40 back from the part down the
+  // diagonal; a ring's radius is `RING_PX` of the world span of one pixel at
+  // that depth (fov 30 over 600 px).
+  const DEPTH = 40
+  const VIEW = OBLIQUE.forward.map((v) => v / Math.sqrt(3))
+  const radius = (RING_PX * 2 * DEPTH * Math.tan(Math.PI / 12)) / RECT.height
+  const onCircle = (s, axis, t) => {
+    const u = AXIS[(axis + 1) % 3]
+    const v = AXIS[(axis + 2) % 3]
+    return canvasAt(s, CENTRE_AT.map(
+      (c, i) => c + radius * (u[i] * Math.cos(t) + v[i] * Math.sin(t))))
+  }
+
+  it('carries the knob round under the hand on every ring', () => {
+    for (const axis of [0, 1, 2]) {
+      const s = scene({ camera: perspectiveCamera(THREE, {
+        ...OBLIQUE, eye: CENTRE_AT.map((v, i) => v - VIEW[i] * DEPTH),
+      }) })
+      rendered(s.viewer)
+      const hand = onCircle(s, axis, DISC_T + 1)
+      press(s.canvas, onCircle(s, axis, DISC_T))
+      pointerMove(hand, { shiftKey: true })
+      rendered(s.viewer)
+      knobSpot(s, axis).forEach((value, k) => expect(value, `the ${'XYZ'[axis]} ring`)
+        .toBeCloseTo(hand[k], 6))
+      pointerUp(hand)
+    }
+  })
+
+  it('opens a ring by the sight line to the part, not by the view axis', () => {
+    // Looking straight down -Z at a part off to one side: the sight to it leans
+    // 0.29 towards X, which leaves 30 px of the X ring open. Down the same axis
+    // under ortho the X ring is edge-on (the first test of 'which rings are
+    // drawn at all').
+    const s = scene({ camera: perspectiveCamera(THREE, { eye: [-12, 0, 85] }) })
+    rendered(s.viewer)
+    expect([0, 1, 2].map((axis) => upright(s, axis))).toEqual([true, false, true])
   })
 })

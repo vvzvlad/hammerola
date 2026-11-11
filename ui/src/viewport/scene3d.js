@@ -191,16 +191,18 @@ export function joinPresses(vp, order, take) {
  *     a widget with nothing to stand on disappears by itself.
  *   `place(group, g, k)` positions and orients the group and returns false when
  *     it cannot. The group's scale is this module's and is overwritten every
- *     frame; `k` is world units per CSS pixel, for both kinds of widget.
+ *     frame; `k(point)` is world units per CSS pixel at a world point, for both
+ *     kinds of widget — one number under ortho, the point's depth under
+ *     perspective — and null for a point behind the eye.
  *   `press(event, g, hit)` handles a press the raycast found on ours and
  *     returns whether the widget took it; `hit` is the intersection.
  *
  * `pixels` (true unless the caller says otherwise) is which of the two kinds a
  * widget is:
  *
- *   true — the group is scaled by `k`, so one geometry unit is one CSS pixel
- *     and the widget is the same size on screen at every zoom (handle.js,
- *     rings.js, gizmo.js).
+ *   true — the group is scaled by `k` at the point `place` stood it on, so one
+ *     geometry unit is one CSS pixel there and the widget is the same size on
+ *     screen at every zoom (handle.js, rings.js, gizmo.js).
  *   false — the group's scale is left at 1, and `place` puts the children at
  *     world points and sizes them in world units itself, so the widget is a
  *     thing in the model and grows as the reader zooms in (pins.js). `k` is
@@ -271,19 +273,31 @@ export function createScene3D(vp,
     if (fanout.widgets.size === 0) viewer.onBeforeRender = fanout.previous;
   }
 
-  /** World units per CSS pixel, or null for a camera this cannot answer for.
+  /** World units per CSS pixel at a world point, as a function of the point
+   *  that answers a number or null, or null for a canvas with no height.
    *
-   * The camera is orthographic (`displayOptions` in options.js;
-   * `gestureInternals` refuses anything else), so one number covers the frame:
-   * frustum height over zoom over canvas height in pixels. A perspective camera
-   * would need the widget's depth too, so it gets null and no widget.
+   * Ortho: one number covers the frame, frustum height over zoom over canvas
+   * height in pixels. Perspective: the frustum's height at the point's depth
+   * along the camera's own axis, `2 tan(fov / 2) depth / zoom`, over the canvas
+   * height; null for a point on or behind the eye, which nothing can be drawn
+   * at.
    */
   function pixelScale(g) {
-    if (!g.cam.isOrthographicCamera) return null;
     const rect = g.canvas.getBoundingClientRect();
     if (!(rect.height > 0)) return null;
-    const k = (g.cam.top - g.cam.bottom) / g.cam.zoom / rect.height;
-    return Number.isFinite(k) && k > 0 ? k : null;
+    const cam = g.cam;
+    const positive = (k) => (Number.isFinite(k) && k > 0 ? k : null);
+    if (cam.isOrthographicCamera) {
+      const k = positive((cam.top - cam.bottom) / cam.zoom / rect.height);
+      return k === null ? null : () => k;
+    }
+    // The matrix the frame is drawn with, refreshed as `cameraBasis` does; its
+    // third column is the camera's backward axis, its fourth the eye.
+    cam.updateMatrixWorld();
+    const e = cam.matrixWorld.elements;
+    const span = (2 * Math.tan((cam.fov * Math.PI) / 360)) / cam.zoom / rect.height;
+    return (p) => positive(((e[12] - p[0]) * e[8] + (e[13] - p[1]) * e[9]
+                            + (e[14] - p[2]) * e[10]) * span);
   }
 
   function paint() {
@@ -294,10 +308,17 @@ export function createScene3D(vp,
       group.visible = false;
       return;
     }
-    // Uniform, written after `place`: position and orientation compose with a
-    // uniform scale in any order. A widget measured in the world carries its
-    // own sizes, so its group is left at 1.
-    group.scale.setScalar(pixels ? k : 1);
+    // Uniform, written after `place` and taken where `place` stood the group:
+    // position and orientation compose with a uniform scale in any order. A
+    // widget measured in the world carries its own sizes, so its group is left
+    // at 1.
+    const at = group.position;
+    const scale = pixels ? k([at.x, at.y, at.z]) : 1;
+    if (scale === null) {
+      group.visible = false;
+      return;
+    }
+    group.scale.setScalar(scale);
     group.visible = true;
   }
 
