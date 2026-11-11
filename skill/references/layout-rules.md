@@ -285,6 +285,32 @@ Fix by moving vias and parts first; add bends only where nothing can move.
 - If the per-pass unrouted count in the log sets no new low for 2 passes while above 0,
   stop and fix placement; more passes or reruns on the same placement do not converge.
 - Imported routing is a draft: it must pass the track-geometry gate and DRC like any other.
+- Routing a net by hand, rerouting one, or making room for one: the MCP server `pns`
+  (`scripts/pns_mcp.py`), KiCad 10.0.7's interactive router on a copy of the saved board in
+  docker. It is registered once per machine with
+  `claude mcp add --scope user pns -- python3 ~/.claude/skills/hammerola/scripts/pns_mcp.py`;
+  the first `open_board` builds its image on the docker host (about half an hour), and a
+  changed `pns_bridge.py` rebuilds in under a minute.
+  - Order: save the board in KiCad → `open_board` on the saved `.kicad_pcb` → `delete_net_routing`
+    / `delete`, `start_route` on a pad, track end or via of the net → `line_to` (waypoints, as
+    clicks) or `finish` → `drc` → `save` → `scripts/drc.sh` on the saved `.kicad_pcb` →
+    `put.py` it. `checkpoint` and `restore` work between routes only.
+  - A last waypoint on a pad, track or via of the net on the route's layer commits the route. `via_at_end` puts a
+    via at the last waypoint: on the net's copper on any layer it ends the route, elsewhere the
+    route goes on from it on the other outer layer (F.Cu↔B.Cu). The router does not see zones:
+    a via into a plane ends the route with `via_at_end` and `end` in the same call (KiCad's End
+    key: commit at the last waypoint whatever is under it).
+  - `push` shoves other nets' tracks and vias and reports what it moved; `walk` goes around
+    them; `drag` always pushes.
+  - Track width, via size and clearance come from the net classes; the `.kicad_dru` rules are
+    applied by `drc` only. Zones are neither refilled nor obstacles: after copper moves, `drc`
+    reports clearance errors to the old fill, and `drc.sh` (which refills) is the check. The
+    engine's `drc` has no library, silkscreen or courtyard checks.
+  - Segments follow KiCad's 45° posture: a waypoint off a 0/45/90° line from the previous one
+    becomes a straight piece plus a 45° piece, and a near-miss leaves a stub of a few
+    micrometres that the track-geometry gate flags. Compute waypoints on those lines.
+  - `finish` does not change layer: when the nearest unconnected anchor is on another layer it
+    stops there and says so; place the via with `line_to` and `via_at_end`.
 
 ## Stitching and plane integrity
 
