@@ -3231,8 +3231,8 @@ class Viewer {
    * HAMMEROLA'S PATCH: Studio, a look for showing a model rather than for
    * drawing it — no edges on the parts, ACES tone mapping, and the lights,
    * room and ground shadow of {@link StudioLook}. The camera stays as it is:
-   * the page's gestures and its widgets in the scene work under an ortho
-   * camera only (ui/src/viewport/internals.js `gestureInternals`). Laid over
+   * Studio draws with whichever camera, ortho or perspective, the page's
+   * Settings chose. Laid over
    * whatever is rendered and kept for the next model while on; turned off,
    * the view is put back as it was.
    * @param on - whether Studio is on.
