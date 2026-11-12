@@ -57,6 +57,7 @@ import { HammerolaProjects, VIEW_BODIES } from '../src/HammerolaEntry.jsx'
 import { SHUT } from '../src/Header.jsx'
 import { indexTree } from '../src/hub.js'
 import { css, NARROW } from '../src/style.jsx'
+import { fitBar, quietBtn, toolBar } from '../src/viewlist.jsx'
 import { headerOn, makeComponent, replaceState } from './component.js'
 import { collect, styles, texts } from './eltree.js'
 import { guardSubscribers } from './addressguard.js'
@@ -781,5 +782,126 @@ describe('the project list on a narrow window', () => {
     expect(header).toHaveLength(1)
     expect(header[0].height).toBeUndefined()
     expect(header[0].flexWrap).toBe('wrap')
+  })
+})
+
+describe('the bar short of room', () => {
+  // The owner's «в какой-то момент при сжатии пропадает селектор видов», then
+  // «можно кнопки до значков схлопывать», where even the icons do not fit
+  // beside the comment rail «Прятать инструменты», decided «По самому длинному
+  // имени», and «обрезать на экране это самое имя». jsdom lays nothing out, so
+  // the bar is a box `room` px wide whose other buttons take `rest[classes]` px,
+  // and the views' control, 40px of padding and chevron around its name, capped
+  // at `CAP`, gets what is left of its own width. A name is 6px a character.
+  const rest = { '': 790, 'hmr-icons': 390, 'hmr-bare': 70, 'hmr-bare hmr-icons': 45 }
+  const CAP = 180
+  const bar = (room, shown = 'assembled') => {
+    const box = document.createElement('div')
+    const view = document.createElement('div')
+    const name = document.createElement('span')
+    view.style.flexShrink = '100'
+    name.className = 'hmr-view-name'
+    name.style.minWidth = '0px'
+    view.appendChild(name)
+    box.appendChild(view)
+    const classes = () => [...box.classList].sort().join(' ')
+    const own = () => Math.min(CAP, 40 + Math.max(parseFloat(name.style.minWidth), shown.length * 6))
+    view.getBoundingClientRect = () => ({
+      width: view.style.flexShrink === '0' ? own() : Math.max(0, Math.min(own(), room - rest[classes()])),
+    })
+    return { box, view, name, classes, set: (wide, label = shown) => { room = wide; shown = label } }
+  }
+
+  it('gives up the words, then the tools, then Fit\'s word, until the views\' control has its own width', () => {
+    const { box, view, classes, set } = bar(1000)
+    const fitted = (wide) => {
+      set(wide)
+      fitBar(box)
+      return [classes(), view.getBoundingClientRect().width]
+    }
+    expect(fitted(1000)).toEqual(['', 94])
+    // 808px: the window of the owner's screenshot, where the words left the control 3px
+    expect(fitted(808)).toEqual(['hmr-icons', 94])
+    // the comment rail open on a 740px window, where the icons left it one letter
+    expect(fitted(440)).toEqual(['hmr-bare', 94])
+    expect(fitted(130)).toEqual(['hmr-bare hmr-icons', 85])
+    // and everything comes back once there is room for it again
+    expect(fitted(890)).toEqual(['', 94])
+    // the control's own shrink is put back after the measurement
+    expect(view.style.flexShrink).toBe('100')
+  })
+
+  it('takes the same step on every view, fitted to the widest name the button can show', () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ font: '', measureText: (text) => ({ width: text.length * 6 }) })
+    onTestFinished(() => vi.restoreAllMocks())
+    const names = ['assembled', 'board passing the woofer hole']
+    const { box, name, classes, set } = bar(900)
+    const step = (label) => {
+      set(900, label)
+      fitBar(box, names)
+      return classes()
+    }
+    // 900px: room for the words beside «assembled», not beside the long name at the cap
+    expect([step('assembled'), step('board passing the woofer hole')]).toEqual(['hmr-icons', 'hmr-icons'])
+    // fitted to the name on screen alone, «assembled» would have kept the words
+    set(900, 'assembled')
+    fitBar(box)
+    expect(classes()).toBe('')
+    // the name's own least width is put back after the measurement
+    expect(name.style.minWidth).toBe('0px')
+  })
+
+  it('hides the tools and the words by its own sheet, and refits as its layer resizes', async () => {
+    const { act } = await import('react')
+    const { createRoot } = await import('react-dom/client')
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    const watched = []
+    const gone = vi.fn()
+    let refit = null
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) { refit = callback }
+      observe(el) { watched.push(el) }
+      disconnect() { gone() }
+    })
+    const layer = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(layer)
+    onTestFinished(() => {
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT
+      vi.unstubAllGlobals()
+      layer.remove()
+    })
+    // Every button with the inline `display:flex` the pages give it, which a
+    // class on the button itself could not beat.
+    const look = quietBtn(false)
+    act(() => root.render(toolBar({
+      viewMenu: false, viewTabs: [{ key: 'a', label: 'assembled', hint: '', onClick() {} }], showTools: true,
+      ...Object.fromEntries(['measure', 'insets', 'comment', 'proposal', 'fit', 'studio', 'frame', 'settings']
+        .map((tool) => [`${tool}BtnStyle`, look])),
+    })))
+    const box = layer.firstElementChild
+    // the tools' wrappers leave their buttons the bar's flex items
+    expect([...box.querySelectorAll(':scope > .hmr-tool')].map((el) => getComputedStyle(el).display))
+      .toEqual(['contents', 'contents'])
+    expect(watched).toEqual([box, layer])
+    // hidden: the element or one of its ancestors in the bar is not displayed
+    const hidden = (el) => {
+      for (let at = el; at !== box; at = at.parentElement) {
+        if (getComputedStyle(at).display === 'none') return true
+      }
+      return false
+    }
+    const button = (title) => box.querySelector(`[title^="${title}"]`)
+    const seen = () => [hidden(button('Measure')), hidden(button('Measure').querySelector('span')),
+      hidden(button('back to the frame')), hidden(button('back to the frame').querySelector('span'))]
+    box.className = 'hmr-icons'
+    expect(seen()).toEqual([false, true, false, true])
+    box.className = 'hmr-bare'
+    expect(seen()).toEqual([true, true, false, false])
+    // a resize refits from the words: jsdom's zero widths leave the control its own
+    refit()
+    expect([box.className, seen()]).toEqual(['', [false, false, false, false]])
+    act(() => root.unmount())
+    expect(gone).toHaveBeenCalledTimes(1)
   })
 })

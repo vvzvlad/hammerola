@@ -108,8 +108,10 @@ export function menuGroups(views, documents) {
  *  about its centre with the name from view to view (AGENTS.md). A view's name
  *  is the model's own sentence and can be any length; the button sits in a
  *  bar that must not grow past the window, so it is capped and the name is cut
- *  rather than allowed to push. */
-export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:220px;`
+ *  rather than allowed to push. The cap is short, about twenty characters: the
+ *  bar is fitted to the widest name the button can show (`fitBar`), and a long
+ *  one would cost the other buttons their words on every view. */
+export const viewButtonStyle = (open) => `display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:5px;font:500 12px ${SANS};cursor:pointer;max-width:140px;`
   + (open ? TAB_ON : TAB_OFF);
 
 /**
@@ -166,8 +168,10 @@ const CUT_NAME = `${ELLIPSIS};min-width:0`;
 // orbiting on a retina Mac (measured).
 // Never wider than its layer, and narrower still beside `DocFile` where the
 // strip is short of room (`min-width:0` lets the layer shrink it): where the
-// controls do not fit, the view button (`viewList`) or the strip of views
-// (`TAB_STRIP`) gives up its width first, the names in it cut by an ellipsis.
+// controls do not fit, the bar drops the buttons' words, then the tools
+// (`fitBar`); where the views and Fit do not fit even then, the view button
+// (`viewList`) or the strip of views (`TAB_STRIP`) gives up its width, the
+// names in it cut by an ellipsis.
 export const FLOAT_BAR = 'pointer-events:auto;display:flex;align-items:center;gap:8px;padding:4px;min-width:0;max-width:calc(100% - 24px);background:var(--float-bg);contain:layout;border:1px solid var(--line);border-radius:9px;box-shadow:0 4px 16px var(--shadow-soft)';
 // Its layer, centred on the bottom edge, the z-index appended by the page.
 export const BAR_LAYER = 'position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:';
@@ -365,15 +369,15 @@ export class SheetRows extends React.Component {
  * BUTTON: the bar carries `contain:layout` and is therefore already a
  * containing block for it, so without the wrapper the card would be measured
  * from the bar's whole box and start at its left end rather than at the button.
- * It is also what shrinks when the bar is short of room (`FLOAT_BAR`): a shrink
- * far above the other controls' and no minimum width, so the name is cut before
- * any other label wraps.
+ * It is also what shrinks when the bar is short of room even without its tools
+ * (`fitBar`): a shrink far above the other controls' and no minimum width, so
+ * the name is cut before any other label wraps.
  */
 export function viewList({ label, open, onToggle, views = [], documents = [], wide = true }) {
   return (
     <div style={css(`${RELATIVE};min-width:0;flex-shrink:100`)}>
       <div onClick={onToggle} title={label} style={css(viewButtonStyle(open))}>
-        <span style={css(CUT_NAME)}>{label}</span>
+        <span className={NAME_CLASS} style={css(CUT_NAME)}>{label}</span>
         {CHEVRON}
       </div>
       <div onClick={(e) => e.stopPropagation()} style={css(viewMenuStyle(open, wide))}>
@@ -402,8 +406,9 @@ export function viewList({ label, open, onToggle, views = [], documents = [], wi
 export const quietBtn = (off) => QUIET_BTN + (off ? `;${OFF}` : '');
 
 /** The views as a strip of tabs, while they fit (`VIEW_TABS_MAX`). Where the
- *  bar is short of room it is the strip that shrinks, as the view button does
- *  (`viewList`), its pills' names cut by their ellipsis. */
+ *  bar is short of room even without its tools (`fitBar`) it is the
+ *  strip that shrinks, as the view button does (`viewList`), its pills' names
+ *  cut by their ellipsis. */
 const TAB_STRIP = 'display:flex;gap:2px;padding:2px;min-width:0;flex-shrink:100;background:var(--chip-bg);border-radius:6px';
 
 // The open document's file, on the strip to the left of the bar.
@@ -576,9 +581,94 @@ export function toolBar(b, menus = {}) {
   );
 }
 
+// A button's word and the tools (`showTools`'s share of the bar), and the
+// classes of a bar that has dropped them (`fitBar`). The tools' two wrappers
+// are `display:contents`, so the buttons in them stay the bar's flex items; set
+// here, in the sheet, because an inline `display` would beat the one that hides them.
+const WORD_CLASS = 'hmr-tool-word';
+const TOOL_CLASS = 'hmr-tool';
+// The name on the views' button (`viewList`), which `fitBar` measures.
+const NAME_CLASS = 'hmr-view-name';
+const ICONS_CLASS = 'hmr-icons';
+const BARE_CLASS = 'hmr-bare';
+const BAR_CSS = `.${TOOL_CLASS}{display:contents}`
+  + `.${ICONS_CLASS} .${WORD_CLASS},.${BARE_CLASS} .${TOOL_CLASS}{display:none}`;
+// What the bar gives up, in order, until the views' control has its own width:
+// the words, then the tools with Fit's and AR's words back, as on a narrow
+// window (`showTools`), then those two words as well.
+const BAR_STEPS = [[], [ICONS_CLASS], [BARE_CLASS], [BARE_CLASS, ICONS_CLASS]];
+
+/** The widest of `names` in `el`'s font, in pixels. */
+function widest(el, names) {
+  const ctx = document.createElement('canvas').getContext('2d');
+  const cs = getComputedStyle(el);
+  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  return Math.max(...names.map((name) => ctx.measureText(name).width));
+}
+
+/**
+ * The first of `BAR_STEPS` that leaves the views' control (the bar's first
+ * child) its own width, on `bar`; the last where none does. The control is the
+ * one thing in the bar that shrinks, so a window a little short of the words
+ * would otherwise squeeze it to nothing.
+ *
+ * Its own width is the one it has with the widest of `names`, the names the
+ * views' button can show, within the button's cap (`viewButtonStyle`): the
+ * step is then the same on every view, and the bar changes from view to view by
+ * the name alone (AGENTS.md). The strip of views (`TAB_STRIP`) passes none:
+ * it is the same on every view as it stands.
+ *
+ * Measured rather than a breakpoint: what has to fit differs with the reader
+ * (Comment and Add primitive are the editor's), a document open beside the bar
+ * (`DocFile`), AR and the comment rail narrowing the layer. Synchronous, so a
+ * frame with more than fits is never painted.
+ */
+export function fitBar(bar, names = []) {
+  const view = bar.firstElementChild;
+  const name = view.querySelector(`.${NAME_CLASS}`);
+  // The name as wide as the widest while the steps are tried, and the control
+  // unshrinkable for the measurement of its own width; both inline values put
+  // back after.
+  const least = name && name.style.minWidth;
+  if (name && names.length) name.style.minWidth = `${widest(name, names)}px`;
+  const shrink = view.style.flexShrink;
+  view.style.flexShrink = '0';
+  const natural = view.getBoundingClientRect().width;
+  view.style.flexShrink = shrink;
+  for (const step of BAR_STEPS) {
+    bar.classList.remove(ICONS_CLASS, BARE_CLASS);
+    bar.classList.add(...step);
+    if (view.getBoundingClientRect().width >= natural - 0.5) break;
+  }
+  if (name) name.style.minWidth = least;
+}
+
+/** The bar's box, fitted (`fitBar`) after every render — a document opened
+ *  beside the bar or a tool shown changes what has to fit — and whenever the
+ *  bar or its layer (the window, the comment rail) resizes. */
+function FloatBar({ style, names, children }) {
+  const ref = React.useRef(null);
+  // The latest render's names, for the observer set up at the first.
+  const named = React.useRef(names);
+  named.current = names;
+  React.useLayoutEffect(() => fitBar(ref.current, named.current));
+  React.useLayoutEffect(() => {
+    const bar = ref.current;
+    const sized = new ResizeObserver(() => fitBar(bar, named.current));
+    sized.observe(bar);
+    sized.observe(bar.parentElement);
+    return () => sized.disconnect();
+  }, []);
+  return <div ref={ref} style={style}>{children}<style>{BAR_CSS}</style></div>;
+}
+
+/** A button's word, dropped where the bar is in icons (`fitBar`). */
+const word = (text) => <span className={WORD_CLASS}>{text}</span>;
+
 function floatBar(b, menus) {
   return (
-    <div style={css(FLOAT_BAR)}>
+    <FloatBar style={css(FLOAT_BAR)} names={b.viewMenu
+      ? [b.viewLabel, ...b.viewTabs.map((t) => t.label), ...(b.docRows || []).map((t) => t.label)] : []}>
       {/* A STRIP WHILE THE VIEWS FIT AND NOTHING ELSE NEEDS A ROW, ELSE A
           MENU (`viewMenu` in chromeview.js): the views past `VIEW_TABS_MAX`,
           the build's documents under them. A pill's
@@ -602,19 +692,21 @@ function floatBar(b, menus) {
       {/* Everything between the views and Fit belongs to a pointer and a
           canvas with room to aim in — see `showTools`. */}
       {b.showTools && (
-        <>
+        <div className={TOOL_CLASS}>
           <div style={css(RULE)} />
-          <div onClick={b.tMeasure} style={css(b.measureBtnStyle)}>
+          {/* A title on each button that has none of its own: in icons
+              (`fitBar`) it is the button's only name. */}
+          <div onClick={b.tMeasure} title="Measure" style={css(b.measureBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 14L14 2M2 14l2.2-.55M14 2l-.55 2.2M6.2 9.8l1.4 1.4M9 7l1.4 1.4" /></svg>
-            Measure
+            {word('Measure')}
           </div>
-          <div onClick={b.tInsets} style={css(b.insetsBtnStyle)}>
+          <div onClick={b.tInsets} title="Insets" style={css(b.insetsBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><rect x="8" y="8" width="4.5" height="3.5" rx="0.6" /></svg>
-            Insets
+            {word('Insets')}
           </div>
-          <div onClick={b.tComment} style={css(b.commentBtnStyle)}>
+          <div onClick={b.tComment} title="Comment" style={css(b.commentBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 2.5h12v8.5H8.5L5.5 14v-3H2z" /><path d="M5 5.5h6M5 8h4" /></svg>
-            Comment
+            {word('Comment')}
           </div>
           {/* A box drawn in the air beside the model — which is what this
               adds: a rough body in numbers, over the geometry rather than in
@@ -627,19 +719,19 @@ function floatBar(b, menus) {
               whole box and start at its left end rather than at the button. */}
           <div style={css(RELATIVE)}>
             {/* The one label of two words: kept on one line, so that the
-                bar short of room cuts the view's name (`viewList`) instead. */}
-            <div onClick={b.tProposal} style={css(`${b.proposalBtnStyle};white-space:nowrap`)}>
+                bar short of room drops it (`fitBar`) rather than wraps it. */}
+            <div onClick={b.tProposal} title="Add primitive" style={css(`${b.proposalBtnStyle};white-space:nowrap`)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M2 4.6L8 1.8l6 2.8v6.8L8 14.2 2 11.4z" /><path d="M2 4.6L8 7.4l6-2.8M8 7.4v6.8" /></svg>
-              Add primitive
+              {word('Add primitive')}
             </div>
             {menus.proposal}
           </div>
           <div style={css(RULE)} />
-        </>
+        </div>
       )}
       <div onClick={b.fitView} title="back to the frame this view opened in" style={css(b.fitBtnStyle)}>
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" /></svg>
-        Fit
+        {word('Fit')}
       </div>
       {/* View in AR, beside Fit at every width (`arBtn` in chromeview.js):
           on every view, out of service where it cannot be, so the bar keeps
@@ -647,30 +739,30 @@ function floatBar(b, menus) {
       {b.arBtn && (
         <div key="ar" onClick={b.arBtn.onClick || undefined} title="view the model in AR at 1:1" style={css(quietBtn(!b.arBtn.onClick))}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" /><path d="M2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" /></svg>
-          AR
+          {word('AR')}
         </div>
       )}
       {b.showTools && (
-        <>
+        <div className={TOOL_CLASS}>
           <div onClick={b.tStudio} title="show the model with a studio's light, without edges" style={css(b.studioBtnStyle)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="7" r="4.2" /><path d="M2.5 13.6h11" /><path d="M5.6 5.4a2.6 2.6 0 0 1 2-1.4" /></svg>
-            Studio
+            {word('Studio')}
           </div>
           <div onClick={b.grabFrame} title="save the current frame as a PNG" style={css(b.frameBtnStyle)}>
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
-            Frame
+            {word('Frame')}
           </div>
           {/* The `Add primitive` card's wrapper, for its reason. */}
           <div style={css(RELATIVE)}>
-            <div onClick={b.tSettings} style={css(b.settingsBtnStyle)}>
+            <div onClick={b.tSettings} title="Settings" style={css(b.settingsBtnStyle)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="4.2" /><circle cx="8" cy="8" r="1.8" /><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" /></svg>
-              Settings
+              {word('Settings')}
             </div>
             {menus.settings}
           </div>
-        </>
+        </div>
       )}
-    </div>
+    </FloatBar>
   );
 }
 
