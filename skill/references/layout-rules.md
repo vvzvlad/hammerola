@@ -148,6 +148,12 @@ before placing parts and check them in 3D like DRC.
   crossings (`bq.py score`) and a fastroute draft on a copy (`scripts/autoroute.sh
   --diagnose`), which shows where tracks jam and which connections it could not route
   (agent's suggestion).
+- A re-placement reviews the whole board, not only the parts the change forces to move: any
+  group may move for shorter, cleaner routing, held only by the outline, the mounting holes
+  and what the spec or the enclosure fixes. Before holding a part where it is, check why it is
+  there (a module with its antenna on a cable need not sit at the edge). The owner: «а че у тебя
+  например место есп не поменялось, нафиг ты его в край двигаешь, если там антенна проводом,
+  например. точнее ты просто не двигал ничего, хотя можно же оптимизировать».
 
 ## Silkscreen (part of placement, not a post-pass)
 
