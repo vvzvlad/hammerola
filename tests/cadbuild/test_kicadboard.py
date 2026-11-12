@@ -256,6 +256,24 @@ def test_a_part_colour_is_on_sixteen_levels_a_channel():
     assert kicadboard._quantised("#ffffff") == "#ffffff"
 
 
+def test_linear_light_is_turned_to_srgb():
+    """kicad-cli writes a part's STEP colour in linear light: shown raw, a
+    connector's grey body (linear 0.07) is black."""
+    assert [kicadboard._srgb(c) for c in ("#000000", "#121212", "#808080", "#ffffff")] == [
+        "#000000", "#4b4b4b", "#bcbcbc", "#ffffff"]
+
+
+def test_a_part_colour_is_its_material_s_in_srgb(loaded):
+    """The parts' records carry their materials' colours in sRGB; the layers
+    keep theirs as written (`test_the_records_are_a_catalogue_moved_by_at`)."""
+    board, _, _ = loaded
+    gltf, _ = kicadboard._gltf((FIXTURES / "board.glb").read_bytes())
+    raw = {kicadboard._color(m) for m in gltf["materials"]}
+    parts = {color for name, (*_, color) in board.meshes.items() if name.startswith("parts_")}
+    assert parts <= {kicadboard._quantised(kicadboard._srgb(c)) for c in raw}
+    assert not parts <= {kicadboard._quantised(c) for c in raw}
+
+
 def test_the_layers_are_their_outer_faces_merged(loaded):
     """KiCad writes copper and pads as slabs whose inner faces lie on the
     laminate's; the records keep each layer's flat outer faces, where KiCad put
