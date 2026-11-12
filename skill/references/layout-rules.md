@@ -26,8 +26,9 @@ Placed:
 
 Routed, in addition:
 - Track geometry — acceptance gate: passed.
-- Stitching and plane integrity: reported per pour; every outer-layer pour piece is tied
-  by >= 2 vias/PTH pads of its net.
+- Stitching and plane integrity: reported per pour; every outer-layer piece of a pour whose
+  net has a plane is tied to it by >= 2 vias/PTH pads of its net. Pours of nets without a
+  plane (switch node, class-D output, speaker line) get no stitching vias.
 - DRC errors fixed, none waived as "expected" (copper-to-edge included); no designator
   or label text in any silk_overlap / silk_over_copper / silk_edge_clearance finding.
 - A resolvable 3D model on every assembled part (schematic-library.md → Models on placed
@@ -396,12 +397,20 @@ Fix by moving vias and parts first; add bends only where nothing can move.
 
 A board with pours is not routed until these checks are measured on the saved board.
 
-- Tie every pour on an outer or signal layer to its reference plane with vias of its own
-  net: <= 4 mm apart along the board edge, <= 10 mm along the rest of the drawn zone
-  outline, and inside so that no fill point is farther than 7 mm from such a via (a 10 mm
-  grid), plus one at every extremity or neck of an irregular pour (ADI AN-0971: fill ties
-  every 10 mm, vias at the extreme edges, a 4 mm via fence along the board edge). No vias
-  in isolation or creepage gaps, antenna keep-outs or a deliberate star-ground area.
+- Tie every pour on an outer or signal layer whose net has a plane (GND, a supply rail with
+  its own plane layer) to that plane with vias of its own net: <= 4 mm apart along the
+  board edge, <= 10 mm along the rest of the drawn zone outline, and inside so that no fill
+  point is farther than 7 mm from such a via (a 10 mm grid), plus one at every extremity or
+  neck of an irregular pour (ADI AN-0971: fill ties every 10 mm, vias at the extreme edges,
+  a 4 mm via fence along the board edge). No vias in isolation or creepage gaps, antenna
+  keep-outs or a deliberate star-ground area.
+- A pour of a net with no plane (a switch node, a class-D output, a speaker line) is a
+  conductor between its pads, not a piece of a plane: no stitching vias. A via goes in only
+  where its current has to change layer. A switch node, and a class-D output up to its LC
+  filter (all the way to the speaker on a filterless amp), swings at the edge rate, and each
+  via adds copper that couples it into every layer: keep that copper to what the current
+  needs (TI SLYT614: "All copper connected to the SW node is one plate of a parasitic
+  capacitor"; vias from SW to the inductor only when no single-layer route exists).
 - Module GND pads beside a PCB antenna get vias along the pad row (Espressif asks for
   "dense ground vias" there without a number; e.g. one behind every second pad). EPAD vias
   follow the module's land pattern.
@@ -412,10 +421,10 @@ A board with pours is not routed until these checks are measured on the saved bo
   both layers, leaves no continuous fill.
 - After every refill, count fill pieces per zone and layer (bundled pcbnew on the saved
   file: `zone.GetFilledPolysList(layer).OutlineCount()`). It is a defect when a plane or
-  spec-required pour is in more than one piece, a piece is tied by fewer than 2 vias/PTH
-  pads of its net (TI SZZA009: a fill tied at one point is only a shield), or a required
-  copper area is below its target. Fix it by moving the cutting track, adding vias or
-  removing the sliver.
+  spec-required pour is in more than one piece, a piece of a pour whose net has a plane is
+  tied to it by fewer than 2 vias/PTH pads of its net (TI SZZA009: a fill tied at one
+  point is only a shield), or a required copper area is below its target. Fix it by moving
+  the cutting track, adding vias or removing the sliver.
 - Report per pour: vias added, largest gap along the outline, largest via-free circle
   inside, piece count and ties per piece.
 - Fast nets (USB D+/D-, clocks) stay on one layer over unbroken GND. If a pair must change
