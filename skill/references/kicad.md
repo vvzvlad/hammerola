@@ -22,7 +22,7 @@ block before placing, routing, editing silkscreen or reviewing a board; it is no
 | Isolation distances between domains: air gap, creepage around cut-outs, plan view over all layers | `konnect`, `kicad-pcb` | `references/layout-rules.md` (Safety distances across layers), lenses MI in `references/lens-checklist.md`, `scripts/creep.py` |
 | «Проверь схему»: the electrical review of a revision — operating point, every pin in every state, the power budget per rail, corners, firmware, the diff against the previous revision | `konnect`, `kicad-review` | `references/schematic-review.md`, `references/power-budget.md`, `scripts/sch.py` |
 | A part's rating, abs-max, pin level, a datasheet to cite; an SMD marking to decode | — | `references/datasheets.md` |
-| Alternatives for a part, a category of parts under a price, pin-to-pin comparison | — | `references/parts-search.md`, `scripts/parts.py` |
+| Alternatives for a part from JLCPCB's stock, pin-to-pin comparison | `search_jlcpcb_parts`, `suggest_jlcpcb_alternatives`, `get_jlcpcb_part` | `references/parts-search.md` |
 | Gerbers, BOM/CPL, pick-and-place, fab order, quotes | `konnect`, `kicad-manufacture` | `references/manufacture-assembly.md` |
 | A panel of boards for assembly: KiKit, the panel's DRC, the Gerber diff | `konnect`, `kicad-manufacture` | `references/panel.md`, `scripts/panel_rules.py`, `scripts/gerbers.sh`, `scripts/gerber_diff.py` |
 | Publishing a schematic, a board, its 3D model or Gerbers on the hub | — | `references/boards.md` |
@@ -109,7 +109,6 @@ the interpreter they name: the hub's installer does not keep the executable bit.
 | `view.py` | KiCad Python, rsvg-convert | A region of the saved board (`X1 Y1 X2 Y2`, `ref REF` or `full`) as KiCad's own plot, PNG at most `--px` (1000) on the long side, with an mm grid in board coordinates, reference designators (hidden ones too), net names and numbered markers from a `drc.json` or `bq.py --json`; prints what is in the region |
 | `silk.py` | KiCad Python | Designator placement: `plan` finds a legal spot for every reference and lists the unplaced ones with the reason; `apply` writes the plan to a closed board, or `--live` to the open one over kipy |
 | `sch.py` | python3, kicad-cli | Schematic review from the root `.kicad_sch` (or a kicadxml `.xml` netlist): parts with their sheet, nets, one net, a part's pins and nets with the notes of its sheet within 40 mm (`around REF…`), every sheet note with its nearest parts (`texts`), power rails with what feeds and what draws from each (`rails`, `--md` for the consumption-table skeleton), what changed between two revisions or project directories (`diff`); reads every sheet reachable from the root, a sheet placed twice once per placement; ported from Wiren Board's `kicad_review.py` (MIT) |
-| `parts.py` | python3 | Parts on szlcsc.com (LCSC's domestic shop), solving its RC4 anti-bot cookie: the category tree (`tree --grep`), keyword search with the 1000-pc price in USD (`search`), foreign distributors' offers (`overseas`), a category's brands and packages (`params`), whole categories to JSONL and CSV under a price cap, sliced past the 1500-row cut and resumable (`harvest`), LCSC's English detail and datasheet link (`detail`), `%PDF`-checked datasheets named by part code (`datasheet`), the CNY-per-USD rate (`rate`), a shortlist JSON to CSV (`report`). Work files go to the current directory unless `--out` or `-d` says otherwise |
 | `panel_rules.py` | python3 | After a KiKit rebuild: the panel's `.kicad_pro` gets the board's net classes, its netclass patterns and the classes the schematic assigns as `Board_?-` patterns; the panel's `.kicad_dru` the board's rules with `Board_?-` net names and `<name>*` rule areas; old files to `*.bak`; ported from Wiren Board's `kikit_panel_rules.py` (MIT) |
 | `gerbers.sh` | bash, kicad-cli | Gerbers with the job file and Excellon drills, PTH and NPTH apart, from the board's plot settings, the same for a board and its panel; refuses a non-empty folder unless forced; a panel must have an NPTH drill unless it is a V-cut panel; ported from Wiren Board's `gerbers-kicad.sh` (MIT) |
 | `gerber_diff.py` | python3 with numpy and pillow, gerbv | A panel against its board by the Gerbers: the board's pictures replicated over the copies (given, or found by the PTH drill; a mirrored copy takes the paired layer), XORed with the panel's, one PNG per layer, drills as sets of holes; exit 1 on differences. Runs in docker by `gerbdiff.Dockerfile` beside it (`references/panel.md`, Checks); ported from Wiren Board's `gerber_diff.py` (MIT) |
@@ -148,8 +147,8 @@ defines the agent on an installation lists Monitor beside Bash.
   rows, source vs load, dissipation, what becomes a finding, the report tables.
 - `references/datasheets.md` — locating a datasheet, reading the envelope, SMD markings,
   the citation form, «not found».
-- `references/parts-search.md` — alternatives from szlcsc.com: intake, harvest, funnel,
-  extraction, verification, pinout tiers, the CSV, QA.
+- `references/parts-search.md` — alternatives from JLCPCB's stock: intake, candidates,
+  funnel, extraction, verification, pinout tiers, the CSV, QA.
 - `references/panel.md` — a panel through KiKit: rules, config, Gerbers, the panel's DRC
   and the Gerber diff.
 - `references/boards.md` — publishing a KiCad design and Gerbers on the hub.

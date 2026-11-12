@@ -1,74 +1,81 @@
-# Parts search: alternatives for a part, a whole category at a price cap
+# Parts search: alternatives for a part from JLCPCB's stock
 
-Finding candidate parts for a role — alternatives to a reference part, or everything in a
-category under a price — from szlcsc.com (LCSC's domestic catalogue, the stock JLCPCB
-assembles from), verified against datasheets, compared pin by pin, delivered as a CSV.
-The helper is `scripts/parts.py` (`tree`, `search`, `overseas`, `params`, `harvest`,
-`detail`, `datasheet`, `rate`, `report`); it passes www.szlcsc.com's anti-bot itself, but
-the category host list.szlcsc.com (`params`, `harvest`) answers every new session from here
-with a Tencent slider captcha the script cannot pass, so a whole-category sweep does not run
-from the CLI today (Pitfalls); the reference-part path (2, 6–10) does. Adapted
-from Wiren Board's `wb-component-search` (MIT, read 2026-11-12). The owner chose this
-source over the JLCPCB keyword API, knowing a category harvest is thousands of anonymous
-requests.
+Finding candidate parts for a role — alternatives to a reference part, or parts of a
+class under a price — from the stock JLCPCB assembles from, verified against datasheets,
+compared pin by pin, delivered as a CSV. The source is Copperpour's local copy of the
+JLCPCB parts database (`download_jlcpcb_database`, `get_jlcpcb_database_stats`,
+`search_jlcpcb_parts`, `get_jlcpcb_part`, `suggest_jlcpcb_alternatives`) and, for live
+stock and price without a login, JLCPCB's parts API described in the `jlcpcb-quote`
+skill («Детали без входа: API библиотеки»). The method is adapted from Wiren Board's
+`wb-component-search` (MIT, read 2026-11-12); their szlcsc.com category harvest is not
+used — its catalogue host answers every session from here with a captcha (the decision
+log in `docs/SPEC.md`).
 
 ## Hard rules
 
-- **The datasheet is the only source of a report column.** Catalogue specs and
-  descriptions are often wrong, empty or inflated; they may only pre-rank candidates
-  (step 5), with generous margins disclosed in the report.
-- **Price basis:** the szlcsc CNY ladder price at 1000 pcs, converted to USD at a stated
-  live rate (`rate`; the report note names the rate and the date). For an `overseas`
-  offer, the step for 1000 pcs or for the whole lot when the lot is smaller. A part the
-  site does not stock or price gets a blank price, never a guess; international LCSC USD
-  prices (with markup) are not substituted.
+- **The datasheet is the only source of a report column.** Catalogue descriptions are
+  often wrong, empty or inflated; they may only pre-rank candidates (step 4), with
+  generous margins disclosed in the report.
+- **Price basis:** the JLCPCB unit price as the database or the API gives it, in USD,
+  with the date of the database copy (`get_jlcpcb_database_stats`) or of the API call;
+  the report note names which. A part with no known price gets a blank, never a guess.
+  Extended parts add a setup fee per unique part — a column, not a price adjustment.
 - **Questions once, early, batched** (step 1), through `AskUserQuestion`; the question
-  ends the turn (`SKILL.md`). No multi-hour harvest on guessed requirements. In a
-  non-interactive run: engineering defaults, every assumption listed in the report note.
-- **Deliverable: a CSV** (`parts.py report --csv`), English values, Russian notes;
-  Chinese descriptions and spec values translated to English. HTML only when the owner
-  asks (`~/.claude/CLAUDE.md`).
+  ends the turn (`SKILL.md`). In a non-interactive run: engineering defaults, every
+  assumption listed in the report note.
+- **Deliverable: a CSV**, English values, Russian notes; Chinese descriptions translated
+  to English. HTML only when the owner asks (`~/.claude/CLAUDE.md`).
 - **With a reference part,** the CSV carries a differences column and a pinout-match
   column (FULL / A / B / C / NONE + note); pinout verdicts come from the datasheets'
   pinout figures, never from package names.
-- **Disclose the funnel:** candidate counts at every stage (harvested → coarse filter →
+- **Disclose the funnel:** candidate counts at every stage (found → coarse filter →
   datasheet-verified → report) and every filter applied, in the report note.
 - **Work files live in the project's folder** (a `work/<slug>/` under it, with `work/` in
-  the project's `.gitignore` — a commit publishes the project, and the dump and the PDFs are
-  not part of it), not in `/tmp`.
+  the project's `.gitignore` — a commit publishes the project, and the PDFs are not part
+  of it), not in `/tmp`.
 
 ## 1. Intake
 
 Parse the request into: device class, must-have characteristics, reference part, price
-cap and its basis, package constraints. A quick recon only — `search <MPN>` of the
-reference (its category, own price), maybe one `detail` — then one batched round of
-questions, only what changes the outcome and cannot be derived: the cap's basis
-(× the reference price, or absolute $/1k; on the 1000-pc price, or another quantity);
-package scope (same package, any with ≥ N pins, same family; drop-in required or
-nice-to-have); which characteristics are gates (must equal or exceed the reference) and
-which are report columns; brand policy (clones, established vendors only, minimum
-stock); temperature grade where the class makes it matter. Skip the round when the
-request pins all of it — say so.
+cap and its basis, package constraints, build quantity (the stock floor). A quick recon
+only — `search_jlcpcb_parts <MPN>` of the reference, maybe one `get_jlcpcb_part` — then
+one batched round of questions, only what changes the outcome and cannot be derived:
+the cap's basis (× the reference price, or absolute); package scope (same package, any
+with ≥ N pins, same family; drop-in required or nice-to-have); which characteristics
+are gates (must equal or exceed the reference) and which are report columns; Basic
+parts only, or Extended allowed; brand policy (clones, established vendors only).
+Skip the round when the request pins all of it — say so.
 
 ## 2. Reference part first
 
-`search <MPN>` → its C-code, catalogue id, domestic 1k CNY price; `detail <CODE> --json`
-→ description, spec hints, its datasheet; `datasheet <CODE>` → the PDF. Read the reference
-datasheet now: its feature set defines the comparison columns (4), its pinout page is the
-baseline for step 8. Cap = reference 1k USD price × the multiplier (or the absolute cap).
-Not stocked there → datasheet from the vendor, price basis from the owner. Own stock 0 is
-not «no offers»: run `overseas <MPN>` before calling a part unavailable — the site resells
-Future, DigiKey, Mouser, Arrow with their own stock, MOQ and a 10–20 working-day lead.
+`search_jlcpcb_parts <MPN>` → its LCSC code, package, price, stock, library type;
+`get_jlcpcb_part <code>` → the full record with its datasheet link. Read the reference
+datasheet now: its feature set defines the comparison columns (3), its pinout page is
+the baseline for step 7. Cap = reference price × the multiplier (or the absolute cap).
+Not stocked by JLCPCB → datasheet from the vendor, price basis from the owner.
 
-## 3. Category and harvest
+## 3. Candidates
 
-`tree --grep <word>` finds the category leaves; take the neighbours too (`QFN MCU` beside
-`LQFP MCU`). `harvest <ids…> --out work/<slug>/dump --max-usd-1k <cap × 1.3>` (`--out` is a
-prefix: `dump.jsonl`, `dump.csv`, `dump.state.json`) dumps the leaves with a margin above
-the cap (the server cuts by the unit price × 2.2); a
-query is capped at 1500 rows and `totalCount` reads 10000 for anything above it, so a
-big leaf is sliced and the run resumes from its `.state.json`. One process, polite delay,
-no parallel harvests.
+Refresh the database first when its copy is older than the order horizon
+(`get_jlcpcb_database_stats`, then `download_jlcpcb_database`): the copy's age is the
+data's age. Then:
+
+- `search_jlcpcb_parts` with the class words and the package (every word must match, in
+  any order; a value word matches as a whole — `20pF` does not find `220pF`, and
+  spellings are not converted — search `100nF` and `0.1uF` both); `category` narrows,
+  `basic_only` keeps Basic parts, `in_stock` is on by default, raise `limit` well above
+  the shortlist you want.
+- `suggest_jlcpcb_alternatives <value> <footprint>` for the same value in the package the
+  KiCad footprint uses, with `max_price_usd` as the cap and `min_stock_count` as the
+  build quantity; it ranks Basic, then Preferred, then Extended, and states what it
+  excluded.
+- Live stock and price for the finalists through the parts API named above, when the
+  database copy is older than a few days.
+
+Coarse funnel from there: price ≤ cap with margin, stock ≥ the build quantity, package
+scope, and hint-level description specs with generous margins (never cut on a spec the
+description omits). Target 30–120 parts into the datasheet stage; far more → tighten
+with the owner; almost none → widen and say so. Record every count.
 
 ## 4. Comparison columns
 
@@ -78,25 +85,15 @@ SRAM, VDD range, packages, key peripherals, temperature range; buck: V_in range,
 V_ref, I_out, f_sw, sync / non-sync, I_Q, enable / soft-start, feedback topology,
 package and thermal pad; light sensor: spectral range, lux range, interface, address
 options, supply range, dark current. 6–12 columns, each extractable from a datasheet;
-the list is the extraction schema (7) and the CSV columns (9).
+the list is the extraction schema (6) and the CSV columns (8).
 
-## 5. Coarse funnel
+## 5. Datasheets
 
-From the dump to a shortlist you can afford to verify: price ≤ cap with margin, stock ≥
-the owner's floor (enforce it here — the server-side filter lets `stock: 0` rows
-through), package scope, and hint-level catalogue specs with generous margins («claims ≥
-half the flash floor»; catalogue flash is often wrong, RAM is ~99 % empty; never cut on
-a spec the catalogue omits). Target 30–120 parts into the datasheet stage; far more →
-tighten with the owner; almost none → widen and say so. Record every count.
+The database record's datasheet link first, then `references/datasheets.md` per part;
+PDFs to `work/<slug>/pdfs/<code>.pdf`. A part with no findable datasheet drops out, or
+ships marked unverified (catalogue data only) — never silently.
 
-## 6. Datasheets
-
-`datasheet --codes-file work/<slug>/codes.json -d work/<slug>/pdfs` downloads
-`<CODE>.pdf` through the detail API, `%PDF`-checked, resumable. The failed tail goes
-through `references/datasheets.md` per part. A part with no findable datasheet drops
-out, or ships marked unverified (catalogue data only) — never silently.
-
-## 7. Extraction at scale
+## 6. Extraction at scale
 
 Fan the datasheet reading out across subagents, 8–15 parts each, PDFs read from disk
 (paths in the brief, never PDF content), at the model the session runs its agents on.
@@ -114,9 +111,9 @@ pymupdf) → OCR (`tesseract eng+chi_sim`) → render the page (`get_pixmap(dpi=
 read with vision — figures, pinouts and merged-cell tables scramble in text extraction.
 A suffix missing from the family table: fetch the latest revision, or decode the
 ordering code from its «Ordering Information» section and note the decode. Merge the
-waves into `work/<slug>/extracted.json`, keyed by C-code.
+waves into `work/<slug>/extracted.json`, keyed by LCSC code.
 
-## 8. Verify, then compare pinouts
+## 7. Verify, then compare pinouts
 
 - **Verification, briefed to refute:** for every part that will ship, an independent
   agent re-opens the PDF and looks for where the datasheet contradicts the extracted
@@ -134,18 +131,18 @@ waves into `work/<slug>/extracted.json`, keyed by C-code.
   incompatible; `n/a` — another package, named. The exact differing pins go into the
   note. Two independent reads before FULL: a FULL verdict is a soldering decision.
 
-## 9. The CSV
+## 8. The CSV
 
-`work/<slug>/report.json` for `parts.py report --csv <slug>.csv`: columns = identity
-(`mpn`, brand, package, stock) + `price_usd_1k` + the step-4 columns + with a reference
-`diff` (differences in short English phrases) and `pinout_match` with its note +
-`confidence`; `reference` = the reference's own row. The note — funnel, filters, rate,
-date, assumptions, the QA line — is not a CSV column: it goes into the hand-over reply
-beside the CSV's path. Brand names in the vendor's Latin trade name (兆易创新 →
-GigaDevice); no established name → romanized, Chinese in parentheses. Identifiers
-verbatim everywhere.
+Columns = identity (`lcsc`, `mpn`, brand, package, stock, library type Basic /
+Preferred / Extended) + `price_usd` + the step-4 columns + with a reference `diff`
+(differences in short English phrases) and `pinout_match` with its note +
+`confidence`; `reference` = the reference's own row. The note — funnel, filters, price
+basis and date, assumptions, the QA line — is not a CSV column: it goes into the
+hand-over reply beside the CSV's path. Brand names in the vendor's Latin trade name
+(兆易创新 → GigaDevice); no established name → romanized, Chinese in parentheses.
+Identifiers verbatim everywhere.
 
-## 10. Adversarial QA before hand-over
+## 9. Adversarial QA before hand-over
 
 - **Cell spot-audit:** 5–10 rows — every row a purchase decision leans on (the cheapest
   finalists, every FULL / A verdict) plus 2–3 random — 2–3 cells each, re-derived from
@@ -156,30 +153,22 @@ verbatim everywhere.
   (`grep -P '[\x{4e00}-\x{9fff}]'` over the CSV); `diff` and `pinout_match` do not
   contradict the spec columns of their row; the funnel numbers in the note match the
   counts.
-- **Price sanity:** re-fetch 3–5 finalists live (`search` / `detail`) against
-  `price_usd_1k`, the reference's price too — stale harvests, ladder-parse slips, rate
-  typos.
-- **Links:** every row has a product URL; probe a sample (status < 400; item pages answer
-  200 behind the anti-bot challenge).
+- **Price and stock sanity:** re-check 3–5 finalists live (`get_jlcpcb_part` after a
+  database refresh, or the parts API) against the CSV, the reference too — a stale
+  copy, a ladder slip.
 
-The note records what QA sampled, caught and fixed («QA: проверено N ячеек, исправлено
-M; ссылки и цены выборочно сверены»); an audit nobody can see did not happen.
+The note records what QA sampled, caught and fixed («QA: проверено N ячеек,
+исправлено M; цены и наличие выборочно сверены»); an audit nobody can see did not
+happen.
 
 ## Pitfalls
 
 - Package strings are loose: a bare `QFP-48` may be LQFP-48 — unify by the datasheet's
-  package table.
+  package table; `suggest_jlcpcb_alternatives` refuses a library footprint with no
+  known LCSC package — give it LCSC's package name instead.
 - Same-looking names from different vendors are different parts (CS32F103 Chipsea ≠
-  CKS32F103 中科芯, different pinouts): key by C-code + brand, never merge by name.
+  CKS32F103 中科芯, different pinouts): key by LCSC code + brand, never merge by name.
 - Clone vendors inflate specs and omit blocks; «pin-compatible with X» still needs its
   own datasheet check.
-- Categories contain leak-ins (pneumatic switches under «current monitors»).
-- A cached PDF can be stale or mismatched: PDFs are named by C-code; check the title
+- A cached PDF can be stale or mismatched: PDFs are named by LCSC code; check the title
   before trusting a cached file.
-- The anti-bot cookies (the RC4 one, and Aliyun WAF's `acw_sc__v2` on www.szlcsc.com) live
-  minutes; the script re-solves them, a hand-rolled curl does not. A captcha is not
-  solved: list.szlcsc.com (the host of `params` and `harvest`) answers the first catalog
-  page of every new session from here with a Tencent slider captcha (`TencentCaptcha`,
-  `/WafCaptcha`; the same in a real browser, where a human passes it once per session). The
-  script exits on it with a message; the category sweep then needs another source (lcsc.com
-  international, JLCPCB's parts API) — the owner's call, not a retry.

@@ -38,7 +38,7 @@ not sites to browse:
 1. Scope to the manufacturer: `<part> datasheet site:<vendor>.com`. The manufacturer's
    own site wins over any distributor copy, even one that ranks higher.
 2. Distributor fallback, for obscure or Chinese parts the manufacturer query misses:
-   `site:lcsc.com`, `site:alldatasheet.com`, szlcsc, chipdip, datasheetspdf, octopart.
+   `site:lcsc.com`, `site:alldatasheet.com`, chipdip, datasheetspdf, octopart.
    «Fallback» orders the preference, not the search: before reporting «not found», the
    distributor tier has been tried.
 3. Family rollup: when the exact part number has no document, search the family stem

@@ -299,11 +299,9 @@ def test_the_skill_names_no_deployment(hub):
     actually serves.
 
     An address of a service outside the hub that the skill calls by name — the
-    image model of `references/concept.md`, the KiCad container
-    `scripts/instructions.sh` starts on a network of its own (`$N-kicad`), and
-    the parts catalogue and the exchange-rate service `scripts/parts.py` queries
-    (szlcsc.com, lcsc.com, open.er-api.com, whose base addresses are bare hosts) —
-    and a cited source, an address
+    image model of `references/concept.md`, and the KiCad container
+    `scripts/instructions.sh` starts on a network of its own (`$N-kicad`) — and
+    a cited source, an address
     whose first path segment is none of the first segments this service routes
     (its GET, POST and DELETE tables) — a datasheet in
     `references/lens-checklist.md` — are no deployment of this one, and are
@@ -314,9 +312,7 @@ def test_the_skill_names_no_deployment(hub):
                                               app.DELETE_ROUTES)
                     for (segments, _), _ in table if segments})
     routes = "|".join(map(re.escape, first))
-    text = re.sub(r"(?:https://)?openrouter\.ai/\S*|http://\$N-kicad:8080"
-                  r"|https://(?:[a-z]+\\?\.)*(?:szlcsc|lcsc)\\?\.com\S*"
-                  r"|https://open\.er-api\.com\S*", "",
+    text = re.sub(r"(?:https://)?openrouter\.ai/\S*|http://\$N-kicad:8080", "",
                   one_text(served_skill_files(hub)))
     text = re.sub(
         r"https?://[^\s/)|]+/(?!(?:%s)(?:[/?#)|\s]|$))[^\s)|/?#][^\s)|]*" % routes,
