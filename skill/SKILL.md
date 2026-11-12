@@ -28,6 +28,7 @@ else sits beside it and is read at the moment it applies — the files are in
 | A part whose look is free: a concept picture from an image model; building the model from any picture | `references/concept.md` |
 | Writing or fixing `checks()`; a build that is slow or killed | `references/checks.md` |
 | Writing `model.py`: the contract, the record types, CadQuery's traps | `references/model-py.md` |
+| A wire, lead, cable or harness in the model: from a terminal to a driver, a jumper, an antenna cable | `references/wires.md` |
 | Modelling the part in SolidCraft through its MCP server instead of CadQuery | `references/solidcraft.md` |
 | Putting a dimension on the drawing: shrinkage, minimum walls, orientation, fasteners | `references/printing.md` |
 | Rebuilding a part from a 3D scan of it, or from an STL whose CAD source is lost | `references/scan.md` |
