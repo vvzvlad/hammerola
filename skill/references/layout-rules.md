@@ -140,6 +140,14 @@ before placing parts and check them in 3D like DRC.
 - When placement blocks routing, move the blocking parts (anything outside the held set)
   instead of delivering unconnected nets. A routing brief must not cap part moves
   (e.g. "<= 1 mm").
+- Do not go from placement straight into routing. Finish placement in critic → fix rounds:
+  a fresh critic reviews the placement and estimates where the tracks will go, a fixer moves
+  the parts, and routing starts only when the critic has no MAJOR left on placement. The
+  owner: «ну и хз, наверное можно не сразу бросаться в разводку, а сначала циклом с критиком
+  порасставлять элементы, поприкидывать как дорожки пойдут». The estimate can be airwire
+  crossings (`bq.py score`) and a fastroute draft on a copy (`scripts/autoroute.sh
+  --diagnose`), which shows where tracks jam and which connections it could not route
+  (agent's suggestion).
 
 ## Silkscreen (part of placement, not a post-pass)
 
