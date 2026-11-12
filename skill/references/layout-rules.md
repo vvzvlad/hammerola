@@ -302,10 +302,23 @@ Fix by moving vias and parts first; add bends only where nothing can move.
     key: commit at the last waypoint whatever is under it).
   - `push` shoves other nets' tracks and vias and reports what it moved; `walk` goes around
     them; `drag` always pushes.
-  - Track width, via size and clearance come from the net classes; the `.kicad_dru` rules are
-    applied by `drc` only. Zones are neither refilled nor obstacles: after copper moves, `drc`
-    reports clearance errors to the old fill, and `drc.sh` (which refills) is the check. The
-    engine's `drc` has no library, silkscreen or courtyard checks.
+  - Track width, via size and clearance come from the net classes and the board's `.kicad_dru`,
+    as in KiCad: routing, `push` and `drag` keep the custom rules' clearances. Zones are neither
+    refilled nor obstacles: after copper moves, `drc` reports clearance errors to the old fill,
+    and `drc.sh` (which refills) is the check. The engine's `drc` has no library, silkscreen or
+    courtyard checks.
+  - A differential pair: `start_route` with `pair` on a pad, via or free track end of either
+    net; KiCad finds the partner by the N/P or +/- name suffix and takes width and gap from the
+    net class diff pair settings or a `diff_pair_gap` rule. Waypoints are the pair's centre line;
+    a step bends the pair once, by 45°, and a waypoint as far to the side as ahead is not
+    reached: turn a corner in two steps. A last waypoint on a pad of either net fits the pair
+    onto that pad and its partner and ends the route. KiCad writes each fixed step of a pair to the board at once: `undo_segment` is
+    refused, and `cancel_route` keeps the fixed steps (remove them with `delete`).
+  - `tune` meanders a routed track to a length (`single`), its pair to a length (`pair`) or its
+    pair to a skew (`skew`: this line minus its partner), with the board's meander settings,
+    anywhere on the line between its pads, vias or junctions (clear of the pads and vias, and for
+    a pair where both lines run). The result is committed whatever the status; `too short` means
+    the meanders that fit there fall short of the target.
   - Segments follow KiCad's 45° posture: a waypoint off a 0/45/90° line from the previous one
     becomes a straight piece plus a 45° piece, and a near-miss leaves a stub of a few
     micrometres that the track-geometry gate flags. Compute waypoints on those lines.

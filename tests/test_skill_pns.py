@@ -10,7 +10,10 @@ Pinned here:
   * a bridge that dies (the engine can segfault) fails the call that killed it and every call after it, and
     the next open_board starts a fresh container;
   * the bridge's bookkeeping of the open route: a point where the head already is fixes nothing and is not
-    counted for undo_segment, and checkpoints are taken only between routes.
+    counted for undo_segment, and checkpoints are taken only between routes;
+  * a diff pair route, which KiCad's placer writes to the board step by step: a step is read off the board,
+    a pair ends on its target only where it fits there, and undo is refused;
+  * tune hands the meander placer its mode and target and names its status.
 
 A fake `docker` on PATH runs a fake bridge as the container's main process and maps container paths under
 a directory of the test; the bridge itself runs in-process on a fake `kicad_rl_router`. Nothing here needs
@@ -33,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skill" / "scripts"
 SERVER = SCRIPTS / "pns_mcp.py"
 TOOLS = {"open_board", "get_net", "query_area", "start_route", "line_to", "finish", "cancel_route",
-         "undo_segment", "delete", "delete_net_routing", "drag", "drc", "checkpoint", "restore", "save"}
+         "undo_segment", "delete", "delete_net_routing", "drag", "tune", "drc", "checkpoint", "restore", "save"}
 
 FAKE_DOCKER = r'''
 import json, os, shutil, sys
@@ -84,8 +87,8 @@ def seg(a, b):
     return types.SimpleNamespace(x1_mm=a[0], y1_mm=a[1], x2_mm=b[0], y2_mm=b[1], width_mm=0.2, layer=0)
 
 
-def pad(x, y, layer):
-    return types.SimpleNamespace(net_name="N", net_code=1, layer=layer, x_mm=x, y_mm=y, width_mm=1, height_mm=1)
+def pad(x, y, layer, net="N", code=1):
+    return types.SimpleNamespace(net_name=net, net_code=code, layer=layer, x_mm=x, y_mm=y, width_mm=1, height_mm=1)
 
 
 class FakeRouter:
@@ -97,12 +100,17 @@ class FakeRouter:
 
     def __init__(self, path):
         self.routing = self.placing_via = False
-        self.pads, self.committed = [pad(-9, -9, -2)], None
+        self.pads, self.committed, self.rules = [pad(-9, -9, -2)], None, None
 
-    def start_route(self, x, y, layer):
+    def start_route(self, x, y, layer, diff_pair=False):
         self.routing, self.start, self.end, self.layer, self.tail = True, (x, y), (x, y), layer, [(x, y)]
         self.line = self.placing_via = False
         return True
+
+    def tune(self, x, y, layer, target, mode):
+        self.tuned = (x, y, layer, target, mode)
+        return types.SimpleNamespace(committed=target > 0, status=2, before_mm=10.0, result_mm=target,
+                                     reason="no track at the point on that layer")
 
     def move(self, x, y):
         self.end, self.line = (x, y), True
@@ -146,12 +154,14 @@ class FakeRouter:
 
     get_vias = get_tracks
     get_pads = lambda self: self.pads
+    set_routing_rules = lambda self, path: setattr(self, "rules", path)
     finish = lambda self: False
     get_unrouted_count = lambda self: 0
     is_routing = lambda self: self.routing
     get_current_layer = lambda self: self.layer
     get_copper_layer_count = lambda self: 2
     get_current_net_code = lambda self: 1
+    get_current_net_codes = lambda self: [1]
     get_route_sizes = lambda self: (0.2, 0.6, 0.3, 0.2)
     get_routing_target = lambda self: (0.0, 0.0, -1.0)
     get_failure_reason = lambda self: ""
@@ -178,6 +188,49 @@ def load(name, **modules):
     return module
 
 
+class FakePairRouter(FakeRouter):
+    """KiCad's DIFF_PAIR_PLACER as the bridge meets it: the head is a line per net, their ends either side
+    of the cursor, and the route head is the cursor; a move it cannot fit (a point in `blocked`) leaves the
+    last head; the cursor on a pad of the pair fits both lines onto the target pads; a fix writes the head
+    to the board at once and keeps showing it, and ends the route when the pair sat on its target or the
+    fix was forced."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.pads = [pad(0, 0, 0, "D_P", 1), pad(9, -0.2, 0, "D_P", 1), pad(9, 0.2, 0, "D_N", 2)]
+        self.tracks, self.blocked, self.forced, self.uuids = [], set(), None, itertools.count()
+
+    def start_route(self, x, y, layer, diff_pair=False):
+        super().start_route(x, y, layer)
+        self.lines, self.on_target = [], False
+        return diff_pair
+
+    def move(self, x, y):
+        self.end = (x, y)
+        if (x, y) not in self.blocked:
+            self.on_target = x == 9
+            ends = [(9, -0.2), (9, 0.2)] if self.on_target else [(x, y - 0.2), (x, y + 0.2)]
+            self.lines = [types.SimpleNamespace(x1_mm=self.start[0], y1_mm=self.start[1] + dy, x2_mm=e[0],
+                                                y2_mm=e[1], width_mm=0.2, layer=0, net_code=code,
+                                                net_name=net, uuid=None)
+                          for dy, e, code, net in ((-0.2, ends[0], 1, "D_P"), (0.2, ends[1], 2, "D_N"))]
+        return True
+
+    def fix_route(self, x, y, force_finish, require_via=False):
+        self.forced = force_finish
+        self.tracks += [types.SimpleNamespace(vars(t), uuid=next(self.uuids)) for t in self.lines]
+        self.start = (x, y)
+        if self.on_target or force_finish:
+            self.routing = False
+        return not self.routing
+
+    get_wip_segments = lambda self: self.lines
+    get_tracks = lambda self: list(self.tracks)
+    get_vias = lambda self: []
+    get_current_net_codes = lambda self: [1, 2] if self.routing else []
+    get_diff_pair_sizes = lambda self: (0.2, 0.25, 0.25)
+
+
 KRL = types.ModuleType("kicad_rl_router")
 KRL.RLRouter, KRL.MODE_MARK_OBSTACLES, KRL.MODE_SHOVE, KRL.MODE_WALKAROUND = FakeRouter, 0, 1, 2
 BRIDGE = load("pns_bridge", kicad_rl_router=KRL)
@@ -200,6 +253,16 @@ def bridge(tmp_path, monkeypatch):
     monkeypatch.setattr(BRIDGE, "DIRS", itertools.count(1))
     monkeypatch.setattr(BRIDGE, "B", BRIDGE.Board(str(tmp_path / "b.kicad_pcb")))
     return BRIDGE
+
+
+@pytest.fixture
+def pair_bridge(bridge, monkeypatch):
+    """The bridge with a board open on the fake diff pair placer and a pair route open at (0, 0)."""
+    monkeypatch.setattr(KRL, "RLRouter", FakePairRouter)
+    monkeypatch.setattr(BRIDGE, "B", BRIDGE.Board(bridge.B.dir + ".kicad_pcb"))
+    started = bridge.start_route("D_P", 0, 0, "F.Cu", pair=True)
+    assert started["pair"] == ["D_P", "D_N"] and started["sizes"]["gap"] == 0.25
+    return bridge
 
 
 class Server:
@@ -362,3 +425,65 @@ def test_end_commits_at_the_last_point_whatever_is_under_it(bridge):
     bridge.start_route("N", 0, 0, "F.Cu")
     out = bridge.line_to([[3, 0]], "push", via_at_end=True, end=True)
     assert out["steps"][-1]["via"] and not out["routing"] and r.committed == {"via": True}
+
+
+def test_the_boards_rules_reach_the_router(tmp_path, monkeypatch):
+    monkeypatch.setattr(BRIDGE, "WORK", str(tmp_path))
+    monkeypatch.setattr(BRIDGE, "DIRS", itertools.count(1))
+    (tmp_path / "b.kicad_dru").write_text("(version 1)")
+    assert BRIDGE.Board(str(tmp_path / "b.kicad_pcb")).r.rules == str(tmp_path / "run1" / "b.kicad_dru")
+
+
+def test_a_pair_step_is_read_off_the_board_and_a_move_off_the_head(pair_bridge):
+    r = pair_bridge.B.r
+    r.blocked.add((5, 0))
+    out = pair_bridge.line_to([[3, 0], [3, 0], [5, 0]], "push")
+    first, again, blocked = out["steps"]
+    assert [t[-1] for t in first["fixed"]] == ["D_P", "D_N"] and first["fixed"][0][2:4] == [3, -0.2]
+    assert again["skipped"] == "the head is already there"
+    # the placer still shows the step it fixed: the pair stays where that step ended
+    assert blocked == {"to": [5, 0], "reached": False, "head": [3, 0],
+                       "reason": "the pair does not fit to this point"}
+    assert out["routing"] and len(r.tracks) == 2
+    # a fix that wrote nothing to the board is a refusal
+    r.fix_route = lambda x, y, force_finish, require_via=False: False
+    assert pair_bridge.line_to([[6, 0]], "push")["steps"][-1]["reason"] == "collision"
+
+
+def test_a_pair_ends_on_a_pad_only_where_it_fits_there(pair_bridge):
+    r = pair_bridge.B.r
+    pair_bridge.line_to([[3, 0]], "push")
+    r.blocked.add((9, -0.2))
+    step = pair_bridge.line_to([[9, -0.2]], "push")["steps"][-1]
+    assert not step["reached"] and r.routing and len(r.tracks) == 2
+    r.blocked.clear()
+    out = pair_bridge.line_to([[9, -0.2]], "push")
+    assert out["steps"][-1]["ended_on_net"] and not out["routing"] and r.forced is False
+
+
+def test_a_pair_via_goes_on_from_the_other_side_or_drops_the_route(pair_bridge):
+    r = pair_bridge.B.r
+    step = pair_bridge.line_to([[3, 0]], "push", via_at_end=True)["steps"][-1]
+    assert step["via"] and r.layer == 2 and r.routing
+    # the engine drops the route when the vias did not fit on the head
+    r.fix_route = lambda x, y, force_finish, require_via=False: setattr(r, "routing", False)
+    out = pair_bridge.line_to([[5, 0]], "push", via_at_end=True, end=True)
+    assert "the engine dropped the open route" in out["steps"][-1]["reason"] and not out["routing"]
+
+
+def test_undo_is_refused_for_a_pair_and_cancel_keeps_its_fixed_steps(pair_bridge):
+    pair_bridge.line_to([[3, 0]], "push")
+    assert "no UnfixRoute" in pair_bridge.undo_segment()["reason"]
+    kept = pair_bridge.cancel_route()["kept"]
+    assert [t[-1] for t in kept["tracks"]] == ["D_P", "D_N"]
+
+
+def test_tune_hands_the_placer_its_mode_and_target(bridge):
+    r = bridge.B.r
+    assert bridge.tune(1, 2, "B.Cu", 12.5, "skew") == {"status": "tuned", "skew": 12.5, "before": 10.0,
+                                                       "target": 12.5, "committed": bridge.B.diff({})}
+    assert r.tuned == (1, 2, 2, 12.5, 2)
+    assert bridge.tune(1, 2, "F.Cu", 0, "single") == {"committed": False,
+                                                      "reason": "no track at the point on that layer"}
+    with pytest.raises(ValueError, match="single, pair or skew"):
+        bridge.tune(1, 2, "F.Cu", 5, "meander")

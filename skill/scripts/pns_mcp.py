@@ -1,4 +1,4 @@
-"""Stdio MCP server: KiCad's interactive router (push-and-shove, walkaround, vias, delete and reroute, drag, DRC) on a copy of a saved board, run in docker.
+"""Stdio MCP server: KiCad's interactive router (push-and-shove, walkaround, vias, diff pairs, length tuning, delete and reroute, drag, DRC) on a copy of a saved board, run in docker.
 usage: python3 pns_mcp.py   (an MCP client starts it; open_board copies the saved board with its .kicad_pro and .kicad_dru into the engine, save writes the result into a new temporary directory on this machine with a copy of that .kicad_dru, so drc.sh on it checks the board's own rules, and put.py then puts that .kicad_pcb in place of the board KiCad has open; the project is never written)
 needs: python3 (stdlib only), docker that runs linux/amd64 images, pns.Dockerfile, pns_engine.patch and pns_bridge.py next to this script; the first open_board builds the image (about half an hour)"""
 import hashlib
@@ -30,8 +30,8 @@ def tool(name, description, properties=None, required=()):
 TOOLS = [
     tool("open_board", "Load a copy of a saved .kicad_pcb (with its .kicad_pro and .kicad_dru) into the router. "
          "Returns the board outline box [x1, y1, x2, y2], copper layers, design rules and net classes, net count "
-         "and unrouted connection count. All coordinates and sizes are mm. Routing follows the net classes; "
-         "the .kicad_dru is applied by drc only.",
+         "and unrouted connection count. All coordinates and sizes are mm. Routing, push and drag keep the net "
+         "classes and the board's .kicad_dru, as in KiCad.",
          {"path": {"type": "string", "description": "absolute path of the .kicad_pcb"}}, ["path"]),
     tool("get_net", "A net: its class sizes, pads (ref, pad, xy, layer, size), tracks [x1, y1, x2, y2, layer, "
          "width], vias [x, y, diameter, drill] and unrouted connections [x1, y1, layer1, x2, y2, layer2]. "
@@ -40,7 +40,12 @@ TOOLS = [
          {"x1": NUM, "y1": NUM, "x2": NUM, "y2": NUM, "layer": LAYER}, ["x1", "y1", "x2", "y2"]),
     tool("start_route", "Open a route of a net at (x, y) on a layer: the router snaps to the pad, track end or "
          "via there, which must be on that net. Returns the net class sizes the route uses and the nearest "
-         "unconnected target.", {"net": {"type": "string"}, "x": NUM, "y": NUM, "layer": LAYER},
+         "unconnected target. With pair, the route is a differential pair from that pad, via or free track end "
+         "and the nearest one of the same kind of the coupled net, which KiCad finds by the N/P or +/- name "
+         "suffix; width and gap come from the net class diff pair settings and the board's rules, and a pair "
+         "that cannot start reports KiCad's reason.",
+         {"net": {"type": "string"}, "x": NUM, "y": NUM, "layer": LAYER,
+          "pair": {"type": "boolean", "default": False}},
          ["net", "x", "y", "layer"]),
     tool("line_to", "Move the route head through the points in turn and fix it at each, like clicks in KiCad. "
          "Each step reports the line it fixed, or that the head could not reach the point (the call stops "
@@ -49,7 +54,12 @@ TOOLS = [
          "the route and commits it, reporting what was written to the board, other nets' copper moved by "
          "push included. via_at_end puts a via at the last point and continues on the other outer layer "
          "(from an inner layer, on F.Cu); a via_at_end on copper of the routed net on any layer (a pad, "
-         "track or via; zones do not count) ends the route with that via.",
+         "track or via; zones do not count) ends the route with that via. For a pair the points are its "
+         "centre line (a step bends the pair once, by 45 degrees: turn a corner in two steps), and a step "
+         "reports the tracks it fixed with their nets: KiCad's diff pair placer "
+         "writes each fixed step to the board at once. A point on a pad, via or free track end of either net "
+         "of the pair fits the pair onto it and its partner's and ends the route, as the cursor on a pad does "
+         "in KiCad; via_at_end puts a via on each line.",
          {"points": {"type": "array", "items": {"type": "array", "items": NUM, "minItems": 2, "maxItems": 2}},
           "mode": MODE, "via_at_end": {"type": "boolean", "default": False},
           "end": {"type": "boolean", "default": False,
@@ -58,14 +68,27 @@ TOOLS = [
          ["points", "mode"]),
     tool("finish", "Route the head to the nearest unconnected anchor of its net and commit the route; reports "
          "what was written to the board.", {"mode": MODE}, ["mode"]),
-    tool("cancel_route", "Drop the open route: nothing of it reaches the board."),
-    tool("undo_segment", "Unfix the last fixed step of the open route; the head goes back to where that step began."),
+    tool("cancel_route", "Drop the open route: nothing of it reaches the board. The steps a pair has fixed are on "
+         "the board already and stay there; they are reported as kept."),
+    tool("undo_segment", "Unfix the last fixed step of the open route; the head goes back to where that step began. "
+         "Not for a pair: KiCad's diff pair placer cannot take a fixed step back."),
     tool("delete", "Delete the track segment or via at (x, y), optionally only on one layer.",
          {"x": NUM, "y": NUM, "kind": {"type": "string", "enum": ["track", "via"]}, "layer": LAYER},
          ["x", "y", "kind"]),
     tool("delete_net_routing", "Delete every track and via of a net.", {"net": {"type": "string"}}, ["net"]),
     tool("drag", "Drag the track or via at (x, y) to (to_x, to_y) in push mode and commit the result.",
          {"x": NUM, "y": NUM, "to_x": NUM, "to_y": NUM}, ["x", "y", "to_x", "to_y"]),
+    tool("tune", "Tune the length of the routed line through (x, y) on a layer with KiCad's meander placer and "
+         "commit it, as KiCad's length tuning does: meanders of the board's meander settings go anywhere on that "
+         "line between its ends (pads, vias, junctions), clear of the pads and vias there, and for a pair only "
+         "where both of its lines run. single tunes the net's pad-to-pad length to length mm; "
+         "pair tunes the diff pair the line is part of (the longer of its two lines) to length; skew tunes this "
+         "line against its partner so that this line minus the partner is length. Returns the length or skew "
+         "reached, the one before, KiCad's status (tuned, too short: the meanders that fit fall short, too "
+         "long: already longer) and what was written to the board.",
+         {"x": NUM, "y": NUM, "layer": LAYER, "length": NUM,
+          "mode": {"type": "string", "enum": ["single", "pair", "skew"]}},
+         ["x", "y", "layer", "length", "mode"]),
     tool("drc", "KiCad's DRC on the committed board with its .kicad_dru (copper clearance, connectivity, track "
          "width, via and hole sizes; zones are not refilled): each violation's type, severity, position, layer, "
          "nets and items."),

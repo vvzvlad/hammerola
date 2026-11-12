@@ -12,6 +12,8 @@ import kicad_rl_router as krl
 
 MODES = {"mark": krl.MODE_MARK_OBSTACLES, "push": krl.MODE_SHOVE, "walk": krl.MODE_WALKAROUND}
 SEVERITY = {0x10: "warning", 0x20: "error", 0x40: "ignore"}
+TUNE_MODES = {"single": 0, "pair": 1, "skew": 2}
+TUNE_STATUS = {0: "too short", 1: "too long", 2: "tuned"}   # MEANDER_PLACER_BASE::TUNING_STATUS
 ALL_COPPER = -2   # RL_LAYER_SPANS_COPPER: a through pad or anchor
 WORK = "/work"   # the container's directory the bridge's user owns
 DIRS = itertools.count(1)
@@ -38,6 +40,9 @@ class Board:
         self.r = krl.RLRouter(os.path.join(self.dir, stem + ".kicad_pcb"))
         dru = os.path.join(self.dir, stem + ".kicad_dru")
         self.rules = dru if os.path.exists(dru) else ""
+        # as in pcbnew, routing keeps the custom rules as well as the net classes
+        if self.rules:
+            self.r.set_routing_rules(self.rules)
         n = self.r.get_copper_layer_count()
         ids = [0] + [4 + 2 * i for i in range(n - 2)] + [2]
         names = ["F.Cu"] + ["In%d.Cu" % (i + 1) for i in range(n - 2)] + ["B.Cu"]
@@ -47,6 +52,7 @@ class Board:
         self.before = None   # copper at the start of the open route
         self.start_at = None   # where the open route goes on from
         self.fixed = []        # where it went on from before each fixed step, for undo_segment
+        self.pair = None       # {net code: name} of an open diff pair route, P first
         # engine checkpoint handles are 64-bit, more than a JSON number keeps in a JavaScript
         # client: the tools hand out small ids instead
         self.checkpoints = []
@@ -62,6 +68,12 @@ class Board:
         if name not in self.layer_id:
             raise ValueError("unknown copper layer %r; the board has %s" % (name, ", ".join(self.layer_id)))
         return self.layer_id[name]
+
+    def net_name(self, code):
+        for item in self.r.get_pads() + self.r.get_tracks():
+            if item.net_code == code:
+                return item.net_name
+        return str(code)
 
     def net_code(self, name):
         for p in self.r.get_pads():
@@ -96,7 +108,30 @@ class Board:
 
     def head(self):
         x, y, layer = self.r.get_route_head()
+        if self.pair:
+            # the pair's head is the cursor even where the pair did not follow it: the middle of
+            # the two lines' ends is where the pair is
+            x, y = self.pair_mid(self.pair_ends()) or self.start_at
         return [mm(x), mm(y)], self.layer_name.get(int(layer), int(layer))
+
+    def pair_ends(self):
+        """{net code: (x, y)}: the far end of each line of the open pair's head."""
+        ends = {}
+        for t in self.r.get_wip_segments():
+            if (t.x1_mm, t.y1_mm) != (t.x2_mm, t.y2_mm):
+                ends[t.net_code] = (t.x2_mm, t.y2_mm)
+        return ends
+
+    @staticmethod
+    def pair_mid(ends):
+        if len(ends) == 2:
+            (ax, ay), (bx, by) = ends.values()
+            return (ax + bx) / 2, (ay + by) / 2
+        return None
+
+    def pair_added(self, before):
+        """The pair's tracks the board gained since `before`, each with its net."""
+        return [t for t in self.diff(before)["tracks"] if t[-1] in self.pair.values()]
 
     def on_net_copper(self, x, y, layer, code):
         """True when (x, y) lies on a pad, track or via of net `code` on board layer `layer`, or on
@@ -247,26 +282,31 @@ def query_area(x1, y1, x2, y2, layer=None):
             "vias": vias, "keepouts": keepouts}
 
 
-def start_route(net, x, y, layer):
+def start_route(net, x, y, layer, pair=False):
     b = board()
     r = b.r
     if r.is_routing():
         raise RuntimeError("a route is open; finish or cancel_route it first")
     code = b.net_code(net)
     b.before = b.copper()
-    if not r.start_route(x, y, b.layer(layer)):
+    if not r.start_route(x, y, b.layer(layer), diff_pair=pair):
         return {"started": False, "reason": r.get_failure_reason() or "no anchor at that point on that layer"}
-    got = r.get_current_net_code()
-    if got != code:
+    codes = r.get_current_net_codes()
+    if code not in codes:
         r.cancel_route()
         return {"started": False, "reason": "the copper at (%s, %s) on %s is not on net %s" % (x, y, layer, net)}
     b.start_at, b.fixed = r.get_route_head()[:2], []
+    b.pair = {c: b.net_name(c) for c in codes} if pair else None
     width, via, drill, clearance = r.get_route_sizes()
     tx, ty, tl = r.get_routing_target()
     out = {"started": True, "net": net,
            "sizes": {"track_width": mm(width), "via_diameter": mm(via), "via_drill": mm(drill),
                      "clearance": mm(clearance)},
            "target": None if int(tl) == -1 else [mm(tx), mm(ty), b.layer_name.get(int(tl), int(tl))]}
+    if pair:
+        width, gap, via_gap = r.get_diff_pair_sizes()
+        out["pair"] = list(b.pair.values())
+        out["sizes"].update(track_width=mm(width), gap=mm(gap), via_gap=mm(via_gap))
     return b.end_route(out)
 
 
@@ -281,6 +321,8 @@ def line_to(points, mode, via_at_end=False, end=False):
     r = b.r
     b.need_route()
     b.mode(mode)
+    if b.pair:
+        return b.end_route({"steps": pair_steps(b, points, via_at_end, end)})
     width, via_d, _, _ = r.get_route_sizes()
     code = r.get_current_net_code()
     steps = []
@@ -350,6 +392,75 @@ def line_to(points, mode, via_at_end=False, end=False):
     return b.end_route({"steps": steps})
 
 
+def pair_steps(b, points, via_at_end, end):
+    """line_to for a diff pair. KiCad's DIFF_PAIR_PLACER writes each step it fixes to the board at
+    once, keeps showing that step as its head after the fix, and keeps its last head when a move
+    does not fit: a step is read off the board, and a move off whether the head changed."""
+    r = b.r
+    width, gap, _ = r.get_diff_pair_sizes()
+    steps = []
+    for i, (x, y) in enumerate(points):
+        last = i == len(points) - 1
+        via = last and via_at_end
+        if math.hypot(x - b.start_at[0], y - b.start_at[1]) < 1e-4:
+            if via:
+                steps.append({"to": [x, y], "reached": True, "fixed": False,
+                              "reason": "a via needs a line ending at it, and the head is already here"})
+                break
+            steps.append({"to": [x, y], "reached": True, "fixed": False, "skipped": "the head is already there"})
+            continue
+        if via:
+            r.set_via_placement(True)
+        was = b.pair_ends()
+        r.move(x, y)
+        ends = b.pair_ends()
+        layer = r.get_current_layer()
+        on_net = last and any(b.on_net_copper(x, y, None if via else layer, c) for c in b.pair)
+        # as the cursor on a pad in KiCad: the placer fits the pair onto that pad, via or track end
+        # and its partner's, and both lines end on their nets' copper
+        snapped = on_net and not via and len(ends) == 2 and all(
+            b.on_net_copper(ex, ey, layer, c) for c, (ex, ey) in ends.items())
+        mid = b.pair_mid(ends)
+        # a head the move left as it was did not fit, and after a fix it lies on the copper it
+        # wrote; otherwise the point is the pair's centre line, reached when it lies between the
+        # two lines' ends
+        if ends == was or not mid or not snapped and math.hypot(mid[0] - x, mid[1] - y) > (width + gap) / 2:
+            if via:
+                r.set_via_placement(False)
+            reason = r.get_failure_reason() or ("the pair did not fit onto this copper and its partner's"
+                                                if on_net else "the pair does not fit to this point")
+            steps.append({"to": [x, y], "reached": False, "head": b.head()[0], "reason": reason})
+            break
+        copper = b.copper()
+        # a via onto the pair's copper or the End key commits the pair where it is; a pair fitted
+        # onto its target finishes by itself
+        ending = via and on_net or last and end
+        done = r.fix_route(x, y, force_finish=ending, require_via=via)
+        if not r.is_routing():
+            if not done:
+                steps.append({"to": [x, y], "reached": True, "fixed": False,
+                              "reason": "the vias do not fit here; the engine dropped the open route"})
+                break
+            step = {"to": [x, y], "reached": True, "fixed": b.pair_added(copper),
+                    "ended_on_net": snapped or on_net}
+            steps.append(dict(step, via=True) if via else step)
+            break
+        fixed = b.pair_added(copper)
+        if not fixed:
+            if via:
+                r.set_via_placement(False)
+            steps.append({"to": [x, y], "reached": True, "fixed": False,
+                          "reason": r.get_failure_reason() or "collision"})
+            break
+        # the next step goes on from this point, as KiCad's placer from its cursor
+        b.start_at = [x, y]
+        step = {"to": [x, y], "reached": True, "fixed": fixed}
+        if via:
+            step["via"] = bool(r.switch_layer(2 if layer == 0 else 0))
+        steps.append(step)
+    return steps
+
+
 def finish(mode):
     b = board()
     r = b.r
@@ -374,7 +485,11 @@ def cancel_route():
     b = board()
     b.need_route()
     b.r.cancel_route()
-    return {"cancelled": True, "routing": False}
+    out = {"cancelled": True, "routing": False}
+    if b.pair:
+        # the steps KiCad's diff pair placer fixed are on the board and stay there
+        out["kept"] = b.diff(b.before)
+    return out
 
 
 def undo_segment():
@@ -382,6 +497,10 @@ def undo_segment():
     b = board()
     r = b.r
     b.need_route()
+    if b.pair:
+        return b.end_route({"undone": False, "reason": "KiCad's diff pair placer writes each fixed step to the "
+                            "board and cannot take one back (DIFF_PAIR_PLACER has no UnfixRoute); after "
+                            "cancel_route, delete the step's tracks"})
     if not b.fixed:
         return b.end_route({"undone": False, "reason": "nothing is fixed since start_route"})
     # KiCad's UnfixRoute answers with the first point of the head, and a fix has just cleared
@@ -455,6 +574,23 @@ def drag(x, y, to_x, to_y):
     return {"dragged": True, "committed": b.diff(before)}
 
 
+def tune(x, y, layer, length, mode):
+    """Tunes the routed line through (x, y) with KiCad's meander placer and commits the result."""
+    b = board()
+    r = b.r
+    if r.is_routing():
+        raise RuntimeError("a route is open; finish or cancel_route it first")
+    if mode not in TUNE_MODES:
+        raise ValueError("mode is single, pair or skew, not %r" % mode)
+    before = b.copper()
+    got = r.tune(x, y, b.layer(layer), length, TUNE_MODES[mode])
+    if not got.committed:
+        return {"committed": False, "reason": got.reason}
+    key = "skew" if mode == "skew" else "length"
+    return {"status": TUNE_STATUS[got.status], key: mm(got.result_mm), "before": mm(got.before_mm),
+            "target": length, "committed": b.diff(before)}
+
+
 def drc():
     b = board()
     found = b.r.run_drc(b.rules)
@@ -500,7 +636,8 @@ def save():
 
 
 TOOLS = {f.__name__: f for f in (open_board, get_net, query_area, start_route, line_to, finish, cancel_route,
-                                  undo_segment, delete, delete_net_routing, drag, drc, checkpoint, restore, save)}
+                                  undo_segment, delete, delete_net_routing, drag, tune, drc, checkpoint, restore,
+                                  save)}
 
 
 def main():

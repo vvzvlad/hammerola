@@ -5,7 +5,9 @@ FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce
 # cached rebuild needs no network; the archive signature verifies the packages, the TLS peer check is off
 # only because the base image has no CA store yet (ca-certificates arrives in this same step). The snapshot
 # serves one connection slowly, so the packages come down eight connections at a time before the install.
+# It also answers 502/503 on single files for hours at a time, so every fetch is retried with apt's backoff.
 RUN sed -i 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/20261101T000000Z/#' /etc/apt/sources.list.d/ubuntu.sources \
+ && echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80retries \
  && P="ca-certificates git rsync build-essential cmake ninja-build pkg-config swig python3-dev python3-pybind11 \
       libwxgtk3.2-dev libwxgtk-webview3.2-dev libglm-dev libglew-dev libglu1-mesa-dev zlib1g-dev libzstd-dev \
       libcurl4-openssl-dev libspnav-dev libx11-dev libcairo2-dev libpixman-1-dev libgit2-dev libboost-dev \
