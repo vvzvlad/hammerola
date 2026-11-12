@@ -169,7 +169,7 @@ board of the project, which the hub exports on every build
   `<key>.3mf`, and **it is one fused body**. The gate reads `.val()`, the first
   body on the stack, alone: only it is validated, measured, written to the STL
   and rendered. So `plate.add(bosses)` publishes green with the bosses missing
-  from the STL and the preview while the 3MF and STEP have them, and
+  from the STL, the 3MF and the preview while the STEP has them, and
   `pushPoints(...).box(..., combine=False)` REPLACES the stack and loses the
   base. `assembled.stl` is glued from every body of the view, so its `N parts`
   in the log and the footer counts bodies, and more than the view holds means a

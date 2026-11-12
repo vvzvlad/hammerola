@@ -212,14 +212,6 @@ def export_printables(catalogue, out_dir):
                 "catalogue entry of its own."
             )
 
-        # The 3MF is that same gated mesh, its vertices shared between faces as
-        # trimesh merged them on load. cadquery's own 3MF writer meshes every
-        # face apart, each with its own copy of the vertices on its edges, and
-        # Bambu Studio does not weld a 3MF it opens: slicing the unwelded mesh
-        # it chains the contours wrongly and closes holes (a printed bed's 240
-        # holes, most of them filled on most layers).
-        write_3mf(mf_path, {name: (mesh.vertices, mesh.faces)}, [(name, IDENTITY)])
-
         # Gate part 4 -- and it has to stand on something. A part whose lowest
         # face is a point or a line has nothing for the first layer to stick
         # to: it is printed on supports or it is not printed at all, and
@@ -233,6 +225,13 @@ def export_printables(catalogue, out_dir):
                 f"{float(lowest[2]):.3f}) and no face lies flat there. Rest "
                 "it on a face, or split it so each piece has one."
             )
+
+        # The 3MF is that same gated mesh, its vertices shared between faces as
+        # trimesh merged them on load. cadquery's own 3MF writer meshes every
+        # face apart, each with its own copy of the vertices on its edges, and
+        # Bambu Studio does not weld a 3MF it opens: slicing the unwelded mesh
+        # it fills holes.
+        write_3mf(mf_path, {name: (mesh.vertices, mesh.faces)}, [(name, IDENTITY)])
 
         print(f"  {name}: valid, volume {volume / 1000.0:.2f} cm3, watertight, "
               f"one body, {mesh.faces.shape[0]} triangles")

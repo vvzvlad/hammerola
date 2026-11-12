@@ -4,7 +4,8 @@ Both are here for the same reason: the build already knows the answer and needs
 no number from the author. A part whose smallest overall dimension is under one
 extrusion width is not thin, it is a line; a part with no flat bottom of its own
 has nothing for the first layer to stick to. Neither question has a threshold
-somebody has to choose, so neither belongs in `checks()`.
+somebody has to choose, so neither belongs in `checks()`. And one property of
+the 3MF the gate writes: it is the very mesh the gate passed, welded.
 
 WHAT `first_layer_area` MEANS is the load-bearing decision and the half worth
 reading twice: the bed is the part's OWN lowest point, so a box centred on the
@@ -280,10 +281,9 @@ def test_an_ordinary_part_standing_on_the_bed_passes_both(out_dir):
 
 
 def test_the_parts_3mf_is_one_mesh_every_edge_between_two_triangles(out_dir):
-    """A part's own 3MF shares its vertices between faces. cadquery's 3MF
-    writer meshed each face apart, every edge's vertices copied once per face,
-    and Bambu Studio, which does not weld a 3MF it opens, sliced a plate of such
-    holes with most of them filled."""
+    """A part's own 3MF shares its vertices between faces: Bambu Studio does not
+    weld a 3MF it opens, and slicing a mesh whose faces each carry their own
+    copy of their edges' vertices it fills holes."""
     cq = _cq()
     plate = (cq.Workplane("XY").box(20, 20, 3).translate((0, 0, 1.5))
              .faces(">Z").workplane().rarray(8, 8, 2, 2).hole(4))
