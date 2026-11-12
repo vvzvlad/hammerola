@@ -925,8 +925,9 @@ export class HmrViewport extends HTMLElement {
     // flag lives on the viewer across renders, and the setter is a no-op when
     // the answer is the one it has.
     this.viewer.setHoverHighlight(!!s.hoverHighlight);
-    // The camera, switched on the scene standing: the library keeps the eye,
-    // the turn and the zoom across the switch and draws a frame.
+    // The camera, switched on the scene standing: the library keeps the turn
+    // and the zoom across the switch, standing the perspective eye
+    // `camera_distance / zoom` before the target, and draws a frame.
     //
     // Into perspective, the target first goes to the depth of what the centre
     // shows while the camera is still ortho, which draws the same picture with

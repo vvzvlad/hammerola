@@ -6,13 +6,14 @@
 // What is asserted is where the eye ends up against that box, not the
 // arithmetic that put it there.
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 
+import { cameraBasis } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
 import {
-  installZoomSeat, keepEye, orthoFrame, seatFrame,
+  installZoomSeat, keepEye, orthoFrame, seatFrame, surfaceDepth,
 } from '../src/viewport/seat.js'
 import { RECT } from './component.js'
 import { boxScene, fakeViewer, fakeViewport, perspectiveCamera } from './fakes.js'
@@ -89,6 +90,24 @@ describe('a frame taken under ortho, opened under perspective', () => {
                     zoom: CD / 15 }, false)
     expect(camera.eye).toEqual([0, 0, 25])
     expect(viewer.idPicker.pickAt).not.toHaveBeenCalled()
+  })
+})
+
+describe('how deep the canvas looks at the centre', () => {
+  // A cut face's depth is picking.test.js's, where the cut is built.
+  const depthAt = ({ viewer, vp, g }) => surfaceDepth(vp, g, cameraBasis(viewer, g), 400, 300, [0, 0])
+
+  it('is a printer bed\'s where the pick buffer sees nothing', () => {
+    const s = scene({ eye: [50, 0, 60] })
+    s.vp.beds.pointAt = vi.fn(() => [50, 0, -20])
+    expect(depthAt(s).depth).toBeCloseTo(80, 9)
+  })
+
+  it('is the part\'s where the pick buffer sees one, through a bed nearer the eye', () => {
+    // Looking at the cube's top face, z = 10, through a bed at z = 30.
+    const s = scene()
+    s.vp.beds.pointAt = vi.fn(() => [0, 0, 30])
+    expect(depthAt(s).depth).toBeCloseTo(50, 9)
   })
 })
 

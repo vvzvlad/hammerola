@@ -77,11 +77,12 @@ export function boxOf(viewer) {
  * or null for the background. Only a point ahead of the eye counts.
  *
  * A cut face first: the pick buffer does not hold it, and it hides what lies
- * behind it (`capOwnerAt`). Then the nearer of the pick buffer's point and a
- * printer bed's, which the buffer does not hold either. The buffer is read at
- * the one pixel with no topology filter: its passes are depth-tested, so a
- * face, an edge and a vertex alike answer with the surface seen there. A ghost
- * is in the buffer like any part; a hidden part is not.
+ * behind it (`capOwnerAt`). Then the pick buffer's point, read at the one
+ * pixel with no topology filter: its passes are depth-tested, so a face, an
+ * edge and a vertex alike answer with the surface seen there. A ghost is in
+ * the buffer like any part; a hidden part is not. Only where the buffer sees
+ * nothing, a printer bed, which the buffer does not hold: it is translucent
+ * scenery, and a part seen through it from below is what the reader looks at.
  */
 export function surfaceDepth(vp, g, b, x, y, ndc) {
   const cap = capOwnerAt(vp, g, ndc);
@@ -99,12 +100,10 @@ export function surfaceDepth(vp, g, b, x, y, ndc) {
   } catch (error) {
     console.warn("surface pick", error);
   }
+  if (seen) return seen;
   const bed = vp.beds.pointAt(ndc);
   const bedDepth = bed ? depthOf(b, bed) : NaN;
-  if (bedDepth > 0 && !(seen && seen.depth <= bedDepth)) {
-    seen = { depth: bedDepth, ghost: false };
-  }
-  return seen;
+  return bedDepth > 0 ? { depth: bedDepth, ghost: false } : null;
 }
 
 /**
@@ -138,6 +137,10 @@ export function seatTarget(vp, g, z, notify) {
   const [x, y, ndc] = centreOf(g);
   const from = { eye: g.camera.getPosition(), C: outside, target: ahead, view: b.view };
   const hit = surfaceDepth(vp, g, from, x, y, ndc);
+  // The buffer now holds the pose at `outside`, which is never drawn; the
+  // render below skips marking it stale when the final pose equals the last
+  // drawn one, so it is marked here.
+  g.picker.setDirty();
   const T = along(outside, b.view, hit ? hit.depth : cd);
   const tb = g.controls.controls;
   if (tb && tb._zoomStart && tb._zoomEnd) tb._zoomStart.copy(tb._zoomEnd);
