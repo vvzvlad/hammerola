@@ -20,7 +20,9 @@ DIRS = itertools.count(1)
 
 
 def mm(v):
-    return round(v, 4)
+    # KiCad's internal unit is 1 nm: six decimals of a mm keep a coordinate exact, so a point copied
+    # from a reply lands on the copper it came from.
+    return round(v, 6)
 
 
 class Board:
