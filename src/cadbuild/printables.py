@@ -13,6 +13,11 @@ from .checklib import minimum_feature
 from .errors import BuildError
 from .geometry import as_shape, drop_mesh
 from .parts import check_stem, printable_keys
+from .threemf import write_3mf
+
+# A part's own 3MF holds it where the model drew it: one build item, no move.
+IDENTITY = ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0))
 
 
 # The three formats every printable is published in, and the order they are
@@ -128,7 +133,6 @@ def export_printables(catalogue, out_dir):
     parse the part out of a filename (a key may contain dots).
     """
     import cadquery as cq
-    from cadquery import exporters
     import trimesh
 
     files = {}
@@ -188,10 +192,6 @@ def export_printables(catalogue, out_dir):
             str(stl_path), tolerance=STL_TOLERANCE,
             angularTolerance=STL_ANGULAR_TOLERANCE, ascii=False, relative=False,
         )
-        # 3MF is not reachable through Assembly -- the extension is not
-        # recognised there. Only exporters.export on a Workplane/Shape works.
-        exporters.export(obj, str(mf_path), exportType=exporters.ExportTypes.THREEMF)
-
         # Gate part 2 -- the mesh people actually print must be closed.
         mesh = trimesh.load(str(stl_path))
         watertight = getattr(mesh, "is_watertight", False)
@@ -211,6 +211,14 @@ def export_printables(catalogue, out_dir):
                 "body. Fuse them into one solid, or give each piece a "
                 "catalogue entry of its own."
             )
+
+        # The 3MF is that same gated mesh, its vertices shared between faces as
+        # trimesh merged them on load. cadquery's own 3MF writer meshes every
+        # face apart, each with its own copy of the vertices on its edges, and
+        # Bambu Studio does not weld a 3MF it opens: slicing the unwelded mesh
+        # it chains the contours wrongly and closes holes (a printed bed's 240
+        # holes, most of them filled on most layers).
+        write_3mf(mf_path, {name: (mesh.vertices, mesh.faces)}, [(name, IDENTITY)])
 
         # Gate part 4 -- and it has to stand on something. A part whose lowest
         # face is a point or a line has nothing for the first layer to stick
