@@ -436,7 +436,10 @@ jobs:
         for tag in "$@"; do tag_args="$tag_args --tag $tag"; done
         # `--pull` for the reason the hub's build gives. No memory ceiling: kicadsvc/Dockerfile
         # has no RUN, so nothing executes under one. The context is kicadsvc/ alone.
-        docker build --pull kicadsvc --file kicadsvc/Dockerfile $tag_args
+        # `--provenance=false`: the default attestation carries this build's timestamps, so an
+        # unchanged image would get a new digest on every push and the auto-updater would
+        # recreate the sidecar each time. Without it a fully cached build keeps its digest.
+        docker build --pull --provenance=false kicadsvc --file kicadsvc/Dockerfile $tag_args
 
     - name: Check the KiCad sidecar exports a board
       # The sidecar under its own command, asked by a second container of the same image on a
