@@ -1,6 +1,7 @@
 // The Settings card at the right end of the floating toolbar, and the answers it
 // holds: whether the model is drawn at the display's full density, whether its
-// camera is perspective, and whether the header draws its strip of projects.
+// camera is perspective, whether the face under the cursor is tinted, and
+// whether the header draws its strip of projects.
 //
 // NOTHING IS MOUNTED, this directory's arrangement (viewmenu.test.js): the real
 // prototype over a hand-spelled state, the real `computed()` and handlers. `sync`
@@ -11,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
-import { readPerspective, readRetina } from '../src/store.js'
+import { readHoverHighlight, readPerspective, readRetina } from '../src/store.js'
 import { css } from '../src/style.jsx'
 import { headerOn, makeComponent, replaceState } from './component.js'
 import { texts } from './eltree.js'
@@ -148,6 +149,25 @@ describe('the Settings card', () => {
     expect(readPerspective()).toBe(false)
   })
 
+  it('flips Hover highlight on its row, remembers it and tells the viewport', () => {
+    // Off where nothing was stored: the owner asked the tint off.
+    const seen = listening()
+    const c = component({ settingsOpen: true, hoverHighlight: false })
+    expect(texts(c.render())).toContain('Hover highlight')
+    expect(row(c, 'hover').mark).toBe('')
+
+    row(c, 'hover').onClick(click)
+    expect(c.state.hoverHighlight).toBe(true)
+    expect(seen.at(-1).hoverHighlight).toBe(true)
+    expect(readHoverHighlight()).toBe(true)
+    expect(row(c, 'hover').mark).toBe('✓')
+    expect(new HammerolaViewer({}).state.hoverHighlight).toBe(true)
+
+    row(c, 'hover').onClick(click)
+    expect(seen.at(-1).hoverHighlight).toBe(false)
+    expect(readHoverHighlight()).toBe(false)
+  })
+
   it('hands the flip of Project tabs up to BuildPage, which owns the answer', () => {
     // The header is not this page's, so the row writes nothing here: it calls
     // BuildPage's door, and its tick is the prop that comes back down.
@@ -164,10 +184,11 @@ describe('the Settings card', () => {
     expect(onTabStrip).toHaveBeenLastCalledWith(false)
   })
 
-  it('stays in service over a document, its Retina and Perspective rows out of service there', () => {
+  it('stays in service over a document, its Retina, Perspective and Hover highlight rows out of service there', () => {
     // The owner asked why the project tabs could not be switched over a
-    // document: they are about the whole site. Retina and Perspective are about
-    // the model's canvas, which the document covers, so their rows are grey.
+    // document: they are about the whole site. Retina, Perspective and Hover
+    // highlight are about the model's canvas, which the document covers, so
+    // their rows are grey.
     const DOC = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 10 }
     const meta = { project: 'fixture', title: 'Fixture', commit: 'abc1234', parts: {}, views: [], documents: [DOC] }
     const onTabStrip = vi.fn()
@@ -178,7 +199,7 @@ describe('the Settings card', () => {
     expect(css(c.computed().settingsBtnStyle).pointerEvents).toBeUndefined()
     c.computed().tSettings(click)
     expect(css(c.computed().settingsMenuStyle).display).toBe('block')
-    for (const key of ['retina', 'perspective']) {
+    for (const key of ['retina', 'perspective', 'hover']) {
       expect(css(row(c, key).style).pointerEvents).toBe('none')
       expect(row(c, key).onClick).toBeUndefined()
     }

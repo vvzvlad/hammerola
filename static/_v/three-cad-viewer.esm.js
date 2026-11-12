@@ -18657,16 +18657,18 @@ class PickingController {
      * tint/status is a CAD/analysis affordance, not wanted in Studio, and skipping it
      * means the id buffer is never re-rendered for a bare mouse-move there. The
      * studio look (`Viewer.setStudio`) turns it off for the same reason, but keeps
-     * double-click, which the Studio tab does not.
+     * double-click, which the Studio tab does not. And off wherever the page has
+     * turned it off (`Viewer.setHoverHighlight`).
      */
     hoverPreselectActive() {
-        return (this.host.shapes?.format !== "GDS" &&
+        return (this.host.hoverHighlight &&
+            this.host.shapes?.format !== "GDS" &&
             !this.host.studioActive &&
             !this.host.studioLookActive);
     }
     /**
-     * Called once per render: drive hover preselection unless a model is GDS or the
-     * camera is being dragged.
+     * Called once per render: drive hover preselection unless it is off
+     * ({@link hoverPreselectActive}) or the camera is being dragged.
      */
     handleHover() {
         if (!this.hoverPreselectActive())
@@ -29978,6 +29980,10 @@ class Viewer {
     get studioLookActive() {
         return this._studio;
     }
+    /** True while {@link setHoverHighlight} has hover preselection on. PickHost member. */
+    get hoverHighlight() {
+        return this._hoverHighlight;
+    }
     // ---------------------------------------------------------------------------
     // Constructor & Initialization
     // ---------------------------------------------------------------------------
@@ -30017,6 +30023,9 @@ class Viewer {
         this._studioLook = null;
         this._studioToneMapping = THREE.NoToneMapping;
         this._studioExposure = 1;
+        // HAMMEROLA'S PATCH: whether the component under the cursor is tinted
+        // (setHoverHighlight). The page turns it off by default from its Settings.
+        this._hoverHighlight = true;
         // ---------------------------------------------------------------------------
         // Render Loop & Scene Updates
         // ---------------------------------------------------------------------------
@@ -30106,8 +30115,8 @@ class Viewer {
             if (!this._studioManager.hasComposer) {
                 this.renderer.clear();
             }
-            // Hover preselection (always-on for non-GDS models; gated internally on the
-            // active drag and the GDS format).
+            // Hover preselection (gated internally on GDS, Studio, the page's
+            // setHoverHighlight and an active drag).
             this.pickingController.handleHover();
             this.rendered.gridHelper.update(this.rendered.camera.getZoom());
             // Keep the id picker's clip state in sync, and mark its buffer stale ONLY on an
@@ -32697,6 +32706,23 @@ class Viewer {
         else
             this._leaveStudio();
         this.update(true);
+    }
+    /**
+     * HAMMEROLA'S PATCH: hover preselection — the tint of the component under
+     * the cursor and its status line. Off, a bare mouse move renders nothing.
+     * Kept across render() like Studio; turned off, the tint the cursor left is
+     * dropped.
+     * @param on - whether the component under the cursor is highlighted.
+     * @public
+     */
+    setHoverHighlight(on) {
+        if (on === this._hoverHighlight)
+            return;
+        this._hoverHighlight = on;
+        if (this._rendered === null || on)
+            return;
+        this.pickingController.clearHover();
+        this.update(true, false);
     }
     /** Studio over the scene on screen: its look in, the default look out (`_showDefaultLook`). */
     _enterStudio() {

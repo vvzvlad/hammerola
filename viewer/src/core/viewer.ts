@@ -401,6 +401,10 @@ class Viewer {
   private _studioToneMapping: THREE.ToneMapping = THREE.NoToneMapping;
   private _studioExposure = 1;
 
+  // HAMMEROLA'S PATCH: whether the component under the cursor is tinted
+  // (setHoverHighlight). The page turns it off by default from its Settings.
+  private _hoverHighlight = true;
+
   /** Environment manager — proxied from StudioManager for display.ts access. */
   get envManager() {
     return this._studioManager.envManager;
@@ -414,6 +418,11 @@ class Viewer {
   /** True while {@link setStudio} has the studio look on. PickHost member. */
   get studioLookActive(): boolean {
     return this._studio;
+  }
+
+  /** True while {@link setHoverHighlight} has hover preselection on. PickHost member. */
+  get hoverHighlight(): boolean {
+    return this._hoverHighlight;
   }
   // Z-scale
   zScale!: number;
@@ -949,8 +958,8 @@ class Viewer {
       this.renderer.clear();
     }
 
-    // Hover preselection (always-on for non-GDS models; gated internally on the
-    // active drag and the GDS format).
+    // Hover preselection (gated internally on GDS, Studio, the page's
+    // setHoverHighlight and an active drag).
     this.pickingController.handleHover();
 
     this.rendered.gridHelper.update(this.rendered.camera.getZoom());
@@ -3258,6 +3267,22 @@ class Viewer {
       this._enterStudio();
     } else this._leaveStudio();
     this.update(true);
+  }
+
+  /**
+   * HAMMEROLA'S PATCH: hover preselection — the tint of the component under
+   * the cursor and its status line. Off, a bare mouse move renders nothing.
+   * Kept across render() like Studio; turned off, the tint the cursor left is
+   * dropped.
+   * @param on - whether the component under the cursor is highlighted.
+   * @public
+   */
+  setHoverHighlight(on: boolean): void {
+    if (on === this._hoverHighlight) return;
+    this._hoverHighlight = on;
+    if (this._rendered === null || on) return;
+    this.pickingController.clearHover();
+    this.update(true, false);
   }
 
   /** Studio over the scene on screen: its look in, the default look out (`_showDefaultLook`). */

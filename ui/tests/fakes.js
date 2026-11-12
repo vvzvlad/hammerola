@@ -480,6 +480,9 @@ export function fakeViewer({
     setStudio: vi.fn(),
     // `Viewer.switchCamera(ortho)`, the same: one call per turn of Perspective.
     switchCamera: vi.fn(),
+    // `Viewer.setHoverHighlight(on)`, the fork's hover tint: asked on every
+    // reconcile, a no-op in the viewer when the answer is unchanged.
+    setHoverHighlight: vi.fn(),
     dispose: vi.fn(),
   }
   /** `Camera.target`, as an array. */

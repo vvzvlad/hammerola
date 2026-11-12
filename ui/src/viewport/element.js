@@ -74,6 +74,9 @@ const INITIAL_STATE = {
   // The camera: perspective when true, orthographic when false — the
   // interface's "Perspective" setting (store.js remembers it).
   perspective: false,
+  // Whether the component under the cursor is tinted — the interface's
+  // "Hover highlight" setting (store.js remembers it).
+  hoverHighlight: false,
   // The bar's Studio: the fork's studio look (`Viewer.setStudio`), not the
   // library's Studio tab.
   studio: false,
@@ -916,6 +919,10 @@ export class HmrViewport extends HTMLElement {
       else this.box.style.removeProperty("--tcv-bg-color");
       this.applied.studio = s.studio;
     }
+    // The hover tint, asked of the viewer rather than memo'd in `applied`: the
+    // flag lives on the viewer across renders, and the setter is a no-op when
+    // the answer is the one it has.
+    this.viewer.setHoverHighlight(!!s.hoverHighlight);
     // The camera, switched on the scene standing: the library keeps the eye,
     // the turn and the zoom across the switch and draws a frame, and the frame
     // on screen is stood again as the new camera shows it (`standFrame`).

@@ -24,10 +24,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  clearToken, forgetTab, readAssembly, readNotes, readPerspective, readProjectSort,
+  clearToken, forgetTab, readAssembly, readHoverHighlight, readNotes, readPerspective, readProjectSort,
   readProjectView, readRetina,
   readTabs, readTabStrip, readToken, rememberPointer, rememberTab, TAB_CAP, writeAssembly, writeNotes,
-  writePerspective, writeProjectSort, writeProjectView, writeRetina, writeTabStrip,
+  writeHoverHighlight, writePerspective, writeProjectSort, writeProjectView, writeRetina, writeTabStrip,
   writeToken,
 } from '../src/store.js'
 
@@ -624,6 +624,21 @@ describe('the perspective setting', () => {
     expect(readPerspective()).toBe(true)
     writePerspective(false)
     expect(readPerspective()).toBe(false)
+  })
+})
+
+// -- the hover highlight setting ---------------------------------------------
+// Whether the viewer tints the face under the cursor. One site-wide key, and
+// NOTHING STORED IS OFF — the owner asked the tint off.
+
+describe('the hover highlight setting', () => {
+  it('reads OFF where nothing was stored, ON once turned on, under one key', () => {
+    expect(readHoverHighlight()).toBe(false)
+    writeHoverHighlight(true)
+    expect([...storage.cells.keys()]).toEqual(['hammerola.hover_highlight'])
+    expect(readHoverHighlight()).toBe(true)
+    writeHoverHighlight(false)
+    expect(readHoverHighlight()).toBe(false)
   })
 })
 

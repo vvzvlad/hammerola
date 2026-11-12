@@ -57,7 +57,7 @@ import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
-import { readPerspective, readRetina } from './store.js';
+import { readHoverHighlight, readPerspective, readRetina } from './store.js';
 import { css, FONTS, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 import {
   BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, settingsCard, settingsView, toolBar,
@@ -131,6 +131,7 @@ export function docBar({
     settingsBtnStyle: btn(!!settings.open, false, false),
     ...settingsView({
       open: settings.open, retina: settings.retina, perspective: settings.perspective,
+      hoverHighlight: settings.hoverHighlight,
       tabStrip: settings.tabStrip, onTabStrip: settings.onTabStrip,
     }),
     fitView: tools ? () => tools.fit() : undefined,
@@ -202,10 +203,10 @@ export default class DocShell extends React.Component {
     // which a bare `d=` would miss for a default schematic.
     this.addressDoc = (at) => pickDocument(this.props.meta.documents, at.doc).id;
     this.state = {
-      // The Retina and Perspective answers are read once: their rows are out
-      // of service here, so nothing on this page changes them.
+      // The Retina, Perspective and Hover highlight answers are read once: their
+      // rows are out of service here, so nothing on this page changes them.
       active: this.addressDoc(parse()), viewsOpen: false, settingsOpen: false, retina: readRetina(),
-      perspective: readPerspective(), tools: null,
+      perspective: readPerspective(), hoverHighlight: readHoverHighlight(), tools: null,
       // Read at once and kept current (`componentDidMount`), as the model's
       // page keeps its own.
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
@@ -479,6 +480,7 @@ export default class DocShell extends React.Component {
                       },
                       retina: this.state.retina,
                       perspective: this.state.perspective,
+                      hoverHighlight: this.state.hoverHighlight,
                       tabStrip: this.props.tabStrip,
                       onTabStrip: this.props.onTabStrip,
                     }}

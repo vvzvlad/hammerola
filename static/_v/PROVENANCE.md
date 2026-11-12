@@ -81,6 +81,10 @@ their own:
   `viewer/src/core/picking-controller.ts` drops the hover tint while it is on.
   The peel shader in `depth-peeling.ts` tone-maps its layers itself when the
   renderer does, because three tone-maps only what it draws to the screen;
+* the page's "Hover highlight" setting: `viewer/src/core/viewer.ts` gains
+  `setHoverHighlight` (the hub turns hover preselection off unless the reader
+  ticks it in Settings), and `viewer/src/core/picking-controller.ts` reads it
+  through `PickHost.hoverHighlight` in `hoverPreselectActive`;
 * `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
   — and drops the outputs and the dev-server branch we do not use;
 * `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no

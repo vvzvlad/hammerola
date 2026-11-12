@@ -95,7 +95,7 @@ import {
 // The reader's notes, the pointer they were last on and the Settings card's
 // answer: per-reader state, which store.js is the one module to keep.
 import {
-  readNotes, writeNotes, rememberPointer, readRetina, readPerspective,
+  readNotes, writeNotes, rememberPointer, readRetina, readPerspective, readHoverHighlight,
 } from './store.js';
 // The proposal: a rough body the reader assembles out of numbers so the agent
 // has something to design against or to copy — the motor the bracket has to
@@ -923,6 +923,7 @@ export default class HammerolaViewer extends React.Component {
       // (store.js).
       retina: readRetina(),
       perspective: readPerspective(),
+      hoverHighlight: readHoverHighlight(),
       // The bar's Studio (`tStudio` in chromeview.js), for this page only:
       // not remembered.
       studio: false,
@@ -3309,7 +3310,7 @@ export default class HammerolaViewer extends React.Component {
       detail: {
         ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
-        retina: s.retina, perspective: s.perspective, studio: s.studio,
+        retina: s.retina, perspective: s.perspective, hoverHighlight: s.hoverHighlight, studio: s.studio,
         tool: s.tool,
         diffShow: s.diffShow, pins,
         ...(extra || {}),

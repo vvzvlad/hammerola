@@ -23,7 +23,7 @@ import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import { PAGE, buildKey, buildPath, mb, shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
-import { writePerspective, writeRetina } from './store.js';
+import { writeHoverHighlight, writePerspective, writeRetina } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, settingsView } from './viewlist.jsx';
 
@@ -458,6 +458,13 @@ export function chromeView(s, props, deps) {
       onPerspective: docOpen ? undefined : () => {
         set({ perspective: !s.perspective });
         writePerspective(!s.perspective);
+      },
+      // The tint of the face under the cursor (viewport/element.js),
+      // remembered and heard the same way.
+      hoverHighlight: s.hoverHighlight,
+      onHoverHighlight: docOpen ? undefined : () => {
+        set({ hoverHighlight: !s.hoverHighlight });
+        writeHoverHighlight(!s.hoverHighlight);
       },
       // Whether the header draws its strip of projects: BuildPage's answer and
       // door, since the header belongs to neither page (the theme's way).

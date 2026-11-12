@@ -437,6 +437,16 @@ describe('reconcile', () => {
     })
   })
 
+  it('hands the viewer the Hover highlight setting, off unless the state turns it on', () => {
+    const vp = element()
+    vp.box = document.createElement('div')
+    vp.reconcile()
+    expect(vp.viewer.setHoverHighlight).toHaveBeenLastCalledWith(false)
+    vp.state = { ...vp.state, hoverHighlight: true }
+    vp.reconcile()
+    expect(vp.viewer.setHoverHighlight).toHaveBeenLastCalledWith(true)
+  })
+
   describe('Studio', () => {
     /** A settled viewport with the box its canvas colour is written on. */
     const studio = (state) => {

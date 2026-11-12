@@ -2,10 +2,11 @@
 //
 // `tools: false` hides the toolbar, the tree and the orientation marker, and
 // that is all it hides: `div.tcv_status_line` lives in `tcv_cad_view` rather
-// than in the tools panel, so `showTools(false)` never touches it. Hover
-// preselection is on unconditionally (it is only skipped for the GDS format and
-// in Studio mode), and every mouse move over the model writes a badge like
-// `Circle: r ≈ 5.00, c ≈ (...), len ≈ 31.42` over the bottom-left of the canvas.
+// than in the tools panel, so `showTools(false)` never touches it. While hover
+// preselection runs (the Settings card's "Hover highlight" is ticked, and the
+// model is neither GDS nor in Studio), every mouse move over the model writes a
+// badge like `Circle: r ≈ 5.00, c ≈ (...), len ≈ 31.42` over the bottom-left of
+// the canvas.
 // In an interface that draws its own chrome that is a stray artefact of another
 // design sitting on top of ours.
 //
@@ -26,7 +27,8 @@ export function muteStatusLine(vp, display) {
   if (typeof original !== "function") return;
   display.setStatusLine = (text) => {
     // Kept, not shown. Nothing reads this yet; the day the interface wants a
-    // hover readout, this is where it already is.
+    // hover readout, this is where it already is — while "Hover highlight" is
+    // ticked, since with it off the library computes nothing.
     vp.hoverText = typeof text === "string" ? text : "";
   };
   try {

@@ -1,14 +1,14 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Ten things are kept, all under the `hammerola.` prefix the rest of the site
-// uses (`hammerola.pointing_device`, viewport/options.js). Nine live in
+// Eleven things are kept, all under the `hammerola.` prefix the rest of the site
+// uses (`hammerola.pointing_device`, viewport/options.js). Ten live in
 // `localStorage`; the theme is a cookie because the server has to know it to
-// send the page already painted (see the theme section). Three of the nine are
+// send the page already painted (see the theme section). Three of the ten are
 // keyed by project (notes, the pointer, and the BOM's Sourced and Placed marks,
 // by design too) so that editing one model and viewing another do not collide;
 // the token, the project-list arrangement, the tab strip, whether it is drawn,
-// the retina setting and the camera's perspective are one key for the whole
-// site.
+// the retina setting, the camera's perspective and the hover highlight are one
+// key for the whole site.
 //
 // EVERY access goes through the two functions at the top and the cookie's two
 // at the bottom. `localStorage` and `document.cookie` THROW on the getter in a
@@ -321,6 +321,20 @@ const PERSPECTIVE_KEY = `${NS}perspective`;
 export const readPerspective = () => read(PERSPECTIVE_KEY) === 'on';
 
 export const writePerspective = (on) => write(PERSPECTIVE_KEY, on ? 'on' : 'off');
+
+// -- whether the face under the cursor is tinted -----------------------------
+// The Settings card's "Hover highlight": on, the viewer tints the component
+// under the cursor blue (viewport/element.js). The owner asked it off, so it is
+// off until the reader turns it on. One key for the whole site, like the
+// camera.
+//
+// Nothing stored reads as off; only the exact word `on` turns it on.
+
+const HOVER_HIGHLIGHT_KEY = `${NS}hover_highlight`;
+
+export const readHoverHighlight = () => read(HOVER_HIGHLIGHT_KEY) === 'on';
+
+export const writeHoverHighlight = (on) => write(HOVER_HIGHLIGHT_KEY, on ? 'on' : 'off');
 
 // -- whether the header draws the strip of projects --------------------------
 // The Settings card's "Project tabs". The owner found the strip in the way, so

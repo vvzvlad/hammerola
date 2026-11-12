@@ -30,6 +30,8 @@ export interface PickHost {
   readonly studioActive: boolean;
   /** True while the studio look (`Viewer.setStudio`) is on: no hover tint there. */
   readonly studioLookActive: boolean;
+  /** False while the page has turned hover preselection off (`Viewer.setHoverHighlight`). */
+  readonly hoverHighlight: boolean;
   readonly shapes: Shapes | null;
   readonly renderer: THREE.WebGLRenderer;
   readonly rendered: RenderedState;
@@ -159,10 +161,12 @@ export class PickingController {
    * tint/status is a CAD/analysis affordance, not wanted in Studio, and skipping it
    * means the id buffer is never re-rendered for a bare mouse-move there. The
    * studio look (`Viewer.setStudio`) turns it off for the same reason, but keeps
-   * double-click, which the Studio tab does not.
+   * double-click, which the Studio tab does not. And off wherever the page has
+   * turned it off (`Viewer.setHoverHighlight`).
    */
   private hoverPreselectActive(): boolean {
     return (
+      this.host.hoverHighlight &&
       this.host.shapes?.format !== "GDS" &&
       !this.host.studioActive &&
       !this.host.studioLookActive
@@ -170,8 +174,8 @@ export class PickingController {
   }
 
   /**
-   * Called once per render: drive hover preselection unless a model is GDS or the
-   * camera is being dragged.
+   * Called once per render: drive hover preselection unless it is off
+   * ({@link hoverPreselectActive}) or the camera is being dragged.
    */
   handleHover(): void {
     if (!this.hoverPreselectActive()) return;
