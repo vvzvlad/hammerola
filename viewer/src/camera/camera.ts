@@ -144,8 +144,7 @@ class Camera {
 
     const aspect = width / height;
 
-    // 22 is a good compromise
-    const fov = 22;
+    const fov = this._perspectiveFov(aspect);
 
     this.camera_distance = Camera.DISTANCE_FACTOR * distance;
 
@@ -195,6 +194,40 @@ class Camera {
    */
   updateCameraDistance(distance: number): void {
     this.camera_distance = Camera.DISTANCE_FACTOR * distance;
+  }
+
+  /**
+   * HAMMEROLA'S PATCH: the perspective camera's vertical field of view, in
+   * degrees, for a canvas of this aspect.
+   *
+   * The angle at which, `camera_distance` from the target, the perspective
+   * camera frames exactly what the orthographic one frames at zoom 1
+   * (`projectSize`), 22.62 degrees on a landscape canvas. A switch between the
+   * two then keeps the target's plane in place and at its size on screen.
+   */
+  private _perspectiveFov(aspect: number): number {
+    const half = this.projectSize(1, aspect)[1] / Camera.DISTANCE_FACTOR;
+    return THREE.MathUtils.radToDeg(2 * Math.atan(half));
+  }
+
+  /**
+   * HAMMEROLA'S PATCH: under perspective, put the near plane a twentieth of the
+   * eye's distance to `target` out and the far plane a hundred radii past the
+   * eye's distance to `centre`, the middle of a model of radius `radius`. A
+   * no-op under ortho.
+   *
+   * The constructor's planes are constant and suit an eye `camera_distance`
+   * from the target, where the orthographic eye always stands. The perspective
+   * eye moves with the zoom: close to the model a fixed near plane cuts it, and
+   * far from it the depth buffer's precision is spent on empty space.
+   */
+  fitPlanes(target: Vector3Tuple, centre: Vector3Tuple, radius: number): void {
+    if (this.ortho) return;
+    const eye = this.pCamera.position;
+    this.pCamera.near = eye.distanceTo(new THREE.Vector3(...target)) / 20;
+    this.pCamera.far =
+      eye.distanceTo(new THREE.Vector3(...centre)) + 100 * radius;
+    this.pCamera.updateProjectionMatrix();
   }
 
   /**
@@ -448,6 +481,7 @@ class Camera {
 
     if (this.pCamera) {
       this.pCamera.aspect = aspect;
+      this.pCamera.fov = this._perspectiveFov(aspect);
     }
 
     if (this.camera) {

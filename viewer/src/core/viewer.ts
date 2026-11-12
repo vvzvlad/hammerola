@@ -958,6 +958,19 @@ class Viewer {
       this.renderer.clear();
     }
 
+    // HAMMEROLA'S PATCH: the perspective camera's near and far planes, fitted
+    // to where its eye stands now (`Camera.fitPlanes`): the camera's own are
+    // constant, and the perspective eye moves with every zoom. Before the hover
+    // pick and the pick buffer's change check below, so both see the
+    // projection this frame is drawn with.
+    if (this.bbox) {
+      this.rendered.camera.fitPlanes(
+        toVector3Tuple(this.rendered.controls.getTarget().toArray()),
+        this.bbox.center(),
+        this.bbox.boundingSphere().radius,
+      );
+    }
+
     // Hover preselection (gated internally on GDS, Studio, the page's
     // setHoverHighlight and an active drag).
     this.pickingController.handleHover();

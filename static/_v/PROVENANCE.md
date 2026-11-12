@@ -51,7 +51,7 @@ its tsconfig. Its `docs/`, `examples/` and `tests/` are not vendored.
 
 ## What we changed, and why
 
-Eight files, all of them but `package.json` carrying the reason in a comment of
+Nine files, all of them but `package.json` carrying the reason in a comment of
 their own:
 
 * `viewer/src/index.ts` re-exports three's namespace, so the page can name the
@@ -85,6 +85,12 @@ their own:
   `setHoverHighlight` (the hub turns hover preselection off unless the reader
   ticks it in Settings), and `viewer/src/core/picking-controller.ts` reads it
   through `PickHost.hoverHighlight` in `hoverPreselectActive`;
+* the page's "Perspective camera" setting: `viewer/src/camera/camera.ts` gives
+  the perspective camera the field of view at which, `camera_distance` from the
+  target, it frames what the orthographic camera frames at zoom 1, and gains
+  `fitPlanes`, which under perspective puts the near and far planes where the
+  eye now stands; `viewer/src/core/viewer.ts` calls it in `update()` before the
+  hover pick, so the pick buffer is drawn with the same projection;
 * `viewer/rollup.config.mjs` sets `external: three` — the whole point (issue #14)
   — and drops the outputs and the dev-server branch we do not use;
 * `viewer/package.json` — `prepare` removed (it ran `yarn build`, and there is no
