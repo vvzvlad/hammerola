@@ -24,7 +24,7 @@ How the helper decides a net is a rail (the `[how]` tag):
 | tag | rule |
 |---|---|
 | `power-symbol` | a `power:` library symbol sits on the net |
-| `name` | the name looks like a rail after the sheet path is stripped: `+5V`, `+3V3_ISO`, `-12V`, `VCC1`, `VDD_MCU`, `AVDD`, `PVDD`, `GVDD_AB`, `VBUS`, `VIN`, `VBAT`, `VSYS` |
+| `name` | the name looks like a rail after the sheet path is stripped: `+5V` / `+3V3_ISO` / `-12V` / `VCC1` / `VDD_MCU` / `AVDD` / `PVDD` / `GVDD_AB`, and exactly `VBUS` / `VIN` / `VBAT` / `VSYS`; not a name ending in a signal word (`3V3_EN` / `5V_PG` / `PWRGD` / `PWR_LED`) |
 | `implicit` | a net the name rule does not take (`Net-(…)`, or a name of its own) lands on a VDD / VCC / VIN-class pin of an active part, or on a VO / VOUT / VISO pin that also carries a capacitor (a `VOx` pin with no cap is a signal output — isolator channel, op-amp — not a rail) |
 | `via <ref>` | reached from a rail through a series element — polyfuse `F`, inductor `L` or ferrite `FB`, jumper `JP` or solder jumper `SJ`, diode `D` (`VIN → D1 → F1 → L1 → +12V`) |
 | `user` | `--rail NET` |
@@ -41,7 +41,7 @@ SEL — not loads), connectors (input or load — decide from the spec's pinout)
 and the active pins it could not classify.
 
 Limits: the heuristics see pin names (symbols without pin names fall back to pad numbers);
-a regulator with odd pin names (`IN1`, `VBAT_IN`, `PVCC`) lands in «other active pins» —
+a regulator with odd pin names (`IN1` / `VBAT_IN` / `PVCC`) lands in «other active pins» —
 classify it by hand from the pinout, never drop it; a resistor array is listed once per
 far net; a mains-side chain (rectifier diodes, measurement dividers) shows up as rails —
 keep it, the mains-side wattage belongs in the budget; the helper never invents a
