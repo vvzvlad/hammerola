@@ -4,15 +4,6 @@
 
 ## Project structure
 - `src/` — application code (`settings.py` is the single config entry point)
-- `src/archive.py` — reading a tarball of sources: the ceilings, the alphabet
-  each path COMPONENT is held to, and the unpack that refuses a member before it
-  becomes a file. Its one reader is the import, which turns the archives of
-  builds published before git into commits (`Store._import_build`). It knows
-  nothing about projects, builds or pointers. The import edge runs
-  `store → archive` and only that way, so it raises `PublishError` from
-  `src/errors.py` rather than from `store`. Code in this module resolves
-  `SAFE_COMPONENT` and `gzip` in THIS module's globals, so a test that replaces
-  one of them has to patch `src.archive`
 - `src/cadbuild/` — the build half, moved in from `cad_publish` (SPEC 8A.2 step
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
@@ -117,11 +108,10 @@
   every branch: each is a variant, its `latest`, draft slot and `builds.json`
   in `data/project/<pid>/.variants/<branch>/` (`main`'s where they always were)
   and the list of them in `variants.json` (`Store._derive`). The
-  repository itself is the store's: created by `ensure_repo` on the first git
-  request or by the start, under a lock of its own — for a project with builds
-  published before git, as the import of those builds (`Store._import`); swept
-  of ref locks, push quarantine and unrenamed staging at startup with no age
-  threshold (`_sweep_repos`); removed with the project
+  repository itself is the store's: created empty by `ensure_repo` on the first
+  git request, under a lock of its own; swept of ref locks, push quarantine and
+  unrenamed staging at startup with no age threshold (`_sweep_repos`); removed
+  with the project
 - `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
   #128): the ref updates of one push, checked in two passes. The first refuses
   without building — a deleted `main` or draft (any other deleted branch is
@@ -339,10 +329,6 @@
   joined name because `SAFE_ID` allows `_`: `<a>__<b>` would let the pair
   `x` + `y__z` and the pair `x__y` + `z` collide, and a collision here serves
   one comparison the other's geometry.
-  `data/sources/<digest>/` holds the archive and the log of a revision published
-  before git, kept by the hub of that time: the import reads them, and the pass
-  at start (`Store.drop_sources`), after the imports of that start, deletes
-  each one its import commits give back.
   `data/cache/<pid>/` holds the project's caches, one directory for all of
   them: written by its build processes, read by nothing on the serving side,
   never served. Today it is one file, `distance.sqlite`, the distance cache
