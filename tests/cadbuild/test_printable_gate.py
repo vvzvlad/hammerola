@@ -19,7 +19,10 @@ the kernel, because what it checks is that the two refusals fire from inside
 kernel does not import. CI's image carries it.
 """
 
+import collections
 import math
+import xml.etree.ElementTree as ET
+import zipfile
 
 import numpy as np
 import pytest
@@ -30,6 +33,7 @@ from src.cadbuild.checklib import minimum_feature
 from src.cadbuild.errors import BuildError
 from src.cadbuild.printables import (export_printables, first_layer_area,
                                      overhang_area)
+from src.cadbuild.threemf import CORE_NAMESPACE, MODEL_PATH
 
 
 # The eight corners of the unit cube and the twelve triangles over them, wound
@@ -273,3 +277,22 @@ def test_an_ordinary_part_standing_on_the_bed_passes_both(out_dir):
                                        out_dir)
     assert set(files) == {"plate"}
     assert metrics["plate"]["bbox_mm"] == pytest.approx([20.0, 10.0, 4.0])
+
+
+def test_the_parts_3mf_is_one_mesh_every_edge_between_two_triangles(out_dir):
+    """A part's own 3MF shares its vertices between faces. cadquery's 3MF
+    writer meshed each face apart, every edge's vertices copied once per face,
+    and Bambu Studio, which does not weld a 3MF it opens, sliced a plate of such
+    holes with most of them filled."""
+    cq = _cq()
+    plate = (cq.Workplane("XY").box(20, 20, 3).translate((0, 0, 1.5))
+             .faces(">Z").workplane().rarray(8, 8, 2, 2).hole(4))
+    files, _metrics = export_printables(catalogue(plate=("printable", plate)),
+                                        out_dir)
+    with zipfile.ZipFile(out_dir / files["plate"]["3mf"]) as package:
+        root = ET.fromstring(package.read(MODEL_PATH))
+    triangles = [[int(t.get(k)) for k in ("v1", "v2", "v3")]
+                 for t in root.iter(f"{{{CORE_NAMESPACE}}}triangle")]
+    edges = collections.Counter(tuple(sorted(edge)) for a, b, c in triangles
+                                for edge in ((a, b), (b, c), (c, a)))
+    assert triangles and set(edges.values()) == {2}
