@@ -29,7 +29,8 @@ faces lie ON the laminate's, coplanar with it, and those inner faces and the
 slabs' walls are dropped; mask and silkscreen are flat already. Each layer's
 coincident vertices are then merged. The parts are kept as KiCad tessellated
 them, each CAD face with its own vertices, grouped into one mesh a colour on
-16 levels a channel (`_quantised`).
+16 levels a channel (`_quantised`), their colours turned from the linear light
+the GLB carries them in to sRGB first (`_srgb`); the layers' are sRGB already.
 
 `footprints` is read from the `.kicad_pcb` itself, so it holds every footprint,
 those with no 3D model (a mounting hole) and DNP ones too; `bounds` is what says
@@ -367,7 +368,7 @@ def _scene(glb, thickness):
                 colors.setdefault(kind, color)
                 layers.setdefault(kind, []).append(piece)
                 continue
-            color = _quantised(color)
+            color = _quantised(_srgb(color))
             record = f"parts_{color[1:]}"
             colors[record] = color
             parts.setdefault(record, []).append(piece)
@@ -391,6 +392,19 @@ def _scene(glb, thickness):
     bounds = {reference: tuple(float(c) for c in (*low, *high))
               for reference, (low, high) in extent.items()}
     return meshes, bounds
+
+
+def _srgb(color):
+    """A part's "#rrggbb" from linear light to sRGB. kicad-cli writes the
+    board's layers in KiCad's sRGB colours but a part's STEP colour in linear
+    light, as glTF has it; shown as it is, a connector's grey body (linear
+    0.07) comes out black and gold comes out brown."""
+    out = []
+    for i in (1, 3, 5):
+        c = int(color[i:i + 2], 16) / 255
+        c = 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+        out.append("%02x" % int(round(min(max(c, 0.0), 1.0) * 255)))
+    return "#" + "".join(out)
 
 
 def _quantised(color):
