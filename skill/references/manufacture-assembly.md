@@ -21,3 +21,10 @@
 - Export with the native tools (kicad-manufacture section 3, or `kicad-cli sch export bom --exclude-dnp` /
   `kicad-cli pcb export pos --exclude-dnp`) and commit any post-processing script beside
   the outputs. BOM designators = CPL designators = fitted footprints on the board.
+- A BOM is reconciled with its schematic variant (`kicad-cli sch export bom --variant`):
+  every fitted part has a line, every line exists; DNP flags mirror the current variant,
+  and a variant switch is a change the parts diff cannot see — it goes into the revision's
+  changelog. Every excluded or missing active part is judged by its nets: an omission that
+  severs a mandatory function (the only RX path, a non-synchronous buck's catch diode) is
+  MAJOR even when the board has always been built so (`schematic-review.md`, 6f).
+- A panel for assembly: `panel.md`.

@@ -1,0 +1,13 @@
+(version 1)
+
+(rule "hv isolation"
+  (condition "A.NetClass == 'HV' && B.NetClass != 'HV'")
+  (constraint clearance (min 3mm)))
+
+(rule "live in the mains area"
+  (condition "A.NetName == '/mains/L' && A.intersectsArea('mains')")
+  (constraint clearance (min 2mm)))
+
+(rule "signal width"
+  (condition "A.NetName != 'GND'")
+  (constraint track_width (min 0.15mm)))

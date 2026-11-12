@@ -1,0 +1,41 @@
+{
+  "board": {
+    "design_settings": {
+      "rules": {
+        "min_clearance": 0.2
+      }
+    }
+  },
+  "meta": {
+    "filename": "board.kicad_pro",
+    "version": 3
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "clearance": 0.2,
+        "name": "Default",
+        "track_width": 0.2
+      },
+      {
+        "clearance": 2.0,
+        "name": "HV",
+        "track_width": 0.5
+      }
+    ],
+    "meta": {
+      "version": 4
+    },
+    "netclass_assignments": {
+      "/mains/N": [
+        "HV"
+      ]
+    },
+    "netclass_patterns": [
+      {
+        "netclass": "HV",
+        "pattern": "/mains/L*"
+      }
+    ]
+  }
+}

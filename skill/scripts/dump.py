@@ -1,9 +1,10 @@
-"""Dump a .kicad_pcb (read-only) to JSON for check.py: footprints, pads with copper polygons, tracks, vias, zones, edge, F/B silk (mm).
+"""Dump a .kicad_pcb (read-only) to JSON for check.py and creep.py: footprints, pads with copper polygons, tracks, vias with their copper layers, zones with fills refilled in memory, edge, the board outline polygon with its cut-outs as holes, each net's net class, the copper layers in stack order, F/B silk (mm).
 usage: dump.py board.kicad_pcb out.json
 needs: KiCad's bundled Python with pcbnew, e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3"""
 import sys, json, pcbnew
 
 b = pcbnew.LoadBoard(sys.argv[1])
+pcbnew.ZONE_FILLER(b).Fill(b.Zones())
 MM = 1e-6
 
 
@@ -24,8 +25,11 @@ def polyset(ps):
     return out
 
 
-CU = {pcbnew.F_Cu: 'F.Cu', pcbnew.In1_Cu: 'In1.Cu', pcbnew.In2_Cu: 'In2.Cu', pcbnew.B_Cu: 'B.Cu'}
-D = {'fps': [], 'tracks': [], 'vias': [], 'zones': [], 'edge': [], 'texts': [], 'netclass': {}}
+CU = {l: b.GetLayerName(l) for l in b.GetEnabledLayers().CuStack()}
+outline = pcbnew.SHAPE_POLY_SET()
+b.GetBoardPolygonOutlines(outline, False)
+D = {'fps': [], 'tracks': [], 'vias': [], 'zones': [], 'edge': [], 'texts': [], 'netclass': {}, 'copper': list(CU.values()),
+     'outline': polyset(outline)}
 for n, ni in b.GetNetsByName().items():
     nm = str(n)
     if nm:
@@ -50,7 +54,8 @@ for f in b.GetFootprints():
         for l, nm in CU.items():
             if p.IsOnLayer(l) and p.FlashLayer(l):
                 ps = pcbnew.SHAPE_POLY_SET()
-                p.TransformShapeToPolygon(ps, l, 0, 5000, pcbnew.ERROR_INSIDE)
+                # outside the true outline by at most 5 um: creep.py's distances never come out larger than the copper's
+                p.TransformShapeToPolygon(ps, l, 0, 5000, pcbnew.ERROR_OUTSIDE)
                 pd['poly'][nm] = polyset(ps)
         fd['pads'].append(pd)
     D['fps'].append(fd)
@@ -58,12 +63,12 @@ for f in b.GetFootprints():
 for t in b.GetTracks():
     if t.GetClass() == 'PCB_VIA':
         D['vias'].append({'pos': pt(t.GetPosition()), 'd': t.GetWidth(pcbnew.F_Cu) * MM, 'drill': t.GetDrillValue() * MM,
-                          'net': t.GetNetname(), 'uuid': t.m_Uuid.AsString()})
+                          'net': t.GetNetname(), 'uuid': t.m_Uuid.AsString(), 'layers': [CU[l] for l in CU if t.IsOnLayer(l)]})
     elif t.GetClass() == 'PCB_TRACK':
         D['tracks'].append({'a': pt(t.GetStart()), 'b': pt(t.GetEnd()), 'w': t.GetWidth() * MM,
                             'layer': t.GetLayerName(), 'net': t.GetNetname(), 'uuid': t.m_Uuid.AsString()})
     else:
-        D['tracks'].append({'arc': True, 'a': pt(t.GetStart()), 'b': pt(t.GetEnd()), 'w': t.GetWidth() * MM,
+        D['tracks'].append({'arc': True, 'a': pt(t.GetStart()), 'mid': pt(t.GetMid()), 'b': pt(t.GetEnd()), 'w': t.GetWidth() * MM,
                             'layer': t.GetLayerName(), 'net': t.GetNetname(), 'uuid': t.m_Uuid.AsString()})
 
 for z in b.Zones():

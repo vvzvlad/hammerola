@@ -19,7 +19,12 @@ block before placing, routing, editing silkscreen or reviewing a board; it is no
 | Symbols, footprints, libraries, 3D models | `konnect`, `kicad-library` | `references/schematic-library.md` (Library) |
 | A board an agent will bring up and test with no person at the bench (any board with a controller); test groups, fiducials and the bring-up document for the owner's robotic probe bench | `konnect`, `kicad-schematic`, `kicad-pcb` | the `probe-bench` skill: `~/.claude/skills/probe-bench/SKILL.md` |
 | Review, DRC/ERC, «плата готова?», critics | `konnect`, `kicad-review` | `scripts/ready.sh`, `references/review-critics.md`, `references/lens-checklist.md`, Layout definition of done in `references/layout-rules.md` |
+| Isolation distances between domains: air gap, creepage around cut-outs, plan view over all layers | `konnect`, `kicad-pcb` | `references/layout-rules.md` (Safety distances across layers), lenses MI in `references/lens-checklist.md`, `scripts/creep.py` |
+| «Проверь схему»: the electrical review of a revision — operating point, every pin in every state, the power budget per rail, corners, firmware, the diff against the previous revision | `konnect`, `kicad-review` | `references/schematic-review.md`, `references/power-budget.md`, `scripts/sch.py` |
+| A part's rating, abs-max, pin level, a datasheet to cite; an SMD marking to decode | — | `references/datasheets.md` |
+| Alternatives for a part, a category of parts under a price, pin-to-pin comparison | — | `references/parts-search.md`, `scripts/parts.py` |
 | Gerbers, BOM/CPL, pick-and-place, fab order, quotes | `konnect`, `kicad-manufacture` | `references/manufacture-assembly.md` |
+| A panel of boards for assembly: KiKit, the panel's DRC, the Gerber diff | `konnect`, `kicad-manufacture` | `references/panel.md`, `scripts/panel_rules.py`, `scripts/gerbers.sh`, `scripts/gerber_diff.py` |
 | Publishing a schematic, a board, its 3D model or Gerbers on the hub | — | `references/boards.md` |
 | A brief for a subagent | — | `references/review-critics.md` (Briefs and fixers), Agents below |
 
@@ -87,12 +92,13 @@ the interpreter they name: the hub's installer does not keep the executable bit.
 | `drc.sh` | bash, kicad-cli, python3 | DRC on a copy with a private KiCad config; optional extra rules file; exit 1 on errors, dangling tracks or vias, or unconnected items |
 | `geocheck.py` | KiCad Python | Track-geometry gate, checks 1–5; optional JSON of findings; exit 1 on any finding |
 | `inv.py` | KiCad Python | Per footprint: side, position, SMD/THT/unspec, DNP and exclusion flags, model count, reference field; silk texts |
-| `dump.py` | KiCad Python | Board to JSON (pads with copper polygons, tracks, vias, zones, edges, F/B silk) for check.py |
+| `dump.py` | KiCad Python | Board to JSON (pads with copper polygons, tracks, vias, zones with fills refilled in memory, edges, the board outline with its cut-outs, net classes, F/B silk) for check.py and creep.py |
 | `check.py` | python3 with shapely | Routing report: pad exits, track ends, angles and lengths, jogs, vias under silk or in courtyards, crossings, loops, detours; exit 1 on findings |
+| `creep.py` | python3 with shapely | Safety distances between two isolation groups (`class:NAME` or `net:NAME`) on a `dump.py` JSON, per copper layer and in plan view (all copper layers projected together): the air gap and the creepage around the board's internal cut-outs, with the copper items at both ends and the creepage path; a distance below its limit by any amount is a violation, exit 1; ported from Wiren Board's wb-clearance (MIT) |
 | `stepA.py` | KiCad Python | Sets SMD/THT from pad types, saves to a new file |
 | `step.sh` | bash | One via-stitching iteration (add vias, DRC, dump, measure); needs helper scripts named in its header |
 | `kc.py` | python3 | MCP stdio client for copperpour: a fresh server per run |
-| `bq.py` | KiCad Python | Board queries on the saved file: what is near a point, clearance between two items, legal via sites, a track corridor, legal designator spots, a footprint's pads and what is attached to each (`pads REF`), a net's pads, tracks, vias and fill pieces (`net NAME`), zones with their fill pieces, areas and tying vias, or only the piece at a point (`zones --at X Y`), a placement `score` (HPWL and airwire crossings over signal nets, crossings optionally within a box; on a routed board also the bare pads, netted pads with nothing attached, per footprint); applies the `.kicad_dru` beside the board as KiCad's DRC does; `-` reads one query per line from stdin |
+| `bq.py` | KiCad Python | Board queries on the saved file: what is near a point, clearance between two items, legal via sites, a track corridor, legal designator spots, a footprint's pads and what is attached to each (`pads REF`), a net's pads, tracks, vias and fill pieces (`net NAME`), zones with their fill pieces, areas and tying vias, or only the piece at a point (`zones --at X Y`), a placement `score` (HPWL and airwire crossings over signal nets, crossings optionally within a box; on a routed board also the bare pads, netted pads with nothing attached, per footprint), a footprint's courtyard against the board outline with the nearest edge and the direction to it (`edge REF`), the routed copper from a pad's edge to another pad of its net or to the nearest via over tracks, arcs and vias, zone fills not counted, with the via count, layers, item sequence and the straight pad-edge gap (`path REF.PAD REF.PAD|via`; two pads of different nets give the straight gap alone — the measure of a placement rule); applies the `.kicad_dru` beside the board as KiCad's DRC does; `-` reads one query per line from stdin |
 | `autoroute.sh` | bash, docker | Routes a copy of the saved board in docker: existing tracks/vias locked for the run, fastroute draft, optional Freerouting finish, DRC with refill, `geocheck.py`, unrouted list; prints the routed copy's path. Uses `autoroute.Dockerfile`, `autoroute_run.sh` and `autoroute_board.py` beside it |
 | `pns_mcp.py` | python3, docker | MCP server `pns`: KiCad's interactive router on a copy of the saved board in docker — push-and-shove and walkaround routes, vias, delete and reroute, drag, checkpoints, KiCad's DRC; `save` writes the result into a new temporary directory with the board's `.kicad_dru`, for `drc.sh` and `put.py`. Uses `pns.Dockerfile`, `pns_engine.patch` and `pns_bridge.py` beside it; how to route with it is in `references/layout-rules.md` (Autorouting) |
 | `findings.py` | python3 | A `drc.json` and `geocheck.py` findings filtered by type, net, ref, box or point, or counted by type, ref or net (`--type unconnected_items --by ref` on an autoroute run's `run/drc.json`: unrouted connections per footprint) |
@@ -102,6 +108,11 @@ the interpreter they name: the hub's installer does not keep the executable bit.
 | `boardgeo.py` | KiCad Python | Geometry core of `bq.py` and `silk.py` (imported, not run) |
 | `view.py` | KiCad Python, rsvg-convert | A region of the saved board (`X1 Y1 X2 Y2`, `ref REF` or `full`) as KiCad's own plot, PNG at most `--px` (1000) on the long side, with an mm grid in board coordinates, reference designators (hidden ones too), net names and numbered markers from a `drc.json` or `bq.py --json`; prints what is in the region |
 | `silk.py` | KiCad Python | Designator placement: `plan` finds a legal spot for every reference and lists the unplaced ones with the reason; `apply` writes the plan to a closed board, or `--live` to the open one over kipy |
+| `sch.py` | python3, kicad-cli | Schematic review from the root `.kicad_sch` (or a kicadxml `.xml` netlist): parts with their sheet, nets, one net, a part's pins and nets with the notes of its sheet within 40 mm (`around REF…`), every sheet note with its nearest parts (`texts`), power rails with what feeds and what draws from each (`rails`, `--md` for the consumption-table skeleton), what changed between two revisions or project directories (`diff`); reads every sheet reachable from the root, a sheet placed twice once per placement; ported from Wiren Board's `kicad_review.py` (MIT) |
+| `parts.py` | python3 | Parts on szlcsc.com (LCSC's domestic shop), solving its RC4 anti-bot cookie: the category tree (`tree --grep`), keyword search with the 1000-pc price in USD (`search`), foreign distributors' offers (`overseas`), a category's brands and packages (`params`), whole categories to JSONL and CSV under a price cap, sliced past the 1500-row cut and resumable (`harvest`), LCSC's English detail and datasheet link (`detail`), `%PDF`-checked datasheets named by part code (`datasheet`), the CNY-per-USD rate (`rate`), a shortlist JSON to CSV (`report`). Work files go to the current directory unless `--out` or `-d` says otherwise |
+| `panel_rules.py` | python3 | After a KiKit rebuild: the panel's `.kicad_pro` gets the board's net classes, its netclass patterns and the classes the schematic assigns as `Board_?-` patterns; the panel's `.kicad_dru` the board's rules with `Board_?-` net names and `<name>*` rule areas; old files to `*.bak`; ported from Wiren Board's `kikit_panel_rules.py` (MIT) |
+| `gerbers.sh` | bash, kicad-cli | Gerbers with the job file and Excellon drills, PTH and NPTH apart, from the board's plot settings, the same for a board and its panel; refuses a non-empty folder unless forced; a panel must have an NPTH drill unless it is a V-cut panel; ported from Wiren Board's `gerbers-kicad.sh` (MIT) |
+| `gerber_diff.py` | python3 with numpy and pillow, gerbv | A panel against its board by the Gerbers: the board's pictures replicated over the copies (given, or found by the PTH drill; a mirrored copy takes the paired layer), XORed with the panel's, one PNG per layer, drills as sets of holes; exit 1 on differences. Runs in docker by `gerbdiff.Dockerfile` beside it (`references/panel.md`, Checks); ported from Wiren Board's `gerber_diff.py` (MIT) |
 
 ## Agents
 
@@ -129,5 +140,16 @@ defines the agent on an installation lists Monitor beside Bash.
   footprints, symbol fields, courtyards, 3D models on placed boards.
 - `references/review-critics.md` — severity changes, layout critics, briefs and fixers.
 - `references/manufacture-assembly.md` — part codes, stock, exclusions, BOM/CPL parity.
-- `references/lens-checklist.md` — review lenses (TG, GR, DC, MI, SK, DFM) with sources.
+- `references/lens-checklist.md` — review lenses (TG, GR, DC, MI, SK, DFM, SCH) with sources.
+- `references/schematic-review.md` — the electrical review: hard rules, order, pin states,
+  firmware cross-check, corners, protection and isolation, production artifacts,
+  orchestration, KiCad pitfalls.
+- `references/power-budget.md` — the per-rail budget: `sch.py rails` skeleton, pricing the
+  rows, source vs load, dissipation, what becomes a finding, the report tables.
+- `references/datasheets.md` — locating a datasheet, reading the envelope, SMD markings,
+  the citation form, «not found».
+- `references/parts-search.md` — alternatives from szlcsc.com: intake, harvest, funnel,
+  extraction, verification, pinout tiers, the CSV, QA.
+- `references/panel.md` — a panel through KiKit: rules, config, Gerbers, the panel's DRC
+  and the Gerber diff.
 - `references/boards.md` — publishing a KiCad design and Gerbers on the hub.
