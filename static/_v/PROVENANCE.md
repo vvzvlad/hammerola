@@ -85,7 +85,7 @@ their own:
   `setHoverHighlight` (the hub turns hover preselection off unless the reader
   ticks it in Settings), and `viewer/src/core/picking-controller.ts` reads it
   through `PickHost.hoverHighlight` in `hoverPreselectActive`;
-* the page's "Perspective camera" setting: `viewer/src/camera/camera.ts` gives
+* the page's "Perspective" setting: `viewer/src/camera/camera.ts` gives
   the perspective camera the field of view at which, `camera_distance` from the
   target, it frames what the orthographic camera frames at zoom 1, and gains
   `fitPlanes`, which under perspective puts the near and far planes where the
