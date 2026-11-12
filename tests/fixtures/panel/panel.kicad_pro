@@ -1,0 +1,71 @@
+{
+  "board": {
+    "design_settings": {
+      "rules": {
+        "min_clearance": 0.2
+      }
+    }
+  },
+  "meta": {
+    "filename": "panel.kicad_pro",
+    "version": 3
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "clearance": 0.2,
+        "name": "Default",
+        "track_width": 0.2
+      },
+      {
+        "clearance": 0.2,
+        "name": "Board_0-Default",
+        "track_width": 0.2
+      },
+      {
+        "clearance": 0.2,
+        "name": "Board_1-Default",
+        "track_width": 0.2
+      },
+      {
+        "clearance": 2.0,
+        "name": "Board_0-HV",
+        "track_width": 0.5
+      },
+      {
+        "clearance": 2.0,
+        "name": "Board_1-HV",
+        "track_width": 0.5
+      }
+    ],
+    "meta": {
+      "version": 4
+    },
+    "netclass_assignments": {
+      "Board_0-/mains/N": [
+        "Board_0-HV"
+      ],
+      "Board_1-/mains/N": [
+        "Board_1-HV"
+      ]
+    },
+    "netclass_patterns": [
+      {
+        "netclass": "Board_0-Default",
+        "pattern": "Board_0-GND"
+      },
+      {
+        "netclass": "Board_0-HV",
+        "pattern": "Board_0-/mains/L*"
+      },
+      {
+        "netclass": "Board_1-Default",
+        "pattern": "Board_1-GND"
+      },
+      {
+        "netclass": "Board_1-HV",
+        "pattern": "Board_1-/mains/L*"
+      }
+    ]
+  }
+}

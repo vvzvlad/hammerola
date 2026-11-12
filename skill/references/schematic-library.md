@@ -21,6 +21,24 @@ on the four filtered inputs of an ADE7913 split into label pairs: «ему ле�
 линии, которые ничего не портят и не мешают читать?» A net whose name something reads (a
 netclass pattern in the `.kicad_pro`, a document) keeps one label on its wire as the name.
 
+### What the sheet says about itself
+
+A reader of the sheet — a reviewer, the firmware author, the next revision's designer —
+gets from the sheet itself, not from a chat:
+
+- every MCU signal documented at its pin or net: what the level means, inversion, what it
+  enables; a change to the MCU pinout is told to the firmware author;
+- the formula behind every analog network (a divider's ratio and its range, a sense
+  resistor's full-scale) and the voltage and frequency ranges of an input, as a note;
+- an alternative part that needs other parts changed with it, as a note at the part;
+- every isolation domain as a net class, and the isolation voltage and the required
+  distance between domains stated on the sheet (`schematic-review.md`, 6b).
+
+Two footprints for one package in the project's library is a defect: one footprint per
+package. A connection reads as a wire, not as two pin ends set against each other.
+Wires, references and values cross neither symbols nor each other — judged on the
+render, not on `check_schematic_overlaps`. Net names in English, never transliterated.
+
 ### Power symbols
 
 - A rail with no stock power symbol (GNDISO, +12V_BUS): `add_schematic_component` with
@@ -52,6 +70,13 @@ and then run the netlist gate below (not only `run_erc`).
 - `run_erc` (kicad-cli sch erc) reports neither a missing digit nor a duplicate reference,
   even across sheets. Gate after any reference change: `kicad-cli sch export netlist -o
   <scratch>.net <root>.kicad_sch` must not print "schematic has annotation errors".
+- ERC is triaged by category, never dumped: `unconnected_wire_endpoint`,
+  `pin_not_connected` on intentional NC, `lib_symbol_issues`, `footprint_link_issues`,
+  `power_pin_not_driven` for a rail fed through an L or an R, `multiple_net_names` for
+  intentional dual labels (they hand you the rail map), `pin_to_pin` on an EPAD are the
+  usual noise; the report quotes the real-vs-noise split. In the kicadxml netlist
+  `<node pin>` is the pad number and `pinfunction` the name — review by net and pad
+  number (`schematic-review.md`, KiCad pitfalls).
 
 ### Moving parts and overlap checks
 

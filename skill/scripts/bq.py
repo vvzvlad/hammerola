@@ -1,7 +1,7 @@
-"""Board queries for layout agents: what is near a point, copper clearance between two items, legal via sites, a track corridor, legal designator spots, a footprint's pads with what is attached to each, a net's copper, zones with their fill pieces, placement score (HPWL and airwire crossings of signal nets, bare pads once the board has tracks); compact text, or JSON with --json.
-usage: "$PY" bq.py <board.kicad_pcb> near X Y [--r 2] [--layer L] | clearance A B | via X Y --net NET [--r 3] [--n 5] [--size D --drill d] | corridor X1 Y1 X2 Y2 --layer L --width W --net NET | labels REF | pads REF | net NAME | zones [--layer L] [--net N] [--at X Y] | score [X1 Y1 X2 Y2] [--n 5]   (mm; A/B = REF, REF.PAD or net:NAME; cmd "-" reads one query per line from stdin, board loaded once; reads the saved file, zones refilled in memory; clearance, hole_clearance and edge_clearance rules of the .kicad_dru beside the board are applied, see boardgeo.py; a bare pad has a net other than KiCad's unconnected-* and nothing attached: no track, arc or via, no zone fill, no touching pad that has one)
+"""Board queries for layout agents: what is near a point, copper clearance between two items, legal via sites, a track corridor, legal designator spots, a footprint's pads with what is attached to each, a net's copper, zones with their fill pieces, placement score (HPWL and airwire crossings of signal nets, bare pads once the board has tracks), a footprint's courtyard against the board outline, the routed copper length, vias and layers between two pads of one net or from a pad to the nearest via; compact text, or JSON with --json.
+usage: "$PY" bq.py <board.kicad_pcb> near X Y [--r 2] [--layer L] | clearance A B | via X Y --net NET [--r 3] [--n 5] [--size D --drill d] | corridor X1 Y1 X2 Y2 --layer L --width W --net NET | labels REF | pads REF | net NAME | zones [--layer L] [--net N] [--at X Y] | score [X1 Y1 X2 Y2] [--n 5] | edge REF | path REF.PAD REF.PAD|via   (mm; A/B = REF, REF.PAD or net:NAME; path between pads of two nets gives the straight gap only; cmd "-" reads one query per line from stdin, board loaded once; reads the saved file, zones refilled in memory; clearance, hole_clearance and edge_clearance rules of the .kicad_dru beside the board are applied, see boardgeo.py; a bare pad has a net other than KiCad's unconnected-* and nothing attached: no track, arc or via, no zone fill, no touching pad that has one)
 needs: KiCad's bundled Python with pcbnew ($PY), e.g. /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3; boardgeo.py beside this file"""
-import sys, json, math, shlex, argparse, collections
+import sys, json, math, shlex, argparse, collections, heapq
 import pcbnew
 sys.dont_write_bytecode = True  # no __pycache__ beside the installed scripts
 import boardgeo
@@ -628,12 +628,329 @@ def parser():
     s = sp.add_parser("zones"); s.add_argument("--layer"); s.add_argument("--net")
     s.add_argument("--at", type=float, nargs=2, metavar=("X", "Y"))
     s = sp.add_parser("score"); s.add_argument("box", type=float, nargs="*"); s.add_argument("--n", type=int, default=5)
+    s = sp.add_parser("edge"); s.add_argument("ref")
+    s = sp.add_parser("path"); s.add_argument("a"); s.add_argument("b")
     for s in sp.choices.values():
         s.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     return p
 
 
-CMDS = dict(near=near, clearance=clearance, via=via, corridor=corridor, labels=labels, pads=pads, net=net, zones=zones, score=score)
+# ---------------------------------------------------------------- edge
+def edge(g, a):
+    """A footprint's courtyard against the board outline: inside it, crossing it or outside; the nearest Edge.Cuts item
+    with the distance to it and the direction from the courtyard's nearest point to that edge point, or from the
+    footprint's centre when the courtyard crosses the outline (KiCad's y grows downwards), for judging whether a
+    connector sits at an edge and opens outwards; the footprint's side and rotation."""
+    if a.ref not in g.fps:
+        raise SystemExit("bq: no footprint %s" % a.ref)
+    f = g.fps[a.ref]
+    side = "B" if f.IsFlipped() else "F"
+    cy = f.GetCourtyard(boardgeo.SIDE[side][3])
+    if not cy.OutlineCount():
+        raise SystemExit("bq: %s has no courtyard on %s" % (a.ref, side))
+    cy = pcbnew.SHAPE_POLY_SET(cy)
+    o = cy.Outline(0)
+    inside = sum(g.inside(o.CPoint(i).x, o.CPoint(i).y) for i in range(o.PointCount()))
+    where = "inside" if inside == o.PointCount() else "outside" if inside == 0 else "crossing"
+    edges = {id(it): it for c in g.grid[g.ln(pcbnew.Edge_Cuts)].cells.values() for it in c}
+    if not edges:
+        raise SystemExit("bq: the board has no Edge.Cuts")
+    # measured to the outline's boundary segments, since a closed Edge.Cuts shape (a circle, a closed polyline) is
+    # filled and measures 0 from anything inside it; holes are the board's slots and round cut-outs, polygonised
+    best = None
+    for i in range(g.outline.OutlineCount()):
+        for chain in [g.outline.Outline(i)] + [g.outline.Hole(i, j) for j in range(g.outline.HoleCount(i))]:
+            for k in range(chain.SegmentCount()):
+                s = chain.CSegment(k)
+                seg = pcbnew.SHAPE_SEGMENT(s.A, s.B, 0)
+                d = dist(cy, seg)
+                if best is None or d < best[0]:
+                    best = (d, seg)
+    d, seg = best
+    if where == "inside" and d == 0:
+        where = "crossing"
+    pa, pb = nearest(cy, seg)
+    it = min(edges.values(), key=lambda e: dist(point(pb.x, pb.y), e.shape))
+    # the direction from the courtyard's nearest point to the edge is normal to the edge; a crossing courtyard has
+    # pa == pb, so take the footprint's centre instead
+    dx, dy = pb.x - pa.x, pb.y - pa.y
+    if dx == 0 and dy == 0:
+        dx, dy = pb.x - f.GetPosition().x, pb.y - f.GetPosition().y
+    towards = ("+x (right)" if dx > 0 else "-x (left)") if abs(dx) >= abs(dy) else ("+y (down)" if dy > 0 else "-y (up)")
+    res = dict(cmd="edge", ref=a.ref, side=side, rotation=round(f.GetOrientationDegrees(), 1), courtyard=where,
+               edge=dict(dist=f3(d), item=desc(it), at=at(pb), courtyard_at=at(pa), towards=towards))
+    txt = ["edge %s: side %s, rotation %.1f, courtyard %s the outline; nearest edge %.3f mm at (%.3f,%.3f), towards %s" % (
+        a.ref, side, res["rotation"], where, res["edge"]["dist"], f3(pb.x), f3(pb.y), towards)]
+    return res, txt
+
+
+# ---------------------------------------------------------------- path
+class Line:
+    """A track's or arc's centreline: its length and the point at a fraction of it, nm."""
+
+    def __init__(self, t):
+        self.len = t.GetLength()
+        self.a, self.b = t.GetStart(), t.GetEnd()
+        self.arc = None
+        if t.GetClass() == "PCB_ARC":
+            t = t.Cast()
+            c = t.GetCenter()
+            self.arc = (c.x, c.y, t.GetRadius(), math.radians(t.GetArcAngleStart().AsDegrees()), math.radians(t.GetAngle().AsDegrees()))
+
+    def at(self, f):
+        if self.arc:
+            cx, cy, r, a0, sweep = self.arc
+            return cx + r * math.cos(a0 + f * sweep), cy + r * math.sin(a0 + f * sweep)
+        return self.a.x + (self.b.x - self.a.x) * f, self.a.y + (self.b.y - self.a.y) * f
+
+    def frac(self, x, y):
+        """Fraction of the length at the centreline point nearest (x, y)."""
+        if self.arc:
+            cx, cy, r, a0, sweep = self.arc
+            d = (math.atan2(y - cy, x - cx) - a0) % (2 * math.pi)
+            if sweep < 0:
+                d = (2 * math.pi - d) % (2 * math.pi)   # the angle run in the arc's own direction
+            s = abs(sweep)
+            if d <= s:
+                return d / s if s else 0.0
+            return 1.0 if d - s < 2 * math.pi - d else 0.0   # beyond the arc: its nearer end
+        dx, dy = self.b.x - self.a.x, self.b.y - self.a.y
+        n = dx * dx + dy * dy
+        return min(max(((x - self.a.x) * dx + (y - self.a.y) * dy) / n, 0.0), 1.0) if n else 0.0
+
+    def span(self, f0, shape):
+        """The stretch of the centreline around fraction f0 that lies inside `shape`, as two fractions ((f0, f0) when
+        the point at f0 is outside it)."""
+        def inside(u):
+            return hit(point(*self.at(u)), shape, 0)
+        if not inside(f0):
+            return f0, f0
+        out = []
+        for lim in (0.0, 1.0):
+            lo, hi = f0, lim
+            if inside(lim):
+                lo = lim
+            else:
+                for _ in range(30):
+                    mid = (lo + hi) / 2
+                    lo, hi = (mid, hi) if inside(mid) else (lo, mid)
+            out.append(lo)
+        return tuple(out)
+
+
+def path_pads(g, spec):
+    """The pads named REF.PAD (several when a footprint repeats the number)."""
+    ref, _, num = spec.rpartition(".")
+    if ref not in g.fps:
+        raise SystemExit("bq: no footprint %s (path takes REF.PAD)" % (ref or spec))
+    ps = [p for p in g.fps[ref].Pads() if p.GetNumber() == num]
+    if not ps:
+        raise SystemExit("bq: no pad %s" % spec)
+    return ps
+
+
+def copper_graph(g, code):
+    """The net's tracks, arcs, pads and vias (no zone fills) as a graph. A pad or via is one item on every layer. A track
+    end joins a pad or via whose copper on its layer is within half the track width (KiCad's connectivity) at a port, the
+    point where its centreline leaves that copper, so the part of the track inside it is not counted; the ports of one
+    pad or via, and of two that touch, join each other at their straight distance. A track end on another track's copper
+    joins it at that end or, mid-track, at the nearest centreline point.
+    Returns adjacency {node: [(node, nm, label)]} (label: the track's uuid, or "through" inside a pad or via), the
+    ports [(pad or via uuid, x, y)], the pads and vias {uuid: [Item per layer]}, their ports {uuid: [node]}, the
+    tracks {uuid: (Item, Line)} and which pads and vias touch {uuid: {uuid}}."""
+    its = {}
+    for L, grid in g.grid.items():
+        for c in grid.cells.values():
+            for it in c:
+                if it.code == code and it.kind in ("pad", "via", "track", "arc"):
+                    its[id(it)] = it
+    uid = {id(it): it.obj.m_Uuid.AsString() for it in its.values()}
+    hubs = collections.defaultdict(list)
+    for k, it in its.items():
+        if it.kind in ("pad", "via"):
+            hubs[uid[k]].append(it)
+    tracks = {uid[k]: (it, Line(it.obj)) for k, it in its.items() if it.kind in ("track", "arc")}
+    adj, ports, hub_ports = collections.defaultdict(list), [], collections.defaultdict(list)
+    atts = {u: [(0.0, (u, 0)), (1.0, (u, 1))] for u in tracks}
+
+    def edge(m, n, d, lab):
+        adj[m].append((n, d, lab))
+        adj[n].append((m, d, lab))
+
+    def port(v, u, t):
+        node = ("port", len(ports))
+        ports.append((v,) + tracks[u][1].at(t))
+        hub_ports[v].append(node)
+        atts[u].append((t, node))
+
+    for u, (it, line) in tracks.items():
+        w = it.obj.GetWidth()
+        for end, p in ((0, line.a), (1, line.b)):
+            node = (u, end)
+            for o in g.query(it.layer, (p.x, p.y, p.x, p.y), w):
+                if id(o) not in its or o is it:
+                    continue
+                v = uid[id(o)]
+                if o.kind in ("pad", "via"):
+                    if hit(point(p.x, p.y), o.shape, w // 2):
+                        port(v, u, line.span(end, o.shape)[1 - end])
+                elif hit(point(p.x, p.y), o.shape, 0):
+                    oline, ow = tracks[v][1], o.obj.GetWidth()
+                    near = [k for k, q in ((0, oline.a), (1, oline.b)) if math.hypot(q.x - p.x, q.y - p.y) <= max(w, ow) / 2]
+                    if near:
+                        edge(node, (v, near[0]), 0, None)
+                    else:
+                        atts[v].append((oline.frac(p.x, p.y), node))
+        # a pad or via whose centre lies on the track's copper (KiCad joins it there, also away from the track's
+        # ends): ports where the centreline enters and leaves its copper
+        for o in g.query(it.layer, it.box):
+            if id(o) in its and o.kind in ("pad", "via"):
+                q = o.obj.GetPosition()
+                if hit(point(q.x, q.y), it.shape, 0):
+                    for t in line.span(line.frac(q.x, q.y), o.shape):
+                        port(uid[id(o)], u, t)
+    for u, lst in atts.items():
+        lst.sort(key=lambda e: e[0])
+        for (f1, m), (f2, n) in zip(lst, lst[1:]):
+            edge(m, n, tracks[u][1].len * (f2 - f1), u)
+    touch = collections.defaultdict(set)
+    for k, it in its.items():
+        if it.kind in ("pad", "via"):
+            for o in g.query(it.layer, it.box):
+                if id(o) in its and o.kind in ("pad", "via") and uid[id(o)] != uid[k] and hit(it.shape, o.shape, 0):
+                    touch[uid[k]].add(uid[id(o)])
+    # 1 nm over the straight distance: on a tie the path stays on its track, so a via it only runs past is not entered
+    for v, ps in list(hub_ports.items()):
+        for o in {v} | touch[v]:
+            for p in ps:
+                for q in hub_ports[o]:
+                    if p < q:
+                        edge(p, q, math.hypot(ports[p[1]][1] - ports[q[1]][1], ports[p[1]][2] - ports[q[1]][2]) + 1, "through")
+    return adj, ports, hubs, hub_ports, tracks, touch
+
+
+def path(g, a):
+    """Routed copper between two pads of one net, or from a pad to the nearest same-net via reachable from it, along
+    tracks, arcs, vias and pads only (zone fills are not copper here): Dijkstra over copper_graph from the first pad's
+    copper edge to the last pad's or via's. Every via the path enters is counted. With the straight pad-edge gap for
+    comparison (on any layers); two pads of different nets give the straight gap only."""
+    A = path_pads(g, a.a)
+    B = None if a.b == "via" else path_pads(g, a.b)
+    code, netname = A[0].GetNetCode(), A[0].GetNetname()
+    for spec, P in ((a.a, A), (a.b, B or [])):
+        for p in P:
+            if p.GetNetCode() != P[0].GetNetCode():
+                raise SystemExit("bq: %s has pads on %s and %s; path takes pads of one net each" % (
+                    spec, P[0].GetNetname(), p.GetNetname()))
+
+    def pad_gap(P, Q):
+        return f3(min(dist(p.GetEffectiveShape(lp), q.GetEffectiveShape(lq)) for p in P for q in Q
+                      for lp in g.cu if p.IsOnLayer(lp) for lq in g.cu if q.IsOnLayer(lq)))
+
+    if B and B[0].GetNetCode() != code:
+        res = dict(cmd="path", a=a.a, b=a.b, net=netname, net_b=B[0].GetNetname(), length=None, vias=None, layers=None,
+                   items=None, gap=pad_gap(A, B), joined=None)
+        return res, ["path %s %s nets %s and %s: different nets, no copper path; straight gap %.3f mm" % (
+            a.a, a.b, netname, res["net_b"], res["gap"])]
+    adj, ports, hubs, hub_ports, tracks, touch = copper_graph(g, code)
+    src = {p.m_Uuid.AsString() for p in A}
+    dst = {p.m_Uuid.AsString() for p in B} if B else {v for v, its in hubs.items() if its[0].kind == "via"}
+
+    def gap_to(h, port):
+        return min(dist(point(*ports[port[1]][1:]), it.shape) for it in hubs[h])
+
+    # S and T stand for the two ends: a port starts or ends the path at its distance from the end pad's copper (a port
+    # of a touching pad or via, such as a via in the pad, included), which is not 0 when a track only touches the pad
+    for h in src:
+        for o in {h} | touch[h]:
+            for port in hub_ports[o]:
+                adj["S"].append((port, gap_to(h, port), ("from", h)))
+            if o in dst:
+                adj["S"].append(("T", 0, ("touch", h, o)))
+    for h in dst:
+        for o in {h} | touch[h]:
+            for port in hub_ports[o]:
+                adj[port].append(("T", gap_to(h, port), ("to", h)))
+    best, prev, heap, n = {"S": 0}, {}, [(0, 0, "S")], 0
+    while heap:
+        d, _, u = heapq.heappop(heap)
+        if u == "T":
+            break
+        if d > best[u]:
+            continue
+        for v, w, lab in adj[u]:
+            if d + w < best.get(v, float("inf")):
+                best[v], prev[v] = d + w, (u, lab, w)
+                n += 1
+                heapq.heappush(heap, (d + w, n, v))
+    res = dict(cmd="path", a=a.a, b=a.b, net=netname, length=None, vias=None, layers=None, items=None, gap=None, joined=None)
+    if "T" not in best:
+        # no track path: KiCad's connectivity, which counts zone fills, says whether a fill joins them
+        cn = conn(g)
+        joined = any((i.Type() == pcbnew.PCB_PAD_T and i.m_Uuid.AsString() in dst) if B else i.Type() == pcbnew.PCB_VIA_T
+                     for p in A for i in cn.GetConnectedItems(p))
+        res["joined"] = "fill" if joined else None
+        if B:
+            res["gap"] = pad_gap(A, B)
+        txt = ["path %s %s net %s: %s%s" % (a.a, a.b, netname, "no track path; joined through a fill" if joined else "not connected",
+                                             ", straight gap %.3f mm" % res["gap"] if res["gap"] is not None else "")]
+        return res, txt
+    steps, u = [], "T"
+    while u != "S":
+        steps.append((u,) + prev[u][1:])
+        u = prev[u][0]
+    steps.reverse()
+    items, end = [], None
+
+    def add_hub(h):
+        if not items or items[-1].get("uuid") != h:
+            it = hubs[h][0] if h in hubs else None
+            items.append(dict(kind="via", at=at(it.obj.GetPosition()), uuid=h) if it and it.kind == "via" else
+                         dict(kind="pad", name=it.name() if it else a.a, uuid=h))
+
+    for i, (node, lab, d) in enumerate(steps):
+        if isinstance(lab, tuple):          # an end: the pad itself, then the touching pad or via the port is on
+            add_hub(lab[1])
+            if d:
+                items[-1]["through"] = items[-1].get("through", 0) + d
+            if lab[0] == "touch":
+                add_hub(lab[2])
+            end = lab[2] if lab[0] == "touch" else lab[1] if lab[0] == "to" else end
+        elif lab == "through":
+            items[-1]["through"] = items[-1].get("through", 0) + d
+        elif lab is not None:
+            if items and items[-1].get("uuid") == lab:
+                items[-1]["length"] += d
+            else:
+                items.append(dict(kind=tracks[lab][0].kind, layer=tracks[lab][0].layer, length=d, uuid=lab))
+        # a port the path only runs past along its track does not enter that pad or via
+        if node != "T" and node[0] == "port" and (not isinstance(lab, str) or not isinstance(steps[i + 1][1], str) or
+                                                  "through" in (lab, steps[i + 1][1])):
+            add_hub(ports[node[1]][0])
+    for e in items:
+        for k in ("length", "through"):
+            if k in e:
+                e[k] = f3(e[k])
+    layers = list(dict.fromkeys(e["layer"] for e in items if "layer" in e))
+    last = hubs[end][0].obj
+    gap = min(dist(p.GetEffectiveShape(la), last.GetEffectiveShape(lb)) for p in A
+              for la in g.cu if p.IsOnLayer(la) for lb in g.cu if last.IsOnLayer(lb))
+    res.update(length=f3(best["T"]), vias=sum(e["kind"] == "via" for e in items), layers=layers, items=items, gap=f3(gap),
+               joined="tracks")
+
+    def show(e):
+        s = "pad " + e["name"] if e["kind"] == "pad" else "via (%.3f, %.3f)" % tuple(e["at"]) if e["kind"] == "via" else \
+            "%s %s %.3f" % (e["kind"], e["layer"], e["length"])
+        return s + (" through %.3f" % e["through"] if e.get("through") else "")
+
+    txt = ["path %s %s net %s: %.3f mm routed, %d vias, layers %s; straight gap %.3f mm" % (
+        a.a, a.b, netname, res["length"], res["vias"], ",".join(layers) or "-", res["gap"]),
+           "  " + " > ".join(show(e) for e in items)]
+    return res, txt
+
+
+CMDS = dict(near=near, clearance=clearance, via=via, corridor=corridor, labels=labels, pads=pads, net=net, zones=zones, score=score,
+            edge=edge, path=path)
 
 
 def run(g, argv, js):

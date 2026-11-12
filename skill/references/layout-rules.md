@@ -15,8 +15,8 @@ Placed:
 - Mechanics (see Mechanical interfaces): mating-board contact band, enclosure features
   and plug envelopes are keep-outs with no part inside; every mating pad faces a pad of
   the same net; every pin-1/polarity mark sits at pad 1.
-- Decoupling and every "next to / close / tight" in the spec: distance in mm against a
-  numeric limit.
+- Decoupling, every "next to / close / tight" in the spec and every pair / satellite / chain
+  rule of the brief (Placement): distance in mm against its limit, met or not.
 - Safety distances measured >= the spec value (plus any margin the brief states); a pair
   below it by any amount fails. Where the spec requires a distance across layers, check
   it in plan view by script.
@@ -107,17 +107,70 @@ before placing parts and check them in 3D like DRC.
 
 ## Placement
 
-- Decoupling caps (ceramic, one per supply pin): <= 2 mm from cap pad edge to pin pad
-  edge, same layer, smallest value nearest the pin. The supply track reaches the cap pad
-  before the pin, with no via between them; the cap's GND pad has its own via to the plane
-  at the pad. Bulk caps are not held to 2 mm.
+- Decoupling caps (ceramic, one per supply pin), same layer as the pin: the copper between
+  the pin and the plane adds at most three times the cap's own ESL, so the mounted
+  resonance stays >= 0.5 x SRF — f_m = 1/(2π√((ESL + L_mount)·C)) (Xilinx UG483 v1.14
+  p. 33–34); the value cancels, only the case counts. Budget: L'·l + L_via <= 3·ESL(case),
+  where l is the routed copper from the pin pad edge to the cap pad edge plus from the
+  cap's GND pad edge to its via, L_via is that GND via down to the nearest GND plane, and
+  the supply side has no via. ESL (TDK Ceramic Capacitor Product Guide A14, p. 17):
+  0402 0.30, 0603 0.40, 0805 0.50, 1206 0.60 nH. L' of a 0.3 mm track: 0.357 nH/mm over
+  0.21 mm prepreg (JLC04161H-7628), 0.23 over 0.10 mm (3313), 0.74 on a 2-layer 1.6 mm
+  board (Z0/c from the microstrip formula; Bogatin and Johnson quote 0.33–0.39 nH/mm for
+  typical traces). L_via: 0.02 nH from the top to L2 of the 4-layer stack, 0.74 nH through
+  1.6 mm (Grover, Xilinx XAPP623 App. B eq. 5; Johnson & Graham's formula gives 1.30 and
+  leaves 0402/0603 no room on 2 layers). l_max for a 0.3 mm track, Grover's via: 4-layer
+  7628 — 0402 2.5, 0603 3.3, 0805 4.1, 1206 5.0 mm; 2-layer with a through via — 0402 0.2,
+  0603 0.6, 0805 1.0, 1206 1.4 mm. Measure l as `bq.py path U1.<pin> C1.<pad>` plus
+  `bq.py path C1.<gnd pad> via` (routed length and via count along the net's copper, the
+  second from the cap's GND pad to its nearest via) after every re-placement or re-route of
+  the group;
+  before routing, the straight pad-edge gap is the lower bound of l. Smallest value nearest
+  the pin; the supply track reaches the cap pad before the pin; the cap's GND pad has its
+  own via at the pad. Bulk caps are exempt.
 - Where the datasheet says "without vias" (e.g. an isolator's VCC2/GND2 bypass) or gives a
   layout figure (a switcher's input cap across VIN/GND), keep both sides on the component
   layer with no via and follow the figure.
-- Re-measure cap-to-pin distances by script after every re-placement of the group.
 - Turn every "next to / close / flush" in the spec into a mm limit in the brief (e.g. a
   cold-junction sensor: its distance to the terminal bodies, on the same pour) and measure
   it after placement.
+- Write the rest of the placement intent as rules in the brief before the first move, one
+  line each, pads named, in one of three forms: **pair** — `A.pad B.pad <= d mm` (a switch
+  node and its inductor, a TVS and its connector pin); **satellite** — `C1 C2 C3 within r mm
+  of U1.pad` (a regulator's caps as one island at its input); **chain** — `J1.pin > D1 > R1 >
+  U1.pin, each link <= d mm, in that order` (a protected signal from the connector to the
+  MCU). After every placement batch measure each rule pad to pad (`bq.py path A.PAD B.PAD`
+  — the straight pad-edge gap for any two pads, same net or not, and the routed length once
+  the net has tracks; `bq.py clearance` skips pads of one net, and the named pairs almost
+  always share one; one query per line through `bq.py <board> -`; a chain is its links in
+  order, each part farther from the connector than the last) and report it met, not met with
+  the number, or not measured with the reason. Violated: move the named part towards its
+  anchor, never the anchor. (HeyPCB's `check_placement` measures its author's rules in these
+  three forms, read 2026-11-12.)
+- A crystal or resonator sits at its IC's clock pins with nothing between them but its load
+  capacitors: crystal pad edge to clock pin pad edge <= 5 mm (`bq.py path Y1.<pad> U1.<pad>`),
+  and no other part's courtyard nearer to those pins than the crystal (`bq.py near` at the
+  pin). TI SWRA495 §4 (rev. 2025-04): "as close as possible to the device", no number; 5 mm
+  is the agent's default, the brief may tighten it. Violated: move the crystal and its caps,
+  not the IC. Clock tracks, vias and foreign copper under the crystal are DC-3 in
+  `lens-checklist.md`, checked after routing.
+- Every connector a cable or another board plugs into sits at the board edge, opening
+  outwards. `bq.py edge J1` gives the courtyard against the outline (inside / crossing /
+  outside), the distance to the nearest edge and the direction to it; the distance is <=
+  the figure the brief sets (0 for a footprint made to overhang, e.g. USB-C), and that
+  direction is the connector's insertion axis — read the axis off `view.py ref J1` and the
+  3D model, the query does not know it. Violated: move it to the edge and rotate it; a
+  connector that has to stay inside gets its reason in the hand-off.
+- No courtyard outside the outline or across it, except a connector made to overhang
+  (`bq.py edge REF` for every reference `inv.py` lists; Copperpour's `score_placement`
+  proves containment only for a rectangular outline), and no two courtyards overlapping
+  (`courtyards_overlap` in `drc.sh`). Violated: move the part; never shrink a courtyard.
+- Like parts in a row — the caps along an IC's side, a resistor array, a connector bank —
+  share one line and one pitch: their centres (`inv.py`) agree in one coordinate and step
+  by one value in the other. Violated: `align_components`, then re-measure.
+- A finding is fixed by moving the part it names; re-placing a cell that already passes
+  its rules is not a fix. Lock a cell that passes (the footprint's Locked flag in KiCad)
+  and name it in the held set of every later brief, so no batch moves it again.
 - Placement is not done until every dense IC (pitch <= 0.65 mm or >= 12 signal pins) has a
   proven escape. "Courtyards clear + DRC clean" is not routability. Per side: copper gap to
   the next part >= n x (track + clearance) + clearance for the n pins leaving on that layer,
@@ -412,7 +465,9 @@ A board with pours is not routed until these checks are measured on the saved bo
   directly over N on B.Cu under an 8 mm rule raised no error). When the spec applies a
   distance across layers, measure plan-view distances between isolation groups over
   all copper layers (pads, tracks, vias, plated barrels, zone fills) after each routing
-  pass and before reporting done. Whether two groups may overlap through the board core
+  pass and before reporting done: `scripts/creep.py` on a `dump.py` JSON gives, per layer
+  and in plan view, the air gap and the surface path around the board's cut-outs between
+  two net classes or nets, and exits non-zero on a pair below the limit. Whether two groups may overlap through the board core
   is the spec's decision; ask the owner if the spec is silent.
 - Place parts with >= 0.5 mm spare over each required distance so routing has room.
   Build keep-out and zone outlines at required + 0.05 mm: polygon approximation and
@@ -457,5 +512,9 @@ Do NOT add signal-layer fills before routing is complete.
 Routing Tools: `route_pad_to_pad` — direct connection, auto L-bend routing (raw 90° corner — chamfer
 it, see Track geometry — acceptance gate).
 
-konnect, Design Rules Quick Reference: IC decoupling cap — 100nF ceramic within 2 mm of the supply
-pin, same layer (Placement above).
+Placement, Strategy: "Decoupling caps: within 2mm of their IC power pins, on same layer" reads:
+decoupling caps within the mounting-inductance budget of Placement above (3 x the cap's ESL),
+on the same layer.
+
+konnect, Design Rules Quick Reference: IC decoupling cap — within the mounting-inductance budget
+of Placement above (3 x the cap's ESL), same layer.

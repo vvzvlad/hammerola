@@ -266,7 +266,9 @@ reviewer/owner parameter, not a fact.
 - Script: `GEOM` — for each IC supply pin: capacitors with one pad on the pin's net and one on GND;
   edge-to-edge distance pin↔capacitor pad and routed length; order by capacitance (value field) — the
   smallest value must be nearest; distance from the capacitor GND pad to the nearest GND via and the
-  via count; topology check that the supply route passes the capacitor pad before reaching the pin.
+  via count; topology check that the supply route passes the capacitor pad before reaching the pin;
+  the mounted inductance (`bq.py path`) against the budget of `layout-rules.md` Placement
+  (L'·l + L_via ≤ 3·ESL of the case).
 
 **DC-2. Device-specific decoupling.**
 - Each IC's datasheet decides values, placement and via use; e.g. ISO1042: "place the V CC2 bypass
@@ -305,7 +307,9 @@ reviewer/owner parameter, not a fact.
 - JLCPCB: non-plated slot minimum 1.0 mm; copper clearance from routed slots ≥0.2 mm; "Rectangular
   holes and slots without rounded corners are not supported" [S18].
 - Script: `GEOM` — internal Edge.Cuts contours used as creepage slots: minimum width (inscribed circle)
-  ≥ X; copper-to-slot ≥ 0.2 mm. `AUTO` partial: KiCad 10 `creepage` constraint ("Creepage paths are
+  ≥ X; copper-to-slot ≥ 0.2 mm; `creep.py` measures the surface path around those slots between
+  two domains (the path's ends are searched together with the path, so a slot away from the air-gap
+  minimum does not inflate it). `AUTO` partial: KiCad 10 `creepage` constraint ("Creepage paths are
   highlighted ... configured using a creepage constraint in custom rules", [S22]); whether KiCad applies
   the X rule to narrow slots was not found — verify with a test case.
 
@@ -339,7 +343,9 @@ reviewer/owner parameter, not a fact.
 - IEC 60664-1: "Joints or grooves joining conductive parts should be avoided since they can collect
   pollution or retain water"; "A creepage distance cannot be less than the associated clearance"
   (IEC 60664-1).
-- Script: `GEOM` — slots whose ends come within 0.2 mm of copper of two different domains.
+- Script: `GEOM` — slots whose ends come within 0.2 mm of copper of two different domains; `creep.py`
+  reports air gap and creepage of every close pair, so creepage < clearance shows as a shorter
+  surface path than the straight line.
 
 **MI-6. Surge parts near the terminal.**
 - ADI: "Connect a metal oxide varistor (MOV) across and near the live in terminal and the neutral
@@ -431,6 +437,14 @@ reviewer/owner parameter, not a fact.
 | QFN/LFCSP land | TI: NSMD pads recommended; central pad to lead pad clearance "should not be reduced to smaller than 0.2 mm"; at 0.5 mm pitch pad width 0.28 mm or less; thermal vias plugged or tented [S10] | `GEOM` on footprints |
 
 ---
+
+## 7. Schematic (SCH)
+
+The electrical lenses — operating point against located datasheets, every MCU and logic pin
+in every state, the power budget per rail, corners and temperature extremes, firmware
+cross-check, protection and isolation declared on the sheet, the diff against the previous
+revision — read the schematic, not the board, and are `schematic-review.md` with
+`power-budget.md` and `datasheets.md`. Script: `sch.py`.
 
 ## Sources
 

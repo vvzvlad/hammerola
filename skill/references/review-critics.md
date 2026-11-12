@@ -22,6 +22,17 @@ Severity: these two findings are WARNING, not SUGGESTION.
   part-to-edge rules).
 - Every finding needs a severity, evidence measured on the saved file, a failure
   scenario and a fix. The critic tries to refute it before reporting.
+- A finding that rests on a part's rating carries the located datasheet citation —
+  document and revision, URL, table / page (`datasheets.md`); without one its severity is
+  capped at «проверить», never MAJOR on a guessed limit.
+- The electrical lenses — operating point, every pin in every state, the power budget,
+  corners, firmware, the revision diff — are a schematic critic running
+  `schematic-review.md`; its coverage map assigns every notable part and every MCU pin to
+  exactly one brief, and what stays unassigned the lead vets inline.
+- When critics fan out, the lead runs one verifier over the surviving MAJORs, briefed to
+  refute and to aggravate (the worst credible scenario, including what firmware legally
+  allows), and gives every finding any critic returned a disposition — kept / merged into
+  X / downgraded by note Y / refuted — with the counts in the report.
 - Never list a defect class the owner has complained about under "known, do not
   re-report", and rate such a class at least MAJOR.
 - Before passing a finding to the owner, check it against the recorded owner decisions.
