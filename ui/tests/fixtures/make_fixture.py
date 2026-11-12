@@ -312,9 +312,9 @@ def payload_digest(out_dir, names):
     looking at the interface by hand actually wants.
 
     THE PART EXPORTS ARE OUT FOR THE SAME REASON: two runs of an unchanged model
-    produce STEP and 3MF files that differ byte for byte, because both formats
-    carry the moment they were written (measured on the pinned cadquery 2.8.0;
-    the binary STL hashed identically). `Store` applies the same reasoning to a
+    produce STEP files that differ byte for byte, because STEP carries the
+    moment it was written (measured on the pinned cadquery 2.8.0; the binary STL
+    and the 3MF hash identically). `Store` applies the same reasoning to a
     real push, where the rewritten meta.json is outside the digest as well.
     """
     digest = hashlib.sha256()

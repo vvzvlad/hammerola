@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""A 3MF package of several objects, each placed on the bed by a build item.
+"""A 3MF package of several objects, each placed on the bed by a build item:
+a bed of the `print` view, and each printable's own `<key>.3mf`.
 
 Our own writer, on the standard library alone (`zipfile` for the package,
 ElementTree for the XML): trimesh's 3MF exporter needs lxml, which the image
 does not carry, and cadquery's `ThreeMFWriter` wraps every mesh into one
-component object under one build item, which a slicer loads as one part.
+component object under one build item, which a slicer loads as one part, and
+meshes every face apart, each with its own copy of its edges' vertices, which
+Bambu Studio slices with holes filled.
 
 The same input gives the same bytes: nothing in the XML carries a date, and
 every member of the zip carries one fixed timestamp.
