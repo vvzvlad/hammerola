@@ -79,9 +79,9 @@ MERGE_GRID = 1e-4
 # How near a laminate hole is to a pad's drill to be that drill, in mm: the
 # STEP and the board file give both to the micrometre.
 HOLE_TOL = 0.01
-# The parts are grouped by colour on this many levels a channel: KiCad's models
-# come in near-identical blacks and greys (#000000, #020202, #050505), one
-# record each, exact.
+# The parts are grouped by their sRGB colour on this many levels a channel:
+# KiCad's models come in near-identical colours, and exact colours would give
+# each a record of its own.
 COLOR_LEVELS = 16
 
 # The kind of a board layer is the end of its glTF mesh's name
@@ -309,7 +309,8 @@ def _scene(glb, thickness):
 
     -> ({name: (vertices, faces, normals, "#rrggbb")}, {reference: bounds}).
     A layer's colour is its material's as KiCad wrote it, which is what its
-    own 3D viewer shows; a part's is that on `COLOR_LEVELS`, so the parts of
+    own 3D viewer shows; a part's is its material's turned from linear light
+    to sRGB (`_srgb`) and put on `COLOR_LEVELS`, so the parts of
     near-identical colours share one record. The GLB is read straight from its buffer (`_gltf`): a board
     is tens of thousands of small meshes, and building an object for each is
     what took the time.
