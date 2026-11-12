@@ -218,7 +218,7 @@ class FakePairRouter(FakeRouter):
 
     def fix_route(self, x, y, force_finish, require_via=False):
         self.forced = force_finish
-        self.tracks += [types.SimpleNamespace(vars(t), uuid=next(self.uuids)) for t in self.lines]
+        self.tracks += [types.SimpleNamespace(**{**vars(t), "uuid": next(self.uuids)}) for t in self.lines]
         self.start = (x, y)
         if self.on_target or force_finish:
             self.routing = False

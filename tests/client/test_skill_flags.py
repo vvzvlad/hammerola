@@ -83,6 +83,9 @@ OTHER_PROGRAMS = {
     # body or its copper alone, for a thermal or current model.
     "--board-only", "--no-components", "--include-inner-copper",
     "--fuse-shapes", "--net-filter",
+    # `references/layout-rules.md`: `claude mcp add --scope user` registers
+    # the pns router's MCP server.
+    "--scope",
 }
 
 
