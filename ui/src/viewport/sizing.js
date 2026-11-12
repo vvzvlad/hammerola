@@ -4,6 +4,7 @@
 // hold more than one viewport (the diff view shows two builds side by side),
 // and one's chrome measurement is not the other's.
 
+import { internals } from "./internals.js";
 import { displayOptions } from "./options.js";
 
 /**
@@ -53,4 +54,27 @@ export function refit(vp) {
   // The 4th argument is `glass`, and it DEFAULTS TO FALSE. Leaving it out means
   // the viewer silently drops out of glass mode and the layout jumps.
   vp.viewer.resizeCadView(w, treeWidth(w), h, displayOptions.glass);
+  fitPanSpeed(vp);
+}
+
+/**
+ * The right-button pan's speed for the camera on screen and the canvas's
+ * shape, so the model follows the cursor alike under both cameras.
+ *
+ * The trackball's ortho pan moves the model by a fixed share of the cursor's
+ * travel. Its perspective pan (`CADTrackballControls`) counts the travel in
+ * canvas heights and scales it by the eye's distance to the target. With the
+ * fork's field of view (`Camera._perspectiveFov`) that is the same share on a
+ * canvas wider than tall, and `aspect` times it on a taller one, where the
+ * field of view widens to keep the ortho frame's width. The trackball is
+ * shared with the board's 3D view, so the model's viewer makes up the
+ * difference with its own pan speed, which the library keeps across a
+ * `render()`.
+ */
+export function fitPanSpeed(vp) {
+  const [w, h] = sized(vp);
+  const aspect = w / h;
+  const g = internals(vp.viewer);
+  const perspective = !!g && !g.cam.isOrthographicCamera;
+  vp.viewer.setPanSpeed(perspective && aspect < 1 ? 1 / aspect : 1, false);
 }

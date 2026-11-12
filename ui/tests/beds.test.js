@@ -77,6 +77,16 @@ describe('the printer\'s beds', () => {
     expect(beds.bedAt(over(canvas, 6, 0))).toBeNull()
   })
 
+  it('give the world point a place on the canvas shows of a bed, and none over empty space', () => {
+    const { beds } = scene(PRINT)
+    // NDC of the world point (x, y): 20 px a unit on an 800 x 600 canvas.
+    const at = (x, y) => beds.pointAt([x / 20, y / 15])
+    for (const [x, y, z] of [[1, 1, -3], [13, -2, 4]]) {
+      at(x, y).forEach((v, i) => expect(v).toBeCloseTo([x, y, z][i], 9))
+    }
+    expect(at(6, 0)).toBeNull()
+  })
+
   it('are not there for a view that names no printer', () => {
     const { beds, group, canvas } = scene({ id: 'print', file: 'print.json' })
     expect(group.children).toHaveLength(0)

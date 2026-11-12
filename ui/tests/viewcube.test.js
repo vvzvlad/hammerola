@@ -29,7 +29,7 @@ import {
   FACES, SIZE, applyCameraTarget, cameraTarget, cellDirection, createViewCube,
   halfChord, projectCubePoint, rotateByConjugate, visibleFaces,
 } from '../src/viewport/viewcube.js'
-import { fakeViewer, perspectiveCamera } from './fakes.js'
+import { boxScene, fakeViewer, fakeViewport, perspectiveCamera } from './fakes.js'
 
 const IDENTITY = [0, 0, 0, 1]
 
@@ -419,31 +419,41 @@ describe('the camera call — the trap this whole module is written around', () 
     expect(() => applyCameraTarget(null, [1, 1, 1])).not.toThrow()
   })
 
-  it('keeps the zoom under perspective, on a face and on a corner', () => {
-    // The library's moves, modelled on a real perspective camera: both stand
-    // the eye `camera_distance` from `Camera.target` along the direction, and
-    // `presetCamera` then sets the zoom it was given, `camera.zoom` (always 1
-    // here) when given none; under perspective `setZoom` walks the eye to
-    // `camera_distance / zoom`.
+  /** The library's `Camera` moves, modelled on a real perspective camera:
+   *  `setPosition(dir, true)` and `presetCamera` stand the eye
+   *  `camera_distance` from `Camera.target` along the direction, and
+   *  `presetCamera` and `setZoom` walk it to `camera_distance / zoom`. */
+  function perspectiveCube() {
     const camera = perspectiveCamera(THREE, { eye: [0, 0, 60] })
+    // `cameraUp` for `up: "Z"` (options.js), which the aiming rolls by.
+    camera.cam.up.set(0, 0, 1)
     const viewer = fakeViewer({ camera })
     const at = viewer.camera.target
     const aim = () => camera.cam.lookAt(at.x, at.y, at.z)
-    const stand = (dir) => {
+    const stand = (dir, length = camera.distance) => {
       const n = Math.hypot(...dir)
-      camera.eye = [0, 1, 2].map((i) => [at.x, at.y, at.z][i] + (dir[i] / n) * camera.distance)
+      camera.eye = [0, 1, 2].map((i) => [at.x, at.y, at.z][i] + (dir[i] / n) * length)
     }
+    const walk = (zoom) => stand(camera.eye.map((v, i) => v - [at.x, at.y, at.z][i]),
+                                 camera.distance / zoom)
     viewer.bbox = { center: () => [10, 20, 30] }
     viewer.controls.setTarget = (v) => { viewer.target = [v.x, v.y, v.z] }
-    viewer.camera.lookAtTarget = aim
-    viewer.setCameraPosition = vi.fn((position) => stand(position))
-    viewer.presetCamera = vi.fn((preset, zoom = null) => {
-      at.set(...viewer.bbox.center())
-      stand(FACES.find((f) => f.preset === preset).n)
-      viewer.setCameraZoom(zoom === null ? camera.cam.zoom : zoom)
-      aim()
-      viewer.controls.setTarget(at)
+    viewer.setCameraPosition = vi.fn()
+    Object.assign(viewer.camera, {
+      lookAtTarget: aim,
+      setPosition: (p, relative) => (relative ? stand(p) : (camera.eye = [...p])),
+      setZoom: walk,
+      presetCamera: (preset, zoom) => {
+        stand(FACES.find((f) => f.preset === preset).n)
+        walk(zoom)
+        aim()
+      },
     })
+    return { camera, viewer }
+  }
+
+  it('keeps the zoom under perspective, on a face and on a corner', () => {
+    const { camera, viewer } = perspectiveCube()
     // Three times as close as the library stands the eye, after a pan the
     // library's own target did not follow.
     viewer.target = [5, 0, 0]
@@ -455,6 +465,22 @@ describe('the camera call — the trap this whole module is written around', () 
       const off = camera.eye.map((v, i) => v - [10, 20, 30][i])
       expect(Math.hypot(...off)).toBeCloseTo(20, 9)
     }
+  })
+
+  it('stands the eye before the surface under perspective, where the kept zoom would put it inside the model', () => {
+    // A 20 mm cube about the centre, and a zoom of 12: the eye 5 from the
+    // centre, inside. FRONT looks along +y, onto the face y = 10.
+    const { camera, viewer } = perspectiveCube()
+    boxScene(THREE, viewer, { min: [0, 10, 20], max: [20, 30, 40] })
+    viewer.target = [10, 20, 30]
+    camera.eye = [10, 20, 35]
+    applyCameraTarget(viewer, FACES.find((f) => f.preset === 'front').n, fakeViewport(viewer))
+    const near = (a, b) => expect(Math.hypot(...a.map((v, i) => v - b[i]))).toBeCloseTo(0, 9)
+    near(camera.eye, [10, 5, 30])
+    near(viewer.getCameraTarget(), [10, 10, 30])
+    // One frame, drawn from outside.
+    expect(viewer.locationCalls).toHaveLength(1)
+    expect(viewer.update).not.toHaveBeenCalled()
   })
 
   it('classifies every direction, so nothing falls between the two paths', () => {

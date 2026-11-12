@@ -14,6 +14,7 @@
 
 import { syncCameraTarget } from "./camera.js";
 import { internals } from "./internals.js";
+import { boxOf, seatTarget } from "./seat.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -189,8 +190,8 @@ export function cellDirection(face, col, row) {
  * zoom = null)` keeps the current zoom). Under perspective it takes
  * `camera.zoom`, always 1 on a `PerspectiveCamera`, while the zoom there is the
  * eye's distance to the target; both paths stand the eye `camera_distance`
- * back, so the zoom on screen is read before the move and written after it
- * (`perspectiveZoom`).
+ * back, so the zoom on screen is read before the move and handed to the
+ * library's `Camera` with it (`perspectiveZoom`, `perspectiveMove`).
  *
  * The twelve edges and eight corners have no preset. None is parallel to
  * `[0, 0, 1]`, so the roll is well defined, and `relative: true` makes the
@@ -200,8 +201,10 @@ export function cellDirection(face, col, row) {
  *
  * The target: `presetCamera` re-seats the camera target on the bounding box
  * centre (`camera.target` and `controls.target`), discarding any pan.
- * `applyCameraTarget` recentres on the edge/corner path too, so every click on
- * the cube goes to a centred standard view; any click discards a pan.
+ * `applyCameraTarget` recentres on the edge/corner path too, and on both under
+ * perspective, so every click on the cube goes to a centred standard view; any
+ * click discards a pan. Under perspective an eye that would stand inside the
+ * model then has the target moved onto the surface ahead (`perspectiveMove`).
  */
 export function cameraTarget(dir) {
   const preset = PRESET_BY_NORMAL.get(dir.join(","));
@@ -233,14 +236,13 @@ export function cameraTarget(dir) {
  * The aiming is checked before the move, and the move is abandoned without it:
  * a camera moved without turning is worse than a click that did nothing.
  */
-export function applyCameraTarget(viewer, dir) {
+export function applyCameraTarget(viewer, dir, vp) {
   if (!viewer) return;
   const target = cameraTarget(dir);
   try {
     const zoom = perspectiveZoom(viewer);
-    if (target.kind === "preset") {
-      if (zoom === null) viewer.presetCamera(target.preset);
-      else viewer.presetCamera(target.preset, zoom);
+    if (target.kind === "preset" && zoom === null) {
+      viewer.presetCamera(target.preset);
       return;
     }
     const g = internals(viewer);
@@ -250,15 +252,47 @@ export function applyCameraTarget(viewer, dir) {
       return;
     }
     recentre(viewer, g);
+    if (zoom !== null) {
+      perspectiveMove(vp, viewer, g, target, zoom);
+      return;
+    }
     // `notify: false` on the move, since the frame is half-built until aimed;
     // `viewer.update(true, true)` below renders it and notifies subscribers.
     viewer.setCameraPosition(target.position, true, false);
     g.camera.lookAtTarget();
-    if (zoom !== null) viewer.setCameraZoom(zoom, false);
     if (typeof viewer.update === "function") viewer.update(true, true);
   } catch (error) {
     console.warn("viewcube", error);
   }
+}
+
+/**
+ * The perspective move, recentred already: the eye `camera_distance / zoom`
+ * from the box centre along the clicked direction, turned as the library
+ * turns it, and one frame drawn.
+ *
+ * Through the library's `Camera` and not the viewer, whose `presetCamera`,
+ * `setCameraPosition` and `setCameraZoom` each draw a frame: kept close in,
+ * the eye can land inside the model. Within `20r/19` of the bounding sphere's
+ * centre (`r` its radius) the target is put on the surface the centre shows
+ * and the eye in front of it (`seatTarget`), which draws the one frame; past
+ * that, an eye looking at the centre is clear of the sphere by its near plane,
+ * a twentieth of the distance (`Camera.fitPlanes`).
+ */
+function perspectiveMove(vp, viewer, g, target, zoom) {
+  if (target.kind === "preset") {
+    g.camera.presetCamera(target.preset, zoom);
+  } else {
+    g.camera.setPosition(target.position, true);
+    g.camera.lookAtTarget();
+    g.camera.setZoom(zoom);
+  }
+  const box = boxOf(viewer);
+  const eye = g.camera.getPosition();
+  const inside = box && Math.hypot(eye.x - box.centre[0], eye.y - box.centre[1],
+                                   eye.z - box.centre[2]) < (20 * box.radius) / 19;
+  if (inside && vp && seatTarget(vp, g, zoom, true)) return;
+  viewer.update(true, true);
 }
 
 /** The zoom on screen under perspective, read against the target the
@@ -506,7 +540,7 @@ export function createViewCube(vp) {
     const found = cellAt(event.target);
     if (!found) return;
     applyCameraTarget(vp && vp.viewer,
-                      cellDirection(found.entry.face, found.cell.col, found.cell.row));
+                      cellDirection(found.entry.face, found.cell.col, found.cell.row), vp);
   });
 
   /** Place and size one face's caption, or hide it.

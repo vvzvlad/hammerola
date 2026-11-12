@@ -7,9 +7,11 @@
 // Scenery, not a part. Objects in the library's scene beside the comment
 // arrows (`scene3d.js` carries the shared half), so not in the tree, the pick
 // buffer, a measurement, the cut or a comment, and the parts' eye and ghost
-// square leave them be. The one thing a bed answers is the click that opens a
-// part's menu, where no part is under the cursor (`bedAt`, asked by `openMenu`
-// in tools.js): the page offers that bed's 3MF.
+// square leave them be. A bed answers two questions the pick buffer cannot:
+// the click that opens a part's menu, where no part is under the cursor
+// (`bedAt`, asked by `openMenu` in tools.js), where the page offers that bed's
+// 3MF; and how deep the canvas looks at a pixel (`pointAt`, asked by
+// `surfaceDepth` in seat.js), so the perspective camera zooms to the bed.
 //
 // Depth-tested and translucent: a part in front hides the bed, the bed is drawn
 // under the parts standing on it, and it takes its shade from the canvas behind.
@@ -175,14 +177,9 @@ export function createBeds(vp) {
     return true;
   }
 
-  /**
-   * The bed under the pointer of `event`, or null: the nearest face the ray
-   * through it crosses, from above or below.
-   */
-  function bedAt(event) {
-    const g = wanted() && group.visible ? internals(vp.viewer) : null;
-    const ndc = g ? ndcAt(g.canvas, event) : null;
-    if (!ndc) return null;
+  /** The nearest bed face the ray through NDC `ndc` crosses, from above or
+   *  below, as three's intersection, or null. */
+  function hitAt(g, ndc) {
     pointer.set(ndc[0], ndc[1]);
     raycaster.setFromCamera(pointer, g.cam);
     group.updateMatrixWorld(true);
@@ -192,7 +189,27 @@ export function createBeds(vp) {
     }
     if (!hits.length) return null;
     hits.sort((a, b) => a.distance - b.distance);
-    return drawn.find((bed) => bed.face === hits[0].object).plate;
+    return hits[0];
+  }
+
+  /** The library's internals while beds are on screen, or null. */
+  const shown = () => (wanted() && group.visible ? internals(vp.viewer) : null);
+
+  /** The bed under the pointer of `event`, or null. */
+  function bedAt(event) {
+    const g = shown();
+    const ndc = g ? ndcAt(g.canvas, event) : null;
+    const hit = ndc ? hitAt(g, ndc) : null;
+    return hit ? drawn.find((bed) => bed.face === hit.object).plate : null;
+  }
+
+  /** The world point of the bed the canvas shows at NDC `ndc`, or null: the
+   *  depth `seat.js` takes where the pick buffer, which has no beds in it,
+   *  sees nothing. */
+  function pointAt(ndc) {
+    const g = shown();
+    const hit = g ? hitAt(g, ndc) : null;
+    return hit ? [hit.point.x, hit.point.y, hit.point.z] : null;
   }
 
   return {
@@ -203,6 +220,7 @@ export function createBeds(vp) {
       if (sync()) widget.refresh();
     },
     bedAt,
+    pointAt,
     // The two halves of the lifecycle, passed straight through to `show()` in
     // element.js, which knows when a scene is replaced.
     attach: widget.attach,

@@ -323,14 +323,48 @@ function plane(normal, constant, center) {
 }
 
 /**
+ * A box as the only thing in the scene, for what reads the scene's depth:
+ * `viewer.bbox` as the library's `BoundingBox` answers (a `Box3` with
+ * `center()` as an array and `boundingSphere()`), and a pick buffer whose
+ * `pickAt` answers with the surface the pixel shows, the way the id picker's
+ * depth-tested passes do: three's own ray from the camera on screen, its
+ * entry into the box. Returns the `Box3`. `path` is the part's path.
+ *
+ * For the ortho model the camera must be the real one `realCamera` puts in
+ * place, at the pose the picks are taken in.
+ */
+export function boxScene(three, viewer, { min, max, path = '/model/box' }) {
+  const box = new three.Box3(new three.Vector3(...min), new three.Vector3(...max))
+  viewer.bbox = Object.assign(box, {
+    center: () => box.getCenter(new three.Vector3()).toArray(),
+    boundingSphere: () => box.getBoundingSphere(new three.Sphere()),
+  })
+  const caster = new three.Raycaster()
+  viewer.idPicker.pickAt = vi.fn((x, y) => {
+    const rect = viewer.canvas.getBoundingClientRect()
+    const cam = viewer.camera.getCamera()
+    cam.updateMatrixWorld()
+    caster.setFromCamera(new three.Vector2((x / rect.width) * 2 - 1,
+                                           1 - (y / rect.height) * 2), cam)
+    const point = caster.ray.intersectBox(box, new three.Vector3())
+    return point ? { id: 1, info: { path: `${path}/faces/faces_0`, topo: 'face' }, point } : null
+  })
+  return box
+}
+
+/**
  * The viewer.
  *
  * `gridSize` and `clipCenter` are separate arguments on purpose: they are the
  * two things a republished, slightly larger model changes, and the section
  * capture/restore test is entirely about what happens when they do.
+ *
+ * `other` is the second camera `Camera` keeps, for a viewer whose
+ * `switchCamera` is to switch: ortho one way, perspective the other.
  */
 export function fakeViewer({
   camera = orthoCamera(),
+  other = null,
   gridSize = 100,
   clipCenter = [0, 0, 0],
   states = {},
@@ -358,11 +392,31 @@ export function fakeViewer({
     camera: {
       getCamera: () => camera.cam,
       getPosition: () => camera.position(),
-      camera_distance: camera.distance,
+      camera_distance: camera.distance ?? (other ? other.distance : undefined),
       target: {
         x: aim[0], y: aim[1], z: aim[2],
         set(x, y, z) { Object.assign(this, { x, y, z }) },
       },
+      // `Camera.setPosition(position, relative)`, absolute: the eye, nothing
+      // else, and no frame.
+      setPosition: vi.fn((p) => {
+        camera.eye = Array.isArray(p) ? [...p] : [p.x, p.y, p.z]
+      }),
+      // `Camera.setQuaternion`, on the perspective model, whose turn is three's.
+      setQuaternion: vi.fn((q) => {
+        camera.cam.quaternion.set(...q)
+        camera.cam.updateMatrixWorld(true)
+      }),
+      // `Camera.fitPlanes`, the fork's (viewer/src/camera/camera.ts): under
+      // perspective the near plane a twentieth of the eye's distance to the
+      // target, the far one a hundred radii past its distance to the centre.
+      fitPlanes: vi.fn((at, centre, radius) => {
+        if (!camera.cam.isPerspectiveCamera) return
+        camera.cam.near = Math.sqrt(dot(sub(camera.eye, at), sub(camera.eye, at))) / 20
+        camera.cam.far = Math.sqrt(dot(sub(camera.eye, centre), sub(camera.eye, centre)))
+          + 100 * radius
+        camera.cam.updateProjectionMatrix()
+      }),
     },
     clipping: {
       clipPlanes: planes,
@@ -387,7 +441,9 @@ export function fakeViewer({
       getPixelRatio: () => viewer.renderer.pixelRatio,
       setPixelRatio: vi.fn((value) => { viewer.renderer.pixelRatio = value }),
     },
-    idPicker: {},
+    // `IdPicker.setDirty`; `pickAt` only where a test stands something under
+    // the pixel (`boxScene`).
+    idPicker: { setDirty: vi.fn() },
     nestedGroup: {
       groups,
       // `NestedGroup` carries the viewport size its edge materials are
@@ -411,7 +467,13 @@ export function fakeViewer({
       },
     },
     display: {},
-    controls: {},
+    // `Controls.getTarget()`: the trackball's own target, live, so a write to
+    // it moves `getCameraTarget()`.
+    controls: {
+      getTarget: () => ({
+        set(x, y, z) { viewer.target = [x, y, z] },
+      }),
+    },
 
     canvas,
     model: camera,
@@ -479,7 +541,23 @@ export function fakeViewer({
     // what the viewport owes it is one call per turn of the bar's button.
     setStudio: vi.fn(),
     // `Viewer.switchCamera(ortho)`, the same: one call per turn of Perspective.
-    switchCamera: vi.fn(),
+    // With an `other` camera, `Camera.switchCamera` too: the other camera takes
+    // the eye and the zoom, which under perspective `setZoom` writes by walking
+    // the eye to `camera_distance / zoom` of `Camera.target`. And the turn, which
+    // is not modelled: the two cameras must look the same way already.
+    switchCamera: vi.fn((ortho) => {
+      if (!other || ortho === !!camera.cam.isOrthographicCamera) return
+      if (dot(norm(camera.forward), norm(other.forward)) < 1 - 1e-12) {
+        throw new Error('switchCamera between cameras turned differently')
+      }
+      const eye = [...camera.eye]
+      const zoom = viewer.getCameraZoom()
+      ;[camera, other] = [other, camera]
+      camera.eye = eye
+      setZoom(zoom)
+    }),
+    // `Viewer.setPanSpeed(speed, notify)`.
+    setPanSpeed: vi.fn(),
     // `Viewer.setHoverHighlight(on)`, the fork's hover tint: asked on every
     // reconcile, a no-op in the viewer when the answer is unchanged.
     setHoverHighlight: vi.fn(),
@@ -922,7 +1000,7 @@ export function fakeViewport(viewer, state = {}) {
     overlay: { refresh: vi.fn() },
     // The printer's beds (beds.js), none of which is under any pixel unless a
     // test stands one there.
-    beds: { bedAt: vi.fn(() => null) },
+    beds: { bedAt: vi.fn(() => null), pointAt: vi.fn(() => null) },
   }
 }
 

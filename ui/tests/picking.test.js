@@ -24,10 +24,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 
-import { projectPoint } from '../src/viewport/camera.js'
+import { cameraBasis, projectPoint } from '../src/viewport/camera.js'
 import { internals } from '../src/viewport/internals.js'
 import { capOwnerAt, nameOf, planePointAt, solidOf } from '../src/viewport/picking.js'
 import { SECTION_INDEX } from '../src/viewport/options.js'
+import { surfaceDepth } from '../src/viewport/seat.js'
 import { applySection, placeSectionPlane } from '../src/viewport/section.js'
 import { RECT } from './component.js'
 import {
@@ -457,6 +458,21 @@ describe('capOwnerAt', () => {
         warn.mockRestore()
       }
     })
+  })
+})
+
+describe('how deep the canvas looks over a cut face (seat.js)', () => {
+  it('is the cut plane\'s depth, not that of what the pick buffer sees behind the cap', () => {
+    const { viewer, vp, g } = cutScene([PLATE], {
+      camera: perspectiveCamera(THREE, { eye: [0, 0, 80] }),
+    })
+    // The cap is not in the pick buffer, which reads through it to the floor.
+    viewer.idPicker.pickAt = vi.fn(() => ({ point: new THREE.Vector3(1, 1, 0) }))
+    const ndc = pixelOver(g, 1, 1)
+    const { point } = planePointAt(vp, g, ndc)
+    // Down -Z from z = 80.
+    expect(surfaceDepth(vp, g, cameraBasis(viewer, g), 0, 0, ndc).depth)
+      .toBeCloseTo(80 - point[2], 9)
   })
 })
 

@@ -16789,8 +16789,7 @@ class Camera {
         this.zaxis = new THREE.Vector3(0, 0, 1);
         // define the perspective camera
         const aspect = width / height;
-        // 22 is a good compromise
-        const fov = 22;
+        const fov = this._perspectiveFov(aspect);
         this.camera_distance = Camera.DISTANCE_FACTOR * distance;
         const near = Camera._computeNear(distance);
         const far = 100 * distance;
@@ -16825,6 +16824,39 @@ class Camera {
      */
     updateCameraDistance(distance) {
         this.camera_distance = Camera.DISTANCE_FACTOR * distance;
+    }
+    /**
+     * HAMMEROLA'S PATCH: the perspective camera's vertical field of view, in
+     * degrees, for a canvas of this aspect.
+     *
+     * The angle at which, `camera_distance` from the target, the perspective
+     * camera frames exactly what the orthographic one frames at zoom 1
+     * (`projectSize`), 22.62 degrees on a landscape canvas. A switch between the
+     * two then keeps the target's plane in place and at its size on screen.
+     */
+    _perspectiveFov(aspect) {
+        const half = this.projectSize(1, aspect)[1] / Camera.DISTANCE_FACTOR;
+        return THREE.MathUtils.radToDeg(2 * Math.atan(half));
+    }
+    /**
+     * HAMMEROLA'S PATCH: under perspective, put the near plane a twentieth of the
+     * eye's distance to `target` out and the far plane a hundred radii past the
+     * eye's distance to `centre`, the middle of a model of radius `radius`. A
+     * no-op under ortho.
+     *
+     * The constructor's planes are constant and suit an eye `camera_distance`
+     * from the target, where the orthographic eye always stands. The perspective
+     * eye moves with the zoom: close to the model a fixed near plane cuts it, and
+     * far from it the depth buffer's precision is spent on empty space.
+     */
+    fitPlanes(target, centre, radius) {
+        if (this.ortho)
+            return;
+        const eye = this.pCamera.position;
+        this.pCamera.near = eye.distanceTo(new THREE.Vector3(...target)) / 20;
+        this.pCamera.far =
+            eye.distanceTo(new THREE.Vector3(...centre)) + 100 * radius;
+        this.pCamera.updateProjectionMatrix();
     }
     /**
      * Remove assets.
@@ -17051,6 +17083,7 @@ class Camera {
         }
         if (this.pCamera) {
             this.pCamera.aspect = aspect;
+            this.pCamera.fov = this._perspectiveFov(aspect);
         }
         if (this.camera) {
             this.camera.updateProjectionMatrix();
@@ -30114,6 +30147,14 @@ class Viewer {
             // skip manual clear to avoid double-clear artifacts.
             if (!this._studioManager.hasComposer) {
                 this.renderer.clear();
+            }
+            // HAMMEROLA'S PATCH: the perspective camera's near and far planes, fitted
+            // to where its eye stands now (`Camera.fitPlanes`): the camera's own are
+            // constant, and the perspective eye moves with every zoom. Before the hover
+            // pick and the pick buffer's change check below, so both see the
+            // projection this frame is drawn with.
+            if (this.bbox) {
+                this.rendered.camera.fitPlanes(toVector3Tuple(this.rendered.controls.getTarget().toArray()), this.bbox.center(), this.bbox.boundingSphere().radius);
             }
             // Hover preselection (gated internally on GDS, Studio, the page's
             // setHoverHighlight and an active drag).

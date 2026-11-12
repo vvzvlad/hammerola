@@ -11,7 +11,7 @@ import * as THREE from '../../static/_v/three.module.js'
 
 import { installWheel } from '../src/viewport/wheel.js'
 import { RECT } from './component.js'
-import { fakeViewer, orthoCamera, perspectiveCamera } from './fakes.js'
+import { fakeViewer, fakeViewport, orthoCamera, perspectiveCamera } from './fakes.js'
 
 const removals = []
 afterEach(() => {
@@ -26,7 +26,7 @@ function swiping(camera) {
     addEventListener(type, fn, options) { if (options && options.capture) box.on = fn },
     removeEventListener() {},
   }
-  const vp = { viewer, box, trackpad: true, zoomAnchor: null, zoomPoint: null }
+  const vp = { ...fakeViewport(viewer), box, trackpad: true, zoomPoint: null }
   removals.push(installWheel(vp))
   return (deltaX, deltaY, { ctrlKey = false, clientX = 400, clientY = 300 } = {}) => box.on({
     target: viewer.canvas, deltaX, deltaY, deltaMode: 0, ctrlKey, clientX, clientY,
