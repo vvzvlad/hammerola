@@ -90,6 +90,9 @@ PR, `image-check-publish.yml` на push в `main`/`develop`) запускает 
 Полный список с обоснованиями — `docs/conventions.md`; читай его, прежде чем
 нарушать или «упрощать» правило.
 
+- Edit and commit in your own worktree (`.claude/worktrees/<name>`, its own branch), never in
+  the primary tree on `main`: other sessions work there. The owner: «хули он не в ворктри
+  работает и другим мешает».
 - Commit messages, code comments and user-facing text (UI, CLI, logs) are in
   English. Commits: conventional-commit subject, body explaining WHY.
 - All mutable state goes under `data/`. All config comes from ENV / `.env`;
