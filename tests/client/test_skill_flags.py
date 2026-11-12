@@ -86,6 +86,15 @@ OTHER_PROGRAMS = {
     # `references/layout-rules.md`: `claude mcp add --scope user` registers
     # the pns router's MCP server.
     "--scope",
+    # The schematic and parts references: the skill's `sch.py` (`rails --md
+    # --rail`, the netlist export's `--variant`), `parts.py` (`tree --grep`,
+    # `harvest --out --max-usd-1k`, `datasheet --codes-file`, `report --csv`),
+    # and `references/panel.md`: `gerbers.sh --panel --vcuts`, `gerber_diff.py
+    # --single --panel --auto-copies`, kicad-cli's plot `--check-zones` and
+    # `kikit panelize --help`.
+    "--md", "--rail", "--variant",
+    "--grep", "--out", "--max-usd-1k", "--codes-file", "--csv",
+    "--panel", "--vcuts", "--single", "--auto-copies", "--check-zones", "--help",
 }
 
 
