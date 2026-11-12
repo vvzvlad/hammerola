@@ -4,7 +4,10 @@ Finding candidate parts for a role — alternatives to a reference part, or ever
 category under a price — from szlcsc.com (LCSC's domestic catalogue, the stock JLCPCB
 assembles from), verified against datasheets, compared pin by pin, delivered as a CSV.
 The helper is `scripts/parts.py` (`tree`, `search`, `overseas`, `params`, `harvest`,
-`detail`, `datasheet`, `rate`, `report`); it passes the site's anti-bot itself. Adapted
+`detail`, `datasheet`, `rate`, `report`); it passes www.szlcsc.com's anti-bot itself, but
+the category host list.szlcsc.com (`params`, `harvest`) answers every new session from here
+with a Tencent slider captcha the script cannot pass, so a whole-category sweep does not run
+from the CLI today (Pitfalls); the reference-part path (2, 6–10) does. Adapted
 from Wiren Board's `wb-component-search` (MIT, read 2026-11-12). The owner chose this
 source over the JLCPCB keyword API, knowing a category harvest is thousands of anonymous
 requests.
@@ -175,7 +178,8 @@ M; ссылки и цены выборочно сверены»); an audit nobod
   before trusting a cached file.
 - The anti-bot cookies (the RC4 one, and Aliyun WAF's `acw_sc__v2` on www.szlcsc.com) live
   minutes; the script re-solves them, a hand-rolled curl does not. A captcha is not
-  solved: list.szlcsc.com (the host of `params`, `harvest` and the datasheet links) answers
-  some requests with a Tencent captcha page (`TencentCaptcha`, `/WafCaptcha`) instead of the
-  content; the script exits on it at once, and the owner's rule holds — stop at the first
-  captcha and tell him, no retry from another address or session.
+  solved: list.szlcsc.com (the host of `params` and `harvest`) answers the first catalog
+  page of every new session from here with a Tencent slider captcha (`TencentCaptcha`,
+  `/WafCaptcha`; the same in a real browser, where a human passes it once per session). The
+  script exits on it with a message; the category sweep then needs another source (lcsc.com
+  international, JLCPCB's parts API) — the owner's call, not a retry.
