@@ -40,6 +40,10 @@ export const displayOptions = {
   zscaleTool: false,
   zebraTool: false,
   studioTool: false,
+  // The library's own "p" switches the camera behind the page's back: its key
+  // handler stays bound on the container at `tools: false`. An empty key is
+  // one no keystroke carries, so the camera is the Settings card's alone.
+  keymap: { perspective: "" },
 };
 
 export const renderOptions = {

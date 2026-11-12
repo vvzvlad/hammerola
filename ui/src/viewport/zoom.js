@@ -37,11 +37,12 @@
 //
 // Any P of the ray holds the pixel; what P sets is how near the eye comes, since
 // the homothety scales the eye's distance to P by s. So P is taken at the depth
-// of what the picker finds under the cursor: the part there grows by exactly the
-// zoom and no notch walks the eye through it. Over the background P stands at
-// the target's depth. P stays where it is in the world under this zoom, so it is
-// picked again only when the cursor stands on another pixel or something else
-// moved the camera.
+// of what the cursor is over (`surfaceDepth` in seat.js): the part there grows
+// by exactly the zoom and no notch walks the eye through it. Over the background
+// P stands at the target's depth, and over a ghost no nearer than the model's
+// middle, so the zoom flies through it. P stays where it is in the world under
+// this zoom, so it is picked again only when the cursor stands on another pixel
+// or something else moved the camera.
 //
 // TWO LISTENERS, not one, and that is the subtle half: the anchor has to be
 // measured against the camera the reader was LOOKING at. By the time the event
@@ -53,6 +54,7 @@ import {
 } from "./camera.js";
 import { gestureInternals } from "./internals.js";
 import { dot3 } from "./math.js";
+import { boxOf, depthOf, surfaceDepth } from "./seat.js";
 
 /** Whether two camera poses are one, to a billionth of the distance to the
  *  target: the library writes a position back as `target + (position -
@@ -65,11 +67,12 @@ const samePose = (was, b) => {
 };
 
 /**
- * The world point a perspective zoom is held about, or null.
- *
- * The picked point is put back on the cursor ray at its own depth, as the orbit
- * pivot is: the picker prefers a vertex or an edge near the cursor to the face
- * under it, and holding that corner would let the model slide under the cursor.
+ * The world point a perspective zoom is held about, or null: the point of the
+ * cursor ray at the depth of what the cursor is over (`surfaceDepth`: a cut
+ * face, a part, an edge or a vertex of one, a printer bed), so the eye comes
+ * to that surface and never through it. Over the background, at the target's
+ * depth. Over a ghost, at the farther of its depth and the model's middle: a
+ * ghost is seen through, and the zoom passes it.
  *
  * `vp.zoomPoint` remembers the last answer with the pixel it was taken at and
  * the camera it holds for (the one it was picked under, then the one each
@@ -82,14 +85,12 @@ function zoomPoint(vp, g, b, event, ndc) {
       && samePose(was, b)) return was.P;
   let depth = dot3([b.target[0] - b.C[0], b.target[1] - b.C[1],
                     b.target[2] - b.C[2]], b.view);
-  try {
-    const rect = g.canvas.getBoundingClientRect();
-    const hit = g.picker.pickAt(event.clientX - rect.left, event.clientY - rect.top);
-    const at = hit && hit.point;
-    const picked = at && dot3([at.x - b.C[0], at.y - b.C[1], at.z - b.C[2]], b.view);
-    if (picked > 0) depth = picked;
-  } catch (error) {
-    console.warn("zoom pick", error);
+  const rect = g.canvas.getBoundingClientRect();
+  const hit = surfaceDepth(vp, g, b, event.clientX - rect.left,
+                           event.clientY - rect.top, ndc);
+  if (hit) {
+    const box = hit.ghost ? boxOf(vp.viewer) : null;
+    depth = box ? Math.max(hit.depth, depthOf(b, box.centre)) : hit.depth;
   }
   const P = pointAtDepth(g, b, ndc[0], ndc[1], depth);
   vp.zoomPoint = P ? { x: event.clientX, y: event.clientY, P, C: b.C, target: b.target }

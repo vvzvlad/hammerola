@@ -86,7 +86,7 @@ export function statesOf(viewer) {
 }
 
 /** Does `path` name this leaf, or an ancestor node of it? */
-const covers = (entry, path) => path === entry || path.startsWith(`${entry}/`);
+export const covers = (entry, path) => path === entry || path.startsWith(`${entry}/`);
 
 /**
  * Apply the interface's `hidden` list.

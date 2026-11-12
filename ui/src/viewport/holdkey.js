@@ -12,8 +12,9 @@
 // Not any letter: the library binds `_handleKeyboardShortcut` on the container
 // (`ViewerState.DISPLAY_DEFAULTS.keymap`) and answers a key it knows with
 // `preventDefault(); stopPropagation()`. The container takes focus on any
-// click on the model. Its letters, read off the bundle:
-// A 0 g G p t b R r 5 1 3 8 2 4 6 x L D P I h space Escape T C M Z S, plus
+// click on the model. Its letters, read off the bundle (less `p`, which
+// `displayOptions.keymap` unbinds):
+// A 0 g G t b R r 5 1 3 8 2 4 6 x L D P I h space Escape T C M Z S, plus
 // a/v/e/f/s while the topo-filter dropdown is open and Backspace with the select
 // tool. Hiding the panel (`tools: false`, docs/viewer-api.md §1) is only CSS:
 // the handler stays bound and still eats those keys.

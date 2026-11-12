@@ -26,7 +26,9 @@ import * as THREE from '../../static/_v/three.module.js'
 
 import { zoomWheelAfter, zoomWheelBefore } from '../src/viewport/zoom.js'
 import { RECT } from './component.js'
-import { eventAt, fakeViewer, orthoCamera, perspectiveCamera } from './fakes.js'
+import {
+  boxScene, eventAt, fakeViewer, fakeViewport, orthoCamera, perspectiveCamera,
+} from './fakes.js'
 
 // A cursor well away from the centre: at the centre every zoom law agrees,
 // including a broken one.
@@ -189,7 +191,7 @@ describe('zoom to the cursor under the perspective camera', () => {
     camera = perspectiveCamera(THREE, { eye: [4, 3, 50], distance: 60 })
     viewer = fakeViewer({ camera, rect: RECT })
     viewer.idPicker.pickAt = vi.fn(() => null)
-    vp = { viewer, zoomAnchor: null, zoomPoint: null }
+    vp = { ...fakeViewport(viewer), zoomPoint: null }
   })
 
   /** What the controls do between the two listeners: the eye walked along its
@@ -248,6 +250,18 @@ describe('zoom to the cursor under the perspective camera', () => {
     notch(CURSOR, 2.5)
     expectStill(P, before)
     expect(away(P)).toBeCloseTo(start / 2.5, 9)
+  })
+
+  it('flies through a ghost, the point held no nearer than the model\'s middle', () => {
+    // A ghosted case from z = 0 to z = 20: its face 30 ahead of the eye, its
+    // middle 40.
+    boxScene(THREE, viewer, { min: [-20, -20, 0], max: [20, 20, 20] })
+    vp.state.ghost = ['/model']
+    const P = onRay(CURSOR, 40)
+    const start = away(P)
+    notch(CURSOR, 8)
+    expect(away(P)).toBeCloseTo(start / 8, 9)
+    expect(camera.eye[2]).toBeLessThan(20)
   })
 
   it('holds the point after a pan, the zoom read against the target the trackball turns about', () => {

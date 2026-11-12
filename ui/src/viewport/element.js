@@ -24,6 +24,7 @@ import { installIdleClock, captureLive, restoreLive, cameraState, isBusy, snapsh
   from "./live.js";
 import { installOrbit } from "./orbit.js";
 import { installPinchGuard } from "./pinch.js";
+import { installZoomSeat, seatForPerspective, seatFrame } from "./seat.js";
 import { installTools } from "./tools.js";
 import { installWheel, initialPointingDevice, setPointingDevice } from "./wheel.js";
 import { createOverlay } from "./overlay.js";
@@ -35,7 +36,7 @@ import { createRings } from "./rings.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
-import { measureChrome, refit, sized, treeWidth } from "./sizing.js";
+import { fitPanSpeed, measureChrome, refit, sized, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
 import { jointNodes } from "./joints.js";
 import { applyGhost, applyHidden, applyJoints, applySelected, partTop,
@@ -365,6 +366,7 @@ export class HmrViewport extends HTMLElement {
     this.teardown = [
       installWheel(this),
       installOrbit(this),
+      installZoomSeat(this),
       // Its release must run before the tool's. The guard adds its
       // capture-phase window `pointerup` here at install, while tools.js and
       // orbit.js add theirs inside their own `pointerdown`; same-phase listeners
@@ -924,16 +926,36 @@ export class HmrViewport extends HTMLElement {
     // the answer is the one it has.
     this.viewer.setHoverHighlight(!!s.hoverHighlight);
     // The camera, switched on the scene standing: the library keeps the eye,
-    // the turn and the zoom across the switch and draws a frame, and the frame
-    // on screen is stood again as the new camera shows it (`standFrame`).
+    // the turn and the zoom across the switch and draws a frame.
+    //
+    // Into perspective, the target first goes to the depth of what the centre
+    // shows while the camera is still ortho, which draws the same picture with
+    // the target at any depth (`seatForPerspective`); the switch then stands
+    // the eye in front of it, and the switch's own frame is the only one drawn.
+    // Back into ortho, the frame on screen is stood again as the ortho camera
+    // shows it (`standFrame`), its eye `camera_distance` back.
+    //
     // Only on a scene that rendered: after a failed render the library has no
     // camera and `switchCamera` throws, and the next render builds the one
     // `state.perspective` names.
+    //
+    // A switch that throws is logged and the rest of the state is still
+    // applied; `applied.perspective` stays, so the next reconcile tries again.
     if (!!s.perspective !== this.applied.perspective && internals(this.viewer)) {
-      const frame = cameraState(this.viewer);
-      this.viewer.switchCamera(!s.perspective);
-      if (frame) standFrame(this.viewer, frame, true);
-      this.applied.perspective = !!s.perspective;
+      try {
+        if (s.perspective) {
+          seatForPerspective(this, internals(this.viewer));
+          this.viewer.switchCamera(false);
+        } else {
+          const frame = cameraState(this.viewer);
+          this.viewer.switchCamera(true);
+          if (frame) standFrame(this.viewer, frame, true);
+        }
+        fitPanSpeed(this);
+        this.applied.perspective = !!s.perspective;
+      } catch (error) {
+        console.warn("camera mode", error);
+      }
     }
     // The pixel ratio, asked of the renderer rather than memo'd in `applied`
     // (which every render resets): `setPixelRatio` reallocates the drawing
@@ -1142,7 +1164,7 @@ export class HmrViewport extends HTMLElement {
   setCamera(c) {
     try {
       if (this.viewer && c && typeof this.viewer.setCameraLocationSettings === "function") {
-        standFrame(this.viewer, c, false);
+        seatFrame(this, c, false);
       }
     } catch (error) {
       console.warn("camera", error);

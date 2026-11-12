@@ -9,10 +9,11 @@
 // down, put it back on the replacement, and say whether a gesture is in
 // progress.
 
-import { standFrame, syncCameraTarget } from "./camera.js";
+import { syncCameraTarget } from "./camera.js";
 import { internals } from "./internals.js";
 import { IDLE_MS } from "./options.js";
 import { captureSection, restoreSection } from "./section.js";
+import { seatFrame } from "./seat.js";
 import { statesOf } from "./parts.js";
 
 /** The frame the reader is looking at, in the library's own terms, or null. */
@@ -83,7 +84,7 @@ export function restoreLive(vp, keep) {
     if (c && typeof viewer.setCameraLocationSettings === "function") {
       // notify: false — this is restoring the frame the reader already had, not
       // a camera move anything downstream should react to.
-      standFrame(viewer, c, false);
+      seatFrame(vp, c, false);
     }
   } catch (error) {
     console.warn("live camera", error);

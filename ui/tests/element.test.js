@@ -111,7 +111,9 @@ import {
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
 import { GHOST_OPACITY, STUDIO_GHOST_OPACITY } from '../src/viewport/options.js'
 import * as THREE from '../../static/_v/three.module.js'
-import { fakeViewer } from './fakes.js'
+import {
+  boxScene, fakeViewer, orthoCamera, perspectiveCamera, realCamera,
+} from './fakes.js'
 import { drained, runFrames, stubFrames } from './component.js'
 
 /**
@@ -193,8 +195,11 @@ function element(state = {}, viewer = fakeViewer()) {
     refresh: vi.fn(), endDrag: vi.fn(), attach: vi.fn(), detach: vi.fn(),
   }
   // The printer's beds, handed the view's meta.json entry on every render and
-  // carried across a scene the library disposes like the arrows.
-  vp.beds = { setBeds: vi.fn(), attach: vi.fn(), detach: vi.fn() }
+  // carried across a scene the library disposes like the arrows, and asked
+  // how deep the canvas looks (`pointAt`) when the camera turns perspective.
+  vp.beds = {
+    setBeds: vi.fn(), attach: vi.fn(), detach: vi.fn(), pointAt: vi.fn(() => null),
+  }
   // The up-events go through `dispatchEvent`, which is a real DOM method on a
   // real element and refuses to run on an object the DOM never built — the same
   // reason the note above `calledWithViewport` gives about `getAttributeNames`.
@@ -1090,6 +1095,73 @@ describe('show', () => {
     expect(viewer.locationCalls).toEqual([{
       position: [1, 2, 103], quaternion: [0, 0, 0, 1], target: [1, 2, 3], zoom: 2, notify: true,
     }])
+  })
+
+  /** An ortho camera at zoom 2 down -Z after a pan, its target 40 behind the
+   *  top face of a 20 mm cube and the eye `camera_distance` (60) before the
+   *  target, beside the perspective camera the library would switch to: one
+   *  that frames at 60 what ortho frames at zoom 1 (`Camera._perspectiveFov`
+   *  in the fork). */
+  function switching() {
+    const ortho = orthoCamera({ eye: [3, 2, 30], halfW: 20, halfH: 15, zoom: 2 })
+    realCamera(THREE, ortho)
+    const persp = perspectiveCamera(THREE, {
+      fov: THREE.MathUtils.radToDeg(2 * Math.atan(15 / 60)), distance: 60,
+    })
+    const viewer = fakeViewer({ camera: ortho, other: persp, target: [3, 2, -30] })
+    boxScene(THREE, viewer, { min: [-10, -10, -10], max: [10, 10, 10] })
+    viewer.getCameraLocationSettings = () => {
+      const p = viewer.camera.getPosition()
+      return { position: [p.x, p.y, p.z], quaternion: null,
+               target: viewer.getCameraTarget(), zoom: viewer.getCameraZoom() }
+    }
+    const vp = element({}, viewer)
+    vp.box = document.createElement('div')
+    vp.chrome = [0, 0]
+    return { vp, viewer, ortho, persp }
+  }
+
+  it('keeps the surface in the centre in its place and size into perspective, and the ortho picture back', () => {
+    const { vp, viewer, ortho, persp } = switching()
+    // Two marks on the top face, off the centre.
+    const marks = [[7, 2, 10], [3, -1, 10]]
+    const seen = (camera) => marks.map((p) => camera.project(p).slice(0, 2))
+    const before = seen(ortho)
+
+    vp.state = { ...vp.state, perspective: true }
+    vp.reconcile()
+    expect(viewer.switchCamera.mock.calls).toEqual([[false]])
+    seen(persp).forEach((at, i) => {
+      expect(at[0]).toBeCloseTo(before[i][0], 9)
+      expect(at[1]).toBeCloseTo(before[i][1], 9)
+    })
+    // The switch's own frame, and no other.
+    expect(viewer.locationCalls).toHaveLength(0)
+
+    vp.state = { ...vp.state, perspective: false }
+    vp.reconcile()
+    seen(ortho).forEach((at, i) => {
+      expect(at[0]).toBeCloseTo(before[i][0], 9)
+      expect(at[1]).toBeCloseTo(before[i][1], 9)
+    })
+  })
+
+  it('evens the perspective pan out on a canvas taller than wide, on a refit and on a switch', () => {
+    const { vp, viewer } = switching()
+    viewer.resizeCadView = vi.fn()
+    Object.defineProperties(vp.box, {
+      clientWidth: { value: 400 }, clientHeight: { value: 800 },
+    })
+    vp.refit()
+    expect(viewer.setPanSpeed).toHaveBeenLastCalledWith(1, false)
+    vp.state = { ...vp.state, perspective: true }
+    vp.reconcile()
+    expect(viewer.setPanSpeed).toHaveBeenLastCalledWith(2, false)
+    vp.refit()
+    expect(viewer.setPanSpeed).toHaveBeenLastCalledWith(2, false)
+    vp.state = { ...vp.state, perspective: false }
+    vp.reconcile()
+    expect(viewer.setPanSpeed).toHaveBeenLastCalledWith(1, false)
   })
 
   it('orders the coplanar parts of the scene it has just rendered', async () => {
