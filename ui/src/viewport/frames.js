@@ -17,11 +17,13 @@
 // animation frame only queues behind the previous ones, and the queue is the
 // distance between the pointer and the picture: unpaced, a turn of the WB7
 // board at retina (Apple M4) queues up to five frames, over 100 ms behind the
-// pointer. Two in flight keep the GPU busy back to back, so the frame rate stays
-// the GPU's, and the picture about two frames behind; with one, the GPU would
-// idle from finishing a frame to the next animation frame, and a frame costing
-// it 20-28 ms would land on every second or third one.
-const IN_FLIGHT = 2;
+// pointer. With one in flight the picture is at most one frame behind. The GPU
+// then idles from finishing a frame to the next animation frame, so on a 60 Hz
+// display a frame costing it 20-33 ms lands on every second or third one: 20-30
+// frames a second instead of the 35-55 two in flight give. The lag matters more
+// than the rate (docs/SPEC.md, section 4): at times the same view costs the GPU
+// 80-96 ms a frame, and two in flight then trail the pointer by 150-170 ms.
+const IN_FLIGHT = 1;
 
 /**
  * Route `viewer.update` through one render per animation frame. What it
