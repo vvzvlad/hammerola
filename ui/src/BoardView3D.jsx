@@ -526,16 +526,31 @@ class Stage {
 
   /** What `raycaster`, the click's unless given, meets among `objects`,
    *  nearest first, of what is drawn and stops a click: nothing hidden, not
-   *  the solder mask nor the silkscreen, and with Isolate on no copper but
-   *  the lit net's. */
+   *  the solder mask nor the silkscreen, no copper off the board's body,
+   *  which the shader discards, and with Isolate on no copper but the lit
+   *  net's. */
   hits(objects, raycaster = this.raycaster) {
     return raycaster.intersectObjects(objects, true).filter((hit) => {
       for (let node = hit.object; node; node = node.parent) {
         if (!node.visible || this.skin.has(node)) return false;
       }
-      const { shared } = this.copper || {};
-      return !(hit.object.userData.board3dCopper && shared.isolate.value && this.netAt(hit) !== shared.litNet.value);
+      if (!hit.object.userData.board3dCopper) return true;
+      const { shared, onBoard } = this.copper;
+      if (shared.isolate.value && this.netAt(hit) !== shared.litNet.value) return false;
+      return onBoard(...this.boardPoint(hit));
     });
+  }
+
+  /** Where a hit on our copper reads the board's mask, in the board's mm, as
+   *  the shader does (board3dcopper.js, `copperMaterial`): a sheet's at the
+   *  hit, a barrel's past its wall by its face's `outward`. */
+  boardPoint(hit) {
+    const point = this.root.worldToLocal(hit.point.clone()).multiplyScalar(1000);
+    const { outward } = hit.object.geometry.attributes;
+    if (!outward) return [point.x, point.z];
+    const { a, b, c } = hit.face;
+    return [point.x + (outward.getX(a) + outward.getX(b) + outward.getX(c)) / 3,
+      point.z + (outward.getY(a) + outward.getY(b) + outward.getY(c)) / 3];
   }
 
   /** The net code of the copper a hit is on. */

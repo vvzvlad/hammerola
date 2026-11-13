@@ -13,7 +13,7 @@ import { Vec2 } from '../../ecad-viewer/packages/ecad-viewer-app/src/base/math/i
 import { world_to_inset } from '../../ecad-viewer/packages/ecad-viewer-app/src/ecad-viewer/insets/camera.ts'
 import { exportRoot } from '../src/board3d.js'
 import {
-  bodyTop, boardMask, copperModel, glbLayers, holeMask, insetView, place, separationLook, stackOffsets,
+  bodyTop, boardMask, copperModel, glbLayers, holeMask, insetView, maskAt, place, separationLook, stackOffsets,
 } from '../src/board3dcopper.js'
 
 /** A binary glTF whose top node holds one node per mesh name of `names`, each a triangle. */
@@ -114,17 +114,6 @@ describe('our copper in the .glb\'s frame', () => {
   })
 })
 
-/** Mask `data` on the grid of `grid` (a `holeMask`) at the board's mm point
- *  `x`, `y`, 0 to 1, as the texture's linear lookup reads it: texel centres at
- *  half a texel. */
-function linear(grid, data, x, y) {
-  const [u, v] = [(x - grid.x0) / grid.texel - 0.5, (y - grid.y0) / grid.texel - 0.5]
-  const [i, j] = [Math.floor(u), Math.floor(v)]
-  const [fu, fv] = [u - i, v - j]
-  const texel = (a, b) => data[b * grid.width + a] / 255
-  return (texel(i, j) * (1 - fu) + texel(i + 1, j) * fu) * (1 - fv) + (texel(i, j + 1) * (1 - fu) + texel(i + 1, j + 1) * fu) * fv
-}
-
 describe('the drills cut out of the copper', () => {
   const box = { x0: 0, y0: 0, x1: 4, y1: 3 }
   const mask = holeMask(COPPER, box)
@@ -143,7 +132,7 @@ describe('the drills cut out of the copper', () => {
   it('cross a half, as the shader reads them, within 3 um of the drill\'s edge', () => {
     for (const angle of [0, 0.3, Math.PI / 4, 2, 4]) {
       let edge = 0
-      for (let r = 0; r < 0.3; r += 0.0005) if (linear(mask, mask.data, 1 + r * Math.cos(angle), 1 + r * Math.sin(angle)) > 0.5) edge = r
+      for (let r = 0; r < 0.3; r += 0.0005) if (maskAt(mask, mask.data, 1 + r * Math.cos(angle), 1 + r * Math.sin(angle)) > 0.5) edge = r
       expect([angle, Math.abs(edge - 0.15) <= 0.003]).toEqual([angle, true])
     }
   })
@@ -207,7 +196,7 @@ describe('the board\'s edge cutting the copper', () => {
     const edge = (from, to, want) => {
       let last = 0
       for (let t = 0; t <= 1; t += 0.001) {
-        if (linear(grid, mask, from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t) > 0.5) last = t
+        if (maskAt(grid, mask, from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t) > 0.5) last = t
       }
       const crossed = [from[0] + (to[0] - from[0]) * last, from[1] + (to[1] - from[1]) * last]
       return Math.hypot(crossed[0] - want[0], crossed[1] - want[1]) <= 0.003
@@ -225,21 +214,27 @@ describe('the board\'s edge cutting the copper', () => {
     expect(new Set(boardMask(top, inside))).toEqual(new Set([255]))
   })
 
-  it('cuts nothing of a board with no body, and reads a barrel past its wall', () => {
-    const plain = copperModel(THREE, COPPER, {}, null).shared.boardMap.value.image
-    expect([plain.width, plain.height, [...plain.data]]).toEqual([1, 1, [255]])
-    const model = copperModel(THREE, COPPER, {}, top)
-    const { image } = model.shared.boardMap.value
-    const drills = holeMask(COPPER, { x0: 0, y0: 0, x1: 4, y1: 3 })
-    expect([image.width, image.height, image.data.length]).toEqual([drills.width, drills.height, drills.data.length])
-    // each corner of a tube reaches out from its axis, the sagitta of a side and two texels past the drill
+  it('cuts nothing of a board with no body, and keeps a barrel inside the board, half of one on the edge', () => {
+    const plain = copperModel(THREE, COPPER, {}, null)
+    expect([plain.shared.boardMap.value.image.width, [...plain.shared.boardMap.value.image.data], plain.onBoard(-50, -50)])
+      .toEqual([1, [255], true])
+    // copper whose box spans the whole body, a barrel in its drill and one centred on its edge at x 10
+    const copper = { ...COPPER, layers: COPPER.layers.map((layer) => ({ ...layer, triangles: new Float32Array([-1, -1, 11, -1, -1, 9]) })),
+      barrels: [{ x: 7, y: 5, radius: 1, from: 0, to: 3, net: 1 }, { x: 10, y: 4, radius: 0.5, from: 0, to: 3, net: 1 }] }
+    const model = copperModel(THREE, copper, {}, top)
+    expect([model.onBoard(2, 4), model.onBoard(5, 1), model.onBoard(10.5, 4)]).toEqual([true, false, false])
+    // where the shader reads each side of a tube: its corners and its middle, past the wall by `outward`
     const { position, outward } = model.barrels.mesh.geometry.attributes
-    const reach = (i) => {
-      const barrel = COPPER.barrels[Math.floor(i / 72)]
-      const [x, y] = [position.getX(i) * 1000 + outward.getX(i), position.getZ(i) * 1000 + outward.getY(i)]
-      return Math.hypot(x - barrel.x, y - barrel.y) - barrel.radius * (2 - Math.cos(Math.PI / 12))
+    const read = (i, j) => [(position.getX(i) + position.getX(j)) * 500 + (outward.getX(i) + outward.getX(j)) / 2,
+      (position.getZ(i) + position.getZ(j)) * 500 + (outward.getY(i) + outward.getY(j)) / 2]
+    const sides = (barrel) => Array.from({ length: 12 }, (_, k) => barrel * 72 + k * 6)
+    // the drill's barrel whole, corners and middles
+    expect(sides(0).flatMap((i) => [model.onBoard(...read(i, i)), model.onBoard(...read(i, i + 1))]).every(Boolean)).toBe(true)
+    // the edge's: the sides that face away from the board gone, those that face into it kept
+    for (const i of sides(1)) {
+      const [x] = read(i, i + 1)
+      if (Math.abs(x - 10) > 0.15) expect([x > 10, model.onBoard(...read(i, i + 1))]).toEqual([x > 10, x < 10])
     }
-    expect(new Set(Array.from({ length: position.count }, (_, i) => +reach(i).toFixed(5)))).toEqual(new Set([0.05]))
   })
 })
 
