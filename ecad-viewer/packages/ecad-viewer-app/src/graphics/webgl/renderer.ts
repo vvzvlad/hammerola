@@ -18,6 +18,17 @@ import {
 } from "./vector";
 
 /**
+ * The least time between two canvas resizes the ResizeObserver drives, in ms.
+ *
+ * The context is multisampled (WebGL2's default `antialias`), and a resize
+ * reallocates its multisampled drawing buffer: 17 ms at 2860x1674 and 29 ms
+ * at 3840x2160 on an Apple M4, against 3.4 and 5.5 ms without MSAA. The
+ * observer ticks on every frame of a window drag, so a resize per tick keeps
+ * the main thread busy for the whole drag.
+ */
+const RESIZE_MS = 100;
+
+/**
  * WebGL2-based renderer
  */
 export class WebGL2Renderer extends Renderer {
@@ -92,6 +103,8 @@ export class WebGL2Renderer extends Renderer {
     override dispose() {
         this.#size_observer?.disconnect();
         this.#size_observer = undefined;
+        clearTimeout(this.#resize_timer);
+        this.#resize_timer = undefined;
         for (const layer of this.layers) {
             layer.dispose();
         }
@@ -102,6 +115,26 @@ export class WebGL2Renderer extends Renderer {
     #size_dirty = true;
     #size_observer?: ResizeObserver;
 
+    // The observer's last resize and the one pending after it. A tick at least
+    // RESIZE_MS after the last resize runs at once; ticks inside the window
+    // fold into one resize at its end, which measures the canvas as it is by
+    // then, so the backing store always ends at the final size. `-Infinity`,
+    // not 0: `performance.now()` counts from the start of the navigation.
+    #resized_at = -Infinity;
+    #resize_timer?: ReturnType<typeof setTimeout>;
+
+    #observed_resize() {
+        this.#resize_timer = undefined;
+        this.#resized_at = performance.now();
+        // Raised here and not on every tick: `clear_canvas` resizes whenever
+        // the flag is up, which would undo the throttle.
+        this.#size_dirty = true;
+        // Resize the GL backing store before notifying listeners so a
+        // re-paint (document comparison) does not run at 0×0 / 300×150.
+        this.update_canvas_size();
+        this.on_resize?.();
+    }
+
     override update_canvas_size() {
         if (!this.gl) {
             return;
@@ -109,12 +142,23 @@ export class WebGL2Renderer extends Renderer {
 
         // Avoid getBoundingClientRect() every frame — it forces layout.
         if (!this.#size_observer) {
-            this.#size_observer = new ResizeObserver(() => {
-                this.#size_dirty = true;
-                // Resize the GL backing store before notifying listeners so a
-                // re-paint (document comparison) does not run at 0×0 / 300×150.
-                this.update_canvas_size();
-                this.on_resize?.();
+            this.#size_observer = new ResizeObserver((entries) => {
+                // The projection follows every tick, as the viewport's camera
+                // does (Viewport's own SizeObserver): CSS stretches the old
+                // buffer over the new box, and a projection of the old size
+                // would shift and scale the board until the buffer catches
+                // up. `contentRect` and not a measurement, which forces layout.
+                const { width, height } = entries[0]!.contentRect;
+                this.projection_matrix = Matrix3.orthographic(width, height);
+                if (this.#resize_timer !== undefined) return;
+                const wait =
+                    this.#resized_at + RESIZE_MS - performance.now();
+                if (wait <= 0) this.#observed_resize();
+                else
+                    this.#resize_timer = setTimeout(
+                        () => this.#observed_resize(),
+                        wait,
+                    );
             });
             this.#size_observer.observe(this.canvas);
         }
