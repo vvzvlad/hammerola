@@ -1043,6 +1043,52 @@ describe('show', () => {
       .toBeGreaterThan(viewer.render.mock.invocationCallOrder[0])
   })
 
+  it('draws the model once on the next frame, however many renders were asked for in this one', async () => {
+    // One wheel zoom to the cursor alone asks for two (`frames.js`).
+    stubFrames()
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { vp, viewer } = rendering()
+    const render = viewer.update
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    runFrames()
+    render.mockClear()
+    viewer.update(true, false)
+    viewer.update(false, true)
+    viewer.update(false, false)
+    expect(render).not.toHaveBeenCalled()
+    runFrames()
+    expect(render.mock.calls).toEqual([[true, true]])
+  })
+
+  it('draws a refit in the same task, with no frame run', async () => {
+    // A resize resets the drawing buffer, which shows blank until drawn.
+    stubFrames()
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { vp, viewer } = rendering()
+    const render = viewer.update
+    viewer.resizeCadView = vi.fn(() => viewer.update(true))
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    runFrames()
+    render.mockClear()
+    vp.refit()
+    expect(render.mock.calls).toEqual([[true, true]])
+  })
+
+  it('draws a pending render before a pick reads the pick buffer', async () => {
+    stubFrames()
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { vp, viewer } = rendering()
+    const render = viewer.update
+    const pickAt = viewer.idPicker.pickAt = vi.fn(() => null)
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    runFrames()
+    render.mockClear()
+    viewer.update(true, false)
+    viewer.idPicker.pickAt(10, 20)
+    expect(render).toHaveBeenCalledTimes(1)
+    expect(render.mock.invocationCallOrder[0]).toBeLessThan(pickAt.mock.invocationCallOrder[0])
+  })
+
   it('builds the camera the reader chose, and switches it on the standing scene', async () => {
     // The Settings card's Perspective: passed to `render()`, which makes a new
     // camera every time, and switched without a reload when it changes after.
@@ -2236,6 +2282,37 @@ describe('the widgets connectedCallback puts on the page', () => {
     expect(widths()).toEqual([900])
     vi.advanceTimersByTime(RESIZE_MS)
     expect(widths()).toEqual([900, 1100])
+  })
+
+  it('follows a resize inside the window with the canvas, the boxes and the camera, refitting nothing', () => {
+    // three fixes the canvas's CSS size in px, so between two refits the model
+    // would stand still and then jump (`follow` in sizing.js).
+    let tick = null
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) { tick = callback }
+      observe() {}
+      disconnect() {}
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    onTestFinished(() => vi.useRealTimers())
+    const el = mount()
+    const viewer = el.viewer = fakeViewer()
+    viewer.resizeCadView = vi.fn()
+    let width = 900
+    Object.defineProperties(el.box, {
+      clientWidth: { get: () => width }, clientHeight: { value: 600 },
+    })
+    tick()
+    width = 1000
+    tick()
+    const { style } = viewer.renderer.domElement
+    expect(viewer.resizeCadView).toHaveBeenCalledTimes(1)
+    expect([style.width, style.height]).toEqual(['1000px', '600px'])
+    expect(viewer.display.setSizes.mock.lastCall[0]).toMatchObject({ cadWidth: 1000, height: 600 })
+    expect(viewer.camera.changeDimensions.mock.lastCall.slice(1)).toEqual([1000, 600])
+    expect(viewer.controls.handleResize).toHaveBeenCalled()
+    expect(viewer.idPicker.setSize.mock.lastCall).toEqual([1000, 600])
+    expect(viewer.update.mock.lastCall).toEqual([true, false])
   })
 
   it('lets the remembered view document go with everything else', () => {

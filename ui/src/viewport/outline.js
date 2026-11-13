@@ -468,6 +468,12 @@ export function sectionOutline(vp, g, normal, value) {
         || !front.matrixWorld) {
       continue;
     }
+    // `matrixWorld` is composed by a render, and a move writes the group's
+    // position while the render that would refresh it waits for its frame
+    // (frames.js), so it is recomposed first: of the group, which is what a
+    // move writes, and from the root down, since a joint may have moved a group
+    // above the part (`applyJoints`).
+    if (typeof group.updateWorldMatrix === "function") group.updateWorldMatrix(true, true);
     // The plane in the solid's LOCAL frame — see `localPlane` for why it is the
     // plane that crosses over and not the triangles.
     const { n, c } = localPlane(front.matrixWorld, nx, ny, nz, constant);

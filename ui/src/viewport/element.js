@@ -36,7 +36,8 @@ import { createRings } from "./rings.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
-import { fitPanSpeed, measureChrome, refit, sized, throttled, treeWidth } from "./sizing.js";
+import { fitPanSpeed, follow, measureChrome, refit, sized, throttled, treeWidth } from "./sizing.js";
+import { coalesceRenders, synchronously } from "./frames.js";
 import { muteStatusLine } from "./statusline.js";
 import { jointNodes } from "./joints.js";
 import { applyGhost, applyHidden, applyJoints, applySelected, partTop,
@@ -367,11 +368,7 @@ export class HmrViewport extends HTMLElement {
       installWheel(this),
       installOrbit(this),
       installZoomSeat(this),
-      // Its release must run before the tool's. The guard adds its
-      // capture-phase window `pointerup` here at install, while tools.js and
-      // orbit.js add theirs inside their own `pointerdown`; same-phase listeners
-      // run in registration order. Its release flushes a deferred `update`,
-      // which re-marks the id-picker before the tool's release pick reads it.
+      // Two fingers on the canvas do not rotate the model (pinch.js).
       installPinchGuard(this),
       installIdleClock(this),
       installTools(this),
@@ -407,9 +404,14 @@ export class HmrViewport extends HTMLElement {
     // Sized from the CONTAINER, never from the window: the interface decides how
     // much room the viewport gets, and an assumed header height puts the header
     // off-screen the moment it is wrong. Throttled, because each refit
-    // reallocates the canvas's multisampled buffer (`RESIZE_MS` in sizing.js).
+    // reallocates the canvas's multisampled buffer (`RESIZE_MS` in sizing.js);
+    // `follow` keeps the model under the container in between. The refit goes
+    // first, so a tick it served leaves `follow` nothing to do.
     this.resized = throttled(() => refit(this));
-    this.observer = new ResizeObserver(this.resized);
+    this.observer = new ResizeObserver(() => {
+      this.resized();
+      follow(this);
+    });
     this.observer.observe(this);
   }
 
@@ -459,6 +461,7 @@ export class HmrViewport extends HTMLElement {
     } catch (error) {
       console.warn("viewport dispose", error);
     }
+    if (this.frames) this.frames.cancel();
     this.viewer = null;
     // The payload is released here: `show` keeps the parsed view file (a couple
     // of megabytes) so `setOverlay` can re-stage without a fetch, and a detached
@@ -753,6 +756,7 @@ export class HmrViewport extends HTMLElement {
         };
         this.viewer = new Viewer(new Display(this.box, opts), opts,
                                  (changes) => this.onNotify(changes), null);
+        this.frames = coalesceRenders(this.viewer);
       } else {
         // The widgets come out of the scene before `clear()`, which runs
         // `deepDispose` over everything in it (viewer/src/core/viewer.ts). Their
@@ -775,6 +779,15 @@ export class HmrViewport extends HTMLElement {
       const perspective = !!this.state.perspective;
       this.viewer.render(framedWithBeds(scene, entry), renderOptions,
                          { ...viewerOptions, ortho: !perspective });
+      // A pick reads the pick buffer and the near and far planes a render fits
+      // to the camera, so a render still waiting for its frame is drawn first.
+      // The picker is the one `render()` just built.
+      const picker = this.viewer.idPicker;
+      const pickAt = picker.pickAt;
+      picker.pickAt = (...args) => {
+        this.frames.flush();
+        return pickAt.apply(picker, args);
+      };
       // And back into the new THREE.Scene `render()` just built. The namespace
       // is handed over here because this is where the page has it.
       this.handle.attach(library.THREE);
@@ -840,6 +853,11 @@ export class HmrViewport extends HTMLElement {
       // moves, which a joint composes onto.
       if (restage) applyJoints(this);
       this.overlay.refresh();
+      // Drawn in this task: `refit` above reset the drawing buffer and drew the
+      // scene as `render()` left it, and the frame the browser presents next has
+      // to be the finished one (the camera a live swap kept, the hatch, the
+      // states).
+      this.frames.flush();
       // The tree travels with the render: the nesting and colours come from
       // the payload, and whether the library answers for a leaf comes from the
       // scene just built.
@@ -972,7 +990,8 @@ export class HmrViewport extends HTMLElement {
     if (renderer.getPixelRatio() !== want) {
       renderer.setPixelRatio(want);
       setCutHatch(internals(this.viewer), s.cutHatch);
-      this.viewer.update(true, true);
+      // In this task: the new ratio reset the drawing buffer.
+      synchronously(this, () => this.viewer.update(true, true));
     }
     // The comment arrows follow the list, and ask for the frame that draws them.
     this.pins.setPins(s.pins);

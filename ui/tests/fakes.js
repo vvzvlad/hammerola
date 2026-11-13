@@ -373,7 +373,8 @@ export function fakeViewer({
   rect = { left: 0, top: 0, width: 800, height: 600 },
   target = null,
 } = {}) {
-  const canvas = { getBoundingClientRect: () => ({ ...rect }) }
+  // `style` is where a resize puts the canvas's CSS size.
+  const canvas = { getBoundingClientRect: () => ({ ...rect }), style: {} }
   const planes = [plane([0, 0, 1], gridSize / 2, clipCenter),
                   plane([0, 1, 0], gridSize / 2, clipCenter),
                   plane([1, 0, 0], gridSize / 2, clipCenter)]
@@ -417,6 +418,9 @@ export function fakeViewer({
           + 100 * radius
         camera.cam.updateProjectionMatrix()
       }),
+      // `Camera.changeDimensions(distance, width, height)`, which a resize
+      // hands the canvas's new shape.
+      changeDimensions: vi.fn(),
     },
     clipping: {
       clipPlanes: planes,
@@ -441,9 +445,9 @@ export function fakeViewer({
       getPixelRatio: () => viewer.renderer.pixelRatio,
       setPixelRatio: vi.fn((value) => { viewer.renderer.pixelRatio = value }),
     },
-    // `IdPicker.setDirty`; `pickAt` only where a test stands something under
-    // the pixel (`boxScene`).
-    idPicker: { setDirty: vi.fn() },
+    // `IdPicker.setDirty` and `setSize`; `pickAt` only where a test stands
+    // something under the pixel (`boxScene`).
+    idPicker: { setDirty: vi.fn(), setSize: vi.fn() },
     nestedGroup: {
       groups,
       // `NestedGroup` carries the viewport size its edge materials are
@@ -466,13 +470,16 @@ export function fakeViewer({
         },
       },
     },
-    display: {},
+    // `Display.setSizes`, the widget's boxes at a canvas size.
+    display: { setSizes: vi.fn() },
     // `Controls.getTarget()`: the trackball's own target, live, so a write to
     // it moves `getCameraTarget()`.
     controls: {
       getTarget: () => ({
         set(x, y, z) { viewer.target = [x, y, z] },
       }),
+      // `Controls.handleResize()`: the trackball re-reads the canvas's box.
+      handleResize: vi.fn(),
     },
 
     canvas,

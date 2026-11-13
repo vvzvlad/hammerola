@@ -1,0 +1,50 @@
+// viewport/frames.js — the ways back from one render per animation frame to the
+// library's own synchronous one. The frames are driven by hand (component.js).
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { coalesceRenders } from '../src/viewport/frames.js'
+import { runFrames, stubFrames } from './component.js'
+
+beforeEach(() => { stubFrames() })
+afterEach(() => { vi.unstubAllGlobals() })
+
+/** A viewer whose `update` is a spy, routed. */
+function routed() {
+  const render = vi.fn()
+  const viewer = { update: render }
+  return { viewer, render, frames: coalesceRenders(viewer) }
+}
+
+describe('coalesceRenders', () => {
+  it('draws at once inside `now`, until the promise `fn` returned settles', async () => {
+    const { viewer, render, frames } = routed()
+    let settle = null
+    const held = frames.now(() => new Promise((resolve) => { settle = resolve }))
+    viewer.update(true, false)
+    expect(render.mock.calls).toEqual([[true, false]])
+    settle('done')
+    expect(await held).toBe('done')
+    viewer.update(true, false)
+    expect(render).toHaveBeenCalledTimes(1)
+    runFrames()
+    expect(render).toHaveBeenCalledTimes(2)
+  })
+
+  it('draws a pending render on flush, and no frame draws it again', () => {
+    const { viewer, render, frames } = routed()
+    viewer.update(false, true)
+    frames.flush()
+    expect(render.mock.calls).toEqual([[false, true]])
+    runFrames()
+    expect(render).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops a pending render on cancel', () => {
+    const { viewer, render, frames } = routed()
+    viewer.update(true, true)
+    frames.cancel()
+    runFrames()
+    expect(render).not.toHaveBeenCalled()
+  })
+})

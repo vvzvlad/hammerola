@@ -624,9 +624,10 @@ export function partTop(viewer, path) {
  * outside the caller's `try` and catching its own failures, so it cannot turn a
  * completed move into a refused one.
  *
- * After the caller's render and followed by another: the rebuild reads
- * `matrixWorld`, which only a render refreshes, and the library draws on demand
- * only, so the new contour needs its own frame.
+ * Followed by a frame of its own: the library draws on demand only, and the new
+ * contour is drawn in the frame it asks for. The rebuild does not wait for the
+ * caller's render to refresh the world matrices it reads; `sectionOutline`
+ * recomposes them itself.
  *
  * Gated on the same pair `reconcile` uses, not on the seed alone:
  * `suspendSectionCut` empties the contours but keeps the seed (so re-enabling
@@ -715,8 +716,8 @@ export function movePart(vp, paths, delta, turn) {
     console.warn("move", error);
     return false;
   }
-  // The contour the part carried off the plane. Outside the `try` and after
-  // the render, see `redrawCut`.
+  // The contour the part carried off the plane. Outside the `try`, see
+  // `redrawCut`.
   redrawCut(vp);
   return true;
 }
