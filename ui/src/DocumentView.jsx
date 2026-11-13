@@ -74,7 +74,7 @@
 import React from 'react';
 
 import { follow, format, parse, respell } from './address.js';
-import { parseCsv } from './csv.js';
+import { decodeCsv, parseCsv } from './csv.js';
 import {
   findQuote, markdownElements, NOWRAP_CLASS, offsetOf, quoteOf, rangeOf, SHORT_CELL, TAG_STYLE, textIndex,
 } from './docmd.js';
@@ -552,7 +552,10 @@ export default class DocumentView extends React.Component {
     const count = meter((received) => {
       if (!this._gone) this.setState({ received });
     });
-    fetchBody(docUrl(base, doc), count, true)
+    // A CSV's bytes, which need not be UTF-8 (`decodeCsv`).
+    const csv = docExt(doc) === 'csv';
+    fetchBody(docUrl(base, doc), count, !csv)
+      .then((body) => (csv ? decodeCsv(body) : body))
       .then((text) => {
         if (this._gone) return;
         this.setState({ text });

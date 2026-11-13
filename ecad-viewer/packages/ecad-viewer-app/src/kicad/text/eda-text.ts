@@ -46,6 +46,7 @@ export class EDAText {
         this.attributes.size.set(size.y * 10000, size.x * 10000);
         this.attributes.stroke_width = (effects.font.thickness ?? 0) * 10000;
         this.attributes.stroke_width = this.get_effective_text_thickness(1588);
+        this.attributes.line_spacing = effects.font.line_spacing;
         this.attributes.color = effects.font.color;
     }
 
@@ -215,7 +216,7 @@ export class EDAText {
         const text_size = extents.copy();
 
         if (this.multiline && line && line < strings.length) {
-            pos.y -= Math.round(line * font.get_interline(font_size.y));
+            pos.y -= line * Math.round(font.get_interline(font_size.y) * this.line_spacing);
         }
 
         if (text.includes("~{")) {
@@ -242,9 +243,10 @@ export class EDAText {
                 text_size.x = Math.max(text_size.x, extents.x);
             }
 
-            text_size.y += Math.round(
-                (strings.length - 1) * font.get_interline(font_size.y),
-            );
+            // EDA_TEXT::GetTextBox: the interline times the line spacing, rounded
+            text_size.y +=
+                (strings.length - 1) *
+                Math.round(font.get_interline(font_size.y) * this.line_spacing);
         }
 
         bbox.w = text_size.x;

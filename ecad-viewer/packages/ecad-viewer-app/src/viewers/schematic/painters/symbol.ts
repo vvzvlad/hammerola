@@ -72,8 +72,6 @@ export class LibSymbolPainter extends SchematicItemPainter {
     }
 }
 
-const visible_properties = new Set(["Reference", "Value"]);
-
 export class SchematicSymbolPainter extends SchematicItemPainter {
     classes = [schematic_items.SchematicSymbol];
 
@@ -132,11 +130,9 @@ export class SchematicSymbolPainter extends SchematicItemPainter {
             layer.name == LayerNames.symbol_field ||
             layer.name == LayerNames.interactive
         ) {
+            // Every field, as SCH_PAINTER::draw( const SCH_SYMBOL* ) draws
+            // them; PropertyPainter skips the hidden and the empty ones.
             for (const [_, p] of si.properties) {
-                if (!visible_properties.has(p.name)) {
-                    continue;
-                }
-
                 this.view_painter.paint_item(layer, p);
             }
         }
