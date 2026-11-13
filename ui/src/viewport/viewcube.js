@@ -257,7 +257,8 @@ export function applyCameraTarget(viewer, dir, vp) {
       return;
     }
     // `notify: false` on the move, since the frame is half-built until aimed;
-    // `viewer.update(true, true)` below renders it and notifies subscribers.
+    // `viewer.update(true, true)` below asks for the frame that draws it, which
+    // notifies subscribers (frames.js).
     viewer.setCameraPosition(target.position, true, false);
     g.camera.lookAtTarget();
     if (typeof viewer.update === "function") viewer.update(true, true);
@@ -269,15 +270,17 @@ export function applyCameraTarget(viewer, dir, vp) {
 /**
  * The perspective move, recentred already: the eye `camera_distance / zoom`
  * from the box centre along the clicked direction, turned as the library
- * turns it, and one frame drawn.
+ * turns it, and one frame asked for.
  *
  * Through the library's `Camera` and not the viewer, whose `presetCamera`,
- * `setCameraPosition` and `setCameraZoom` each draw a frame: kept close in,
- * the eye can land inside the model. Within `20r/19` of the bounding sphere's
- * centre (`r` its radius) the target is put on the surface the centre shows
- * and the eye in front of it (`seatTarget`), which draws the one frame; past
- * that, an eye looking at the centre is clear of the sphere by its near plane,
- * a twentieth of the distance (`Camera.fitPlanes`).
+ * `setCameraPosition` and `setCameraZoom` each ask for a frame, and the pick
+ * `seatTarget` makes draws a frame still pending (frames.js): through them,
+ * kept close in, the eye would be drawn inside the model before it is seated.
+ * Within `20r/19` of the bounding sphere's centre (`r` its radius) the target
+ * is put on the surface the centre shows and the eye in front of it
+ * (`seatTarget`), which asks for the one frame; past that, an eye looking at
+ * the centre is clear of the sphere by its near plane, a twentieth of the
+ * distance (`Camera.fitPlanes`).
  */
 function perspectiveMove(vp, viewer, g, target, zoom) {
   if (target.kind === "preset") {

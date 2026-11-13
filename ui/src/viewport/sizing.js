@@ -4,6 +4,7 @@
 // hold more than one viewport (the diff view shows two builds side by side),
 // and one's chrome measurement is not the other's.
 
+import { synchronously } from "./frames.js";
 import { internals } from "./internals.js";
 import { displayOptions } from "./options.js";
 
@@ -92,9 +93,46 @@ export function refit(vp) {
   if (!vp.viewer) return;
   const [w, h] = sized(vp);
   // The 4th argument is `glass`, and it DEFAULTS TO FALSE. Leaving it out means
-  // the viewer silently drops out of glass mode and the layout jumps.
-  vp.viewer.resizeCadView(w, treeWidth(w), h, displayOptions.glass);
+  // the viewer silently drops out of glass mode and the layout jumps. Drawn in
+  // this task: the resize resets the drawing buffer.
+  synchronously(vp, () => vp.viewer.resizeCadView(w, treeWidth(w), h, displayOptions.glass));
   fitPanSpeed(vp);
+}
+
+/**
+ * The model kept under the container between two refits, by CSS alone: the
+ * canvas stretched to the container's size over its old drawing buffer, the
+ * camera at the new shape, and one frame. three fixes the canvas's CSS size in
+ * px, so without this the model stands still for up to RESIZE_MS and then
+ * jumps. The buffer and the viewer's sizes stay at the last refit's, the
+ * viewport `viewer.update` draws into among them: it is in CSS px times the
+ * pixel ratio and has to cover the old buffer exactly. The next refit sets
+ * them all. A canvas already at the container's size, as a refit leaves it,
+ * is left alone.
+ *
+ * The widget's boxes follow too (`Display.setSizes`, the same call
+ * `resizeCadView` makes): the canvas is transparent, and the colour behind it
+ * is `.tcv_cad_viewer`'s, a box only as large as `.tcv_cad_body`'s px size, so
+ * past the old size a grown canvas would show the page's colour instead.
+ */
+export function follow(vp) {
+  const g = internals(vp.viewer);
+  if (!g) return;
+  const [w, h] = sized(vp);
+  const style = g.canvas.style;
+  if (style.width === `${w}px` && style.height === `${h}px`) return;
+  style.width = `${w}px`;
+  style.height = `${h}px`;
+  g.display.setSizes({
+    cadWidth: w, height: h, glass: displayOptions.glass, tools: displayOptions.tools,
+  });
+  // The pick target at the new size, as `resizeCadView` sets it: a pick maps a
+  // pixel of the canvas as it is shown now.
+  g.picker.setSize(w, h);
+  g.camera.changeDimensions(vp.viewer.bb_radius, w, h);
+  g.controls.handleResize();
+  // In this task, the one that stretched the canvas.
+  synchronously(vp, () => vp.viewer.update(true, false));
 }
 
 /**

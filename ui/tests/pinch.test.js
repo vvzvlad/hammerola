@@ -1,25 +1,19 @@
-// ui/src/viewport/pinch.js — what two fingers are allowed to do to the model,
-// and how many frames one gesture is allowed to cost.
+// ui/src/viewport/pinch.js — what two fingers are allowed to do to the model.
 //
 // THE TRACKBALL IS FAKED AND THE FAKE IS TRANSCRIBED, not invented: the fields
 // this guard touches are `CADTrackballControls`' own
 // (viewer/src/camera/controls/CADTrackballControls.ts:63-65) and
 // `_holroydStart.copy` is the same call the library's `_rotateCamera` ends with
 // (viewer/src/camera/controls/CADTrackballControls.ts:498) — which is the whole
-// reason the guard has to make it by hand. `update(updateMarker, notify = true)`
-// is `Viewer.update` (viewer/src/core/viewer.ts:882), and that DEFAULT is a fact
-// the coalescing rule leans on: an omitted `notify` is the strong value, not a
-// missing one.
+// reason the guard has to make it by hand.
 //
 // The canvas is a REAL element and the container a real div, because the half
 // under test here is a capture listener on an ancestor and a `target` check
 // against the canvas — neither survives being modelled as a plain object.
 //
 // rAF IS A QUEUE THIS FILE DRIVES. jsdom has a real one, and a real one turns
-// "was the second update coalesced into the first" into a question about
-// timers. Stubbed, the frame runs exactly when a test says so, which is also
-// what makes the flush-on-release assertion meaningful: the original has to
-// have been called BEFORE any frame ran.
+// "is the overlay measured once a frame" into a question about timers.
+// Stubbed, the frame runs exactly when a test says so.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -266,136 +260,6 @@ describe('two fingers do not rotate', () => {
     off()
     off = null
     expect(tb.noRotate).toBe(false)
-  })
-})
-
-describe('one frame per gesture, and none outside one', () => {
-  it('passes an update straight through when no pointer is down', () => {
-    // Outside a gesture NOTHING CHANGES: `update` marks the id-picker dirty and
-    // `pickAt` re-renders its buffer only when it is, so a deferred update is a
-    // window in which a pick reads the previous camera.
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    release(1)
-    // The wrapper really is in place — otherwise this test would be asserting
-    // that an unwrapped function calls itself.
-    expect(viewer.update).not.toBe(original)
-
-    viewer.update(true, true)
-    expect(original).toHaveBeenCalledTimes(1)
-    expect(frames.size).toBe(0)
-  })
-
-  it('coalesces a run of updates into one frame while a pointer is down', () => {
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    viewer.update(true, true)
-    viewer.update(true, true)
-    viewer.update(true, true)
-    expect(original).not.toHaveBeenCalled()
-    expect(frames.size).toBe(1)
-
-    runFrames()
-    expect(original).toHaveBeenCalledTimes(1)
-    expect(original.mock.calls[0]).toEqual([true, true])
-  })
-
-  it('keeps the strongest arguments the batch was asked with', () => {
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    viewer.update(false, false)
-    viewer.update(true, false)
-    runFrames()
-    expect(original.mock.calls[0]).toEqual([true, false])
-  })
-
-  it('reads an omitted notify as the true the library defaults it to', () => {
-    // `update(updateMarker, notify = true)`. An omitted `notify` is the STRONG
-    // value, so a later explicit `false` must not win over it — which is what a
-    // rule written against the raw `undefined` would have let happen.
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    viewer.update(true)
-    viewer.update(false, false)
-    runFrames()
-    expect(original.mock.calls[0]).toEqual([true, true])
-  })
-
-  it('flushes what is pending when the last pointer lifts', () => {
-    // The flush is what closes the picking window: a pick happens on the
-    // release, and it must not read a buffer marked against the previous camera.
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    viewer.update(true, true)
-    expect(original).not.toHaveBeenCalled()
-
-    release(1)
-    // Synchronously, BEFORE any frame ran.
-    expect(original).toHaveBeenCalledTimes(1)
-
-    // And the frame that was already asked for does not repeat it.
-    runFrames()
-    expect(original).toHaveBeenCalledTimes(1)
-  })
-
-  it('holds the flush until the LAST finger lifts', () => {
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    press(canvas, 2)
-    viewer.update(true, true)
-    release(2)
-    expect(original).not.toHaveBeenCalled()
-    release(1)
-    expect(original).toHaveBeenCalledTimes(1)
-  })
-
-  it('defers nothing for a press that missed the canvas', () => {
-    const { vp, box, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(box, 1)
-    expect(viewer.update).toBe(original)
-    viewer.update(true, true)
-    expect(original).toHaveBeenCalledTimes(1)
-    expect(frames.size).toBe(0)
-  })
-
-  it('puts the original update back on teardown, and drops what it was holding', () => {
-    // Dropped rather than flushed: the element disposes the viewer immediately
-    // after the teardown runs, so the deferred frame would repaint a scene on
-    // its way out.
-    const { vp, canvas, viewer } = scene()
-    const original = viewer.update
-    off = installPinchGuard(vp)
-
-    press(canvas, 1)
-    viewer.update(true, true)
-    off()
-    off = null
-
-    expect(viewer.update).toBe(original)
-    expect(original).not.toHaveBeenCalled()
-    runFrames()
-    expect(original).not.toHaveBeenCalled()
   })
 })
 

@@ -1,28 +1,12 @@
-// Two fingers on the canvas: stop them rotating the model; and while any
-// pointer is down on the canvas, limit repaints to one per frame. The rotation
-// guard needs a second finger; the repaint budget helps a one-finger drag and a
-// mouse orbit too.
+// Two fingers on the canvas: stop them rotating the model.
 //
-// 1. A pinch rotates the model, by the wrong amount. `CADTrackballControls
-//    .update()` gates rotation on `noRotate` alone, never on `state`, and
-//    neither `_onHolroydPointerDown` nor `_onHolroydPointerMove` filters by
-//    `pointerId`, so a second finger overwrites `_holroydStart`/`_holroydEnd`
-//    and the rotation delta becomes the distance between the fingers, with
-//    alternating sign: the zoom jitters. The fix is the flag the library
-//    honours: `noRotate` on while two pointers are down. The zoom stays the
-//    library's.
-//
-// 2. One pointermove is one complete render: `hasAnimationLoop` is false and
-//    the library renders from a change listener, so every move pays for ambient
-//    occlusion, tone mapping, SMAA and a second pass. During a gesture the calls
-//    are coalesced into one `requestAnimationFrame`; otherwise they pass
-//    straight through.
-//
-// Coalescing is confined to a gesture because `viewer.update` marks the
-// id-picker dirty and `pickAt` re-renders its buffer only when dirty, so a
-// deferred update lets a pick read the previous camera's buffer. Picks happen
-// on pointerdown and pointerup, and the flush on the last release runs before
-// the release's pick.
+// A pinch rotates the model, by the wrong amount. `CADTrackballControls
+// .update()` gates rotation on `noRotate` alone, never on `state`, and neither
+// `_onHolroydPointerDown` nor `_onHolroydPointerMove` filters by `pointerId`,
+// so a second finger overwrites `_holroydStart`/`_holroydEnd` and the rotation
+// delta becomes the distance between the fingers, with alternating sign: the
+// zoom jitters. The fix is the flag the library honours: `noRotate` on while
+// two pointers are down. The zoom stays the library's.
 //
 // Not fixed here: lifting one of two fingers leaves the other rotating nothing,
 // because the library clears `_holroydActive` on any pointerup
@@ -47,7 +31,7 @@ function trackballOf(g) {
 export function installPinchGuard(vp) {
   // The ids of pointers down on the canvas, separate from `vp.pointersDown`
   // (live.js), which also counts wheels and serves the IDLE_MS swap deferral;
-  // a wheel has no fingers to guard and no frames to coalesce here.
+  // a wheel has no fingers to guard.
   const down = new Set();
 
   // What we did to the trackball, so that only our change is undone. `onDown`
@@ -57,60 +41,6 @@ export function installPinchGuard(vp) {
   // rebuilt mid-gesture leaves a new trackball, and the flag to put back is on
   // the old one.
   let held = null;              // { tb, previous }
-
-  // The wrapped `update` and the original to put back. `viewer.update` is an
-  // own arrow property assigned in the Viewer constructor, so assigning over it
-  // on the instance intercepts internal `this.update(...)` calls too and
-  // survives `render()` and `clear()`.
-  let patched = null;           // { viewer, original, wrapper }
-  let pending = null;           // { updateMarker, notify }
-  let frame = 0;
-
-  /** Run whatever the gesture deferred, right now. */
-  const flush = () => {
-    if (frame) cancelAnimationFrame(frame);
-    frame = 0;
-    const args = pending;
-    pending = null;
-    if (!args || !patched) return;
-    try {
-      patched.original.call(patched.viewer, args.updateMarker, args.notify);
-    } catch (error) {
-      console.warn("pinch update", error);
-    }
-  };
-
-  /** Put our wrapper on this viewer's `update`, once per viewer. */
-  const wrapUpdate = (viewer) => {
-    if (patched && patched.viewer === viewer) return;
-    // A replaced viewer took our wrapper with it, and a deferred frame would
-    // repaint a scene that is gone, so nothing is restored or flushed. The
-    // element keeps one viewer across scene reloads, so this runs once.
-    if (frame) cancelAnimationFrame(frame);
-    frame = 0;
-    pending = null;
-    patched = null;
-    if (!viewer || typeof viewer.update !== "function") return;
-    const original = viewer.update;
-    const wrapper = (updateMarker, notify) => {
-      if (down.size === 0) return original.call(viewer, updateMarker, notify);
-      // Keep the strongest arguments seen while a call is pending, so a batch
-      // never does less than the calls it replaced. The library declares
-      // `notify = true`, so an omitted `notify` is the strong value; `||` alone
-      // would let a later explicit `false` win.
-      const wanted = notify === undefined ? true : notify;
-      pending = pending
-        ? { updateMarker: pending.updateMarker || updateMarker,
-            notify: pending.notify || wanted }
-        : { updateMarker, notify: wanted };
-      if (!frame) {
-        frame = requestAnimationFrame(() => { frame = 0; flush(); });
-      }
-      return undefined;
-    };
-    viewer.update = wrapper;
-    patched = { viewer, original, wrapper };
-  };
 
   /**
    * Give rotation back, squaring up the holroyd state first.
@@ -147,7 +77,6 @@ export function installPinchGuard(vp) {
     // library's own DOM (the same rule `gestureInternals` applies).
     if (event.target !== g.canvas) return;
     down.add(event.pointerId);
-    wrapUpdate(vp.viewer);
     if (down.size < 2 || held) return;
     const tb = trackballOf(g);
     if (!tb) return;
@@ -163,7 +92,6 @@ export function installPinchGuard(vp) {
     // on the page, and `delete` checks and removes in one call.
     if (!down.delete(event.pointerId)) return;
     if (down.size < 2) restore();
-    if (down.size === 0) flush();
   };
 
   // Capture on the container, an ancestor of the canvas, so this runs before
@@ -184,13 +112,5 @@ export function installPinchGuard(vp) {
     // Rotation goes back on the way out: an element unmounted mid-pinch would
     // otherwise leave a trackball that cannot turn.
     restore();
-    if (frame) cancelAnimationFrame(frame);
-    frame = 0;
-    // Not flushed: the element disposes the viewer right after this runs.
-    pending = null;
-    if (patched && patched.viewer.update === patched.wrapper) {
-      patched.viewer.update = patched.original;
-    }
-    patched = null;
   };
 }

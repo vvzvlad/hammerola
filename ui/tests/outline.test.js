@@ -15,7 +15,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 
@@ -31,7 +31,8 @@ import {
 import {
   dragSection, placeSectionPlane, sectionAxis, suspendSectionCut,
 } from '../src/viewport/section.js'
-import { RECT } from './component.js'
+import { coalesceRenders } from '../src/viewport/frames.js'
+import { RECT, stubFrames } from './component.js'
 import {
   fakeMatrix, fakeRenderer, fakeShapeSolid, fakeViewer, fakeViewport, orthoCamera,
 } from './fakes.js'
@@ -1030,6 +1031,26 @@ describe('the outline under the part passes', () => {
     // kept. `restageMoves` walks that map on the panel's very next edit.
     expect(vp.moved.size).toBe(0)
     expect(vp.partHome.size).toBe(0)
+  })
+
+  it('builds the contour from the pose the move left, with the render still waiting for its frame', () => {
+    // `matrixWorld` is composed by a render, and the render after a move waits
+    // for its frame (frames.js), so the rebuild has the group recompose it.
+    // The spy composes from the group's position, as `updateWorldMatrix` does.
+    stubFrames()
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { solid, viewer, vp, g } = partScene()
+    vp.frames = coalesceRenders(viewer)
+    solid.updateWorldMatrix = vi.fn(() => {
+      const { x, y, z } = solid.position
+      solid.front.matrixWorld = fakeMatrix({ position: [x, y, z] })
+    })
+    placeSectionPlane(vp, g, [1, 0, 0], [1, 0, 1])
+    vp.state.cut = true
+    const outline = outlineOf(solid)
+    expect(outline.geometry.instanceCount).toBe(8)
+    expect(movePart(vp, ['S|body'], [2, 0, 0])).toBe(true)
+    expect(outline.geometry.instanceCount).toBe(0)
   })
 })
 

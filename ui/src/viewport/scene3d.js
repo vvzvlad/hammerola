@@ -120,9 +120,8 @@ const FANOUT = Symbol("hammerola.scene3d");
  * calls each registered widget's `paint`. This module is the only owner of
  * that field.
  *
- * Whatever was there is kept and restored when the last widget leaves (as
- * `installPinchGuard` does around `viewer.update`); nothing assigns to it
- * today.
+ * Whatever was there is kept and restored when the last widget leaves; nothing
+ * assigns to it today.
  */
 function fanoutOn(viewer) {
   const held = viewer.onBeforeRender;

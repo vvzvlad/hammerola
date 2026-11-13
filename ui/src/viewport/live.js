@@ -10,6 +10,7 @@
 // progress.
 
 import { syncCameraTarget } from "./camera.js";
+import { synchronously } from "./frames.js";
 import { internals } from "./internals.js";
 import { IDLE_MS } from "./options.js";
 import { captureSection, restoreSection } from "./section.js";
@@ -222,7 +223,8 @@ export async function snapshot(vp, label) {
   const prefix = "data:image/png;base64,";
   try {
     if (!vp.viewer || !internals(vp.viewer)) return null;
-    const data = await vp.viewer.getImage(label || "snapshot");
+    // Synchronous renders: `getImage` draws and then reads the canvas back.
+    const data = await synchronously(vp, () => vp.viewer.getImage(label || "snapshot"));
     const url = data && data.dataUrl;
     if (typeof url !== "string" || !url.startsWith(prefix)) return null;
     const raw = atob(url.slice(prefix.length));
