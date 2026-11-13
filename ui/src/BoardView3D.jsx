@@ -105,7 +105,7 @@ import {
   mergeByMaterial, partPlace, partsOf, pickedPart, plainColours, sharedGeometries, snapPoint,
 } from './board3d.js';
 import {
-  COPPER, copperModel, fade, glbLayers, insetView, place, separationLook, stackOffsets,
+  bodyTop, COPPER, copperModel, fade, glbLayers, insetView, place, separationLook, stackOffsets,
 } from './board3dcopper.js';
 import { wheelMove } from './gerber.js';
 import { fetchBody, loadBar, meter, painted } from './loadbar.jsx';
@@ -544,9 +544,11 @@ class Stage {
   }
 
   /** Our copper (board3dcopper.js) from what the board's element read
-   *  (`getBoardCopper`), in place of the `.glb`'s own. */
+   *  (`getBoardCopper`), in place of the `.glb`'s own, cut at the edge of
+   *  the `.glb`'s board body (`bodyTop`), in the frame the copper is drawn in. */
   setCopper(copper) {
-    this.copper = copperModel(this.THREE, copper, copper.colours);
+    const body = this.glb.body.length ? bodyTop(this.THREE, this.glb.body, this.root) : null;
+    this.copper = copperModel(this.THREE, copper, copper.colours, body);
     this.root.add(this.copper.group);
     for (const node of this.glb.copper) node.visible = false;
     // The copper a lit net leaves out fades into the canvas's colour, which

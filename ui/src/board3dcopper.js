@@ -25,6 +25,17 @@
 // `.glb` has it drilled. The drills that go through the whole stack are a mask
 // (`holeMask`) the sheets' shader discards over.
 //
+// THE BOARD'S EDGE cuts the copper as milling cuts a board: nothing of it is
+// drawn off the board's body, so a pad, a track or a zone that runs past the
+// outline, or the ring of a hole on the edge, ends at the edge. The body is the
+// `.glb`'s `PCB`, whose top face (`bodyTop`) KiCad cuts the outline's cutouts
+// and the drills out of; it is a second mask on the drills' grid
+// (`boardMask`). A sheet is discarded off it. A barrel's wall lies on its
+// drill's edge, where the mask is halfway, so a barrel is read a little
+// outward of its wall instead: board there for a hole inside the board, empty
+// beyond the edge for the half of a plated hole the edge cuts through. A board
+// with no `PCB` is not cut.
+//
 // HOW IT LOOKS is a uniform or two of one shader (`copperMaterial`): the lit net
 // in the selection colour, the other copper all but faded into the canvas's
 // colour (`DIM`), and with Isolate only the lit net's copper drawn. Stackup
@@ -65,9 +76,10 @@ export function glbLayerKind(node, parser) {
  *  part), by what they are to our copper: `copper`, the `.glb`'s copper, which
  *  ours replaces; `skin`, the solder mask and the silkscreen, which a click on
  *  copper goes through; `board`, all of them but the copper, which the stackup
- *  separation thins and Isolate hides. */
+ *  separation thins and Isolate hides; `body`, the board's body (`PCB`), whose
+ *  edge cuts our copper (`bodyTop`). */
 export function glbLayers(layers, parser) {
-  const out = { copper: [], skin: [], board: [] };
+  const out = { copper: [], skin: [], board: [], body: [] };
   for (const node of layers) {
     const kind = glbLayerKind(node, parser);
     if (GLB_COPPER.has(kind)) {
@@ -76,6 +88,7 @@ export function glbLayers(layers, parser) {
     }
     out.board.push(node);
     if (GLB_SKIN.has(kind)) out.skin.push(node);
+    if (kind === 'PCB') out.body.push(node);
   }
   return out;
 }
@@ -144,6 +157,19 @@ const LIT_LIFT = 0.00006;
 const HOLE_TEXEL = 0.025;
 const HOLE_TEXELS = 4096;
 
+/** How near the body's top a vertex lies on its top face, in mm: the `.glb`
+ *  is float32 metres, a ten-thousandth of a micrometre at a board's height. */
+const TOP_TOLERANCE = 0.001;
+
+/** How many rows of the board mask are summed at once (`boardMask`): a band's
+ *  sums are all it holds besides the mask, 2 MB at 4096 texels a row. */
+const MASK_BAND = 128;
+
+/** How many texels past its wall a barrel reads the board mask: clear of the
+ *  drill's edge, where the mask is halfway, by more than the texel the
+ *  lookup blurs over. */
+const BARREL_REACH = 2;
+
 /** The box of the copper's triangles, in the board's mm, or null when it has
  *  none. */
 export function copperBox(copper) {
@@ -191,6 +217,134 @@ export function holeMask(copper, box) {
 }
 
 /**
+ * The top face of the board's body, `nodes` (the `.glb`'s `PCB`, `glbLayers`),
+ * as triangles in the board's mm, a vertex's x and y, in the frame of `root`,
+ * which our copper is drawn in: those of its triangles whose three corners lie
+ * at its top, the height of its highest vertex. The walls and the bottom face
+ * are left out.
+ */
+export function bodyTop(THREE, nodes, root) {
+  root.updateWorldMatrix(true, false);
+  const inverse = root.matrixWorld.clone().invert();
+  const meshes = [];
+  for (const node of nodes) node.traverse((object) => object.isMesh && meshes.push(object));
+  const point = new THREE.Vector3();
+  const matrix = new THREE.Matrix4();
+  const corners = meshes.map((mesh) => {
+    mesh.updateWorldMatrix(true, false);
+    matrix.multiplyMatrices(inverse, mesh.matrixWorld);
+    const { position } = mesh.geometry.attributes;
+    const xyz = new Float64Array(position.count * 3);
+    for (let i = 0; i < position.count; i++) {
+      point.fromBufferAttribute(position, i).applyMatrix4(matrix).multiplyScalar(1000).toArray(xyz, i * 3);
+    }
+    return { xyz, index: mesh.geometry.index };
+  });
+  let top = -Infinity;
+  for (const { xyz } of corners) for (let i = 1; i < xyz.length; i += 3) top = Math.max(top, xyz[i]);
+  const out = [];
+  for (const { xyz, index } of corners) {
+    const count = index ? index.count : xyz.length / 3;
+    for (let i = 0; i + 2 < count; i += 3) {
+      const at = [i, i + 1, i + 2].map((k) => (index ? index.getX(k) : k));
+      if (at.every((v) => top - xyz[v * 3 + 1] < TOP_TOLERANCE)) for (const v of at) out.push(xyz[v * 3], xyz[v * 3 + 2]);
+    }
+  }
+  return Float32Array.from(out);
+}
+
+/**
+ * The board's body over the drills' grid (`grid`, a `holeMask`: the same box
+ * and texel) as a mask: a byte per texel, how much of it the body's top face
+ * (`triangles`, `bodyTop`) covers, 255 all of it, so that a linear lookup
+ * halfway up lies on the board's edge, as on a drill's.
+ *
+ * The cover is the exact area, filled as font-rs fills a glyph: each edge of
+ * each triangle, every triangle turned the same way, adds to the texels it
+ * crosses the area it leaves to its right, a running sum along a row makes
+ * that the cover, and an edge two triangles share cancels. Only the texels an
+ * edge crosses are touched, a band of `MASK_BAND` rows at a time; the edges
+ * are clamped to the grid's sides, past which nothing is read.
+ */
+export function boardMask(triangles, grid) {
+  const { width, height, x0, y0, texel } = grid;
+  // The edges in texels, each [x, y, x, y], those that run along a row dropped:
+  // they cover nothing.
+  const edges = [];
+  for (let i = 0; i + 5 < triangles.length; i += 6) {
+    const p = [0, 2, 4].map((k) => [(triangles[i + k] - x0) / texel, (triangles[i + k + 1] - y0) / texel]);
+    const turn = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]);
+    if (!turn) continue;
+    if (turn < 0) [p[1], p[2]] = [p[2], p[1]];
+    for (let k = 0; k < 3; k++) {
+      const [a, b] = [p[k], p[(k + 1) % 3]];
+      if (a[1] !== b[1]) edges.push([a[0], a[1], b[0], b[1]]);
+    }
+  }
+  const data = new Uint8Array(width * height);
+  const stride = width + 2;
+  const sums = new Float32Array(stride * MASK_BAND);
+  for (let r0 = 0; r0 < height; r0 += MASK_BAND) {
+    const r1 = Math.min(height, r0 + MASK_BAND);
+    sums.fill(0);
+    for (const edge of edges) {
+      if (Math.max(edge[1], edge[3]) > r0 && Math.min(edge[1], edge[3]) < r1) coverEdge(sums, stride, width, r0, r1, edge);
+    }
+    for (let y = r0; y < r1; y++) {
+      let sum = 0;
+      for (let x = 0; x < width; x++) {
+        sum += sums[(y - r0) * stride + x];
+        data[y * width + x] = Math.round(Math.min(1, Math.abs(sum)) * 255);
+      }
+    }
+  }
+  return data;
+}
+
+/** What `edge` (`boardMask`, in texels) adds to the `sums` of rows `r0` to
+ *  `r1` (`stride` a row, x clamped to 0 to `width`): font-rs's `draw_line`. */
+function coverEdge(sums, stride, width, r0, r1, [ax, ay, bx, by]) {
+  const dir = ay < by ? 1 : -1;
+  if (dir < 0) [ax, ay, bx, by] = [bx, by, ax, ay];
+  const dxdy = (bx - ax) / (by - ay);
+  const clampX = (x) => Math.min(width, Math.max(0, x));
+  for (let y = Math.max(r0, Math.floor(ay)); y < Math.min(r1, Math.ceil(by)); y++) {
+    const top = Math.max(y, ay);
+    const bottom = Math.min(y + 1, by);
+    const d = (bottom - top) * dir;
+    const x = clampX(ax + (top - ay) * dxdy);
+    const xnext = clampX(ax + (bottom - ay) * dxdy);
+    const row = (y - r0) * stride;
+    const left = Math.min(x, xnext);
+    const right = Math.max(x, xnext);
+    const leftFloor = Math.floor(left);
+    const rightCeil = Math.ceil(right);
+    if (rightCeil <= leftFloor + 1) {
+      const middle = 0.5 * (x + xnext) - leftFloor;
+      sums[row + leftFloor] += d - d * middle;
+      sums[row + leftFloor + 1] += d * middle;
+      continue;
+    }
+    const s = 1 / (right - left);
+    const leftPart = left - leftFloor;
+    const a0 = 0.5 * s * (1 - leftPart) * (1 - leftPart);
+    const rightPart = right - rightCeil + 1;
+    const am = 0.5 * s * rightPart * rightPart;
+    sums[row + leftFloor] += d * a0;
+    if (rightCeil === leftFloor + 2) {
+      sums[row + leftFloor + 1] += d * (1 - a0 - am);
+    } else {
+      const a1 = s * (1.5 - leftPart);
+      sums[row + leftFloor + 1] += d * (a1 - a0);
+      for (let xi = leftFloor + 2; xi < rightCeil - 1; xi++) sums[row + xi] += d * s;
+      const a2 = a1 + (rightCeil - leftFloor - 3) * s;
+      sums[row + rightCeil - 1] += d * (1 - a2 - am);
+    }
+    sums[row + rightCeil] += d * am;
+  }
+}
+
+/**
  * The shader of our copper: three's standard material with a net index on
  * every vertex (`netIndex`) and the uniforms `shared` holds, one object for
  * every layer's material: `litNet`, the lit net's code or −1; `isolate`, only
@@ -198,7 +352,10 @@ export function holeMask(copper, box) {
  * canvas's colour in sRGB, which the rest of the copper fades into (`DIM`);
  * `holeMap` and
  * `holeBox`, the drills' mask (`holeMask`) as a texture and where it lies,
- * which a sheet (`holed`) is discarded over. The lit net takes no metal, so
+ * which a sheet (`holed`) is discarded over; `boardMap`, the body's mask on
+ * the same grid (`boardMask`), which a sheet is discarded off, and a barrel
+ * off where it reads it, `outward` (a vertex's, in mm) past its wall. The lit
+ * net takes no metal, so
  * the colour reads as it is, and glows a little, as a lit part does (board3d.js,
  * `light`); it is drawn `LIT_LIFT` toward the eye along the line of sight, so
  * it stands where it is on screen and the mask over it fails the depth test.
@@ -213,8 +370,10 @@ export function copperMaterial(THREE, shared, colour, holed) {
     Object.assign(shader.uniforms, shared);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', 'attribute float netIndex;\nuniform float litNet;\nvarying float vNet;\n'
-        + 'varying vec2 vBoard;\n#include <common>')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvNet = netIndex;\nvBoard = position.xz * 1000.0;')
+        + 'varying vec2 vBoard;\n#ifndef BOARD3D_HOLES\nattribute vec2 outward;\nvarying vec2 vOutward;\n#endif\n'
+        + '#include <common>')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvNet = netIndex;\nvBoard = position.xz * 1000.0;\n'
+        + '#ifndef BOARD3D_HOLES\nvOutward = outward;\n#endif')
       .replace('#include <project_vertex>', '#include <project_vertex>\n'
         + 'if ( litNet >= 0.0 && abs( netIndex - litNet ) < 0.5 ) {\n'
         + '  mvPosition.xyz += ( isPerspectiveMatrix( projectionMatrix ) ? - normalize( mvPosition.xyz )'
@@ -222,11 +381,15 @@ export function copperMaterial(THREE, shared, colour, holed) {
         + '  gl_Position = projectionMatrix * mvPosition;\n}');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', 'uniform float litNet;\nuniform bool isolate;\nuniform vec3 accent;\n'
-        + 'uniform vec3 dimTo;\nuniform sampler2D holeMap;\nuniform vec4 holeBox;\nvarying float vNet;\nvarying vec2 vBoard;\n'
+        + 'uniform vec3 dimTo;\nuniform sampler2D holeMap;\nuniform sampler2D boardMap;\nuniform vec4 holeBox;\n'
+        + 'varying float vNet;\nvarying vec2 vBoard;\n#ifndef BOARD3D_HOLES\nvarying vec2 vOutward;\n#endif\n'
         + '#include <common>')
       .replace('#include <color_fragment>', '#include <color_fragment>\n'
         + '#ifdef BOARD3D_HOLES\n'
-        + 'if ( texture2D( holeMap, ( vBoard - holeBox.xy ) * holeBox.zw ).r > 0.5 ) discard;\n'
+        + 'vec2 holeAt = ( vBoard - holeBox.xy ) * holeBox.zw;\n'
+        + 'if ( texture2D( holeMap, holeAt ).r > 0.5 || texture2D( boardMap, holeAt ).r < 0.5 ) discard;\n'
+        + '#else\n'
+        + 'if ( texture2D( boardMap, ( vBoard + vOutward - holeBox.xy ) * holeBox.zw ).r < 0.5 ) discard;\n'
         + '#endif\n'
         + 'bool lit = litNet >= 0.0 && abs( vNet - litNet ) < 0.5;\n'
         + 'if ( isolate && ! lit ) discard;\n'
@@ -264,9 +427,18 @@ function sheet(THREE, xy, nets, height, material) {
   return mesh;
 }
 
+/** A mask (`holeMask`, `boardMask`) as a texture the shader reads linearly. */
+function maskTexture(THREE, data, width, height) {
+  const texture = new THREE.DataTexture(data, width, height, THREE.RedFormat, THREE.UnsignedByteType);
+  return Object.assign(texture, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false,
+    unpackAlignment: 1, needsUpdate: true });
+}
+
 /**
  * Our copper (`copper`, what `getBoardCopper` hands, with `colours`, each
- * layer's CSS colour by its name) as three objects: `group`, holding a mesh per
+ * layer's CSS colour by its name, and `body`, the top face of the board's body,
+ * `bodyTop`, or null for none, which cuts nothing: its mask is a single full
+ * texel) as three objects: `group`, holding a mesh per
  * layer and one of every barrel; `layers`, each `{ name, mesh, material,
  * colour }`, the layer's own colour as a three colour; `barrels`, the barrels'
  * mesh and, per vertex, the layer whose height it follows and its height there
@@ -274,14 +446,14 @@ function sheet(THREE, xy, nets, height, material) {
  * `shared`, the uniforms of the shader (`copperMaterial`); `base`, the copper's
  * own colour; and `diagonal`, what the separation's gap is scaled by.
  */
-export function copperModel(THREE, copper, colours) {
+export function copperModel(THREE, copper, colours, body) {
   const box = copperBox(copper) || { x0: 0, y0: 0, x1: 0, y1: 0 };
   const mask = holeMask(copper, box);
-  const holeMap = new THREE.DataTexture(mask.data, mask.width, mask.height, THREE.RedFormat, THREE.UnsignedByteType);
-  Object.assign(holeMap, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false,
-    unpackAlignment: 1, needsUpdate: true });
+  const holeMap = maskTexture(THREE, mask.data, mask.width, mask.height);
+  const boardMap = body ? maskTexture(THREE, boardMask(body, mask), mask.width, mask.height)
+    : maskTexture(THREE, new Uint8Array([255]), 1, 1);
   const shared = { litNet: { value: -1 }, isolate: { value: false }, accent: { value: new THREE.Color() },
-    dimTo: { value: new THREE.Color() }, holeMap: { value: holeMap },
+    dimTo: { value: new THREE.Color() }, holeMap: { value: holeMap }, boardMap: { value: boardMap },
     holeBox: { value: new THREE.Vector4(mask.x0, mask.y0, 1 / (mask.width * mask.texel), 1 / (mask.height * mask.texel)) } };
   const group = new THREE.Group();
   const count = copper.layers.length;
@@ -294,8 +466,13 @@ export function copperModel(THREE, copper, colours) {
   });
   // Each barrel a tube of BARREL_SIDES sides from the top face of its upper
   // layer to the bottom face of its lower one, flat-shaded as the sheets are.
+  // Its `outward` reaches about BARREL_REACH texels past the drill's circle
+  // from anywhere on a side, the middle of one too, which lies inside the
+  // circle by the sagitta: the side's corners reach out by that much more, and
+  // between them the reach shrinks as the side's distance from the axis does.
   const sides = copper.barrels.length * BARREL_SIDES * 6;
   const position = new Float32Array(sides * 3);
+  const outward = new Float32Array(sides * 2);
   const netIndex = new Float32Array(sides);
   const ends = new Uint8Array(sides);
   const heights = new Float32Array(sides);
@@ -303,12 +480,15 @@ export function copperModel(THREE, copper, colours) {
   for (const barrel of copper.barrels) {
     const top = [barrel.from, copper.layers[barrel.from].top];
     const bottom = [barrel.to, copper.layers[barrel.to].bottom];
+    const reach = barrel.radius * (1 - Math.cos(Math.PI / BARREL_SIDES)) + BARREL_REACH * mask.texel;
     for (let i = 0; i < BARREL_SIDES; i++) {
       const a = (i / BARREL_SIDES) * 2 * Math.PI;
       const b = ((i + 1) / BARREL_SIDES) * 2 * Math.PI;
       for (const [angle, [layer, height]] of [[a, top], [b, top], [a, bottom], [a, bottom], [b, top], [b, bottom]]) {
         position[at * 3] = (barrel.x + barrel.radius * Math.cos(angle)) / 1000;
         position[at * 3 + 2] = (barrel.y + barrel.radius * Math.sin(angle)) / 1000;
+        outward[at * 2] = reach * Math.cos(angle);
+        outward[at * 2 + 1] = reach * Math.sin(angle);
         netIndex[at] = barrel.net;
         ends[at] = layer;
         heights[at] = height;
@@ -319,6 +499,7 @@ export function copperModel(THREE, copper, colours) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
   geometry.setAttribute('netIndex', new THREE.BufferAttribute(netIndex, 1));
+  geometry.setAttribute('outward', new THREE.BufferAttribute(outward, 2));
   const material = copperMaterial(THREE, shared, base.clone(), false);
   const tubes = new THREE.Mesh(geometry, material);
   tubes.userData.board3dCopper = true;
