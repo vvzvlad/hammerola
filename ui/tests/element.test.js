@@ -1060,6 +1060,18 @@ describe('show', () => {
     expect(render.mock.calls).toEqual([[true, true]])
   })
 
+  it('fences the renders on the renderer\'s own context', async () => {
+    stubFrames()
+    onTestFinished(() => vi.unstubAllGlobals())
+    const { vp, viewer } = rendering()
+    const gl = { SYNC_GPU_COMMANDS_COMPLETE: 1, fenceSync: vi.fn(() => ({})), flush() {}, deleteSync() {} }
+    viewer.renderer.getContext = () => gl
+    await vp.show({ parts: [] }, { view: 'a', token: 0 })
+    viewer.update(true, true)
+    runFrames()
+    expect(gl.fenceSync).toHaveBeenCalled()
+  })
+
   it('draws a refit in the same task, with no frame run', async () => {
     // A resize resets the drawing buffer, which shows blank until drawn.
     stubFrames()

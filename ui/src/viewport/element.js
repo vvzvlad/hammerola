@@ -756,7 +756,7 @@ export class HmrViewport extends HTMLElement {
         };
         this.viewer = new Viewer(new Display(this.box, opts), opts,
                                  (changes) => this.onNotify(changes), null);
-        this.frames = coalesceRenders(this.viewer);
+        this.frames = coalesceRenders(this.viewer, this.viewer.renderer.getContext());
       } else {
         // The widgets come out of the scene before `clear()`, which runs
         // `deepDispose` over everything in it (viewer/src/core/viewer.ts). Their

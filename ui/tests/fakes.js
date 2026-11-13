@@ -444,6 +444,8 @@ export function fakeViewer({
       pixelRatio: window.devicePixelRatio,
       getPixelRatio: () => viewer.renderer.pixelRatio,
       setPixelRatio: vi.fn((value) => { viewer.renderer.pixelRatio = value }),
+      // No GL under jsdom: the routed renders do not wait for the GPU here.
+      getContext: () => null,
     },
     // `IdPicker.setDirty` and `setSize`; `pickAt` only where a test stands
     // something under the pixel (`boxScene`).

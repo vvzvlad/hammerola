@@ -40,6 +40,40 @@ describe('coalesceRenders', () => {
     expect(render).toHaveBeenCalledTimes(1)
   })
 
+  it('holds a frame while the GPU has two in flight, and never a synchronous one', () => {
+    // Fences are numbered in the order they are set; the GPU has finished those
+    // below `finished`.
+    let made = 0
+    let finished = 0
+    const gl = {
+      SYNC_GPU_COMMANDS_COMPLETE: 1, SYNC_STATUS: 2, UNSIGNALED: 'unsignaled',
+      fenceSync: vi.fn(() => ({ n: made++ })), deleteSync: vi.fn(), flush: vi.fn(),
+      getSyncParameter: (fence) => (fence.n < finished ? 'signaled' : 'unsignaled'),
+    }
+    const render = vi.fn()
+    const viewer = { update: render }
+    const frames = coalesceRenders(viewer, gl)
+    for (let i = 0; i < 2; i++) {
+      viewer.update(true, true)
+      runFrames()
+    }
+    expect(render).toHaveBeenCalledTimes(2)
+    viewer.update(true, true)
+    runFrames()
+    runFrames()
+    expect(render).toHaveBeenCalledTimes(2)
+    finished = 1
+    runFrames()
+    expect(render).toHaveBeenCalledTimes(3)
+    // the oldest of three fences is let go
+    expect(gl.deleteSync.mock.calls).toEqual([[{ n: 0 }]])
+    viewer.update(true, true)
+    frames.flush()
+    expect(render).toHaveBeenCalledTimes(4)
+    frames.now(() => viewer.update(true, false))
+    expect(render).toHaveBeenCalledTimes(5)
+  })
+
   it('drops a pending render on cancel', () => {
     const { viewer, render, frames } = routed()
     viewer.update(true, true)
