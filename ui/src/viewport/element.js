@@ -36,7 +36,7 @@ import { createRings } from "./rings.js";
 import { createViewCube } from "./viewcube.js";
 import { internals } from "./internals.js";
 import { loadViewerLibrary } from "./library.js";
-import { fitPanSpeed, measureChrome, refit, sized, treeWidth } from "./sizing.js";
+import { fitPanSpeed, measureChrome, refit, sized, throttled, treeWidth } from "./sizing.js";
 import { muteStatusLine } from "./statusline.js";
 import { jointNodes } from "./joints.js";
 import { applyGhost, applyHidden, applyJoints, applySelected, partTop,
@@ -406,8 +406,10 @@ export class HmrViewport extends HTMLElement {
 
     // Sized from the CONTAINER, never from the window: the interface decides how
     // much room the viewport gets, and an assumed header height puts the header
-    // off-screen the moment it is wrong.
-    this.observer = new ResizeObserver(() => refit(this));
+    // off-screen the moment it is wrong. Throttled, because each refit
+    // reallocates the canvas's multisampled buffer (`RESIZE_MS` in sizing.js).
+    this.resized = throttled(() => refit(this));
+    this.observer = new ResizeObserver(this.resized);
     this.observer.observe(this);
   }
 
@@ -434,6 +436,7 @@ export class HmrViewport extends HTMLElement {
     this.booted = false;
     removeEventListener(EVENT_STATE, this.onState);
     if (this.observer) this.observer.disconnect();
+    if (this.resized) this.resized.cancel();
     for (const off of this.teardown || []) {
       try {
         off();

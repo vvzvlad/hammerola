@@ -116,6 +116,7 @@ import { CHEVRON, NET_LABEL, NET_NAME } from './PcbPanel.jsx';
 import { css, MONO } from './style.jsx';
 import { PIN_LENGTH_FRACTION, PIN_PX } from './viewport/options.js';
 import { arrowKit, pinDirection } from './viewport/pins.js';
+import { throttled } from './viewport/sizing.js';
 
 // The page's 3D canvas colour behind a transparent canvas, so the view follows
 // the theme. The canvas goes into HOLDER, which React renders empty and so never
@@ -333,7 +334,15 @@ class Stage {
       if (part && down[0] === 2) this.handlers.onMenu(part, event.clientX, event.clientY);
     });
 
-    this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.resize()) : null;
+    // The camera follows every tick: CSS stretches the canvas over the holder
+    // at once (CANVAS), and a camera of the old aspect would squash the board.
+    // The buffer waits for the throttled `resize`, because each resize
+    // reallocates its multisampled buffer (`RESIZE_MS` in viewport/sizing.js).
+    this.resized = throttled(() => this.resize());
+    this.observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      this.reshape();
+      this.resized();
+    }) : null;
     if (this.observer) this.observer.observe(host);
     this.resize();
     this.fit();
@@ -414,15 +423,21 @@ class Stage {
   }
 
   resize() {
+    if (this.reshape()) this.renderer.setSize(this.host.clientWidth, this.host.clientHeight, false);
+  }
+
+  /** The camera and the trackball to the holder's size, and a frame; false
+   *  while the holder has no size. The canvas's buffer is `resize`'s. */
+  reshape() {
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
-    if (!width || !height) return;
-    this.renderer.setSize(width, height, false);
+    if (!width || !height) return false;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     // The trackball measures a drag against the canvas's box, which it keeps.
     this.controls.handleResize();
     this.request();
+    return true;
   }
 
   /** The camera onto `box`, along `direction`, with `margin` and at least `least`.
@@ -777,6 +792,7 @@ class Stage {
   dispose() {
     if (this.frame) cancelAnimationFrame(this.frame);
     if (this.observer) this.observer.disconnect();
+    this.resized.cancel();
     if (this.themed) this.themed.disconnect();
     this.host.removeEventListener('wheel', this.onWheel, true);
     this.controls.dispose();

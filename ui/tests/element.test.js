@@ -110,6 +110,7 @@ import {
 } from '../src/viewport/parts.js'
 import { applySection, suspendSectionCut } from '../src/viewport/section.js'
 import { GHOST_OPACITY, STUDIO_GHOST_OPACITY } from '../src/viewport/options.js'
+import { RESIZE_MS } from '../src/viewport/sizing.js'
 import * as THREE from '../../static/_v/three.module.js'
 import {
   boxScene, fakeViewer, orthoCamera, perspectiveCamera, realCamera,
@@ -2206,6 +2207,35 @@ describe('the widgets connectedCallback puts on the page', () => {
     dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyC', key: 'c' }))
     expect(el.activeTool).toBe('move')
     expect(rings.refresh).toHaveBeenCalled()
+  })
+
+  it('refits on a resize at once, and once more at the end of the window, at the final size', () => {
+    // A window drag ticks the observer on every frame, and each refit
+    // reallocates the canvas's multisampled buffer (RESIZE_MS in sizing.js).
+    let tick = null
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) { tick = callback }
+      observe() {}
+      disconnect() {}
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    onTestFinished(() => vi.useRealTimers())
+    const el = mount()
+    el.viewer = fakeViewer()
+    el.viewer.resizeCadView = vi.fn()
+    let width = 900
+    Object.defineProperties(el.box, {
+      clientWidth: { get: () => width }, clientHeight: { value: 600 },
+    })
+    const widths = () => el.viewer.resizeCadView.mock.calls.map(([w]) => w)
+    tick()
+    width = 1000
+    tick()
+    width = 1100
+    tick()
+    expect(widths()).toEqual([900])
+    vi.advanceTimersByTime(RESIZE_MS)
+    expect(widths()).toEqual([900, 1100])
   })
 
   it('lets the remembered view document go with everything else', () => {

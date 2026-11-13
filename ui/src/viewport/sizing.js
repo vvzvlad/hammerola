@@ -47,6 +47,46 @@ export function sized(vp) {
 export const treeWidth = (w) =>
   Math.max(120, Math.min(displayOptions.treeWidth, Math.round(w * 0.4)));
 
+/**
+ * The least time between two canvas resizes a `ResizeObserver` drives, in ms.
+ *
+ * Every 3D canvas here is multisampled (`antialias`), and a resize reallocates
+ * its multisampled drawing buffer: 17 ms at 2860x1674 and 29 ms at 3840x2160
+ * on an Apple M4, against 3.4 and 5.5 ms without MSAA. The observer ticks on
+ * every frame of a window drag, so a resize per tick keeps the main thread busy
+ * for the whole drag.
+ */
+export const RESIZE_MS = 100;
+
+/**
+ * `fn` at most once per `ms`. A call at least `ms` after the last run runs at
+ * once; calls inside the window fold into ONE run at its end, which reads the
+ * container as it is by then, so the canvas always ends at the final size.
+ * `cancel()` drops that pending run.
+ */
+export function throttled(fn, ms = RESIZE_MS) {
+  // -Infinity, not 0: `performance.now()` counts from the start of the
+  // navigation, so 0 would hold back a resize in the page's first `ms`.
+  let last = -Infinity;
+  let timer = null;
+  const run = () => {
+    timer = null;
+    last = performance.now();
+    fn();
+  };
+  const call = () => {
+    if (timer !== null) return;
+    const wait = last + ms - performance.now();
+    if (wait <= 0) run();
+    else timer = setTimeout(run, wait);
+  };
+  call.cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  return call;
+}
+
 /** Re-fit the widget to the container. */
 export function refit(vp) {
   if (!vp.viewer) return;

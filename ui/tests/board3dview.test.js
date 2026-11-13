@@ -15,7 +15,7 @@
 // (board3d.js) runs for real and is tested in board3d.test.js. `fetch` and the
 // animation frames are driven by hand.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import * as THREE from '../../static/_v/three.module.js'
 import { mergeGeometries } from '../../static/_v/BufferGeometryUtils.js'
@@ -30,6 +30,7 @@ import { loadThree, TRACKBALL_URL } from '../src/board3d.js'
 import { MEASURE_HINT as BOARD_MEASURE_HINT } from '../src/KicadView.jsx'
 import { VIEWER_MODULE_URL } from '../src/viewport/library.js'
 import { PIN_PX } from '../src/viewport/options.js'
+import { RESIZE_MS } from '../src/viewport/sizing.js'
 import { drained, runFrames, stubFrames } from './component.js'
 import { collect, texts } from './eltree.js'
 
@@ -336,6 +337,34 @@ describe('the 3D view of a board', () => {
     expect(defaults).toEqual(['1.0', '1.0', '1.0'])
     expect(TRACKBALL_SPEEDS).toEqual({ panSpeed: Number(factors[1]), rotateSpeed: Number(factors[2]), zoomSpeed: Number(factors[3]) })
     expect(view.props.onTools).toHaveBeenCalledTimes(1)
+  })
+
+  it('resizes its canvas on a resize of its holder at once and once more at the end of the window, its camera on every tick', async () => {
+    // Each resize reallocates the canvas's multisampled buffer (RESIZE_MS in viewport/sizing.js);
+    // the camera follows the holder meanwhile, as CSS stretches the old buffer over it.
+    let tick = null
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) { tick = callback }
+      observe() {}
+      disconnect() {}
+    })
+    const { view } = await loaded()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    onTestFinished(() => vi.useRealTimers())
+    let width = 400
+    Object.defineProperties(view.stage.host, { clientWidth: { get: () => width }, clientHeight: { value: 300 } })
+    const { setSize } = renderers[0]
+    setSize.mockClear()
+    const aspects = []
+    for (const w of [400, 500, 600]) {
+      width = w
+      tick()
+      aspects.push(view.stage.camera.aspect)
+    }
+    expect(aspects).toEqual([400 / 300, 500 / 300, 600 / 300])
+    expect(setSize.mock.calls.map(([w]) => w)).toEqual([400])
+    vi.advanceTimersByTime(RESIZE_MS)
+    expect(setSize.mock.calls.map(([w]) => w)).toEqual([400, 600])
   })
 
   it('tells the bar it can fit and frame once the model is drawn, and nothing before', async () => {
