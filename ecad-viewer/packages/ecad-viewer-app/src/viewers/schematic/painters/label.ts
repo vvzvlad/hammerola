@@ -136,29 +136,10 @@ export abstract class LabelPainter extends SchematicItemPainter {
 export class NetLabelPainter extends LabelPainter {
     override classes: any[] = [schematic_items.NetLabel];
 
+    // The text offset is LabelPainter's: a local label is SCH_LABEL, which
+    // lifts its text off the wire (SCH_LABEL_BASE::GetSchematicTextOffset).
     override get color() {
         return this.theme.label_local;
-    }
-    override get_schematic_text_offset(
-        l: schematic_items.Label,
-        schtext: SchText,
-    ): Vec2 {
-        const dist = Math.round(
-            this.get_text_offset(schtext) + schtext.text_width,
-        );
-
-        switch (l.at.rotation) {
-            case 0:
-                return new Vec2(dist, 0);
-            case 90:
-                return new Vec2(0, -dist);
-            case 180:
-                return new Vec2(-dist, 0);
-            case 270:
-                return new Vec2(0, dist);
-            default:
-                throw new Error(`Unexpected label rotation ${l.at.rotation}`);
-        }
     }
     override create_shape(
         label: schematic_items.Label,

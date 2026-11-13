@@ -8,7 +8,6 @@ import { Angle, BBox, Arc as MathArc, Matrix3, Vec2 } from "../../base/math";
 import { BezierCurve } from "../../base/math";
 
 import {
-    Arc,
     Circle,
     Color,
     Polygon,
@@ -57,19 +56,13 @@ class RectanglePainter extends SchematicItemPainter {
     }
 
     #stroke(layer: ViewLayer, r: schematic_items.Rectangle, pts: Vec2[]) {
-        const { width, color } = this.determine_stroke(layer, r);
+        const { width, color, dashes } = this.determine_stroke(layer, r);
 
         if (!width || !color) {
             return;
         }
 
-        this.gfx.line(
-            new Polyline(
-                pts,
-                r.stroke?.width || this.gfx.state.stroke_width,
-                color,
-            ),
-        );
+        this.stroke_polyline(pts, width, color, dashes);
     }
 
     #fill(layer: ViewLayer, r: schematic_items.Rectangle, pts: Vec2[]) {
@@ -96,13 +89,13 @@ class PolylinePainter extends SchematicItemPainter {
     }
 
     #stroke(layer: ViewLayer, pl: schematic_items.Polyline) {
-        const { width, color } = this.determine_stroke(layer, pl);
+        const { width, color, dashes } = this.determine_stroke(layer, pl);
 
         if (!width || !color) {
             return;
         }
 
-        this.gfx.line(new Polyline(pl.pts, width, color));
+        this.stroke_polyline(pl.pts, width, color, dashes);
     }
 
     #fill(layer: ViewLayer, pl: schematic_items.Polyline) {
@@ -179,21 +172,20 @@ class CirclePainter extends SchematicItemPainter {
     }
 
     #stroke(layer: ViewLayer, c: schematic_items.Circle) {
-        const { width, color } = this.determine_stroke(layer, c);
+        const { width, color, dashes } = this.determine_stroke(layer, c);
 
         if (!width || !color) {
             return;
         }
 
-        this.gfx.arc(
-            new Arc(
-                c.center,
-                c.radius,
-                new Angle(0),
-                new Angle(Math.PI * 2),
-                width,
-                color,
-            ),
+        this.stroke_arc(
+            c.center,
+            c.radius,
+            new Angle(0),
+            new Angle(Math.PI * 2),
+            width,
+            color,
+            dashes,
         );
     }
 
@@ -228,21 +220,20 @@ class ArcPainter extends SchematicItemPainter {
     }
 
     #stroke(layer: ViewLayer, a: schematic_items.Arc, arc: MathArc) {
-        const { width, color } = this.determine_stroke(layer, a);
+        const { width, color, dashes } = this.determine_stroke(layer, a);
 
         if (!width || !color) {
             return;
         }
 
-        this.gfx.arc(
-            new Arc(
-                arc.center,
-                arc.radius,
-                arc.start_angle,
-                arc.end_angle,
-                width,
-                color,
-            ),
+        this.stroke_arc(
+            arc.center,
+            arc.radius,
+            arc.start_angle,
+            arc.end_angle,
+            width,
+            color,
+            dashes,
         );
     }
 
@@ -275,7 +266,7 @@ class BezierPainter extends SchematicItemPainter {
     }
 
     #stroke(layer: ViewLayer, b: schematic_items.Bezier) {
-        const { width, color } = this.determine_stroke(layer, b);
+        const { width, color, dashes } = this.determine_stroke(layer, b);
 
         if (!width || !color) {
             return;
@@ -284,7 +275,7 @@ class BezierPainter extends SchematicItemPainter {
         // Draw the Bezier curve as a polyline approximation
         const curve = new BezierCurve(b.pts);
         const polyline = curve.toPolyline(32); // 32 segments for smoothness
-        this.gfx.line(new Polyline(polyline, width, color));
+        this.stroke_polyline(polyline, width, color, dashes, true);
     }
 
     #fill(layer: ViewLayer, b: schematic_items.Bezier) {
@@ -436,8 +427,9 @@ class PropertyPainter extends SchematicItemPainter {
         // KiCad stores property visibility on the property itself.  The text
         // effects object has its own hide flag for other text primitives, but
         // checking only that flag makes hidden symbol fields (notably #PWR
-        // references) visible.
-        if (p.hide || p.effects.hide || !p.text) {
+        // references) visible. An empty field showing its name still has
+        // text to draw (SCH_FIELD::GetShownText).
+        if (p.hide || p.effects.hide || (!p.text && !p.show_name)) {
             return;
         }
 
@@ -493,7 +485,11 @@ class PropertyPainter extends SchematicItemPainter {
                 this.view_painter.active_instance_context?.unit_suffix(
                     parent,
                 ) ?? parent.unit_suffix;
-        } else if (p.name == "Sheetfile") text = `File: ${text}`;
+        }
+        // SCH_FIELD::GetShownText: "Name: text" for a field that shows its
+        // name, otherwise "File: text" for a sheet's file name.
+        if (p.show_name) text = `${p.name}: ${text}`;
+        else if (p.name == "Sheetfile") text = `File: ${text}`;
 
         const schfield = new SchField(text, {
             position: parent.at.position.multiply(10000),

@@ -133,7 +133,14 @@ export class StrokeFont extends Font {
     override get_interline(glyph_height: number, line_spacing = 1): number {
         // KiCAD doesn't include glyph thickness for interline spacing in
         // order to keep the spacing between bold and normal text the same.
-        return glyph_height * line_spacing * StrokeFont.interline_pitch_ratio;
+        // STROKE_FONT::GetInterline scales the pitch by a LEGACY_FACTOR of
+        // 0.9583, and FONT::getLinePositions by the text's line spacing.
+        return (
+            glyph_height *
+            StrokeFont.interline_pitch_ratio *
+            0.9583 *
+            line_spacing
+        );
     }
 
     override get_text_as_glyphs(

@@ -14,6 +14,7 @@ import {
     type HAlign,
     type VAlign,
 } from "../../../kicad/text";
+import type { Project } from "../../../kicanvas/project";
 import { LayerNames, ViewLayer } from "../layers";
 import { SchematicItemPainter } from "./base";
 import { get_symbol_transform } from "../../../kicad/symbol-transform";
@@ -199,7 +200,24 @@ export class PinPainter extends SchematicItemPainter {
             pin.position,
             p0,
             dir,
+            PinPainter.decoration_size(pin),
         );
+    }
+
+    /**
+     * The radius of the pin's inverted bubble and the size of its other
+     * marks: the project's `pin_symbol_size` (mils), which kicad-cli draws
+     * with (EESCHEMA_JOBS_HANDLER::InitRenderSettings), or half the pin
+     * number's size when that is 0 (SCH_PAINTER::externalPinDecoSize). KiCad
+     * sizes the clock notch by internalPinDecoSize instead, half the pin
+     * name's size when the setting is 0; this one size serves all marks.
+     */
+    static decoration_size(pin: PinInfo): number {
+        const project = pin.pin.parent.parent.project as Project | undefined;
+        const size = project
+            ? project.settings.schematic.drawing.pin_symbol_size * 0.0254
+            : schematic_items.DefaultValues.pinsymbol_size;
+        return size > 0 ? size : pin.def.number.effects.font.size.x / 2;
     }
 
     /**
@@ -211,9 +229,19 @@ export class PinPainter extends SchematicItemPainter {
         const name = def.name.text;
         const number = def.number.text;
         const pin_length = def.length;
-        const hide_pin_names = libsym.pin_names.hide || !name || name == "~";
+        // A text of size 0 is not drawn: KiCad clamps its pen to 0 and its
+        // glyphs to a point (SCH_PAINTER::draw( const SCH_PIN* ),
+        // ClampTextPenSize). The size's first number is its height.
+        const hide_pin_names =
+            libsym.pin_names.hide ||
+            !name ||
+            name == "~" ||
+            def.name.effects.font.size.x == 0;
         const hide_pin_numbers =
-            libsym.pin_numbers.hide || !number || number == "~";
+            libsym.pin_numbers.hide ||
+            !number ||
+            number == "~" ||
+            def.number.effects.font.size.x == 0;
         const pin_thickness = schematic_items.DefaultValues.line_width;
         const pin_name_offset = libsym.pin_names.offset;
         //  24 mils * ratio
@@ -386,8 +414,8 @@ export const PinShapeInternals = {
         position: Vec2,
         p0: Vec2,
         dir: Vec2,
+        radius: number,
     ) {
-        const radius = schematic_items.DefaultValues.pinsymbol_size;
         const diam = radius * 2;
         const nc_radius = schematic_items.DefaultValues.target_pin_radius;
 

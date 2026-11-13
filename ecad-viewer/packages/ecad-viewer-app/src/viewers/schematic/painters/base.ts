@@ -5,8 +5,16 @@
 */
 
 import type { Color } from "../../../base/color";
+import { Angle, type Vec2 } from "../../../base/math";
+import { Arc, Polyline } from "../../../graphics";
 import type { SchematicTheme } from "../../../kicad";
 import * as schematic_items from "../../../kicad/schematic";
+import {
+    dash_arc,
+    dash_pattern,
+    dash_polyline,
+} from "../../../kicad/stroke-params";
+import type { Project } from "../../../kicanvas/project";
 import { DocumentPainter, ItemPainter } from "../../base/painter";
 import { LayerNames, type ViewLayer } from "../layers";
 import type { SchematicPainter } from "../painter";
@@ -95,7 +103,79 @@ export abstract class SchematicItemPainter extends ItemPainter {
 
         const color = this.dim_if_needed(item.stroke?.color ?? default_stroke);
 
-        return { width, color };
+        // The schematic's own dash and gap ratios, which kicad-cli draws
+        // with (EESCHEMA_JOBS_HANDLER::InitRenderSettings).
+        const project = this.view_painter.active_instance_context?.document
+            .project as Project | undefined;
+        const drawing = project?.settings.schematic.drawing;
+        const dashes = dash_pattern(
+            stroke_type,
+            width,
+            drawing?.dashed_lines_dash_length_ratio,
+            drawing?.dashed_lines_gap_length_ratio,
+        );
+
+        return { width, color, dashes };
+    }
+
+    /**
+     * Strokes `pts` solid, or with `dashes` (`dash_pattern`) restarting at
+     * every vertex, as KiCad strokes a polygon's and a rectangle's sides
+     * (EDA_SHAPE::makeEffectiveShapes); `chain` carries the pattern across
+     * the vertices instead, as for a Bézier curve.
+     */
+    protected stroke_polyline(
+        pts: Vec2[],
+        width: number,
+        color: Color,
+        dashes: number[] | null,
+        chain = false,
+    ) {
+        if (!dashes) {
+            this.gfx.line(new Polyline(pts, width, color));
+            return;
+        }
+        const marks = chain
+            ? dash_polyline(pts, dashes)
+            : pts
+                  .slice(1)
+                  .flatMap((pt, i) => dash_polyline([pts[i]!, pt], dashes));
+        for (const mark of marks) {
+            this.gfx.line(new Polyline(mark, width, color));
+        }
+    }
+
+    /** Strokes an arc solid, or with `dashes` (`dash_pattern`). */
+    protected stroke_arc(
+        center: Vec2,
+        radius: number,
+        start: Angle,
+        end: Angle,
+        width: number,
+        color: Color,
+        dashes: number[] | null,
+    ) {
+        if (!dashes) {
+            this.gfx.arc(new Arc(center, radius, start, end, width, color));
+            return;
+        }
+        for (const [from, to] of dash_arc(
+            radius,
+            start.radians,
+            end.radians,
+            dashes,
+        )) {
+            this.gfx.arc(
+                new Arc(
+                    center,
+                    radius,
+                    new Angle(from),
+                    new Angle(to),
+                    width,
+                    color,
+                ),
+            );
+        }
     }
 
     protected determine_fill(

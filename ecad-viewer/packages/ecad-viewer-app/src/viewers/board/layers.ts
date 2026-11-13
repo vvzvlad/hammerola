@@ -174,6 +174,15 @@ export const ObjLayerNames = [
 
 const ObjLayerNamesSet = new Set(ObjLayerNames);
 
+/** The layers other than copper that a board opens with drawn. */
+const DefaultVisibleLayerNames = new Set<string>([
+    LayerNames.f_silks,
+    LayerNames.b_silks,
+    LayerNames.f_mask,
+    LayerNames.b_mask,
+    LayerNames.edge_cuts,
+]);
+
 /**
  * Opacity of the DNP hatch overlay (VAR-06). Low enough that pads, copper and
  * silkscreen below stay readable; the hatch is a marker, not a mask.
@@ -262,7 +271,12 @@ export class LayerSet extends BaseLayerSet {
                 continue;
             }
 
-            let visible: VisibilityType = true;
+            // A board opens with its copper, silkscreen, solder mask and
+            // outline drawn; the other layers stay in the list, off.
+            let visible: VisibilityType =
+                is_virtual(layer_name) ||
+                is_copper(layer_name) ||
+                DefaultVisibleLayerNames.has(layer_name);
             let interactive = false;
 
             // The DNP hatch is a display overlay: never interactive, and

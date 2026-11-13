@@ -223,6 +223,7 @@ export class Font {
     thickness = 0;
     bold = false;
     italic = false;
+    line_spacing = 1;
     color: Color = Color.transparent_black;
 
     constructor(expr?: commonProto.I_Font) {
@@ -234,6 +235,7 @@ export class Font {
             this.thickness = expr.thickness ?? 0;
             this.bold = expr.bold ?? false;
             this.italic = expr.italic ?? false;
+            this.line_spacing = expr.line_spacing ?? 1;
             if (expr.color) {
                 this.color = new Color(
                     expr.color.r,
@@ -252,6 +254,7 @@ export class Font {
         f.thickness = this.thickness;
         f.bold = this.bold;
         f.italic = this.italic;
+        f.line_spacing = this.line_spacing;
         f.color = this.color.copy();
         return f;
     }

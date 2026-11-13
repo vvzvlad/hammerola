@@ -27,8 +27,9 @@ export abstract class Font {
     /** Used to apply italic slant to stroke fonts and to estimate size of italic outline fonts. */
     static readonly italic_tilt = 1.0 / 8;
 
-    /** Used to determine the spacing between two lines */
-    static readonly interline_pitch_ratio = 1.62;
+    /** Used to determine the spacing between two lines: KIFONT::METRICS'
+     * m_InterlinePitch (font_metrics.h) */
+    static readonly interline_pitch_ratio = 1.68;
 
     constructor(public name: string) {}
 
@@ -282,9 +283,9 @@ export abstract class Font {
 
         const lines = text.split("\n");
         const num_lines = lines.length;
-        const interline = this.get_interline(
-            attributes.size.y,
-            attributes.line_spacing,
+        // An int in FONT::getLinePositions, so truncated
+        const interline = Math.trunc(
+            this.get_interline(attributes.size.y, attributes.line_spacing),
         );
         let height = 0;
 
