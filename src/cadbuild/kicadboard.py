@@ -30,7 +30,10 @@ slabs' walls are dropped; mask and silkscreen are flat already. Each layer's
 coincident vertices are then merged. The board's edge cuts the copper as
 milling cuts a board (`_on_board`): what KiCad draws past the outline or in a
 cut-out of it -- a pad in the air, the ring of a hole the edge goes through --
-is dropped, cut along the edge where it crosses it; a drill is no edge. The
+is dropped, cut along the edge where it crosses it; a drill is no edge. Of a
+plated hole's barrel, a tube KiCad draws through the laminate, the copper
+keeps the inner face, where the hole is open in the laminate (`_walls`), cut
+along the edge too, so a half-hole keeps the half on the board. The
 parts are kept as KiCad tessellated them, each CAD face with its own
 vertices, grouped into one mesh a colour on 16 levels a channel
 (`_quantised`), their colours turned from the linear light the GLB carries
@@ -92,6 +95,11 @@ EDGE_DEFLECTION = 1e-3
 EDGE_CELL = 0.5
 # How far off a line, in mm, a point of the cut is still on it.
 EDGE_EPS = 1e-9
+# How far in front of a barrel's wall and behind it, in mm, `_walls` looks
+# for the hole and for the laminate: past the plating (KiCad's is 25 um) and
+# the laminate's hole wall as the edge follows it (an arc's chords at most
+# EDGE_DEFLECTION inside it), and short of the far wall of a 0.1 mm drill.
+WALL_FRONT = 0.05
 # How many points or triangles near the edge are taken at once, sorted by y,
 # against the segments of the edge their band reaches (`_within`,
 # `_on_board`): the whole edge against each would cost seconds on a board of
@@ -243,7 +251,7 @@ def load(path):
         (Path(scratch) / "board.step").write_bytes(step)
         laminate = cq.importers.importStep(str(Path(scratch) / "board.step")).val()
     thickness = laminate.BoundingBox().zlen
-    meshes, bounds = _scene(glb, thickness)
+    meshes, bounds, through = _scene(glb, thickness)
     tree = _sexpr(source.read_text(encoding="utf-8", errors="replace"))
     footprints, filled, holes = {}, [], []
     for found in _footprints(tree):
@@ -256,7 +264,11 @@ def load(path):
             bounds=bounds.get(found["reference"]), **found))
     if "copper" in meshes:
         *copper, color = meshes["copper"]
-        meshes["copper"] = (*_on_board(*copper, _edge(laminate, thickness, holes)), color)
+        walls = _walls(*through, _edge(laminate, thickness, filled))
+        # Joined, not merged: where a wall meets a pad's face, each keeps its
+        # own vertices and normals, and the edge between them stays sharp.
+        meshes["copper"] = (*_joined([_on_board(*copper, _edge(laminate, thickness, holes)),
+                                      walls]), color)
     laminate = _laminate(laminate, thickness, filled)
     exported = ("GLB and STEP from this build's cache"
                 if glb_seconds is None and step_seconds is None else
@@ -565,10 +577,92 @@ def _within(points, edge):
     return inside
 
 
+def _walls(vertices, faces, normals, laminate):
+    """The walls of the plated holes a viewer sees, out of the pads' and
+    vias' faces that run through the laminate (`_scene`), merged.
+
+    KiCad draws a barrel as a tube: its outer face on the laminate's hole
+    wall, its inner face the plating's thickness inside it. A point of a
+    wall is kept where the hole is open just in front of it and the laminate
+    is just behind it (`WALL_FRONT` each way, along the normal its turn
+    gives), `laminate` being the edge of the laminate the build keeps. So
+    the inner face of a hole that laminate keeps open is kept; the outer
+    face, which would show through the laminate's own hole wall, is not, nor
+    a via's or that of a drill a fitted part fills, holes it does not have.
+    Of a half-hole's inner face the half on the board is kept, cut where the
+    laminate behind it ends; of a slot KiCad draws as overlapping drills,
+    each barrel's arcs along the slot's wall, not those across its opening.
+
+    A wall is vertical, and is cut in its own plane: along its chord, the
+    line it stands on, and up. A triangle goes as the ends of its chord do;
+    one whose ends differ is split where the chord, moved in front of it and
+    behind it, crosses the edge, and each piece goes as the end it holds."""
+    import numpy as np
+
+    def kept(points, out):
+        return (~_within(points + WALL_FRONT * out, laminate)
+                & _within(points - WALL_FRONT * out, laminate))
+
+    corners = vertices[faces]
+    out = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])[:, :2]
+    out /= np.linalg.norm(out, axis=1)[:, None]
+    along = np.column_stack([-out[:, 1], out[:, 0]])
+    s = (corners[:, :, :2] * along[:, None]).sum(axis=2)
+    s -= s.min(axis=1)[:, None]
+    length = s.max(axis=1)
+    start = corners[np.arange(len(faces)), s.argmin(axis=1), :2]
+    ends = kept(np.vstack([start, start + along * length[:, None]]),
+                np.vstack([out, out])).reshape(2, -1)
+    crossed = np.flatnonzero(ends[0] != ends[1])
+
+    pieces, owners, held = [], [], []
+    p, d = laminate[:, :2], laminate[:, 2:] - laminate[:, :2]
+    for row in crossed:
+        # Where the chord moved each way, a + t * along, meets a segment of
+        # the edge, p + v * d.
+        w = p - (start[row] + np.multiply.outer((WALL_FRONT, -WALL_FRONT), out[row]))[:, None]
+        u = along[row]
+        turn = u[0] * d[:, 1] - u[1] * d[:, 0]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = (w[..., 0] * d[:, 1] - w[..., 1] * d[:, 0]) / turn
+            v = (w[..., 0] * u[1] - w[..., 1] * u[0]) / turn
+        meets = ((np.abs(turn) > EDGE_EPS) & (v >= -EDGE_EPS) & (v <= 1 + EDGE_EPS)
+                 & (t > EDGE_EPS) & (t < length[row] - EDGE_EPS))
+        # The triangle in its plane, (t, z) a corner, split at each crossing.
+        split = [list(zip(s[row].tolist(), corners[row, :, 2].tolist()))]
+        for at in sorted(t[meets]):
+            split = [half for piece in split
+                     for half in (_halves(piece, [a - at for a, _ in piece])[:2]
+                                  if min(a for a, _ in piece) < at < max(a for a, _ in piece)
+                                  else [piece])]
+        for piece in split:
+            low, high = min(a for a, _ in piece), max(a for a, _ in piece)
+            first, last = low <= EDGE_EPS, high >= length[row] - EDGE_EPS
+            held.append(ends[0, row] if first and not last else ends[1, row] if last and not first
+                        else kept((start[row] + u * (low + high) / 2)[None], out[row])[0])
+            pieces.append([(*(start[row] + u * a), z) for a, z in piece])
+            owners.append(row)
+    new_vertices, new_faces, new_normals = [], [], []
+    begin = len(vertices)
+    for piece, row, keep in zip(pieces, owners, held):
+        if not keep:
+            continue
+        new_vertices += piece
+        new_normals += [normals[faces[row, 0]]] * len(piece)
+        new_faces += [(begin, begin + i, begin + i + 1) for i in range(1, len(piece) - 1)]
+        begin += len(piece)
+    return _merged(np.vstack([vertices, np.array(new_vertices).reshape(-1, 3)]),
+                   np.vstack([faces[ends[0] & ends[1]],
+                              np.array(new_faces, dtype=np.int64).reshape(-1, 3)]),
+                   np.vstack([normals, np.array(new_normals).reshape(-1, 3)]))
+
+
 def _scene(glb, thickness):
     """The GLB's parts and layers in the board frame.
 
-    -> ({name: (vertices, faces, normals, "#rrggbb")}, {reference: bounds}).
+    -> ({name: (vertices, faces, normals, "#rrggbb")}, {reference: bounds},
+    the copper's faces that run through the laminate (`_through`) or None
+    when the GLB has no copper).
     A layer's colour is its material's as KiCad wrote it, which is what its
     own 3D viewer shows; a part's is its material's turned from linear light
     to sRGB (`_srgb`) and put on `COLOR_LEVELS`, so the parts of
@@ -641,19 +735,21 @@ def _scene(glb, thickness):
             extent[top] = (low, high)
     meshes = {record: (*_joined(found), colors[record])
               for record, found in parts.items()}
-    joined, kinds = {}, {}
+    joined, kinds, through = {}, {}, []
     for kind, found in layers.items():
         record = LAYER_RECORDS[kind]
         piece = _joined(found)
-        joined.setdefault(record, []).append(
-            _outer(*piece, thickness) if kind in SLAB_KINDS else piece)
+        if kind in SLAB_KINDS:
+            through.append(_through(*piece, thickness))
+            piece = _outer(*piece, thickness)
+        joined.setdefault(record, []).append(piece)
         kinds.setdefault(record, []).append(kind)
     for record, found in joined.items():
         color = colors.get(RECORD_COLOR_KIND[record], colors[kinds[record][0]])
         meshes[record] = (*_merged(*_joined(found)), color)
     bounds = {reference: tuple(float(c) for c in (*low, *high))
               for reference, (low, high) in extent.items()}
-    return meshes, bounds
+    return meshes, bounds, _merged(*_joined(through)) if through else None
 
 
 def _srgb(color):
@@ -701,9 +797,18 @@ def _outer(vertices, faces, normals, thickness):
     return vertices, faces[keep], normals
 
 
+def _through(vertices, faces, normals, thickness):
+    """A slab layer cut to the faces that run through the laminate, from
+    under its bottom face to over its top: the barrels KiCad draws in the
+    pads' and vias' meshes (`_walls`). A slab's own walls stay on one side."""
+    z = vertices[faces][:, :, 2]
+    through = (z.min(axis=1) < -FACE_TOL) & (z.max(axis=1) > thickness + FACE_TOL)
+    return vertices, faces[through], normals
+
+
 def _merged(vertices, faces, normals):
-    """A flat layer with its coincident vertices made one, on `MERGE_GRID`,
-    and no vertex no face uses; a face merged to a line is dropped."""
+    """A layer with its coincident vertices made one, on `MERGE_GRID`, and
+    no vertex no face uses; a face merged to a line is dropped."""
     import numpy as np
 
     used = faces.reshape(-1)
