@@ -297,11 +297,15 @@ def test_the_layers_are_their_outer_faces_merged(loaded):
         z = mesh.vertices[:, 2]
         assert not ((z > -1e-3) & (z < board.thickness + 1e-3)).any(), key
         assert z.min() < 0 and z.max() > board.thickness, key
-        # Flat: a face's three corners at one height, so no wall is left.
-        assert np.ptp(z[mesh.faces], axis=1).max() < 1e-6, key
-        grid = np.round(mesh.vertices / kicadboard.MERGE_GRID)
+        # Flat: a face's three corners at one height, so no slab's wall is
+        # left; what is not flat is a barrel's wall, through the laminate
+        # (`test_an_open_plated_hole_shows_the_inner_face_of_its_barrel`).
+        flat = np.ptp(z[mesh.faces], axis=1) < 1e-6
+        assert (np.ptp(z[mesh.faces[~flat]], axis=1) > board.thickness).all(), key
+        assert flat.all() or key == "amp_copper", key
+        grid = np.round(mesh.vertices[np.unique(mesh.faces[flat])] / kicadboard.MERGE_GRID)
         assert len(np.unique(grid, axis=0)) == len(grid), key
-        assert len(np.unique(mesh.faces)) == len(grid), key
+        assert len(np.unique(mesh.faces)) == len(mesh.vertices), key
     # The copper's outer faces: 35 um out on both sides, the pads' 40 um.
     assert sorted(set(np.round(records["amp_copper"]["mesh"].vertices[:, 2], 3))) == (
         pytest.approx([-0.04, -0.035, board.thickness + 0.035, board.thickness + 0.04]))
@@ -423,6 +427,29 @@ def test_copper_all_on_the_board_is_the_very_record(edge):
     assert all(a is b for a, b in zip(kicadboard._on_board(*record, edge), record))
 
 
+def _load_over(laminate, tmp_path, monkeypatch):
+    """The fixture board loaded with `laminate` (a cadquery Workplane) as the
+    sidecar's STEP, its GLB as KiCad wrote it."""
+    import cadquery as cq
+
+    step = tmp_path / "laminate.step"
+    cq.exporters.export(laminate, str(step))
+    root = tmp_path / "project"
+    (root / "kicad").mkdir(parents=True)
+    shutil.copyfile(BOARD, root / PATH)
+    # The stub reads `FIXTURES / answer`, and an absolute answer is that file.
+    answers = {("glb", kicadboard.GLB_FLAGS): "board.glb",
+               ("step", kicadboard.STEP_FLAGS): str(step)}
+    with KicadStub(answers) as stub:
+        monkeypatch.setenv(URL_ENV, stub.url)
+        paths.set_project_root(root)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kicadboard.load(PATH)
+        finally:
+            paths.set_project_root(None)
+
+
 def test_load_cuts_the_copper_at_the_laminate_s_edge(loaded, tmp_path, monkeypatch):
     """`load` cuts the copper at the edge of the laminate the sidecar hands
     it: the fixture's GLB over a laminate half its length, x 100..120, keeps
@@ -431,23 +458,8 @@ def test_load_cuts_the_copper_at_the_laminate_s_edge(loaded, tmp_path, monkeypat
     import cadquery as cq
 
     whole, _, _ = loaded
-    half = tmp_path / "half.step"
-    cq.exporters.export(cq.Workplane().box(20, 15, whole.thickness, centered=False)
-                        .translate((100, -115, 0)), str(half))
-    root = tmp_path / "project"
-    (root / "kicad").mkdir(parents=True)
-    shutil.copyfile(BOARD, root / PATH)
-    # The stub reads `FIXTURES / answer`, and an absolute answer is that file.
-    answers = {("glb", kicadboard.GLB_FLAGS): "board.glb",
-               ("step", kicadboard.STEP_FLAGS): str(half)}
-    with KicadStub(answers) as stub:
-        monkeypatch.setenv(URL_ENV, stub.url)
-        paths.set_project_root(root)
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                board = kicadboard.load(PATH)
-        finally:
-            paths.set_project_root(None)
+    board = _load_over(cq.Workplane().box(20, 15, whole.thickness, centered=False)
+                       .translate((100, -115, 0)), tmp_path, monkeypatch)
 
     def short(record):
         corners = record[0][record[1]]
@@ -456,6 +468,124 @@ def test_load_cuts_the_copper_at_the_laminate_s_edge(loaded, tmp_path, monkeypat
     assert board.meshes["copper"][0][:, 0].max() <= 120 + kicadboard.MERGE_GRID
     assert short(board.meshes["copper"]) == short(whole.meshes["copper"])
     assert short(whole.meshes["copper"])
+
+
+# The fixture's open plated holes, (x, y, drill): J2's (a DNP header) and H2's
+# (a mounting hole with no model). KiCad's plating is 25 um, and it draws a
+# barrel in 24 facets of two triangles.
+OPEN_HOLES = [(133, -110, 1.0), (133, -112.54, 1.0), (137.5, -104, 2.2)]
+PLATING, BARREL = 0.025, 48
+
+
+def _walls(record):
+    """A copper record's barrel walls, its faces that are not flat: (their
+    corners, n x 3 x 3, the vertex normals at those)."""
+    import numpy as np
+
+    vertices, faces, normals, _ = record
+    corners = vertices[faces]
+    wall = np.ptp(corners[:, :, 2], axis=1) > 1e-6
+    return corners[wall], normals[faces[wall]]
+
+
+def test_an_open_plated_hole_shows_the_inner_face_of_its_barrel(loaded):
+    """Of a barrel KiCad draws as a tube, its outer face on the laminate's
+    hole wall and its inner face the plating inside it, the copper keeps the
+    inner face of each hole the laminate keeps open: through the board from
+    the pads' faces under it to those over it, turned and lit toward the
+    hole's axis, which is the side it is seen from."""
+    import numpy as np
+
+    board, _, _ = loaded
+    corners, normals = _walls(board.meshes["copper"])
+    for x, y, drill in OPEN_HOLES:
+        near = np.hypot(*(corners[:, :, :2].mean(axis=1) - (x, y)).T) < drill
+        wall = corners[near]
+        assert len(wall) == BARREL, (x, y)
+        assert np.hypot(wall[..., 0] - x, wall[..., 1] - y) == pytest.approx(
+            drill / 2 - PLATING, abs=1e-4)
+        assert sorted(set(np.round(wall[..., 2].ravel(), 3))) == pytest.approx(
+            [-0.04, board.thickness + 0.04])
+        axis = (x, y) - wall[..., :2]
+        turn = np.cross(wall[:, 1] - wall[:, 0], wall[:, 2] - wall[:, 0])[:, :2]
+        assert ((turn * axis.mean(axis=1)).sum(axis=1) > 0).all(), (x, y)
+        assert ((normals[near][..., :2] * axis).sum(axis=2) > 0).all(), (x, y)
+
+
+def test_a_filled_drill_a_via_and_an_unplated_hole_show_no_barrel(loaded):
+    """KiCad draws the barrels of J1's drills, which its pin header fills and
+    the laminate closes, and of the via, which the board-only STEP has no
+    hole for; the copper keeps no wall of theirs, nor the outer face of an
+    open hole's. H1's unplated hole has no barrel to begin with."""
+    import numpy as np
+
+    board, _, _ = loaded
+    _, _, through = kicadboard._scene((FIXTURES / "board.glb").read_bytes(), board.thickness)
+    drawn = through[0][through[1]][:, :, :2].mean(axis=1)
+    kept = _walls(board.meshes["copper"])[0][:, :, :2].mean(axis=1)
+    for (x, y), barrel in (((133, -104), True), ((133, -106.54), True), ((114, -106), True),
+                           ((105, -111), False)):
+        assert (np.hypot(*(drawn - (x, y)).T) < 2).any() == barrel, (x, y)
+        assert not (np.hypot(*(kept - (x, y)).T) < 2).any(), (x, y)
+    assert len(drawn) == 6 * 2 * BARREL
+    assert len(kept) == len(OPEN_HOLES) * BARREL
+
+
+def test_a_half_hole_keeps_the_half_of_its_barrel_on_the_board(loaded, tmp_path, monkeypatch):
+    """A board milled through H2's plated hole: the fixture's GLB, its barrel
+    whole, over a laminate that ends at x = 137.7, 0.2 mm past the hole's
+    centre, the hole a notch in that edge. The inner face's part on the
+    board stays, cut where the laminate behind it ends, within WALL_FRONT of
+    the edge; the part past the edge goes."""
+    import cadquery as cq
+    import numpy as np
+
+    whole, _, _ = loaded
+    edge, (x, y, drill) = 137.7, OPEN_HOLES[2]
+    board = _load_over(
+        cq.Workplane().box(edge - 100, 15, whole.thickness, centered=False)
+        .translate((100, -115, 0))
+        .cut(cq.Workplane().cylinder(whole.thickness, drill / 2, centered=(True, True, False))
+             .translate((x, y, 0))), tmp_path, monkeypatch)
+    wall, _ = _walls(board.meshes["copper"])
+    radius = np.hypot(wall[..., 0] - x, wall[..., 1] - y)
+    assert len(wall) and (radius < drill / 2 - PLATING / 2).all()
+    inner = drill / 2 - PLATING
+    assert wall[..., 0].min() == pytest.approx(x - inner, abs=1e-4)
+    assert edge - kicadboard.WALL_FRONT < wall[..., 0].max() <= edge
+    # Cut, not only dropped: the pieces of the triangles the edge crosses
+    # have corners on their chords, between the facets' and the pads' rows.
+    assert (radius >= inner * np.cos(np.pi / 24) - 1e-4).all()
+    assert (radius < inner - 1e-3).any()
+    z = wall[..., 2]
+    assert ((z > -0.04 + 1e-3) & (z < whole.thickness + 0.04 - 1e-3)).any()
+    # The edge cuts the pad's copper at the hole's wall, and the plating is
+    # closed at its ends: 10 um behind the top and the bottom edge of every
+    # kept wall, on the board's side, there is flat copper at that height.
+    vertices, faces, _, _ = board.meshes["copper"]
+    corners = vertices[faces]
+    for height in (whole.thickness + 0.04, -0.04):
+        flat = corners[(np.abs(corners[:, :, 2] - height) < 1e-6).all(axis=1)][:, :, :2]
+        behind = []
+        for face in wall:
+            at = np.abs(face[:, 2] - height) < 1e-6
+            if at.sum() == 2:
+                turn = np.cross(face[1] - face[0], face[2] - face[0])[:2]
+                behind.append(face[at, :2].mean(axis=0) - 0.01 * turn / np.linalg.norm(turn))
+        assert behind, height
+        for point in behind:
+            assert _over(flat, point).any(), (height, point)
+
+
+def _over(triangles, point):
+    """Which of `triangles` (n x 3 x 2) hold `point`, their edges included."""
+    import numpy as np
+
+    a, b, c = (triangles[:, i] for i in range(3))
+    side = np.stack([(q[:, 0] - p[:, 0]) * (point[1] - p[:, 1])
+                     - (q[:, 1] - p[:, 1]) * (point[0] - p[:, 0])
+                     for p, q in ((a, b), (b, c), (c, a))], axis=1)
+    return (side >= -1e-12).all(axis=1) | (side <= 1e-12).all(axis=1)
 
 
 def test_a_kicad_6_footprint_is_read_by_its_fp_text_reference():
