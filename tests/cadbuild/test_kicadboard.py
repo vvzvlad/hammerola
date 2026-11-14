@@ -559,6 +559,33 @@ def test_a_half_hole_keeps_the_half_of_its_barrel_on_the_board(loaded, tmp_path,
     assert (radius < inner - 1e-3).any()
     z = wall[..., 2]
     assert ((z > -0.04 + 1e-3) & (z < whole.thickness + 0.04 - 1e-3)).any()
+    # The edge cuts the pad's copper at the hole's wall, and the plating is
+    # closed at its ends: 10 um behind the top and the bottom edge of every
+    # kept wall, on the board's side, there is flat copper at that height.
+    vertices, faces, _, _ = board.meshes["copper"]
+    corners = vertices[faces]
+    for height in (whole.thickness + 0.04, -0.04):
+        flat = corners[(np.abs(corners[:, :, 2] - height) < 1e-6).all(axis=1)][:, :, :2]
+        behind = []
+        for face in wall:
+            at = np.abs(face[:, 2] - height) < 1e-6
+            if at.sum() == 2:
+                turn = np.cross(face[1] - face[0], face[2] - face[0])[:2]
+                behind.append(face[at, :2].mean(axis=0) - 0.01 * turn / np.linalg.norm(turn))
+        assert behind, height
+        for point in behind:
+            assert _over(flat, point).any(), (height, point)
+
+
+def _over(triangles, point):
+    """Which of `triangles` (n x 3 x 2) hold `point`, their edges included."""
+    import numpy as np
+
+    a, b, c = (triangles[:, i] for i in range(3))
+    side = np.stack([(q[:, 0] - p[:, 0]) * (point[1] - p[:, 1])
+                     - (q[:, 1] - p[:, 1]) * (point[0] - p[:, 0])
+                     for p, q in ((a, b), (b, c), (c, a))], axis=1)
+    return (side >= -1e-12).all(axis=1) | (side <= 1e-12).all(axis=1)
 
 
 def test_a_kicad_6_footprint_is_read_by_its_fp_text_reference():

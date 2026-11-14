@@ -98,8 +98,18 @@ EDGE_EPS = 1e-9
 # How far in front of a barrel's wall and behind it, in mm, `_walls` looks
 # for the hole and for the laminate: past the plating (KiCad's is 25 um) and
 # the laminate's hole wall as the edge follows it (an arc's chords at most
-# EDGE_DEFLECTION inside it), and short of the far wall of a 0.1 mm drill.
+# EDGE_DEFLECTION inside it), and short of the far wall of a 0.1 mm drill. A
+# piece of a wall that holds neither end of its chord is judged at its
+# middle, which on KiCad's barrel of 24 facets lies up to (R - 0.025)(1 -
+# cos 7.5 deg) inside the drill's arc: behind it the laminate is found for a
+# drill up to 5.9 mm.
 WALL_FRONT = 0.05
+# How wide, in mm, the flat strip is that closes a barrel's plating at its
+# top and bottom where the edge cuts the pad's copper at the hole's wall
+# (`_walls`): over the plating, 25 um, and the way a facet's chord lies
+# inside the drill's arc (WALL_FRONT), onto the pad's copper for a drill up
+# to 5.9 mm.
+WALL_RIM = 0.05
 # How many points or triangles near the edge are taken at once, sorted by y,
 # against the segments of the edge their band reaches (`_within`,
 # `_on_board`): the whole edge against each would cost seconds on a board of
@@ -264,11 +274,11 @@ def load(path):
             bounds=bounds.get(found["reference"]), **found))
     if "copper" in meshes:
         *copper, color = meshes["copper"]
-        walls = _walls(*through, _edge(laminate, thickness, filled))
+        edge = _edge(laminate, thickness, holes)
+        walls = _walls(*through, _edge(laminate, thickness, filled), edge)
         # Joined, not merged: where a wall meets a pad's face, each keeps its
         # own vertices and normals, and the edge between them stays sharp.
-        meshes["copper"] = (*_joined([_on_board(*copper, _edge(laminate, thickness, holes)),
-                                      walls]), color)
+        meshes["copper"] = (*_joined([_on_board(*copper, edge), walls]), color)
     laminate = _laminate(laminate, thickness, filled)
     exported = ("GLB and STEP from this build's cache"
                 if glb_seconds is None and step_seconds is None else
@@ -577,9 +587,10 @@ def _within(points, edge):
     return inside
 
 
-def _walls(vertices, faces, normals, laminate):
+def _walls(vertices, faces, normals, laminate, board):
     """The walls of the plated holes a viewer sees, out of the pads' and
-    vias' faces that run through the laminate (`_scene`), merged.
+    vias' faces that run through the laminate (`_scene`), merged, and the
+    strips that close their plating at its ends, merged apart.
 
     KiCad draws a barrel as a tube: its outer face on the laminate's hole
     wall, its inner face the plating's thickness inside it. A point of a
@@ -596,7 +607,19 @@ def _walls(vertices, faces, normals, laminate):
     A wall is vertical, and is cut in its own plane: along its chord, the
     line it stands on, and up. A triangle goes as the ends of its chord do;
     one whose ends differ is split where the chord, moved in front of it and
-    behind it, crosses the edge, and each piece goes as the end it holds."""
+    behind it, crosses the edge, and each piece goes as the end it holds.
+
+    Where `board`, the edge the pads' copper is cut along (`_on_board`),
+    runs round the hole -- one that is no single pad's drill: a slot of
+    overlapping drills, a half-hole's arc --, the pad's copper ends at the
+    hole's wall, the plating's thickness behind the kept face. There a flat
+    strip `WALL_RIM` wide runs behind each kept piece along its top and its
+    bottom edge, facing up and down: the end of the plating, which would
+    otherwise show as a gap. At an end of a facet's chord it runs back along
+    the barrel's normal there, the facets' summed, so the strips of
+    neighbouring facets meet, with no wedge between them; where a piece was
+    cut, along the facet's own, so it ends on the edge the piece was cut at
+    or short of it. Round a drill the pad's copper covers it."""
     import numpy as np
 
     def kept(points, out):
@@ -610,11 +633,34 @@ def _walls(vertices, faces, normals, laminate):
     s = (corners[:, :, :2] * along[:, None]).sum(axis=2)
     s -= s.min(axis=1)[:, None]
     length = s.max(axis=1)
-    start = corners[np.arange(len(faces)), s.argmin(axis=1), :2]
+    rows = np.arange(len(faces))
+    head, tail = faces[rows, s.argmin(axis=1)], faces[rows, s.argmax(axis=1)]
+    start = vertices[head, :2]
     ends = kept(np.vstack([start, start + along * length[:, None]]),
                 np.vstack([out, out])).reshape(2, -1)
     crossed = np.flatnonzero(ends[0] != ends[1])
+    # The barrel's normal at each column of its vertices, the sum of the
+    # facets' whose kept end is there, so that two facets meeting at a column
+    # agree on it and a face dropped there does not turn it: KiCad's own,
+    # where two barrels' faces share a vertex, is one barrel's.
+    _, columns = np.unique(np.round(vertices[:, :2] / MERGE_GRID).astype(np.int64), axis=0,
+                           return_inverse=True)
+    columns = columns.reshape(-1)
+    bend = np.zeros((columns.max(initial=-1) + 1, 2))
+    for end, at in zip(ends, (head, tail)):
+        np.add.at(bend, columns[at[end]], out[end])
+    bends = bend[columns[head]], bend[columns[tail]]
 
+    # The top and bottom edges of the kept pieces: (row, from, to, height, up).
+    rims = []
+    whole = np.flatnonzero(ends[0] & ends[1])
+    level = corners[whole, :, 2]
+    for height, up in ((level.max(axis=1), True), (level.min(axis=1), False)):
+        on = np.abs(level - height[:, None]) <= EDGE_EPS
+        pair = on.sum(axis=1) == 2
+        span = np.where(on, s[whole], np.nan)[pair]
+        rims += [(row, low, high, z, up) for row, low, high, z in zip(
+            whole[pair], np.nanmin(span, axis=1), np.nanmax(span, axis=1), height[pair])]
     pieces, owners, held = [], [], []
     p, d = laminate[:, :2], laminate[:, 2:] - laminate[:, :2]
     for row in crossed:
@@ -642,6 +688,11 @@ def _walls(vertices, faces, normals, laminate):
                         else kept((start[row] + u * (low + high) / 2)[None], out[row])[0])
             pieces.append([(*(start[row] + u * a), z) for a, z in piece])
             owners.append(row)
+            if held[-1]:
+                top, bottom = corners[row, :, 2].max(), corners[row, :, 2].min()
+                rims += [(row, min(a, b), max(a, b), z, z == top)
+                         for (a, z), (b, y) in zip(piece, piece[1:] + piece[:1])
+                         if z == y and a != b and z in (top, bottom)]
     new_vertices, new_faces, new_normals = [], [], []
     begin = len(vertices)
     for piece, row, keep in zip(pieces, owners, held):
@@ -651,10 +702,38 @@ def _walls(vertices, faces, normals, laminate):
         new_normals += [normals[faces[row, 0]]] * len(piece)
         new_faces += [(begin, begin + i, begin + i + 1) for i in range(1, len(piece) - 1)]
         begin += len(piece)
-    return _merged(np.vstack([vertices, np.array(new_vertices).reshape(-1, 3)]),
-                   np.vstack([faces[ends[0] & ends[1]],
-                              np.array(new_faces, dtype=np.int64).reshape(-1, 3)]),
-                   np.vstack([normals, np.array(new_normals).reshape(-1, 3)]))
+    walls = _merged(np.vstack([vertices, np.array(new_vertices).reshape(-1, 3)]),
+                    np.vstack([faces[whole], np.array(new_faces, dtype=np.int64).reshape(-1, 3)]),
+                    np.vstack([normals, np.array(new_normals).reshape(-1, 3)]))
+
+    # A strip only where the pad's copper is cut: where the hole in front of
+    # the rim's middle is off `board` too.
+    row, low, high, height, up = (np.array(column) for column in zip(*rims)) if rims else (
+        np.zeros(0, dtype=np.int64), *np.zeros((3, 0)), np.zeros(0, dtype=bool))
+    middle = start[row] + along[row] * ((low + high) / 2)[:, None]
+    need = ~_within(middle + WALL_FRONT * out[row], board)
+    row, low, high, height, up = row[need], low[need], high[need], height[need], up[need]
+
+    def rim(at):
+        """The point `at` along each rim's chord and the point behind it: at
+        an end of the chord along the barrel's normal there, which the facet
+        next to it shares; where the piece was cut, along the facet's own,
+        so on the edge it was cut at or short of it."""
+        toward = np.where((at <= EDGE_EPS)[:, None], bends[0][row],
+                          np.where((at >= length[row] - EDGE_EPS)[:, None], bends[1][row], out[row]))
+        toward = toward + EDGE_EPS * out[row]
+        point = start[row] + along[row] * at[:, None]
+        return point, point - WALL_RIM * toward / np.linalg.norm(toward, axis=1)[:, None]
+
+    (a, a_behind), (b, b_behind) = rim(low), rim(high)
+    # a, b and the points behind them turn counter-clockwise seen from above.
+    quad = np.stack([a, b, b_behind, a_behind], axis=1)
+    strips = np.concatenate([quad, np.repeat(height[:, None, None], 4, axis=1)], axis=2)
+    count = np.arange(len(row))[:, None] * 4
+    strip_faces = (np.where(up[:, None, None], [[0, 1, 2], [0, 2, 3]], [[0, 2, 1], [0, 3, 2]])
+                   + count[:, None])
+    return _joined([walls, _merged(strips.reshape(-1, 3), strip_faces.reshape(-1, 3),
+                                   np.repeat(np.where(up, 1.0, -1.0), 4)[:, None] * [0, 0, 1])])
 
 
 def _scene(glb, thickness):
