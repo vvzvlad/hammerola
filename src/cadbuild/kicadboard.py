@@ -27,10 +27,14 @@ The layers are kept as the faces a viewer sees and no more (`_outer`,
 `_merged`): KiCad writes copper, pads and vias as 35-40 um slabs whose inner
 faces lie ON the laminate's, coplanar with it, and those inner faces and the
 slabs' walls are dropped; mask and silkscreen are flat already. Each layer's
-coincident vertices are then merged. The parts are kept as KiCad tessellated
-them, each CAD face with its own vertices, grouped into one mesh a colour on
-16 levels a channel (`_quantised`), their colours turned from the linear light
-the GLB carries them in to sRGB first (`_srgb`); the layers' are sRGB already.
+coincident vertices are then merged. The board's edge cuts the copper as
+milling cuts a board (`_on_board`): what KiCad draws past the outline or in a
+cut-out of it -- a pad in the air, the ring of a hole the edge goes through --
+is dropped, cut along the edge where it crosses it; a drill is no edge. The
+parts are kept as KiCad tessellated them, each CAD face with its own
+vertices, grouped into one mesh a colour on 16 levels a channel
+(`_quantised`), their colours turned from the linear light the GLB carries
+them in to sRGB first (`_srgb`); the layers' are sRGB already.
 
 `footprints` is read from the `.kicad_pcb` itself, so it holds every footprint,
 those with no 3D model (a mounting hole) and DNP ones too; `bounds` is what says
@@ -79,6 +83,20 @@ MERGE_GRID = 1e-4
 # How near a laminate hole is to a pad's drill to be that drill, in mm: the
 # STEP and the board file give both to the micrometre.
 HOLE_TOL = 0.01
+# How closely the cut of the copper follows an arc of the board's edge, in mm
+# (`_edge`): its straight lines it follows exactly.
+EDGE_DEFLECTION = 1e-3
+# The side of a cell of the grid that tells the copper's triangles well inside
+# the board and well outside it from those near its edge, which alone are cut
+# (`_on_board`), in mm.
+EDGE_CELL = 0.5
+# How far off a line, in mm, a point of the cut is still on it.
+EDGE_EPS = 1e-9
+# How many points or triangles near the edge are taken at once, sorted by y,
+# against the segments of the edge their band reaches (`_within`,
+# `_on_board`): the whole edge against each would cost seconds on a board of
+# a few thousand segments.
+EDGE_CHUNK = 256
 # The parts are grouped by their sRGB colour on this many levels a channel:
 # KiCad's models come in near-identical colours, and exact colours would give
 # each a record of its own.
@@ -227,14 +245,18 @@ def load(path):
     thickness = laminate.BoundingBox().zlen
     meshes, bounds = _scene(glb, thickness)
     tree = _sexpr(source.read_text(encoding="utf-8", errors="replace"))
-    footprints, filled = {}, []
+    footprints, filled, holes = {}, [], []
     for found in _footprints(tree):
         drills = found.pop("drills")
+        holes += drills + found.pop("unplated")
         if bounds.get(found["reference"]) is not None:
             filled += drills
         footprints.setdefault(found["reference"], Footprint(
             location=_location(found, thickness),
             bounds=bounds.get(found["reference"]), **found))
+    if "copper" in meshes:
+        *copper, color = meshes["copper"]
+        meshes["copper"] = (*_on_board(*copper, _edge(laminate, thickness, holes)), color)
     laminate = _laminate(laminate, thickness, filled)
     exported = ("GLB and STEP from this build's cache"
                 if glb_seconds is None and step_seconds is None else
@@ -302,6 +324,245 @@ def _filled(wire, filled):
     box = wire.BoundingBox()
     return any(abs(box.center.x - x) < HOLE_TOL and abs(box.center.y - y) < HOLE_TOL
                and max(box.xlen, box.ylen) <= size + HOLE_TOL for x, y, size in filled)
+
+
+def _edge(step, thickness, drills):
+    """The board's edge in the board plane as straight segments, an (n, 4)
+    array of x0, y0, x1, y1: the outline and the cut-outs of the STEP's top
+    faces, an arc followed to `EDGE_DEFLECTION`. A hole that is one of the
+    pads' `drills` (`_filled`, plated or not) is no edge: the copper round a
+    drill stays as KiCad drew it. A drill the outline runs through, a plated
+    half-hole's or a mouse bite's, is the outline's own."""
+    import numpy as np
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.GCPnts import GCPnts_QuasiUniformDeflection
+    from OCP.TopExp import TopExp
+
+    segments = []
+    for face in step.Faces():
+        if face.geomType() != "PLANE" or abs(face.Center().z - thickness) > FACE_TOL:
+            continue
+        cut = [wire for wire in face.innerWires() if not _filled(wire, drills)]
+        for wire in (face.outerWire(), *cut):
+            for edge in wire.Edges():
+                points = GCPnts_QuasiUniformDeflection(BRepAdaptor_Curve(edge.wrapped),
+                                                       EDGE_DEFLECTION)
+                xy = [(points.Value(i).X(), points.Value(i).Y())
+                      for i in range(1, points.NbPoints() + 1)]
+                # The ends are the edge's vertices, which the next edge of the
+                # wire shares, so every ring closes exactly: the curve's own
+                # ends may miss them by OCCT's tolerance, and a gap there would
+                # miscount `_within` for a point level with it.
+                for at, vertex in ((0, TopExp.FirstVertex_s(edge.wrapped)),
+                                   (-1, TopExp.LastVertex_s(edge.wrapped))):
+                    point = BRep_Tool.Pnt_s(vertex)
+                    xy[at] = (point.X(), point.Y())
+                segments += [(*a, *b) for a, b in zip(xy, xy[1:])]
+    return np.array(segments, dtype=float).reshape(-1, 4)
+
+
+def _on_board(vertices, faces, normals, edge):
+    """The copper record (`_merged`'s) without what lies off the board, past
+    the outline or in a cut-out (`edge`, `_edge`): a triangle wholly off it
+    dropped, one the edge crosses cut along it, its pieces on the board kept
+    on the triangle's height, with its turn and its normal, and merged again.
+    The very arrays given when nothing lies off the board.
+
+    Only the triangles near the edge pay for the cut. A grid of `EDGE_CELL`
+    marks the cells the edge passes through and those around them; the other
+    cells fall into regions the edge bounds, each wholly on or off the board,
+    as one point of it is. A triangle whose box meets no marked cell lies in
+    one such region and is kept or dropped whole; of the rest, those a
+    segment of the edge meets are cut (`_cut`), the others go as their
+    centre does."""
+    import numpy as np
+    from scipy import ndimage
+
+    if not len(faces) or not len(edge):
+        return vertices, faces, normals
+    corners = vertices[:, :2][faces]
+    ends = edge.reshape(-1, 2)
+    low = np.minimum(corners.min(axis=(0, 1)), ends.min(axis=0)) - EDGE_CELL
+    high = np.maximum(corners.max(axis=(0, 1)), ends.max(axis=0)) + EDGE_CELL
+    size = tuple(np.ceil((high - low) / EDGE_CELL).astype(np.int64) + 1)
+
+    def cell(points):
+        return np.floor((points - low) / EDGE_CELL).astype(np.int64)
+
+    # The edge walked in steps no longer than a cell, so it passes through no
+    # cell but those of its steps and their neighbours.
+    steps = np.maximum(1, np.ceil(np.hypot(*(edge[:, 2:] - edge[:, :2]).T)
+                                  / EDGE_CELL)).astype(np.int64)
+    which = np.repeat(np.arange(len(edge)), steps + 1)
+    fraction = ((np.arange(len(which)) - np.repeat(np.cumsum(steps + 1) - steps - 1, steps + 1))
+                / np.repeat(steps, steps + 1))[:, None]
+    near = np.zeros(size, dtype=bool)
+    near[tuple(cell(edge[which, :2] + (edge[which, 2:] - edge[which, :2]) * fraction).T)] = True
+    near = ndimage.binary_dilation(near, np.ones((3, 3), dtype=bool))
+    regions, _ = ndimage.label(~near)
+    labels, first = np.unique(regions, return_index=True)
+    on = np.zeros(labels.max() + 1, dtype=bool)
+    on[labels] = _within(low + (np.column_stack(np.unravel_index(first, size)) + 0.5)
+                         * EDGE_CELL, edge)
+    lo, hi = cell(corners.min(axis=1)), cell(corners.max(axis=1)) + 1
+    table = np.zeros((size[0] + 1, size[1] + 1), dtype=np.int64)
+    table[1:, 1:] = near.cumsum(0).cumsum(1)
+    marked = (table[hi[:, 0], hi[:, 1]] - table[lo[:, 0], hi[:, 1]]
+              - table[hi[:, 0], lo[:, 1]] + table[lo[:, 0], lo[:, 1]])
+    keep = (marked == 0) & on[regions[lo[:, 0], lo[:, 1]]]
+
+    # Each triangle near the edge against the segments whose box meets its
+    # own, found a band of y at a time (`EDGE_CHUNK`). Those no segment meets
+    # (`_meets`) lie on one side of the edge, as their centre does; only the
+    # rest are cut.
+    candidates = np.flatnonzero(marked)
+    triangles = corners[candidates]
+    tri_low, tri_high = triangles.min(axis=1) - EDGE_EPS, triangles.max(axis=1) + EDGE_EPS
+    seg_low = np.minimum(edge[:, :2], edge[:, 2:])
+    seg_high = np.maximum(edge[:, :2], edge[:, 2:])
+    order = np.argsort(tri_low[:, 1], kind="stable")
+    pairs = [np.zeros((0, 2), dtype=np.int64)]
+    for start in range(0, len(order), EDGE_CHUNK):
+        chunk = order[start:start + EDGE_CHUNK]
+        reach = np.flatnonzero(np.all((seg_low <= tri_high[chunk].max(axis=0))
+                                      & (seg_high >= tri_low[chunk].min(axis=0)), axis=1))
+        hit = np.argwhere(np.all((seg_low[reach] <= tri_high[chunk, None])
+                                 & (seg_high[reach] >= tri_low[chunk, None]), axis=2))
+        pairs.append(np.column_stack([chunk[hit[:, 0]], reach[hit[:, 1]]]))
+    pairs = np.vstack(pairs)
+    pairs = pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
+    pairs = pairs[_meets(triangles[pairs[:, 0]], edge[pairs[:, 1]])]
+    crossed = np.zeros(len(candidates), dtype=bool)
+    crossed[pairs[:, 0]] = True
+    keep[candidates[~crossed]] = _within(triangles[~crossed].mean(axis=1), edge)
+
+    rows, firsts = np.unique(pairs[:, 0], return_index=True)
+    pieces, owners = [], []
+    for row, segments in zip(rows, np.split(pairs[:, 1], firsts[1:])):
+        split = _cut(triangles[row].tolist(), edge[segments].tolist())
+        pieces += split
+        owners += [row] * len(split)
+    owners = np.array(owners, dtype=np.int64)
+    inside = _within(np.array([[sum(c) / len(piece) for c in zip(*piece)]
+                               for piece in pieces]).reshape(-1, 2), edge)
+    # A triangle all of whose pieces are on the board is kept whole, one with
+    # none dropped, and one with some gives way to those.
+    count = np.bincount(owners, minlength=len(candidates))
+    held = np.bincount(owners, weights=inside, minlength=len(candidates))
+    keep[candidates[(count > 0) & (held == count)]] = True
+    if keep.all():
+        return vertices, faces, normals
+    new_vertices, new_faces, new_normals = [], [], []
+    start = len(vertices)
+    for piece, row, kept in zip(pieces, owners, inside):
+        if not kept or held[row] == count[row]:
+            continue
+        corner = faces[candidates[row], 0]
+        new_vertices += [(x, y, vertices[corner, 2]) for x, y in piece]
+        new_normals += [normals[corner]] * len(piece)
+        new_faces += [(start, start + i, start + i + 1) for i in range(1, len(piece) - 1)]
+        start += len(piece)
+    return _merged(np.vstack([vertices, np.array(new_vertices).reshape(-1, 3)]),
+                   np.vstack([faces[keep], np.array(new_faces, dtype=np.int64).reshape(-1, 3)]),
+                   np.vstack([normals, np.array(new_normals).reshape(-1, 3)]))
+
+
+def _cut(triangle, segments):
+    """`triangle` ([x, y] three times) in convex pieces no segment of the
+    edge ([x0, y0, x1, y1] each) crosses, so each lies wholly on the board or
+    off it: a piece is split along the line of every segment that runs
+    through its inside. The pieces keep the triangle's turn; it comes back
+    alone when no segment crosses it. In plain floats: a triangle and its few
+    segments are too small for numpy's per-call cost to pay."""
+    pieces = [triangle]
+    for x0, y0, x1, y1 in segments:
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length <= EDGE_EPS:
+            continue
+        ax, ay = (x1 - x0) / length, (y1 - y0) / length
+        out = []
+        for piece in pieces:
+            side = [(y - y0) * ax - (x - x0) * ay for x, y in piece]
+            if min(side) > -EDGE_EPS or max(side) < EDGE_EPS:
+                out.append(piece)
+                continue
+            # Split only if the segment itself runs where the line goes
+            # through the piece: its chord, along the segment.
+            left, right, line = _halves(piece, side)
+            chord = [(x - x0) * ax + (y - y0) * ay for x, y in line]
+            if min(max(chord), length) - max(min(chord), 0.0) <= EDGE_EPS:
+                out.append(piece)
+            else:
+                out += [left, right]
+        pieces = out
+    return pieces
+
+
+def _meets(triangles, segments):
+    """Which of `segments` (n x 4) meet their `triangles` (n x 3 x 2), give
+    or take EDGE_EPS: corners of the triangle on both sides of the segment's
+    line, and no edge of the triangle with both ends of the segment beyond
+    it. A segment that does not meet a triangle runs through no piece of it
+    (`_cut`)."""
+    import numpy as np
+
+    starts, ends = segments[:, :2], segments[:, 2:]
+    along = ends - starts
+    across = (np.column_stack([-along[:, 1], along[:, 0]])
+              / np.maximum(np.hypot(*along.T), EDGE_EPS)[:, None])
+    side = ((triangles - starts[:, None]) * across[:, None]).sum(axis=2)
+    meets = (side.min(axis=1) <= -EDGE_EPS) & (side.max(axis=1) >= EDGE_EPS)
+    turned = np.roll(triangles, -1, axis=1) - triangles
+    inner = np.stack([-turned[..., 1], turned[..., 0]], axis=2)
+    inner *= np.sign(((np.roll(triangles, 1, axis=1) - triangles) * inner).sum(axis=2))[..., None]
+    margin = -EDGE_EPS * np.hypot(inner[..., 0], inner[..., 1])
+    beyond = [((end[:, None] - triangles) * inner).sum(axis=2) < margin for end in (starts, ends)]
+    return meets & ~(beyond[0] & beyond[1]).any(axis=1)
+
+
+def _halves(piece, side):
+    """The convex `piece` split by a line it crosses, `side` each corner's
+    signed distance from it: (the half on the left, the half on the right,
+    the points on the line), the halves in the piece's turn, each with the
+    points on the line. A corner within EDGE_EPS of the line is on it."""
+    left, right, line = [], [], []
+    for (x, y), here, (u, v), there in zip(piece, side, piece[1:] + piece[:1],
+                                           side[1:] + side[:1]):
+        if here >= -EDGE_EPS:
+            left.append((x, y))
+        if here <= EDGE_EPS:
+            right.append((x, y))
+        if abs(here) <= EDGE_EPS:
+            line.append((x, y))
+        elif here * there < 0 and abs(there) > EDGE_EPS:
+            t = here / (here - there)
+            crossing = (x + (u - x) * t, y + (v - y) * t)
+            left.append(crossing)
+            right.append(crossing)
+            line.append(crossing)
+    return left, right, line
+
+
+def _within(points, edge):
+    """Which of `points` (n x 2) lie on the board: inside an odd number of
+    the edge's rings, the outline's and the cut-outs', so crossing an odd
+    number of its segments on the way to +x. Taken a band of y at a time
+    (`EDGE_CHUNK`), against the segments that reach the band."""
+    import numpy as np
+
+    inside = np.zeros(len(points), dtype=bool)
+    order = np.argsort(points[:, 1], kind="stable")
+    low, high = np.minimum(edge[:, 1], edge[:, 3]), np.maximum(edge[:, 1], edge[:, 3])
+    for start in range(0, len(order), EDGE_CHUNK):
+        rows = order[start:start + EDGE_CHUNK]
+        x, y = points[rows, :1], points[rows, 1:]
+        x0, y0, x1, y1 = edge[(high >= y.min()) & (low <= y.max())].T
+        crosses = (y0 > y) != (y1 > y)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            at = x0 + (y - y0) * (x1 - x0) / (y1 - y0)
+        inside[rows] = (crosses & (x < at)).sum(axis=1) % 2 == 1
+    return inside
 
 
 def _scene(glb, thickness):
@@ -542,8 +803,9 @@ def _children(node, name):
 def _footprints(tree):
     """Each footprint of a parsed board as the fields of a `Footprint`, minus
     `location` and `bounds`, plus `drills`, its plated holes as (x, y, the
-    drill's larger size) in the board frame; the reference is the `Reference`
-    property, or the `fp_text reference` of a KiCad 6/7 file."""
+    drill's larger size) in the board frame, and `unplated`, its unplated ones
+    alike; the reference is the `Reference` property, or the `fp_text
+    reference` of a KiCad 6/7 file."""
     for node in _children(tree, "footprint"):
         at = _children(node, "at")[0]
         x, y = float(at[1]), float(at[2])
@@ -555,7 +817,7 @@ def _footprints(tree):
                         if item[1] == "reference"])[0]
         # A pad's offset is in the footprint's unturned frame, KiCad's y down.
         cos, sin = math.cos(math.radians(angle)), math.sin(math.radians(angle))
-        pads, drills = {}, []
+        pads, drills, unplated = {}, [], []
         for pad in _children(node, "pad"):
             local = _children(pad, "at")[0]
             px, py = float(local[1]), float(local[2])
@@ -563,10 +825,11 @@ def _footprints(tree):
             centre = (x + px * cos + py * sin, -(y - px * sin + py * cos))
             pads.setdefault(pad[1], Pad(*centre, (net[0][-1] or None) if net else None))
             drill = _children(pad, "drill")
-            if pad[2] == "thru_hole" and drill:
+            if pad[2] in ("thru_hole", "np_thru_hole") and drill:
                 # `(drill 1)` or `(drill oval 1.2 2)`, and maybe an `(offset ...)`.
-                drills.append((*centre, max(float(atom) for atom in drill[0][1:]
-                                            if isinstance(atom, str) and atom != "oval")))
+                (drills if pad[2] == "thru_hole" else unplated).append(
+                    (*centre, max(float(atom) for atom in drill[0][1:]
+                                  if isinstance(atom, str) and atom != "oval")))
         yield {"reference": reference, "x": x, "y": -y, "angle": angle,
                "side": "B" if layer.startswith("B.") else "F", "pads": pads,
-               "drills": drills}
+               "drills": drills, "unplated": unplated}
