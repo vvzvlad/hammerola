@@ -423,6 +423,41 @@ def test_copper_all_on_the_board_is_the_very_record(edge):
     assert all(a is b for a, b in zip(kicadboard._on_board(*record, edge), record))
 
 
+def test_load_cuts_the_copper_at_the_laminate_s_edge(loaded, tmp_path, monkeypatch):
+    """`load` cuts the copper at the edge of the laminate the sidecar hands
+    it: the fixture's GLB over a laminate half its length, x 100..120, keeps
+    no copper past x = 120, and every triangle short of it as the whole
+    board's record has it."""
+    import cadquery as cq
+
+    whole, _, _ = loaded
+    half = tmp_path / "half.step"
+    cq.exporters.export(cq.Workplane().box(20, 15, whole.thickness, centered=False)
+                        .translate((100, -115, 0)), str(half))
+    root = tmp_path / "project"
+    (root / "kicad").mkdir(parents=True)
+    shutil.copyfile(BOARD, root / PATH)
+    # The stub reads `FIXTURES / answer`, and an absolute answer is that file.
+    answers = {("glb", kicadboard.GLB_FLAGS): "board.glb",
+               ("step", kicadboard.STEP_FLAGS): str(half)}
+    with KicadStub(answers) as stub:
+        monkeypatch.setenv(URL_ENV, stub.url)
+        paths.set_project_root(root)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                board = kicadboard.load(PATH)
+        finally:
+            paths.set_project_root(None)
+
+    def short(record):
+        corners = record[0][record[1]]
+        return {row.tobytes() for row in corners[(corners[:, :, 0] < 119).all(axis=1)]}
+    assert whole.meshes["copper"][0][:, 0].max() > 121
+    assert board.meshes["copper"][0][:, 0].max() <= 120 + kicadboard.MERGE_GRID
+    assert short(board.meshes["copper"]) == short(whole.meshes["copper"])
+    assert short(whole.meshes["copper"])
+
+
 def test_a_kicad_6_footprint_is_read_by_its_fp_text_reference():
     tree = kicadboard._sexpr(
         '(kicad_pcb (footprint "R" (layer "B.Cu") (at 1 2)'

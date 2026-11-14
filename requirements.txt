@@ -150,10 +150,12 @@ trimesh==4.12.2
 
 # `from scipy.spatial import cKDTree` in src/cadbuild/checklib.py — the tree over facet centres
 # that `checklib.deviation` searches, and the whole reason a scan of 200 000 points is measured
-# against a model in seconds rather than in hours. NAMED HERE THOUGH IT ARRIVES TRANSITIVELY,
-# which is the rule at the top of this file and the same case as pydantic above: requirements.lock
-# records it `# via cadquery`, so the day a cadquery release stops wanting scipy, what breaks is a
-# deviation map in a build of a model nobody touched.
+# against a model in seconds rather than in hours. And `scipy.ndimage` in `kicadboard._on_board`,
+# the grid that tells a board's copper far from its edge from the copper the edge cuts: without
+# it every build of a model that loads a KiCad board fails. NAMED HERE THOUGH IT ARRIVES
+# TRANSITIVELY, which is the rule at the top of this file and the same case as pydantic above:
+# requirements.lock records it `# via cadquery`, so the day a cadquery release stops wanting
+# scipy, what breaks is a deviation map or a board in a build of a model nobody touched.
 scipy==1.17.1
 
 # --- The preview picture -----------------------------------------------------------------------
