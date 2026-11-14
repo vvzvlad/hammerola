@@ -678,6 +678,16 @@ describe('the board\'s copper in the 3D view', () => {
     expect(view.props.onSelect.mock.calls).toEqual([[null], [null]])
   })
 
+  it('takes no click on copper past the board\'s edge, which it does not draw', async () => {
+    // F.Cu from 40 to 55 mm across a body that ends at 50
+    const past = { ...COPPER, layers: [{ ...COPPER.layers[0], triangles: new Float32Array([40, 10, 55, 10, 55, 30, 40, 10, 55, 30, 40, 30]) }] }
+    const { view, canvas } = await loaded({ copper: () => past, onNet: vi.fn() })
+    clickAt(canvas, onCanvas(view, new THREE.Vector3(0.045, 0.001545, 0.02)))
+    expect(view.props.onNet.mock.calls).toEqual([['A']])
+    clickAt(canvas, onCanvas(view, new THREE.Vector3(0.0525, 0.001545, 0.02)))
+    expect(view.props.onNet).toHaveBeenCalledTimes(1)
+  })
+
   it('hides the .glb\'s copper once the board hands over ours, which it builds once', async () => {
     let handed = null
     const copper = vi.fn(() => handed)

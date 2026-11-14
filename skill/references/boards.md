@@ -117,7 +117,9 @@ def parts():
   something may pass through: NPTH holes, Edge.Cuts cut-outs, and the plated holes of
   footprints with no fitted part (mounting holes, DNP parts); the holes of fitted
   through-hole parts are filled, their leads are in them — `<prefix>_mask`, `<prefix>_copper` and `<prefix>_silk`, the board's surface
-  as KiCad renders it, and `<prefix>_parts_<rrggbb>`, the fitted parts as meshes merged
+  as KiCad renders it, except that the copper past the board's edge and in its cut-outs
+  is cut away, as milling cuts it (a pad off the board goes, a ring on the edge keeps its
+  half on the board; the copper round a drill stays), and `<prefix>_parts_<rrggbb>`, the fitted parts as meshes merged
   by colour rounded to 16 levels a channel (the key names the rounded colour); these are
   kind `mock`, which no gate sees. Everything is already moved by `at`, and a view
   cannot move it again (a mesh refuses `at`): to show the board elsewhere, move the

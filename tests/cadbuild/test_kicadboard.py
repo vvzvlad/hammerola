@@ -246,6 +246,7 @@ def test_a_footprint_s_plated_drills_are_read_with_their_larger_size():
         ' (pad "3" smd rect (at -1 0))))')
     (found,) = kicadboard._footprints(tree)
     assert found["drills"] == pytest.approx([(10, -19, 1), (12, -20, 2)])
+    assert found["unplated"] == pytest.approx([(10, -20, 3.2)])
 
 
 def test_a_part_colour_is_on_sixteen_levels_a_channel():
@@ -304,6 +305,157 @@ def test_the_layers_are_their_outer_faces_merged(loaded):
     # The copper's outer faces: 35 um out on both sides, the pads' 40 um.
     assert sorted(set(np.round(records["amp_copper"]["mesh"].vertices[:, 2], 3))) == (
         pytest.approx([-0.04, -0.035, board.thickness + 0.035, board.thickness + 0.04]))
+
+
+# The board the edge tests cut copper with: 20 x 10 mm, 1.6 thick, a 2 mm
+# square cut-out at (14, 4), a 1 mm drill at (5, 5) and a plated half-hole of
+# 1 mm on its top edge at (10, 10); KiCad's copper heights over and under it.
+EDGE_BOARD, EDGE_TOP, EDGE_BOTTOM = 1.6, 1.635, -0.035
+EDGE_DRILLS = [(5, 5, 1.0), (10, 10, 1.0)]
+
+
+@pytest.fixture(scope="module")
+def edge():
+    """The test board's edge, as `_edge` reads it from its laminate."""
+    pytest.importorskip("cadquery")
+    import cadquery as cq
+
+    def hole(x, y):
+        return (cq.Workplane().cylinder(EDGE_BOARD, 0.5, centered=(True, True, False))
+                .translate((x, y, 0)))
+    laminate = (cq.Workplane().box(20, 10, EDGE_BOARD, centered=False)
+                .cut(cq.Workplane().box(2, 2, EDGE_BOARD, centered=False).translate((14, 4, 0)))
+                .cut(hole(5, 5)).cut(hole(10, 10))).val()
+    return kicadboard._edge(laminate, EDGE_BOARD, EDGE_DRILLS)
+
+
+def _sheet(z, step=0.3, low=(-2.05, -2.05), high=(22.1, 12.1)):
+    """A copper sheet at height `z` over a box larger than the test board, two
+    triangles a square, facing up over the board and down under it, as
+    `_merged` leaves a layer: (vertices, faces, normals)."""
+    import numpy as np
+
+    xs, ys = np.arange(low[0], high[0], step), np.arange(low[1], high[1], step)
+    gx, gy = np.meshgrid(xs, ys, indexing="ij")
+    vertices = np.column_stack([gx.ravel(), gy.ravel(), np.full(gx.size, z)])
+    a = (np.arange(len(xs) - 1)[:, None] * len(ys) + np.arange(len(ys) - 1)).ravel()
+    b, c, d = a + len(ys), a + len(ys) + 1, a + 1
+    faces = np.vstack([np.column_stack([a, b, c]), np.column_stack([a, c, d])])
+    if z < 0:
+        faces = faces[:, ::-1]
+    normals = np.tile([0.0, 0.0, 1.0 if z > 0 else -1.0], (len(vertices), 1))
+    return kicadboard._merged(vertices, faces, normals)
+
+
+def test_the_edge_is_the_outline_and_the_cut_outs_and_no_drill(edge):
+    import numpy as np
+
+    ends = edge.reshape(-1, 2)
+    # The drill inside the board is no edge; the half-hole is the outline's,
+    # its arc followed in chords.
+    assert not (np.hypot(*(ends - (5, 5)).T) < 1).any()
+    arc = np.abs(np.hypot(*(ends - (10, 10)).T) - 0.5) < 1e-9
+    assert arc.sum() > 8
+    for corner in ((0, 0), (20, 0), (20, 10), (0, 10), (14, 4), (16, 4), (16, 6), (14, 6)):
+        assert (np.abs(ends - corner).max(axis=1) < 1e-9).any(), corner
+    # Every ring closes exactly: each point ends one segment and starts the
+    # next, bit for bit, as the even-odd test needs.
+    _, counts = np.unique(ends, axis=0, return_counts=True)
+    assert (counts % 2 == 0).all()
+
+
+def test_the_board_s_edge_cuts_the_copper_and_a_drill_does_not(edge):
+    """A sheet larger than the board, over it and under it, comes out as the
+    board's shape: cut along the outline, the cut-out's edge and the
+    half-hole's arc, while the sheet over the drill stays as it was."""
+    import numpy as np
+
+    sheets = [_sheet(EDGE_TOP), _sheet(EDGE_BOTTOM)]
+    offset = len(sheets[0][0])
+    vertices, faces, normals = kicadboard._merged(
+        np.vstack([sheets[0][0], sheets[1][0]]),
+        np.vstack([sheets[0][1], sheets[1][1] + offset]),
+        np.vstack([sheets[0][2], sheets[1][2]]))
+    out, cut, turned = kicadboard._on_board(vertices, faces, normals, edge)
+
+    xy, z = out[:, :2], out[:, 2]
+    assert ((xy >= -1e-9) & (xy <= (20 + 1e-9, 10 + 1e-9))).all()
+    assert not ((np.abs(xy - (15, 5)) < 1 - 1e-9).all(axis=1)).any()
+    # The half-hole's arc is followed in chords, and a point of the cut lands
+    # on MERGE_GRID.
+    assert np.hypot(*(xy - (10, 10)).T).min() >= (
+        0.5 - kicadboard.EDGE_DEFLECTION - kicadboard.MERGE_GRID)
+    corners = out[cut][:, :, :2]
+    u, v = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+    signed = (u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]) / 2
+    below = z[cut].mean(axis=1) < 0
+    # The board's area on each side: its 200 mm2 less the cut-out and the
+    # half of the half-hole inside the outline, whose arc the cut follows in
+    # chords at most EDGE_DEFLECTION inside it (2/3 of that along the arc).
+    board = pytest.approx(200 - 4 - np.pi * 0.5 ** 2 / 2,
+                          abs=np.pi * 0.5 * kicadboard.EDGE_DEFLECTION)
+    assert signed[~below].sum() == board and -signed[below].sum() == board
+    # Each piece on its triangle's height, with its normal and its turn.
+    assert set(np.round(z, 9)) == {EDGE_TOP, EDGE_BOTTOM}
+    assert (turned[z < 0] == (0, 0, -1)).all() and (turned[z > 0] == (0, 0, 1)).all()
+    assert (signed[below] < 0).all() and (signed[~below] > 0).all()
+    # The sheet over the drill, and a stretch of it away from the edge, as it was.
+    before = vertices[faces]
+    centres = before[:, :, :2].mean(axis=1)
+    away = (np.hypot(*(centres - (5, 5)).T) < 1.5) | (
+        (centres > 1).all(axis=1) & (centres < (13, 3)).all(axis=1))
+    kept = {row.tobytes() for row in out[cut]}
+    assert away.sum() > 100
+    assert all(row.tobytes() in kept for row in before[away])
+
+
+def test_copper_all_on_the_board_is_the_very_record(edge):
+    """The record of a board with no copper off it comes back as it was given,
+    the same arrays: the sheet's triangles away from the board's edge, over
+    the drill among them."""
+    import numpy as np
+
+    vertices, faces, normals = _sheet(EDGE_TOP)
+    corners = vertices[faces][:, :, :2]
+    on = (corners > 0.5).all(axis=(1, 2)) & (corners < (9, 9.5)).all(axis=(1, 2))
+    record = kicadboard._merged(vertices, faces[on], normals)
+    assert len(record[1]) > 1000
+    assert all(a is b for a, b in zip(kicadboard._on_board(*record, edge), record))
+
+
+def test_load_cuts_the_copper_at_the_laminate_s_edge(loaded, tmp_path, monkeypatch):
+    """`load` cuts the copper at the edge of the laminate the sidecar hands
+    it: the fixture's GLB over a laminate half its length, x 100..120, keeps
+    no copper past x = 120, and every triangle short of it as the whole
+    board's record has it."""
+    import cadquery as cq
+
+    whole, _, _ = loaded
+    half = tmp_path / "half.step"
+    cq.exporters.export(cq.Workplane().box(20, 15, whole.thickness, centered=False)
+                        .translate((100, -115, 0)), str(half))
+    root = tmp_path / "project"
+    (root / "kicad").mkdir(parents=True)
+    shutil.copyfile(BOARD, root / PATH)
+    # The stub reads `FIXTURES / answer`, and an absolute answer is that file.
+    answers = {("glb", kicadboard.GLB_FLAGS): "board.glb",
+               ("step", kicadboard.STEP_FLAGS): str(half)}
+    with KicadStub(answers) as stub:
+        monkeypatch.setenv(URL_ENV, stub.url)
+        paths.set_project_root(root)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                board = kicadboard.load(PATH)
+        finally:
+            paths.set_project_root(None)
+
+    def short(record):
+        corners = record[0][record[1]]
+        return {row.tobytes() for row in corners[(corners[:, :, 0] < 119).all(axis=1)]}
+    assert whole.meshes["copper"][0][:, 0].max() > 121
+    assert board.meshes["copper"][0][:, 0].max() <= 120 + kicadboard.MERGE_GRID
+    assert short(board.meshes["copper"]) == short(whole.meshes["copper"])
+    assert short(whole.meshes["copper"])
 
 
 def test_a_kicad_6_footprint_is_read_by_its_fp_text_reference():
