@@ -203,9 +203,9 @@ export function joinPresses(vp, order, take) {
  *     geometry unit is one CSS pixel there and the widget is the same size on
  *     screen at every zoom (handle.js, rings.js, gizmo.js).
  *   false — the group's scale is left at 1, and `place` puts the children at
- *     world points and sizes them in world units itself, so the widget is a
- *     thing in the model and grows as the reader zooms in (pins.js). `k` is
- *     still passed, for a widget that wants a screen-sized fallback.
+ *     world points and sizes each itself, for a widget of many pieces standing
+ *     at different depths: pins.js scales every arrow by `k` at its own point,
+ *     which one scale on the group cannot do under perspective.
  *
  * `rank(object)` (optional) picks which intersection `hit` is when the ray
  * crosses several targets; without it, the nearest. How depends on `pixels`

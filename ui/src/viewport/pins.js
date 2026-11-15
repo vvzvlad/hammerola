@@ -11,17 +11,17 @@
 //
 // Many arrows in the ONE group `scene3d.js` places, asked for with
 // `pixels: false`: the group is left unscaled, so `place` stands each arrow at
-// its world point and scales it to a length taken from the model's own size.
-// Measured in the model rather than on the screen, and depth-tested, so an
-// arrow grows as the reader zooms in and is hidden by the geometry in front of
-// it, like the part it points into.
+// its world point and scales it by the pixel size at that point. Each arrow
+// keeps `PIN_PX` on the screen at any zoom, so a close look at a small part is
+// not buried under arrows sized for the whole model, and under perspective each
+// is sized at its own depth. Depth-tested, so it is hidden by the geometry in
+// front of it, like the part it points into.
 
 import { cameraBasis, canvasXY, ndcAt } from "./camera.js";
 import { EVENT_PIN, emit } from "./events.js";
 import { dot3, finite3, sub3, unit3, vec3 } from "./math.js";
 import {
-  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_LENGTH_FRACTION, PIN_PX,
-  PIN_SHAFT_PX,
+  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_PX, PIN_SHAFT_PX,
 } from "./options.js";
 import { capOwnerAt, pickEntity } from "./picking.js";
 import { PINS_ORDER, createScene3D } from "./scene3d.js";
@@ -41,6 +41,44 @@ const CASING = 0xffffff;
 /** How round the shaft and the head are. Twice the grip's: these are lit, and
  *  a lit cone shows its facets where a flat one does not. */
 const SIDES = 24;
+
+/** Steps in each rounded corner of the casing's outline (`outline`). */
+const ARC = 6;
+
+/**
+ * The arrow's outline in the half-plane it is turned about, `[r, y]` from the
+ * tip on the axis to the middle of the tail: the head's flank, its flat
+ * shoulder, the shaft, the tail's flat end. `grow` 0 is the ink; the casing is
+ * the same outline moved `grow` out along every normal, so its rim is one
+ * width all round. Its outer corners — the tip, the head's rim, the tail's
+ * edge — go round on arcs, as the inflated solid does; the inner one, where
+ * the shoulder meets the shaft, is where the two moved lines cross.
+ *
+ * The ink lists each corner twice. `LatheGeometry` gives a point the sum of
+ * its two segments' normals, and the zero-length segment between the copies
+ * gives each copy only its own face's normal, so the shoulder is lit flat
+ * instead of smeared into the flank.
+ */
+function outline(grow) {
+  const r = PIN_HEAD_WIDTH_PX / 2;
+  const s = PIN_SHAFT_PX / 2;
+  const h = PIN_HEAD_PX;
+  const l = PIN_PX;
+  if (grow === 0) return [[0, 0], [r, h], [r, h], [s, h], [s, h], [s, l], [s, l], [0, l]];
+  const arc = (x, y, from, to) => Array.from({ length: ARC + 1 }, (_, i) => {
+    const angle = from + ((to - from) * i) / ARC;
+    return [x + grow * Math.cos(angle), y + grow * Math.sin(angle)];
+  });
+  // The flank's outward normal, out from the axis and back toward the tip.
+  const flank = Math.atan2(-r, h);
+  return [
+    ...arc(0, 0, -Math.PI / 2, flank),
+    ...arc(r, h, flank, Math.PI / 2),
+    [s + grow, h + grow],
+    ...arc(s, l, 0, Math.PI / 2),
+    [0, l + grow],
+  ];
+}
 
 /** Which way an arrow stands when its comment carries no normal: from above,
  *  along the viewer's up axis (`up: "Z"` in options.js). */
@@ -66,17 +104,19 @@ export function pinDirection(n, up = UP) {
  * `three`, and the arrows made of them: the model's (`createPins` below) and
  * those on a board's 3D model (BoardView3D.jsx), one look for both.
  *
- * An arrow is `PIN_PX` long along +Y (the axis three gives a cylinder and a
- * cone) with the TIP at the origin: a node put at the point, turned from +Y
- * onto the direction and scaled to its world length points into the face, its
- * body standing out of it.
+ * An arrow is one solid turned about +Y (`outline`), `PIN_PX` long with the
+ * TIP at the origin: a node put at the point, turned from +Y onto the
+ * direction and scaled to its world length points into the face, its body
+ * standing out of it.
  *
- * The casing is the same shaft and head grown by `PIN_CASE_PX` all round, the
- * tip included, so it ENCLOSES the ink. Only its far side is drawn
+ * The casing is the same solid grown by `PIN_CASE_PX` all round, the tip
+ * included, so it ENCLOSES the ink. Only its far side is drawn
  * (`side: BackSide`, the inverted-hull outline): its front faces are nearer
  * than the ink and, with the depth test on, would simply cover it and leave a
  * white arrow, while its back faces show exactly as a rim around the
- * silhouette.
+ * silhouette. Grown along the normals rather than scaled, it stands the same
+ * distance off the ink everywhere, so the rim keeps one width round the head
+ * and the tail and never touches the ink to fight it for a pixel.
  *
  * The ink is lit (Phong) and the casing flat, and both are opaque and
  * depth-tested: an arrow is an object in the scene, so an opaque part in
@@ -89,28 +129,10 @@ export function pinDirection(n, up = UP) {
  * widgets share.
  */
 export function arrowKit(three) {
-  const shapes = (grow) => {
-    const headLength = PIN_HEAD_PX + 2 * grow;
-    const cone = new three.ConeGeometry(PIN_HEAD_WIDTH_PX / 2 + grow,
-                                        headLength, SIDES);
-    // A cone is centred on the origin and points +Y: turned over to point at
-    // the tip, and lifted so its point is `grow` beyond the origin.
-    cone.rotateZ(Math.PI);
-    cone.translate(0, headLength / 2 - grow, 0);
-    // The rod runs from `grow` short of the ink head's base (`PIN_HEAD_PX`)
-    // to `grow` past the tail (`PIN_PX`). The casing's rod has to start
-    // inside the ink's head: its end
-    // cap faces the tip, so seen from the tail it is a back face the
-    // casing draws, and level with the ink's base it would fight it for
-    // every pixel round the shaft.
-    const length = PIN_PX - PIN_HEAD_PX + 2 * grow;
-    const rod = new three.CylinderGeometry(PIN_SHAFT_PX / 2 + grow,
-                                           PIN_SHAFT_PX / 2 + grow, length, SIDES);
-    rod.translate(0, (PIN_HEAD_PX + PIN_PX) / 2, 0);
-    return [rod, cone];
-  };
-  const [shaft, head] = shapes(0);
-  const [caseShaft, caseHead] = shapes(PIN_CASE_PX);
+  const solid = (grow) => new three.LatheGeometry(
+    outline(grow).map(([r, y]) => new three.Vector2(r, y)), SIDES);
+  const body = solid(0);
+  const shell = solid(PIN_CASE_PX);
   const lit = (color) => new three.MeshPhongMaterial({
     color, shininess: 60, transparent: false, depthTest: true,
     depthWrite: true, clippingPlanes: [],
@@ -128,9 +150,8 @@ export function arrowKit(three) {
      *  the arrow out of its band (handle.js nests its rings the same way). */
     arrow() {
       const node = new three.Object3D();
-      const meshes = [new three.Mesh(shaft, ink), new three.Mesh(head, ink)];
-      const casings = [new three.Mesh(caseShaft, casing),
-                       new three.Mesh(caseHead, casing)];
+      const meshes = [new three.Mesh(body, ink)];
+      const casings = [new three.Mesh(shell, casing)];
       node.add(...meshes, ...casings);
       return { node, meshes, casings };
     },
@@ -155,7 +176,7 @@ export function arrowKit(three) {
     /** Free the shared shapes and inks: nothing frees them through the
      *  arrows standing, and there may be none. */
     dispose() {
-      for (const owned of [shaft, head, caseShaft, caseHead, ink, inkActive, casing]) owned.dispose();
+      for (const owned of [body, shell, ink, inkActive, casing]) owned.dispose();
     },
   };
 }
@@ -244,35 +265,25 @@ export function createPins(vp) {
   }
 
   /**
-   * Stand every arrow on its point, at the length the model gives.
+   * Stand every arrow on its point, `PIN_PX` CSS pixels long on the screen.
    *
    * The group stays at the origin, unturned and unscaled (`pixels: false`), so
    * a node goes straight to its world point and carries the size itself: the
-   * shape is `PIN_PX` long, so the scale is the world length over `PIN_PX`.
-   *
-   * That length is `PIN_LENGTH_FRACTION` of the model's half-diagonal, taken
-   * from the bounding box the hub published with the view (`payload.bb`), which
-   * is a fetched document and so is read a field at a time. A view that carries
-   * no usable box leaves the arrow at `PIN_PX * k`, the size it had on the
-   * screen when it was a screen widget, rather than at nothing — `k` at the
-   * arrow's own point, which under perspective is each arrow's own depth.
+   * shape is `PIN_PX` long, so the scale is `k` at the arrow's own point — one
+   * number under ortho, each arrow's own depth under perspective. Asked on
+   * every frame, so a zoom resizes the arrows in the frame that draws it.
    *
    * An arrow whose point is on or behind the eye of a perspective camera, where
    * `k` answers null, is not drawn.
    */
   function place(root, g, k) {
-    const bb = vp.payload && vp.payload.bb;
-    const span = bb
-      ? [bb.xmax - bb.xmin, bb.ymax - bb.ymin, bb.zmax - bb.zmin] : null;
-    const half = finite3(span) ? Math.hypot(span[0], span[1], span[2]) / 2 : 0;
     for (const arrow of arrows.values()) {
       const p = arrow.point;
       const here = k(p);
       arrow.node.visible = here !== null;
       if (here === null) continue;
-      const length = half > 0 ? PIN_LENGTH_FRACTION * half : PIN_PX * here;
       arrow.node.position.set(p[0], p[1], p[2]);
-      arrow.node.scale.setScalar(length / PIN_PX);
+      arrow.node.scale.setScalar(here);
     }
     return true;
   }

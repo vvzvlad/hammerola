@@ -202,29 +202,15 @@ export const HANDLE_CASE_PX = 2;
  */
 export const HANDLE_RING_PX = (HANDLE_PX * 3) / 4;
 
-/* A comment's arrow on the model (pins.js). Unlike the section grip, this one
- * is measured in the MODEL: it marks a place on a part, so it grows as the
- * reader zooms in and goes behind whatever stands in front of it, instead of
- * keeping one size on the canvas. The numbers below are the arrow's own
- * proportions — `build` in pins.js lays the shape out `PIN_PX` long and `place`
- * scales the whole thing to the world length `PIN_LENGTH_FRACTION` gives.
- * Separate constants from `HANDLE_*`: the grip is a control standing on the
- * cut, this is a marker pointing into a face. */
+/* A comment's arrow on the model (pins.js) and on a board's 3D model
+ * (BoardView3D.jsx). Like the section grip it keeps one size on the canvas at
+ * any zoom, and unlike it it is depth-tested, so it goes behind whatever stands
+ * in front of it. The numbers below are in CSS pixels on the screen — `arrowKit`
+ * in pins.js lays the shape out in them, and each frame scales it by the world
+ * size of a pixel at the arrow's point. Separate constants from `HANDLE_*`: the
+ * grip is a control standing on the cut, this is a marker pointing into a face. */
 
-/** The arrow's world length, as a fraction of the model's half-diagonal — half
- *  the diagonal of the bounding box the hub publishes with the view
- *  (`payload.bb`).
- *
- * The box rather than the viewer's own `bb_radius`: that is the larger of the
- * bounding sphere's radius and the distance from the origin to its centre, so
- * a part modelled far from the origin would carry an arrow several times too
- * big. A fraction rather than a length, because a hub builds parts of any
- * size. Long enough to stand clear of the face it points into, short enough
- * that two comments on one part do not cross the model. */
-export const PIN_LENGTH_FRACTION = 0.08;
-
-/** The whole arrow, tip to tail, and the unit the rest of these are in: the
- *  shape is built this long and then scaled to its world length. */
+/** The whole arrow, tip to tail. */
 export const PIN_PX = 46;
 
 /** The head's length along the arrow. Longer than it is wide, so it reads as a
@@ -235,11 +221,10 @@ export const PIN_HEAD_PX = 20;
 export const PIN_HEAD_WIDTH_PX = 16;
 
 /** The shaft's thickness. */
-export const PIN_SHAFT_PX = 5;
+export const PIN_SHAFT_PX = 6;
 
-/** The white casing standing out of the ink all round, the tip included, in the
- *  same units as the arrow it grows — the grip's `HANDLE_CASE_PX` is the same
- *  construction counted in pixels. */
+/** The white casing standing out of the ink all round, the tip included: the
+ *  arrow's outline moved out along its normals (`outline` in pins.js). */
 export const PIN_CASE_PX = 2;
 
 /**
